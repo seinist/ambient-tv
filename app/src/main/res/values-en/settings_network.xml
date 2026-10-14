@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_area_network">Devices &amp; network</string>
+    <string name="settings_network_devices">Phone &amp; devices</string>
+    <string name="settings_network_receiver">UPnP receiver</string>
+    <string name="settings_network_wake">Servers &amp; Wake-on-LAN</string>
+    <string name="settings_network_wake_hint">MAC addresses and wake settings; choosing a profile switches the active server.</string>
+    <string name="settings_wol_retries">Wake-on-LAN retries</string>
+    <string name="settings_wol_retries_hint">If a server has not answered when the wait time runs out, wake it again with new packets and wait once more. Applies to all servers, file sources and DLNA; the quick check when the app returns is never repeated.</string>
+    <string name="settings_wol_retries_off">Off</string>
+    <string name="settings_wol_retries_value">%1$d×</string>
+    <string name="settings_network_link">Network settings</string>
+    <string name="settings_network_routes">Use WireGuard for these systems</string>
+    <string name="settings_network_wake_now">Wake now</string>
+    <string name="settings_network_wake_sent">Wake request sent</string>
+    <string name="settings_network_receiver_name">Name visible on the network</string>
+    <string name="settings_network_receiver_running">Receiver is running. Apps on your network can find this device.</string>
+    <string name="settings_network_receiver_stopped">Receiver is not running. Enable it and allow local network access to receive media.</string>
+    <string name="settings_network_dlna_hint">DLNA servers found on the network. Wake-on-LAN wakes a sleeping server before browsing when auto-wake is on.</string>
+    <string name="settings_network_receiving">Receiving: %1$s</string>
+    <string name="settings_network_receiver_save_hint">Receiver switches take effect immediately. Apply the device name with Save below the field.</string>
+    <string name="settings_wake_group_services">Services: %1$s</string>
+    <string name="settings_wake_mac_conflict">Different MAC addresses are saved: %1$s. One machine has one MAC; enter the correct one or apply the first to all services.</string>
+    <string name="settings_wake_apply_mac">Use %1$s for all services</string>
+    <string name="settings_wake_auto_for">Wake automatically: %1$s</string>
+    <string name="settings_wake_profiles">Active server profiles</string>
+    <string name="settings_wake_empty">No servers set up yet.</string>
+    <string name="settings_wake_nas_details">%1$s: Wake-on-LAN details</string>
+</resources>

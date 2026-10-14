@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="playback_this_tv">This TV</string>
+    <string name="playback_status_playing">Playing</string>
+    <string name="playback_status_paused">Paused</string>
+    <string name="playback_status_loading">Loading…</string>
+    <string name="playback_status_error">Playback error</string>
+    <string name="playback_status_idle">Nothing playing</string>
+    <string name="playback_status_on_device">%1$s · %2$s</string>
+    <string name="playback_open">Open playback</string>
+</resources>

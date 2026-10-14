@@ -1,0 +1,15 @@
+--- a/modules/demux/mkv/matroska_segment_seeker.cpp
++++ b/modules/demux/mkv/matroska_segment_seeker.cpp
+@@ -318,7 +318,11 @@
+         if ( start.fpos == std::numeric_limits<fptr_t>::max() )
+             return tracks_seekpoint_t();
+ 
+-        if ( ms.sys.b_fastseekable &&
++        // HTTP range access is seekable but not fast-seekable. Validate the
++        // bounded interval between existing cues there too, otherwise all
++        // QUESTIONABLE cues are ignored and playback scans from the beginning.
++        // Keep unindexed network streams out of the unbounded scan path.
++        if ( ms.sys.b_seekable && (ms.sys.b_fastseekable || ms.b_cues) &&
+              (end.fpos != std::numeric_limits<fptr_t>::max() || !ms.b_cues) &&
+              (needle_pts != start.pts || start.trust_level < Seekpoint::TRUSTED))
+             // do not read the whole (infinite?) file to get seek indexes

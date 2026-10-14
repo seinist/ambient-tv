@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_frame_drop_compact">Drops %1$s · %2$s / 1 s</string>
+    <string name="player_frame_drop_compact_estimated">Drops %1$s · ≈%2$s / 1 s</string>
+    <string name="player_frame_drop_sample_percent">Dropped frames in sample: %1$s of expected frames</string>
+    <string name="player_frame_drop_count">Dropped frames: %1$s</string>
+    <string name="player_frame_drop_ratio">Dropped / rendered (last second): %1$s</string>
+    <string name="player_frame_drop_ratio_estimated">Dropped / rendered (last second, estimated): %1$s</string>
+</resources>

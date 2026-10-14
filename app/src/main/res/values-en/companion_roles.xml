@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_connect_tv">Connect to TV</string>
+    <string name="companion_pair_phone">Pair phone</string>
+    <string name="companion_tv_only_hint">Open Companion on your phone and scan the QR code. This TV receives connections and does not search for other TVs.</string>
+    <string name="companion_phone_connect_first">Connect your phone to this TV first, then start the transfer.</string>
+    <string name="companion_role_required">Device role unsupported. Update the app on both devices and connect the phone to the TV.</string>
+</resources>

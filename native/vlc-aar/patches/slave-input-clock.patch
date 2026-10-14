@@ -1,0 +1,23 @@
+--- a/src/input/es_out.c
++++ b/src/input/es_out.c
+@@ -3569,6 +3569,11 @@
+         /* Search program */
+         if( i_query == ES_OUT_SET_PCR )
+         {
++            /* Slave demuxers share the selected program but must not replace
++             * its input clock. Fragmented audio can demux seconds ahead of
++             * video and otherwise repeatedly reset the master's timeline. */
++            if( EsOutIsGroupSticky(p_sys, source, 0) )
++                return VLC_SUCCESS;
+             p_pgrm = p_sys->p_pgrm;
+             if( !p_pgrm )
+                 p_pgrm = EsOutProgramAdd(p_sys, source, i_group);   /* Create it */
+@@ -3576,6 +3581,8 @@
+         else
+         {
+             i_group = va_arg( args, int );
++            if( EsOutIsGroupSticky(p_sys, source, i_group) )
++                return VLC_SUCCESS;
+             p_pgrm = EsOutProgramInsert(p_sys, source, i_group);
+         }
+         if( !p_pgrm )

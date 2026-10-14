@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_companion_hint">Pair devices, control your TV, transfer accounts and settings, and set up connections.</string>
+    <string name="settings_companion_devices">Devices and remote control</string>
+    <string name="settings_companion_devices_hint">Open Ambient TV on both devices on the same network. Pair them once to use playback and remote control. Select a paired device to connect.</string>
+    <string name="settings_companion_receiver">Allow connections on this TV</string>
+    <string name="settings_companion_receiver_hint">Paired devices can connect while Ambient TV is open.</string>
+    <string name="settings_companion_transfer">Transfer accounts and settings</string>
+    <string name="settings_companion_transfer_hint">Send accounts, settings or menu sounds; the receiving device confirms the import.</string>
+    <string name="settings_companion_network">Availability and network</string>
+    <string name="settings_companion_network_hint">Keep the TV reachable in the background, and set VPN, port and Wake-on-LAN per device.</string>
+    <string name="settings_companion_select_device">Device connection: select a paired device. Apply changes here with “Save connection”.</string>
+</resources>

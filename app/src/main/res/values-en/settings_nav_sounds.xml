@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_nav_sounds_title">Menu sounds</string>
+    <string name="settings_nav_sounds_page_hint">Menu sounds, volume and sound editor</string>
+    <string name="settings_nav_sounds_draft_hint">Changes are saved with your settings. Preview works even when menu sounds are off.</string>
+</resources>

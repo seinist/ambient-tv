@@ -1,0 +1,4 @@
+CuNNy-faster-SOFT shader by funnyplanter.
+Source revision: 906031bb00c15dd6a6bbbaa21c0eb0b724ca8437
+License: GNU Lesser General Public License v3.0 or later.
+Full license text: bjin-LGPL.txt

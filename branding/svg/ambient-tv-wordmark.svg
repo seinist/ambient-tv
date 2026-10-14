@@ -1,0 +1,20 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="152" height="32" viewBox="0 0 152 32" role="img" aria-label="Ambient TV wordmark">
+  <title>Ambient TV wordmark</title>
+  <g transform="translate(-41 -4)">
+    <g transform="translate(49 28) scale(1)" id="brand-wordmark">
+      <path d="M8 40L24 8L40 40" fill="none" stroke="#F0B441" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" transform="translate(-2.086000000 -21.375000000) scale(0.500000000)" />
+      <path d="M82 0H207V271C207 377 263 431 346 431C422 431 466 385 466 290V0H591V271C591 377 648 431 730 431C806 431 850 385 850 290V0H975V306C975 467 885 540 756 540C671 540 599 506 556 450C519 511 454 540 376 540C303 540 241 515 201 467V534H82Z" transform="translate(19.828000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+      <path d="M378 -7C534 -7 649 101 649 267C649 433 534 540 378 540C310 540 250 517 207 469V742H82V0H201V70C243 18 305 -7 378 -7ZM364 100C274 100 205 165 205 267C205 369 274 434 364 434C454 434 522 369 522 267C522 165 454 100 364 100Z" transform="translate(42.994000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+      <path d="M82 0H207V534H82ZM145 622C192 622 225 656 225 700C225 741 191 772 145 772C98 772 64 739 64 697C64 655 98 622 145 622Z" transform="translate(58.086000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+      <path d="M333 -7C425 -7 500 23 548 80L481 157C443 118 396 99 336 99C243 99 178 149 163 227H582C583 239 584 254 584 264C584 431 470 540 314 540C155 540 38 426 38 267C38 108 154 -7 333 -7ZM162 310C174 388 233 440 314 440C396 440 455 387 465 310Z" transform="translate(64.444000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+      <path d="M82 0H207V270C207 377 267 431 356 431C436 431 483 385 483 290V0H608V306C608 467 513 540 385 540C307 540 242 514 201 465V534H82Z" transform="translate(78.128000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+      <path d="M283 -7C328 -7 373 5 403 29L368 118C349 103 324 96 298 96C250 96 224 124 224 176V434H367V534H224V652H99V534H11V434H99V173C99 55 166 -7 283 -7Z" transform="translate(93.198000000 0) scale(0.022 -0.022)" fill="#f3f3f6" />
+    </g>
+    <rect x="159.526000000" y="12" width="25" height="18" rx="4" fill="#F0B441" stroke="none" id="brand-tv-badge" />
+    <g transform="translate(164.526000000 24.5) scale(1)" id="brand-tv-label">
+      <path d="M236 0H366V590H598V700H4V590H236Z" transform="translate(0.0 0) scale(0.01 -0.01)" fill="#181511" />
+      <path d="M301 0H429L734 700H604L369 161L136 700H-5Z" transform="translate(6.0200000000000005 0) scale(0.01 -0.01)" fill="#181511" />
+    </g>
+  </g>
+</svg>

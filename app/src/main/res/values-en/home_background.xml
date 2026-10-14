@@ -1,0 +1,6 @@
+<resources>
+    <string name="settings_home_background_everywhere">Home background on all screens</string>
+    <string name="settings_home_background_everywhere_hint">Shows the Home effect behind other screens too; off in Low performance mode.</string>
+    <string name="settings_focus_artwork_backdrop">Artwork backdrop</string>
+    <string name="settings_focus_artwork_backdrop_hint">Shows the focused title\'s image behind Home, libraries and YouTube.</string>
+</resources>

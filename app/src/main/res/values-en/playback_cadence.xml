@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_cadence">Display cadence</string>
+    <string name="player_cadence_double">Double frame rate</string>
+    <string name="player_cadence_pulldown">3:2 pulldown</string>
+</resources>

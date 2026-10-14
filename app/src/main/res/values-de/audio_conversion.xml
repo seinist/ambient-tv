@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_conversion_location">Audio-Umwandlung</string>
+    <string name="audio_conversion_local">Lokal auf diesem Gerät</string>
+    <string name="audio_conversion_server">Durch den Medienserver</string>
+    <string name="audio_conversion_location_hint">Wo nicht unterstützter Ton umgewandelt wird; ohne Server-Transcoder lokal.</string>
+</resources>

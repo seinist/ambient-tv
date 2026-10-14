@@ -1,0 +1,237 @@
+package com.ambient.tv.ui.player
+
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.MutableState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import kotlin.math.ceil
+
+@Composable
+fun rememberPlaybackSleepTimer(owner: Any): MutableState<SleepTimerConfig> = remember(owner) {
+    object : MutableState<SleepTimerConfig> {
+        override var value: SleepTimerConfig
+            get() = BackgroundPlaybackSession.sleepTimer
+            set(value) {
+                BackgroundPlaybackSession.setSleepTimer(value)
+            }
+        override fun component1() = value
+        override fun component2(): (SleepTimerConfig) -> Unit = { value = it }
+    }
+}
+
+@Composable
+@Suppress("UNUSED_PARAMETER")
+fun PlaybackSessionContent(
+    metadata: PlaybackMetadata,
+    onStopped: () -> Unit,
+    onPlayNext: (NextUpCandidate) -> Unit = {},
+    onIntroSkipModeChanged: ((String) -> Unit)? = null,
+    onCreditsSkipModeChanged: ((String) -> Unit)? = null,
+    onAutoplayChanged: ((Boolean) -> Unit)? = null,
+    timelineKey: String = metadata.route,
+    timeline: com.ambient.tv.domain.model.PlaybackTimeline = com.ambient.tv.domain.model.PlaybackTimeline(),
+    timelineLoader: (suspend () -> com.ambient.tv.domain.model.PlaybackTimeline)? = null,
+    onTimelineSeek: ((Long) -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val chrome = LocalPlayerChromeState.current
+    var introSkipMode by remember(metadata.route) { mutableStateOf(metadata.introSkipMode) }
+    var creditsSkipMode by remember(metadata.route) { mutableStateOf(metadata.creditsSkipMode) }
+    var autoplay by remember(metadata.route, metadata.nextUpConfig.autoplay) {
+        mutableStateOf(metadata.nextUpConfig.autoplay)
+    }
+    LaunchedEffect(metadata.introSkipMode) { introSkipMode = metadata.introSkipMode }
+    LaunchedEffect(metadata.creditsSkipMode) { creditsSkipMode = metadata.creditsSkipMode }
+    fun normalizedSkipMode(value: String) = value.takeIf { it in setOf("off", "button", "auto") } ?: "button"
+    val navigation = remember(timelineKey) { PlaybackNavigationState() }
+    val segments = navigation.timeline.segments
+    val skipControls = SegmentSkipControls(
+        introMode = introSkipMode,
+        creditsMode = creditsSkipMode,
+        onIntroModeChanged = onIntroSkipModeChanged?.let { persist ->
+            { value -> normalizedSkipMode(value).let { introSkipMode = it; persist(it) } }
+        },
+        onCreditsModeChanged = onCreditsSkipModeChanged?.let { persist ->
+            { value -> normalizedSkipMode(value).let { creditsSkipMode = it; persist(it) } }
+        },
+        hasIntro = segments.any { it.type == "intro" },
+        // Open-ended credits only matter when there is a next item to hand over to.
+        hasCredits = segments.any { it.type == "credits" && (it.endMs >= 0 || metadata.nextUp != null) },
+    )
+    val activeMetadata = metadata.copy(
+        introSkipMode = introSkipMode,
+        creditsSkipMode = creditsSkipMode,
+        nextUpConfig = metadata.nextUpConfig.copy(autoplay = autoplay),
+    )
+    SideEffect { BackgroundPlaybackSession.refreshMetadata(activeMetadata) }
+    val observedSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+    // acquire() updates synchronously during composition; collectAsState may still hold the old item.
+    val snapshot = remember(observedSnapshot, BackgroundPlaybackSession.activeHandle()) { BackgroundPlaybackSession.snapshot.value }
+    var acquired by remember(metadata.route) { mutableStateOf(false) }
+    var dismissedKey by remember(metadata.route) { mutableStateOf<String?>(null) }
+    var handledKey by remember(metadata.route) { mutableStateOf<String?>(null) }
+    // A leaving navigation destination must not render a handle replaced by the next screen.
+    if (acquired && snapshot.active && snapshot.metadata?.route != metadata.route) return
+    if (acquired && !snapshot.active) {
+        LaunchedEffect(snapshot.generation) {
+            val current = BackgroundPlaybackSession.snapshot.value
+            if (!current.active && current.generation == snapshot.generation) onStopped()
+        }
+        return
+    }
+    val audioSuccessor = metadata.companionNext.takeIf { !metadata.hasVideo && !metadata.isLive }
+    val candidate = metadata.nextUp ?: audioSuccessor
+    val config = activeMetadata.nextUpConfig
+    val candidateKey = candidate?.let { "${it.source}:${it.mediaId}" }
+    var knownDurationMs by remember(metadata.route) { mutableStateOf(0L) }
+    val runtimeDurationMs = snapshot.takeIf { it.metadata?.route == metadata.route }
+        ?.status?.durationMs?.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs)
+    val durationMs = metadata.durationMs.takeIf { it > 0 }
+        ?: runtimeDurationMs ?: knownDurationMs
+    // Some native backends clear their media length before reporting Stopped/EOF.
+    // Keep the last known length so the pending Next Up choice survives that event.
+    SideEffect { if (durationMs > 0) knownDurationMs = durationMs }
+    val positionMs = snapshot.status.positionMs + metadata.timelineOffsetMs
+    val timing = nextUpTiming(positionMs, durationMs, navigation.timeline.segments,
+        activeMetadata.creditsSkipMode != "off", config.leadSeconds)
+    val secondsRemaining = ceil(timing.remainingMs / 1_000.0).toInt()
+    // Metadata duration is only a countdown hint. A seek/restart can temporarily leave the
+    // old clock at that value; only the current engine may declare an actual EOF.
+    val atEnd = snapshot.status.ended
+    val stillWatching = config.autoplay &&
+        BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery)
+    // Content without a known final end (live, open-ended streams) must never offer Next Up.
+    val linkCreditsToNextUp = candidate != null && config.enabled && !metadata.isLive &&
+        durationMs > 0L &&
+        BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM
+    val queuePending = com.ambient.tv.companion.CompanionQueuePlayback.pending
+    val changingItem = LocalPlayerChangingItem.current || snapshot.replacingSource
+    val ownsSnapshot = snapshot.metadata?.route == metadata.route
+    val canOfferNext = acquired && ownsSnapshot && !changingItem && linkCreditsToNextUp && !queuePending
+    val nextUpDue = canOfferNext && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && candidateKey != dismissedKey && candidateKey != handledKey &&
+        (atEnd || timing.offer)
+    // A hidden overlay still has to ask the still-watching question at the end.
+    val showNextUp = nextUpDue && (config.showOverlay || (atEnd && stillWatching))
+
+    var wasNextUpVisible by remember(timelineKey) { mutableStateOf(false) }
+    LaunchedEffect(showNextUp) {
+        if (wasNextUpVisible && !showNextUp && handledKey != candidateKey) navigation.returnToControls()
+        wasNextUpVisible = showNextUp
+    }
+
+    fun playNext(automatic: Boolean) {
+        val next = candidate ?: return
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (changingItem || current.replacingSource || current.metadata?.route != metadata.route || current.generation != snapshot.generation) return
+        if (handledKey == candidateKey) return
+        handledKey = candidateKey
+        if (automatic) BackgroundPlaybackSession.recordAutomaticNextUp(next)
+        else BackgroundPlaybackSession.recordManualNextUp(next)
+        onPlayNext(next)
+    }
+
+    LaunchedEffect(acquired, atEnd, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (!acquired || !atEnd || !ownsSnapshot || changingItem || metadata.successorsLoading ||
+            current.replacingSource || current.generation != snapshot.generation || current.metadata?.route != metadata.route ||
+            com.ambient.tv.companion.CompanionQueuePlayback.pending || (handledKey != null && handledKey == candidateKey)) return@LaunchedEffect
+        when {
+            audioSuccessor != null && BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM -> playNext(automatic = true)
+            nextUpDue && config.autoplay && !stillWatching -> playNext(automatic = true)
+            // Keep the choice visible at EOF when autoplay is off or confirmation is required.
+            showNextUp -> Unit
+            candidateKey == dismissedKey || !canOfferNext || nextUpDue -> BackgroundPlaybackSession.stopIfCurrent(metadata.route, snapshot.generation)
+        }
+    }
+
+    CompositionLocalProvider(
+        LocalPlaybackMetadata provides activeMetadata,
+        LocalSegmentSkipControls provides skipControls,
+    ) {
+        Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
+            // Next Up is a sibling of the renderer's controls. Handle media keys here so its
+            // focused buttons cannot bypass Next/Previous, especially after native EOF.
+            if (metadata.isLive || !ownsSnapshot ||
+                BackgroundPlaybackSession.snapshot.value.metadata?.route != metadata.route ||
+                event.type != KeyEventType.KeyDown) false
+            else when (event.key) {
+                Key.MediaNext -> if (candidate != null && !queuePending) {
+                    playNext(automatic = false)
+                    true
+                } else false
+                Key.MediaPrevious -> {
+                    if (!changingItem) {
+                        if (onTimelineSeek != null) onTimelineSeek(0L)
+                        else BackgroundPlaybackSession.seekTo(0L)
+                        chrome?.visible?.value = true
+                    }
+                    true
+                }
+                else -> false
+            }
+        }) {
+            PlaybackNavigationProvider(activeMetadata, timelineKey, timeline, timelineLoader, onTimelineSeek,
+                nextUpVisible = showNextUp,
+                onPlayNext = if (candidate != null) ({ automatic -> playNext(automatic) }) else null,
+                // With Next Up enabled, open-ended credits must not bypass its autoplay/confirmation rules.
+                canAutoAdvance = !changingItem && !queuePending && !linkCreditsToNextUp && !BackgroundPlaybackSession.shouldConfirmNextUp(config.stillWatchingEvery) &&
+                    BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM,
+                navigationState = navigation,
+                creditsHandledByNextUp = linkCreditsToNextUp,
+            ) { content() }
+            if (showNextUp) {
+                NextUpOverlay(
+                    candidate = candidate,
+                    secondsRemaining = secondsRemaining,
+                    leadSeconds = timing.progressWindowSeconds,
+                    autoplay = config.autoplay,
+                    stillWatching = stillWatching,
+                    onPlayNow = { playNext(automatic = false) },
+                    onAutoplayChanged = onAutoplayChanged?.let { persist ->
+                        { enabled ->
+                            persist(enabled)
+                            autoplay = enabled
+                        }
+                    },
+                    onDismiss = {
+                        dismissedKey = candidateKey
+                        navigation.returnToControls()
+                    },
+                    onSkipCredits = timing.credits?.takeIf { it.endMs > positionMs }?.let { credits ->
+                        {
+                            navigation.interact()
+                            if (onTimelineSeek != null) onTimelineSeek(credits.endMs)
+                            else BackgroundPlaybackSession.seekTo((credits.endMs - metadata.timelineOffsetMs).coerceAtLeast(0))
+                            navigation.returnToControls()
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(if (handheld) 12.dp else 32.dp),
+                )
+            }
+        }
+    }
+    SideEffect {
+        if (BackgroundPlaybackSession.snapshot.value.metadata?.route == activeMetadata.route) {
+            acquired = true
+            BackgroundPlaybackSession.updateMetadata(activeMetadata)
+        }
+    }
+}

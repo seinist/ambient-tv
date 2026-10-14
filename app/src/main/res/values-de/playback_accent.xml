@@ -1,0 +1,14 @@
+<resources>
+    <string name="playback_resume_position">Fortsetzen bei %1$s</string>
+    <string name="settings_accent_pair_hint">Jede Vorgabe kombiniert Haupt- und Wiedergabefarbe; unter „Benutzerdefiniert“ wählst du beide.</string>
+    <string name="settings_primary_accent">Hauptfarbe</string>
+    <string name="settings_playback_accent">Wiedergabefarbe</string>
+    <string name="settings_primary_accent_hint">Für Aktionen, ausgewählte Optionen und das Erscheinungsbild der App.</string>
+    <string name="settings_playback_accent_hint">Für Wiedergabestatus und Fortschritt. Eine Änderung der Hauptfarbe behält diese Auswahl bei.</string>
+    <string name="settings_choose_primary_accent">Hauptfarbe wählen</string>
+    <string name="settings_choose_playback_accent">Wiedergabefarbe wählen</string>
+    <string name="settings_artwork_playback_accent_hint">Coverfarben bleiben auf den jeweiligen Titel begrenzt. Ansonsten sind Aktionen goldfarben und Wiedergabeanzeigen blau.</string>
+    <string name="settings_accent_single_hint">Eine Farbe für Aktionen, Auswahl, Wiedergabestatus und Fortschritt.</string>
+    <string name="settings_dual_accent">Eigene Wiedergabefarbe</string>
+    <string name="settings_dual_accent_hint">Nutzt eine zweite Farbe für Wiedergabestatus und Fortschritt. Aus: Alles nutzt die Hauptfarbe.</string>
+</resources>

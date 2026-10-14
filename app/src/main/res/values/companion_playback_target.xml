@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_choose_playback">Where would you like to play?</string>
+    <string name="companion_play_on">Play on %1$s · Connected</string>
+    <string name="companion_reconnect_play">%1$s · Reconnect and play</string>
+    <string name="companion_starting_on">Starting playback on %1$s…</string>
+    <string name="companion_playing_on">Playing on %1$s</string>
+    <string name="companion_start_failed">The TV could not start playback. Check the connection and whether this source is configured on the TV. Try again or play on this phone.</string>
+    <string name="companion_target_start_timeout">The TV has not confirmed playback. Check the TV for a confirmation dialog or a playback error before retrying.</string>
+    <string name="companion_source_phone_only">This content is only available on this phone.</string>
+    <string name="companion_paired">%1$s · Paired</string>
+    <string name="companion_mute">Mute</string>
+    <string name="companion_unmute">Restore volume</string>
+    <string name="companion_target_source_missing">This media source is not available on the TV. Set it up there or play on this phone.</string>
+    <string name="companion_choose_device">Choose playback device</string>
+    <string name="companion_play_here">Play on this phone</string>
+</resources>

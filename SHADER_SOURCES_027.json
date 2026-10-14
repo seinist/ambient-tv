@@ -1,0 +1,284 @@
+[
+  {
+    "key": "ravu_lite_r2",
+    "url": "https://raw.githubusercontent.com/bjin/mpv-prescalers/b3f0a59d68f33b7162051ea5970a5169558f0ea2/ravu-lite-ar-r2.hook",
+    "revision": "b3f0a59d68f33b7162051ea5970a5169558f0ea2",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "cbbabe0a5544c3bd832c7a0ec949a364242643cc834c2840dd25f732a2f13634",
+    "file": "app/src/main/res/raw/quality_ravu_lite_r2_cbbabe0a.glsl"
+  },
+  {
+    "key": "ravu_lite_r3",
+    "url": "https://raw.githubusercontent.com/bjin/mpv-prescalers/b3f0a59d68f33b7162051ea5970a5169558f0ea2/ravu-lite-ar-r3.hook",
+    "revision": "b3f0a59d68f33b7162051ea5970a5169558f0ea2",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "6225c2362567f818cf6e67e66cd7125a32ec0ea727285643b1e5a377387c5b5f",
+    "file": "app/src/main/res/raw/quality_ravu_lite_r3_6225c236.glsl"
+  },
+  {
+    "key": "ravu_zoom_r3",
+    "url": "https://raw.githubusercontent.com/bjin/mpv-prescalers/b3f0a59d68f33b7162051ea5970a5169558f0ea2/ravu-zoom-ar-r3.hook",
+    "revision": "b3f0a59d68f33b7162051ea5970a5169558f0ea2",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "eb0c3744af3615c99281a6ff74d1276a5cc7527a30a0bd54984aeb43d0cb2eea",
+    "file": "app/src/main/res/raw/quality_ravu_zoom_r3_eb0c3744.glsl"
+  },
+  {
+    "key": "ravu_lite_r4",
+    "url": "https://raw.githubusercontent.com/bjin/mpv-prescalers/b3f0a59d68f33b7162051ea5970a5169558f0ea2/ravu-lite-ar-r4.hook",
+    "revision": "b3f0a59d68f33b7162051ea5970a5169558f0ea2",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "ee844074aedc1b40602e42885540ff312b6fed0fb8b3203e57fabc0d237f8922",
+    "file": "app/src/main/res/raw/quality_ravu_lite_r4_ee844074.glsl"
+  },
+  {
+    "key": "anime4k",
+    "url": "https://raw.githubusercontent.com/bloc97/Anime4K/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_Upscale_CNN_x2_S.glsl",
+    "revision": "7684e9586f8dcc738af08a1cdceb024cc184f426",
+    "license": "MIT",
+    "sha256": "4c53ec2e287908f7ee7bcb266b0170421626d663576468b7d7dafc62962649a4",
+    "file": "app/src/main/res/raw/quality_anime4k_4c53ec2e.glsl"
+  },
+  {
+    "key": "anime4k_denoise",
+    "url": "https://raw.githubusercontent.com/bloc97/Anime4K/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale+Denoise/Anime4K_Upscale_Denoise_CNN_x2_S.glsl",
+    "revision": "7684e9586f8dcc738af08a1cdceb024cc184f426",
+    "license": "MIT",
+    "sha256": "1a45ad3aa20d8368399f2fd46791deed957c2fd0a4afd131cc92516827abab93",
+    "file": "app/src/main/res/raw/quality_anime4k_denoise_1a45ad3a.glsl"
+  },
+  {
+    "key": "anime4k_m",
+    "url": "https://raw.githubusercontent.com/bloc97/Anime4K/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale/Anime4K_Upscale_CNN_x2_M.glsl",
+    "revision": "7684e9586f8dcc738af08a1cdceb024cc184f426",
+    "license": "MIT",
+    "sha256": "9b8e956d5ceeee7836700f503f3fc0fa38d31ad0b1e68f68e2958ee4dd502ea8",
+    "file": "app/src/main/res/raw/quality_anime4k_m_9b8e956d.glsl"
+  },
+  {
+    "key": "anime4k_denoise_m",
+    "url": "https://raw.githubusercontent.com/bloc97/Anime4K/7684e9586f8dcc738af08a1cdceb024cc184f426/glsl/Upscale%2BDenoise/Anime4K_Upscale_Denoise_CNN_x2_M.glsl",
+    "revision": "7684e9586f8dcc738af08a1cdceb024cc184f426",
+    "license": "MIT",
+    "sha256": "967804d79834e0821345060dd451197496511428c1fed9c39273c0df5e77feed",
+    "file": "app/src/main/res/raw/quality_anime4k_denoise_m_967804d7.glsl"
+  },
+  {
+    "key": "artcnn16",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F16.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "03d0b3d31cb82c898a94a46663021a3e8f02c5a21d69c5cfdf0208de4bfd453e",
+    "file": "app/src/main/res/raw/quality_artcnn16_03d0b3d3.glsl"
+  },
+  {
+    "key": "artcnn32",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F32.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "f773bce6cf5fe7e5e5d599a695edd40df5cd7a20c3d08c4d164d07591d5bead3",
+    "file": "app/src/main/res/raw/quality_artcnn32_f773bce6.glsl"
+  },
+  {
+    "key": "artcnn16_ds",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F16_DS.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "57df650fddec3969e17799f5522c9b03dd2d33b1aeace237fef216bf3858125a",
+    "file": "app/src/main/res/raw/quality_artcnn16_ds_57df650f.glsl"
+  },
+  {
+    "key": "artcnn16_dn",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F16_DN.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "047f33cd43ca3751b00c7c81206e076ac921c1fbc06d49f23010a0b428271acf",
+    "file": "app/src/main/res/raw/quality_artcnn16_dn_047f33cd.glsl"
+  },
+  {
+    "key": "artcnn32_ds",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F32_DS.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "a04c9cba6fbb8e6db9239d61848390208aedf8e348ef116e12174c803d22077e",
+    "file": "app/src/main/res/raw/quality_artcnn32_ds_a04c9cba.glsl"
+  },
+  {
+    "key": "artcnn32_dn",
+    "url": "https://raw.githubusercontent.com/Artoriuz/ArtCNN/8789539dfae120f2877a89bb6218026d56809612/GLSL/ArtCNN_C4F32_DN.glsl",
+    "revision": "8789539dfae120f2877a89bb6218026d56809612",
+    "license": "MIT",
+    "sha256": "6b51a6f7d75826c9492c3f78b5e60acffa24a71928e2d47c4a329423922a143c",
+    "file": "app/src/main/res/raw/quality_artcnn32_dn_6b51a6f7.glsl"
+  },
+  {
+    "key": "cunny_fast_ds",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/ds/CuNNy-fast-DS.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "86681e39ef4a2f22ad5622be88c2bff179007f4f9b898e05638d6ab1239e03c0",
+    "file": "app/src/main/res/raw/quality_cunny_fast_ds_86681e39.glsl"
+  },
+  {
+    "key": "fsrcnnx8",
+    "url": "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_8-0-4-1.glsl",
+    "revision": "1.1",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "e800dbc5c1c95185cc82216c597724533ff5f2880179f256eef600f03e8dc2ae",
+    "file": "app/src/main/res/raw/quality_fsrcnnx8_e800dbc5.glsl"
+  },
+  {
+    "key": "fsrcnnx16",
+    "url": "https://github.com/igv/FSRCNN-TensorFlow/releases/download/1.1/FSRCNNX_x2_16-0-4-1.glsl",
+    "revision": "1.1",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "d5a24a271e5d9a3f7f7a053b150c460a44c25b3cf7f770857d57cc3a2e1c9965",
+    "file": "app/src/main/res/raw/quality_fsrcnnx16_d5a24a27.glsl"
+  },
+  {
+    "key": "krig",
+    "url": "https://gist.githubusercontent.com/igv/a015fc885d5c22e6891820ad89555637/raw/d7f39734d6aff4c0989f32a4530b1b010e64bda3/KrigBilateral.glsl",
+    "revision": "038064821c5f768dfc6c00261535018d5932cdd5",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "8a4798abb77b83646fce0d71985ddfd14c9806e3be486e8fc7f5a5a8bd940cb0",
+    "file": "app/src/main/res/raw/quality_krig_8a4798ab.glsl"
+  },
+  {
+    "key": "ssim_down",
+    "url": "https://gist.githubusercontent.com/igv/36508af3ffc84410fe39761d6969be10/raw/e969b6a19cc9e4a92494421a7c29821607b9f91f/SSimDownscaler.glsl",
+    "revision": "38992bce7f9ff844f800820df0908692b65bb74a",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "f46f4710a162d17058b9d82ed8610588b0c04d7be07cef6bf2a8c4077828f804",
+    "file": "app/src/main/res/raw/quality_ssim_down_f46f4710.glsl"
+  },
+  {
+    "key": "ssim_super",
+    "url": "https://gist.githubusercontent.com/igv/2364ffa6e81540f29cb7ab4c9bc05b6b/raw/a8feaac97835c211fa3ebcabf90db149a254187b/SSimSuperRes.glsl",
+    "revision": "15d93440d0a24fc4b8770070be6a9fa2af6f200b",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "a8b27115840c60045250411b375e0188000217258ad776eeb51724c97815460f",
+    "file": "app/src/main/res/raw/quality_ssim_super_a8b27115.glsl"
+  },
+  {
+    "key": "adaptive",
+    "url": "https://gist.githubusercontent.com/igv/8a77e4eb8276753b54bb94c1c50c317e/raw/f496fcc10f7e9602ff9fd12f6ab4930ffb3ac470/adaptive-sharpen.glsl",
+    "revision": "572f59099cd0e3eb5e321a6da0a3d90a7382e2dc",
+    "license": "BSD-2-Clause",
+    "upstream_sha256": "827fb3d662ac9a91b4075e9117fe6e1dbc1c06d85959ba719cdb954dfb7fb8e4",
+    "local_patch": "Guard zero edge weights and soft-limit distance to prevent NaN output on flat frames; array constructors replaced by element assignments because NVIDIA GLES (SHIELD) rejects texture-sampled vec3[]/float[] constructors",
+    "sha256": "fb112c0a62753bf93b0f12f70d6a202e8a8df1ecb54ebd3110b25692c9fa46c5",
+    "file": "app/src/main/res/raw/quality_adaptive_44e81f12.glsl"
+  },
+  {
+    "key": "fsr",
+    "url": "https://gist.githubusercontent.com/agyild/82219c545228d70c5604f865ce0b0ce5/raw/f1794d720013ccd9c5c86a0f20fddd71e0375f94/FSR.glsl",
+    "revision": "2623d743b9c23f500ba086f05b385dcb1557e15d",
+    "license": "MIT",
+    "sha256": "56d8597fc6b7bf6d13f8c3b2bdf1cdc43b06175d51746aab44cf1dca16929b9e",
+    "file": "app/src/main/res/raw/quality_fsr_56d8597f.glsl"
+  },
+  {
+    "key": "cas",
+    "url": "https://gist.githubusercontent.com/agyild/bbb4e58298b2f86aa24da3032a0d2ee6/raw/1f96a8c50fde6924067a875e03868dea6a0a11dd/CAS.glsl",
+    "revision": "10e4ca1b6ef173b64391ce2c81b9a95fcd095931",
+    "license": "MIT",
+    "sha256": "939ed74a59d142d77256f6d30d174c07a18d0587cc9dd25891f24020569b0719",
+    "file": "app/src/main/res/raw/quality_cas_a945e104.glsl"
+  },
+  {
+    "key": "nis",
+    "url": "https://gist.githubusercontent.com/agyild/7e8951915b2bf24526a9343d951db214/raw/05f00864228871ffd157daa9beb2db8fa7412cfa/NVScaler.glsl",
+    "revision": "05f00864228871ffd157daa9beb2db8fa7412cfa",
+    "license": "MIT",
+    "sha256": "7948bc72bf479c2515672370069e213da58edf078c93409c05e9a602fac50213",
+    "file": "app/src/main/res/raw/quality_nis_nvscaler_7948bc72.glsl"
+  },
+  {
+    "key": "cfl_lite",
+    "url": "https://raw.githubusercontent.com/Artoriuz/glsl-chroma-from-luma-prediction/066dff964b83aa34e893de25d590874bf8c8e94f/CfL_Prediction_Lite.glsl",
+    "revision": "066dff964b83aa34e893de25d590874bf8c8e94f",
+    "license": "MIT",
+    "sha256": "159c1dad4daab10eddaae822a5d0fb0b94a38e85a2825fb7df9d7feb509ad4f7",
+    "file": "app/src/main/res/raw/quality_cfl_lite_159c1dad.glsl"
+  },
+  {
+    "key": "cfl",
+    "url": "https://raw.githubusercontent.com/Artoriuz/glsl-chroma-from-luma-prediction/066dff964b83aa34e893de25d590874bf8c8e94f/CfL_Prediction.glsl",
+    "revision": "066dff964b83aa34e893de25d590874bf8c8e94f",
+    "license": "MIT",
+    "sha256": "f9d12d38d4bab4d9db266b5982c81fadca907396212e22fd8b2c1ca2f317b716",
+    "file": "app/src/main/res/raw/quality_cfl_f9d12d38.glsl"
+  },
+  {
+    "key": "cunny_faster_ds",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/ds/CuNNy-faster-DS.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "bdb1fc5718aec6414e2cf94a596c10c8e664a6bac9f37be238a8e212045debd5",
+    "file": "app/src/main/res/raw/quality_cunny_faster_ds_bdb1fc57.glsl"
+  },
+  {
+    "key": "cunny_fast_soft",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/CuNNy-fast-SOFT.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "7f5077ebe18ac599f088e8d8c0401a195132bcc1b078c9f3bb2f1baf16a92c8c",
+    "file": "app/src/main/res/raw/quality_cunny_fast_soft_7f5077eb.glsl"
+  },
+  {
+    "key": "cunny_faster_soft",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/CuNNy-faster-SOFT.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "6166d08af2fb256e7d3510ede1a427c23e0580055ada4d9c835ae8bced3f9613",
+    "file": "app/src/main/res/raw/quality_cunny_faster_soft_6166d08a.glsl"
+  },
+  {
+    "key": "cunny_veryfast_soft",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/CuNNy-veryfast-SOFT.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "9c63e86ef43322c31b6def499e937d79edd0d8311fc318b76769d14235ccac63",
+    "file": "app/src/main/res/raw/quality_cunny_veryfast_soft_9c63e86e.glsl"
+  },
+  {
+    "key": "cunny_fast_soft_q",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/dp4a/CuNNy-fast-SOFT-Q.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "96af5170cdb0c06e7dac6bb18bb3b22d812af40fcf447ef2a291e6720d7a5114",
+    "file": "app/src/main/res/raw/quality_cunny_fast_soft_q_96af5170.glsl"
+  },
+  {
+    "key": "cunny_faster_soft_q",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/dp4a/CuNNy-faster-SOFT-Q.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "9caf11134c598927a000650c9ba4d1c7cd2b7a6b62e06e2db44836756ec7ba6f",
+    "file": "app/src/main/res/raw/quality_cunny_faster_soft_q_9caf1113.glsl"
+  },
+  {
+    "key": "cunny_veryfast_soft_q",
+    "url": "https://raw.githubusercontent.com/funnyplanter/CuNNy/906031bb00c15dd6a6bbbaa21c0eb0b724ca8437/mpv/soft/dp4a/CuNNy-veryfast-SOFT-Q.glsl",
+    "revision": "906031bb00c15dd6a6bbbaa21c0eb0b724ca8437",
+    "license": "LGPL-3.0-or-later",
+    "sha256": "aff8624c3663ca69a92e3f03fa41a6f139cc74cb03f070e1cdc3ec2d4d28d35c",
+    "file": "app/src/main/res/raw/quality_cunny_veryfast_soft_q_aff8624c.glsl"
+  },
+  {
+    "key": "filmgrain_light",
+    "url": "local: written for Ambient TV (no upstream)",
+    "revision": "local",
+    "license": "CC0-1.0",
+    "sha256": "4aee719a4b7fbef68fddf4914b8a5f6316365a516744bc19aeb6c56591252773",
+    "file": "app/src/main/res/raw/quality_filmgrain_light_4aee719a.glsl"
+  },
+  {
+    "key": "filmgrain_medium",
+    "url": "local: written for Ambient TV (no upstream)",
+    "revision": "local",
+    "license": "CC0-1.0",
+    "sha256": "4921afc101eda245a043171f3f3cf37f808ad628a2adc359b4fbf3a99ee22b68",
+    "file": "app/src/main/res/raw/quality_filmgrain_medium_4921afc1.glsl"
+  }
+]

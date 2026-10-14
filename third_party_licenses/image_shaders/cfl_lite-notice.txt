@@ -1,0 +1,3 @@
+CfL Prediction Lite chroma shader by João Chrisóstomo (Artoriuz).
+Source revision: 066dff964b83aa34e893de25d590874bf8c8e94f
+License: MIT. Full license text: CfL-MIT.txt

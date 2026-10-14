@@ -1,0 +1,157 @@
+package com.ambient.tv.connectivity
+
+import com.ambient.tv.data.dlna.DlnaStore
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.local.TokenStore
+import com.ambient.tv.server.EmbyConnectionManager
+import com.ambient.tv.server.JellyfinConnectionManager
+import com.ambient.tv.server.ServerConnectionManager
+import com.ambient.tv.server.ServerConnectionState
+import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.ui.common.PlexRefreshBus
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+data class UnreachableServerGateState(
+    val unreachable: Set<String> = emptySet(),
+    val pending: Boolean = false,
+    val canDismiss: Boolean = false,
+    val acknowledged: Set<String> = emptySet(),
+    val names: List<String> = emptyList(),
+) {
+    val hidden: Set<String> get() = hiddenUnreachableSystems(unreachable, acknowledged)
+    /** Unacknowledged failures whose check has finished. */
+    val prompt: Boolean get() = !pending && unreachable.any { it !in acknowledged }
+}
+
+/**
+ * In-memory hide list for media servers that are not responding.
+ * Saved server profiles are never removed; a server reappears when it is reachable again.
+ */
+@Singleton
+class UnreachableServerGate @Inject constructor(
+    private val preferences: AppPreferences,
+    private val tokens: TokenStore,
+    private val dlnaStore: DlnaStore,
+    private val plex: ServerConnectionManager,
+    private val jellyfin: JellyfinConnectionManager,
+    private val emby: EmbyConnectionManager,
+) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val acknowledged = MutableStateFlow<Set<String>>(emptySet())
+    private val revision = MutableStateFlow(0)
+
+    val state: StateFlow<UnreachableServerGateState> = combine(
+        plex.state,
+        jellyfin.state,
+        emby.state,
+        acknowledged,
+        revision,
+    ) { plexState, jellyfinState, embyState, acknowledgedIds, _ ->
+        snapshot(plexState, jellyfinState, embyState, acknowledgedIds)
+    }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
+
+    init {
+        scope.launch {
+            state.collect { current ->
+                val reconciled = reconcileAcknowledged(current.acknowledged, current.unreachable)
+                if (reconciled != acknowledged.value) acknowledged.value = reconciled
+            }
+        }
+    }
+
+    fun current(): UnreachableServerGateState = snapshot(
+        plex.state.value,
+        jellyfin.state.value,
+        emby.state.value,
+        acknowledged.value,
+    )
+
+    /** Re-read enabled systems (YouTube and the rest are not connection-state flows). */
+    fun refresh() {
+        revision.value = revision.value + 1
+    }
+
+    /** Hides unreachable servers only when another system is active and reachable. */
+    fun confirm() {
+        val current = current()
+        val next = acknowledgedAfterConfirm(current.acknowledged, current.toDecision())
+        if (next != acknowledged.value) acknowledged.value = next
+    }
+
+    fun retry(refreshBus: PlexRefreshBus) {
+        scope.launch {
+            val failed = current().unreachable
+            coroutineScope {
+                if (MediaSystem.PLEX.key in failed) launch { plex.ensureConnected() }
+                if (MediaSystem.JELLYFIN.key in failed) launch { jellyfin.ensureConnected() }
+                if (MediaSystem.EMBY.key in failed) launch { emby.ensureConnected() }
+            }
+            refreshBus.requestRefresh()
+            refresh()
+        }
+    }
+
+    private fun snapshot(
+        plexState: ServerConnectionState,
+        jellyfinState: ServerConnectionState,
+        embyState: ServerConnectionState,
+        acknowledgedIds: Set<String>,
+    ): UnreachableServerGateState {
+        val probes = mapOf(
+            MediaSystem.PLEX.key to probeOf(preferences.isConfigured, plexState),
+            MediaSystem.JELLYFIN.key to probeOf(preferences.isJellyfinConfigured, jellyfinState),
+            MediaSystem.EMBY.key to probeOf(preferences.isEmbyConfigured, embyState),
+        )
+        val decision = decideUnreachableServers(
+            UnreachableServerInput(probes, independentSystems()),
+        )
+        val names = decision.unreachable.map { displayName(it) }.filter { it.isNotBlank() }
+        return UnreachableServerGateState(
+            unreachable = decision.unreachable,
+            pending = decision.pending,
+            canDismiss = decision.canDismiss,
+            acknowledged = acknowledgedIds,
+            names = names,
+        )
+    }
+
+    private fun independentSystems(): Set<String> = buildSet {
+        if (preferences.youtubeEnabled) add(MediaSystem.YOUTUBE.key)
+        if (preferences.spotifyEnabled) add(MediaSystem.SPOTIFY.key)
+        if (preferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add(MediaSystem.TRAILERS.key)
+        if (preferences.filesEnabled) add(MediaSystem.FILES.key)
+        if (dlnaStore.servers().isNotEmpty()) add(MediaSystem.DLNA.key)
+        if (preferences.isTvheadendConfigured) add(MediaSystem.TVHEADEND.key)
+        // Another media server counts only when its own probe is REACHABLE (see decideUnreachableServers).
+    }
+
+    private fun displayName(system: String): String = when (system) {
+        MediaSystem.PLEX.key -> preferences.activeServerProfile()?.name?.takeIf { it.isNotBlank() }
+            ?: preferences.host.takeIf { it.isNotBlank() }
+            ?: "Plex"
+        MediaSystem.JELLYFIN.key -> preferences.activeJellyfinServerProfile()?.name?.takeIf { it.isNotBlank() }
+            ?: preferences.jellyfinHost.takeIf { it.isNotBlank() }
+            ?: "Jellyfin"
+        MediaSystem.EMBY.key -> preferences.activeEmbyServerProfile()?.name?.takeIf { it.isNotBlank() }
+            ?: preferences.embyHost.takeIf { it.isNotBlank() }
+            ?: "Emby"
+        else -> system
+    }
+}
+
+private fun UnreachableServerGateState.toDecision() = UnreachableServerDecision(
+    unreachable = unreachable,
+    pending = pending,
+    canDismiss = canDismiss,
+)

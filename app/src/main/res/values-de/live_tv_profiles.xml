@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="live_profiles_title">Live-TV · Audio und Video nach Breite</string>
+    <string name="live_profiles_hint">Eigene Vorgaben für Live-Sender nach Quellbreite; gilt ab dem nächsten Senderstart.</string>
+    <string name="live_profiles_resolution">Quellbreite · beliebige Höhe</string>
+    <string name="live_profiles_section">Einstellungen</string>
+    <string name="live_profiles_edit_renderer">Renderer-Einstellungen bearbeiten</string>
+    <string name="live_profiles_inherited">Kein eigenes Live-TV-Preset: allgemeines Preset dieser Breite, sonst globale Vorgaben.</string>
+    <string name="live_profiles_active">Für diese Breite ist ein eigenes Live-TV-Preset gespeichert.</string>
+    <string name="live_profiles_reset">Für diese Breite allgemeines Preset verwenden</string>
+    <string name="live_profiles_save_scope">Für Live-TV · %1$s speichern</string>
+    <string name="live_profiles_load_scope">Live-TV · %1$s laden</string>
+    <string name="live_profiles_scope_hint">Gilt für Live-Sender mit Quellbreite %1$s. * steht für beliebige Höhe. Hat Vorrang vor dem allgemeinen Preset dieser Breite.</string>
+</resources>

@@ -1,0 +1,15 @@
+--- a/video/decode/vd_lavc.c
++++ b/video/decode/vd_lavc.c
+@@ -867,6 +867,12 @@
+         goto error;
+     }
+ 
++    // MediaCodec vendors use the source cadence to configure decoder throughput.
++    // Demuxers can expose FPS separately while codecpar->framerate remains unset.
++    if (!strcmp(lavc_codec->name, "hevc_mediacodec") &&
++        avctx->framerate.num <= 0 && c->fps > 0 && c->fps <= 240)
++        avctx->framerate = av_d2q(c->fps, 1001000);
++
+ #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+     if (avctx->width > 8192 || avctx->height > 8192) {
+         MP_ERR(vd, "Frame size too big %" PRIu32 "x%" PRIu32 ".\n", avctx->width, avctx->height);

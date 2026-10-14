@@ -1,0 +1,38 @@
+--- a/audio/out/ao_audiotrack.c
++++ b/audio/out/ao_audiotrack.c
+@@ -34,6 +34,24 @@
+ 
+ static mp_static_mutex jni_static_lock = MP_STATIC_MUTEX_INITIALIZER;
+ static int jni_static_use_count = 0;
++
++#include <dlfcn.h>
++/* Optional in-process PCM tap; no microphone or system-wide audio capture. */
++static void ambient_pcm_tap(int source, const void *data, size_t frames, int channels, int encoding)
++{
++    typedef void (*tap_fn)(int, const void *, size_t, int, int);
++    static tap_fn tap;
++    static unsigned retry;
++    if (!tap && (++retry % 64 == 1)) {
++        void *lib = dlopen("libambientprojectm.so", RTLD_NOW | RTLD_NOLOAD);
++        if (lib) {
++            tap = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
++            /* Retain the handle for the lifetime of the cached function pointer. */
++            if (!tap) dlclose(lib);
++        }
++    }
++    if (tap) tap(source, data, frames, channels, encoding);
++}
+ 
+ struct priv {
+     jobject audiotrack;
+@@ -591,6 +609,10 @@
+             ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));
+             ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));
+             int samples = ao_read_data(ao, &p->chunk, read_samples, ts, NULL, false, false);
++            if (p->format != AudioFormat.ENCODING_IEC61937)
++                ambient_pcm_tap(2, p->chunk, samples, ao->channels.num,
++                    p->format == AudioFormat.ENCODING_PCM_FLOAT ? 4 :
++                    p->format == AudioFormat.ENCODING_PCM_16BIT ? 2 : 1);
+             int ret = AudioTrack_write(ao, samples * ao->sstride);
+             if (ret >= 0) {
+                 p->written_frames += ret / ao->sstride;

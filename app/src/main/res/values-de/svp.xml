@@ -1,0 +1,11 @@
+<resources>
+    <string name="settings_performance_maximum">Maximale Leistung</string>
+    <string name="image_svp">Bewegungsglättung (experimentell)</string>
+    <string name="image_svp_locked">SVP ist ausgeschaltet. Nur im Modus „Maximale Leistung“ verfügbar; die gespeicherte Auswahl bleibt erhalten.</string>
+    <string name="image_svp_hint">Fügt Zwischenbilder für flüssigere Bewegung ein, nur bei progressivem SDR und nicht bei direkter MPV-Ausgabe oder Media3.</string>
+    <string name="image_svp_auto">Automatisch · Überlastschutz</string>
+    <string name="image_svp_balanced">Ausgewogen</string>
+    <string name="image_svp_quality">Hohe Qualität</string>
+    <string name="settings_svp_available">Bewegungsglättung (SVP) verfügbar</string>
+    <string name="settings_svp_available_hint">Aus blendet SVP im Player aus; bei An muss SVP im Panel eingeschaltet werden. Benötigt „Maximale Leistung“.</string>
+</resources>

@@ -1,0 +1,38 @@
+--- a/modules/codec/omxil/mediacodec.c
++++ b/modules/codec/omxil/mediacodec.c
+@@ -1183,6 +1183,21 @@
+                     i_profile = i_hevc_profile;
+             }
+             mime = "video/hevc";
++            /* Single-layer DV retains HEVC CSD/NAL handling, but must select
++             * the vendor DV decoder rather than the HEVC base-layer decoder.
++             * Android CodecProfileLevel uses one bit per Dolby Vision profile. */
++            if (p_dec->fmt_in->video.dovi.rpu_present &&
++                p_dec->fmt_in->video.dovi.bl_present &&
++                !p_dec->fmt_in->video.dovi.el_present &&
++                (p_dec->fmt_in->video.dovi.profile == 5 ||
++                 p_dec->fmt_in->video.dovi.profile == 8))
++            {
++                mime = "video/dolby-vision";
++                i_profile = 1 << p_dec->fmt_in->video.dovi.profile;
++                msg_Info(p_dec, "Dolby Vision decoder requested: profile=%u level=%u",
++                         p_dec->fmt_in->video.dovi.profile,
++                         p_dec->fmt_in->video.dovi.level);
++            }
+             break;
+         case VLC_CODEC_H264:
+             if (i_profile == -1)
+--- a/modules/codec/omxil/mediacodec_jni.c
++++ b/modules/codec/omxil/mediacodec_jni.c
+@@ -344,8 +344,9 @@
+                         int omx_profile = (*env)->GetIntField(env, profile_level, jfields.profile_field);
+                         (*env)->DeleteLocalRef(env, profile_level);
+ 
+-                        int codec_profile =
+-                            convert_omx_to_profile_idc(codec, omx_profile);
++                        int codec_profile = !strcmp(psz_mime, "video/dolby-vision")
++                            ? omx_profile
++                            : convert_omx_to_profile_idc(codec, omx_profile);
+                         if (codec_profile != profile)
+                             continue;
+                         /* Some encoders set the level too high, thus we ignore it for the moment.

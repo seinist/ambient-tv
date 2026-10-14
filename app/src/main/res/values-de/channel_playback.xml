@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="channel_profile_auto">Audio- und Bildeinstellungen werden automatisch für diesen Sender auf diesem Server gespeichert.</string>
+    <string name="channel_profile_reset">Einstellungen für diesen Sender zurücksetzen</string>
+    <string name="channel_renderer_default">Globale Vorgabe: %1$s</string>
+    <string name="channel_renderer_saved">Für diesen Sender gespeichert: %1$s</string>
+    <string name="channel_renderer_live_preset">Live-TV-Preset: %1$s</string>
+    <string name="channel_renderer_video_preset">Allgemeines Bildbreiten-Preset: %1$s</string>
+    <string name="channel_renderer_manual">Manuelle Auswahl: %1$s</string>
+    <string name="channel_renderer_recovery">Ersatzrenderer nach Wiedergabefehler: %1$s</string>
+    <string name="channel_renderer_dv">Dolby-Vision-Schutz: %1$s</string>
+    <string name="channel_renderer_unavailable">MPV nicht verfügbar. Aktiver Renderer: %1$s</string>
+</resources>

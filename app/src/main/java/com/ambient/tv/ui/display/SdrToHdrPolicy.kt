@@ -1,0 +1,88 @@
+package com.ambient.tv.ui.display
+
+/** ACTIVE confirms the renderer's target, never the physical TV/HDMI output. */
+enum class SdrToHdrStatus { OFF, UNAVAILABLE, WAITING, ACTIVE, FAILED }
+
+data class SdrToHdrRequest(val peakNits: Int, val displayId: Int, val displayModeId: Int)
+
+/**
+ * The current SDR/HDR ratio may still be 1 before the first HDR frame. A real, reported
+ * ratio and peak are preferred. A verified video surface may instead probe a bounded target.
+ * The caller supplies display eligibility for HDR10, not the SDR source's format.
+ */
+internal fun sdrToHdrRequest(
+    display: UiHdrEligibility,
+    enabled: Boolean,
+    peakNits: Float?,
+    displayId: Int,
+    displayModeId: Int,
+    allowSurfaceProbe: Boolean = false,
+): SdrToHdrRequest? {
+    if (!enabled || display.sdk < 34 || !display.automatic || !display.windowReady ||
+        !display.displayHdr || !display.wideColor || !display.sourceSupported) return null
+    val measured = display.headroom != null && display.headroom.isFinite() && display.headroom >= 1f &&
+        peakNits != null && peakNits.isFinite() && peakNits >= 300f
+    // Some HDR TVs publish placeholder peak values and no mixed-SDR headroom.
+    // Only a video path that verifies its negotiated PQ surface may probe those displays.
+    // This is an output budget, never an estimate of the panel's measured brightness.
+    if (!measured && !allowSurfaceProbe) return null
+    return SdrToHdrRequest(if (measured) peakNits.coerceAtMost(600f).toInt() else 300,
+        displayId, displayModeId)
+}
+
+enum class SdrToHdrPlayerKind { NONE, MPV_VULKAN, MPV_UNSUPPORTED, VLC_GL, VLC_VULKAN, MEDIA3 }
+
+/** What the active engine can do right now. A null handle means no playback, not "unsupported". */
+data class SdrToHdrPath(
+    val kind: SdrToHdrPlayerKind,
+    val width: Int = 0,
+    val height: Int = 0,
+    val fps: Float = 0f,
+    val blocked: Boolean = false,
+)
+
+data class SdrToHdrSwitchFacts(
+    val sdk: Int,
+    val displayHdr: Boolean,
+    val wideColor: Boolean,
+    val mode: String,
+    val reducedEffects: Boolean,
+    val ratio: Float?,
+    val peakNits: Float?,
+    val player: SdrToHdrPlayerKind = SdrToHdrPlayerKind.NONE,
+    val frameWidth: Int = 0,
+    val frameHeight: Int = 0,
+    val frameRate: Float = 0f,
+    val pathBlocked: Boolean = false,
+    val hdr10Supported: Boolean = true,
+)
+
+/** The interface mode is only offered when the window can actually enter capped HDR. */
+fun hdrInterfaceChoiceVisible(sdk: Int, displayHdr: Boolean, wideColor: Boolean): Boolean =
+    sdk >= 35 && displayHdr && wideColor
+
+/** Hide conversion unless both the display and the current playback path support it. */
+fun sdrToHdrSwitchVisible(facts: SdrToHdrSwitchFacts): Boolean {
+    if (facts.sdk < 34 || !facts.displayHdr || !facts.wideColor) return false
+    if (facts.reducedEffects || facts.pathBlocked || !facts.hdr10Supported) return false
+    val ratio = facts.ratio
+    val peak = facts.peakNits
+    val measured = ratio != null && ratio.isFinite() && ratio >= 1f &&
+        peak != null && peak.isFinite() && peak >= 300f
+    if (!measured && facts.player != SdrToHdrPlayerKind.MPV_VULKAN) return false
+    return when (facts.player) {
+        SdrToHdrPlayerKind.NONE, SdrToHdrPlayerKind.MPV_VULKAN -> true
+        SdrToHdrPlayerKind.MPV_UNSUPPORTED, SdrToHdrPlayerKind.VLC_VULKAN -> false
+        SdrToHdrPlayerKind.VLC_GL, SdrToHdrPlayerKind.MEDIA3 -> {
+            val unknownSize = facts.frameWidth <= 0 || facts.frameHeight <= 0 ||
+                !facts.frameRate.isFinite() || facts.frameRate <= 0f
+            unknownSize || com.ambient.tv.ui.player.sdrHdrSizeAllowed(
+                facts.frameWidth, facts.frameHeight, facts.frameRate,
+            )
+        }
+    }
+}
+
+/** The selected UI mode controls availability without changing hardware support. */
+fun sdrToHdrSwitchEnabled(facts: SdrToHdrSwitchFacts): Boolean =
+    sdrToHdrSwitchVisible(facts) && normalizedUiHdrMode(facts.mode) == "auto"

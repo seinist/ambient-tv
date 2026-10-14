@@ -1,0 +1,23 @@
+--- a/libvlc/jni/libvlcjni-mediaplayer.c
++++ b/libvlc/jni/libvlcjni-mediaplayer.c
+@@ -431,16 +431,16 @@
+     return libvlc_media_player_get_time(p_obj->u.p_mp);
+ }
+ 
+-void
++jlong
+ Java_org_videolan_libvlc_MediaPlayer_nativeSetTime(JNIEnv *env, jobject thiz,
+                                                    jlong time, jboolean fast)
+ {
+     vlcjni_object *p_obj = VLCJniObject_getInstance(env, thiz);
+ 
+     if (!p_obj)
+-        return;
+-
+-    libvlc_media_player_set_time(p_obj->u.p_mp, time, fast);
++        return -1;
++
++    return libvlc_media_player_set_time(p_obj->u.p_mp, time, fast);
+ }
+ 
+ jfloat

@@ -1,0 +1,176 @@
+package com.ambient.tv.ui.photos
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.photos.PhotoEntry
+import com.ambient.tv.data.photos.PhotoKind
+import com.ambient.tv.data.photos.PhotoRepository
+import com.ambient.tv.data.photos.PhotoSort
+import com.ambient.tv.data.photos.PhotoViewerSession
+import com.ambient.tv.data.photos.sortedForDisplay
+import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.Instant
+import java.time.YearMonth
+import java.time.ZoneId
+import javax.inject.Inject
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+data class PhotoAlbumLevel(val key: String, val title: String)
+
+/** A month bucket of the timeline; photos without a date go into [month] = null. */
+data class PhotoTimelineGroup(val month: YearMonth?, val entries: List<PhotoEntry>)
+
+data class PhotoBrowserUiState(
+    val stack: List<PhotoAlbumLevel> = emptyList(),
+    val entries: List<PhotoEntry> = emptyList(),
+    val loading: Boolean = true,
+    val failed: Boolean = false,
+    val sort: PhotoSort = PhotoSort.DATE_DESC,
+    val timeline: Boolean = false,
+    val timelineGroups: List<PhotoTimelineGroup> = emptyList(),
+    /** Entry id to focus after returning from a sub-album or the viewer. */
+    val focusId: String? = null,
+) {
+    val current: PhotoAlbumLevel? get() = stack.lastOrNull()
+    val atRoot: Boolean get() = stack.size <= 1
+    val photos: List<PhotoEntry> get() = entries.filter { it.kind != PhotoKind.FOLDER }
+}
+
+@HiltViewModel
+class PhotoBrowserViewModel @Inject constructor(
+    private val repository: PhotoRepository,
+    private val session: PhotoViewerSession,
+    private val preferences: AppPreferences,
+) : ViewModel() {
+    private val _state = MutableStateFlow(PhotoBrowserUiState(sort = PhotoSort.fromKey(preferences.photoSortKey)))
+    val state: StateFlow<PhotoBrowserUiState> = _state.asStateFlow()
+    private var job: Job? = null
+    /** Focus to restore per album when stepping back up. */
+    private val focusByAlbum = mutableMapOf<String, String>()
+
+    fun start(rootKey: String, title: String) {
+        if (_state.value.stack.firstOrNull()?.key == rootKey) return
+        _state.update { it.copy(stack = listOf(PhotoAlbumLevel(rootKey, title)), timeline = false) }
+        load()
+    }
+
+    fun openFolder(entry: PhotoEntry) {
+        val current = _state.value.current ?: return
+        focusByAlbum[current.key] = entry.id
+        _state.update { it.copy(stack = it.stack + PhotoAlbumLevel(entry.id, entry.title), timeline = false, focusId = null) }
+        load()
+    }
+
+    /** Back inside the browser; false when already at the library root. */
+    fun back(): Boolean {
+        val state = _state.value
+        if (state.timeline) { leaveTimeline(); return true }
+        if (state.atRoot) return false
+        val parent = state.stack.dropLast(1)
+        _state.update { it.copy(stack = parent, focusId = focusByAlbum[parent.last().key]) }
+        load()
+        return true
+    }
+
+    fun retry() = load()
+
+    fun setSort(sort: PhotoSort) {
+        preferences.photoSortKey = sort.key
+        _state.update { it.copy(sort = sort, entries = it.entries.sortedForDisplay(sort)) }
+    }
+
+    fun toggleTimeline() {
+        val enable = !_state.value.timeline
+        if (!enable) { leaveTimeline(); return }
+        _state.update { it.copy(timeline = true) }
+        loadTimeline()
+    }
+
+    /** Back to the album grid: a timeline error must not stay on it, and a cancelled album load is redone. */
+    private fun leaveTimeline() {
+        val reload = _state.value.loading || _state.value.failed
+        _state.update { it.copy(timeline = false, failed = false) }
+        if (reload) load()
+    }
+
+    fun rememberFocus(id: String) {
+        _state.value.current?.let { focusByAlbum[it.key] = id }
+        _state.update { it.copy(focusId = id) }
+    }
+
+    /** After the viewer: focus the photo that was shown last, when it belongs to this album. */
+    fun applyViewerReturn() {
+        val id = session.lastViewedId ?: return
+        session.lastViewedId = null
+        val state = _state.value
+        val visible = if (state.timeline) state.timelineGroups.flatMap { it.entries } else state.entries
+        if (visible.any { it.id == id }) rememberFocus(id)
+    }
+
+    /** Prepares the viewer for [entry] within the visible photo list. */
+    fun prepareViewer(entry: PhotoEntry, slideshow: Boolean = false) {
+        val state = _state.value
+        val list = if (state.timeline) state.timelineGroups.flatMap { it.entries } else state.photos
+        rememberFocus(entry.id)
+        session.request = PhotoViewerSession.Request(
+            title = state.current?.title.orEmpty(),
+            entries = list,
+            startIndex = list.indexOf(entry).coerceAtLeast(0),
+            startSlideshow = slideshow,
+            albumKey = if (state.timeline) null else state.current?.key,
+        )
+    }
+
+    /** Slideshow over the current album, from the first photo. */
+    fun prepareSlideshow(): Boolean {
+        val state = _state.value
+        val list = if (state.timeline) state.timelineGroups.flatMap { it.entries } else state.photos
+        if (list.isEmpty() && !preferences.photoIncludeSubfolders) return false
+        session.request = PhotoViewerSession.Request(
+            title = state.current?.title.orEmpty(),
+            entries = list,
+            startIndex = 0,
+            startSlideshow = true,
+            // The timeline already spans all subfolders; it is not the album's own photo list.
+            albumKey = if (state.timeline) null else state.current?.key,
+        )
+        return true
+    }
+
+    private fun load() {
+        val key = _state.value.current?.key ?: return
+        job?.cancel()
+        _state.update { it.copy(loading = true, failed = false) }
+        job = viewModelScope.launch {
+            repository.list(key)
+                .onSuccess { entries -> _state.update { it.copy(loading = false, entries = entries.sortedForDisplay(it.sort)) } }
+                .onFailure { _state.update { it.copy(loading = false, failed = true, entries = emptyList()) } }
+        }
+    }
+
+    private fun loadTimeline() {
+        val key = _state.value.current?.key ?: return
+        job?.cancel()
+        _state.update { it.copy(loading = true, failed = false) }
+        job = viewModelScope.launch {
+            repository.listRecursive(key)
+                .onSuccess { photos ->
+                    val zone = ZoneId.systemDefault()
+                    val groups = photos
+                        .sortedByDescending { it.takenAt ?: it.addedAt ?: Long.MIN_VALUE }
+                        .groupBy { entry ->
+                            (entry.takenAt ?: entry.addedAt)?.let { YearMonth.from(Instant.ofEpochMilli(it).atZone(zone)) }
+                        }
+                        .map { (month, entries) -> PhotoTimelineGroup(month, entries) }
+                    _state.update { it.copy(loading = false, timelineGroups = groups) }
+                }
+                .onFailure { _state.update { it.copy(loading = false, failed = true) } }
+        }
+    }
+}

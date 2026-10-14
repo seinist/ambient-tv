@@ -1,0 +1,18 @@
+<resources>
+    <string name="feedback_access_denied">Zugriff verweigert. Prüfe dein Konto und die Berechtigungen.</string>
+    <string name="feedback_connection_hint">Prüfe den Server und die Netzwerkverbindung und versuche es erneut.</string>
+    <string name="feedback_retry_hint">Der Vorgang konnte nicht abgeschlossen werden. Versuche es erneut.</string>
+    <string name="feedback_recording_failed">Aufnahmeaktion fehlgeschlagen</string>
+    <string name="feedback_live_load_failed">Live-TV konnte nicht geladen werden</string>
+    <string name="feedback_live_partial">Einige Live-TV-Daten sind nicht verfügbar</string>
+    <string name="feedback_live_partial_hint">Verfügbare Sender und Aufnahmen bleiben zugänglich. Lade erneut, um die fehlenden Daten abzurufen.</string>
+    <string name="feedback_source_removed">Dieser Server ist nicht mehr eingerichtet. Wähle einen anderen Server.</string>
+    <string name="feedback_folder_added">Ordner hinzugefügt</string>
+    <string name="feedback_folder_updated">Ordner aktualisiert</string>
+    <string name="feedback_source_removed_success">Quelle entfernt</string>
+    <string name="feedback_server_added">Server hinzugefügt</string>
+    <string name="feedback_server_removed">Server entfernt</string>
+    <string name="feedback_settings_save_failed">Einstellungen konnten nicht gespeichert werden</string>
+    <string name="feedback_import_refresh_warning">Einstellungen importiert. Einige Dienste konnten nicht aktualisiert werden. Öffne die App erneut, um alle Änderungen anzuwenden.</string>
+    <string name="feedback_playback_command_failed">Wiedergabeaktion fehlgeschlagen</string>
+</resources>

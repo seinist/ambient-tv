@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="channel_options">Sender-Optionen</string>
+    <string name="guide_options">Guide-Optionen</string>
+    <string name="guide_options_hint">Sendertyp, Empfang und Gruppen kombinieren. Fehlende Angaben erscheinen als Unbekannt.</string>
+    <string name="guide_sort_number">Sendernummer</string>
+    <string name="guide_kind">Sendertyp</string>
+    <string name="guide_tv">TV</string>
+    <string name="guide_radio">Radio</string>
+    <string name="guide_unknown">Unbekannt</string>
+    <string name="guide_access">Empfang</string>
+    <string name="guide_fta">Frei empfangbar (FTA)</string>
+    <string name="guide_encrypted">Verschlüsselt</string>
+    <string name="guide_group">Sendergruppe</string>
+    <string name="guide_epg">Programmdaten</string>
+    <string name="guide_all_channels">Alle Sender</string>
+    <string name="guide_with_epg">Nur mit Programmdaten</string>
+    <string name="guide_no_matches">Keine Sender für diese Filter</string>
+    <string name="guide_count">%1$d Sender</string>
+    <string name="guide_az">A–Z</string>
+    <string name="guide_no_programme">Keine Programmdaten</string>
+    <string name="guide_active_filters">Aktive Filter</string>
+    <string name="guide_options_filtered">%1$s (%2$d)</string>
+    <string name="guide_filter_value">%1$s: %2$s</string>
+</resources>

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambient TV</title>
+<meta name="description" content="Media libraries, live TV and network files on Android TV, phones and tablets. Phone remote, WebDAV, SFTP, SMB/NFS and a choice of video players.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+<header class="top">
+  <nav aria-label="Language">
+    <button type="button" class="lang" data-lang="de" aria-pressed="false">DE</button>
+    <button type="button" class="lang" data-lang="en" aria-pressed="false">EN</button>
+  </nav>
+</header>
+<main id="main">
+  <section class="hero">
+    <div class="glow" aria-hidden="true"></div>
+    <img class="wordmark" src="assets/wordmark.svg" alt="Ambient TV" width="456" height="96">
+    <p class="tagline" data-i18n="tagline">Your libraries, live TV and files on the big screen. Browse on your phone, watch on TV, and choose how your videos are played.</p>
+    <a class="cta" data-release href="#"><span data-i18n="download">Download latest version</span></a>
+    <p class="meta" data-i18n="meta">Android TV &amp; phone · Android 10+ (API 29) · Free &amp; open source (CC0)</p>
+  </section>
+
+  <!-- Ordered gallery from SCREENSHOTS in main.js. -->
+  <section class="shots" id="screens" hidden aria-labelledby="shots-h">
+    <h2 id="shots-h" data-i18n="shots_h">Screenshots</h2>
+    <ul class="gallery" role="list"></ul>
+  </section>
+
+  <section class="why reveal" aria-labelledby="why-h">
+    <h2 id="why-h" data-i18n="why_h">Why?</h2>
+    <p data-i18n="why1">Ambient TV started with a few things I wanted for my own movie nights: wake the server from the couch, choose the player and adjust the picture to suit the film.</p>
+    <p data-i18n="why2">It grew into one place for media libraries, network folders and live TV, with a remote-friendly interface on TV and touch controls on phones and tablets.</p>
+  </section>
+
+  <section class="features" aria-labelledby="feat-h">
+    <h2 id="feat-h" data-i18n="feat_h">What's inside</h2>
+    <ul class="grid">
+      <li class="card reveal"><span class="ic" aria-hidden="true">📚</span><h3 data-i18n="f1h">All sources, one app</h3><p data-i18n="f1">Bring Plex, Jellyfin and Emby libraries together with YouTube through SmartTube, Spotify and DLNA sources.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">📱</span><h3 data-i18n="f7h">Phone & TV together</h3><p data-i18n="f7">Pair by QR code on the same home network. Use your phone as a touchpad or keyboard, start supported content on TV, and transfer accounts and settings with confirmation. Keep Ambient TV open on both devices.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">📂</span><h3 data-i18n="f8h">Files without a media server</h3><p data-i18n="f8">Open local folders or connect via SMB, NFS, WebDAV or SFTP. Browse your own videos and music directly on the NAS or network storage.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">▶️</span><h3 data-i18n="f2h">MPV · VLC · Media3</h3><p data-i18n="f2">Three engines in one shared player, picture settings remembered per title.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">✨</span><h3 data-i18n="f3h">Upscalers &amp; SVP</h3><p data-i18n="f3">GPU shader upscalers like NNEDI3, RAVU, FSRCNNX, Anime4K, FSR – plus experimental SVP motion smoothing.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">🌈</span><h3 data-i18n="f4h">HDR</h3><p data-i18n="f4">Display-mode matching, HDR tone mapping and optional SDR → HDR10 (Android 14+).</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">⏰</span><h3 data-i18n="f5h">Wake-on-LAN</h3><p data-i18n="f5">Wakes sleeping servers and NAS sources before connecting.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">🛡️</span><h3 data-i18n="f6h">WireGuard on the go</h3><p data-i18n="f6">Built-in WireGuard, switchable per system – your libraries away from home.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">📺</span><h3 data-i18n="f9h">Live TV, at your pace</h3><p data-i18n="f9">TVHeadend and IPTV playlists with a programme guide and reminders. Enable timeshift to pause and rewind supported MPEG-TS streams; schedule recordings through TVHeadend.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">🏠</span><h3 data-i18n="f10h">A home screen of your own</h3><p data-i18n="f10">Arrange Continue watching, recently added titles, favourite channels and library shortcuts in the order that works for you.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">💬</span><h3 data-i18n="f11h">Subtitles that fit</h3><p data-i18n="f11">Choose preferred languages, load subtitle files beside your videos and adjust their timing. Online subtitle search is available with your own OpenSubtitles API key.</p></li>
+      <li class="card reveal"><span class="ic" aria-hidden="true">🎵</span><h3 data-i18n="f12h">Music & photos</h3><p data-i18n="f12">Browse music folders with album tags and cover images, try spectrum or projectM visualisations, or show photos as a slideshow with gentle pans and zooms.</p></li>
+    </ul>
+  </section>
+
+  <section class="why spotify-setup reveal" id="spotify-setup" aria-labelledby="spotify-h">
+    <h2 id="spotify-h" data-i18n="spotify_h">Spotify setup</h2>
+    <p data-i18n="spotify_intro">Ambient TV does not include a Spotify client ID. Create your own in the Spotify Developer Dashboard and enter it in the app to sign in.</p>
+    <ol>
+      <li data-i18n="spotify_create">Open the <a href="https://developer.spotify.com/dashboard">Spotify Developer Dashboard</a>, choose <strong>Create app</strong>, enter a name and description, and select <strong>Web API</strong>.</li>
+      <li>
+        <span data-i18n="spotify_redirects">Add and save both redirect URIs:</span>
+        <ul>
+          <li><code>ambienttv://spotify-auth</code> — <span data-i18n="spotify_device">sign-in on the device</span></li>
+          <li><code>https://seinist.github.io/ambient-tv-spotify-callback/spotify-callback.html</code> — <span data-i18n="spotify_tv">QR sign-in on TV; the page forwards the code to the TV on your local network</span></li>
+        </ul>
+      </li>
+      <li data-i18n="spotify_copy">Copy the <strong>Client ID</strong> from your Spotify app's <strong>Settings</strong>.</li>
+      <li data-i18n="spotify_enter">In Ambient TV, open <strong>Settings › Media sources &amp; accounts › Spotify › Spotify account</strong>, enter your <strong>Spotify client ID</strong>, then choose <strong>Sign in</strong>.</li>
+    </ol>
+    <p><a data-spotify-guide href="https://github.com/seinist/ambient-tv/blob/main/README.md#spotify-setup" data-i18n="spotify_guide">Full Spotify setup guide</a></p>
+  </section>
+
+</main>
+<dialog class="lightbox" aria-labelledby="lb-title">
+  <img alt="">
+  <p id="lb-title"></p>
+  <button type="button" class="lb-close" data-i18n-aria="close" aria-label="Close">×</button>
+</dialog>
+
+<footer class="foot">
+  <p class="disclaimer" data-i18n="disclaimer">A hobby project, provided as is. No responsibility is taken for melting TVs, exploding TV boxes, overheated living rooms or a sudden urge to buy new hardware.</p>
+  <p class="support-line" data-i18n="support">Built in spare time, out of love for a good couch evening. If it makes your TV a little nicer:</p>
+  <div class="support">
+    <a class="pill kofi" href="https://ko-fi.com/seinist" rel="noopener">☕ Ko-fi</a>
+    <a class="pill sponsor" href="https://github.com/sponsors/seinist" rel="noopener">♥ GitHub Sponsors</a>
+  </div>
+  <p class="links">
+    <a data-repo href="#">GitHub</a> ·
+    <a data-docs href="#" data-i18n="docs">Documentation</a> ·
+    <a data-repo-releases href="#" data-i18n="releases">Releases</a>
+  </p>
+</footer>
+<script src="main.js"></script>
+</body>
+</html>

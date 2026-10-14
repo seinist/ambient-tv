@@ -1,0 +1,4 @@
+<resources>
+    <string name="settings_select_placeholder">Auswählen…</string>
+    <string name="settings_select_count">%1$d ausgewählt</string>
+</resources>

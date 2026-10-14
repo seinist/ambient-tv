@@ -1,0 +1,118 @@
+package com.ambient.tv.ui.settings
+
+import androidx.annotation.StringRes
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
+import com.ambient.tv.R
+import com.ambient.tv.ui.common.TvSettingRow
+import android.os.Build
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
+import com.ambient.tv.ui.display.LocalUiHdrState
+import com.ambient.tv.ui.display.SdrToHdrPlayerKind
+import com.ambient.tv.ui.display.SdrToHdrStatus
+import com.ambient.tv.ui.display.SdrToHdrSwitchFacts
+import com.ambient.tv.ui.display.hdrInterfaceChoiceVisible
+import com.ambient.tv.ui.display.sdrToHdrSwitchEnabled
+import com.ambient.tv.ui.display.sdrToHdrSwitchVisible
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.player.BackgroundPlaybackSession
+
+// Preserve existing positional calls with (mode, onModeChanged).
+@Composable
+internal fun UiHdrSettings(mode: String, onModeChanged: (String) -> Unit) {
+    UiHdrSettings(mode = mode, onModeChanged = onModeChanged, sdrToHdrEnabled = false)
+}
+
+@Composable
+internal fun UiHdrSettings(
+    mode: String,
+    sdrToHdrEnabled: Boolean = false,
+    onSdrToHdrChanged: (Boolean) -> Unit = {},
+    onModeChanged: (String) -> Unit,
+) {
+    val state = LocalUiHdrState.current
+    val facts = rememberHdrControlFacts(mode)
+    val showChoice = hdrInterfaceChoiceVisible(facts.sdk, facts.displayHdr, facts.wideColor)
+    val showSwitch = sdrToHdrSwitchVisible(facts)
+    if (!showChoice && !showSwitch) return
+    SettingsGroup(
+        title = stringResource(R.string.settings_ui_hdr),
+        subtitle = stringResource(R.string.settings_ui_hdr_hint),
+    ) {
+        if (showChoice) {
+            SettingsSelect(options = listOf(
+                SettingsSelectOption(stringResource(R.string.settings_ui_hdr_auto), mode == "auto", { onModeChanged("auto") }),
+                SettingsSelectOption(stringResource(R.string.settings_ui_hdr_force), mode == "force", { onModeChanged("force") }),
+                SettingsSelectOption(stringResource(R.string.settings_ui_hdr_sdr), mode == "sdr", { onModeChanged("sdr") }),
+            ))
+            Text(stringResource(when {
+                state?.failed == true -> R.string.settings_ui_hdr_failed
+                state != null && state.headroom > 1f -> R.string.settings_ui_hdr_requested
+                else -> R.string.settings_ui_hdr_default
+            }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (showSwitch) {
+            TvSettingRow(
+                title = stringResource(R.string.settings_sdr_to_hdr),
+                body = stringResource(R.string.settings_sdr_to_hdr_hint),
+                checked = sdrToHdrEnabled,
+                onCheckedChange = onSdrToHdrChanged,
+                enabled = sdrToHdrSwitchEnabled(facts),
+            )
+            Text(
+                text = stringResource(sdrToHdrStatusTextRes(mode, sdrToHdrEnabled, state?.sdrToHdrStatus)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun rememberHdrControlFacts(mode: String, inspectVideoPlayback: Boolean = true): SdrToHdrSwitchFacts {
+    val view = LocalView.current
+    val reduced = LocalPerformanceProfile.current.gateExpensiveVideoVisuals
+    val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+    // Music, Spotify and other audio-only playback has no video path to judge.
+    val handle = if (inspectVideoPlayback && snapshot.active && snapshot.metadata?.hasVideo == true) BackgroundPlaybackSession.activeHandle() else null
+    val path = handle?.sdrToHdrPath()
+    val display = view.display
+    val sdk = Build.VERSION.SDK_INT
+    val ratio = if (Build.VERSION.SDK_INT >= 34 && display?.isHdrSdrRatioAvailable == true) display.hdrSdrRatio else null
+    return SdrToHdrSwitchFacts(
+        sdk = sdk,
+        displayHdr = display?.isHdr == true,
+        wideColor = display?.isWideColorGamut == true,
+        mode = mode,
+        reducedEffects = reduced,
+        ratio = ratio,
+        peakNits = display?.hdrCapabilities?.desiredMaxLuminance,
+        player = path?.kind ?: if (handle == null) SdrToHdrPlayerKind.NONE else SdrToHdrPlayerKind.MPV_UNSUPPORTED,
+        frameWidth = path?.width ?: 0,
+        frameHeight = path?.height ?: 0,
+        frameRate = path?.fps ?: 0f,
+        pathBlocked = handle != null && (path == null || path.blocked),
+        hdr10Supported = display != null && android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in
+            com.ambient.tv.ui.player.HdrSupport.enabledHdrTypes(display),
+    )
+}
+
+@StringRes
+internal fun sdrToHdrStatusTextRes(mode: String, sdrToHdrEnabled: Boolean, status: SdrToHdrStatus?): Int {
+    val effectiveStatus = if (mode == "auto" && sdrToHdrEnabled) {
+        status ?: SdrToHdrStatus.UNAVAILABLE
+    } else {
+        SdrToHdrStatus.OFF
+    }
+    return when (effectiveStatus) {
+        SdrToHdrStatus.OFF -> R.string.settings_sdr_to_hdr_off
+        SdrToHdrStatus.UNAVAILABLE -> R.string.settings_sdr_to_hdr_unavailable
+        SdrToHdrStatus.WAITING -> R.string.settings_sdr_to_hdr_waiting
+        SdrToHdrStatus.ACTIVE -> R.string.settings_sdr_to_hdr_active
+        SdrToHdrStatus.FAILED -> R.string.settings_sdr_to_hdr_failed
+    }
+}

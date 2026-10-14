@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_start_timeout">Playback did not start in time.</string>
+    <string name="companion_queue_restore_failed">The saved queue could not be loaded.</string>
+    <string name="companion_queue_save_failed">The queue is still available, but could not be saved for a restart.</string>
+</resources>

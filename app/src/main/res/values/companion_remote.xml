@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="remote_tab_dpad">D-Pad</string>
+  <string name="remote_tab_mouse">Mouse</string>
+  <string name="remote_tab_keyboard">Keyboard</string>
+  <string name="remote_disconnected">TV disconnected</string>
+  <string name="remote_ready">Ready to control your TV</string>
+  <string name="remote_waiting">Control not active</string>
+  <string name="remote_reconnect_hint">Reconnect to your TV to continue controlling it.</string>
+  <string name="remote_dpad_hint">Navigate with the arrows. Confirm with the centre button.</string>
+  <string name="remote_up">Up</string>
+  <string name="remote_down">Down</string>
+  <string name="remote_left">Left</string>
+  <string name="remote_right">Right</string>
+  <string name="remote_ok">OK · Select</string>
+  <string name="remote_click">Click on TV</string>
+  <string name="remote_mouse_hint">Move with one finger\nTap to click\nScroll with two fingers</string>
+  <string name="remote_sensitivity">Sensitivity</string>
+  <string name="remote_keyboard_hint">First select a text field on your TV. Insert sends your draft; delete and enter act on the TV field.</string>
+  <string name="remote_rewind">Back 10 seconds</string>
+  <string name="remote_forward">Forward 10 seconds</string>
+  <string name="remote_player_options">More player options</string>
+</resources>

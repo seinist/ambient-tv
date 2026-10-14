@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="playback_profile_actions">Playback presets</string>
+    <string name="playback_profile_load_resolution">Load configuration for %1$s</string>
+    <string name="playback_profile_saved_resolution">Audio/video configuration saved for this source width</string>
+    <string name="playback_profile_loaded">Saved audio/video configuration loaded</string>
+    <string name="playback_profile_failed">Configuration could not be applied or saved</string>
+    <string name="playback_profile_unavailable">Available once playback is ready</string>
+    <string name="playback_profile_title_unavailable">Changes to live TV, trailers and shared links apply to this playback only. Shared defaults can be saved explicitly.</string>
+    <string name="playback_profile_resolution_unavailable">Width preset unavailable: source width is unknown or this is a trailer</string>
+    <string name="playback_profile_save_all">Save for all videos</string>
+    <string name="playback_profile_saved_all">Audio/video configuration saved for all videos</string>
+    <string name="playback_profile_save_resolution_scope">Save for all videos with this width</string>
+    <string name="playback_profile_resolution_scope">Source width: %1$s. * means any height. Also applies to live TV unless it has its own preset for this width.</string>
+    <string name="playback_profile_load_all">Load configuration for all videos</string>
+    <string name="playback_profile_summary">Audio, video and renderer</string>
+    <string name="playback_profile_includes">Audio, renderer, video output, decoder, picture and filter changes are remembered automatically for the current video. Save actions apply them as shared defaults.</string>
+    <string name="playback_profile_reset_all">Reset defaults for all videos</string>
+    <string name="playback_profile_reset_resolution">Reset this width preset</string>
+    <string name="playback_profile_reset_title">Reset changes for this video</string>
+    <string name="playback_profile_reset_scope_hint">Reset affects only the selected scope. Live TV falls back to the regular preset for the same width, then global defaults. Automatically remembered video changes take priority.</string>
+    <string name="playback_profile_auto_title">Changes are saved automatically for this video.</string>
+</resources>

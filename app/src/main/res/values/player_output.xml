@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_output_restart">Applies to this playback. Switching briefly restarts video and keeps the position and pause state.</string>
+    <string name="player_output_restart_live">Applies to this channel. Switching briefly restarts playback at the live point.</string>
+    <string name="player_output_hdr_direct">Native HDR uses the direct Android video surface. GPU filters and Vulkan output are paused for this video.</string>
+</resources>

@@ -1,0 +1,19 @@
+<resources>
+    <string name="dlna_title">DLNA</string>
+    <string name="dlna_explanation">Medienserver im lokalen Netzwerk suchen und die gewünschten Server hinzufügen.</string>
+    <string name="dlna_search">DLNA-Server suchen</string>
+    <string name="dlna_saved_servers">Gespeicherte Server</string>
+    <string name="dlna_found_servers">Gefundene Server</string>
+    <string name="dlna_no_servers_found">Keine neuen DLNA-Server gefunden.</string>
+    <string name="dlna_notification_search_failed">DLNA-Serversuche fehlgeschlagen</string>
+    <string name="dlna_notification_browse_failed">DLNA-Ordner konnte nicht geladen werden</string>
+    <string name="dlna_remove">%1$s entfernen</string>
+    <string name="dlna_remove_confirm">%1$s aus der Seitenleiste entfernen und den lokalen Wiedergabefortschritt löschen?</string>
+    <string name="dlna_servers">Server</string>
+    <string name="dlna_root">Medien</string>
+    <string name="dlna_empty">Dieser Ordner enthält keine abspielbaren Medien oder Unterordner.</string>
+    <string name="settings_page_dlna_hint">DLNA- und UPnP-Medienserver im lokalen Netzwerk</string>
+    <string name="dlna_view_hint">Wähle, wie Medien angezeigt werden.</string>
+    <string name="dlna_loading_more">Weitere Einträge werden geladen…</string>
+    <string name="dlna_page_failed">Weitere Einträge konnten nicht geladen werden.</string>
+</resources>

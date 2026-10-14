@@ -1,0 +1,8 @@
+# Optional Spotify build configuration (separate from local.properties, which Android tooling
+# may regenerate). No Spotify client ID is built in: each user enters their own in
+# Settings › Media sources & accounts › Spotify › Spotify account (see the README guide).
+#
+# TV sign-in via QR code: HTTPS relay page that forwards Spotify's redirect from the phone to the
+# TV in the local network (seinist/ambient-tv-spotify-callback via GitHub Pages). Register this URL as an
+# additional redirect URI in the Spotify Developer Dashboard. Set to "off" to disable QR sign-in.
+SPOTIFY_QR_REDIRECT_URI=https://seinist.github.io/ambient-tv-spotify-callback/spotify-callback.html

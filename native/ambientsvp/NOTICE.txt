@@ -1,0 +1,16 @@
+Open-SVPFlow Android integration (experimental)
+
+Open-SVPFlow: https://github.com/Z1xus/open-svpflow
+Revision: deadbad61cab699c2779f18b0fecd81a3a59e938
+License: Apache-2.0; see OPEN-SVPFLOW-LICENSE.
+The original smooth.wgsl is included unmodified. The Android C ABI, bounded
+streaming adapter and native wgpu/Vulkan host implementation are app additions.
+The MPV and VLC filter adapters are LGPL-2.1-or-later.
+
+This is an independent integration of Open-SVPFlow, not the proprietary SVP
+Manager, SVP Android application, or a distribution of proprietary SVP binaries.
+No VapourSynth, Python, OpenCL runtime or AVX-capable CPU is required.
+
+All resolved Rust dependency names, versions, declared SPDX licenses and
+repository URLs are in dependencies.tsv; their supplied license and notice
+files are included beside it in the packaged licenses/open-svpflow asset.

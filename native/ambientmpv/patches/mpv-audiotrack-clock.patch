@@ -1,0 +1,25 @@
+--- a/audio/out/ao_audiotrack.c
++++ b/audio/out/ao_audiotrack.c
+@@ -20,6 +20,8 @@
+  * You should have received a copy of the GNU Lesser General Public
+  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+  */
++
++#include <time.h>
+ 
+ #include "ao.h"
+ #include "internal.h"
+@@ -386,7 +388,12 @@
+         return 0;
+     JNIEnv *env = MP_JNI_GET_ENV(ao);
+     uint32_t pos = 0;
+-    int64_t now = mp_raw_time_ns();
++    // AudioTimestamp.nanoTime uses CLOCK_MONOTONIC, while mp_raw_time_ns()
++    // may select CLOCK_MONOTONIC_RAW. Their offsets/drift are not interchangeable.
++    struct timespec stamp;
++    if (clock_gettime(CLOCK_MONOTONIC, &stamp) != 0)
++        return MP_JNI_CALL_INT(p->audiotrack, AudioTrack.getPlaybackHeadPosition);
++    int64_t now = (int64_t)stamp.tv_sec * 1000000000 + stamp.tv_nsec;
+     int state = MP_JNI_CALL_INT(p->audiotrack, AudioTrack.getPlayState);
+ 
+     int stable_count = 20;

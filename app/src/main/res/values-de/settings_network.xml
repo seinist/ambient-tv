@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_area_network">Geräte &amp; Netzwerk</string>
+    <string name="settings_network_devices">Handy &amp; Geräte</string>
+    <string name="settings_network_receiver">UPnP-Receiver</string>
+    <string name="settings_network_wake">Server &amp; Wake-on-LAN</string>
+    <string name="settings_network_wake_hint">MAC-Adressen und Aufwecken; die Profilauswahl wechselt den aktiven Server.</string>
+    <string name="settings_wol_retries">Wake-on-LAN-Wiederholungen</string>
+    <string name="settings_wol_retries_hint">Antwortet ein Server nach Ablauf der Wartezeit nicht, wird er mit neuen Paketen erneut geweckt und noch einmal gewartet. Gilt für alle Server, Dateiquellen und DLNA; die kurze Prüfung beim Zurückkehren in die App wird nie wiederholt.</string>
+    <string name="settings_wol_retries_off">Aus</string>
+    <string name="settings_wol_retries_value">%1$d×</string>
+    <string name="settings_network_link">Netzwerkeinstellungen</string>
+    <string name="settings_network_routes">WireGuard für diese Systeme verwenden</string>
+    <string name="settings_network_wake_now">Jetzt wecken</string>
+    <string name="settings_network_wake_sent">Weckanfrage gesendet</string>
+    <string name="settings_network_receiver_name">Sichtbarer Name im Netzwerk</string>
+    <string name="settings_network_receiver_running">Receiver läuft. Apps in deinem Netzwerk können dieses Gerät finden.</string>
+    <string name="settings_network_receiver_stopped">Receiver läuft nicht. Aktiviere ihn und erlaube den lokalen Netzwerkzugriff, um Medien zu empfangen.</string>
+    <string name="settings_network_dlna_hint">Im Netzwerk gefundene DLNA-Server. Mit Wake-on-LAN wird ein schlafender Server vor dem Durchsuchen geweckt, wenn automatisches Aufwecken an ist.</string>
+    <string name="settings_network_receiving">Aktuelle Zuspielung: %1$s</string>
+    <string name="settings_network_receiver_save_hint">Receiver-Schalter wirken sofort. Den Gerätenamen mit Speichern unter dem Eingabefeld übernehmen.</string>
+    <string name="settings_wake_group_services">Dienste: %1$s</string>
+    <string name="settings_wake_mac_conflict">Es sind unterschiedliche MAC-Adressen gespeichert: %1$s. Ein Rechner hat eine MAC; gib die richtige ein oder übernimm die erste für alle Dienste.</string>
+    <string name="settings_wake_apply_mac">%1$s für alle Dienste übernehmen</string>
+    <string name="settings_wake_auto_for">Automatisch wecken: %1$s</string>
+    <string name="settings_wake_profiles">Aktive Serverprofile</string>
+    <string name="settings_wake_empty">Noch keine Server eingerichtet.</string>
+    <string name="settings_wake_nas_details">%1$s: Wake-on-LAN-Details</string>
+</resources>

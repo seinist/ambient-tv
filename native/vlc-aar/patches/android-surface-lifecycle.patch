@@ -1,0 +1,32 @@
+diff --git a/src/input/resource.c b/src/input/resource.c
+--- a/src/input/resource.c
++++ b/src/input/resource.c
+@@ -377,7 +377,12 @@ static void input_resource_PutVoutLocked(input_resource_t *p_resource,
+         vout_rsc->started = false;
+     }
+ 
+-    if (vout_rsc == resource_GetFirstVoutRsc(p_resource))
++    /* An embedded Android Surface may be destroyed while audio keeps playing.
++     * Do not retain its window/decoder device across a video-track deselection:
++     * the next selection must acquire the current Java Surface from AWindow. */
++    if (vout_rsc == resource_GetFirstVoutRsc(p_resource)
++        && var_InheritAddress(p_resource->p_parent,
++                              "drawable-androidwindow") == NULL)
+     {
+         assert(p_resource->vout_rsc_free == NULL || p_resource->vout_rsc_free == vout_rsc);
+ 
+diff --git a/modules/video_output/android/utils.c b/modules/video_output/android/utils.c
+--- a/modules/video_output/android/utils.c
++++ b/modules/video_output/android/utils.c
+@@ -317,6 +317,11 @@ JNISurfaceTexture_releaseTexImage(
+ 
+     (*p_env)->CallVoidMethod(p_env, handle->jtexture,
+                              handle->awh->jfields.SurfaceTexture.releaseTexImage);
++    /* A Surface can disappear during output teardown. Never leave a Java
++     * exception pending on VLC's native rendering thread. */
++    if ((*p_env)->ExceptionCheck(p_env)) {
++        (*p_env)->ExceptionClear(p_env);
++    }
+ }
+ 
+ static void JNISurfaceTexture_destroy(

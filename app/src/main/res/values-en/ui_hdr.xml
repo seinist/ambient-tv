@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_ui_hdr">HDR interface</string>
+    <string name="settings_ui_hdr_hint">Automatic follows HDR playback, Always HDR forces it on a capable display, and Always SDR turns it off.</string>
+    <string name="settings_ui_hdr_auto">Automatic (safe)</string>
+    <string name="settings_ui_hdr_force">Always HDR</string>
+    <string name="settings_ui_hdr_sdr">Always SDR</string>
+    <string name="settings_ui_hdr_requested">Interface: HDR requested</string>
+    <string name="settings_ui_hdr_default">Interface: SDR</string>
+    <string name="settings_ui_hdr_failed">Interface: HDR disabled after an error</string>
+    <string name="settings_sdr_to_hdr">SDR video to HDR</string>
+    <string name="settings_sdr_to_hdr_hint">Shows eligible SDR video as HDR on an HDR10 display; Media3 and VLC up to Full HD at 60 fps, no Dolby Vision.</string>
+    <string name="settings_sdr_to_hdr_off">SDR to HDR: off</string>
+    <string name="settings_sdr_to_hdr_unavailable">SDR to HDR: unavailable for this playback</string>
+    <string name="settings_sdr_to_hdr_waiting">SDR to HDR: preparing</string>
+    <string name="settings_sdr_to_hdr_active">SDR to HDR: conversion active</string>
+    <string name="settings_sdr_to_hdr_failed">SDR to HDR: disabled after an error</string>
+    <string name="sdr_to_hdr_restore_failed">Video playback stopped because the original colour output could not be restored.</string>
+    <string name="settings_projectm_resolution_sdr_hint">Higher is sharper but needs much more GPU power; Low performance limits it to 720p.</string>
+</resources>

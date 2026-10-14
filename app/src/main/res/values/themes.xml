@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AmbientTv" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0A0C0F</item>
+        <item name="android:colorBackground">#0A0C0F</item>
+        <item name="android:statusBarColor">#0A0C0F</item>
+        <item name="android:navigationBarColor">#0A0C0F</item>
+        <!-- TV otherwise draws a yellow rectangle around the focused View. Compose owns
+             focus internally, so that highlight wraps the whole ComposeView. -->
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+</resources>

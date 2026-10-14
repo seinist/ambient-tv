@@ -1,0 +1,79 @@
+name: PR checks
+
+# Compiles the app and runs every JVM unit test on each pull request and on main.
+# Packaging an APK needs native libraries that only ./build.sh produces (mpv/FFmpeg,
+# Spotify, projectM, SVP), so this job stops at compile + unit tests; the full native
+# build stays a local ./build.sh step.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: "30.0.16248370"
+  ANDROID_PLATFORM: "android-37.0"
+  # Skips the local FFmpeg audio decoder build; the Vulkan probe still builds with the NDK.
+  SKIP_MPV_NATIVE: "1"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android platform and NDK
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$sdkmanager" ] || sdkmanager="$(command -v sdkmanager)"
+          echo "sdkmanager: $sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          # Surface the reason as an annotation; the raw log is not always reachable.
+          # compileSdk 37 is not on the stable SDK channel yet; fall back to the preview channel.
+          "$sdkmanager" --list --channel=3 2>/dev/null | tr '\r' '\n' | grep -E 'platforms;android-3[7-9]' | sort -u | sed 's/^/::notice title=channel3::/'
+          if ! out=$("$sdkmanager" "platforms;${ANDROID_PLATFORM}" "ndk;${NDK_VERSION}" 2>&1) &&
+             ! out=$("$sdkmanager" --channel=3 "platforms;${ANDROID_PLATFORM}" "ndk;${NDK_VERSION}" 2>&1); then
+            echo "$out" | tr '\r' '\n' | grep -iE 'warning|error|fail|not found|unknown|available' | tail -15 | sed 's/^/::error title=sdkmanager::/'
+            "$sdkmanager" --list 2>/dev/null | tr '\r' '\n' | grep -E '^ *(ndk;30|platforms;android-3[6-9])' | sort -u | sed 's/^/::error title=available::/'
+            exit 1
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Script checks
+        run: |
+          bash -n build.sh
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      - name: Compile and run unit tests
+        # One ABI keeps the Vulkan probe build short; unit tests do not depend on it.
+        run: |
+          set -o pipefail
+          if ! ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 --continue 2>&1 | tee gradle.log; then
+            # Kotlin compile errors, failed tests and Gradle's own failure summary as annotations.
+            grep -E '^e: |FAILED$|tests completed|What went wrong' -A3 gradle.log | grep -v '^--$' | head -40 \
+              | sed 's/%/%25/g; s/^/::error title=gradle::/'
+            exit 1
+          fi
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/
+          retention-days: 7

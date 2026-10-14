@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_output_restart">Gilt für diese Wiedergabe. Beim Wechsel startet das Video kurz neu; Position und Pausenstatus bleiben erhalten.</string>
+    <string name="player_output_restart_live">Gilt für diesen Sender. Beim Wechsel startet die Wiedergabe kurz neu am Live-Punkt.</string>
+    <string name="player_output_hdr_direct">Natives HDR nutzt die direkte Android-Videofläche. GPU-Filter und Vulkan-Ausgabe sind für dieses Video ausgesetzt.</string>
+</resources>

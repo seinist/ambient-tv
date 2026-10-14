@@ -1,0 +1,40 @@
+--- a/modules/audio_output/android/audiotrack.c
++++ b/modules/audio_output/android/audiotrack.c
+@@ -598,6 +598,24 @@
+     return 0;
+ }
+ 
++#include <dlfcn.h>
++/* Optional in-process PCM tap; no microphone or system-wide audio capture. */
++static void ambient_pcm_tap(int source, const void *data, size_t frames, int channels, int encoding)
++{
++    typedef void (*tap_fn)(int, const void *, size_t, int, int);
++    static tap_fn tap;
++    static unsigned retry;
++    if (!tap && (++retry % 64 == 1)) {
++        void *lib = dlopen("libambientprojectm.so", RTLD_NOW | RTLD_NOLOAD);
++        if (lib) {
++            tap = (tap_fn)dlsym(lib, "ambient_projectm_pcm_v1");
++            /* Retain the handle for the lifetime of the cached function pointer. */
++            if (!tap) dlclose(lib);
++        }
++    }
++    if (tap) tap(source, data, frames, channels, encoding);
++}
++
+ struct role {
+     char vlc[16];
+ };
+@@ -1377,6 +1395,12 @@
+                             p_sys->i_chans_to_reorder, p_sys->p_chan_table,
+                             p_sys->fmt.i_format );
+ 
++    if (!p_sys->b_passthrough &&
++        (p_sys->fmt.i_format == VLC_CODEC_FL32 || p_sys->fmt.i_format == VLC_CODEC_S16N))
++        ambient_pcm_tap(1, p_buffer->p_buffer,
++            p_buffer->i_buffer / (p_sys->fmt.i_channels * (p_sys->fmt.i_format == VLC_CODEC_FL32 ? 4 : 2)),
++            p_sys->fmt.i_channels, p_sys->fmt.i_format == VLC_CODEC_FL32 ? 4 : 2);
++
+     if( p_sys->first_pts == VLC_TICK_INVALID )
+         p_sys->first_pts = p_buffer->i_pts;
+ 

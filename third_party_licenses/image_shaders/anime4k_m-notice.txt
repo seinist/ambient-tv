@@ -1,0 +1,3 @@
+Anime4K CNN x2 M shader by bloc97.
+Source revision: 7684e9586f8dcc738af08a1cdceb024cc184f426
+License: MIT. Full license text: Anime4K-MIT.txt

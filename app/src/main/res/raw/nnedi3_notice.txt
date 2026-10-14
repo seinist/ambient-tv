@@ -1,0 +1,13 @@
+NNEDI3 shader resources used by this app are taken from bjin/mpv-prescalers at
+commit b3f0a59d68f33b7162051ea5970a5169558f0ea2.
+
+Quality ladder: nns16, nns32, nns64, nns128 and nns256 use win8x4; the explicit
+Expert entry nns256/win8x6 is bundled as well. All six presets come from this
+pinned revision. The player validates the NNEDI3 stages before loading the copied
+resource into mpv; no shader network fetch is required at playback time.
+
+Source: https://github.com/bjin/mpv-prescalers
+License: GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later)
+Full license text: nnedi3_lgpl3.txt
+
+Each shader file retains its upstream license header.

@@ -1,0 +1,4 @@
+RAVU Lite AR r4 shader from bjin/mpv-prescalers.
+Source revision: b3f0a59d68f33b7162051ea5970a5169558f0ea2
+License: GNU Lesser General Public License v3.0 or later.
+Full license text: bjin-LGPL.txt

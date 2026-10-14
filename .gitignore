@@ -1,0 +1,75 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.hprof
+app/build/
+/dist
+/third_party
+/app/src/main/jniLibs/
+/app/src/main/assets/*
+!/app/src/main/assets/branding/
+/smarttube_wrappers/youtubeapi/build
+/smarttube_wrappers/sharedutils/build
+/smarttube_wrappers/j2v8/build
+/smarttube_wrappers/commons-io/build
+/smarttube_wrappers/mediaserviceinterfaces/build
+
+# Native dependency build worktree
+.native/
+/native/vlc-aar/build/
+/app/libs/libvlc-vulkan.aar
+/app/libs/.svp-vlc-*
+/app/libs/.projectm-pcm-vlc-*
+/scripts/**/__pycache__/
+
+# Firebase CLI debug output
+firebase-debug.log
+
+# Release signing material (keep local only)
+keystore.properties
+keystore/
+*.jks
+*.keystore
+
+# Public repo: never commit local config, binaries or build outputs
+spotify.properties
+*.pyc
+*.apk
+*.aab
+/app/libs/*.aar
+
+# AI agent / assistant configs (local only)
+.kilo/
+.kilocode/
+kilo*.json
+kilo*.jsonc
+kilo*.md
+.cursor/
+.cursorrules
+.cursorignore
+AGENTS.md
+CLAUDE.md
+.claude/
+GEMINI.md
+.github/copilot-instructions.md
+.aider*
+.continue/
+.windsurf/
+.windsurfrules
+.clinerules
+.roo/
+.roomodes
+.vscode
+
+# build.sh moves stale Groovy Gradle entrypoints aside
+*.legacy-disabled
+
+# Kotlin daemon logs and session data
+.kotlin/

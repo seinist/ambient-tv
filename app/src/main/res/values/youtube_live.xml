@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="youtube_live_event_title">Livestream has not started</string>
+    <string name="youtube_live_planned">Scheduled</string>
+    <string name="youtube_live_start_at">Scheduled: %1$s</string>
+    <string name="youtube_live_countdown">Starts in %1$s</string>
+    <string name="youtube_live_delayed">The stream has not started yet. The scheduled start time has passed.</string>
+    <string name="youtube_live_unknown_time">The stream is not live yet. No start time is available.</string>
+    <string name="youtube_live_wait">Wait for start</string>
+    <string name="youtube_live_stop_waiting">Stop waiting</string>
+    <string name="youtube_live_check">Check again</string>
+    <string name="youtube_live_checking">Checking stream…</string>
+    <string name="youtube_live_waiting_hint">While this screen is open, we check every 30 seconds and play when the stream becomes available.</string>
+    <string name="youtube_live_check_failed">Could not check the stream. Please try again.</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_home_hero_aurora">Aurora</string>
+    <string name="settings_home_hero_cinema">Cinema light</string>
+    <string name="settings_home_hero_prism">Prism</string>
+</resources>

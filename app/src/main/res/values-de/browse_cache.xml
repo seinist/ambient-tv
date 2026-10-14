@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="browse_offline">Quelle nicht erreichbar · gespeicherte Inhalte</string>
+    <string name="browse_playback_unavailable">Diese Quelle ist nicht erreichbar. Wiedergabe kann nicht gestartet werden.</string>
+    <string name="browse_item_removed">Dieser Inhalt ist nicht mehr verfügbar.</string>
+</resources>

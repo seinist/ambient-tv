@@ -1,0 +1,18 @@
+--- a/modules/codec/omxil/mediacodec.c
++++ b/modules/codec/omxil/mediacodec.c
+@@ -945,6 +945,15 @@
+                               AWindowHandler *awh, bool need_gpu)
+ {
+     decoder_sys_t *p_sys = p_dec->p_sys;
++    /* Philips TA1's Codec2 HEVC decoder exhausts its eight vendor buffers
++     * with the AImageReader/EGLImage path (audio continues, video freezes).
++     * Keep MediaCodec hardware decoding but use the existing Surface path. */
++    if (p_sys->api.psz_name != NULL &&
++        !strcmp(p_sys->api.psz_name, "c2.mtk.hevc.decoder"))
++    {
++        msg_Warn(p_dec, "Using Surface output for MediaTek Codec2 HEVC");
++        return VLC_EGENERIC;
++    }
+     struct aimage_reader_api *air_api = AWindowHandler_getAImageReaderApi(awh);
+     struct asurface_control_api *asc_api = AWindowHandler_getASurfaceControlApi(awh);
+     if (air_api == NULL || asc_api == NULL)

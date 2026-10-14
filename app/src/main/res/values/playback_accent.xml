@@ -1,0 +1,14 @@
+<resources>
+    <string name="playback_resume_position">Resume at %1$s</string>
+    <string name="settings_accent_pair_hint">Each preset pairs a main color with a playback color; Custom lets you pick both.</string>
+    <string name="settings_primary_accent">Main color</string>
+    <string name="settings_playback_accent">Playback color</string>
+    <string name="settings_primary_accent_hint">Used for actions, selected options and the app identity.</string>
+    <string name="settings_playback_accent_hint">Used for playback status and progress. Changing the main color keeps this choice.</string>
+    <string name="settings_choose_primary_accent">Choose main color</string>
+    <string name="settings_choose_playback_accent">Choose playback color</string>
+    <string name="settings_artwork_playback_accent_hint">Artwork tints stay local to the title. Actions use gold and playback uses blue elsewhere.</string>
+    <string name="settings_accent_single_hint">One color for actions, selection, playback status and progress.</string>
+    <string name="settings_dual_accent">Separate playback color</string>
+    <string name="settings_dual_accent_hint">Use a second color for playback status and progress. Off: everything uses the main color.</string>
+</resources>

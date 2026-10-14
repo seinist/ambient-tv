@@ -1,0 +1,312 @@
+package com.ambient.tv.connectivity
+
+import com.ambient.tv.notifications.*
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import android.os.SystemClock
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.ambient.tv.R
+import com.ambient.tv.data.files.WakeOnLan
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.server.EmbyConnectionManager
+import com.ambient.tv.server.JellyfinConnectionManager
+import com.ambient.tv.server.ServerConnectionManager
+import com.ambient.tv.tvheadend.data.TvheadendRepository
+import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.vpn.WireGuardRouteController
+import com.ambient.tv.vpn.WireGuardRouteState
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
+
+/**
+ * On process foreground (after a meaningful background gap, or when last health is stale),
+ * rechecks network + VPN + configured local media servers with short timeouts, optional one-shot WoL,
+ * and publishes progress for the existing Home startup / connection status UI.
+ *
+ * Also watches VPN transport loss / revoke signals so mid-playback WireGuard drops surface promptly.
+ */
+@Singleton
+class ResumeConnectivityMonitor @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val preferences: AppPreferences,
+    private val plexConnection: ServerConnectionManager,
+    private val jellyfinConnection: JellyfinConnectionManager,
+    private val embyConnection: EmbyConnectionManager,
+    private val tvheadendRepository: TvheadendRepository,
+    private val wakeOnLan: WakeOnLan,
+    private val wireGuardRoute: WireGuardRouteController,
+) : DefaultLifecycleObserver {
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val recheckMutex = Mutex()
+    private var recheckJob: Job? = null
+    private var started = false
+    private var vpnCallbackRegistered = false
+
+    private var lastStopElapsedMs: Long = -1L
+    @Volatile private var lastHealthElapsedMs: Long = SystemClock.elapsedRealtime()
+
+    private val _status = MutableStateFlow<ResumeConnectivityStatus>(ResumeConnectivityStatus.Idle)
+    val status: StateFlow<ResumeConnectivityStatus> = _status.asStateFlow()
+
+    private val _recheckGeneration = MutableStateFlow(0L)
+    /** Bumped after each completed resume recheck so Home can soft-retry offline screens. */
+    val recheckGeneration: StateFlow<Long> = _recheckGeneration.asStateFlow()
+
+    private val _vpnDropGeneration = MutableStateFlow(0L)
+    /** Bumped when the WireGuard route is marked failed (revoke / VPN network lost) so player UI can react. */
+    val vpnDropGeneration: StateFlow<Long> = _vpnDropGeneration.asStateFlow()
+
+    private val vpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onLost(network: Network) {
+            if (!wireGuardRoute.anySystemEnabled()) return
+            val current = wireGuardRoute.status.value
+            if (current is WireGuardRouteState.Up || current is WireGuardRouteState.Connecting) {
+                Timber.w("VPN network lost while WireGuard route was active")
+                markVpnRouteFailed(context.getString(R.string.wg_vpn_network_lost))
+            }
+        }
+    }
+
+    fun start() {
+        if (started) return
+        started = true
+        ProcessLifecycleOwner.get().lifecycle.addObserver(this)
+        registerVpnCallback()
+    }
+
+    /** Called from [com.ambient.tv.vpn.WireGuardVpnService.onRevoke]. */
+    fun onVpnRevoked() {
+        markVpnRouteFailed(context.getString(R.string.wg_vpn_revoked))
+    }
+
+    private fun markVpnRouteFailed(message: String) {
+        wireGuardRoute.note(WireGuardRouteState.Failed(message))
+        _vpnDropGeneration.value = _vpnDropGeneration.value + 1
+        requestRecheck(reason = "vpn-drop: $message")
+    }
+
+    private fun registerVpnCallback() {
+        if (vpnCallbackRegistered) return
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .build()
+        runCatching {
+            cm.registerNetworkCallback(request, vpnNetworkCallback)
+            vpnCallbackRegistered = true
+        }.onFailure { Timber.w(it, "Failed to register VPN NetworkCallback") }
+    }
+
+    override fun onStop(owner: LifecycleOwner) {
+        lastStopElapsedMs = SystemClock.elapsedRealtime()
+    }
+
+    override fun onStart(owner: LifecycleOwner) {
+        val now = SystemClock.elapsedRealtime()
+        val backgroundedFor = if (lastStopElapsedMs < 0L) 0L else (now - lastStopElapsedMs).coerceAtLeast(0L)
+        val healthAge = (now - lastHealthElapsedMs).coerceAtLeast(0L)
+        if (!ResumeConnectivityPolicy.shouldRecheck(backgroundedFor, healthAge)) return
+        requestRecheck(reason = "resume backgrounded=${backgroundedFor}ms healthAge=${healthAge}ms")
+    }
+
+    /** Manual / activity-level kick; coalesced with an in-flight recheck. */
+    fun requestRecheck(reason: String = "manual") {
+        com.ambient.tv.network.LocalNetworkPolicy.clearCache()
+        recheckJob?.cancel()
+        recheckJob = scope.launch {
+            recheckMutex.withLock { runRecheck(reason) }
+        }
+    }
+
+    fun noteHealthyNow() {
+        lastHealthElapsedMs = SystemClock.elapsedRealtime()
+    }
+
+    private suspend fun runRecheck(reason: String) {
+        Timber.d("Resume connectivity recheck: %s", reason)
+        if (!isNetworkAvailable()) {
+            _status.value = ResumeConnectivityStatus.NoNetwork
+            _recheckGeneration.value = _recheckGeneration.value + 1
+            return
+        }
+        _status.value = ResumeConnectivityStatus.Checking
+        val vpnLabel = if (wireGuardRoute.anySystemEnabled()) {
+            wireGuardRoute.reconcile()
+            when (val s = wireGuardRoute.status.value) {
+                WireGuardRouteState.Up -> context.getString(R.string.wg_status_up)
+                WireGuardRouteState.Connecting -> context.getString(R.string.wg_status_connecting)
+                is WireGuardRouteState.Failed -> context.getString(R.string.wg_status_failed, s.message)
+                WireGuardRouteState.Idle -> context.getString(R.string.wg_status_idle)
+            }
+        } else null
+
+        val targets = configuredSystems()
+        val progress = MutableStateFlow(
+            ResumeConnectivityStatus.Progress(
+                networkOk = true,
+                vpnLabel = vpnLabel,
+                servers = targets.map {
+                    ResumeConnectivityStatus.ServerProgress(it, ResumeConnectivityStatus.ServerPhase.CHECKING)
+                },
+            ),
+        )
+        _status.value = progress.value
+
+        fun update(system: MediaSystem, phase: ResumeConnectivityStatus.ServerPhase, detail: String? = null) {
+            if (system == MediaSystem.TVHEADEND) {
+                val working = phase == ResumeConnectivityStatus.ServerPhase.CHECKING || phase == ResumeConnectivityStatus.ServerPhase.WAKING
+                val online = phase == ResumeConnectivityStatus.ServerPhase.ONLINE
+                AppNotifications.post(AppNotice("resume:tvheadend", when {
+                    phase == ResumeConnectivityStatus.ServerPhase.WAKING -> R.string.notice_waking
+                    working -> R.string.notice_connecting
+                    online -> R.string.notice_connected
+                    else -> R.string.notice_unreachable
+                }, listOf("tvheadend"), preferences.tvheadendHost,
+                    if (working) NoticePhase.WORKING else if (online) NoticePhase.SUCCESS else NoticePhase.ERROR,
+                    if (phase == ResumeConnectivityStatus.ServerPhase.WAKING) NoticeKind.WAKE else NoticeKind.CONNECTION,
+                    quietSuccess = true, interruptPlayback = phase == ResumeConnectivityStatus.ServerPhase.WAKING))
+            }
+            progress.value = progress.value.copy(
+                servers = progress.value.servers.map {
+                    if (it.system == system) it.copy(phase = phase, detail = detail) else it
+                },
+            )
+            _status.value = progress.value
+        }
+
+        kotlinx.coroutines.coroutineScope {
+            targets.map { system ->
+                async {
+                    val online = runCatching { recheckSystem(system, ::update) }.getOrElse { error ->
+                        Timber.w(error, "Resume recheck failed for %s", system)
+                        update(system, ResumeConnectivityStatus.ServerPhase.ERROR, error.message)
+                        false
+                    }
+                    if (online) noteHealthyNow()
+                    online
+                }
+            }.awaitAll()
+        }
+
+        lastHealthElapsedMs = SystemClock.elapsedRealtime()
+        _recheckGeneration.value = _recheckGeneration.value + 1
+        // Keep the last progress visible briefly for the status UI, then idle.
+        _status.value = progress.value
+        delay(COMPLETED_STATUS_DISPLAY_MS)
+        if (_status.value == progress.value) {
+            _status.value = ResumeConnectivityStatus.Idle
+        }
+    }
+
+    private suspend fun recheckSystem(
+        system: MediaSystem,
+        update: (MediaSystem, ResumeConnectivityStatus.ServerPhase, String?) -> Unit,
+    ): Boolean {
+        update(system, ResumeConnectivityStatus.ServerPhase.CHECKING, null)
+        val ok = when (system) {
+            MediaSystem.PLEX -> plexConnection.recheckOnResume(
+                onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
+            )
+            MediaSystem.JELLYFIN -> jellyfinConnection.recheckOnResume(
+                onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
+            )
+            MediaSystem.EMBY -> embyConnection.recheckOnResume(
+                onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
+            )
+            MediaSystem.TVHEADEND -> tvheadendRepository.recheckOnResume(
+                onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
+            )
+            MediaSystem.FILES -> recheckFiles(onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) })
+            else -> false
+        }
+        update(
+            system,
+            if (ok) ResumeConnectivityStatus.ServerPhase.ONLINE else ResumeConnectivityStatus.ServerPhase.OFFLINE,
+            if (ok) null else context.getString(R.string.home_startup_unreachable),
+        )
+        return ok
+    }
+
+    /** Light TCP probe of remote NAS sources; optional brief WoL when auto-wake is configured. */
+    private suspend fun recheckFiles(onWaking: (() -> Unit)? = null): Boolean {
+        val sources = preferences.fileSources.filter { it.kind != "local" }
+        if (sources.isEmpty()) return true
+        var allOk = true
+        for (source in sources) {
+            if (wakeOnLan.isReachable(source)) continue
+            if (source.wolAuto && source.wolMac.isNotBlank()) {
+                val noticeKey = "wake:files:${source.host.lowercase()}:${source.port}"
+                AppNotifications.post(AppNotice(noticeKey, R.string.notice_waking, listOf("files"), source.name, NoticePhase.WORKING, NoticeKind.WAKE))
+                onWaking?.invoke()
+                runCatching {
+                    wakeOnLan.send(
+                        mac = source.wolMac,
+                        broadcast = source.wolBroadcast,
+                        port = source.wolPort,
+                        wireGuardHost = source.host.takeIf { source.wireGuard },
+                    )
+                }
+                // Brief wait only — full cold-start wake remains on demand in Files.
+                val deadline = System.currentTimeMillis() + ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS
+                var woke = false
+                while (System.currentTimeMillis() < deadline) {
+                    if (wakeOnLan.isReachable(source)) {
+                        woke = true
+                        break
+                    }
+                    kotlinx.coroutines.delay(ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS)
+                }
+                if (!woke) allOk = false
+                notifyResult(noticeKey, "files", source.name, R.string.notice_awake, woke, NoticeKind.WAKE, R.string.notice_wake_failed)
+            } else {
+                allOk = false
+                notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)
+            }
+        }
+        return allOk
+    }
+
+    private fun configuredSystems(): List<MediaSystem> = buildList {
+        if (preferences.plexEnabled && preferences.isConfigured) add(MediaSystem.PLEX)
+        if (preferences.jellyfinEnabled && preferences.isJellyfinConfigured) add(MediaSystem.JELLYFIN)
+        if (preferences.embyEnabled && preferences.isEmbyConfigured) add(MediaSystem.EMBY)
+        if (preferences.tvheadendEnabled && preferences.isTvheadendConfigured) add(MediaSystem.TVHEADEND)
+        if (preferences.filesEnabled && preferences.fileSources.any { it.kind != "local" }) add(MediaSystem.FILES)
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return true
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+    }
+
+    private companion object {
+        const val COMPLETED_STATUS_DISPLAY_MS = 2_000L
+    }
+}

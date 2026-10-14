@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_connection_settings">TV-Verbindungseinstellungen</string>
+    <string name="companion_receiver_background">Von gekoppelten Geräten starten lassen</string>
+    <string name="companion_receiver_ready">Bereit für Wiedergabeaufträge gekoppelter Geräte</string>
+    <string name="companion_receiver_hint">Empfänger im Hintergrund und nach einem TV-Neustart bereithalten. Zum Öffnen der App ist die Berechtigung „Über anderen Apps einblenden“ erforderlich.</string>
+    <string name="companion_launch_permission">Automatischer App-Start nicht verfügbar. Empfangsdienst und „Über anderen Apps einblenden“ in den TV-Einstellungen aktivieren.</string>
+    <string name="companion_launch_timeout">Die TV-App wurde nicht rechtzeitig bereit. Automatischen Start in den TV-Einstellungen prüfen.</string>
+    <string name="companion_connection_vpn_toggle">Internes WireGuard verwenden</string>
+    <string name="companion_connection_vpn_hint">Von diesem Handy zum TV im entfernten Netz verbinden. Der TV benötigt kein eigenes VPN. Zuerst lokal koppeln.</string>
+    <string name="companion_connection_vpn">Verbindung über WireGuard…</string>
+    <string name="companion_connection_address">TV-IPv4-Adresse im entfernten Netz</string>
+    <string name="companion_connection_port">TV-Port (leer: %1$d)</string>
+    <string name="companion_connection_vpn_permission">VPN-Verbindung erlauben</string>
+    <string name="companion_connection_wake_toggle">Bei Bedarf per Wake-on-LAN wecken</string>
+    <string name="companion_connection_wake_hint">Nur bei einem ausdrücklichen Verbindungsauftrag. Gerät und Netzwerk müssen WOL unterstützen; über VPN müssen gerichtete Broadcasts weitergeleitet werden.</string>
+    <string name="companion_connection_mac">MAC-Adresse (automatisch, falls verfügbar)</string>
+    <string name="companion_connection_detected_mac">Gespeicherte MAC-Adresse übernehmen</string>
+    <string name="companion_connection_broadcast">Broadcast-IPv4-Adresse (leer: automatisch)</string>
+    <string name="companion_connection_wake_port">WOL-UDP-Port</string>
+    <string name="companion_connection_test_wake">Speichern und Aufwecken testen</string>
+    <string name="companion_connection_test">Speichern und Verbindung testen</string>
+    <string name="companion_connection_save">Verbindung speichern</string>
+    <string name="companion_connection_invalid">Private IPv4-Adresse, MAC-Adresse und Ports prüfen.</string>
+    <string name="companion_connection_waking">TV aufwecken und auf den Empfänger warten…</string>
+    <string name="companion_wake_sent">Einschaltsignal an %1$s gesendet.</string>
+    <string name="companion_wake_failed">Weckpaket an %1$s konnte nicht gesendet werden</string>
+    <string name="companion_connection_saved">Verbindungseinstellungen für %1$s gespeichert</string>
+    <string name="companion_connection_failed">Verbindungseinstellungen oder Test für %1$s fehlgeschlagen</string>
+    <string name="companion_connection_availability">Die TV-App muss geöffnet oder ihr Hintergrundempfänger aktiviert sein. Verbindungsoptionen findest du unter Einstellungen → App &amp; Daten → Handy und TV.</string>
+</resources>

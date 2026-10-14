@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_connect_tv">Mit TV verbinden</string>
+    <string name="companion_pair_phone">Handy koppeln</string>
+    <string name="companion_tv_only_hint">Öffne Companion auf deinem Handy und scanne den QR-Code. Dieser TV empfängt Verbindungen und sucht keine anderen TVs.</string>
+    <string name="companion_phone_connect_first">Verbinde das Handy zuerst mit diesem TV. Danach kannst du die Übertragung starten.</string>
+    <string name="companion_role_required">Geräterolle nicht unterstützt. Aktualisiere die App auf beiden Geräten und verbinde das Handy mit dem TV.</string>
+</resources>

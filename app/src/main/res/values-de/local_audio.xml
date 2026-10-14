@@ -1,0 +1,14 @@
+<resources>
+    <string name="audio_local_fallback">Audio-Fallback</string>
+    <string name="audio_fallback_pcm">Nur PCM</string>
+    <string name="audio_local_fallback_hint">Wandelt nicht unterstützten Ton automatisch um; AC3 behält 5.1, aber keine Atmos-Höhenkanäle.</string>
+    <string name="player_local_audio_failed">Der Ton kann mit den verfügbaren Playern und diesem Videoformat lokal nicht wiedergegeben werden. Wähle eine andere Tonspur oder ändere die Audioausgabe. Server-Transcoding wurde nicht angefordert.</string>
+    <string name="player_video_compatibility_failed">Das Video konnte lokal nicht wiedergegeben werden und der Kompatibilitätsstream des Servers ist fehlgeschlagen oder nicht verfügbar.</string>
+    <string name="notice_audio_ac3_conversion">Der Medienserver wandelt die ausgewählte Tonspur zu AC3 um; das Video bleibt für Stream-Kopie vorgesehen.</string>
+    <string name="notice_audio_local_ac3_conversion">Ton wird auf diesem Gerät für die aktuelle Ausgabe zu AC3 umgewandelt.</string>
+    <string name="notice_audio_aac_conversion">AC3 ist nicht verfügbar oder fehlgeschlagen. Ein kompatibler AAC-Tonstream wird versucht.</string>
+    <string name="notice_audio_conversion_failed">Die Tonumwandlung ist fehlgeschlagen. Wähle eine andere Tonspur oder versuche es erneut; AAC wird angeboten, wenn verfügbar.</string>
+    <string name="player_audio_ac3_failed">AC3-Ton konnte nicht abgespielt werden. Versuche AAC oder wähle eine andere Tonspur.</string>
+    <string name="player_audio_conversion_failed">Der kompatible Tonstream konnte nicht erzeugt werden. Wähle eine andere Tonspur oder versuche es erneut.</string>
+    <string name="player_try_aac">AAC versuchen</string>
+</resources>

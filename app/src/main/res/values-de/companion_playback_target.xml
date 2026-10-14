@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_choose_playback">Wo möchtest du abspielen?</string>
+    <string name="companion_play_on">Auf %1$s abspielen · Verbunden</string>
+    <string name="companion_reconnect_play">%1$s · Erneut verbinden und abspielen</string>
+    <string name="companion_starting_on">Wiedergabe auf %1$s wird gestartet …</string>
+    <string name="companion_playing_on">Wiedergabe auf %1$s gestartet</string>
+    <string name="companion_start_failed">Der TV konnte die Wiedergabe nicht starten. Prüfe die Verbindung und ob die Quelle auf dem TV eingerichtet ist. Versuche es erneut oder spiele auf diesem Handy ab.</string>
+    <string name="companion_target_start_timeout">Der TV hat den Wiedergabestart noch nicht bestätigt. Prüfe den TV auf eine Rückfrage oder einen Wiedergabefehler, bevor du es erneut versuchst.</string>
+    <string name="companion_source_phone_only">Dieser Inhalt ist nur auf diesem Handy verfügbar.</string>
+    <string name="companion_paired">%1$s · Gekoppelt</string>
+    <string name="companion_mute">Stummschalten</string>
+    <string name="companion_unmute">Ton einschalten</string>
+    <string name="companion_target_source_missing">Diese Medienquelle ist auf dem TV nicht verfügbar. Richte sie dort ein oder spiele auf diesem Handy ab.</string>
+    <string name="companion_choose_device">Wiedergabegerät wählen</string>
+    <string name="companion_play_here">Auf diesem Handy abspielen</string>
+</resources>

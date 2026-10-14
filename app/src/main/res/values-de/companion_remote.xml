@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="remote_tab_dpad">D-Pad</string>
+  <string name="remote_tab_mouse">Maus</string>
+  <string name="remote_tab_keyboard">Tastatur</string>
+  <string name="remote_disconnected">TV nicht verbunden</string>
+  <string name="remote_ready">Bereit zur TV-Steuerung</string>
+  <string name="remote_waiting">Steuerung nicht aktiv</string>
+  <string name="remote_reconnect_hint">Verbinde dich erneut mit deinem TV, um ihn zu steuern.</string>
+  <string name="remote_dpad_hint">Mit den Pfeilen navigieren, in der Mitte bestätigen.</string>
+  <string name="remote_up">Nach oben</string>
+  <string name="remote_down">Nach unten</string>
+  <string name="remote_left">Nach links</string>
+  <string name="remote_right">Nach rechts</string>
+  <string name="remote_ok">OK · Auswählen</string>
+  <string name="remote_click">Am TV klicken</string>
+  <string name="remote_mouse_hint">Mit einem Finger bewegen\nTippen zum Klicken\nMit zwei Fingern scrollen</string>
+  <string name="remote_sensitivity">Empfindlichkeit</string>
+  <string name="remote_keyboard_hint">Wähle zuerst ein Textfeld am TV. Einfügen sendet deinen Entwurf; Löschen und Enter wirken direkt am TV.</string>
+  <string name="remote_rewind">10 Sekunden zurück</string>
+  <string name="remote_forward">10 Sekunden vor</string>
+  <string name="remote_player_options">Weitere Player-Optionen</string>
+</resources>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+      Cleartext HTTP is required for user-configured LAN media servers (Plex/Jellyfin/Emby/TVH),
+      NAS file bridges (127.0.0.1 MediaFileServer / AuthenticatedStreamProxy), and optional
+      Spotify QR login. Host names and private IPs are not known at build time, and Android's
+      domain-config cannot express RFC1918 CIDR ranges, so a global cleartext permit remains
+      the only practical NSC default that does not break legitimate LAN HTTP.
+
+      Runtime mitigations (see LocalNetworkPolicy + settings UI):
+      - localNetworkOnly (default ON) blocks non-local media hosts in interceptors/managers.
+      - Optional per-system HTTPS switches (Plex/JF/Emby) prefer TLS when the server supports it.
+      - Settings warns when localNetworkOnly is turned off while cleartext remains permitted.
+      Platform TLS trust anchors are unchanged; there is no trust-all / hostname bypass.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
+    <!-- Explicit localhost allow for the loopback stream proxies (documentation + future hardening). -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

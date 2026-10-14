@@ -1,0 +1,60 @@
+--- a/video/out/vo_mediacodec_embed.c
++++ b/video/out/vo_mediacodec_embed.c
+@@ -15,17 +15,20 @@
+  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <time.h>
+ #include <libavcodec/mediacodec.h>
+ #include <libavutil/hwcontext.h>
+ #include <libavutil/hwcontext_mediacodec.h>
+ 
+ #include "common/common.h"
++#include "osdep/timer.h"
+ #include "vo.h"
+ #include "video/mp_image.h"
+ #include "video/hwdec.h"
+ 
+ struct priv {
+     struct mp_image *next_image;
++    int64_t next_pts;
+     struct mp_hwdec_ctx hwctx;
+ };
+ 
+@@ -62,6 +65,9 @@
+     }
+ 
+     hwdec_devices_add(vo->hwdec_devs, &p->hwctx);
++    // Queue ahead so the Android display pipeline can meet the presentation
++    // deadline (notably the additional vendor Dolby Vision processing stage).
++    vo_set_queue_params(vo, 50000000, 1, 2);
+     return 0;
+ }
+ 
+@@ -72,7 +78,17 @@
+         return;
+ 
+     AVMediaCodecBuffer *buffer = (AVMediaCodecBuffer *)p->next_image->planes[3];
+-    av_mediacodec_release_buffer(buffer, 1);
++    const int64_t delay = p->next_pts - mp_time_ns();
++    struct timespec now;
++    if (p->next_pts > 0 && delay > 0 && delay < 1000000000 &&
++        clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
++        // mpv may use MONOTONIC_RAW plus its own epoch; Android timestamps use
++        // System.nanoTime/CLOCK_MONOTONIC. Convert the relative deadline only.
++        av_mediacodec_render_buffer_at_time(buffer,
++            (int64_t)now.tv_sec * 1000000000 + now.tv_nsec + delay);
++    } else {
++        av_mediacodec_release_buffer(buffer, 1);
++    }
+     mp_image_unrefp(&p->next_image);
+ }
+ 
+@@ -86,6 +102,7 @@
+ 
+     talloc_free(p->next_image);
+     p->next_image = mpi;
++    p->next_pts = frame->pts;
+     return VO_TRUE;
+ }
+ 

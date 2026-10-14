@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_connection_settings">TV connection settings</string>
+    <string name="companion_receiver_background">Allow paired devices to launch this TV app</string>
+    <string name="companion_receiver_ready">Ready for playback requests from paired devices</string>
+    <string name="companion_receiver_hint">Keep the receiver available in the background and after restarting the TV. Opening the app requires the display-over-other-apps permission.</string>
+    <string name="companion_launch_permission">Automatic app launch is unavailable. Enable the receiver and display-over-other-apps permission in the TV settings.</string>
+    <string name="companion_launch_timeout">The TV app did not become ready in time. Check automatic launch in the TV settings.</string>
+    <string name="companion_connection_vpn_toggle">Use internal WireGuard</string>
+    <string name="companion_connection_vpn_hint">Connect from this phone to the TV in the remote network. The TV does not need its own VPN. Pair locally first.</string>
+    <string name="companion_connection_vpn">Connecting through WireGuard…</string>
+    <string name="companion_connection_address">TV IPv4 address in the remote network</string>
+    <string name="companion_connection_port">TV port (empty: %1$d)</string>
+    <string name="companion_connection_vpn_permission">Allow VPN connection</string>
+    <string name="companion_connection_wake_toggle">Wake with Wake-on-LAN if needed</string>
+    <string name="companion_connection_wake_hint">Only on an explicit connection request. Requires device and network support; routed broadcasts must be allowed for VPN wake.</string>
+    <string name="companion_connection_mac">MAC address (automatic when available)</string>
+    <string name="companion_connection_detected_mac">Reload saved MAC address</string>
+    <string name="companion_connection_broadcast">Broadcast IPv4 address (empty: automatic)</string>
+    <string name="companion_connection_wake_port">WOL UDP port</string>
+    <string name="companion_connection_test_wake">Save and test wake</string>
+    <string name="companion_connection_test">Save and test connection</string>
+    <string name="companion_connection_save">Save connection</string>
+    <string name="companion_connection_invalid">Check the private IPv4 address, MAC address and ports.</string>
+    <string name="companion_connection_waking">Waking TV and waiting for the receiver…</string>
+    <string name="companion_wake_sent">Wake signal sent to %1$s.</string>
+    <string name="companion_wake_failed">Could not send wake packet to %1$s</string>
+    <string name="companion_connection_saved">Connection settings saved for %1$s</string>
+    <string name="companion_connection_failed">Connection settings or test failed for %1$s</string>
+    <string name="companion_connection_availability">The TV app must be open or its background receiver enabled. Find connection options under Settings → App &amp; data → Phone and TV.</string>
+</resources>

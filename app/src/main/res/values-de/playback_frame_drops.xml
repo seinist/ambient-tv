@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_frame_drop_compact">Drops %1$s · %2$s / 1 s</string>
+    <string name="player_frame_drop_compact_estimated">Drops %1$s · ≈%2$s / 1 s</string>
+    <string name="player_frame_drop_sample_percent">Verworfene Frames im Messfenster: %1$s der erwarteten Frames</string>
+    <string name="player_frame_drop_count">Verworfene Frames: %1$s</string>
+    <string name="player_frame_drop_ratio">Verworfen / gerendert (letzte Sekunde): %1$s</string>
+    <string name="player_frame_drop_ratio_estimated">Verworfen / gerendert (letzte Sekunde, geschätzt): %1$s</string>
+</resources>

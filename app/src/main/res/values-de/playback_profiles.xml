@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="playback_profile_actions">Wiedergabe-Presets</string>
+    <string name="playback_profile_load_resolution">Konfiguration für %1$s laden</string>
+    <string name="playback_profile_saved_resolution">Audio-/Videokonfiguration für diese Quellbreite gespeichert</string>
+    <string name="playback_profile_loaded">Gespeicherte Audio-/Videokonfiguration geladen</string>
+    <string name="playback_profile_failed">Konfiguration konnte nicht angewendet oder gespeichert werden</string>
+    <string name="playback_profile_unavailable">Verfügbar, sobald die Wiedergabe bereit ist</string>
+    <string name="playback_profile_title_unavailable">Änderungen für Live-TV, Trailer und geteilte Links gelten nur während dieser Wiedergabe. Gemeinsame Vorgaben können ausdrücklich gespeichert werden.</string>
+    <string name="playback_profile_resolution_unavailable">Breitenpreset nicht verfügbar: Quellbreite noch unbekannt oder Trailer</string>
+    <string name="playback_profile_save_all">Für alle Videos speichern</string>
+    <string name="playback_profile_saved_all">Audio-/Videokonfiguration für alle Videos gespeichert</string>
+    <string name="playback_profile_save_resolution_scope">Für alle Videos dieser Breite speichern</string>
+    <string name="playback_profile_resolution_scope">Quellbreite: %1$s. * steht für beliebige Höhe. Gilt auch für Live-TV, solange dort kein eigenes Preset dieser Breite gespeichert ist.</string>
+    <string name="playback_profile_load_all">Konfiguration für alle Videos laden</string>
+    <string name="playback_profile_summary">Audio, Video und Renderer</string>
+    <string name="playback_profile_includes">Änderungen an Audio, Renderer, Videoausgabe, Decoder, Bild und Filtern werden automatisch für das aktuelle Video gemerkt. Mit den Speicheraktionen werden sie als gemeinsame Vorgaben übernommen.</string>
+    <string name="playback_profile_reset_all">Vorgaben für alle Videos zurücksetzen</string>
+    <string name="playback_profile_reset_resolution">Preset dieser Breite zurücksetzen</string>
+    <string name="playback_profile_reset_title">Änderungen dieses Videos zurücksetzen</string>
+    <string name="playback_profile_reset_scope_hint">Zurücksetzen betrifft nur die gewählte Ebene. Live-TV nutzt ohne eigenes Breitenpreset das allgemeine Preset derselben Breite, danach globale Vorgaben. Automatisch gemerkte Videoänderungen haben Vorrang.</string>
+    <string name="playback_profile_auto_title">Änderungen werden automatisch für dieses Video gespeichert.</string>
+</resources>

@@ -1,0 +1,5 @@
+<resources>
+    <string name="mpv_unresponsive_title">Player is not responding</string>
+    <string name="mpv_unresponsive_body">Video processing is taking longer than expected. You can wait or close playback. The player will release its resources when it responds again.</string>
+    <string name="mpv_unresponsive_wait">Wait</string>
+</resources>

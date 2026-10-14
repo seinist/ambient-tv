@@ -1,0 +1,16 @@
+diff --git a/modules/video_filter/deinterlace/deinterlace.c b/modules/video_filter/deinterlace/deinterlace.c
+--- a/modules/video_filter/deinterlace/deinterlace.c
++++ b/modules/video_filter/deinterlace/deinterlace.c
+@@ -452,7 +452,11 @@ void Flush( filter_t *p_filter )
+     filter_sys_t *p_sys = p_filter->p_sys;
+     FlushDeinterlacing(&p_sys->context);
+ 
+-    IVTCClearState( p_filter );
++    /* IVTC and Phosphor share a union. Resetting IVTC for other methods
++     * corrupts Phosphor's chroma mode and dimmer when seeking/flushing. */
++    if( !p_sys->context.settings.b_double_rate &&
++        p_sys->context.pf_render_single_pic == RenderIVTC )
++        IVTCClearState( p_filter );
+ }
+ 
+ /*****************************************************************************

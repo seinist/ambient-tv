@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sync_title">Geräte synchronisieren</string>
+    <string name="sync_to_tv_hint">An ein verknüpftes Gerät senden. Ambient TV muss auf beiden Geräten geöffnet sein.</string>
+    <string name="sync_to_phone_hint">An ein verknüpftes Handy oder einen anderen TV senden. Ambient TV muss auf beiden Geräten geöffnet sein. Über VPN zuerst vom Handy aus verbinden.</string>
+    <string name="sync_no_devices">Noch keine Geräte verknüpft. Verknüpfe zuerst die beiden Geräte.</string>
+    <string name="sync_accounts">Accounts synchronisieren</string>
+    <string name="sync_all">Alles synchronisieren · Accounts + Einstellungen</string>
+    <string name="sync_sounds">Nur Menütöne</string>
+    <string name="sync_scope_hint">Überträgt die ausgewählten Accounts bzw. Netzwerkquellen. Bei „Alles“ kommen übertragbare Einstellungen inklusive Menütöne hinzu. Zugänge nur mit aktivierter Option; gerätespezifische Einstellungen nur nach Auswahl am Ziel. SmartTube- und Spotify-Anmeldungen sowie WireGuard-Schlüssel zählen ebenfalls als Zugänge. WireGuard wird nur übertragen, wenn ausgewählt: Derselbe Schlüssel auf zwei Geräten gleichzeitig trennt beide. Lokale Dateien, VPN-Routing pro Quelle und Kopplungen bleiben lokal.</string>
+    <string name="sync_select_all">Alle auswählen</string>
+    <string name="sync_select_none">Alle abwählen</string>
+    <string name="sync_save_first">Speichere zuerst deine offenen Einstellungen. Übertragen wird der gespeicherte Stand.</string>
+    <string name="sync_waiting">Warte auf Bestätigung am Zielgerät.</string>
+    <string name="sync_another">Weitere Synchronisierung</string>
+</resources>

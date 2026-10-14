@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_other_network">TV unreachable: this phone is not on the same network. Join the TV\'s Wi-Fi or enable VPN access under Availability and network.</string>
+    <string name="companion_searching">Looking for TVs on this Wi-Fi …</string>
+    <string name="companion_search_empty">No TV found. Open Ambient TV on the TV, turn on Settings → Phone &amp; TV → Allow connections on this TV, and keep both devices on the same Wi-Fi.</string>
+    <string name="companion_needs_local_network">Allow access to the home network so the phone can find and reach the TV.</string>
+    <string name="companion_section_paired">Linked TVs</string>
+    <string name="companion_section_found">New TVs on this Wi-Fi</string>
+    <string name="companion_no_paired_tv">No TV linked yet.</string>
+    <string name="companion_paired_reachable">%1$s · On this Wi-Fi</string>
+    <string name="companion_paired_missing">%1$s · Not found</string>
+    <string name="companion_found_hint">To link a TV, enter the code it shows under Settings → Phone &amp; TV → Pair device.</string>
+    <string name="companion_pair_qr_or_link">Link with QR code or link</string>
+</resources>

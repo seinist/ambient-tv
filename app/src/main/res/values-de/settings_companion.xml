@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_companion_hint">Geräte koppeln, TV steuern, Accounts und Einstellungen übertragen sowie Verbindungen einrichten.</string>
+    <string name="settings_companion_devices">Geräte und Fernsteuerung</string>
+    <string name="settings_companion_devices_hint">Öffne Ambient TV auf beiden Geräten im selben Netzwerk. Kopple sie einmal, um Wiedergabe und Fernsteuerung zu nutzen. Wähle ein gekoppeltes Gerät zum Verbinden.</string>
+    <string name="settings_companion_receiver">Verbindungen auf diesem TV erlauben</string>
+    <string name="settings_companion_receiver_hint">Gekoppelte Geräte können sich verbinden, solange Ambient TV geöffnet ist.</string>
+    <string name="settings_companion_transfer">Accounts und Einstellungen übertragen</string>
+    <string name="settings_companion_transfer_hint">Accounts, Einstellungen oder Menütöne senden; das Zielgerät bestätigt die Übernahme.</string>
+    <string name="settings_companion_network">Erreichbarkeit und Netzwerk</string>
+    <string name="settings_companion_network_hint">TV im Hintergrund erreichbar halten sowie VPN, Port und Wake-on-LAN je Gerät einrichten.</string>
+    <string name="settings_companion_select_device">Gerätespezifische Verbindung: Wähle ein gekoppeltes Gerät. Änderungen hier mit „Verbindung speichern“ übernehmen.</string>
+</resources>

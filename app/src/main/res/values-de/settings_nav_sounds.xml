@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_nav_sounds_title">Menütöne</string>
+    <string name="settings_nav_sounds_page_hint">Menütöne, Lautstärke und Klang-Editor</string>
+    <string name="settings_nav_sounds_draft_hint">Änderungen werden mit den Einstellungen gespeichert. Vorhören ist auch bei ausgeschalteten Menütönen möglich.</string>
+</resources>

@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name=".ui.catalog.AppearanceSettingsActivity" android:exported="true" android:label="Ambient TV · Farbeinstellungen" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density" />
+        <!-- ADB-only (am start); no launcher entry, so debug builds show a single app icon. -->
+        <activity android:name=".ui.catalog.AccentPreviewActivity" android:exported="true" android:label="Ambient TV · RGB-Entwurf" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density" />
+        <!-- ADB-only component catalogue. This activity does not exist in release builds. -->
+        <activity android:name=".ui.catalog.UiCatalogActivity" android:exported="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density" />
+        <activity android:name=".ui.player.PlaybackAuditActivity" android:exported="false" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density" />
+        <activity android:name=".livetv.LiveTvAuditActivity" android:exported="false" />
+    </application>
+</manifest>

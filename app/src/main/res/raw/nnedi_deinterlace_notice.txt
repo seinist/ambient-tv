@@ -1,0 +1,9 @@
+NNEDI3 weights for the FFmpeg NNEDI deinterlacer
+
+Source: https://github.com/dubhater/vapoursynth-nnedi3
+Revision: 82993ff21cf569776fc1a7e5bb60235c00bbeea3
+File: src/nnedi3_weights.bin
+Size: 13574928 bytes
+SHA-256: 27f382430435bb7613deb1c52f3c79c300c9869812cfe29079432a9c82251d42
+License: GPLv2; see bundled nnedi_deinterlace_gpl2.txt and upstream sources.
+This model is distinct from the app's NNEDI3 GLSL upscaling shaders.

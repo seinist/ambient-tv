@@ -1,0 +1,2 @@
+Ambient TV film grain (medium) shader. Written for Ambient TV and released under CC0 1.0 (public domain dedication).
+No third-party code.

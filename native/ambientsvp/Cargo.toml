@@ -1,0 +1,26 @@
+[package]
+name = "ambientsvp"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["vulkan"]
+vulkan = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+svpflow1 = { git = "https://github.com/Z1xus/open-svpflow", rev = "deadbad61cab699c2779f18b0fecd81a3a59e938" }
+svpflow-core = { git = "https://github.com/Z1xus/open-svpflow", rev = "deadbad61cab699c2779f18b0fecd81a3a59e938" }
+svpflow-wasm = { git = "https://github.com/Z1xus/open-svpflow", rev = "deadbad61cab699c2779f18b0fecd81a3a59e938" }
+rayon = "1.12"
+wgpu = { version = "=24.0.5", default-features = false, features = ["wgsl", "vulkan-portability"], optional = true }
+pollster = { version = "0.4", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SmartTube Stable colored logo derived from yuliskov/SmartTube app icon; Stable is red. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path android:fillColor="#FFFF0000" android:pathData="M4.40,1.20 H19.60 A3.40,3.40 0 0 1 23.00,4.60 V13.40 A3.40,3.40 0 0 1 19.60,16.80 H4.40 A3.40,3.40 0 0 1 1.00,13.40 V4.60 A3.40,3.40 0 0 1 4.40,1.20 Z" />
+    <path android:fillColor="#FFFF0000" android:pathData="M6.40,18.50 H17.60 A1.20,1.20 0 0 1 18.80,19.70 V20.10 A1.20,1.20 0 0 1 17.60,21.30 H6.40 A1.20,1.20 0 0 1 5.20,20.10 V19.70 A1.20,1.20 0 0 1 6.40,18.50 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M11.76,3.67 L11.07,3.90 L10.45,4.37 L10.03,4.98 L9.76,5.68 L9.69,6.14 L9.69,6.91 L9.90,7.76 L10.38,8.46 L10.93,9.00 L12.52,10.08 L13.00,10.62 L13.14,11.01 L13.14,11.70 L12.93,12.32 L12.86,12.55 L12.52,12.71 L12.10,12.86 L11.41,12.86 L10.38,12.55 L9.90,12.32 L9.76,12.78 L9.69,13.56 L10.24,13.94 L10.93,14.17 L11.97,14.25 L12.72,14.10 L13.41,13.71 L13.97,13.09 L14.31,12.32 L14.45,11.47 L14.38,10.54 L14.10,9.85 L13.69,9.23 L12.79,8.54 L11.76,7.92 L11.21,7.38 L11.00,6.76 L11.07,5.99 L11.48,5.37 L11.90,5.14 L13.07,5.14 L13.55,5.37 L14.03,4.37 L13.97,4.06 L13.21,3.75 L12.79,3.67 Z" />
+</vector>

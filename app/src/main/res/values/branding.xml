@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Platform vectors derived from SVG masters. Compose loads the SVG assets directly;
+         only currentColor parts follow the accent. Launcher/banner use the default amber. -->
+    <item name="brand_mark" type="drawable">@drawable/ic_ambient_tv_lg</item>
+    <item name="brand_wordmark" type="drawable">@drawable/ic_brand_wordmark</item>
+    <item name="brand_banner" type="drawable">@drawable/app_banner</item>
+    <item name="brand_launcher" type="mipmap">@mipmap/ic_launcher</item>
+</resources>

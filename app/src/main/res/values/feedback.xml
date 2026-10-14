@@ -1,0 +1,18 @@
+<resources>
+    <string name="feedback_access_denied">Access denied. Check your account and permissions.</string>
+    <string name="feedback_connection_hint">Check the server and network connection, then try again.</string>
+    <string name="feedback_retry_hint">The operation could not be completed. Please try again.</string>
+    <string name="feedback_recording_failed">Recording action failed</string>
+    <string name="feedback_live_load_failed">Live TV could not be loaded</string>
+    <string name="feedback_live_partial">Some Live TV data is unavailable</string>
+    <string name="feedback_live_partial_hint">Available channels and recordings remain accessible. Reload to try fetching the missing data again.</string>
+    <string name="feedback_source_removed">This server is no longer configured. Select another server.</string>
+    <string name="feedback_folder_added">Folder added</string>
+    <string name="feedback_folder_updated">Folder updated</string>
+    <string name="feedback_source_removed_success">Source removed</string>
+    <string name="feedback_server_added">Server added</string>
+    <string name="feedback_server_removed">Server removed</string>
+    <string name="feedback_settings_save_failed">Settings could not be saved</string>
+    <string name="feedback_import_refresh_warning">Settings imported. Some services could not be refreshed. Reopen the app to apply all changes.</string>
+    <string name="feedback_playback_command_failed">Playback command failed</string>
+</resources>

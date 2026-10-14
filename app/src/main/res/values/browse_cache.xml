@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="browse_offline">Source unavailable · showing saved content</string>
+    <string name="browse_playback_unavailable">This source is unavailable. Playback cannot start.</string>
+    <string name="browse_item_removed">This item is no longer available.</string>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="live_profiles_title">Live TV · Audio and video by width</string>
+    <string name="live_profiles_hint">Separate defaults for live channels by source width; applied on the next channel start.</string>
+    <string name="live_profiles_resolution">Source width · any height</string>
+    <string name="live_profiles_section">Settings</string>
+    <string name="live_profiles_edit_renderer">Renderer settings to edit</string>
+    <string name="live_profiles_inherited">No Live TV preset: uses the regular preset for this width, otherwise global defaults.</string>
+    <string name="live_profiles_active">A separate Live TV preset is saved for this width.</string>
+    <string name="live_profiles_reset">Use the regular preset for this width</string>
+    <string name="live_profiles_save_scope">Save for Live TV · %1$s</string>
+    <string name="live_profiles_load_scope">Load Live TV · %1$s</string>
+    <string name="live_profiles_scope_hint">Applies to live channels with source width %1$s. * means any height. Takes priority over the regular preset for this width.</string>
+</resources>

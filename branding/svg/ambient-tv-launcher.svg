@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108" role="img" aria-label="Ambient TV launcher icon">
+  <title>Ambient TV launcher icon</title>
+  <rect x="0" y="0" width="108" height="108" fill="#101115" />
+  <g transform="translate(24 24) scale(1.25)">
+    <g id="brand-icon">
+      <g fill="none" stroke="#F0B441" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10 8H38A4 4 0 0 1 42 12V28A4 4 0 0 1 38 32H10A4 4 0 0 1 6 28V12A4 4 0 0 1 10 8Z" stroke-width="3.2" />
+        <path d="M15 28L24 13L33 28" stroke-width="3.6" />
+        <path d="M24 34.5V37M16 40H32" stroke-width="3.2" />
+      </g>
+    </g>
+  </g>
+</svg>

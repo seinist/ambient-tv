@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AmbientTv" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0A0C0F</item>
+        <item name="android:colorBackground">#0A0C0F</item>
+        <item name="android:statusBarColor">#0A0C0F</item>
+        <item name="android:navigationBarColor">#0A0C0F</item>
+        <!-- Vector, not the adaptive mipmap: the splash icon mask upscales an adaptive snapshot. -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#101115</item>
+        <item name="android:windowSplashScreenBackground">#0A0C0F</item>
+        <item name="android:defaultFocusHighlightEnabled">false</item>
+    </style>
+</resources>

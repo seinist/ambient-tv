@@ -1,0 +1,14 @@
+<resources>
+    <string name="audio_local_fallback">Audio fallback</string>
+    <string name="audio_fallback_pcm">PCM only</string>
+    <string name="audio_local_fallback_hint">Converts unsupported audio automatically; AC3 keeps 5.1 but drops Atmos height channels.</string>
+    <string name="player_local_audio_failed">Audio cannot be played locally with the available players and this video format. Try another audio track or change the audio output. Server transcoding was not requested.</string>
+    <string name="player_video_compatibility_failed">The video could not be played locally and the server compatibility stream failed or is unavailable.</string>
+    <string name="notice_audio_ac3_conversion">The media server converts the selected audio track to AC3; video remains eligible for stream copy.</string>
+    <string name="notice_audio_local_ac3_conversion">Converting audio to AC3 on this device for the current output.</string>
+    <string name="notice_audio_aac_conversion">AC3 is unavailable or failed. Trying a compatible AAC audio stream.</string>
+    <string name="notice_audio_conversion_failed">Audio conversion failed. Try another audio track or retry; AAC is offered when available.</string>
+    <string name="player_audio_ac3_failed">AC3 audio could not be played. Try AAC or select another audio track.</string>
+    <string name="player_audio_conversion_failed">The compatible audio stream could not be created. Try another audio track or retry.</string>
+    <string name="player_try_aac">Try AAC</string>
+</resources>

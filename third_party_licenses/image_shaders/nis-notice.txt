@@ -1,0 +1,5 @@
+NVIDIA Image Scaling v1.0.2 NVScaler/NVSharpen MPV port.
+Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+MPV port by agyild.
+Source revision: 05f00864228871ffd157daa9beb2db8fa7412cfa
+License: MIT. Full license text: NVIDIA-NIS-MIT.txt
