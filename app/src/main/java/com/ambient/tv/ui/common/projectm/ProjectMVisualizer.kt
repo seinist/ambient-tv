@@ -275,22 +275,21 @@ fun ProjectMVisualizer(
             }
         }
 
-                if (availablePresets.isEmpty()) {
+        if (availablePresets.isEmpty()) {
             Text(
                 stringResource(R.string.projectm_no_presets),
                 modifier = Modifier.align(Alignment.Center),
                 color = Color.White.copy(alpha = 0.75f),
                 style = MaterialTheme.typography.titleMedium,
             )
-        } else if (showControls) {
-            current?.let {
-                Text(
-                    it.displayName,
-                    color = Color.White.copy(alpha = 0.75f),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 30.dp),
-                )
-            }
+        } else {
+            ProjectMPresetNameOverlay(
+                preset = current,
+                enabled = browser.showPresetName,
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .padding(horizontal = 24.dp)
+                    .padding(top = if (showControls) 80.dp else 24.dp),
+            )
         }
     }
 }

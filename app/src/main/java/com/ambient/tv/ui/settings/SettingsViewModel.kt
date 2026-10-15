@@ -473,6 +473,7 @@ class SettingsViewModel @Inject constructor(
         projectmQualityKey = appPreferences.projectmQualityKey,
         projectmResolutionKey = appPreferences.projectmResolutionKey,
         projectmHdr4kAllowed = appPreferences.projectmHdr4kAllowed,
+        projectmShowPresetName = appPreferences.projectmShowPresetName,
         projectmPresetCategoryKey = appPreferences.projectmPresetCategoryKey,
         bigSeekJumpSeconds = appPreferences.bigSeekJumpSeconds,
         creditsSkipMode = appPreferences.creditsSkipMode,
@@ -2064,6 +2065,7 @@ class SettingsViewModel @Inject constructor(
     fun onProjectmResolutionChanged(value: String) = _uiState.update {
         it.copy(projectmResolutionKey = com.ambient.tv.ui.common.projectm.ProjectMRenderResolution.normalize(value))
     }
+    fun onProjectmShowPresetNameChanged(value: Boolean) = _uiState.update { it.copy(projectmShowPresetName = value) }
     fun onProjectmHdr4kChanged(value: Boolean) = _uiState.update { it.copy(projectmHdr4kAllowed = value) }
     fun onProjectmCategoryChanged(value: String) = _uiState.update { it.copy(projectmPresetCategoryKey = value) }
     fun onBigSeekJumpChanged(value: Int) = _uiState.update { it.copy(bigSeekJumpSeconds = value.coerceIn(10, 300)) }
@@ -2466,6 +2468,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.projectmQualityKey = state.projectmQualityKey
         appPreferences.projectmResolutionKey = state.projectmResolutionKey
         appPreferences.projectmHdr4kAllowed = state.projectmHdr4kAllowed
+        appPreferences.projectmShowPresetName = state.projectmShowPresetName
         appPreferences.projectmPresetCategoryKey = state.projectmPresetCategoryKey
         appPreferences.bigSeekJumpSeconds = state.bigSeekJumpSeconds
         appPreferences.creditsSkipMode = state.creditsSkipMode

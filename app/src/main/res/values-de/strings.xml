@@ -621,6 +621,8 @@
     <string name="settings_projectm_unavailable">projectM ist in dieser App-Version nicht verfügbar. Wähle eine andere Visualisierung.</string>
     <string name="settings_projectm_title">MilkDrop-Presets</string>
     <string name="settings_projectm_hint">Wechselt automatisch durch die gebündelten Presets. Während Audio läuft, können Presets gewechselt, gesperrt und favorisiert werden.</string>
+    <string name="settings_projectm_show_preset_name">Preset-Namen anzeigen</string>
+    <string name="settings_projectm_show_preset_name_hint">Blendet den Namen bei jedem Preset-Wechsel für 2 Sekunden ein.</string>
     <string name="settings_projectm_interval">Preset-Wechsel</string>
     <string name="settings_projectm_transition">Übergang</string>
     <string name="settings_projectm_quality">Detailstufe</string>

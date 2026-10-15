@@ -32,6 +32,13 @@ class ProjectMBrowser(
             "all"
         },
     )
+    private var showPresetNameState by mutableStateOf(preferences.projectmShowPresetName)
+    var showPresetName: Boolean
+        get() = showPresetNameState
+        set(value) {
+            showPresetNameState = value
+            preferences.projectmShowPresetName = value
+        }
     var intervalSeconds by mutableIntStateOf(preferences.projectmPresetIntervalSeconds)
     var transitionSeconds by mutableIntStateOf(preferences.projectmTransitionSeconds)
     var qualityKey by mutableStateOf(preferences.projectmQualityKey)

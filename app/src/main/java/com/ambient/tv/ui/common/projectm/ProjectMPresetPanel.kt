@@ -111,6 +111,23 @@ fun ProjectMPresetPanel(
             }
         }
         if (settingsView) {
+            item("preset_name") {
+                ProjectMOptionRow(
+                    stringResource(R.string.settings_projectm_show_preset_name),
+                    stringResource(R.string.settings_projectm_show_preset_name_hint),
+                ) {
+                    TvChip(
+                        text = stringResource(R.string.player_off),
+                        selected = !browser.showPresetName,
+                        onClick = { browser.showPresetName = false },
+                    )
+                    TvChip(
+                        text = stringResource(R.string.player_on),
+                        selected = browser.showPresetName,
+                        onClick = { browser.showPresetName = true },
+                    )
+                }
+            }
             item("interval") {
                 ProjectMOptionRow(stringResource(R.string.settings_projectm_interval)) {
                     listOf(15, 30, 60, 120, 300).forEach { seconds ->

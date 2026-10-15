@@ -1140,6 +1140,12 @@ fun SettingsScreen(
                             if (uiState.audioVisualizerModeKey == "projectm") {
                                 item {
                                     SettingsGroup(title = stringResource(R.string.settings_projectm_title), subtitle = stringResource(R.string.settings_projectm_hint)) {
+                                        TvSettingRow(
+                                            title = stringResource(R.string.settings_projectm_show_preset_name),
+                                            body = stringResource(R.string.settings_projectm_show_preset_name_hint),
+                                            checked = uiState.projectmShowPresetName,
+                                            onCheckedChange = viewModel::onProjectmShowPresetNameChanged,
+                                        )
                                         Text(stringResource(R.string.settings_projectm_interval), style = MaterialTheme.typography.titleSmall)
                                         SettingsSelect(options = buildList {
                                             listOf(15, 30, 60, 120, 300).forEach { seconds ->
