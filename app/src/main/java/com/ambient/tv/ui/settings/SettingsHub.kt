@@ -184,10 +184,6 @@ internal fun SettingsHub(
         val next = navState().pop()
         if (next == null) requestExit(onBack) else applyNav(next)
     }
-    // The index (no page, no search) is the Settings root: Back chip, Left and Back open the global menu.
-    fun backOrMenu() {
-        if (linkedPages.isEmpty() && page == null && !search) requestExit(onFocusMenu) else back()
-    }
     fun dismissExitDialog() {
         pendingExit = null
         // Keep editing returns to the control that triggered the exit, not to the Back chip.
@@ -416,8 +412,8 @@ internal fun SettingsHub(
                 }
                 TvChip(stringResource(R.string.action_search), modifier = Modifier.focusRequester(searchButtonFocus).onFocusChanged { if (it.isFocused) lastRegionFocus = searchButtonFocus }
                     .onPreviewKeyEvent { event ->
-                        // Left from the leftmost header chip goes back, as the Back chip used to.
-                        if (event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) { backOrMenu(); true } else false
+                        // Left from the leftmost header chip stays put; only Back leaves Settings.
+                        event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                     },
                     icon = Icons.Filled.Search, iconOnly = true) { linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false }
                 if (area == SettingsArea.SYSTEMS && page != SettingsCategory.NOTIFICATIONS) {
@@ -480,8 +476,8 @@ internal fun SettingsHub(
                                     }
                                 }
                                 .onPreviewKeyEvent { event ->
-                                // Vertical wrapping belongs to the list shell. Right still enters
-                                // the selected area; Left still opens the main navigation.
+                                // Vertical wrapping belongs to the list shell. Right enters the
+                                // selected area; Left stays put (only Back opens the main navigation).
                                 if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) {
                                     if (event.nativeKeyEvent.repeatCount == 0) uiSounds?.playSelect()
                                     if (area != target) selectArea(target)
@@ -496,10 +492,7 @@ internal fun SettingsHub(
                                     val moved = runCatching { searchButtonFocus.requestFocus() }.getOrDefault(false)
                                     if (moved) uiSounds?.playFocus()
                                     moved
-                                } else if (event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown) {
-                                    requestExit(onFocusMenu)
-                                    true
-                                } else false
+                                } else event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                             }, onClick = {
                                 selectArea(target)
                                 scope.launch {
@@ -589,26 +582,21 @@ internal fun SettingsHub(
                         }
                         if (event.key != Key.DirectionLeft) return@onKeyEvent false
                         if (page == null) return@onKeyEvent false
-                        val leavePage: suspend () -> Unit = {
-                            parking = true
-                            withFrameNanos { }
-                            runCatching { parkFocus.requestFocus() }
-                            back()
-                            if (page == null && !focusLastPage()) requestPanelContentFocus()
-                            parking = false
-                        }
+                        // On a page, Left only moves within the focused row; it never leaves the
+                        // page (Back does that). onExit already blocks leaving the panel.
                         val before = focusedRect.rect()
+                        runCatching { contentFocus.saveFocusedChild() }
                         if (focusManager.moveFocus(FocusDirection.Left)) {
                             // Geometric search also counts a narrower control in a lower row as "left"
                             // of a full-width row. Only a target sharing the row is a real move.
                             scope.launch {
                                 withFrameNanos { }
                                 val after = focusedRect.rect()
-                                if (before != null && after != null && (after.top >= before.bottom || after.bottom <= before.top)) leavePage()
+                                if (before != null && after != null && (after.top >= before.bottom || after.bottom <= before.top)) {
+                                    runCatching { contentFocus.restoreFocusedChild() }
+                                }
                             }
-                            return@onKeyEvent true
                         }
-                        scope.launch { leavePage() }
                         true
                     }
                     .then(focusedRect.modifier)
