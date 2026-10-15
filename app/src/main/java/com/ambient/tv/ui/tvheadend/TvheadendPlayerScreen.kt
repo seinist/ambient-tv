@@ -641,6 +641,7 @@ private fun TvheadendPlaybackSurface(
 
     val projectMBrowser = rememberProjectMBrowser(projectmPresetCategoryKey)
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
         // Timeshift owns Rewind/Forward while it buffers a live channel; media keys act with a panel open too.
         if (source.isLive && handleTimeshiftMediaKey(event, positionMs, seekJumpMs) { controlsVisible = true }) return@osdKeys true
@@ -657,6 +658,7 @@ private fun TvheadendPlaybackSurface(
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(player.currentPosition, direction)
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
                 override fun play() { player.play() }

@@ -27,12 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -221,7 +215,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 onInteraction = {},
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
-                modifier = Modifier.focusRequester(seekFocusRequester).focusProperties { down = playFocusRequester },
+                modifier = Modifier.focusRequester(seekFocusRequester),
                 timelineContext = { previewPosition ->
                     if (nowEvent != null && liveEventDurationMs > 0L) {
                         val previewWallMs = oldest + previewPosition
@@ -262,13 +256,6 @@ fun BoxScope.TvhReferencePlayerChrome(
         }
 
         PlayerControlBar(
-            modifier = Modifier.onPreviewKeyEvent { event ->
-                if ((!shiftable && (source.isLive || durationMs <= 0L)) || event.key != Key.DirectionUp) false
-                else {
-                    if (event.type == KeyEventType.KeyDown) runCatching { seekFocusRequester.requestFocus() }
-                    true
-                }
-            },
             leftContent = {
                 val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
                 if (source.isLive) {

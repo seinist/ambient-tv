@@ -793,6 +793,7 @@ private fun YouTubeMedia3Playback(
     }
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -802,6 +803,7 @@ private fun YouTubeMedia3Playback(
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(position, direction)
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
                 override fun play() { player.play() }
@@ -1092,6 +1094,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are VLC's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -1101,6 +1104,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.player.play() }
@@ -1346,6 +1350,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are MPV's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -1355,6 +1360,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }

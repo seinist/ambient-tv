@@ -38,6 +38,8 @@ internal interface OsdKeyTarget {
     fun stop()
     /** Relative seek; with [revealOsd] false the seek bar is shown instead of the OSD. */
     fun seek(deltaMs: Long, revealOsd: Boolean)
+    /** Null means no chapters; zero means the chapter boundary was reached. */
+    fun chapterSeekDelta(direction: Int): Long? = null
     fun showOsd()
     fun hideSeekFeedback()
     /** Back to the start of the title. */
@@ -68,8 +70,8 @@ private val PASS_KEYS = setOf(
  * key was used. Back and volume are never handled here (see [PASS_KEYS]).
  *
  * Rules: media keys always act, also with a panel open; every other key goes to an open panel.
- * With the OSD hidden, OK opens it (or toggles playback right after a jump), Left/Right and
- * Up/Down jump (Up/Down change channels in live TV), and any other key opens the OSD. With the
+ * With the OSD hidden, OK opens it, Left/Right seek, and Up/Down change chapters or make a
+ * large jump (change channels in live TV). Any other key opens the OSD. With the
  * OSD visible, navigation keys move the focus inside it.
  */
 internal fun handlePlayerOsdKey(
@@ -86,12 +88,8 @@ internal fun handlePlayerOsdKey(
     when (key) {
         in CONFIRM_KEYS -> {
             if (state.osdVisible) return false
-            if (state.seekFeedbackVisible) {
-                val wasPlaying = target.isPlaying()
-                target.togglePlayback()
-                target.hideSeekFeedback()
-                if (wasPlaying) target.showOsd()
-            } else target.showOsd()
+            if (state.seekFeedbackVisible) target.hideSeekFeedback()
+            target.showOsd()
             return true
         }
         Key.DirectionLeft, Key.DirectionRight -> {
@@ -107,7 +105,10 @@ internal fun handlePlayerOsdKey(
         Key.DirectionUp, Key.DirectionDown -> {
             val delta = if (key == Key.DirectionUp) 1 else -1
             if (state.osdVisible && !(live && state.zapOsd)) return false
-            if (live) target.zap(delta) else target.seek(delta * steps.jumpMs, revealOsd = false)
+            if (live) target.zap(delta) else {
+                val jump = (if (!music) target.chapterSeekDelta(delta) else null) ?: (delta * steps.jumpMs)
+                if (jump != 0L) target.seek(jump, revealOsd = false)
+            }
             return true
         }
         Key.MediaPlayPause, Key.Spacebar -> { target.togglePlayback(); target.showOsd(); return true }

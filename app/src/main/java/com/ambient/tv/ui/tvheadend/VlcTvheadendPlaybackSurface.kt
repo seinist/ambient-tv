@@ -302,6 +302,7 @@ internal fun VlcTvheadendPlaybackSurface(
 
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
         // Timeshift owns Rewind/Forward while it buffers a live channel; media keys act with a panel open too.
         if (source.isLive && handleTimeshiftMediaKey(event, snapshot.positionMs, seekJumpMs) { controlsVisible = true }) return@osdKeys true
@@ -318,6 +319,7 @@ internal fun VlcTvheadendPlaybackSurface(
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(controller.status().positionMs, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.player.play() }

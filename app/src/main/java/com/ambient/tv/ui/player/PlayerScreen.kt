@@ -589,6 +589,7 @@ private fun PlayerContent(
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     val projectMBrowser = rememberProjectMBrowser(state.projectmPresetCategoryKey)
     // One remote handling for the engine and, while the focus is in the panel above it, the panel host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         val restartTitle = { seek.seekTo(0L) }
@@ -597,7 +598,8 @@ private fun PlayerContent(
             OsdKeyState(OsdContent.VIDEO, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekFeedbackVisible),
             OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                // Buffering counts as playing, so OK after a jump pauses instead of resuming.
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(seek.positionMs, direction)
+                // Buffering counts as playing for the explicit play/pause action.
                 override fun isPlaying() = media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)
                 override fun togglePlayback() {
                     if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) exoPlayer.pause() else exoPlayer.play()
@@ -998,21 +1000,26 @@ internal fun TvPlayerSeekBar(
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
 ) {
+    val seekable = interactive && durationMs > 0L
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val controlFocus = LocalPlayerControlFocus.current
     val timelineFocus = remember { FocusRequester() }
     val timelineOwner = remember { Any() }
-    androidx.compose.runtime.DisposableEffect(controlFocus, interactive) {
-        if (interactive) controlFocus?.register("seek-bar", timelineFocus, timelineOwner)
-        onDispose { if (interactive) controlFocus?.unregister("seek-bar", timelineOwner) }
+    androidx.compose.runtime.DisposableEffect(controlFocus, seekable) {
+        if (seekable) controlFocus?.register("seek-bar", timelineFocus, timelineOwner)
+        onDispose { if (seekable) controlFocus?.unregister("seek-bar", timelineOwner) }
     }
-    // Seek bar is full width; pin Down to play/pause.
-    val downToPlayPause = if (interactive && playPauseFocus != null) {
-        Modifier.focusProperties { down = playPauseFocus }
+    // Resolve on each focus search so moving onto the timeline does not lose the originating button.
+    val verticalReturn = if (seekable && playPauseFocus != null) {
+        Modifier.focusProperties {
+            val button = controlFocus?.buttonTarget(playPauseFocus) ?: playPauseFocus
+            up = button
+            down = button
+        }
     } else {
         Modifier
     }
-    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && interactive) {
+    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && seekable) {
         com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier)
         return
     }
@@ -1040,7 +1047,7 @@ internal fun TvPlayerSeekBar(
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
     val highlighted = focused || pointerTarget != null || !interactive
 
-    val interactionModifier = if (interactive) {
+    val interactionModifier = if (seekable) {
         Modifier
             .focusRequester(timelineFocus)
             .onFocusChanged {
@@ -1129,7 +1136,7 @@ internal fun TvPlayerSeekBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .then(downToPlayPause)
+            .then(verticalReturn)
             .then(interactionModifier),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -1178,7 +1185,7 @@ internal fun TvPlayerSeekBar(
         }
     }
 
-    LaunchedEffect(focused, interactive) { if (interactive && focused) onInteraction() }
+    LaunchedEffect(focused, interactive) { if (seekable && focused) onInteraction() }
 }
 
 @Composable

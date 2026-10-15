@@ -65,6 +65,27 @@ class PlaybackSeekStateTest {
         assertEquals(listOf(110_000L, 120_000L), commits)
     }
 
+    @Test fun chapterStepsUsePendingAbsoluteTimelineAcrossTranscodeOffset() {
+        val timeline = com.ambient.tv.domain.model.PlaybackTimeline(listOf(
+            com.ambient.tv.domain.model.VideoChapter(0),
+            com.ambient.tv.domain.model.VideoChapter(120_000),
+            com.ambient.tv.domain.model.VideoChapter(480_000),
+            com.ambient.tv.domain.model.VideoChapter(600_000),
+        ))
+        // Engine time is 20s with a 480s transcode offset; seek state uses original media time.
+        val seek = seekState(500_000)
+        seek.seekBy(checkNotNull(timeline.chapterStepDelta(seek.positionMs, 1)), 900_000)
+        assertEquals(600_000L, seek.positionMs)
+        now = 40
+        seek.sync(500_100) // Engine has not reached the chapter yet.
+        seek.seekBy(checkNotNull(timeline.chapterStepDelta(seek.positionMs, -1)), 900_000)
+        assertEquals(480_000L, seek.positionMs)
+        seek.seekBy(checkNotNull(timeline.chapterStepDelta(seek.positionMs, -1)), 900_000)
+        seek.flushPending()
+        assertEquals(120_000L, seek.positionMs)
+        assertEquals(listOf(600_000L, 120_000L), commits)
+    }
+
     @Test fun pendingResumeTargetUsesAbsoluteTimelineEvenBeforeTranscodeOffset() {
         val seek = seekState(500_000)
         seek.seekTo(480_000)

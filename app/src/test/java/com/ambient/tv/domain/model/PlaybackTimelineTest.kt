@@ -13,6 +13,21 @@ class PlaybackTimelineTest {
         val timeline = PlaybackTimeline(listOf(VideoChapter(5_000, endMs = 10_000), VideoChapter(20_000)))
         assertNull(timeline.chapterAt(0)); assertNull(timeline.chapterAt(15_000))
     }
+    @Test fun verticalStepsUseAdjacentChaptersAndStayBounded() {
+        val timeline = PlaybackTimeline(listOf(VideoChapter(0), VideoChapter(20_000), VideoChapter(50_000))).normalized()
+        assertEquals(25_000L, timeline.chapterStepDelta(25_000, 1))
+        assertEquals(-25_000L, timeline.chapterStepDelta(25_000, -1))
+        assertEquals(30_000L, timeline.chapterStepDelta(20_000, 1))
+        assertEquals(-20_000L, timeline.chapterStepDelta(20_000, -1))
+        assertEquals(0L, timeline.chapterStepDelta(55_000, 1))
+        assertEquals(-5_000L, timeline.chapterStepDelta(5_000, -1))
+        assertEquals(0L, timeline.chapterStepDelta(0, -1))
+        assertNull(PlaybackTimeline().chapterStepDelta(25_000, 1))
+        val lateFirst = PlaybackTimeline(listOf(VideoChapter(10_000)))
+        assertEquals(5_000L, lateFirst.chapterStepDelta(5_000, 1))
+        assertEquals(0L, lateFirst.chapterStepDelta(5_000, -1))
+    }
+
     @Test fun plexPreviewUsesMillisecondsAndRetainsQuery() {
         val preview = TimelinePreview.Plex("https://server/library/parts/9/indexes/sd/__TIME__?X-Plex-Token=test")
         assertTrue(preview.frameAt(123_456).url.contains("/122000?")); assertTrue(preview.frameAt(-5).url.contains("/0?"))

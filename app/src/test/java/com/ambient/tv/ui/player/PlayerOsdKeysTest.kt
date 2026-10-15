@@ -7,7 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlayerOsdKeysTest {
-    private class Recorder(var playing: Boolean = true, private val hasNext: Boolean = true) : OsdKeyTarget {
+    private class Recorder(var playing: Boolean = true, private val hasNext: Boolean = true, private val chapterDelta: Long? = null) : OsdKeyTarget {
         val calls = mutableListOf<String>()
         override fun isPlaying() = playing
         override fun togglePlayback() { calls += "toggle"; playing = !playing }
@@ -15,6 +15,7 @@ class PlayerOsdKeysTest {
         override fun pause() { calls += "pause" }
         override fun stop() { calls += "stop" }
         override fun seek(deltaMs: Long, revealOsd: Boolean) { calls += "seek:$deltaMs:${if (revealOsd) "osd" else "bar"}" }
+        override fun chapterSeekDelta(direction: Int) = chapterDelta
         override fun showOsd() { calls += "osd" }
         override fun hideSeekFeedback() { calls += "hideBar" }
         override fun restart() { calls += "restart" }
@@ -45,11 +46,11 @@ class PlayerOsdKeysTest {
         }
     }
 
-    @Test fun okOpensTheOsdOrTogglesRightAfterAJump() {
+    @Test fun okOpensTheOsdWithoutChangingPlaybackEvenAfterAJump() {
         listOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter).forEach { key ->
             assertEquals(true to listOf("osd"), press(key, state()))
-            assertEquals(true to listOf("toggle", "hideBar", "osd"), press(key, state(bar = true), Recorder(playing = true)))
-            assertEquals(true to listOf("toggle", "hideBar"), press(key, state(bar = true), Recorder(playing = false)))
+            assertEquals(true to listOf("hideBar", "osd"), press(key, state(bar = true), Recorder(playing = true)))
+            assertEquals(true to listOf("hideBar", "osd"), press(key, state(bar = true), Recorder(playing = false)))
             assertEquals(false to emptyList<String>(), press(key, state(visible = true)))
         }
     }
@@ -72,6 +73,18 @@ class PlayerOsdKeysTest {
         assertEquals(false to emptyList<String>(), press(Key.DirectionDown, state(OsdContent.LIVE, visible = true)))
         // The zap OSD is a live-TV thing only.
         assertEquals(false to emptyList<String>(), press(Key.DirectionUp, state(visible = true, zapOsd = true)))
+    }
+
+    @Test fun chaptersTakePrecedenceOnlyForHiddenVideoAndRecordings() {
+        for (content in listOf(OsdContent.VIDEO, OsdContent.RECORDING)) {
+            assertEquals(true to listOf("seek:18000:bar"), press(Key.DirectionUp, state(content), Recorder(chapterDelta = 18_000)))
+            assertEquals(true to listOf("seek:-32000:bar"), press(Key.DirectionDown, state(content), Recorder(chapterDelta = -32_000)))
+            assertEquals(true to emptyList<String>(), press(Key.DirectionUp, state(content), Recorder(chapterDelta = 0)))
+            assertEquals(false to emptyList<String>(), press(Key.DirectionUp, state(content, visible = true), Recorder(chapterDelta = 18_000)))
+            assertEquals(false to emptyList<String>(), press(Key.DirectionDown, state(content, panel = true), Recorder(chapterDelta = -32_000)))
+        }
+        assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, state(OsdContent.MUSIC), Recorder(chapterDelta = 18_000)))
+        assertEquals(true to listOf("zap:1"), press(Key.DirectionUp, state(OsdContent.LIVE), Recorder(chapterDelta = 18_000)))
     }
 
     @Test fun mediaKeysActAndShowTheOsdForEveryContent() {

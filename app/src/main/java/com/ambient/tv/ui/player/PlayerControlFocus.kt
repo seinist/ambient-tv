@@ -1,18 +1,26 @@
 package com.ambient.tv.ui.player
 
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.focus.FocusRequester
 
 /** Lives above channel/renderer replacement, while button registrations live with the OSD. */
 internal class PlayerControlFocus {
     private data class Control(val requester: FocusRequester, val owner: Any)
-    private val controls = mutableMapOf<String, Control>()
+    private val controls = mutableStateMapOf<String, Control>()
     internal var lastKey: String? = null
         private set
+    private var lastButtonKey: String? by mutableStateOf(null)
     private var focusedOwner: Any? = null
 
     val hasFocus: Boolean get() = focusedOwner != null
     fun target(fallback: FocusRequester): FocusRequester = controls[lastKey]?.requester ?: fallback
+
+    fun buttonTarget(fallback: FocusRequester): FocusRequester = controls[lastButtonKey]?.requester ?: fallback
+    fun seekTarget(): FocusRequester? = controls["seek-bar"]?.requester
 
     fun register(key: String, requester: FocusRequester, owner: Any) {
         controls[key] = Control(requester, owner)
@@ -26,6 +34,7 @@ internal class PlayerControlFocus {
     fun focused(key: String, owner: Any, focused: Boolean) {
         if (focused) {
             lastKey = key
+            if (key != "seek-bar") lastButtonKey = key
             focusedOwner = owner
         } else if (focusedOwner === owner) focusedOwner = null
     }

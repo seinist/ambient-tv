@@ -33,6 +33,15 @@ data class PlaybackTimeline(val chapters: List<VideoChapter> = emptyList(), val 
         .sortedBy { it.startMs }.distinctBy { it.startMs }.take(2_000),
         preview = if (preview is TimelinePreview.Sprite && durationMs > 0 && preview.intervalMs > 0)
             preview.copy(count = minOf(preview.count, (durationMs - 1) / preview.intervalMs + 1)) else preview)
+    /** Adjacent chapter on a normalized timeline. Null falls back to a time jump; zero stays at an edge. */
+    fun chapterStepDelta(positionMs: Long, direction: Int): Long? {
+        if (chapters.isEmpty()) return null
+        val current = chapters.indexOfLast { it.startMs <= positionMs }
+        if (direction < 0 && current < 0) return 0L
+        val next = if (direction > 0) current + 1 else (current - 1).coerceAtLeast(0)
+        val chapter = chapters.getOrNull(next) ?: return 0L
+        return chapter.startMs - positionMs
+    }
     fun chapterAt(positionMs: Long): VideoChapter? = chapters.lastOrNull { it.startMs <= positionMs }
         ?.takeIf { it.endMs == null || it.endMs <= it.startMs || positionMs < it.endMs }
     fun previewFrameAt(positionMs: Long): PreviewFrame? = preview?.frameAt(positionMs) ?: chapterImageFrame(chapterAt(positionMs))

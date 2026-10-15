@@ -5,6 +5,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlayerControlFocusTest {
+    @Test fun timelineReturnsToLastButtonAndFallsBackAfterItsRemoval() {
+        val focus = PlayerControlFocus()
+        val fallback = FocusRequester()
+        val button = FocusRequester()
+        val timeline = FocusRequester()
+        val buttonOwner = Any()
+        val timelineOwner = Any()
+        focus.register("settings", button, buttonOwner)
+        focus.register("seek-bar", timeline, timelineOwner)
+        focus.focused("settings", buttonOwner, true)
+        focus.focused("seek-bar", timelineOwner, true)
+        assertSame(timeline, focus.target(fallback))
+        assertSame(timeline, focus.seekTarget())
+        assertSame(button, focus.buttonTarget(fallback))
+        focus.unregister("settings", buttonOwner)
+        assertSame(fallback, focus.buttonTarget(fallback))
+        focus.unregister("seek-bar", timelineOwner)
+        assertNull(focus.seekTarget())
+    }
+
     @Test fun channelReplacementRestoresTheSameButtonForBothZapDirections() {
         for (key in listOf("previous", "next", "audio", "settings")) {
             val focus = PlayerControlFocus()

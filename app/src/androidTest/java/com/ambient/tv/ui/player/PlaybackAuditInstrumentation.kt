@@ -321,6 +321,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "BROWSE CACHE AUDIT PASSED\n$results") })
                     return@thread
                 }
+                if (arguments.getString("osdNavigation") == "true") {
+                    PlayerOsdNavigationAudit(this, ::log).run()
+                    finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "OSD NAVIGATION AUDIT PASSED\n$results") })
+                    return@thread
+                }
                 if (arguments.getString("backNavigation") == "true" || arguments.getString("backShell") == "true") {
                     if (arguments.getString("backShell") != "true") com.ambient.tv.ui.common.BackNavigationAudit(this, ::log).run()
                     com.ambient.tv.ui.common.BackShellAudit(this, ::log).run()

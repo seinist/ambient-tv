@@ -267,11 +267,16 @@ fun PlayerControlBar(
         return
     }
     val focusManager = LocalFocusManager.current
+    val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
     Row(
         modifier = modifier.fillMaxWidth().height(58.dp)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
+                    Key.DirectionUp -> {
+                        controlFocus?.seekTarget()?.let { runCatching { it.requestFocus() } }
+                        true // No seek bar: keep focus in the controls.
+                    }
                     Key.DirectionLeft -> wrapBarFocus(focusManager, FocusDirection.Left, FocusDirection.Right)
                     Key.DirectionRight -> wrapBarFocus(focusManager, FocusDirection.Right, FocusDirection.Left)
                     else -> false

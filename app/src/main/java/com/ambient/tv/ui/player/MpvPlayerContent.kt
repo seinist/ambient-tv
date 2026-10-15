@@ -262,6 +262,7 @@ internal fun MpvPlayerContent(
     LaunchedEffect(controlsVisible, snapshot.isPlaying, panel, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) { if (!changingItem && controlsVisible && snapshot.isPlaying && panel == UnifiedPlayerPanel.NONE) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controlsVisible = false } }
 
     // One remote handling for the engine and, while the focus is in the panel above it, the panel host.
+    val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { event ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are MPV's own.
         val restartTitle = { seek.seekTo(0L) }
@@ -270,6 +271,7 @@ internal fun MpvPlayerContent(
             OsdKeyState(OsdContent.VIDEO, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekFeedbackVisible),
             OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(seek.positionMs, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }

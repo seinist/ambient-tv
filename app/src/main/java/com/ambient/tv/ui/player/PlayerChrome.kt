@@ -182,7 +182,11 @@ fun BoxScope.ReferencePlayerBottomContent(
     content: @Composable () -> Unit,
 ) {
     val playPauseFocus = remember { FocusRequester() }
-    CompositionLocalProvider(LocalPlayerPlayPauseFocus provides playPauseFocus) {
+    val controlFocus = LocalPlayerControlFocus.current ?: remember { PlayerControlFocus() }
+    CompositionLocalProvider(
+        LocalPlayerPlayPauseFocus provides playPauseFocus,
+        LocalPlayerControlFocus provides controlFocus,
+    ) {
         Column(
             modifier = modifier
                 .align(Alignment.BottomCenter)
