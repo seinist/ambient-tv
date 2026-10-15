@@ -23,14 +23,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -40,8 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -72,7 +66,6 @@ import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
@@ -90,7 +83,6 @@ import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.interactionColors
 import com.ambient.tv.ui.theme.menuFocusMotion
-import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import kotlin.math.roundToInt
 
 data class PlayerDropUpSection(
@@ -107,8 +99,9 @@ internal fun nextEnabledSelectorIndex(index: Int, keys: List<String>, disabled: 
     (1..keys.size).asSequence().map { wrapSelectorIndex(index, keys.size, delta * it) }
         .firstOrNull { keys[it] !in disabled }
 
-/** Television menus use the custom anchored popup; handheld keeps the touch popup. */
-internal fun selectorMenuMatchesTrigger(handheld: Boolean): Boolean = !handheld
+/** Television and handheld both use the custom anchored popup so the option list
+ * matches the closed control width (Material DropdownMenu was display-wide on phones). */
+internal fun selectorMenuMatchesTrigger(@Suppress("UNUSED_PARAMETER") handheld: Boolean): Boolean = true
 
 /** Tallest television option list: whichever side of the control has more room. */
 internal fun selectMenuMaxHeight(anchorTop: Int, anchorBottom: Int, windowHeight: Int, gap: Int, margin: Int): Int =
@@ -128,10 +121,9 @@ private val SelectMenuGap = 4.dp
 private val SelectMenuScreenMargin = 16.dp
 private val SelectMenuScrollbarClearance = 12.dp
 
-/** Compact selector. The closed control and option list have the same width. On television the
- * option list uses a custom anchored popup below the control, or above it when there is no room.
- * Handheld retains the touch popup, which [dropUp] biases upward so player choices stay usable
- * near the bottom OSD edge. */
+/** Compact selector. The closed control and option list have the same width on television and
+ * handheld: a custom anchored popup below the control, or above it when there is no room.
+ * [dropUp] is kept for call-site compatibility; placement follows available space. */
 @Composable
 fun PlayerDropUpSelector(
     label: String,
@@ -186,7 +178,7 @@ private fun PlayerDropUpSelectorImpl(
     sections: List<PlayerDropUpSection>,
     selectedKey: String,
     modifier: Modifier,
-    dropUp: Boolean,
+    @Suppress("UNUSED_PARAMETER") dropUp: Boolean,
     onSelected: (String) -> Unit,
     disabledKeys: Set<String> = emptySet(),
     selectedKeys: Set<String> = setOf(selectedKey),
@@ -330,35 +322,15 @@ private fun PlayerDropUpSelectorImpl(
             }
             SelectorColorSwatch(optionSwatches[selectedKey].orEmpty(), enabled)
             Icon(
-                if (dropUp && !matchTrigger) Icons.Filled.ArrowDropUp else Icons.Filled.ArrowDropDown,
+                Icons.Filled.ArrowDropDown,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.8f else 0.38f),
             )
         }
-        if (matchTrigger) {
-            if (expanded && triggerWidth > 0.dp && menuMaxHeight != Dp.Unspecified) {
-                SelectorListPopup(triggerWidth, menuMaxHeight, dismissAction, options, sections,
-                    startIndex, selectedKeys, disabledKeys, optionFocus, optionSwatches,
-                    shouldCloseOnSelection, ::close, onSelected)
-            }
-        } else if (expanded) {
-            // Remove the popup window when its level closes. Its exit animation otherwise
-            // keeps consuming Back after focus has already returned to the panel.
-            DropdownMenu(
-                expanded = true,
-                onDismissRequest = dismissAction,
-                offset = DpOffset(0.dp, if (dropUp) (-8).dp else 8.dp),
-                scrollState = rememberScrollState(),
-                modifier = Modifier.navigationSoundInput()
-                    .requiredWidth(triggerWidth)
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .focusGroup()
-                    .focusProperties { onExit = { cancelFocusChange() } },
-            ) {
-                com.ambient.tv.ui.sound.SilenceSystemMenuSounds()
-                com.ambient.tv.ui.display.SuspendUiHdrForPopup()
-                SelectorOptions(options, sections, selectedKeys, disabledKeys, optionFocus, matchTrigger, optionSwatches, shouldCloseOnSelection, ::close, onSelected)
-            }
+        if (matchTrigger && expanded && triggerWidth > 0.dp && menuMaxHeight != Dp.Unspecified) {
+            SelectorListPopup(triggerWidth, menuMaxHeight, dismissAction, options, sections,
+                startIndex, selectedKeys, disabledKeys, optionFocus, optionSwatches,
+                shouldCloseOnSelection, ::close, onSelected)
         }
     }
 }
@@ -386,7 +358,7 @@ private class SelectMenuPositionProvider(private val gap: Int, private val margi
     )
 }
 
-/** Television option list: a flat bordered box as wide as the control, without dialog chrome. */
+/** Anchored option list: a flat bordered box as wide as the control, without dialog chrome. */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
 private fun SelectorListPopup(
@@ -487,42 +459,6 @@ private fun SelectorListPopup(
                         contentAlignment = Alignment.CenterEnd) {
                         OverlayLazyScrollbar(scroll, Modifier.fillMaxHeight().focusRequester(barFocus), contentFocus = scrollbarContentFocus)
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SelectorOptions(
-    options: List<Pair<String, String>>,
-    sections: List<PlayerDropUpSection>,
-    selectedKeys: Set<String>,
-    disabledKeys: Set<String>,
-    optionFocus: List<FocusRequester>,
-    matchTrigger: Boolean,
-    optionSwatches: Map<String, List<Color>>,
-    closeOnSelection: Boolean,
-    close: () -> Unit,
-    onSelected: (String) -> Unit,
-) {
-    val optionKeys = options.map { it.first }
-    if (sections.isEmpty()) {
-        options.forEachIndexed { index, (key, text) ->
-            PlayerDropUpOptionRow(index, key, text, selectedKeys, disabledKeys, optionKeys, optionFocus, matchTrigger, false, optionSwatches[key].orEmpty(), closeOnSelection, close, onSelected)
-        }
-    } else {
-        sections.forEach { section ->
-            Text(
-                section.title,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
-                fontSize = 11.sp,
-                modifier = Modifier.padding(start = 14.dp, top = 9.dp, end = 14.dp, bottom = 4.dp),
-            )
-            section.options.forEach { (key, text) ->
-                val index = options.indexOfFirst { it.first == key }
-                if (index >= 0) {
-                    PlayerDropUpOptionRow(index, key, text, selectedKeys, disabledKeys, optionKeys, optionFocus, matchTrigger, matchTrigger, optionSwatches[key].orEmpty(), closeOnSelection, close, onSelected)
                 }
             }
         }

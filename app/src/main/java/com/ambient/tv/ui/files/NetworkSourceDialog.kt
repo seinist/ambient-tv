@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.files
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
@@ -138,7 +140,10 @@ internal fun NetworkSourceDialog(
                 }, selected = host == nas.host && kind == nas.kind, enabled = !busy)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             TvActionButton("SMB", { choose(FileKinds.SMB) }, selected = kind == FileKinds.SMB, enabled = !busy)
             TvActionButton("NFS", { choose(FileKinds.NFS) }, selected = kind == FileKinds.NFS, enabled = !busy)
             TvActionButton("WebDAV", { choose(FileKinds.WEBDAV, true) }, selected = kind == FileKinds.WEBDAV, enabled = !busy)
