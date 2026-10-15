@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -21,6 +22,9 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.ui.focus.focusProperties
@@ -119,6 +123,10 @@ fun BoxScope.TvhReferencePlayerChrome(
     )
     ReferencePlayerBottomContent {
         ReferencePlayerHeader(
+            // Keep the header geometry while programme artwork and subtitles load after a zap.
+            modifier = if (source.isLive)
+                Modifier.heightIn(min = com.ambient.tv.ui.mobile.deviceDp(104.dp, 56.dp))
+            else Modifier,
             title = title,
             artworkUrl = resolvedArtwork,
             artworkFallbackUrls = fallbacks,
@@ -133,25 +141,33 @@ fun BoxScope.TvhReferencePlayerChrome(
         val timeshiftAnchor = com.ambient.tv.livetv.LiveTimeshift.anchor.collectAsState().value
         val timeshiftSeek = com.ambient.tv.livetv.LiveTimeshift.seekHandler
         val shiftable = source.isLive && timeshiftAnchor != null && timeshiftSeek != null
+        val changingChannel = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
+        val hadTimeshift = remember { mutableStateOf(shiftable) }
+        SideEffect { if (!changingChannel) hadTimeshift.value = shiftable }
+        // Restarting the buffer clears its anchor. Retain the timeline during that handoff,
+        // but only enable seeking once the new buffer is available.
+        val showTimeshift = shiftable || (source.isLive && changingChannel && hadTimeshift.value)
         // A player that reports stream timestamps instead of time since start would put the picture
         // in the future: the position is bounded by the time since the stream was opened.
         val sinceAnchor = (System.currentTimeMillis() - (timeshiftAnchor ?: 0L)).coerceAtLeast(0L)
         val watchedWallMs = (timeshiftAnchor ?: 0L) + positionMs.coerceIn(0L, sinceAnchor)
         val behindMs = if (shiftable) (System.currentTimeMillis() - watchedWallMs).coerceAtLeast(0L) else 0L
         val shifted = behindMs > TIMESHIFT_LIVE_TOLERANCE_MS
-        if (source.isLive && liveEventDurationMs > 0L) {
+        if (source.isLive) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "${formatTvhChromeClock(nowEvent!!.startEpochSeconds)} – ${formatTvhChromeClock(nowEvent.stopEpochSeconds)}",
+                    if (nowEvent != null && liveEventDurationMs > 0L)
+                        "${formatTvhChromeClock(nowEvent.startEpochSeconds)} – ${formatTvhChromeClock(nowEvent.stopEpochSeconds)}"
+                    else "",
                     color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.82f),
                     fontSize = 13.sp,
                 )
                 // EPG gives the broadcast end; delayed playback finishes later by its live offset.
-                if (nowEvent.stopEpochSeconds > nowSeconds) {
+                if (nowEvent != null && nowEvent.stopEpochSeconds > nowSeconds) {
                     Text(
                         stringResource(
                             R.string.player_ends_at,
@@ -162,19 +178,25 @@ fun BoxScope.TvhReferencePlayerChrome(
                     )
                 }
             }
-            if (!shiftable) LinearProgressIndicator(
-                progress = { (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f) },
+            if (!showTimeshift) LinearProgressIndicator(
+                progress = {
+                    if (liveEventDurationMs > 0L)
+                        (liveEventPositionMs.toFloat() / liveEventDurationMs.toFloat()).coerceIn(0f, 1f)
+                    else 0f
+                },
                 color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
                 modifier = Modifier.fillMaxWidth(),
             )
-            nextEvent?.let {
-                Text(
-                    stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title),
-                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
-            }
+            // EPG is fetched separately from the stream. Empty text retains the line height
+            // without briefly showing programme information from the previous channel.
+            Text(
+                nextEvent?.let {
+                    stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title)
+                } ?: "",
+                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                fontSize = 12.sp,
+                maxLines = 1,
+            )
         } else if (!source.isLive && durationMs > 0L) {
             ReferencePlaybackSummary(positionMs = positionMs, durationMs = durationMs)
             TvPlayerSeekBar(
@@ -188,14 +210,14 @@ fun BoxScope.TvhReferencePlayerChrome(
             )
         }
 
-        if (shiftable) {
+        if (showTimeshift) {
             val buffer = com.ambient.tv.livetv.LiveTimeshift.current
             val oldest = buffer?.oldestWallMs ?: watchedWallMs
             val edge = maxOf(oldest, buffer?.liveWallMs ?: watchedWallMs)
             TvPlayerSeekBar(
                 positionMs = watchedWallMs.coerceIn(oldest, edge) - oldest,
                 durationMs = (edge - oldest).coerceAtLeast(1L),
-                onSeekBy = { delta -> seekLiveTimeshiftBy(positionMs, delta) },
+                onSeekBy = { delta -> if (shiftable) seekLiveTimeshiftBy(positionMs, delta) },
                 onInteraction = {},
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
@@ -216,6 +238,13 @@ fun BoxScope.TvhReferencePlayerChrome(
                         )
                         LinearProgressIndicator(
                             progress = { (programmeMs.toDouble() / liveEventDurationMs).toFloat().coerceIn(0f, 1f) },
+                            color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth().height(3.dp),
+                        )
+                    } else {
+                        Text("", fontSize = 12.sp)
+                        LinearProgressIndicator(
+                            progress = { 0f },
                             color = androidx.tv.material3.MaterialTheme.colorScheme.primary,
                             modifier = Modifier.fillMaxWidth().height(3.dp),
                         )
