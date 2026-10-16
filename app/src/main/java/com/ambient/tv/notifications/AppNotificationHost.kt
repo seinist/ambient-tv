@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,13 +19,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -45,7 +52,7 @@ private object NotificationWindows {
     val dialogs = mutableStateListOf<Any>()
 }
 
-/** Only the active window presents the shared queue. The overlay adds no input or focus targets. */
+/** Only the active window presents the shared queue. TV overlays add no input or focus targets; handheld cards support swipe dismissal. */
 @Composable
 fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playback: Boolean = false) {
     val window = remember { Any() }
@@ -102,29 +109,72 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
     val connectionKinds = setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN)
     val connections = visible.filter { it.notice.kind in connectionKinds }
     val others = visible.filterNot { it.notice.kind in connectionKinds }
-    Box(Modifier.fillMaxSize().padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
+    Box(Modifier.fillMaxSize()
+        .then(if (handheld) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
+        .padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
         Column(Modifier.align(Alignment.TopEnd).widthIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (connections.isNotEmpty()) {
                 val colors = MaterialTheme.colorScheme
                 val shape = RoundedCornerShape(14.dp)
-                Column(Modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
-                    .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)) {
-                    connections.groupBy { listOf(it.notice.kind, it.notice.phase, it.notice.message, it.notice.args) }
-                        .values.forEach { entries ->
-                            val notice = entries.first().notice.copy(
-                                systems = entries.flatMap { it.notice.systems }.distinct(),
-                                subject = entries.mapNotNull { it.notice.subject }.distinct()
-                                    .joinToString(", ").ifBlank { null },
-                            )
-                            NotificationCard(notice, reduced, grouped = true)
-                        }
+                DismissibleNotification(handheld, onDismiss = {
+                    connections.forEach { AppNotifications.dismiss(it.notice.key) }
+                }) {
+                    Column(Modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
+                        .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)) {
+                        connections.groupBy { listOf(it.notice.kind, it.notice.phase, it.notice.message, it.notice.args) }
+                            .values.forEach { entries ->
+                                val notice = entries.first().notice.copy(
+                                    systems = entries.flatMap { it.notice.systems }.distinct(),
+                                    subject = entries.mapNotNull { it.notice.subject }.distinct()
+                                        .joinToString(", ").ifBlank { null },
+                                )
+                                NotificationCard(notice, reduced, grouped = true)
+                            }
+                    }
                 }
             }
             others.forEach { entry ->
-                key(entry.id) { NotificationCard(entry.notice, reduced) }
+                key(entry.id) {
+                    DismissibleNotification(handheld, onDismiss = { AppNotifications.dismiss(entry.notice.key) }) {
+                        NotificationCard(entry.notice, reduced)
+                    }
+                }
             }
         }
     }
+}
+
+/** Gesture handling is limited to the card, leaving the surrounding overlay touch-through. */
+@Composable
+private fun DismissibleNotification(
+    enabled: Boolean,
+    onDismiss: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    if (!enabled) {
+        content()
+        return
+    }
+    var offset by remember { mutableFloatStateOf(0f) }
+    val threshold = with(LocalDensity.current) { 72.dp.toPx() }
+    val dismissCurrent by rememberUpdatedState(onDismiss)
+    Box(Modifier
+        .offset { IntOffset(offset.roundToInt(), 0) }
+        .semantics { dismiss { dismissCurrent(); true } }
+        .pointerInput(threshold) {
+            detectHorizontalDragGestures(
+                onDragCancel = { offset = 0f },
+                onDragEnd = {
+                    if (abs(offset) >= threshold) dismissCurrent()
+                    offset = 0f
+                },
+                onHorizontalDrag = { change, distance ->
+                    change.consume()
+                    offset += distance
+                },
+            )
+        },
+    ) { content() }
 }
 
 @Composable
