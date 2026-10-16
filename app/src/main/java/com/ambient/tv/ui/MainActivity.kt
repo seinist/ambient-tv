@@ -573,7 +573,21 @@ open class MainActivity : ComponentActivity() {
             var themeModeKey by remember { mutableStateOf(appPreferences.themeModeKey) }
             var uiHdrModeKey by remember { mutableStateOf(appPreferences.uiHdrModeKey) }
             var sdrToHdrEnabled by remember { mutableStateOf(appPreferences.sdrToHdrEnabled) }
-            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled)
+            var sdrToHdrPeakNits by remember { mutableStateOf(appPreferences.sdrToHdrPeakNits) }
+            // Panel writes apply immediately; unrelated preference writes must not erase a settings preview.
+            LaunchedEffect(appPreferences) {
+                var storedEnabled = appPreferences.sdrToHdrEnabled
+                var storedPeak = appPreferences.sdrToHdrPeakNits
+                appPreferences.changes().collect {
+                    val enabled = appPreferences.sdrToHdrEnabled
+                    val peak = appPreferences.sdrToHdrPeakNits
+                    if (enabled != storedEnabled) sdrToHdrEnabled = enabled
+                    if (peak != storedPeak) sdrToHdrPeakNits = peak
+                    storedEnabled = enabled
+                    storedPeak = peak
+                }
+            }
+            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled, sdrToHdrPeakNits)
             var uiPerformanceModeKey by remember { mutableStateOf(appPreferences.effectiveUiPerformanceModeKey()) }
             var playbackPerformanceModeKey by remember { mutableStateOf(appPreferences.effectivePlaybackPerformanceModeKey()) }
             var backgroundVideoDimPercent by remember { mutableStateOf(appPreferences.backgroundVideoDimPercent) }
@@ -639,7 +653,7 @@ open class MainActivity : ComponentActivity() {
                             }
                         },
                         onRegisterInteraction = ::registerInteraction,
-                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr ->
+                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits ->
                             uiScale = scale
                             accentColorKey = accent
                             customAccentHex = customHex
@@ -648,6 +662,7 @@ open class MainActivity : ComponentActivity() {
                             themeModeKey = theme
                             uiHdrModeKey = hdr
                             sdrToHdrEnabled = convertSdr
+                            sdrToHdrPeakNits = peakNits
                         },
                         onPerformanceModePreview = { uiMode, playbackMode ->
                             uiPerformanceModeKey = uiMode
@@ -719,7 +734,7 @@ private fun AmbientTvApp(
     onScreensaverHidden: () -> Boolean,
     onScreensaverActiveChanged: (Boolean) -> Unit,
     onRegisterInteraction: () -> Unit,
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean) -> Unit,
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int) -> Unit,
     onPerformanceModePreview: (String, String) -> Unit,
     visibleBackgroundVideoPlayback: Boolean,
     backgroundVideoDimPercent: Int,

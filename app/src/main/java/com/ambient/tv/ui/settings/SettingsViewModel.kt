@@ -446,6 +446,7 @@ class SettingsViewModel @Inject constructor(
         themeModeKey = appPreferences.themeModeKey,
         uiHdrModeKey = appPreferences.uiHdrModeKey,
         sdrToHdrEnabled = appPreferences.sdrToHdrEnabled,
+        sdrToHdrPeakNits = appPreferences.sdrToHdrPeakNits,
         performanceModeKey = appPreferences.performanceModeKey,
         uiPerformanceModeKey = appPreferences.effectiveUiPerformanceModeKey(),
         playbackPerformanceModeKey = appPreferences.effectivePlaybackPerformanceModeKey(),
@@ -1909,6 +1910,10 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(uiHdrModeKey = com.ambient.tv.ui.display.normalizedUiHdrMode(value)) }
     }
 
+    fun onSdrToHdrPeakNitsChanged(value: Int) {
+        _uiState.update { it.copy(sdrToHdrPeakNits = com.ambient.tv.ui.display.normalizedSdrToHdrPeakNits(value)) }
+    }
+
     fun onSdrToHdrChanged(value: Boolean) {
         _uiState.update { it.copy(sdrToHdrEnabled = value) }
     }
@@ -2435,6 +2440,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.themeModeKey = state.themeModeKey
         appPreferences.uiHdrModeKey = state.uiHdrModeKey
         appPreferences.sdrToHdrEnabled = state.sdrToHdrEnabled
+        appPreferences.sdrToHdrPeakNits = state.sdrToHdrPeakNits
         appPreferences.performanceModeKey = state.performanceModeKey
         appPreferences.uiPerformanceModeKey = state.uiPerformanceModeKey
         appPreferences.playbackPerformanceModeKey = state.playbackPerformanceModeKey

@@ -99,7 +99,8 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
             width = format?.width ?: 0,
             height = format?.height ?: 0,
             fps = format?.frameRate ?: 0f,
-            blocked = released || outputError != null || reduced || !sdr || surfaceView?.holder?.surfaceFrame?.let {
+            blocked = released || outputError != null || player.playerError != null ||
+                !hdrOutput.canOfferConversion || reduced || !sdr || surfaceView?.holder?.surfaceFrame?.let {
                 !sdrHdrSizeAllowed(it.width(), it.height(), format.frameRate)
             } != false,
         )

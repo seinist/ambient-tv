@@ -42,6 +42,7 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
 
     val engaged: Boolean get() = snapshot != null
     val active: Boolean get() = status == SdrToHdrStatus.ACTIVE
+    val conversionFailed: Boolean get() = failed
     var rollbackFailed: Boolean = false
         private set
 

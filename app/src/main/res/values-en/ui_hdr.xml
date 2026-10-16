@@ -17,4 +17,6 @@
     <string name="settings_sdr_to_hdr_failed">SDR to HDR: disabled after an error</string>
     <string name="sdr_to_hdr_restore_failed">Video playback stopped because the original colour output could not be restored.</string>
     <string name="settings_projectm_resolution_sdr_hint">Higher is sharper but needs much more GPU power; Low performance limits it to 720p.</string>
+    <string name="settings_sdr_to_hdr_nits">SDR→HDR target brightness</string>
+    <string name="settings_sdr_to_hdr_nits_hint">Automatic or manual 300–600 nits. Reported display limits still apply; actual brightness depends on the TV.</string>
 </resources>

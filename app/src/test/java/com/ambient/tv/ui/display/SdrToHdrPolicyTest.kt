@@ -6,6 +6,32 @@ import org.junit.Test
 class SdrToHdrPolicyTest {
     private val display = UiHdrEligibility(34, true, true, true, true, true, 1f)
 
+    @Test fun manualTargetRespectsDisplayAndRendererLimits() {
+        assertEquals(400, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = 400)?.peakNits)
+        assertEquals(350, sdrToHdrRequest(display, true, 350f, 1, 2, requestedPeakNits = 600)?.peakNits)
+        assertEquals(600, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = 2000)?.peakNits)
+        assertEquals(300, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = -1)?.peakNits)
+        assertNull(sdrToHdrRequest(display.copy(displayHdr = false), true, 800f, 1, 2, true, 600))
+        val unknown = display.copy(headroom = null)
+        assertNull(sdrToHdrRequest(unknown, true, null, 1, 2, requestedPeakNits = 600))
+        assertEquals(500, sdrToHdrRequest(unknown, true, null, 1, 2, true, 500)?.peakNits)
+        assertEquals(300, sdrToHdrRequest(unknown, true, null, 1, 2, true, 0)?.peakNits)
+    }
+
+    @Test fun playbackControlRequiresKnownUsableVideoPath() {
+        val ready = SdrToHdrSwitchFacts(35, true, true, "auto", false, 1f, 400f,
+            player = SdrToHdrPlayerKind.MEDIA3, frameWidth = 1920, frameHeight = 1080, frameRate = 24f)
+        assertTrue(sdrToHdrPlaybackControlVisible(ready))
+        for (unusable in listOf(ready.copy(player = SdrToHdrPlayerKind.NONE),
+            ready.copy(frameWidth = 0), ready.copy(frameRate = Float.NaN),
+            ready.copy(frameRate = 0f), ready.copy(frameWidth = 3840, frameHeight = 2160),
+            ready.copy(pathBlocked = true), ready.copy(mode = "sdr"), ready.copy(displayHdr = false))) {
+            assertFalse(sdrToHdrPlaybackControlVisible(unusable))
+        }
+        assertTrue(sdrToHdrPlaybackControlVisible(ready.copy(player = SdrToHdrPlayerKind.MPV_VULKAN)))
+        assertFalse(sdrToHdrPlaybackControlVisible(ready.copy(player = SdrToHdrPlayerKind.MPV_VULKAN, pathBlocked = true)))
+    }
+
     @Test fun defaultsAndMasterSwitchNeverRequestVideoConversion() {
         assertNull(sdrToHdrRequest(display, false, 800f, 1, 2))
         assertNull(sdrToHdrRequest(display.copy(automatic = false), true, 800f, 1, 2))

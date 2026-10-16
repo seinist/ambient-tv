@@ -17,4 +17,6 @@
     <string name="settings_sdr_to_hdr_failed">SDR zu HDR: nach einem Fehler deaktiviert</string>
     <string name="sdr_to_hdr_restore_failed">Videowiedergabe gestoppt, da die ursprüngliche Farbausgabe nicht wiederhergestellt werden konnte.</string>
     <string name="settings_projectm_resolution_sdr_hint">Höher ist schärfer, braucht aber deutlich mehr GPU-Leistung; „Sparsam“ begrenzt auf 720p.</string>
+    <string name="settings_sdr_to_hdr_nits">SDR→HDR-Zielhelligkeit</string>
+    <string name="settings_sdr_to_hdr_nits_hint">Automatisch oder manuell 300–600 Nits. Gemeldete Display-Grenzen bleiben wirksam; die tatsächliche Helligkeit hängt vom Fernseher ab.</string>
 </resources>

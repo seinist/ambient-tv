@@ -51,6 +51,15 @@ internal class SdrHdrSurfaceOutput(
     private var status = SdrToHdrStatus.OFF
     private val afterStop = mutableListOf<() -> Unit>()
     val active: Boolean get() = status == SdrToHdrStatus.ACTIVE
+    /** Never offer conversion for unknown/HDR input or a surface that already failed. */
+    val canOfferConversion: Boolean get() {
+        val surface = view?.holder?.surface ?: return false
+        if (released || failed || !surface.isValid || quarantinedSurface != null) return false
+        // While routed, the output is PQ; retain the verified original SDR transfer.
+        val dataSpace = if (session != null || closing) originalDataSpace
+            else runCatching { readDataSpace(surface) }.getOrDefault(0)
+        return sdrHdrTransfer(dataSpace) != null
+    }
     /** Includes asynchronous teardown; another producer must not attach until it completes. */
     val ownsSurface: Boolean get() {
         val blocked = quarantinedSurface

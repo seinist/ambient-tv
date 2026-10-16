@@ -32,6 +32,8 @@ internal fun UiHdrSettings(
     mode: String,
     sdrToHdrEnabled: Boolean = false,
     onSdrToHdrChanged: (Boolean) -> Unit = {},
+    sdrToHdrPeakNits: Int = 0,
+    onSdrToHdrPeakNitsChanged: (Int) -> Unit = {},
     onModeChanged: (String) -> Unit,
 ) {
     val state = LocalUiHdrState.current
@@ -63,6 +65,17 @@ internal fun UiHdrSettings(
                 onCheckedChange = onSdrToHdrChanged,
                 enabled = sdrToHdrSwitchEnabled(facts),
             )
+            if (sdrToHdrEnabled && sdrToHdrSwitchEnabled(facts)) {
+                Text(stringResource(R.string.settings_sdr_to_hdr_nits), style = MaterialTheme.typography.bodyMedium)
+                SettingsSelect(options = (listOf(0, 300, 400, 500, 600) + sdrToHdrPeakNits).distinct().sorted().map { nits ->
+                    SettingsSelectOption(
+                        if (nits == 0) stringResource(R.string.settings_ui_hdr_auto) else "$nits nits",
+                        sdrToHdrPeakNits == nits,
+                        { onSdrToHdrPeakNitsChanged(nits) },
+                    )
+                })
+                Text(stringResource(R.string.settings_sdr_to_hdr_nits_hint), style = MaterialTheme.typography.bodySmall)
+            }
             Text(
                 text = stringResource(sdrToHdrStatusTextRes(mode, sdrToHdrEnabled, state?.sdrToHdrStatus)),
                 style = MaterialTheme.typography.bodySmall,

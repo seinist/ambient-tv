@@ -114,8 +114,10 @@ internal fun PlayerVideoSettingsGroups(
         else -> null
     }?.sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, media3 = handle is Media3PlaybackHandle)
     val svpAllowed = LocalPerformanceProfile.current.allowSvpInterpolation
+    val hdrFacts = com.ambient.tv.ui.settings.rememberHdrControlFacts(videoImagePreferences(context).uiHdrModeKey)
+    val hasSdrToHdrControl = com.ambient.tv.ui.display.sdrToHdrPlaybackControlVisible(hdrFacts)
     val hasOutputControls = rememberAvailableDisplayModes(context).size > 1 ||
-        (handle is MpvPlaybackController && handle.supportsGpuFilters) || hasOutputExtras
+        (handle is MpvPlaybackController && handle.supportsGpuFilters) || hasOutputExtras || hasSdrToHdrControl
     val available = buildList {
         if (showRenderer && onRendererSelected != null && rendererKey != null) add("renderer" to R.string.player_renderer)
         if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) || visible?.upscaler == true ||
@@ -132,6 +134,7 @@ internal fun PlayerVideoSettingsGroups(
     val activeSection = section.takeIf { selected -> sections.any { it.first == selected } } ?: sections.firstOrNull()?.first ?: return
     if (!sectionView && onOpenSection != null) {
         // The list: one row per area with what is set there; OK opens the area as its own level.
+        if (hasSdrToHdrControl) PlayerSdrToHdrControl()
         available.forEach { (key, title) ->
             com.ambient.tv.ui.common.PlayerPanelEntry(
                 icon = videoSectionIcon(key),
@@ -166,7 +169,10 @@ internal fun PlayerVideoSettingsGroups(
         if (activeSection == "scaling") presentationControls()
         if (activeSection == "motion") playbackControls()
         if (activeSection == "output" && (handle !is MpvPlaybackController || !handle.supportsGpuFilters)) PlayerDisplayModeGroup()
-        if (activeSection == "output") outputExtras()
+        if (activeSection == "output") {
+            if (hasSdrToHdrControl) PlayerSdrToHdrControl()
+            outputExtras()
+        }
     }
 }
 

@@ -14,6 +14,24 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UiHdrSettingsTest {
+    @Test fun manualNitsRoundTripAndOldBackupsRestoreAutomatic() {
+        val preferences = AppPreferences(memoryPreferences())
+        val backup = SettingsBackupManager(preferences, TokenStore(memoryPreferences(), preferences))
+        assertEquals(0, preferences.sdrToHdrPeakNits)
+        preferences.sdrToHdrPeakNits = 500
+        val exported = backup.exportJson(false)
+        preferences.sdrToHdrPeakNits = 0
+        backup.importJson(exported)
+        assertEquals(500, preferences.sdrToHdrPeakNits)
+        backup.importJson("""{"schemaVersion":48,"exportedAtEpochMs":0}""")
+        assertEquals(0, preferences.sdrToHdrPeakNits)
+        val baseline = SettingsUiState()
+        val draft = baseline.copy(sdrToHdrPeakNits = 400)
+        assertNotEquals(baseline.editableValues(), draft.editableValues())
+        assertEquals(400, mergeStoredSettings(draft, baseline, baseline.copy(uiScale = .9f)).sdrToHdrPeakNits)
+        assertEquals(400, mergeStoredSettings(baseline, baseline, draft).sdrToHdrPeakNits)
+    }
+
     @Test fun choiceRoundTripsThroughPreferencesAndBackup() {
         val preferences = AppPreferences(memoryPreferences())
         val backup = SettingsBackupManager(preferences, TokenStore(memoryPreferences(), preferences))

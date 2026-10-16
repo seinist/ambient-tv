@@ -110,7 +110,7 @@ fun SettingsScreen(
     onDone: () -> Unit,
     initialCategoryKey: String? = null,
     onExitGuardChanged: (SettingsExitGuard?) -> Unit = {},
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean) -> Unit = { _, _, _, _, _, _, _, _ -> },
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
     onPerformanceModePreview: (String, String) -> Unit = { _, _ -> },
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
@@ -125,8 +125,8 @@ fun SettingsScreen(
     val displayContext = LocalContext.current
     val supportedDisplayModes = com.ambient.tv.ui.player.rememberAvailableDisplayModes(displayContext)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshStoredSettings() }
-    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled) {
-        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled)
+    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits) {
+        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits)
     }
     LaunchedEffect(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey) {
         onPerformanceModePreview(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey)
@@ -134,7 +134,7 @@ fun SettingsScreen(
     androidx.compose.runtime.DisposableEffect(viewModel) {
         onDispose {
             val saved = viewModel.savedAppearance
-            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.themeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled)
+            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.themeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled, saved.sdrToHdrPeakNits)
             onPerformanceModePreview(saved.uiPerformanceModeKey, saved.playbackPerformanceModeKey)
             onVisibleBackgroundVideoPlaybackPreview(saved.visibleBackgroundVideoPlayback, saved.backgroundVideoDimPercent)
         }
@@ -342,6 +342,8 @@ fun SettingsScreen(
                                     onModeChanged = viewModel::onUiHdrModeChanged,
                                     sdrToHdrEnabled = uiState.sdrToHdrEnabled,
                                     onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
+                                    sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
+                                    onSdrToHdrPeakNitsChanged = viewModel::onSdrToHdrPeakNitsChanged,
                                 )
                             }
                             item {

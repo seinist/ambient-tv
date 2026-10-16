@@ -182,11 +182,11 @@ internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
 internal val LocalUiHdrState = staticCompositionLocalOf<UiHdrState?> { null }
 
 @Composable
-internal fun rememberUiHdrState(activity: Activity, mode: String, sdrToHdrEnabled: Boolean = false): UiHdrState {
+internal fun rememberUiHdrState(activity: Activity, mode: String, sdrToHdrEnabled: Boolean = false, sdrToHdrPeakNits: Int = 0): UiHdrState {
     val state = remember(activity) { UiHdrState(activity.window) }
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(state, mode, sdrToHdrEnabled, lifecycle) {
+    LaunchedEffect(state, mode, sdrToHdrEnabled, sdrToHdrPeakNits, lifecycle) {
         // Mode changes, recreation and background transitions always start from the SDR baseline.
         state.reset()
         val modeKey = normalizedUiHdrMode(mode)
@@ -223,6 +223,7 @@ internal fun rememberUiHdrState(activity: Activity, mode: String, sdrToHdrEnable
                             conversionDisplay, true, display.hdrCapabilities?.desiredMaxLuminance,
                             display.displayId, display.mode.modeId,
                             allowSurfaceProbe = handle?.sdrToHdrPath()?.kind == SdrToHdrPlayerKind.MPV_VULKAN,
+                            requestedPeakNits = sdrToHdrPeakNits,
                         ) else null
                         state.updateVideoConversion(handle, request, conversionEnabled)
                         val runtimeSource = if (hasVideo) handle?.uiHdrStandard() else null

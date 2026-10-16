@@ -5,6 +5,8 @@ enum class SdrToHdrStatus { OFF, UNAVAILABLE, WAITING, ACTIVE, FAILED }
 
 data class SdrToHdrRequest(val peakNits: Int, val displayId: Int, val displayModeId: Int)
 
+fun normalizedSdrToHdrPeakNits(value: Int): Int = if (value == 0) 0 else value.coerceIn(300, 600)
+
 /**
  * The current SDR/HDR ratio may still be 1 before the first HDR frame. A real, reported
  * ratio and peak are preferred. A verified video surface may instead probe a bounded target.
@@ -17,6 +19,7 @@ internal fun sdrToHdrRequest(
     displayId: Int,
     displayModeId: Int,
     allowSurfaceProbe: Boolean = false,
+    requestedPeakNits: Int = 0,
 ): SdrToHdrRequest? {
     if (!enabled || display.sdk < 34 || !display.automatic || !display.windowReady ||
         !display.displayHdr || !display.wideColor || !display.sourceSupported) return null
@@ -26,7 +29,10 @@ internal fun sdrToHdrRequest(
     // Only a video path that verifies its negotiated PQ surface may probe those displays.
     // This is an output budget, never an estimate of the panel's measured brightness.
     if (!measured && !allowSurfaceProbe) return null
-    return SdrToHdrRequest(if (measured) peakNits.coerceAtMost(600f).toInt() else 300,
+    val requested = normalizedSdrToHdrPeakNits(requestedPeakNits)
+    val automatic = if (measured) peakNits.coerceAtMost(600f).toInt() else 300
+    val target = if (requested == 0) automatic else if (measured) minOf(requested, automatic) else requested
+    return SdrToHdrRequest(target,
         displayId, displayModeId)
 }
 
@@ -82,6 +88,12 @@ fun sdrToHdrSwitchVisible(facts: SdrToHdrSwitchFacts): Boolean {
         }
     }
 }
+
+/** Playback controls require an actual, fully identified path, unlike pre-playback settings. */
+fun sdrToHdrPlaybackControlVisible(facts: SdrToHdrSwitchFacts): Boolean =
+    sdrToHdrSwitchEnabled(facts) && facts.player != SdrToHdrPlayerKind.NONE &&
+        (facts.player == SdrToHdrPlayerKind.MPV_VULKAN ||
+            (facts.frameWidth > 0 && facts.frameHeight > 0 && facts.frameRate.isFinite() && facts.frameRate > 0f))
 
 /** The selected UI mode controls availability without changing hardware support. */
 fun sdrToHdrSwitchEnabled(facts: SdrToHdrSwitchFacts): Boolean =

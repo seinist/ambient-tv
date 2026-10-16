@@ -744,6 +744,11 @@ class AppPreferences @Inject constructor(
         get() = com.ambient.tv.ui.display.normalizedUiHdrMode(prefs.getString("ui_hdr_mode", "auto"))
         set(value) = prefs.edit { putString("ui_hdr_mode", com.ambient.tv.ui.display.normalizedUiHdrMode(value)) }
 
+    /** Zero keeps the automatic output budget. */
+    var sdrToHdrPeakNits: Int
+        get() = com.ambient.tv.ui.display.normalizedSdrToHdrPeakNits(prefs.getInt("sdr_to_hdr_peak_nits", 0))
+        set(value) = prefs.edit { putInt("sdr_to_hdr_peak_nits", com.ambient.tv.ui.display.normalizedSdrToHdrPeakNits(value)) }
+
     /** Stored opt-in; the HDR mode and output capabilities gate its runtime effect. */
     var sdrToHdrEnabled: Boolean
         get() = prefs.getBoolean(KEY_SDR_TO_HDR_ENABLED, false)

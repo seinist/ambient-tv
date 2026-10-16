@@ -1994,13 +1994,14 @@ internal class MpvPlaybackEngine(
         val api = getPropertyString("gpu-api")?.trim()?.lowercase()
         val vulkanGpuNext = acceleration.vulkan && (vo.isNullOrBlank() || vo == "gpu-next") &&
             (api.isNullOrBlank() || api == "vulkan")
-        val supportedInput = !fileReady || supportsMpvSdrToHdrInput(vo, api,
+        val supportedInput = fileReady && supportsMpvSdrToHdrInput(vo, api,
             getPropertyString("video-dec-params/gamma"), getPropertyString("video-params/gamma"),
             getPropertyString("video-out-params/gamma"), getPropertyString("video-params/primaries"))
         return com.ambient.tv.ui.display.SdrToHdrPath(
             kind = if (vulkanGpuNext) com.ambient.tv.ui.display.SdrToHdrPlayerKind.MPV_VULKAN
             else com.ambient.tv.ui.display.SdrToHdrPlayerKind.MPV_UNSUPPORTED,
-            blocked = released || !vulkanGpuNext || reducedVideoEffects(context) ||
+            blocked = released || !attached || !fileReady || ended || errorMessage != null ||
+                sdrToHdr.conversionFailed || !vulkanGpuNext || reducedVideoEffects(context) ||
                 conversionOutputUnsafe || hdr10SwapchainSupported == false || !supportedInput ||
                 (fileReady && getPropertyString("current-gpu-context") != "androidvk") ||
                 listOf("icc-profile", "image-lut", "target-lut").any { !getPropertyString(it).isNullOrBlank() },

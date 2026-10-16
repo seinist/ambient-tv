@@ -91,6 +91,7 @@ data class SettingsBackup(
     val themeModeKey: String = "dark",
     val uiHdrModeKey: String = "auto",
     val sdrToHdrEnabled: Boolean = false,
+    val sdrToHdrPeakNits: Int = 0,
     val performanceModeKey: String = "auto",
     val uiPerformanceModeKey: String? = null,
     val playbackPerformanceModeKey: String? = null,
@@ -364,6 +365,7 @@ class SettingsBackupManager @Inject constructor(
             themeModeKey = preferences.themeModeKey,
             uiHdrModeKey = preferences.uiHdrModeKey,
             sdrToHdrEnabled = preferences.sdrToHdrEnabled,
+        sdrToHdrPeakNits = preferences.sdrToHdrPeakNits,
             performanceModeKey = preferences.performanceModeKey,
             uiPerformanceModeKey = preferences.uiPerformanceModeKey,
             playbackPerformanceModeKey = preferences.playbackPerformanceModeKey,
@@ -687,6 +689,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.themeModeKey = backup.themeModeKey
         preferences.uiHdrModeKey = backup.uiHdrModeKey
         preferences.sdrToHdrEnabled = backup.sdrToHdrEnabled
+        preferences.sdrToHdrPeakNits = backup.sdrToHdrPeakNits
         preferences.performanceModeKey = backup.performanceModeKey
         if (backup.schemaVersion >= 49) {
             preferences.uiPerformanceModeKey = backup.uiPerformanceModeKey

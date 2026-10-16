@@ -34,7 +34,7 @@ internal object CompanionBackupPolicy {
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
     private val hardware = setOf(
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
-        "allowDoubleRefreshRate", "allowThreeTwoPulldown", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled",
+        "allowDoubleRefreshRate", "allowThreeTwoPulldown", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits",
         "performanceModeKey", "uiPerformanceModeKey", "playbackPerformanceModeKey", "frameDropTestSeconds", "highQualityAssetsEnabled", "playbackBackendKey", "tvheadendPlaybackBackendKey",
         "mpvVideoOutputModeKey", "mpvVideoDecoderKey", "vlcVideoOutputModeKey", "mediaAudioPassthroughEnabled",
         "libraryGridColumns", "libraryListRows", "displayChangeNotificationsEnabled",

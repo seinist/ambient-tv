@@ -215,7 +215,8 @@ class VlcPlaybackController(
             width = track?.width ?: 0,
             height = track?.height ?: 0,
             fps = fps,
-            blocked = preserveHdrSource || released || vulkanOutput || reducedVideoEffects(context) || audioVisualizationEnabled ||
+            blocked = preserveHdrSource || released || !prepared || ended || errorMessage != null ||
+                !hdrOutput.canOfferConversion || vulkanOutput || reducedVideoEffects(context) || audioVisualizationEnabled ||
                 imageOptions.softwareProcessing || imageOptions.svpMode != "off" || userVideoDisabled ||
                 track?.orientation != 0 || track.projection != 0 || attachedView?.holder?.surfaceFrame?.let {
                     !com.ambient.tv.ui.player.sdrHdrSizeAllowed(it.width(), it.height(), fps)
