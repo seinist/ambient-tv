@@ -195,7 +195,9 @@ fun TvheadendPlayerScreen(
         LocalLiveRecordingControl provides recordingControl.copy(available = recordingControl.available && viewModel.directRecordingEnabled),
         LocalLiveTimeshiftChanged provides viewModel::applyTimeshiftSetting,
     ) {
-    com.ambient.tv.ui.player.PersistentPlayerChrome(viewModel, viewModel.changingChannel) {
+    com.ambient.tv.ui.player.PersistentPlayerChrome(
+        viewModel, viewModel.changingChannel, initialZapOsd = viewModel.startsWithLiveChannel,
+    ) {
     // A channel change shows the OSD with the new channel; Up/Down keep zapping meanwhile.
     val zapChrome = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     LaunchedEffect(viewModel.zapVersion) {

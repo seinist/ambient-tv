@@ -75,6 +75,18 @@ class PlayerOsdKeysTest {
         assertEquals(false to emptyList<String>(), press(Key.DirectionUp, state(visible = true, zapOsd = true)))
     }
 
+    @Test fun firstLiveChannelAllowsBothZapDirectionsWithStartupOsdVisible() {
+        val chrome = PlayerChromeState(initialZapOsd = true)
+        for ((key, delta) in listOf(Key.DirectionUp to 1, Key.DirectionDown to -1)) {
+            val startup = state(OsdContent.LIVE, visible = chrome.visible.value, zapOsd = chrome.shownByZap.value)
+            assertEquals(true to listOf("zap:$delta"), press(key, startup))
+            assertEquals(false to emptyList<String>(), press(key, startup.copy(panelOpen = true)))
+            // Explicit interaction changes the info OSD into the navigable controls.
+            assertEquals(false to emptyList<String>(), press(key, startup.copy(zapOsd = false)))
+        }
+        assertFalse(PlayerChromeState().shownByZap.value)
+    }
+
     @Test fun chaptersTakePrecedenceOnlyForHiddenVideoAndRecordings() {
         for (content in listOf(OsdContent.VIDEO, OsdContent.RECORDING)) {
             assertEquals(true to listOf("seek:18000:bar"), press(Key.DirectionUp, state(content), Recorder(chapterDelta = 18_000)))

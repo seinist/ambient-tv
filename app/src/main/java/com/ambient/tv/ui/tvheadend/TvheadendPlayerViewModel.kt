@@ -96,6 +96,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val streamMutex = Mutex()
     private var loadingJob: Job? = null
     private val kind: String = savedStateHandle["kind"] ?: "channel"
+    internal val startsWithLiveChannel: Boolean get() = kind == "channel"
     private val initialId: String = savedStateHandle["id"] ?: ""
     private val companionSource = runCatching {
         companionMapper.fromRoute(Destinations.tvhPlayer(kind, initialId, sourceId)).source

@@ -21,13 +21,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.ambient.tv.ui.common.PlayerPanelNavigation
 
 /** UI lifetime is the fullscreen player, not its current decoder or media item. */
-class PlayerChromeState {
+class PlayerChromeState(initialZapOsd: Boolean = false) {
     val visible = mutableStateOf(true)
     /**
-     * The OSD was opened by a channel change. Up/Down keep changing channels until another key
+     * The OSD was opened by entering live TV or by a channel change. Up/Down keep changing channels until another key
      * is pressed or the OSD hides, so zapping through channels shows each one's info.
      */
-    val shownByZap = mutableStateOf(false)
+    val shownByZap = mutableStateOf(initialZapOsd)
     /** The active engine's OSD and panel content and remote handling; see [PersistentPlayerOverlays]. */
     internal val panelModel = mutableStateOf<PlayerPanelModel?>(null)
     internal val osdModel = mutableStateOf<PlayerOsdSpec?>(null)
@@ -46,8 +46,13 @@ val LocalPlayerChromeState = compositionLocalOf<PlayerChromeState?> { null }
 val LocalPlayerChangingItem = compositionLocalOf { false }
 
 @Composable
-fun PersistentPlayerChrome(owner: Any, changingItem: Boolean = false, content: @Composable () -> Unit) {
-    val chrome = remember(owner) { PlayerChromeState() }
+fun PersistentPlayerChrome(
+    owner: Any,
+    changingItem: Boolean = false,
+    initialZapOsd: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    val chrome = remember(owner) { PlayerChromeState(initialZapOsd) }
     CompositionLocalProvider(
         LocalPlayerChromeState provides chrome,
         LocalPlayerControlFocus provides chrome.focus,
