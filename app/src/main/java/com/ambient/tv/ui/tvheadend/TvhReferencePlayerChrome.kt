@@ -281,8 +281,8 @@ fun BoxScope.TvhReferencePlayerChrome(
                 val recording = LocalLiveRecordingControl.current
                 if (source.isLive && recording.available) {
                     PlayerIconButton(
-                        Icons.Filled.FiberManualRecord,
-                        stringResource(if (recording.scheduled) R.string.tvh_recording_scheduled else R.string.tvh_record),
+                        if (recording.scheduled) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
+                        stringResource(if (recording.scheduled) R.string.player_record_stop else R.string.tvh_record),
                         recording.record,
                         selected = recording.scheduled,
                         loading = recording.busy,

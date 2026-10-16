@@ -1725,4 +1725,7 @@
     <string name="settings_live_tv_title">Live-TV</string>
     <string name="settings_page_live_tv_hint">Timeshift, Aufnahmen und Sendungserinnerungen für Live-TV.</string>
     <string name="settings_live_reminders">Sendungserinnerungen</string>
+    <string name="player_record_stop">Aufnahme stoppen</string>
+    <string name="player_record_stopped">Aufnahme gestoppt</string>
+    <string name="player_record_stop_failed">Aufnahme konnte nicht gestoppt werden. Bitte erneut versuchen.</string>
 </resources>

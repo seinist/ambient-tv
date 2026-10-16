@@ -19,6 +19,10 @@ class LiveRecordingControlTest {
         assertFalse(canRecordProgramme(supported, event.copy(eventId = ""), 150))
     }
 
+    @Test fun staleEpgReferenceDoesNotProvideATimerToStop() {
+        assertNull(findProgrammeRecording(event.copy(dvrUuid = "finished"), emptyList()))
+    }
+
     @Test fun recognisesExistingTimersAndDoesNotMatchOtherChannels() {
         assertTrue(hasProgrammeRecording(event.copy(dvrUuid = "dvr"), emptyList()))
         val timer = LiveTvRecording("timer", "channel", "Channel", "Show",
