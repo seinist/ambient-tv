@@ -57,31 +57,23 @@ class SettingsNavigationTest {
         assertNull(fromIndex.pop())
     }
 
-    @Test fun deepLinkPageBackExitsSettingsInOneStep() {
-        assertNull(
-            SettingsHubNav(page = SettingsCategory.PLEX, exitOnPageBack = true, skipIndexOnPageBack = true).pop(),
-        )
+    @Test fun directPageEntryBackWalksParentIndexThenAreaMenuThenExit() {
+        SettingsCategory.entries.forEach { category ->
+            val initialPage = SettingsCategory.fromKey(category.name)!!
+            val parent = SettingsHubNav(page = initialPage).pop()!!
+            assertNull(category.name, parent.page)
+            assertFalse(category.name, parent.areaMenu)
+            val areaMenu = parent.pop()!!
+            assertTrue(category.name, areaMenu.areaMenu)
+            assertNull(category.name, areaMenu.pop())
+        }
     }
 
-    @Test fun singleSystemShortcutSkipsIndexAndLandsOnAreaRail() {
-        val next = SettingsHubNav(page = SettingsCategory.FILES, skipIndexOnPageBack = true).pop()!!
-        assertNull(next.page)
-        assertTrue(next.areaMenu)
-        assertFalse(next.skipIndexOnPageBack)
-        assertNull(next.pop())
-    }
-
-    @Test fun returnToSearchBeatsExitOnPageBack() {
-        val next = SettingsHubNav(
-            page = SettingsCategory.APPEARANCE,
-            returnToSearch = true,
-            exitOnPageBack = true,
-            skipIndexOnPageBack = true,
-        ).pop()!!
-        assertNull(next.page)
-        assertTrue(next.search)
-        assertFalse(next.exitOnPageBack)
-        assertFalse(next.skipIndexOnPageBack)
+    @Test fun handheldPageBackReturnsToParentBeforeExiting() {
+        val parent = SettingsHubNav(page = SettingsCategory.APPEARANCE, areaMenu = true).pop()!!
+        assertNull(parent.page)
+        assertFalse(parent.areaMenu)
+        assertNull(parent.copy(areaMenu = true).pop())
     }
 
     @Test fun wireGuardPickerBackWalksFoldersThenRootsThenDismiss() {

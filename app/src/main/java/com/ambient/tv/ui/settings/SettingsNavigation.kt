@@ -99,18 +99,13 @@ internal fun settingsSearchMatches(query: String, text: String): Boolean {
  * Hub stack, one Left/Back each: input page → area index → area rail → global Settings.
  * The item that opened the next view stays selected and takes focus again on the way back.
  *
- * [skipIndexOnPageBack]: area index was never shown (deep-link / single-system shortcut);
- * closing the page skips that intermediate index.
- * [exitOnPageBack]: page was opened from outside Settings (sidebar shortcut); first Back
- * leaves Settings entirely so the caller path is restored in one press.
+ * Directly opened pages also return to their parent area index.
  */
 internal data class SettingsHubNav(
     val page: SettingsCategory? = null,
     val search: Boolean = false,
     val returnToSearch: Boolean = false,
     val areaMenu: Boolean = false,
-    val skipIndexOnPageBack: Boolean = false,
-    val exitOnPageBack: Boolean = false,
 ) {
     fun pop(): SettingsHubNav? = when {
         page != null -> when {
@@ -118,18 +113,6 @@ internal data class SettingsHubNav(
                 page = null,
                 search = true,
                 areaMenu = false,
-                skipIndexOnPageBack = false,
-                exitOnPageBack = false,
-            )
-            // Sidebar / deep-link shortcut: reverse the enter path in one Back.
-            exitOnPageBack -> null
-            // Single-system (or similar) skipped the index on enter — skip it on exit too.
-            skipIndexOnPageBack -> copy(
-                page = null,
-                search = false,
-                areaMenu = true,
-                skipIndexOnPageBack = false,
-                exitOnPageBack = false,
             )
             else -> copy(page = null, search = false, areaMenu = false)
         }

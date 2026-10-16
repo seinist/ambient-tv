@@ -92,9 +92,6 @@ internal fun SettingsHub(
     var returnToSearch by rememberSaveable { mutableStateOf(false) }
     var lastPage by rememberSaveable { mutableStateOf(initialPage) }
     var areaMenu by rememberSaveable { mutableStateOf(false) }
-    // Deep-link / sidebar shortcut opened a page without showing the area index.
-    var skipIndexOnPageBack by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage != null) }
-    var exitOnPageBack by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage != null) }
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     OperationFeedbackScope(viewModel.feedback, "settings")
     OperationFeedbackScope(viewModel.feedback, viewModel.feedbackScope(page), pendingExit == null)
@@ -150,8 +147,6 @@ internal fun SettingsHub(
         search = search,
         returnToSearch = returnToSearch,
         areaMenu = handheld || areaMenu,
-        skipIndexOnPageBack = skipIndexOnPageBack,
-        exitOnPageBack = exitOnPageBack,
     )
     fun applyNav(next: SettingsHubNav) {
         if (page != null && next.page == null) {
@@ -165,8 +160,6 @@ internal fun SettingsHub(
         search = next.search
         returnToSearch = next.returnToSearch
         areaMenu = next.areaMenu
-        skipIndexOnPageBack = next.skipIndexOnPageBack
-        exitOnPageBack = next.exitOnPageBack
         if (!next.search) query = ""
     }
     val linkedPages = remember { mutableStateListOf<Pair<SettingsHubNav, String>>() }
@@ -205,9 +198,6 @@ internal fun SettingsHub(
         page = resolved
         lastPage = resolved
         areaMenu = false
-        // Opened from the index (or search): Back returns to that index/search, not exit.
-        skipIndexOnPageBack = false
-        exitOnPageBack = false
     }
     fun selectArea(target: SettingsArea) {
         linkedPages.clear()
@@ -216,12 +206,10 @@ internal fun SettingsHub(
         search = false
         returnToSearch = false
         areaMenu = false
-        exitOnPageBack = false
         // Always land on the area index, even with a single configured system: jumping straight
         // into that system's page (formerly SETTINGS_035) hid the list of other sources.
         page = null
         settlingPageFocus = false
-        skipIndexOnPageBack = false
     }
     suspend fun requestPanelContentFocus(attempts: Int = 24): Boolean {
         repeat(attempts) {
