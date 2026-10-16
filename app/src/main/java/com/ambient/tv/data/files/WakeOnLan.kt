@@ -25,10 +25,12 @@ class WakeOnLan {
     private val wolManager: WolManager?
     private val directSend: (suspend (String, String, Int) -> Unit)?
     private val retryCount: () -> Int
+    private val machines: com.ambient.tv.wol.WakeMachines?
 
     @Inject
-    constructor(wolManager: WolManager, preferences: AppPreferences) {
+    constructor(wolManager: WolManager, preferences: AppPreferences, machines: com.ambient.tv.wol.WakeMachines) {
         this.wolManager = wolManager
+        this.machines = machines
         this.directSend = null
         this.retryCount = { preferences.wolRetryCount }
     }
@@ -39,6 +41,7 @@ class WakeOnLan {
         retryCount: () -> Int = { 0 },
     ) {
         this.wolManager = null
+        this.machines = null
         this.directSend = directSend
         this.retryCount = retryCount
     }
@@ -60,9 +63,14 @@ class WakeOnLan {
         wakeAndWait(source)
     }
 
+    /** Shared machine key of a source: same MAC or host as any other system joins its wake. */
+    fun machineKey(source: FileSource): String =
+        machines?.keyFor("files", source.host, source.wolMac) ?: com.ambient.tv.wol.wakeGroupKey(source.wolMac, source.host, "files")
+
     suspend fun wakeAndWait(source: FileSource) {
-        val key = "wake:files:${endpoint(source)}"
-        AppNotifications.post(AppNotice(key, R.string.notice_waking, listOf("files"), source.name, NoticePhase.WORKING, NoticeKind.WAKE))
+        val machine = machineKey(source)
+        val member = "files:${source.id}"
+        WakeNotices.begin(machine, "files", source.name, member)
         try {
         val ready = wakeWithRetries(
             retries = retryCount(),
@@ -81,12 +89,12 @@ class WakeOnLan {
         )
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
         rememberOnline(source)
-        notifyResult(key, "files", source.name, R.string.notice_awake, kind = NoticeKind.WAKE)
+        WakeNotices.finish(machine, "files", success = true, member = member)
         } catch (cancelled: CancellationException) {
-            AppNotifications.dismiss(key)
+            WakeNotices.cancel(machine, "files", member)
             throw cancelled
         } catch (error: Exception) {
-            notifyResult(key, "files", source.name, success = false, kind = NoticeKind.WAKE, failureMessage = R.string.notice_wake_failed)
+            WakeNotices.finish(machine, "files", success = false, member = member)
             throw error
         }
     }
