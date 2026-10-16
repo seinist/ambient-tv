@@ -1690,6 +1690,8 @@
     <string name="reminder_lead_title">Erinnerungen an Sendungen</string>
     <string name="reminder_lead_at_start">Zum Beginn</string>
     <string name="reminder_lead_minutes">%1$d Min. vorher</string>
+    <string name="reminder_auto_switch">Automatisch umschalten</string>
+    <string name="reminder_auto_switch_hint">Bei geöffneter App zum Erinnerungszeitpunkt automatisch zum Sender wechseln. Der gewählte Vorlauf gilt auch hier. Eine laufende Wiedergabe wird ersetzt. Im Hintergrund erscheint nur eine Benachrichtigung.</string>
     <string name="reminder_add">Erinnern</string>
     <string name="reminder_remove">Erinnerung entfernen</string>
     <string name="reminder_set">Erinnerung gesetzt</string>
@@ -1701,7 +1703,7 @@
     <string name="player_record_failed">Aufnahme konnte nicht angelegt werden. Bitte Aufnahmeberechtigung und Backend prüfen.</string>
     <string name="live_direct_record">Aufnahme</string>
     <string name="live_direct_record_hint">Aufnahme-Taste anzeigen, falls unterstützt.</string>
-    <string name="live_timeshift_optional_hint">Live-TV pausieren und zurückspulen.</string>
+    <string name="live_timeshift_optional_hint">Live-TV pausieren und zurückspulen. Bei IPTV nur für direkte MPEG-TS-Streams über HTTP(S), nicht für HLS (.m3u8).</string>
     <string name="live_timeshift_failed">Timeshift-Änderung fehlgeschlagen. Bitte Sender erneut starten.</string>
     <string name="timeshift_programme_position">Sendung %1$s / %2$s · Wiedergabe %3$s</string>
     <string name="timeshift_before_programme">Wiedergabe %1$s · vor aktueller Sendung</string>

@@ -782,7 +782,7 @@ fun SettingsScreen(
                             }
                         }
 
-                        SettingsCategory.IPTV -> { item { IptvSettingsSection() }; item { LiveTvExtrasSettingsGroup() } }
+                        SettingsCategory.IPTV -> { item { IptvSettingsSection() }; item { LiveTvExtrasSettingsGroup(showRecording = false) } }
 
                         SettingsCategory.TRAILERS -> {
                             item { com.ambient.tv.trailers.TrailerSettings(onConnected = { viewModel.refreshTrailerConfiguration() }) }

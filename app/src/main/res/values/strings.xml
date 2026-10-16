@@ -1690,6 +1690,8 @@
     <string name="reminder_lead_title">Programme reminders</string>
     <string name="reminder_lead_at_start">At the start</string>
     <string name="reminder_lead_minutes">%1$d min before</string>
+    <string name="reminder_auto_switch">Switch automatically</string>
+    <string name="reminder_auto_switch_hint">While the app is open, switch to the channel at the reminder time using the selected lead time. This replaces current playback. In the background, only a notification is shown.</string>
     <string name="reminder_add">Remind me</string>
     <string name="reminder_remove">Remove reminder</string>
     <string name="reminder_set">Reminder set</string>
@@ -1701,7 +1703,7 @@
     <string name="player_record_failed">Could not schedule recording. Please check recording permissions and the backend.</string>
     <string name="live_direct_record">Record</string>
     <string name="live_direct_record_hint">Show Record button when supported.</string>
-    <string name="live_timeshift_optional_hint">Pause and rewind Live TV.</string>
+    <string name="live_timeshift_optional_hint">Pause and rewind Live TV. For IPTV, only direct MPEG-TS streams over HTTP(S) are supported, not HLS (.m3u8).</string>
     <string name="live_timeshift_failed">Could not apply timeshift change. Please restart the channel.</string>
     <string name="timeshift_programme_position">Programme %1$s / %2$s · Playing %3$s</string>
     <string name="timeshift_before_programme">Playing %1$s · before current programme</string>

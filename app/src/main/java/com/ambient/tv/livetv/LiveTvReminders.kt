@@ -84,6 +84,13 @@ object LiveTvReminderScheduler {
     private const val ACTION_FIRE = "com.ambient.tv.action.LIVE_REMINDER"
     const val EXTRA_ID = "com.ambient.tv.extra.REMINDER_ID"
 
+    fun autoSwitch(context: Context): Boolean =
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).getBoolean("auto_switch", false)
+
+    fun setAutoSwitch(context: Context, enabled: Boolean) {
+        context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).edit().putBoolean("auto_switch", enabled).apply()
+    }
+
     private fun leadMs(context: Context): Long =
         context.getSharedPreferences("live_tv_reminders", Context.MODE_PRIVATE).getInt("lead_minutes", 2).coerceIn(0, 15) * 60_000L
 
@@ -130,6 +137,8 @@ object LiveTvReminderScheduler {
 
 /** A reminder that is due while the app is open; [LiveTvReminderPromptDialog] shows it. */
 object LiveTvReminderPrompt {
+    var foreground = false
+        internal set
     val due = MutableStateFlow<LiveTvReminder?>(null)
 }
 
@@ -144,8 +153,13 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
         val store = LiveTvReminderStore(context.applicationContext)
         val reminder = store.find(id) ?: return
         store.remove(id)
-        LiveTvReminderPrompt.due.value = reminder
-        notify(context, reminder)
+        if (LiveTvReminderScheduler.autoSwitch(context) && LiveTvReminderPrompt.foreground) {
+            LiveTvReminderPrompt.due.value = null
+            LauncherIntents.post(Destinations.tvhPlayer("channel", reminder.channelUuid, reminder.sourceId.ifBlank { null }))
+        } else {
+            LiveTvReminderPrompt.due.value = reminder
+            notify(context, reminder)
+        }
     }
 
     private fun notify(context: Context, reminder: LiveTvReminder) {
@@ -174,6 +188,10 @@ class LiveTvReminderReceiver : BroadcastReceiver() {
 /** In-app prompt for a due reminder: switch to the channel or dismiss. */
 @Composable
 fun LiveTvReminderPromptDialog() {
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        LiveTvReminderPrompt.foreground = true
+        onPauseOrDispose { LiveTvReminderPrompt.foreground = false }
+    }
     val due by LiveTvReminderPrompt.due.collectAsState()
     // Fired while the app was in the background: once the programme has long started, a prompt is noise.
     val reminder = due?.takeIf { it.startEpochSeconds * 1000 > System.currentTimeMillis() - 30 * 60_000L } ?: return
