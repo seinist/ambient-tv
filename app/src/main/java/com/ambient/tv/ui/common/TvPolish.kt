@@ -768,7 +768,16 @@ fun TvTextField(
     requireExplicitEditing: Boolean = true,
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
     keyboardOptions: androidx.compose.foundation.text.KeyboardOptions = androidx.compose.foundation.text.KeyboardOptions.Default,
+    inputFormatter: (androidx.compose.ui.text.input.TextFieldValue) -> androidx.compose.ui.text.input.TextFieldValue = { it },
 ) {
+    var editorValue by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(value)) }
+    val displayedEditorValue = if (editorValue.text == value) editorValue else editorValue.copy(text = value)
+    androidx.compose.runtime.SideEffect { editorValue = displayedEditorValue }
+    val onEditorValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit = { incoming ->
+        val formatted = inputFormatter(incoming)
+        editorValue = formatted
+        if (formatted.text != value) onValueChange(formatted.text)
+    }
     // PasswordVisualTransformation is deliberately detected here instead of at every call
     // site.  That keeps the reveal affordance consistent for server credentials, tokens,
     // file-source passwords, backup passphrases and other secret settings fields.
@@ -787,7 +796,7 @@ fun TvTextField(
 
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && !requireExplicitEditing) {
         androidx.compose.material3.OutlinedTextField(
-            value = value, onValueChange = onValueChange, label = if (label.isEmpty()) null else ({ androidx.compose.material3.Text(label) }),
+            value = displayedEditorValue, onValueChange = onEditorValueChange, label = if (label.isEmpty()) null else ({ androidx.compose.material3.Text(label) }),
             modifier = modifier, singleLine = singleLine, visualTransformation = effectiveVisualTransformation,
             keyboardOptions = keyboardOptions, shape = RoundedCornerShape(LocalUiTokens.current.controlRadius),
             trailingIcon = if (passwordField) {
@@ -952,8 +961,8 @@ fun TvTextField(
                     .weight(1f),
             ) {
                 if (editing) androidx.compose.foundation.text.BasicTextField(
-                    value = value,
-                    onValueChange = onValueChange,
+                    value = displayedEditorValue,
+                    onValueChange = onEditorValueChange,
                     enabled = editing,
                     singleLine = singleLine,
                     visualTransformation = effectiveVisualTransformation,

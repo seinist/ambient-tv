@@ -179,7 +179,8 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             TvTextField(requireExplicitEditing = true, value = mac,
-                onValueChange = { mac = com.ambient.tv.wol.formatMacAddressInput(it); viewModel.setGroupWakeMac(group, mac) },
+                onValueChange = { mac = it; viewModel.setGroupWakeMac(group, mac) },
+                inputFormatter = { com.ambient.tv.wol.formatMacAddressInput(it) },
                 label = stringResource(R.string.settings_mac_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
             if (mac.isNotBlank() && !isUsableWakeMac(mac)) {
                 Text(stringResource(R.string.settings_status_mac_invalid), color = MaterialTheme.colorScheme.error)

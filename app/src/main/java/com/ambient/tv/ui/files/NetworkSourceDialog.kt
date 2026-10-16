@@ -211,7 +211,7 @@ internal fun NetworkSourceDialog(
         }
         Text(stringResource(R.string.files_wol_title), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.files_wol_hint), style = MaterialTheme.typography.bodySmall)
-        SourceField(R.string.files_mac, mac, { mac = com.ambient.tv.wol.formatMacAddressInput(it) }, !busy)
+        SourceField(R.string.files_mac, mac, { mac = it }, !busy)
         if (mac.isNotBlank() && !isUsableWakeMac(mac)) {
             Text(stringResource(R.string.settings_status_mac_invalid), color = MaterialTheme.colorScheme.error)
         }
@@ -325,5 +325,6 @@ internal fun parseWebDavAddress(value: String): WebDavAddress? {
 private fun SourceField(label: Int, value: String, onChange: (String) -> Unit, enabled: Boolean, modifier: Modifier = Modifier, secret: Boolean = false) {
     // TvTextField keeps the IME closed until the field is clicked/activated, unlike a raw OutlinedTextField.
     TvTextField(value, { if (enabled) onChange(it) }, stringResource(label), modifier.fillMaxWidth(), requireExplicitEditing = true,
+        inputFormatter = { if (label == R.string.files_mac) com.ambient.tv.wol.formatMacAddressInput(it) else it },
         visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None)
 }
