@@ -1079,7 +1079,6 @@ private fun TvhSettingsPanel(
 ) {
     val audio = tvhTrackOptions(currentTracks, C.TRACK_TYPE_AUDIO).firstOrNull { it.selected }?.label ?: stringResource(R.string.player_default_track)
     val subtitle = tvhTrackOptions(currentTracks, C.TRACK_TYPE_TEXT).firstOrNull { it.selected }?.label ?: stringResource(R.string.player_off)
-    val jumpAvailable = jumpToLiveAvailable(source.isLive, player.currentPosition)
     TvhSidePanel(stringResource(R.string.player_playback_settings), onBack) {
         item {
             TvhSettingsRow(Icons.Filled.Movie, stringResource(R.string.player_renderer), tvhRendererLabel(rendererKey), Modifier, onOpenRenderer)
@@ -1089,15 +1088,7 @@ private fun TvhSettingsPanel(
         }
         item { TvhSettingsRow(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), audio, Modifier, onOpenAudio) }
         item { TvhSettingsRow(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), subtitle, Modifier, onOpenSubtitles) }
-        if (jumpAvailable) {
-            item {
-                TvhSettingsRow(
-                    Icons.Filled.PlayArrow,
-                    stringResource(R.string.player_jump_live),
-                    stringResource(R.string.player_jump_live_hint),
-                ) { com.ambient.tv.livetv.LiveTimeshift.seekHandler?.invoke(null) }
-            }
-        }
+        item { JumpToLivePanelEntry(source.isLive, player.currentPosition) }
         item {
             TvhSettingsRow(
                 Icons.Filled.Bedtime,

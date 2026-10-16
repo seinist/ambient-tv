@@ -67,12 +67,17 @@ internal fun jumpToLiveAvailable(isLive: Boolean, positionMs: Long): Boolean {
 
 @Composable
 internal fun JumpToLivePanelEntry(isLive: Boolean, positionMs: Long) {
-    if (jumpToLiveAvailable(isLive, positionMs)) {
+    val available = jumpToLiveAvailable(isLive, positionMs)
+    // Seeking replaces the stream and immediately makes this action unavailable. Keep the
+    // same focus target until the panel closes instead of removing its focused child.
+    var wasAvailable by remember(isLive) { mutableStateOf(false) }
+    SideEffect { if (available) wasAvailable = true }
+    if (isLive && (available || wasAvailable)) {
         PlayerPanelEntry(
             icon = Icons.Filled.PlayArrow,
             title = stringResource(R.string.player_jump_live),
             value = stringResource(R.string.player_jump_live_hint),
-            onClick = { LiveTimeshift.seekHandler?.invoke(null) },
+            onClick = { if (available) LiveTimeshift.seekHandler?.invoke(null) },
         )
     }
 }
