@@ -4,14 +4,8 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -25,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -104,33 +97,31 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
     }
     val reduced = LocalPerformanceProfile.current.reducedEffects || rememberAnimationsDisabled()
     val handheld = LocalHandheldUi.current
-    val slideInPx = with(LocalDensity.current) { 24.dp.roundToPx() }
-    val slideOutPx = with(LocalDensity.current) { 12.dp.roundToPx() }
-    var retained by remember { mutableStateOf<List<NoticeEntry>>(emptyList()) }
-    LaunchedEffect(visible) {
-        retained = retained.map { old -> visible.firstOrNull { it.id == old.id } ?: old } +
-            visible.filter { new -> retained.none { it.id == new.id } }
-    }
-    Box(Modifier.fillMaxSize().padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = if (handheld) 32.dp else 32.dp)) {
+    // Connectivity has several independent producers. Present their current phases inside
+    // one stable surface, so wake/resume/provider updates never stack separate connection cards.
+    val connectionKinds = setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN)
+    val connections = visible.filter { it.notice.kind in connectionKinds }
+    val others = visible.filterNot { it.notice.kind in connectionKinds }
+    Box(Modifier.fillMaxSize().padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
         Column(Modifier.align(Alignment.TopEnd).widthIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            retained.forEach { entry ->
-                key(entry.id) {
-                    val transition = remember { MutableTransitionState(false) }
-                    transition.targetState = visible.any { it.id == entry.id }
-                    LaunchedEffect(transition.isIdle, transition.currentState, transition.targetState) {
-                        if (transition.isIdle && !transition.currentState && !transition.targetState) {
-                            retained = retained.filterNot { it.id == entry.id }
+            if (connections.isNotEmpty()) {
+                val colors = MaterialTheme.colorScheme
+                val shape = RoundedCornerShape(14.dp)
+                Column(Modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
+                    .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)) {
+                    connections.groupBy { listOf(it.notice.kind, it.notice.phase, it.notice.message, it.notice.args) }
+                        .values.forEach { entries ->
+                            val notice = entries.first().notice.copy(
+                                systems = entries.flatMap { it.notice.systems }.distinct(),
+                                subject = entries.mapNotNull { it.notice.subject }.distinct()
+                                    .joinToString(", ").ifBlank { null },
+                            )
+                            NotificationCard(notice, reduced, grouped = true)
                         }
-                    }
-                    val duration = if (reduced) 130 else 200
-                    AnimatedVisibility(
-                        visibleState = transition,
-                        enter = fadeIn(tween(duration)) + if (reduced) androidx.compose.animation.EnterTransition.None
-                            else slideInHorizontally(tween(duration)) { slideInPx },
-                        exit = fadeOut(tween(if (reduced) 130 else 150)) + if (reduced) androidx.compose.animation.ExitTransition.None
-                            else slideOutVertically(tween(150)) { -slideOutPx },
-                    ) { NotificationCard(entry.notice, reduced) }
                 }
+            }
+            others.forEach { entry ->
+                key(entry.id) { NotificationCard(entry.notice, reduced) }
             }
         }
     }
@@ -191,19 +182,20 @@ fun noticeTitle(notice: AppNotice): String {
 fun noticeMessage(notice: AppNotice): String = stringResource(notice.message, *notice.args.toTypedArray())
 
 @Composable
-private fun NotificationCard(notice: AppNotice, reduced: Boolean) {
+private fun NotificationCard(notice: AppNotice, reduced: Boolean, grouped: Boolean = false) {
     val colors = MaterialTheme.colorScheme
     val statusColor = if (notice.phase == NoticePhase.ERROR) colors.error else colors.primary
     val shape = RoundedCornerShape(14.dp)
     Row(
-        Modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
-            .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)
+        Modifier.fillMaxWidth().then(if (grouped) Modifier else Modifier
+            .background(colors.surface.copy(alpha = .98f), shape)
+            .border(1.dp, colors.onSurface.copy(alpha = .16f), shape))
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
             .padding(14.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.size(36.dp)) {
-            val system = notice.systems.firstOrNull()?.let(MediaSystem::fromKey)
+            val system = notice.systems.distinct().singleOrNull()?.let(MediaSystem::fromKey)
             if (system != null) SystemLogo(system, Modifier.align(Alignment.Center), 28.dp)
             else Icon(kindIcon(notice.kind), null, Modifier.size(28.dp).align(Alignment.Center), tint = colors.onSurface)
             if (system != null) Icon(kindIcon(notice.kind), null,

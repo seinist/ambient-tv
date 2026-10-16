@@ -7,7 +7,27 @@ class NotificationStoreTest {
     private var now = 0L
     private val store = NotificationStore({ now }, { 1234L + now })
     private fun notice(key: String = "server", phase: NoticePhase = NoticePhase.WORKING, quiet: Boolean = false) =
-        AppNotice(key, 1, listOf("plex"), "Media server", phase, quietSuccess = quiet)
+        AppNotice(key, 1, listOf("plex"), "Media server", phase, kind = NoticeKind.SETTINGS, quietSuccess = quiet)
+
+    @Test fun wakeHidesConcurrentConnectionUntilWakeFinishes() {
+        store.post(notice("resume:tvheadend").copy(kind = NoticeKind.CONNECTION, systems = listOf("tvheadend")))
+        store.post(notice("wake:server").copy(kind = NoticeKind.WAKE, systems = listOf("tvheadend", "plex")))
+        now = 700
+        store.tick()
+        assertEquals(listOf("wake:server"), store.state.value.visible.map { it.notice.key })
+        store.post(notice("wake:server", NoticePhase.SUCCESS).copy(kind = NoticeKind.WAKE))
+        store.tick()
+        assertTrue(store.state.value.visible.any { it.notice.key == "resume:tvheadend" })
+    }
+
+    @Test fun allConcurrentConnectionsShareOnePresentationSlot() {
+        repeat(4) { store.post(notice("connection:$it").copy(kind = NoticeKind.CONNECTION)) }
+        store.post(notice("unrelated", NoticePhase.ERROR))
+        now = 700
+        store.tick()
+        assertEquals(5, store.state.value.visible.size)
+        assertTrue(store.state.value.visible.any { it.notice.key == "unrelated" })
+    }
 
     @Test fun fastHealthyChecksStaySilentAndDoNotFillHistory() {
         store.post(notice(quiet = true))

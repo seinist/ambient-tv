@@ -118,13 +118,25 @@ class NotificationStore(
                 else -> now - entry.changedAt < 30_000
             }
         }
+        // Independent startup/resume observers may still report connecting during a wake.
+        // Keep their state queued, but present the prerequisite until waking has completed.
+        val wakingSystems = pending.filter {
+            it.notice.kind == NoticeKind.WAKE && it.notice.phase == NoticePhase.WORKING
+        }.flatMap { it.notice.systems }.toSet()
         val selected = if (!presenting) emptyList() else pending
             .filter { it.notice.phase != NoticePhase.WORKING || now - it.createdAt >= 700 }
+            .filterNot {
+                it.notice.kind == NoticeKind.CONNECTION && it.notice.phase == NoticePhase.WORKING &&
+                    it.notice.systems.isNotEmpty() && it.notice.systems.all(wakingSystems::contains)
+            }
             .filter { !playback || it.notice.interruptPlayback || it.notice.phase == NoticePhase.ERROR }
             .sortedWith(compareBy<NoticeEntry> {
                 when (it.notice.phase) { NoticePhase.ERROR -> 0; NoticePhase.WORKING -> 2; else -> 1 }
             }.thenByDescending { it.changedAt }.thenBy { it.id })
-            .take(2).map { it.id }.toSet()
+            .groupBy {
+                if (it.notice.kind in setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN))
+                    "connectivity" else "notice:${it.id}"
+            }.values.take(2).flatten().map { it.id }.toSet()
         pending = pending.map { if (it.id in selected && it.shownAt == null) it.copy(shownAt = now) else it }
         mutable.value = state.copy(pending = pending, visible = pending.filter { it.id in selected })
     }
