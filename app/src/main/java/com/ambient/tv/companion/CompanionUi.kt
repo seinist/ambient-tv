@@ -105,6 +105,7 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
         CompanionImportDialog(viewModel)
         return
     }
+    if (!handheld && state.pullRequest != null) { CompanionPullRequestDialog(manager); return }
     state.prompt?.let { prompt ->
         val screenPixels = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics.heightPixels
         val compact = with(androidx.compose.ui.platform.LocalDensity.current) { screenPixels.toDp() } < 500.dp
@@ -214,12 +215,12 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
                     val session = state.sessions[peer.fingerprint].takeIf { peer.fingerprint != state.target?.fingerprint }
                     session?.let { Text(listOf(peer.name, it.title.ifBlank { stringResource(R.string.playback_status_idle) }, playbackPhaseLabel(it.phase)).joinToString(" · "), style = MaterialTheme.typography.bodySmall) }
                     val discovered = state.devices.firstOrNull { it.fingerprint == peer.fingerprint }
-                    Row {
+                    val reach = rememberReachability(manager, peer)
+                    CompanionPeerRow(manager, peer, reach, onUnpaired = { devicesFocus.requestFocus() }) { mod ->
                         TvActionButton(
                             if (state.sharedMedia != null) stringResource(R.string.companion_send_to, peer.name) else stringResource(if (state.online && state.target?.fingerprint == peer.fingerprint) R.string.companion_connected else R.string.companion_paired, peer.name),
                             { if (state.sharedMedia != null) manager.sendSharedMediaTo(peer) else manager.connect(discovered ?: peer) },
-                            enabled = !state.busy && state.sendingTo == null, modifier = Modifier.weight(1f))
-                        TvActionButton(stringResource(R.string.companion_forget), { devicesFocus.requestFocus(); manager.revoke(peer) })
+                            enabled = !state.busy && state.sendingTo == null && reach.allowsActions(), modifier = mod)
                     }
                 }
                 Text(stringResource(R.string.companion_section_found), style = MaterialTheme.typography.titleSmall)
@@ -235,10 +236,7 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
                 Text(stringResource(R.string.companion_tv_only_hint))
                 TvActionButton(stringResource(R.string.companion_pair_phone), manager::openPairing, modifier = Modifier.focusRequester(devicesFocus), fillWidth = true)
                 state.paired.forEach { peer ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(peer.name, modifier = Modifier.weight(1f))
-                        TvActionButton(stringResource(R.string.companion_forget), { devicesFocus.requestFocus(); manager.revoke(peer) })
-                    }
+                    CompanionPeerRow(manager, peer, onUnpaired = { devicesFocus.requestFocus() }) { mod -> Text(peer.name, modifier = mod) }
                 }
                 if (state.enabled) TvActionButton(stringResource(R.string.companion_disable), { devicesFocus.requestFocus(); manager.enableReceiver(false) })
             }
@@ -253,7 +251,9 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
 internal fun CompanionPairWithCode(manager: CompanionManager, peer: CompanionPeer, enabled: Boolean) {
     var code by remember(peer.fingerprint) { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(R.string.companion_unpaired_device, peer.name))
+        // The TV's own name is the title; the code hint stays short underneath.
+        Text(peer.name, style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.companion_pair_code_hint), style = MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = Alignment.CenterVertically) {
             TvTextField(
                 code,
@@ -277,7 +277,7 @@ internal fun CompanionSearchStatus(state: CompanionState) {
     val unpairedFound = state.devices.any { d -> state.paired.none { it.fingerprint == d.fingerprint } }
     when {
         state.searching && !unpairedFound -> Text(stringResource(R.string.companion_searching), style = MaterialTheme.typography.bodySmall)
-        state.searchEmpty -> Text(stringResource(R.string.companion_search_empty), style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.error)
+        // Details arrive as a notification; inline only a short hint.
+        state.searchEmpty -> Text(stringResource(R.string.companion_search_empty_short), style = MaterialTheme.typography.bodySmall)
     }
 }

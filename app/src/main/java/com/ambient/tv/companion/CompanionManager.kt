@@ -43,7 +43,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 
 data class CompanionPrompt(val name: String, val code: String)
-data class CompanionBackupOffer(val id: String, val sender: String, val mode: String, val credentials: Boolean, val accounts: Int, val sources: Int)
+data class CompanionBackupOffer(val id: String, val sender: String, val mode: String, val credentials: Boolean, val accounts: Int, val sources: Int,
+    /** Export time of the incoming data and this device's last successful import (0 = unknown). */
+    val exportedAt: Long = 0, val localAppliedAt: Long = 0,
+    /** Sent by a TV to this phone: display/audio hardware settings are never offered then. */
+    val fromTelevision: Boolean = false)
+/** TV side: a phone asked to pull this TV's data ("Vom TV holen"); needs local confirmation. */
+data class CompanionPullRequest(val session: String, val pin: String, val name: String, val mode: String, val credentials: Boolean, val transferId: String)
 data class CompanionState(
     val enabled: Boolean = false,
     val backgroundReceiver: Boolean = false,
@@ -82,6 +88,12 @@ data class CompanionState(
     val enqueueSelection: Boolean = false,
     /** Foreground-only, read-only snapshots of other paired TVs. No auto-pair or control lease. */
     val sessions: Map<String, CompanionFrame> = emptyMap(),
+    /** Last time (elapsedRealtime) each device was found by the search or ended a session. */
+    val lastSeen: Map<String, Long> = emptyMap(),
+    /** TV side: pending pull request from a phone. */
+    val pullRequest: CompanionPullRequest? = null,
+    /** Phone side: waiting for a TV to send its data after "Vom TV holen". */
+    val pulling: Boolean = false,
 )
 
 /** Authenticated companion; optional TV receiver service owns idle availability. */
@@ -243,6 +255,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val request = playbackRequest.value ?: return
         val media = request.media ?: return
         if (request.starting || mutable.value.paired.none { it.fingerprint == peer.fingerprint }) return
+        if (!guardReachable(peer)) return
         playbackRequest.value = request.copy(starting = true, device = peer.name, error = null)
         playbackRequestJob = scope.launch(Dispatchers.Main) {
             try {
@@ -314,6 +327,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private val returnSessions = java.util.concurrent.ConcurrentHashMap<String, ReturnSession>()
     private var backupSendJob: Job? = null
     @Volatile private var backupAck: CompletableDeferred<Boolean>? = null
+    @Volatile private var backupAckError: String = ""
     private var outgoingBackupId: String? = null
     private val playbackQueue = CompanionPlaybackQueue()
     private val playbackMutation = Mutex()
@@ -558,7 +572,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         mutable.update { it.copy(panel = true, nowPlayingPanel = false, settingsPanel = false) }
         discover()
     }
-    fun showRemote() { if (television) return; mutable.update { it.copy(remotePanel = true, panel = false, nowPlayingPanel = false, settingsPanel = false) }; send(CompanionFrame(type = "input_claim")) }
+    fun showRemote() {
+        if (television) return
+        if (!mutable.value.online) { notice(R.string.companion_unreachable_notice, mutable.value.target?.name.orEmpty(), error = true); return }
+        mutable.update { it.copy(remotePanel = true, panel = false, nowPlayingPanel = false, settingsPanel = false) }; send(CompanionFrame(type = "input_claim")) }
     fun hideRemote() { send(CompanionFrame(type = "input_release")); mutable.update { it.copy(remotePanel = false) } }
     fun showNowPlaying() {
         if (mutable.value.remotePanel) hideRemote()
@@ -619,7 +636,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val nativeQueue = if (useSpotify) music.queue.take(64).mapIndexed { i, t -> CompanionQueueItem("spotify:$i:${t.id}", CompanionMedia("spotify:track", t.id), t.name.take(160)) } else playbackQueue.entries
         val capabilities = buildList {
             add("start_confirmation")
-            if (foreground && settingsService != null) addAll(listOf("nav_sounds", "settings_sync"))
+            if (foreground && settingsService != null) addAll(listOf("nav_sounds", "settings_sync", "backup_request"))
             add("queue_page")
             if (useSpotify && spotify?.webAuthorized == true || !useSpotify && playbackQueue.entries.size < 64) add("queue_add")
             if (!useSpotify) {
@@ -780,6 +797,59 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         mutable.update { it.copy(settingsPanel = true, panel = false, nowPlayingPanel = false) }
     }
     fun hideSettingsTransfer() { mutable.update { it.copy(settingsPanel = false) } }
+
+    private var pullJob: Job? = null
+
+    /** Phone: ask the connected TV to send its data back ("Vom TV holen"). The TV confirms first. */
+    fun requestBackupFromTv(mode: String, credentials: Boolean) {
+        val target = mutable.value.target
+        val gate = when {
+            television || target == null || !mutable.value.online -> BackupFailure.NOT_CONNECTED
+            mutable.value.remote?.capabilities?.contains("backup_request") != true || mode !in setOf("accounts", "settings", "nav_sounds") -> BackupFailure.UNSUPPORTED
+            mutable.value.backupBusy || mutable.value.backupOffer != null || mutable.value.pulling -> BackupFailure.BUSY
+            else -> null
+        }
+        if (gate != null || target == null) { notice(companionBackupFailureMessage(gate ?: BackupFailure.NOT_CONNECTED), error = true); return }
+        val id = java.util.UUID.randomUUID().toString()
+        outgoingBackupId = id
+        if (!send(CompanionFrame(type = "backup_request", mode = mode, credentials = credentials && mode != "nav_sounds", transferId = id))) {
+            notice(companionBackupFailureMessage(BackupFailure.NOT_CONNECTED), target.name, error = true); return
+        }
+        mutable.update { it.copy(pulling = true, backupStatus = "") }
+        pullJob?.cancel()
+        pullJob = scope.launch {
+            // Return frames ride on the phone's requests; the client loop polls every second and
+            // every 50 ms while a return transfer runs. Here only wait for the outcome.
+            val done = withTimeoutOrNull(150_000) {
+                state.first { !it.pulling || it.backupOffer != null || !it.online || it.backupStatus in setOf("rejected", "expired", "failed") }
+            }
+            if (mutable.value.pulling) {
+                mutable.update { it.copy(pulling = false) }
+                if (done == null || !mutable.value.online) notice(R.string.companion_pull_failed, target.name, error = true)
+            }
+        }
+    }
+
+    fun cancelPull() { pullJob?.cancel(); pullJob = null; mutable.update { it.copy(pulling = false) } }
+
+    /** TV: the user allowed (or refused) sending this TV's data to the requesting phone. */
+    fun answerPullRequest(allow: Boolean) {
+        val request = mutable.value.pullRequest ?: return
+        mutable.update { it.copy(pullRequest = null) }
+        val peer = mutable.value.paired.firstOrNull { it.fingerprint == request.pin }
+        val service = settingsService
+        if (!allow || peer == null || service == null) {
+            backupResults[request.session] = request.transferId to "rejected"
+            return
+        }
+        scope.launch {
+            val raw = withContext(Dispatchers.IO) { runCatching { service.export(request.credentials, request.mode) }.getOrNull() }
+            withContext(Dispatchers.Main) {
+                if (raw == null) { backupResults[request.session] = request.transferId to "failed"; notice(companionBackupFailureMessage(BackupFailure.PREPARE), peer.name, error = true) }
+                else sendSettings(raw, request.mode, request.credentials, peer)
+            }
+        }
+    }
     fun remoteInput(input: CompanionInput) {
         if (mutable.value.remote?.inputGranted != true) return
         input.validate()
@@ -811,14 +881,19 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target) {
         val reverse = target?.let { returnSessions[it.fingerprint] }
         val direct = mutable.value.online && target?.fingerprint == mutable.value.target?.fingerprint
-        if ((!direct && reverse == null) || mutable.value.backupBusy || mutable.value.backupOffer != null || mutable.value.restoreDialog || mutable.value.prompt != null || mutable.value.backupStatus == "pending" || (settingsDirty && mode != "nav_sounds") || mode !in setOf("accounts", "settings", "nav_sounds")) {
-            notice(R.string.companion_backup_failed, error = true); return
+        val s = mutable.value
+        val gate = when {
+            mode !in setOf("accounts", "settings", "nav_sounds") -> BackupFailure.UNSUPPORTED
+            !direct && reverse == null -> BackupFailure.NOT_CONNECTED
+            s.backupBusy || s.backupOffer != null || s.restoreDialog || s.prompt != null || s.pullRequest != null -> BackupFailure.BUSY
+            settingsDirty && mode != "nav_sounds" -> BackupFailure.UNSAVED
+            mode == "nav_sounds" && (credentials || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("nav_sounds") != true) -> BackupFailure.UNSUPPORTED
+            raw.toByteArray().size !in 1..CompanionBackupPolicy.MAX_BYTES -> BackupFailure.TOO_LARGE
+            else -> null
         }
-        if (mode == "nav_sounds" && (credentials || (if (reverse != null) mutable.value.syncPeers[target.fingerprint] else mutable.value.remote?.capabilities)?.contains("nav_sounds") != true)) {
-            notice(R.string.companion_backup_failed, error = true); return
-        }
+        // A stale "pending" from an earlier transfer whose answer never arrived must not block forever.
+        if (gate != null) { notice(companionBackupFailureMessage(gate), target?.name.orEmpty(), error = true); return }
         val bytes = raw.toByteArray()
-        if (bytes.size !in 1..CompanionBackupPolicy.MAX_BYTES) { notice(R.string.companion_backup_failed, error = true); return }
         val id = java.util.UUID.randomUUID().toString()
         val queue = commands
         outgoingBackupId = id
@@ -835,7 +910,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     backupAck = ack
                     queue.send(frame)
                 }
-                check(withTimeout(15_000) { ack.await() })
+                if (!withTimeout(15_000) { ack.await() }) throw CompanionBackupRejected(backupAckError)
             }
             try {
                 if (reverse == null) queue.send(CompanionFrame(type = "input_release"))
@@ -846,13 +921,20 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 }
                 transmit(CompanionFrame(type = "backup_finish", transferId = id))
                 notice(R.string.companion_backup_sent, target?.name.orEmpty())
-            } catch (_: CancellationException) { throw CancellationException() }
-            catch (_: Exception) {
+            } catch (failure: Exception) {
+                // withTimeout throws a CancellationException subtype: a silent timeout used to leave
+                // the sender without any message. Real cancellation (job cancelled) still propagates.
+                if (failure is CancellationException && failure !is TimeoutCancellationException) throw failure
+                val reason = when (failure) {
+                    is TimeoutCancellationException -> BackupFailure.TIMEOUT
+                    is CompanionBackupRejected -> if (failure.reason == BackupFailure.RECEIVER_BUSY) BackupFailure.RECEIVER_BUSY else BackupFailure.UNSUPPORTED
+                    else -> BackupFailure.NOT_CONNECTED
+                }
                 if (commands === queue) {
                     if (reverse != null) reverse.frames.trySend(CompanionFrame(type = "backup_cancel", transferId = id) to CompletableDeferred())
                     else queue.trySend(CompanionFrame(type = "backup_cancel", transferId = id))
                     mutable.update { it.copy(backupStatus = "failed") }
-                    notice(R.string.companion_backup_failed, error = true)
+                    notice(companionBackupFailureMessage(reason), target?.name.orEmpty(), error = true)
                 }
             } finally {
                 if (commands === queue && outgoingBackupId == id) { backupAck = null; mutable.update { it.copy(backupBusy = false) } }
@@ -869,7 +951,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         offerRaw = safe; offerSession = nonce
         mutable.update { it.copy(backupOffer = CompanionBackupOffer(active.id, peer.name, active.mode, active.credentials,
             parsed.servers.size + parsed.jellyfinServers.size + parsed.embyServers.size + (if (parsed.tvheadendHost.isBlank()) 0 else 1),
-            parsed.fileSources.size + parsed.dlnaServers.size)) }
+            parsed.fileSources.size + parsed.dlnaServers.size, exportedAt = parsed.exportedAtEpochMs,
+            localAppliedAt = prefs.getLong(KEY_LAST_APPLIED, 0L), fromTelevision = !television), pulling = false) }
         backupResults[nonce] = active.id to "pending"
         notice(R.string.companion_backup_received, peer.name)
         offerExpiry?.cancel(); offerExpiry = scope.launch(Dispatchers.Main) { delay(120_000); rejectBackup("expired") }
@@ -878,8 +961,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private fun updateBackupResult(id: String, status: String, name: String) {
         if (id == outgoingBackupId && status in setOf("pending", "applied", "rejected", "expired", "failed") && status != mutable.value.backupStatus) {
             mutable.update { it.copy(backupStatus = status, backupBusy = false) }
-            if (status != "pending") notice(if (status == "applied") R.string.companion_backup_applied else R.string.companion_backup_declined,
-                name, error = status == "failed")
+            if (status != "pending") notice(when (status) {
+                "applied" -> R.string.companion_backup_applied
+                "failed" -> companionBackupFailureMessage(BackupFailure.APPLY)
+                else -> R.string.companion_backup_declined
+            }, name, error = status == "failed")
         }
     }
 
@@ -908,10 +994,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             val success = runCatching { service.apply(raw, offer.mode, overwrite, deviceSettings) }.isSuccess
             withContext(Dispatchers.Main) {
                 backupResults[session] = offer.id to if (success) "applied" else "failed"
+                if (success) prefs.edit().putLong(KEY_LAST_APPLIED, System.currentTimeMillis()).apply()
                 offerRaw = null; offerSession = null
                 mutable.update { it.copy(backupOffer = null, backupBusy = false, rollbackAvailable = service.hasRollback(),
                     settingsRevision = it.settingsRevision + if (success) 1 else 0) }
-                notice(if (success) R.string.companion_backup_applied else R.string.companion_backup_failed, offer.sender, error = !success)
+                notice(if (success) R.string.companion_backup_applied else companionBackupFailureMessage(BackupFailure.APPLY), offer.sender, error = !success)
             }
         }
     }
@@ -934,15 +1021,16 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
     /** A settings page that searched for TVs is left: stop, unless the pairing panel still uses it. */
     fun stopSearchUnlessPanel() {
-        pageSearching = false
+        if (pageSearchUsers.updateAndGet { maxOf(0, it - 1) } > 0) return
         if (!television && !mutable.value.panel) stopDiscovery()
     }
 
-    /** The phone's "Connect to TV" settings page is open and lists the TVs it finds. */
-    @Volatile private var pageSearching = false
+    /** Screens that list TVs (settings page, sync, playback target) keep the search running. */
+    private val pageSearchUsers = java.util.concurrent.atomic.AtomicInteger(0)
+    private val pageSearching get() = pageSearchUsers.get() > 0
 
     fun startPageSearch() {
-        pageSearching = true
+        pageSearchUsers.incrementAndGet()
         discover()
     }
 
@@ -1234,7 +1322,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         var error = ""
                         try {
                             if (request.type !in setOf("status", "input_release", "backup_cancel") &&
-                                (mutable.value.backupOffer != null || mutable.value.backupBusy || mutable.value.restoreDialog || mutable.value.prompt != null || mutable.value.backupStatus == "pending")) {
+                                (mutable.value.backupOffer != null || mutable.value.backupBusy || mutable.value.restoreDialog || mutable.value.prompt != null || mutable.value.pullRequest != null)) {
                                 error = "consent_pending"; error("Local consent is pending")
                             }
                             require(!observer || request.type == "status")
@@ -1281,6 +1369,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     transfer = null
                                 }
                                 "backup_cancel" -> { transfer = null; if (offerSession == nonce) rejectBackup() }
+                                "backup_request" -> {
+                                    check(television && settingsService != null && "duplex_sync" in request.capabilities)
+                                    require(request.mode in setOf("accounts", "settings", "nav_sounds") && request.transferId.length in 1..64)
+                                    releaseRemoteControl()
+                                    mutable.update { it.copy(pullRequest = CompanionPullRequest(nonce, sessionPin, peer.name, request.mode,
+                                        request.credentials && request.mode != "nav_sounds", request.transferId)) }
+                                    notice(R.string.companion_pull_request_notice, peer.name)
+                                }
                                 "start" -> {
                                     requireNotNull(request.media)
                                     require(request.startRequestId.length <= 64)
@@ -1306,7 +1402,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         playback.copy(nonce = nonce, sequence = request.sequence, syncReturn = returned,
                             controller = mutable.value.controller, inputGranted = synchronized(inputLease) { inputLease.owns(nonce, SystemClock.elapsedRealtime()) },
                             transferId = result?.first.orEmpty(), backupStatus = result?.second.orEmpty(),
-                            error = error.ifEmpty { if (playback.phase == "error") "playback" else "" })
+                            error = companionReplyError(error, playback.phase, request.type))
                     } finally { if (mutatesPlayback) playbackMutation.unlock() }
                 }
                 output.writeFrame(reply)
@@ -1321,6 +1417,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             releaseRemoteControl(session)
             withContext(NonCancellable + Dispatchers.Main) {
                 if (offerSession == session && !mutable.value.backupBusy) rejectBackup("expired")
+                if (mutable.value.pullRequest?.session == session) mutable.update { it.copy(pullRequest = null) }
                 backupResults.remove(session)
                 peer?.let { p ->
                     returnSession?.let { back ->
@@ -1346,8 +1443,23 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         connect(CompanionPeer(invite.fingerprint, "TV", invite.host, invite.port), invite.token)
     }
 
+    /** The single reachability answer used by every device list, picker and action guard. */
+    fun reachability(peer: CompanionPeer, state: CompanionState = mutable.value, nowMs: Long = SystemClock.elapsedRealtime()): PeerReachability {
+        if (television && peer.name in state.connected) return PeerReachability.CONNECTED
+        val wakeable = !television && companionWakeable(runCatching { connectionTransport?.store?.get(peer.fingerprint) }.getOrNull())
+        return companionReachability(peer.fingerprint, state, wakeable, nowMs)
+    }
+
+    /** Blocks an action on a paired device nothing can reach; says why in a notification. */
+    private fun guardReachable(peer: CompanionPeer): Boolean {
+        if (mutable.value.paired.none { it.fingerprint == peer.fingerprint } || reachability(peer).allowsActions()) return true
+        notice(R.string.companion_unreachable_notice, peer.name, error = true)
+        return false
+    }
+
     @Synchronized fun connect(peer: CompanionPeer, invitation: String = "", initialMedia: CompanionMedia? = null, allowWake: Boolean = true) {
         if (television || !foreground || peer.role == COMPANION_HANDHELD) return
+        if (invitation.isEmpty() && !guardReachable(peer)) return
         diagnosticFailure = ""
         stopSessionWatch(peer.fingerprint)
         if (!LocalNetworkAccess.isGranted(context)) {
@@ -1430,7 +1542,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     ensureActive(); check(commands === queue)
                     if (initialMedia != null) require(mutable.value.paired.any { it.fingerprint == peer.fingerprint })
                     savePeer(trusted); connectionTransport?.store?.learnMac(trusted.fingerprint, response.networkMac); connected = true
-                    mutable.update { it.copy(target = trusted, online = true, busy = false) }
+                    mutable.update { it.copy(target = trusted, online = true, busy = false, lastSeen = it.lastSeen + (trusted.fingerprint to SystemClock.elapsedRealtime())) }
                 }
                 connectionNotice(trusted)
                 socket.soTimeout = 8_000
@@ -1473,7 +1585,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             try {
                                 check(commands === queue && foreground && mutable.value.paired.any { it.fingerprint == trusted.fingerprint })
                                 val frame = returned.command()
-                                if (frame.type != "backup_cancel") check(settingsService != null && !mutable.value.backupBusy && mutable.value.backupOffer == null && !mutable.value.restoreDialog && mutable.value.prompt == null && mutable.value.backupStatus != "pending")
+                                if (frame.type != "backup_cancel") check(settingsService != null && !mutable.value.backupBusy && mutable.value.backupOffer == null && !mutable.value.restoreDialog && mutable.value.prompt == null)
                                 when (frame.type) {
                                     "backup_begin" -> {
                                         check(returnTransfer == null)
@@ -1495,7 +1607,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     synchronized(this@CompanionManager) {
                         ensureActive(); check(commands === queue)
                         require(state.type == "state" && state.nonce == nonce && state.sequence == sequence)
-                        if (state.error.isNotEmpty() && (command.type != "status" || mutable.value.remote?.error != state.error)) notice(
+                        // Transfer frames report their own classified failure from sendSettings.
+                        if (state.error.isNotEmpty() && !command.type.startsWith("backup_") && (command.type != "status" || mutable.value.remote?.error != state.error)) notice(
                             when { command.type.startsWith("input") -> R.string.companion_control_failed
                                 command.type.startsWith("backup_") -> R.string.companion_backup_failed
                                 else -> R.string.companion_play_failed }, error = true)
@@ -1504,7 +1617,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                             playbackStartAck?.takeIf { it.first == command.startRequestId }?.second?.complete(state)
                         }
                         ensureRemoteService()
-                        if (command.type.startsWith("backup_")) backupAck?.complete(state.error.isEmpty())
+                        if (command.type.startsWith("backup_")) { backupAckError = state.error; backupAck?.complete(companionBackupAckOk(state.error)) }
                         updateBackupResult(state.transferId, state.backupStatus, name)
                         if (command.type == "start" && mutable.value.sendingTo != null) {
                             if (state.error.isEmpty()) {
@@ -1527,7 +1640,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         else failure.message.orEmpty().take(240)
                 } ) }
                 if (failure !is EOFException && failure !is SocketException) debugFailure("sender", failure)
-                if (isActive && failure.message != "device_role") notice(if (connected) R.string.companion_disconnected else R.string.companion_connect_failed, peer.name, error = true)
+                if (isActive && failure.message != "device_role") notice(when {
+                    connected -> R.string.companion_disconnected
+                    failure.message == "other_network" -> R.string.companion_other_network
+                    else -> R.string.companion_connect_failed
+                }, peer.name, error = true)
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) {
                     if (offerSession == clientSyncNonce && !mutable.value.backupBusy) rejectBackup("expired")
@@ -1539,7 +1656,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                         clientSocket = null
                         backupAck?.complete(false)
                         playbackStartAck?.second?.completeExceptionally(IllegalStateException("Disconnected"))
-                        mutable.update { it.copy(online = false, busy = false, connectionStage = null, remote = null, prompt = null, sendingTo = null, enqueueSelection = false,
+                        mutable.update { it.copy(lastSeen = if (connected) it.lastSeen + (peer.fingerprint to SystemClock.elapsedRealtime()) else it.lastSeen, online = false, busy = false, connectionStage = null, remote = null, prompt = null, sendingTo = null, enqueueSelection = false,
                             backupBusy = it.backupOffer != null && it.backupBusy, backupStatus = if (it.backupStatus in setOf("pending", "sending")) "failed" else it.backupStatus) }
                     }
                 }
@@ -1654,7 +1771,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     private fun advertise(port: Int) {
-        val info = NsdServiceInfo().apply { serviceName = "Ambient TV $deviceName"; serviceType = "_ambienttv._tcp."; this.port = port; setAttribute("role", COMPANION_TV); setAttribute("id", identity.pin); setAttribute("auth", fingerprint(identity.certificate.publicKey.encoded)) }
+        val info = NsdServiceInfo().apply { serviceName = "Ambient TV $deviceName"; serviceType = "_ambienttv._tcp."; this.port = port; setAttribute("role", COMPANION_TV); setAttribute("name", deviceName.take(40)); setAttribute("id", identity.pin); setAttribute("auth", fingerprint(identity.certificate.publicKey.encoded)) }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 if (registration !== this) runCatching { nsd.unregisterService(this) }
@@ -1684,7 +1801,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 val pin = resolvedServices.remove(info.serviceName)
                 mutable.update { state ->
                     state.copy(devices = state.devices.filterNot { peer ->
-                        if (pin != null) peer.fingerprint == pin else peer.name == safeDeviceName(info.serviceName)
+                        if (pin != null) peer.fingerprint == pin else peer.name == companionDisplayName(info.serviceName, null)
                     })
                 }
             }
@@ -1709,6 +1826,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         searchJob = scope.launch {
             withTimeoutOrNull(8_000) { state.first { it.devices.isNotEmpty() } }
             mutable.update { it.copy(searching = false, searchEmpty = it.devices.isEmpty()) }
+            if (mutable.value.searchEmpty && (mutable.value.panel || pageSearchUsers.get() > 0)) notice(R.string.companion_search_empty, error = true)
         }
     }
     private val resolvedServices = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -1798,9 +1916,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val auth = info.attributes["auth"]?.toString(Charsets.UTF_8).orEmpty()
         val trusted = mutable.value.paired.firstOrNull { it.fingerprint == pin || it.fingerprint == auth || it.authenticationKey.isNotEmpty() && it.authenticationKey == auth }
         val peer = trusted?.copy(host = address.hostAddress!!, port = info.port)
-            ?: CompanionPeer(pin, safeDeviceName(info.serviceName), address.hostAddress!!, info.port, role = COMPANION_TV)
+            ?: CompanionPeer(pin, companionDisplayName(info.serviceName, info.attributes["name"]?.toString(Charsets.UTF_8)), address.hostAddress!!, info.port, role = COMPANION_TV)
         resolvedServices[info.serviceName] = peer.fingerprint
-        mutable.update { it.copy(devices = (it.devices.filterNot { d -> d.fingerprint == peer.fingerprint } + peer).takeLast(32)) }
+        mutable.update { it.copy(devices = (it.devices.filterNot { d -> d.fingerprint == peer.fingerprint } + peer).takeLast(32),
+            lastSeen = it.lastSeen + (peer.fingerprint to SystemClock.elapsedRealtime())) }
     }
 
     private fun stopDiscovery() {
@@ -1865,5 +1984,7 @@ internal fun companionNoticeInterruptsPlayback(message: Int, error: Boolean): Bo
 private const val MAX_PAIR_ATTEMPTS = 5
 private const val LAN_RECHECK_MS = 1_000L
 private const val KEY_SERVER_PORT = "server_port"
+private class CompanionBackupRejected(val reason: String) : IllegalStateException(reason)
+private const val KEY_LAST_APPLIED = "last_settings_applied_at"
 /** Time for TLS, the challenge and the auth frame before an unauthenticated socket is closed. */
 private const val AUTH_DEADLINE_MS = 10_000L
