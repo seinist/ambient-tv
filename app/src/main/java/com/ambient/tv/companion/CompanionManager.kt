@@ -94,6 +94,8 @@ data class CompanionState(
     val pullRequest: CompanionPullRequest? = null,
     /** Phone side: waiting for a TV to send its data after "Vom TV holen". */
     val pulling: Boolean = false,
+    /** Paired TVs whose stored host:port is being probed directly right now. */
+    val probing: Set<String> = emptySet(),
 )
 
 /** Authenticated companion; optional TV receiver service owns idle availability. */
@@ -1032,6 +1034,62 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     fun startPageSearch() {
         pageSearchUsers.incrementAndGet()
         discover()
+        startProbing()
+    }
+
+    private var probeJob: Job? = null
+    private val lastProbe = ConcurrentHashMap<String, Long>()
+
+    /**
+     * mDNS can be blocked on some networks: while a TV-listing screen is open, paired TVs that the
+     * search does not see are probed at their stored host:port (pinned TLS + challenge, 1.5 s),
+     * at most every 30 s each. Success marks them reachable for the usual 2-minute TTL.
+     */
+    @Synchronized private fun startProbing() {
+        if (television || probeJob?.isActive == true) return
+        probeJob = scope.launch {
+            delay(1_500) // Let mDNS answer first.
+            while (isActive && pageSearchUsers.get() > 0 && foreground && LocalNetworkAccess.isGranted(context)) {
+                val link = lan()
+                val now = SystemClock.elapsedRealtime()
+                val due = mutable.value.paired.filter { peer ->
+                    val vpn = runCatching { connectionTransport?.store?.get(peer.fingerprint)?.wireGuard == true }.getOrDefault(false)
+                    val onLan = link != null && runCatching { link.contains(InetAddress.getByName(peer.host)) }.getOrDefault(false)
+                    peer.role != COMPANION_HANDHELD && companionNeedsProbe(peer, mutable.value, vpn, onLan, lastProbe[peer.fingerprint], now)
+                }
+                for (peer in due) {
+                    if (!isActive || pageSearchUsers.get() == 0) break
+                    lastProbe[peer.fingerprint] = SystemClock.elapsedRealtime()
+                    mutable.update { it.copy(probing = it.probing + peer.fingerprint) }
+                    val ok = link != null && probePeer(peer, link)
+                    mutable.update { it.copy(probing = it.probing - peer.fingerprint,
+                        lastSeen = if (ok) it.lastSeen + (peer.fingerprint to SystemClock.elapsedRealtime()) else it.lastSeen) }
+                }
+                delay(5_000)
+            }
+            mutable.update { it.copy(probing = emptySet()) }
+        }
+    }
+
+    private suspend fun probePeer(peer: CompanionPeer, link: Lan): Boolean = withContext(Dispatchers.IO) {
+        val raw = Socket()
+        try {
+            withTimeout(3_500) {
+                runInterruptible {
+                    link.network.bindSocket(raw)
+                    raw.connect(InetSocketAddress(InetAddress.getByName(peer.host), peer.port), 1_500)
+                    val socket = identity.clientContext(peer.fingerprint).socketFactory.createSocket(raw, peer.host, peer.port, true) as SSLSocket
+                    socket.use {
+                        it.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2"); it.soTimeout = 1_500; it.startHandshake()
+                        val challenge = DataInputStream(it.inputStream).readFrame()
+                        challenge.type == "challenge" && challenge.role == COMPANION_TV
+                    }
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            if (cancelled !is TimeoutCancellationException) throw cancelled
+            false
+        } catch (_: Exception) { false } finally { runCatching { raw.close() } }
     }
 
     fun hidePanel() {
@@ -1411,7 +1469,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             throw failure
         } catch (failure: Exception) {
             if (peer != null && failure !is EOFException && failure !is SocketException) debugFailure("receiver", failure)
-            if (peer == null && foreground) rejectNotice()
+            // A reachability probe closes cleanly after the challenge: not a rejected pairing.
+            if (peer == null && foreground && failure !is EOFException) rejectNotice()
         } finally {
             authDeadline.cancel()
             releaseRemoteControl(session)
