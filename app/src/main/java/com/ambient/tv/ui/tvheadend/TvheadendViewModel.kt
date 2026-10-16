@@ -78,6 +78,7 @@ class TvheadendViewModel @Inject constructor(
         configured = true, source = repository.source,
         guideOptions = preferences.guideOptions(repository.source.id),
         dashboard = browseState.dashboard, capabilities = browseState.capabilities,
+        loading = browseState.dashboard == null,
         tab = TvheadendTab.entries.firstOrNull {
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
         } ?: TvheadendTab.LIVE,
@@ -121,13 +122,14 @@ class TvheadendViewModel @Inject constructor(
     private fun load(force: Boolean) {
         refreshJob?.cancel()
         val ticket = feedback.begin("dashboard")
+        _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
         refreshJob = viewModelScope.launch {
             val owner = "livetv:${repository.source.id}"
             val namespace = snapshots.namespace(owner, repository.authHeaders().toSortedMap().toString() +
                 "|${preferences.tvheadendHost}:${preferences.tvheadendPort}:${preferences.tvheadendUsername}")
             snapshots.read<LiveTvDashboard>(namespace, "dashboard")?.let { cached ->
                 if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = !availability.hasNetwork(),
-                    capabilities = it.capabilities.copy(available = true, guide = cached.events.isNotEmpty(), recordings = cached.recordings.isNotEmpty()), loading = false) }
+                    capabilities = it.capabilities.copy(available = true, guide = cached.events.isNotEmpty(), recordings = cached.recordings.isNotEmpty()), loading = false, refreshing = true) }
             }
             _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
             suspendResult {

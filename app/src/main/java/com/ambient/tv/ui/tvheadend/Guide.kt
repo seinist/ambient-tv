@@ -44,8 +44,9 @@ internal fun Guide(
     onOptions: (GuideOptions) -> Unit,
     onWatch: (String) -> Unit,
     canWatch: Boolean,
+    refreshing: Boolean = false,
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
-    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch)
+    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, refreshing = refreshing)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
 @Composable
@@ -64,6 +65,7 @@ internal fun LiveTvChannelBrowser(
     canWatch: Boolean,
     channelList: Boolean = false,
     upcoming: List<LiveTvRecording> = emptyList(),
+    refreshing: Boolean = false,
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
     LaunchedEffect(Unit) { while (true) { delay(60_000); now = System.currentTimeMillis() / 1000L } }
@@ -154,7 +156,9 @@ internal fun LiveTvChannelBrowser(
             }
             GuideActiveFilters(activeFilters)
             if (visibleChannels.isEmpty()) {
-                StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
+                if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                } else StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
                     onAction = { onOptions(GuideOptions(sort = options.sort)) })
             } else Row(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(allowUpExit = true, state = listState,
@@ -202,7 +206,9 @@ internal fun LiveTvChannelBrowser(
                                         }
                                     }
                                 }
-                                if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
+                                if (rowEvents.isEmpty() && refreshing) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
+                                    androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
+                                } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(rowEvents, key = { it.eventId }) { event ->

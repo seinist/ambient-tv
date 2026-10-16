@@ -232,7 +232,14 @@ fun TvheadendScreen(
                 onAction = onOpenSettings,
                 modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 620.dp),
             )
-            state.loading || (state.refreshing && state.tab == TvheadendTab.GUIDE && state.dashboard?.events.isNullOrEmpty() && viewModel.browseState.dashboard == null) -> TvheadendLoadingSkeleton(state.tab)
+            state.loading || (state.refreshing && when (state.tab) {
+                TvheadendTab.LIVE -> state.dashboard?.channels.isNullOrEmpty()
+                TvheadendTab.GUIDE -> state.dashboard?.channels.isNullOrEmpty()
+                TvheadendTab.RECORDINGS -> state.dashboard?.let { it.recordings.isEmpty() && it.failedRecordings.isEmpty() } ?: true
+                TvheadendTab.TIMERS -> state.dashboard?.let { it.upcoming.isEmpty() && it.autoRecs.isEmpty() } ?: true
+            }) -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            }
             state.error != null && state.dashboard == null -> OperationFeedbackContent(
                 feedback = state.error!!,
                 layout = FeedbackLayout.PAGE,
@@ -250,6 +257,7 @@ fun TvheadendScreen(
                         onOptions = viewModel::setGuideOptions,
                         channelList = true,
                         canWatch = !state.offline,
+                        refreshing = state.refreshing,
                         channels = dashboard?.channels.orEmpty(),
                         events = dashboard?.events.orEmpty(),
                         upcoming = dashboard?.upcoming.orEmpty(),
@@ -265,6 +273,7 @@ fun TvheadendScreen(
                         onOptions = viewModel::setGuideOptions,
                         onWatch = watchChannel,
                         canWatch = !state.offline,
+                        refreshing = state.refreshing,
                         browseState = viewModel.browseState,
                         channels = dashboard?.channels.orEmpty(),
                         events = dashboard?.events.orEmpty(),
@@ -382,45 +391,6 @@ private fun TvheadendHeader(
     }
 }
 
-
-@Composable
-private fun TvheadendLoadingSkeleton(tab: TvheadendTab) {
-    LazyColumn(allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp),
-    ) {
-        items(8) { index ->
-            when (tab) {
-                TvheadendTab.GUIDE -> Row(Modifier.fillMaxWidth().height(86.dp), verticalAlignment=Alignment.CenterVertically) {
-                    Row(Modifier.width(212.dp).padding(end=4.dp), verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(10.dp)) {
-                        Box(Modifier.size(72.dp,44.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.58f), RoundedCornerShape(8.dp)))
-                        Column(Modifier.weight(1f), verticalArrangement=Arrangement.spacedBy(7.dp)) {
-                            Box(Modifier.fillMaxWidth(.78f).height(14.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.58f), RoundedCornerShape(999.dp)))
-                            Box(Modifier.fillMaxWidth(.30f).height(10.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.40f), RoundedCornerShape(999.dp)))
-                        }
-                    }
-                    Row(Modifier.padding(start=8.dp), horizontalArrangement=Arrangement.spacedBy(6.dp)) { repeat(3) { i -> Box(Modifier.width((180 + i * 42).dp).height(86.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.52f), RoundedCornerShape(10.dp))) } }
-                }
-                else -> Row(
-                    Modifier.fillMaxWidth().height(78.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha=.78f)).padding(horizontal=14.dp, vertical=11.dp),
-                    verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(14.dp),
-                ) {
-                    Box(Modifier.size(84.dp,48.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.58f), RoundedCornerShape(8.dp)))
-                    Column(Modifier.width(190.dp), verticalArrangement=Arrangement.spacedBy(7.dp)) {
-                        Box(Modifier.fillMaxWidth(.76f).height(14.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.60f), RoundedCornerShape(999.dp)))
-                        Box(Modifier.fillMaxWidth(.28f).height(10.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.40f), RoundedCornerShape(999.dp)))
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement=Arrangement.spacedBy(7.dp)) {
-                        Box(Modifier.fillMaxWidth(.66f).height(14.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.54f), RoundedCornerShape(999.dp)))
-                        Box(Modifier.fillMaxWidth().height(4.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.34f), RoundedCornerShape(999.dp)))
-                        Box(Modifier.fillMaxWidth(.42f).height(10.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.38f), RoundedCornerShape(999.dp)))
-                    }
-                }
-            }
-        }
-    }
-}
 
 @Composable
 internal fun ChannelRow(
