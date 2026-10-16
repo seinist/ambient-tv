@@ -339,7 +339,7 @@ fun TvheadendScreen(
         OperationFeedbackScope(viewModel.feedback, "recording:${entry.uuid}")
         // A recording that is still running already has a URL but is not finished yet.
         val status = entry.scheduleStatus?.lowercase()
-        val completed = status == "completed" || (!entry.url.isNullOrBlank() && status != "recording" && status != "scheduled")
+        val completed = status == "completed" || (!entry.url.isNullOrBlank() && !entry.isActivelyRecording() && status != "scheduled")
         RecordingDialog(
             entry = entry,
             completed = completed,
@@ -691,6 +691,7 @@ private fun DvrRow(
                         when {
                             failed -> stringResource(R.string.tvh_failed)
                             completed -> stringResource(R.string.tvh_completed)
+                            entry.isActivelyRecording() -> stringResource(R.string.tvh_recording_active)
                             else -> stringResource(R.string.tvh_scheduled)
                         },
                         emphasized = !completed || failed,
@@ -750,7 +751,7 @@ private fun EventDialog(
                 TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
                 if (canRecordSeries && !event.seriesLink.isNullOrBlank()) TvActionButton(text = stringResource(R.string.tvh_record_series), onClick = { pending = R.string.tvh_record_series; onRecordSeries() }, enabled = !busy, loading = busy && pending == R.string.tvh_record_series)
             } else if (timer != null && canRecord && timer.canDelete) {
-                TvActionButton(text = stringResource(R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(if (timer?.isActivelyRecording() == true) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
             if (canRemind) TvActionButton(text = stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onClick = onToggleReminder,
                 selected = reminded)
@@ -793,7 +794,11 @@ private fun RecordingDialog(
         maxWidth = 820.dp,
         header = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                MetaBadge(if (completed) stringResource(R.string.tvh_completed) else stringResource(R.string.tvh_scheduled), emphasized = !completed)
+                MetaBadge(stringResource(when {
+                    completed -> R.string.tvh_completed
+                    entry.isActivelyRecording() -> R.string.tvh_recording_active
+                    else -> R.string.tvh_scheduled
+                }), emphasized = !completed)
                 Text(entry.channelName, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
@@ -802,7 +807,7 @@ private fun RecordingDialog(
                 if (canPlay) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onPlay() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
                 if (canManage) TvActionButton(text = stringResource(R.string.tvh_delete_recording), onClick = onDelete, loading = busy)
             } else if (canManage) {
-                TvActionButton(text = stringResource(R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(if (entry.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
             TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if ((!completed || !canPlay) && (busy || !canManage)) Modifier.focusRequester(initialFocus) else Modifier)
         },

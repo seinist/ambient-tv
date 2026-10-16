@@ -312,7 +312,10 @@ class TvheadendRepository @Inject constructor(
     }
 
     suspend fun cancelRecording(uuid: String): Result<Unit> = suspendResult {
-        getJson("api/dvr/entry/cancel", mapOf("uuid" to uuid))
+        // Re-read the server state: a scheduled timer may have started since the UI loaded.
+        val entry = upcomingRecordings(force = true).firstOrNull { it.uuid == uuid }
+            ?: error("Recording is no longer scheduled or running. Refresh the recordings.")
+        getJson(recordingTerminationPath(entry.scheduleStatus), mapOf("uuid" to uuid))
         invalidateDvrAndEpg()
     }
 

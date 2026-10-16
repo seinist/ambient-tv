@@ -29,3 +29,10 @@ internal fun findProgrammeRecording(event: LiveTvProgramme, timers: List<LiveTvR
     }
 
 internal val LocalLiveTimeshiftChanged = staticCompositionLocalOf<(() -> Unit)?> { null }
+
+/** Use backend confirmation; an elapsed timer start alone does not prove recording. */
+internal fun LiveTvRecording.isActivelyRecording(): Boolean =
+    scheduleStatus.equals("recording", ignoreCase = true) ||
+        scheduleStatus.equals("recordingError", ignoreCase = true) ||
+        status.equals("recording", ignoreCase = true) ||
+        status.equals("inprogress", ignoreCase = true)

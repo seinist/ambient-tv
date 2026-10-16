@@ -35,4 +35,17 @@ class LiveRecordingControlTest {
         assertFalse(hasProgrammeRecording(event, listOf(timer.copy(stopEpochSeconds = 110))))
         assertTrue(hasProgrammeRecording(event, listOf(timer.copy(channelUuid = null, broadcastEventId = "event"))))
     }
+    @Test fun distinguishesConfirmedRecordingFromScheduledTimers() {
+        val timer = LiveTvRecording("timer", "channel", "Channel", "Show",
+            startEpochSeconds = 90, stopEpochSeconds = 210, status = null,
+            scheduleStatus = "scheduled", url = null, imageUrl = null, fanartUrl = null, fileSizeBytes = null)
+        assertFalse(timer.isActivelyRecording())
+        assertTrue(timer.copy(scheduleStatus = "recording").isActivelyRecording())
+        assertTrue(timer.copy(scheduleStatus = "recordingError").isActivelyRecording())
+        assertTrue(timer.copy(status = "Recording").isActivelyRecording())
+        assertTrue(timer.copy(status = "InProgress").isActivelyRecording())
+        assertFalse(timer.copy(scheduleStatus = "completed").isActivelyRecording())
+        assertFalse(timer.copy(scheduleStatus = "failed", status = "No input detected").isActivelyRecording())
+        assertFalse(timer.copy(scheduleStatus = null).isActivelyRecording())
+    }
 }

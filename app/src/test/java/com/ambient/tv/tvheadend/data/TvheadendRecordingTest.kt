@@ -30,4 +30,12 @@ class TvheadendRecordingTest {
             assertTrue(runCatching { currentProgrammeRecordingConfig(event, now, "") }.isFailure)
         }
     }
+    @Test fun stopsActiveRecordingsWithoutAbortingAndCancelsOnlyFutureTimers() {
+        assertEquals("api/dvr/entry/stop", recordingTerminationPath("recording"))
+        assertEquals("api/dvr/entry/stop", recordingTerminationPath("recordingError"))
+        assertEquals("api/dvr/entry/cancel", recordingTerminationPath("scheduled"))
+        for (status in listOf(null, "completed", "completedError", "unknown")) {
+            assertTrue(runCatching { recordingTerminationPath(status) }.isFailure)
+        }
+    }
 }

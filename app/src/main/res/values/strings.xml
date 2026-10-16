@@ -1729,4 +1729,5 @@
     <string name="player_record_stop">Stop recording</string>
     <string name="player_record_stopped">Recording stopped</string>
     <string name="player_record_stop_failed">Could not stop recording. Please try again.</string>
+    <string name="tvh_recording_active">Recording in progress</string>
 </resources>

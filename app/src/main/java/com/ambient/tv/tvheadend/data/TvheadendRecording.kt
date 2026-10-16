@@ -24,3 +24,11 @@ internal fun currentProgrammeRecordingConfig(
         if (configUuid.isNotBlank()) put("config_name", configUuid)
     }
 }
+
+/** Cancelling a running TVHeadend recording marks it failed; stop preserves normal completion. */
+internal fun recordingTerminationPath(scheduleStatus: String?): String =
+    when (scheduleStatus?.lowercase()) {
+        "recording", "recordingerror" -> "api/dvr/entry/stop"
+        "scheduled" -> "api/dvr/entry/cancel"
+        else -> error("Recording is no longer scheduled or running. Refresh the recordings.")
+    }

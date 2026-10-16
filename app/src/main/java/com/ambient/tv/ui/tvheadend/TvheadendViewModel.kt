@@ -167,7 +167,12 @@ class TvheadendViewModel @Inject constructor(
                         delivery = if (force && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
                     )) ?: return@launch
                     _uiState.update { it.copy(configured = true, offline = false, loading = false, refreshing = false,
-                        dashboard = dashboard, error = result.takeIf { dashboard.warnings.isNotEmpty() }) }
+                        dashboard = dashboard,
+                        selectedRecording = it.selectedRecording?.let { selected ->
+                            (dashboard.upcoming + dashboard.recordings + dashboard.failedRecordings)
+                                .firstOrNull { entry -> entry.uuid == selected.uuid } ?: selected
+                        },
+                        error = result.takeIf { dashboard.warnings.isNotEmpty() }) }
                 },
                 onFailure = { error ->
                     val result = feedback.complete(ticket, OperationFeedback(
@@ -192,7 +197,7 @@ class TvheadendViewModel @Inject constructor(
     fun cancel(entry: TvhDvrEntry) {
         if (!_uiState.value.capabilities.manageTimers || !entry.canDelete) return
         val scope = _uiState.value.selectedEvent?.let { "event:${it.eventId}" } ?: "recording:${entry.uuid}"
-        recordingAction("cancel:${entry.uuid}", scope, entry.title, R.string.tvh_timer_cancelled,
+        recordingAction("cancel:${entry.uuid}", scope, entry.title, if (entry.isActivelyRecording()) R.string.player_record_stopped else R.string.tvh_timer_cancelled,
             removeRecordingId = entry.uuid) { repository.cancelRecording(entry.uuid) }
     }
 
