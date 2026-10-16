@@ -56,6 +56,11 @@ class WakeMachines @Inject constructor(
         runCatching { resolveWakeGroupKeys(configured() + WakeEndpoint(system, host, mac)).last() }
             .getOrElse { wakeGroupKey(mac, host, system) }
 
+    /** Machine key plus every distinct canonical MAC configured anywhere on that machine. */
+    fun groupFor(system: String, host: String?, mac: String?): Pair<String, List<String>> =
+        runCatching { macsOfGroup(configured() + WakeEndpoint(system, host, mac)) }
+            .getOrElse { wakeGroupKey(mac, host, system) to listOfNotNull(canonicalWolMacKey(mac)) }
+
     private fun configured(): List<WakeEndpoint> = buildList {
         if (preferences.host.isNotBlank()) add(WakeEndpoint("plex", preferences.host, preferences.macAddress))
         if (preferences.jellyfinHost.isNotBlank()) add(WakeEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinMacAddress))
@@ -64,4 +69,13 @@ class WakeMachines @Inject constructor(
         preferences.fileSources.filter { it.kind != "local" }.forEach { add(WakeEndpoint("files", it.host, it.wolMac)) }
         dlnaStore.servers().forEach { add(WakeEndpoint("dlna", dlnaWakeEndpoint(it)?.first, it.wolMac)) }
     }
+}
+
+/** Key of the last endpoint's machine and all MACs in it, the last endpoint's own MAC first. */
+internal fun macsOfGroup(endpoints: List<WakeEndpoint>): Pair<String, List<String>> {
+    val keys = resolveWakeGroupKeys(endpoints)
+    val key = keys.last()
+    val macs = (listOf(endpoints.last()) + endpoints.filterIndexed { i, _ -> keys[i] == key })
+        .mapNotNull { canonicalWolMacKey(it.mac) }.distinct()
+    return key to macs
 }
