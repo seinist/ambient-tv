@@ -69,6 +69,24 @@ class WakeRetryTest {
     }
 
     @Test
+    fun `unavailable wake network aborts without polling or retries`() = runBlocking {
+        var attempts = 0
+        var polls = 0
+        var waiting = 0
+        val failure = IllegalStateException("Wake network unavailable")
+        val result = runCatching {
+            wakeWithRetries(3, 60_000L, 1L,
+                send = { attempts++; throw failure },
+                reachable = { polls++; false },
+                onWaiting = { waiting++ })
+        }
+        assertEquals(failure, result.exceptionOrNull())
+        assertEquals(1, attempts)
+        assertEquals(0, polls)
+        assertEquals(0, waiting)
+    }
+
+    @Test
     fun `stored values outside the offered choices fall back to the default`() {
         assertEquals(WOL_RETRY_COUNT_DEFAULT, normalizedWolRetryCount(4))
         assertEquals(WOL_RETRY_COUNT_DEFAULT, normalizedWolRetryCount(-1))

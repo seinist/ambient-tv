@@ -3,6 +3,7 @@ package com.ambient.tv.wol
 import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.catch
 import javax.inject.Inject
 
 sealed interface WakeState {
@@ -10,6 +11,7 @@ sealed interface WakeState {
     data class WaitingForServer(val elapsedSeconds: Int) : WakeState
     data object Reachable : WakeState
     data object TimedOut : WakeState
+    data class Failed(val message: String) : WakeState
 }
 
 class WakeServerUseCase @Inject constructor(
@@ -23,7 +25,7 @@ class WakeServerUseCase @Inject constructor(
         pollIntervalMs: Long = 2500,
         timeoutMs: Long = 60_000,
         retries: Int = preferences.wolRetryCount,
-    ): Flow<WakeState> = flow {
+    ): Flow<WakeState> = flow<WakeState> {
         // Checked first so a server that's already up (the common case - every Home
         // revisit calls this, not just cold app start) never shows a wake/waiting spinner
         // or sends a needless magic packet.
@@ -42,11 +44,13 @@ class WakeServerUseCase @Inject constructor(
                     macAddress,
                     wireGuardHost = preferences.host.takeIf { preferences.wireGuardPlexEnabled },
                     retry = attempt > 0,
-                )
+                ).getOrThrow()
             },
             reachable = { reachabilityChecker.isReachable() },
             onWaiting = { elapsed -> emit(WakeState.WaitingForServer(elapsed)) },
         )
         emit(if (woke) WakeState.Reachable else WakeState.TimedOut)
+    }.catch { error ->
+        emit(WakeState.Failed(error.message.orEmpty()))
     }
 }

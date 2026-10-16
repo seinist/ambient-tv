@@ -1720,4 +1720,5 @@
     <string name="sleep_trigger_pause">While playback is paused</string>
     <string name="sleep_trigger_input">Without input</string>
     <string name="search_source_partial">%1$s: search results are incomplete. Some sources or sections could not be searched.</string>
+    <string name="wol_network_unavailable">Wake-on-LAN unavailable: no LAN/Wi-Fi connection or active WireGuard route to this system.</string>
 </resources>

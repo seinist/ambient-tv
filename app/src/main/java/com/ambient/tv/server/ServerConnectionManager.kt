@@ -125,6 +125,7 @@ class ServerConnectionManager @Inject constructor(
                             onWaking?.invoke()
                         }
                         WakeState.Reachable -> reachable = true
+                        is WakeState.Failed -> _state.value = ServerConnectionState.Error(wakeState.message)
                         WakeState.TimedOut -> _state.value = ServerConnectionState.WakeTimedOut
                     }
                 }

@@ -1,6 +1,12 @@
 package com.ambient.tv.wol
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import java.net.Inet4Address
+import com.ambient.tv.R
+import com.ambient.tv.notifications.*
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.network.NetworkEndpoint
 import com.ambient.tv.vpn.WireGuardRouteController
@@ -55,6 +61,11 @@ class WolManager @Inject constructor(
         val macBytes = macKey.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         val wireGuardHosts = if (network != null) listOfNotNull(wireGuardHost) else matchingWireGuardHosts(macKey, wireGuardHost)
 
+        // Check before coalescing too: an earlier successful wake says nothing about today's route.
+        if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(network, wireGuardHosts, routeAlive) }) {
+            return Result.failure(networkUnavailable(macAddress))
+        }
+
         val burst: suspend () -> Result<Unit> = {
             sendMagicPacketBurst(
                 macBytes = macBytes,
@@ -86,6 +97,35 @@ class WolManager @Inject constructor(
             }
         }
         return result.map { }
+    }
+
+    /** LAN needs no Internet validation: an isolated Ethernet/Wi-Fi network can still wake a NAS. */
+    @Suppress("DEPRECATION")
+    private fun wakeNetworkAvailable(network: Network?, hosts: List<String>, alive: () -> Boolean): Boolean {
+        if (!alive()) return false
+        val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        return (network?.let { listOf(it) } ?: connectivity.allNetworks.toList()).any { candidate ->
+            val caps = connectivity.getNetworkCapabilities(candidate) ?: return@any false
+            val links = connectivity.getLinkProperties(candidate) ?: return@any false
+            if (links.linkAddresses.none { it.address is Inet4Address && !it.address.isLoopbackAddress }) return@any false
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                wireGuardRoute.ownsCompanionNetwork(links) && hosts.any { wireGuardRoute.wakeTargets(it).isNotEmpty() }
+            } else {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            }
+        }
+    }
+
+    private fun networkUnavailable(mac: String): IllegalStateException {
+        AppNotifications.post(AppNotice(
+            key = "wol-network:${canonicalWolMacKey(mac)}",
+            message = R.string.wol_network_unavailable,
+            subject = mac,
+            phase = NoticePhase.ERROR,
+            kind = NoticeKind.WAKE,
+        ))
+        return IllegalStateException(context.getString(R.string.wol_network_unavailable))
     }
 
     private fun matchingWireGuardHosts(macKey: String, requestedHost: String?): List<String> = buildList {
@@ -146,11 +186,11 @@ class WolManager @Inject constructor(
                 var sentPackets = 0
                 var firstError: Throwable? = null
                 repeat(packetCount) { index ->
-                    check(routeAlive()) { "Wake network unavailable" }
+                    if (!wakeNetworkAvailable(network, wireGuardHosts, routeAlive)) throw networkUnavailable(displayMacAddress)
                     targets.forEach { target ->
                         runCatching {
                             DatagramSocket().use { socket ->
-                                check(routeAlive()) { "Wake network unavailable" }
+                                if (!wakeNetworkAvailable(network, wireGuardHosts, routeAlive)) throw networkUnavailable(displayMacAddress)
                                 network?.bindSocket(socket)
                                 socket.broadcast = true
                                 socket.send(DatagramPacket(packet, packet.size, InetAddress.getByName(target), port))
