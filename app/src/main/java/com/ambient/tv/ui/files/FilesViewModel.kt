@@ -452,11 +452,22 @@ class FilesViewModel @Inject constructor(
             system = "files", subject = source.name, delivery = if (message == R.string.files_invalid_source)
                 FeedbackDelivery.INLINE else FeedbackDelivery.CONTEXTUAL)
     }
+    /**
+     * Manual wake press. While the source's machine is already waking (this press or any other
+     * system), a repeat press is ignored: the running wake, its loading state and the shared
+     * wake card stay as they are instead of being cancelled and restarted.
+     */
     fun wake(source: FileSource) {
+        if (wake.isMachineWaking(source)) return
         job?.cancel()
         _state.update { it.copy(loading = true, error = null) }
         job = viewModelScope.launch {
-            try { access.prepare(source.copy(wolAuto = false)); wake.wakeAndWait(source); openSource(source) }
+            try {
+                access.prepare(source.copy(wolAuto = false))
+                if (wake.wakeAndWait(source, manual = true)) openSource(source)
+                // Another caller started waking this machine in between: its card covers it.
+                else _state.update { it.copy(loading = false) }
+            }
             catch (error: Exception) {
                 if (error is CancellationException) throw error
                 _state.update { it.copy(loading = false, error = fileError(if (error is WireGuardUnavailableException) R.string.files_wireguard_error else R.string.files_wake_timeout)) }

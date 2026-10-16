@@ -30,6 +30,7 @@ class ConnectionNotifications @Inject constructor(
     private val vpn: WireGuardRouteController,
     private val resume: ResumeConnectivityMonitor,
     private val spotify: SpotifyRepository,
+    private val wakeMachines: com.ambient.tv.wol.WakeMachines,
 ) {
     private var started = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -41,15 +42,35 @@ class ConnectionNotifications @Inject constructor(
         scope.launch {
             var previous = emptyMap<String, AppNotice>()
             val unhealthy = mutableSetOf<String>()
+            // system -> machine key of a wake this observer announced through [WakeNotices].
+            val wakingMachines = mutableMapOf<String, String>()
             combine(plex.state, jellyfin.state, emby.state, vpn.status) { p, j, e, route ->
                 route to listOf(
-                    Target("plex", preferences.host, preferences.activeServerProfile()?.name, p),
-                    Target("jellyfin", preferences.jellyfinHost, preferences.activeJellyfinServerProfile()?.name, j),
-                    Target("emby", preferences.embyHost, preferences.activeEmbyServerProfile()?.name, e),
+                    Target("plex", preferences.host, preferences.activeServerProfile()?.name, p, preferences.macAddress),
+                    Target("jellyfin", preferences.jellyfinHost, preferences.activeJellyfinServerProfile()?.name, j, preferences.jellyfinMacAddress),
+                    Target("emby", preferences.embyHost, preferences.activeEmbyServerProfile()?.name, e, preferences.embyMacAddress),
                 )
             }.collect { (route, targets) ->
+                // Wakes are announced per machine, shared with TVHeadend, NAS and DLNA on it.
+                targets.forEach { target ->
+                    val isWaking = target.state is ServerConnectionState.Waking || target.state == ServerConnectionState.SendingWakePacket
+                    val machine = wakingMachines[target.system]
+                    if (isWaking && machine == null) {
+                        val key = wakeMachines.keyFor(target.system, target.host, target.mac)
+                        wakingMachines[target.system] = key
+                        WakeNotices.begin(key, target.system, target.name?.takeIf(String::isNotBlank) ?: target.host.trim().ifBlank { null })
+                    } else if (!isWaking && machine != null) {
+                        wakingMachines.remove(target.system)
+                        when (target.state) {
+                            ServerConnectionState.Connecting, is ServerConnectionState.Online -> WakeNotices.finish(machine, target.system, success = true)
+                            ServerConnectionState.WakeTimedOut, ServerConnectionState.Offline, is ServerConnectionState.Error ->
+                                WakeNotices.finish(machine, target.system, success = false)
+                            else -> WakeNotices.cancel(machine, target.system)
+                        }
+                    }
+                }
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
-                    .groupBy { it.host.trim().lowercase().ifBlank { it.system } }
+                    .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }
                     .mapValues { (host, group) ->
                         val waking = group.any { it.state is ServerConnectionState.Waking || it.state == ServerConnectionState.SendingWakePacket }
                         val failed = group.filter { it.state == ServerConnectionState.Offline || it.state == ServerConnectionState.WakeTimedOut || it.state is ServerConnectionState.Error }
@@ -89,8 +110,11 @@ class ConnectionNotifications @Inject constructor(
                             args = if (!waitingForVpn && !waking && failed.isNotEmpty() && reason != null &&
                                 failed.none { it.state == ServerConnectionState.WakeTimedOut }) listOf(reason) else emptyList(),
                             quietSuccess = true, interruptPlayback = waking || failed.isNotEmpty(),
-                        )
-                    }
+                        ).takeUnless {
+                            // The machine's wake card already covers waking and a failed wake.
+                            !waitingForVpn && (waking || (failed.isNotEmpty() && failed.all { f -> f.state == ServerConnectionState.WakeTimedOut }))
+                        }
+                    }.filterValues { it != null }.mapValues { it.value!! }
                 previous.keys.filterNot { it in notices }.forEach { AppNotifications.dismiss("connection:$it") }
                 notices.forEach { (host, notice) ->
                     if (previous[host] != notice) {
@@ -175,5 +199,5 @@ class ConnectionNotifications @Inject constructor(
         }
     }
 
-    private data class Target(val system: String, val host: String, val name: String?, val state: ServerConnectionState)
+    private data class Target(val system: String, val host: String, val name: String?, val state: ServerConnectionState, val mac: String? = null)
 }

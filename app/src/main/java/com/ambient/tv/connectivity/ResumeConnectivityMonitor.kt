@@ -56,6 +56,7 @@ class ResumeConnectivityMonitor @Inject constructor(
     private val tvheadendRepository: TvheadendRepository,
     private val wakeOnLan: WakeOnLan,
     private val wireGuardRoute: WireGuardRouteController,
+    private val wakeMachines: com.ambient.tv.wol.WakeMachines,
 ) : DefaultLifecycleObserver {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -174,8 +175,23 @@ class ResumeConnectivityMonitor @Inject constructor(
         )
         _status.value = progress.value
 
+        val tvhMachine = wakeMachines.keyFor("tvheadend", preferences.tvheadendHost, preferences.tvheadendMacAddress)
+        var tvhWaking = false
         fun update(system: MediaSystem, phase: ResumeConnectivityStatus.ServerPhase, detail: String? = null) {
-            if (system == MediaSystem.TVHEADEND) {
+            // TVHeadend's wake joins its machine's shared notice; plain checks keep their own card.
+            if (system == MediaSystem.TVHEADEND && phase == ResumeConnectivityStatus.ServerPhase.WAKING) {
+                if (!tvhWaking) {
+                    tvhWaking = true
+                    AppNotifications.dismiss("resume:tvheadend")
+                    com.ambient.tv.notifications.WakeNotices.begin(tvhMachine, "tvheadend", preferences.tvheadendHost)
+                }
+            } else if (system == MediaSystem.TVHEADEND && tvhWaking) {
+                if (phase != ResumeConnectivityStatus.ServerPhase.CHECKING) {
+                    tvhWaking = false
+                    com.ambient.tv.notifications.WakeNotices.finish(tvhMachine, "tvheadend",
+                        success = phase == ResumeConnectivityStatus.ServerPhase.ONLINE)
+                }
+            } else if (system == MediaSystem.TVHEADEND) {
                 val working = phase == ResumeConnectivityStatus.ServerPhase.CHECKING || phase == ResumeConnectivityStatus.ServerPhase.WAKING
                 val online = phase == ResumeConnectivityStatus.ServerPhase.ONLINE
                 AppNotifications.post(AppNotice("resume:tvheadend", when {
@@ -257,8 +273,9 @@ class ResumeConnectivityMonitor @Inject constructor(
         for (source in sources) {
             if (wakeOnLan.isReachable(source)) continue
             if (source.wolAuto && source.wolMac.isNotBlank()) {
-                val noticeKey = "wake:files:${source.host.lowercase()}:${source.port}"
-                AppNotifications.post(AppNotice(noticeKey, R.string.notice_waking, listOf("files"), source.name, NoticePhase.WORKING, NoticeKind.WAKE))
+                val machine = wakeOnLan.machineKey(source)
+                val member = "files:${source.id}"
+                com.ambient.tv.notifications.WakeNotices.begin(machine, "files", source.name, member)
                 onWaking?.invoke()
                 runCatching {
                     wakeOnLan.send(
@@ -279,7 +296,7 @@ class ResumeConnectivityMonitor @Inject constructor(
                     kotlinx.coroutines.delay(ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS)
                 }
                 if (!woke) allOk = false
-                notifyResult(noticeKey, "files", source.name, R.string.notice_awake, woke, NoticeKind.WAKE, R.string.notice_wake_failed)
+                com.ambient.tv.notifications.WakeNotices.finish(machine, "files", success = woke, member = member)
             } else {
                 allOk = false
                 notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)

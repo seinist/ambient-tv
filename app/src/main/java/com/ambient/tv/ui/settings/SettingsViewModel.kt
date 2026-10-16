@@ -119,7 +119,7 @@ class SettingsViewModel @Inject constructor(
     private val dlnaRenderer: com.ambient.tv.renderer.DlnaRenderer,
     private val networkDlnaStore: com.ambient.tv.data.dlna.DlnaStore,
     private val iptvStore: com.ambient.tv.data.iptv.IptvStore,
-    private val networkWol: com.ambient.tv.wol.WolManager,
+    private val machineWake: com.ambient.tv.wol.MachineWake,
     private val youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink,
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
@@ -616,33 +616,35 @@ class SettingsViewModel @Inject constructor(
         finishFeedback(beginFeedback("renderer:name"), SettingsCategory.RECEIVER, R.string.notice_source_saved, true)
     }
 
+    /**
+     * Manual wake buttons wake the whole machine through [com.ambient.tv.wol.MachineWake]: one
+     * burst per NIC, one shared wake card; pressing again while that machine wakes does nothing.
+     */
+    private fun manualWake(request: com.ambient.tv.wol.ManualWakeRequest) {
+        if (com.ambient.tv.wol.canonicalWolMacKey(request.mac) == null) {
+            validation(R.string.settings_status_mac_invalid, SettingsCategory.WAKE)
+            return
+        }
+        machineWake.wake(request)
+    }
+
     fun wakeNetworkServer(system: String) {
         val input = macInput(_uiState.value, system)
-        val ticket = beginFeedback("network:wake:$system")
-        viewModelScope.launch {
-            val vpn = when (system) {
-                "plex" -> _uiState.value.wireGuardPlexEnabled
-                "jellyfin" -> _uiState.value.wireGuardJellyfinEnabled
-                "emby" -> _uiState.value.wireGuardEmbyEnabled
-                "tvheadend" -> _uiState.value.wireGuardTvheadendEnabled
-                else -> false
-            }
-            val result = networkWol.sendWakeBurst(input.third, wireGuardHost = NetworkEndpoint.extractHost(input.first).takeIf { vpn })
-            finishFeedback(ticket, SettingsCategory.WAKE,
-                if (result.isSuccess) R.string.settings_network_wake_sent else R.string.notice_failed,
-                result.isSuccess, system, input.first, result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
+        val vpn = when (system) {
+            "plex" -> _uiState.value.wireGuardPlexEnabled
+            "jellyfin" -> _uiState.value.wireGuardJellyfinEnabled
+            "emby" -> _uiState.value.wireGuardEmbyEnabled
+            "tvheadend" -> _uiState.value.wireGuardTvheadendEnabled
+            else -> false
         }
+        val host = NetworkEndpoint.extractHost(input.first)
+        manualWake(com.ambient.tv.wol.ManualWakeRequest(system, subject = host, host = host, mac = input.third,
+            probePort = input.second, wireGuardHost = host.takeIf { vpn }))
     }
 
     fun wakeFileServer(source: com.ambient.tv.data.files.FileSource) {
-        val ticket = beginFeedback("network:wake:${source.id}")
-        viewModelScope.launch {
-            val result = networkWol.sendWakeBurst(source.wolMac, source.wolBroadcast, source.wolPort,
-                wireGuardHost = source.host.takeIf { source.wireGuard })
-            finishFeedback(ticket, SettingsCategory.WAKE,
-                if (result.isSuccess) R.string.settings_network_wake_sent else R.string.notice_failed,
-                result.isSuccess, "files", source.name, result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
-        }
+        manualWake(com.ambient.tv.wol.ManualWakeRequest("files", "files:${source.id}", source.name, source.host, source.wolMac,
+            source.port, source.wolBroadcast, source.wolPort, source.host.takeIf { source.wireGuard }))
     }
 
     /** Saves the DLNA server's MAC; an invalid entry is kept out of the store (field shows it). */
@@ -671,13 +673,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun wakeDlnaServer(server: com.ambient.tv.data.dlna.DlnaServer) {
-        val ticket = beginFeedback("network:wake:dlna:${server.id}")
-        viewModelScope.launch {
-            val result = networkWol.sendWakeBurst(server.wolMac)
-            finishFeedback(ticket, SettingsCategory.WAKE,
-                if (result.isSuccess) R.string.settings_network_wake_sent else R.string.notice_failed,
-                result.isSuccess, "dlna", server.name, result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
-        }
+        val endpoint = com.ambient.tv.data.dlna.dlnaWakeEndpoint(server)
+        manualWake(com.ambient.tv.wol.ManualWakeRequest("dlna", "dlna:${server.id}", server.name, endpoint?.first,
+            server.wolMac, endpoint?.second))
     }
 
     // ---- Wake page: one section per machine instead of one per service ----
@@ -819,15 +817,11 @@ class SettingsViewModel @Inject constructor(
 
     internal fun wakeGroup(group: WakeHostGroup) {
         val target = group.wakeTarget
-        val ticket = beginFeedback("network:wake:${group.key}")
-        viewModelScope.launch {
-            val result = networkWol.sendWakeBurst(group.mac, target.broadcast, target.wolPort,
-                wireGuardHost = group.probe?.normalizedHost?.takeIf { group.wireGuard })
-            finishFeedback(ticket, SettingsCategory.WAKE,
-                if (result.isSuccess) R.string.settings_network_wake_sent else R.string.notice_failed,
-                result.isSuccess, target.kind.linkTarget, group.hosts.firstOrNull() ?: target.label,
-                result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
-        }
+        val probe = group.probe ?: target
+        val member = if (target.kind.isMediaServer) target.kind.linkTarget else "${target.kind.linkTarget}:${target.id}"
+        manualWake(com.ambient.tv.wol.ManualWakeRequest(target.kind.linkTarget, member,
+            group.hosts.firstOrNull() ?: target.label, probe.normalizedHost.ifBlank { null }, group.mac,
+            probe.port, target.broadcast, target.wolPort, group.probe?.normalizedHost?.takeIf { group.wireGuard }))
     }
 
     /** Tests every media server on the machine; each reports its own result. */

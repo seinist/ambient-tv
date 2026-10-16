@@ -25,10 +25,14 @@ class WakeOnLan {
     private val wolManager: WolManager?
     private val directSend: (suspend (String, String, Int) -> Unit)?
     private val retryCount: () -> Int
+    private val machines: com.ambient.tv.wol.WakeMachines?
+    private val notices: com.ambient.tv.notifications.WakeNoticeTracker
 
     @Inject
-    constructor(wolManager: WolManager, preferences: AppPreferences) {
+    constructor(wolManager: WolManager, preferences: AppPreferences, machines: com.ambient.tv.wol.WakeMachines) {
         this.wolManager = wolManager
+        this.machines = machines
+        this.notices = WakeNotices
         this.directSend = null
         this.retryCount = { preferences.wolRetryCount }
     }
@@ -37,8 +41,11 @@ class WakeOnLan {
     internal constructor(
         directSend: suspend (mac: String, broadcast: String, port: Int) -> Unit = ::defaultDirectSend,
         retryCount: () -> Int = { 0 },
+        notices: com.ambient.tv.notifications.WakeNoticeTracker = WakeNotices,
     ) {
         this.wolManager = null
+        this.machines = null
+        this.notices = notices
         this.directSend = directSend
         this.retryCount = retryCount
     }
@@ -60,9 +67,24 @@ class WakeOnLan {
         wakeAndWait(source)
     }
 
-    suspend fun wakeAndWait(source: FileSource) {
-        val key = "wake:files:${endpoint(source)}"
-        AppNotifications.post(AppNotice(key, R.string.notice_waking, listOf("files"), source.name, NoticePhase.WORKING, NoticeKind.WAKE))
+    /** Shared machine key of a source: same MAC or host as any other system joins its wake. */
+    fun machineKey(source: FileSource): String =
+        machines?.keyFor("files", source.host, source.wolMac) ?: com.ambient.tv.wol.wakeGroupKey(source.wolMac, source.host, "files")
+
+    /** True while any system is waking this source's machine (a manual press is then ignored). */
+    fun isMachineWaking(source: FileSource): Boolean = notices.isWaking(machineKey(source))
+
+    /**
+     * Wakes the source's machine and waits until the source answers. A [manual] press only starts
+     * when nothing on that machine is waking yet and returns false (sending nothing, keeping the
+     * running card) otherwise; automatic callers join a running wake and always wait.
+     */
+    suspend fun wakeAndWait(source: FileSource, manual: Boolean = false): Boolean {
+        val machine = machineKey(source)
+        val member = "files:${source.id}"
+        if (manual) {
+            if (!notices.tryBegin(machine, "files", source.name, member)) return false
+        } else notices.begin(machine, "files", source.name, member)
         try {
         val ready = wakeWithRetries(
             retries = retryCount(),
@@ -81,12 +103,13 @@ class WakeOnLan {
         )
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
         rememberOnline(source)
-        notifyResult(key, "files", source.name, R.string.notice_awake, kind = NoticeKind.WAKE)
+        notices.finish(machine, "files", success = true, member = member)
+        return true
         } catch (cancelled: CancellationException) {
-            AppNotifications.dismiss(key)
+            notices.cancel(machine, "files", member)
             throw cancelled
         } catch (error: Exception) {
-            notifyResult(key, "files", source.name, success = false, kind = NoticeKind.WAKE, failureMessage = R.string.notice_wake_failed)
+            notices.finish(machine, "files", success = false, member = member)
             throw error
         }
     }

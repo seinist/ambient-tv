@@ -36,9 +36,9 @@ class PlayerDropUpSelectorTest {
     }
 
     @Test
-    fun televisionMenusMatchTheClosedControlWidth() {
+    fun menusMatchTheClosedControlWidthOnTelevisionAndHandheld() {
         assertEquals(true, selectorMenuMatchesTrigger(handheld = false))
-        assertEquals(false, selectorMenuMatchesTrigger(handheld = true))
+        assertEquals(true, selectorMenuMatchesTrigger(handheld = true))
     }
 
     @Test

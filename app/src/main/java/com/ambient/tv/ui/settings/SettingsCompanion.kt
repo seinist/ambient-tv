@@ -14,6 +14,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.companion.CompanionConnectionSettingsContent
 import com.ambient.tv.companion.CompanionViewModel
+import com.ambient.tv.companion.allowsActions
 import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
@@ -48,7 +49,7 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
                 Text(stringResource(R.string.companion_connected, name))
             }
             if (state.paired.isEmpty()) Text(stringResource(R.string.sync_no_devices))
-            state.paired.forEach { peer -> Text(peer.name) }
+            state.paired.forEach { peer -> com.ambient.tv.companion.CompanionPeerRow(manager, peer) { mod -> Text(peer.name, modifier = mod) } }
             TvActionButton(stringResource(R.string.companion_pair_phone), manager::showPanel, fillWidth = true)
             if (state.online) TvActionButton(stringResource(R.string.companion_disconnect), { manager.disconnect() }, fillWidth = true)
         }
@@ -63,8 +64,8 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
                 TvActionButton(stringResource(R.string.companion_end_control), { manager.releaseRemoteControl() }, fillWidth = true)
             }
         }
+        // Errors are notifications; the network section below shows the one short inline hint.
         if (state.busy) Text(stringResource(state.connectionStage ?: R.string.companion_connecting))
-        if (state.connectionError.isNotBlank()) Text(state.connectionError, color = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -102,16 +103,16 @@ private fun HandheldCompanionDevices(manager: com.ambient.tv.companion.Companion
     state.paired.forEach { peer ->
         val connected = state.online && state.target?.fingerprint == peer.fingerprint
         val found = state.devices.firstOrNull { it.fingerprint == peer.fingerprint }
-        TvActionButton(
-            stringResource(when {
-                connected -> R.string.companion_connected
-                found != null -> R.string.companion_paired_reachable
-                else -> R.string.companion_paired_missing
-            }, peer.name),
-            onClick = { if (!connected && !state.busy) manager.connect(found ?: peer) },
-            selected = connected,
-            fillWidth = true,
-        )
+        val reach = com.ambient.tv.companion.rememberReachability(manager, peer)
+        com.ambient.tv.companion.CompanionPeerRow(manager, peer, reach) { mod ->
+            TvActionButton(
+                if (connected) stringResource(R.string.companion_connected, peer.name) else peer.name,
+                onClick = { if (!connected && !state.busy) manager.connect(found ?: peer) },
+                selected = connected,
+                enabled = connected || reach.allowsActions(),
+                modifier = mod,
+            )
+        }
     }
     if (state.online) {
         TvActionButton(stringResource(R.string.playback_open), manager::showNowPlaying, fillWidth = true)
