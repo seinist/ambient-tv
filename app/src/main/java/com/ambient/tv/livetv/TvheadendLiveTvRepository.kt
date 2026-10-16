@@ -39,6 +39,9 @@ class TvheadendLiveTvRepository(
     }
     override suspend fun autoRecordings(force: Boolean): List<LiveTvSeriesTimer> { checkSource(); return delegate.autoRecordings(force) }
     override suspend fun scheduleRecording(eventId: String): Result<Unit> { checkSource(); return delegate.scheduleRecording(eventId) }
+    override suspend fun recordCurrentProgramme(event: LiveTvProgramme): Result<Unit> {
+        checkSource(); return delegate.recordCurrentProgramme(event)
+    }
     override suspend fun scheduleSeries(eventId: String): Result<Unit> { checkSource(); return delegate.scheduleSeries(eventId) }
     override suspend fun cancelRecording(uuid: String): Result<Unit> { checkSource(); return delegate.cancelRecording(uuid) }
     override suspend fun deleteRecording(uuid: String): Result<Unit> { checkSource(); return delegate.deleteRecording(uuid) }

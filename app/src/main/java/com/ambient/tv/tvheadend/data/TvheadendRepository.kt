@@ -294,6 +294,13 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
+    suspend fun recordCurrentProgramme(event: TvhEpgEvent): Result<Unit> = suspendResult {
+        val configUuid = defaultDvrConfigUuid()
+        val conf = currentProgrammeRecordingConfig(event, System.currentTimeMillis() / 1000, configUuid)
+        getJson("api/dvr/entry/create", mapOf("conf" to conf.toString()))
+        invalidateDvrAndEpg()
+    }
+
     suspend fun scheduleSeries(eventId: String): Result<Unit> = suspendResult {
         val configUuid = defaultDvrConfigUuid()
         val params = buildMap {

@@ -25,6 +25,8 @@ class LiveRecordingControlTest {
             startEpochSeconds = 90, stopEpochSeconds = 210, status = null,
             scheduleStatus = null, url = null, imageUrl = null, fanartUrl = null, fileSizeBytes = null)
         assertTrue(hasProgrammeRecording(event, listOf(timer)))
+        assertTrue(hasProgrammeRecording(event, listOf(timer.copy(startEpochSeconds = 150))))
+        assertFalse(hasProgrammeRecording(event, listOf(timer.copy(startEpochSeconds = 200))))
         assertFalse(hasProgrammeRecording(event, listOf(timer.copy(channelUuid = "other"))))
         assertFalse(hasProgrammeRecording(event, listOf(timer.copy(stopEpochSeconds = 110))))
         assertTrue(hasProgrammeRecording(event, listOf(timer.copy(channelUuid = null, broadcastEventId = "event"))))

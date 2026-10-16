@@ -179,7 +179,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                 val result = suspendResult {
                     check(repository.capabilities(true).manageTimers)
                     if (!hasProgrammeRecording(event, repository.upcomingRecordings(true))) {
-                        repository.scheduleRecording(event.eventId).getOrThrow()
+                        repository.recordCurrentProgramme(event).getOrThrow()
                     }
                 }
                 if (result.isSuccess) submittedRecordings.add(event.eventId)

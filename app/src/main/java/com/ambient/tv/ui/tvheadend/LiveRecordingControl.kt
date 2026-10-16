@@ -22,7 +22,7 @@ internal fun hasProgrammeRecording(event: LiveTvProgramme, timers: List<LiveTvRe
     !event.dvrUuid.isNullOrBlank() || timers.any {
         it.broadcastEventId == event.eventId ||
             (it.channelUuid == event.channelUuid &&
-                it.startEpochSeconds <= event.startEpochSeconds && it.stopEpochSeconds >= event.stopEpochSeconds)
+                it.startEpochSeconds < event.stopEpochSeconds && it.stopEpochSeconds >= event.stopEpochSeconds)
     }
 
 internal val LocalLiveTimeshiftChanged = staticCompositionLocalOf<(() -> Unit)?> { null }

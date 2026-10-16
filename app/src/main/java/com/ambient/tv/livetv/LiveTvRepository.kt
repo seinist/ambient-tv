@@ -18,6 +18,10 @@ interface LiveTvRepository {
     suspend fun upcomingRecordings(force: Boolean = false): List<LiveTvRecording> = emptyList()
     suspend fun autoRecordings(force: Boolean = false): List<LiveTvSeriesTimer> = emptyList()
     suspend fun scheduleRecording(eventId: String): Result<Unit> = Result.failure(UnsupportedOperationException())
+    suspend fun recordCurrentProgramme(event: LiveTvProgramme): Result<Unit> = suspendResult {
+        check(event.isLive(System.currentTimeMillis() / 1000)) { "Programme has ended. Refresh the guide." }
+        scheduleRecording(event.eventId).getOrThrow()
+    }
     suspend fun scheduleSeries(eventId: String): Result<Unit> = Result.failure(UnsupportedOperationException())
     suspend fun cancelRecording(uuid: String): Result<Unit> = Result.failure(UnsupportedOperationException())
     suspend fun deleteRecording(uuid: String): Result<Unit> = Result.failure(UnsupportedOperationException())
