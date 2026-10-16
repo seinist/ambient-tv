@@ -30,6 +30,17 @@ class WakeNoticeTracker(
         publish(machine, group)
     }
 
+    /**
+     * Manual wake: starts the machine's card only when nothing on that machine is waking yet.
+     * Returns false (and changes nothing) while a wake for the machine is already running.
+     */
+    @Synchronized
+    fun tryBegin(machine: String, system: String, subject: String?, member: String = system): Boolean {
+        if (isWaking(machine)) return false
+        begin(machine, system, subject, member)
+        return true
+    }
+
     @Synchronized
     fun finish(machine: String, system: String, success: Boolean, member: String = system) {
         val group = groups[machine] ?: return
