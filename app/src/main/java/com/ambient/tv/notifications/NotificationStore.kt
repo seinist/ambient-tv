@@ -47,6 +47,14 @@ data class NotificationSnapshot(
     val history: List<NoticeEntry> = emptyList(),
 )
 
+/**
+ * Several producers of one in-progress notice (e.g. systems waking the same machine) keep each
+ * other's systems instead of replacing them. Results carry their own final system list.
+ */
+internal fun mergeWorkingSystems(old: AppNotice?, new: AppNotice): AppNotice =
+    if (old != null && old.phase == NoticePhase.WORKING && new.phase == NoticePhase.WORKING && old.kind == new.kind)
+        new.copy(systems = (old.systems + new.systems).distinct()) else new
+
 /** Process-local, bounded queue. No Activity, server credentials or exception text is retained. */
 class NotificationStore(
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
@@ -60,6 +68,8 @@ class NotificationStore(
     fun post(notice: AppNotice) {
         val state = mutable.value
         val old = state.pending.firstOrNull { it.notice.key == notice.key }
+        @Suppress("NAME_SHADOWING")
+        val notice = mergeWorkingSystems(old?.notice, notice)
         if (old?.notice == notice) return
         val now = clock()
         val entry = NoticeEntry(

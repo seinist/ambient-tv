@@ -1,0 +1,62 @@
+package com.ambient.tv.notifications
+
+import com.ambient.tv.R
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class WakeNoticesTest {
+    private val posted = mutableListOf<AppNotice>()
+    private val dismissed = mutableListOf<String>()
+    private val tracker = WakeNoticeTracker({ posted += it }, { dismissed += it })
+
+    @Test
+    fun systemsOnOneMachineShareOneNoticeAndSucceedOnceAllAreAwake() {
+        tracker.begin("mac:aa", "plex", "Server")
+        tracker.begin("mac:aa", "tvheadend", "Server")
+        assertEquals(setOf("wake:mac:aa"), posted.map { it.key }.toSet())
+        assertEquals(listOf("plex", "tvheadend"), posted.last().systems)
+        assertEquals(NoticePhase.WORKING, posted.last().phase)
+
+        tracker.finish("mac:aa", "tvheadend", success = true)
+        assertEquals(NoticePhase.WORKING, posted.last().phase)
+        tracker.finish("mac:aa", "plex", success = true)
+        assertEquals(NoticePhase.SUCCESS, posted.last().phase)
+        assertEquals(R.string.notice_awake, posted.last().message)
+        assertEquals(1, posted.count { it.phase == NoticePhase.SUCCESS })
+    }
+
+    @Test
+    fun anyFailureReportsTheFailedSystems() {
+        tracker.begin("mac:aa", "plex", null)
+        tracker.begin("mac:aa", "tvheadend", null)
+        tracker.finish("mac:aa", "plex", success = true)
+        tracker.finish("mac:aa", "tvheadend", success = false)
+        assertEquals(NoticePhase.ERROR, posted.last().phase)
+        assertEquals(R.string.notice_wake_failed, posted.last().message)
+        assertEquals(listOf("tvheadend"), posted.last().systems)
+    }
+
+    @Test
+    fun differentMachinesKeepSeparateNotices() {
+        tracker.begin("mac:aa", "plex", null)
+        tracker.begin("mac:bb", "files", null, member = "files:1")
+        assertEquals(setOf("wake:mac:aa", "wake:mac:bb"), posted.map { it.key }.toSet())
+    }
+
+    @Test
+    fun lastCancelledMemberDismisses() {
+        tracker.begin("mac:aa", "plex", null)
+        tracker.cancel("mac:aa", "plex")
+        assertEquals(listOf("wake:mac:aa"), dismissed)
+    }
+
+    @Test
+    fun storeMergesSystemsOfWorkingNoticesWithTheSameKey() {
+        val store = NotificationStore()
+        store.post(AppNotice("wake:m", R.string.notice_waking, listOf("plex"), phase = NoticePhase.WORKING, kind = NoticeKind.WAKE))
+        store.post(AppNotice("wake:m", R.string.notice_waking, listOf("tvheadend"), phase = NoticePhase.WORKING, kind = NoticeKind.WAKE))
+        val pending = store.state.value.pending
+        assertEquals(1, pending.size)
+        assertEquals(listOf("plex", "tvheadend"), pending.single().notice.systems)
+    }
+}

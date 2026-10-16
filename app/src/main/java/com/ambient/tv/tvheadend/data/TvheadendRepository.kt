@@ -63,6 +63,7 @@ class TvheadendRepository @Inject constructor(
     private val tokenStore: TokenStore,
     private val wolManager: WolManager,
     private val wireGuardRoute: WireGuardRouteController,
+    private val wakeMachines: com.ambient.tv.wol.WakeMachines,
 ) {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cacheMutex = Mutex()
@@ -549,7 +550,8 @@ class TvheadendRepository @Inject constructor(
         return isTvheadendReachable().also { if (it) lastReachableAtMs = System.currentTimeMillis() }
     }
 
-    /** Wake TVHeadend independently of Plex. Concurrent API calls share one wake cycle. */
+    /** Wake TVHeadend as part of its machine: the burst and the notice are shared with every
+     * other system on the same MAC or host. Concurrent API calls share one wake cycle. */
     private suspend fun ensureAwakeIfNeeded() {
         val mac = preferences.tvheadendMacAddress?.takeIf { it.isNotBlank() } ?: return
         if (!preferences.tvheadendAutoWakeEnabled) return
@@ -562,9 +564,8 @@ class TvheadendRepository @Inject constructor(
                 lastReachableAtMs = System.currentTimeMillis()
                 return@withLock
             }
-            val noticeKey = "wake:tvheadend"
-            AppNotifications.post(AppNotice(noticeKey, com.ambient.tv.R.string.notice_waking,
-                listOf("tvheadend"), configuredTvheadendEndpoint().host, NoticePhase.WORKING, NoticeKind.WAKE))
+            val machine = wakeMachines.keyFor("tvheadend", configuredTvheadendEndpoint().host, mac)
+            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host)
             try {
             val woke = com.ambient.tv.wol.wakeWithRetries(
                 retries = preferences.wolRetryCount,
@@ -581,17 +582,15 @@ class TvheadendRepository @Inject constructor(
             )
             if (woke) {
                 lastReachableAtMs = System.currentTimeMillis()
-                notifyResult(noticeKey, "tvheadend", configuredTvheadendEndpoint().host,
-                    com.ambient.tv.R.string.notice_awake, kind = NoticeKind.WAKE)
+                com.ambient.tv.notifications.WakeNotices.finish(machine, "tvheadend", success = true)
                 return@withLock
             }
             throw TvheadendWakeTimeoutException(context.getString(com.ambient.tv.R.string.tvh_wake_timeout))
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                AppNotifications.dismiss(noticeKey)
+                com.ambient.tv.notifications.WakeNotices.cancel(machine, "tvheadend")
                 throw cancelled
             } catch (error: Exception) {
-                notifyResult(noticeKey, "tvheadend", configuredTvheadendEndpoint().host, success = false,
-                    kind = NoticeKind.WAKE, failureMessage = com.ambient.tv.R.string.notice_wake_failed)
+                com.ambient.tv.notifications.WakeNotices.finish(machine, "tvheadend", success = false)
                 throw error
             }
         }

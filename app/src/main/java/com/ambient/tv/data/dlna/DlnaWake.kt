@@ -28,6 +28,7 @@ import kotlinx.coroutines.runInterruptible
 class DlnaWake @Inject constructor(
     private val wolManager: WolManager,
     private val preferences: AppPreferences,
+    private val machines: com.ambient.tv.wol.WakeMachines,
 ) {
     private val lastOnline = ConcurrentHashMap<String, Long>()
 
@@ -45,8 +46,9 @@ class DlnaWake @Inject constructor(
         wolManager.sendWakeBurst(server.wolMac)
 
     private suspend fun wakeAndWait(server: DlnaServer, target: Pair<String, Int>, key: String) {
-        val notice = "wake:dlna:$key"
-        AppNotifications.post(AppNotice(notice, R.string.notice_waking, listOf("dlna"), server.name, NoticePhase.WORKING, NoticeKind.WAKE))
+        val machine = machines.keyFor("dlna", target.first, server.wolMac)
+        val member = "dlna:${server.id}"
+        com.ambient.tv.notifications.WakeNotices.begin(machine, "dlna", server.name, member)
         try {
             val ready = wakeWithRetries(
                 retries = preferences.wolRetryCount,
@@ -57,12 +59,12 @@ class DlnaWake @Inject constructor(
             )
             if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
             remember(key)
-            notifyResult(notice, "dlna", server.name, R.string.notice_awake, kind = NoticeKind.WAKE)
+            com.ambient.tv.notifications.WakeNotices.finish(machine, "dlna", success = true, member = member)
         } catch (cancelled: CancellationException) {
-            AppNotifications.dismiss(notice)
+            com.ambient.tv.notifications.WakeNotices.cancel(machine, "dlna", member)
             throw cancelled
         } catch (error: Exception) {
-            notifyResult(notice, "dlna", server.name, success = false, kind = NoticeKind.WAKE, failureMessage = R.string.notice_wake_failed)
+            com.ambient.tv.notifications.WakeNotices.finish(machine, "dlna", success = false, member = member)
             throw error
         }
     }
