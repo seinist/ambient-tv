@@ -22,7 +22,7 @@
     <string name="companion_sent">Playback requested on %1$s</string>
     <string name="companion_target_removed">This TV target is no longer paired. Please pair it again.</string>
     <string name="companion_shared_youtube">Shared YouTube video</string>
-    <string name="companion_scan_hint">On the TV, open Settings → Phone &amp; TV → Pair device. Then pick the TV below and enter the code from its screen — or scan its QR code with your phone camera and open it in Ambient TV.</string>
+    <string name="companion_scan_hint">On the TV, open Settings → Network → Phone &amp; TV → Pair phone. Scan the QR code or enter that TV’s code.</string>
     <string name="companion_qr_hint">Scan with your phone camera, or enter the code below in Ambient TV on the phone. Valid for two minutes. Then compare the codes on both devices.</string>
     <string name="companion_confirm_title">Confirm pairing</string>
     <string name="companion_pair_with">Pair with</string>
@@ -59,7 +59,7 @@
     <string name="companion_no_paired_tv">No TV linked yet.</string>
     <string name="companion_paired_reachable">%1$s · On this Wi-Fi</string>
     <string name="companion_paired_missing">%1$s · Not found</string>
-    <string name="companion_found_hint">To link a TV, enter the code it shows under Settings → Phone &amp; TV → Pair device.</string>
+    <string name="companion_found_hint">On the TV, open “Phone &amp; TV” → “Pair phone”. Choose that TV here and enter its code.</string>
     <string name="companion_pair_qr_or_link">Link with QR code or link</string>
     <string name="companion_reach_connected">Connected</string>
     <string name="companion_reach_reachable">Reachable</string>
@@ -71,7 +71,7 @@
     <string name="companion_unpair_confirm_body">Afterwards the device has to be paired again.</string>
     <string name="companion_unreachable_notice">%1$s is not reachable. Switch it on and open Ambient TV, or set up Wake-on-LAN/VPN in the connection settings.</string>
     <string name="companion_pair_code_hint">Enter the code shown on this TV</string>
-    <string name="companion_error_hint">Connection failed – details in the notification</string>
+    <string name="companion_error_hint">Connection failed. Turn on the TV, open Ambient TV and reconnect.</string>
     <string name="companion_search_empty_short">No TV found</string>
     <string name="companion_pull_request_notice">%1$s wants to take over data from this TV</string>
     <string name="companion_pull_request_title">Send data to phone?</string>
@@ -87,12 +87,12 @@
     <string name="sync_pull_action">Get from TV</string>
     <string name="sync_pull_hint">The TV\'s data is transferred to this phone. The TV asks for confirmation first; display and audio settings are not taken over.</string>
     <string name="sync_pull_running">Waiting for the TV – confirm the request on the TV…</string>
-    <string name="sync_tv_pull_hint">To transfer this TV\'s data to a phone: on the phone open Settings → Phone &amp; TV → Transfer, choose “TV → Phone” and “Get from TV”. If the phone is connected, you can also send from here.</string>
+    <string name="sync_tv_pull_hint">On the phone, open “Remote” → “Transfer data” and choose “TV → Phone”.</string>
     <string name="sync_pick_device">Choose a device – the app connects automatically (sleeping TVs are woken).</string>
     <string name="sync_pick_phone">Only phones connected right now can receive data.</string>
     <string name="sync_connecting_to">Connecting to %1$s…</string>
     <string name="sync_no_connectable">No TV reachable. Switch the TV on, open Ambient TV and enable “Allow connections on this TV” – or set up Wake-on-LAN/VPN in the connection settings.</string>
-    <string name="sync_tv_no_phone">No phone connected. On the phone open Settings → Phone &amp; TV → Transfer and choose “Get from TV”.</string>
+    <string name="sync_tv_no_phone">No phone connected. Open “Remote” on the phone and choose this TV.</string>
     <string name="sync_reason_pick">Choose a device first</string>
     <string name="sync_reason_connecting">Waiting for the connection…</string>
     <string name="sync_reason_connect_failed">Connection failed – choose the device again to retry</string>

@@ -22,7 +22,7 @@
     <string name="companion_sent">Wiedergabe auf %1$s angefordert</string>
     <string name="companion_target_removed">Dieses TV-Ziel ist nicht mehr gekoppelt. Bitte erneut koppeln.</string>
     <string name="companion_shared_youtube">Geteiltes YouTube-Video</string>
-    <string name="companion_scan_hint">Am TV Einstellungen → Handy &amp; TV → Gerät koppeln öffnen. Dann unten den TV auswählen und den Code von seinem Bildschirm eingeben — oder den QR-Code mit der Handykamera scannen und in Ambient TV öffnen.</string>
+    <string name="companion_scan_hint">Am TV Einstellungen → Netzwerk → Handy &amp; TV → Handy koppeln öffnen. QR-Code scannen oder den Code dieses TVs eingeben.</string>
     <string name="companion_qr_hint">Mit der Handykamera scannen oder den Code unten in Ambient TV auf dem Handy eingeben. Zwei Minuten gültig. Danach die Codes auf beiden Geräten vergleichen.</string>
     <string name="companion_confirm_title">Kopplung bestätigen</string>
     <string name="companion_pair_with">Koppeln mit</string>
@@ -59,7 +59,7 @@
     <string name="companion_no_paired_tv">Noch kein TV verknüpft.</string>
     <string name="companion_paired_reachable">%1$s · Im WLAN</string>
     <string name="companion_paired_missing">%1$s · Nicht gefunden</string>
-    <string name="companion_found_hint">Zum Verknüpfen den Code eingeben, den der TV unter Einstellungen → Handy &amp; TV → Gerät koppeln zeigt.</string>
+    <string name="companion_found_hint">Am TV „Handy &amp; TV“ → „Handy koppeln“ öffnen. Hier den TV auswählen und seinen Code eingeben.</string>
     <string name="companion_pair_qr_or_link">Per QR-Code oder Link verknüpfen</string>
     <string name="companion_reach_connected">Verbunden</string>
     <string name="companion_reach_reachable">Erreichbar</string>
@@ -71,7 +71,7 @@
     <string name="companion_unpair_confirm_body">Danach muss das Gerät neu gekoppelt werden.</string>
     <string name="companion_unreachable_notice">%1$s ist nicht erreichbar. Gerät einschalten und Ambient TV öffnen oder in den Verbindungseinstellungen Wake-on-LAN/VPN einrichten.</string>
     <string name="companion_pair_code_hint">Code von diesem TV eingeben</string>
-    <string name="companion_error_hint">Verbindung fehlgeschlagen – Details in der Benachrichtigung</string>
+    <string name="companion_error_hint">Verbindung fehlgeschlagen. TV einschalten, Ambient TV öffnen und erneut verbinden.</string>
     <string name="companion_search_empty_short">Kein TV gefunden</string>
     <string name="companion_pull_request_notice">%1$s möchte Daten von diesem TV übernehmen</string>
     <string name="companion_pull_request_title">Daten an Handy senden?</string>
@@ -87,12 +87,12 @@
     <string name="sync_pull_action">Vom TV holen</string>
     <string name="sync_pull_hint">Die Daten des TVs werden auf dieses Handy übertragen. Das TV fragt vorher nach Bestätigung; Display- und Audio-Einstellungen werden nicht übernommen.</string>
     <string name="sync_pull_running">Warte auf das TV – Anfrage dort bestätigen …</string>
-    <string name="sync_tv_pull_hint">Daten dieses TVs auf ein Handy übertragen: Auf dem Handy Einstellungen → Handy &amp; TV → Übertragung öffnen, „TV → Handy“ und „Vom TV holen“ wählen. Ist das Handy verbunden, kannst du auch hier senden.</string>
+    <string name="sync_tv_pull_hint">Auf dem Handy „Fernbedienung“ → „Daten übertragen“ öffnen und „TV → Handy“ wählen.</string>
     <string name="sync_pick_device">Gerät wählen – die App verbindet automatisch (schlafende TVs werden geweckt).</string>
     <string name="sync_pick_phone">Nur gerade verbundene Handys können Daten empfangen.</string>
     <string name="sync_connecting_to">Verbinde mit %1$s …</string>
     <string name="sync_no_connectable">Kein TV erreichbar. TV einschalten, Ambient TV öffnen und „Verbindungen auf diesem TV erlauben“ aktivieren – oder in den Verbindungseinstellungen Wake-on-LAN/VPN einrichten.</string>
-    <string name="sync_tv_no_phone">Kein Handy verbunden. Auf dem Handy Einstellungen → Handy &amp; TV → Übertragung öffnen und „Vom TV holen“ wählen.</string>
+    <string name="sync_tv_no_phone">Kein Handy verbunden. Auf dem Handy „Fernbedienung“ öffnen und diesen TV auswählen.</string>
     <string name="sync_reason_pick">Zuerst ein Gerät wählen</string>
     <string name="sync_reason_connecting">Warte auf Verbindung …</string>
     <string name="sync_reason_connect_failed">Verbindung fehlgeschlagen – Gerät erneut wählen</string>

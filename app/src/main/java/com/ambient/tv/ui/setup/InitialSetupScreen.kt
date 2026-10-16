@@ -83,6 +83,11 @@ fun InitialSetupScreen(
         Text(stringResource(if (youtubeStep) R.string.setup_youtube_intro else R.string.setup_intro),
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (!youtubeStep) {
+            val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
+            val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+            TvActionButton(stringResource(if (handheld) R.string.companion_setup_phone else R.string.companion_setup_tv),
+                onClick = { if (handheld) companion.manager.showRemoteOrDevices() else companion.manager.showPairing() },
+                selected = true, fillWidth = true)
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val columns = when { maxWidth >= 800.dp -> 3; maxWidth >= 500.dp -> 2; else -> 1 }
                 val systems = listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.TRAILERS, MediaSystem.FILES)

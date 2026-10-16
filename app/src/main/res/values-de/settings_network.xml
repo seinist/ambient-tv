@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="settings_area_network">Geräte &amp; Netzwerk</string>
-    <string name="settings_network_devices">Handy &amp; Geräte</string>
+    <string name="settings_network_devices">Handy &amp; TV</string>
     <string name="settings_network_receiver">UPnP-Receiver</string>
     <string name="settings_network_wake">Server &amp; Wake-on-LAN</string>
     <string name="settings_network_wake_hint">MAC-Adressen und Aufwecken; die Profilauswahl wechselt den aktiven Server.</string>

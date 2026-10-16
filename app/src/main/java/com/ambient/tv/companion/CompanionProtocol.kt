@@ -340,10 +340,8 @@ internal fun coalesceCompanionInput(first: CompanionFrame, next: CompanionFrame)
     return first.copy(input = a.copy(x = x, y = y))
 }
 
-/** Phone reception is deliberately limited to settings; it never grants playback or input control. */
-internal fun companionCommandAllowed(television: Boolean, type: String): Boolean = television || type in setOf(
-    "status", "input_release", "backup_begin", "backup_chunk", "backup_finish", "backup_cancel",
-)
+/** Data imports and remote controls are TV-only; neither role supports pulling TV data. */
+internal fun companionCommandAllowed(television: Boolean, type: String): Boolean = type != "backup_request" && (television || type in setOf("status", "input_release"))
 
 /** Non-recursive envelope: a peer cannot tunnel playback/input commands through settings sync. */
 @Serializable

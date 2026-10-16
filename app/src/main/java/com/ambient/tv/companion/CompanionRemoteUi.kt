@@ -96,7 +96,7 @@ internal fun CompanionRemoteDialog(manager: CompanionManager) {
                 Spacer(Modifier.width(6.dp))
                 Text(stringResource(R.string.back))
             }
-            TvActionButton(stringResource(R.string.companion_end_control), manager::hideRemote)
+            TvActionButton(stringResource(R.string.companion_devices), manager::showPanel)
         },
     ) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
@@ -106,6 +106,7 @@ internal fun CompanionRemoteDialog(manager: CompanionManager) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(stringResource(if (state.online) R.string.companion_control_unavailable else R.string.remote_reconnect_hint,
                             state.remote?.controller.orEmpty()), style = MaterialTheme.typography.bodyMedium)
+                        if (!state.online) TvActionButton(stringResource(R.string.sync_retry_connection), manager::showRemoteOrDevices, fillWidth = true)
                         if (state.online) OutlinedButton({ manager.send(CompanionFrame(type = "input_claim")) }) {
                             Text(stringResource(R.string.companion_take_control))
                         }

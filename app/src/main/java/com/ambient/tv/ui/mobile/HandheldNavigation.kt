@@ -138,6 +138,9 @@ private fun HandheldNavigationBar(
     val sources = stringResource(R.string.mobile_sources)
     val search = stringResource(R.string.nav_search)
     val settings = stringResource(R.string.settings_title)
+    val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
+    val companionState by companion.manager.state.collectAsState()
+    val remote = stringResource(R.string.companion_remote_control)
     NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0), tonalElevation = 0.dp) {
         NavigationBarItem(currentRoute == homeRoute, { onNavigate(homeRoute) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home) })
@@ -147,6 +150,8 @@ private fun HandheldNavigationBar(
             NavigationBarItem(currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
                 { Icon(Icons.Default.Search, search) }, label = { Text(search) })
         }
+        NavigationBarItem(companionState.remotePanel || companionState.panel, companion.manager::showRemoteOrDevices,
+            { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
         NavigationBarItem(currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
             { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
     }
@@ -164,6 +169,9 @@ private fun HandheldNavigationRail(
     val sources = stringResource(R.string.mobile_sources)
     val search = stringResource(R.string.nav_search)
     val settings = stringResource(R.string.settings_title)
+    val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
+    val companionState by companion.manager.state.collectAsState()
+    val remote = stringResource(R.string.companion_remote_control)
     // Parent padding no longer reserves the side status/cutout (that was the dead column).
     // Keep the inset inside the rail so its icons clear the notch while the rail itself
     // still reaches the screen edge.
@@ -180,6 +188,8 @@ private fun HandheldNavigationRail(
             NavigationRailItem(currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
                 { Icon(Icons.Default.Search, search) }, label = { Text(search, maxLines = 1) })
         }
+        NavigationRailItem(companionState.remotePanel || companionState.panel, companion.manager::showRemoteOrDevices,
+            { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
         NavigationRailItem(currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
             { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
         Spacer(Modifier.weight(1f))

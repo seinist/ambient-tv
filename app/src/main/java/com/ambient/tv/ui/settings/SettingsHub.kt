@@ -82,7 +82,11 @@ internal fun SettingsHub(
 ) {
     val handheld = LocalHandheldUi.current
     val sideIndex = settingsUsesSideIndex(isTabletUi(), LocalConfiguration.current.screenWidthDp)
-    val initialPage = remember(initialCategoryKey) { SettingsCategory.fromKey(initialCategoryKey) }
+    val initialPage = remember(initialCategoryKey, handheld) {
+        SettingsCategory.fromKey(initialCategoryKey)?.let {
+            if (!handheld && it == SettingsCategory.TRANSFER) SettingsCategory.COMPANION else it
+        }
+    }
     var area by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage?.area ?: SettingsArea.START) }
     var page by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage) }
     var search by rememberSaveable { mutableStateOf(false) }
@@ -100,8 +104,8 @@ internal fun SettingsHub(
     }
     val dirty by viewModel.pendingChanges.collectAsState()
     val companionVm: com.ambient.tv.companion.CompanionViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
-    SideEffect { companionVm.manager.settingsDirty = dirty }
-    DisposableEffect(companionVm) { onDispose { companionVm.manager.settingsDirty = false } }
+    SideEffect { companionVm.manager.settingsDirty = dirty; companionVm.manager.saveSettingsBeforeTransfer = onSave }
+    DisposableEffect(companionVm) { onDispose { companionVm.manager.settingsDirty = false; companionVm.manager.saveSettingsBeforeTransfer = null } }
     val areaFocus = remember { SettingsArea.entries.associateWith { FocusRequester() } }
     val pageFocus = remember { SettingsCategory.entries.associateWith { FocusRequester() } }
     val searchFocus = remember { FocusRequester() }
@@ -190,7 +194,11 @@ internal fun SettingsHub(
     }
     var searchLandingQuery by rememberSaveable { mutableStateOf<String?>(null) }
     fun openPage(target: SettingsCategory) {
-        val resolved = if (target == SettingsCategory.ADVANCED) SettingsCategory.SPOTIFY else target
+        val resolved = when {
+            target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
+            !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
+            else -> target
+        }
         searchLandingQuery = query.takeIf { search && it.isNotBlank() }
         returnToSearch = search
         area = resolved.area
@@ -245,7 +253,7 @@ internal fun SettingsHub(
         Triple(category, title, hint)
     }.filter { (category, title, hint) ->
         // Empty ADVANCED pointer page is hidden; deep-links go to Spotify (fromKey + openPage).
-        if (category == SettingsCategory.ADVANCED) return@filter false
+        if (category == SettingsCategory.ADVANCED || !handheld && category == SettingsCategory.TRANSFER) return@filter false
         // The UPnP receiver only runs on TVs; phones are senders.
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
         // A renamed system is still found under its provider name.

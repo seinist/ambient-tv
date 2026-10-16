@@ -62,8 +62,8 @@ internal fun CompanionImportDialog(vm: CompanionViewModel) {
         footer = {
             TvActionButton(stringResource(R.string.companion_abort), onClick = { if (restore) manager.closeRestore() else manager.rejectBackup() },
                 modifier = Modifier.focusRequester(cancelFocus), enabled = !state.backupBusy)
-            TvActionButton(stringResource(if (restore) R.string.companion_restore_action else if (offer?.mode in setOf("settings", "nav_sounds") || overwriteAccounts) R.string.companion_overwrite else R.string.companion_add_accounts),
-                onClick = { if (restore) manager.restoreSettings() else manager.applyBackup(offer?.mode in setOf("settings", "nav_sounds") || overwriteAccounts, hardware && offer?.fromTelevision != true) },
+            TvActionButton(stringResource(if (restore) R.string.companion_restore_action else if (offer?.mode in setOf("settings", "preferences", "nav_sounds") || overwriteAccounts) R.string.companion_overwrite else R.string.companion_add_accounts),
+                onClick = { if (restore) manager.restoreSettings() else manager.applyBackup(offer?.mode in setOf("settings", "preferences", "nav_sounds") || overwriteAccounts, hardware && offer?.fromTelevision != true) },
                 enabled = !state.backupBusy)
         },
     ) {
@@ -84,9 +84,9 @@ internal fun CompanionImportDialog(vm: CompanionViewModel) {
                 if (offer.mode == "nav_sounds") {
                     TransferCard(stringResource(R.string.nav_sync_title), stringResource(R.string.nav_sync_hint))
                 } else {
-                    TransferCard(stringResource(if (offer.mode == "accounts") R.string.companion_accounts_only else R.string.companion_accounts_settings),
-                        stringResource(R.string.companion_import_counts, offer.accounts, offer.sources))
-                    Text(stringResource(if (offer.credentials) R.string.companion_credentials_received else R.string.companion_credentials_preserved),
+                    TransferCard(stringResource(when (offer.mode) { "accounts" -> R.string.companion_accounts_only; "preferences" -> R.string.sync_preferences; else -> R.string.companion_accounts_settings }),
+                        if (offer.mode == "preferences") stringResource(R.string.sync_preferences_hint) else stringResource(R.string.companion_import_counts, offer.accounts, offer.sources))
+                    if (offer.mode != "preferences") Text(stringResource(if (offer.credentials) R.string.companion_credentials_received else R.string.companion_credentials_preserved),
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (offer.mode == "accounts") Option(stringResource(R.string.companion_overwrite_accounts), overwriteAccounts, !state.backupBusy) { overwriteAccounts = it }
                     else {
@@ -99,33 +99,6 @@ internal fun CompanionImportDialog(vm: CompanionViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (state.backupBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        }
-    }
-}
-
-/** TV: a phone asked to pull this TV's data; nothing leaves the TV without this confirmation. */
-@Composable
-internal fun CompanionPullRequestDialog(manager: CompanionManager) {
-    val state by manager.state.collectAsState()
-    val request = state.pullRequest ?: return
-    val cancelFocus = remember(request.session) { FocusRequester() }
-    AppDialog(
-        title = stringResource(R.string.companion_pull_request_title),
-        maxWidth = 620.dp,
-        onDismiss = { manager.answerPullRequest(false) },
-        footer = {
-            TvActionButton(stringResource(R.string.companion_abort), onClick = { manager.answerPullRequest(false) }, modifier = Modifier.focusRequester(cancelFocus))
-            TvActionButton(stringResource(R.string.companion_pull_allow), onClick = { manager.answerPullRequest(true) })
-        },
-    ) {
-        LaunchedEffect(request.session) { withFrameNanos { }; cancelFocus.requestFocus() }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(stringResource(R.string.companion_pull_request_body, request.name), style = MaterialTheme.typography.titleMedium)
-            TransferCard(stringResource(when (request.mode) {
-                "accounts" -> R.string.companion_accounts_only
-                "nav_sounds" -> R.string.nav_sync_title
-                else -> R.string.companion_accounts_settings
-            }), stringResource(if (request.credentials) R.string.companion_pull_request_credentials else R.string.companion_pull_request_no_credentials))
         }
     }
 }

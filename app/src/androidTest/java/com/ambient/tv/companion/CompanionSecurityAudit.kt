@@ -161,7 +161,7 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
                 tv.attach { received += requireNotNull(it.media); starts.incrementAndGet() }
             }
             settingsAndControl(tv, phone, peer)
-            reverseSettings(tv, phone)
+            oneWaySettings(tv, phone, activity.takeIf { canTestUi })
             tvToTv()
             tv.revoke(tv.state.value.paired.single())
             await("revocation closes existing connection") { !phone.state.value.online }
@@ -170,7 +170,17 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
             await("revoked identity cannot reconnect") { !phone.state.value.busy }
             check(!phone.state.value.online && starts.get() == 4)
             log("PASS revoked device cannot issue further commands")
-            phone.revoke(sharedPeer)
+            if (canTestUi) {
+                withContext(Dispatchers.Main) { phone.showPanel() }
+                clickLabel(com.ambient.tv.R.string.companion_manage_devices)
+                delay(400)
+                screenshot("companion-offline-management")
+                clickLabel(com.ambient.tv.R.string.companion_unpair)
+                delay(400)
+                screenshot("companion-offline-unpair")
+                clickLabel(com.ambient.tv.R.string.companion_unpair)
+                await("offline TV can be unpaired through the confirmation UI") { phone.state.value.paired.isEmpty() }
+            } else phone.revoke(sharedPeer)
             check(shortcuts.dynamicShortcuts.none { it.id == shortcutId })
             phone.handleIntent(share("https://media.example.test/song.mp3"))
             delay(300); check(starts.get() == 4 && !phone.state.value.online)
@@ -256,7 +266,9 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
             phone.foreground(false, false)
             check(phone.state.value.currentPlayback() == null && phone.state.value.target != null)
             phone.foreground(true, false)
-            await("foreground return reconnects the paired TV and refreshes status") { phone.state.value.currentPlayback()?.isLive == true }
+            check(!phone.state.value.online)
+            phone.connectRemote(requireNotNull(phone.state.value.target))
+            await("explicit remote action reconnects and opens controls after foreground return") { phone.state.value.currentPlayback()?.isLive == true && phone.state.value.remotePanel }
             withContext(Dispatchers.Main) {
                 tv.attach { request ->
                     val reference = requireNotNull(request.media)
@@ -411,46 +423,115 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
         await("connection recovers after cancelled settings transfer") { phone.state.value.online }
     }
 
-    private suspend fun reverseSettings(tv: CompanionManager, phone: CompanionManager) {
+    private suspend fun oneWaySettings(tv: CompanionManager, phone: CompanionManager, activity: com.ambient.tv.ui.catalog.UiCatalogActivity?) {
         val prefs = com.ambient.tv.data.local.AppPreferences(isolated("phone_settings").getSharedPreferences("unused", 0))
         val tokens = com.ambient.tv.data.local.TokenStore(isolated("phone_tokens").getSharedPreferences("unused", 0), prefs)
         val service = CompanionSettingsService(base, com.ambient.tv.data.local.SettingsBackupManager(prefs, tokens))
-        var allowed = true
-        phone.attachSettings(service) { allowed }
+        phone.attachSettings(service) { true }
         val target = tv.state.value.paired.single()
-        await("phone advertises settings return channel on existing connection") { target.fingerprint in tv.state.value.syncPeers }
-        tv.showSettingsTransfer()
-        check(!tv.state.value.online) // No TV -> phone socket: same requirement as the VPN path.
         check(phone.state.value.online)
-        val bank = com.ambient.tv.ui.sound.NavSoundBank().encode()
+        check(tv.state.value.syncPeers.isEmpty())
+        await("TV capabilities arrive after reconnect") { phone.state.value.remote != null }
+        check("backup_request" !in phone.state.value.remote!!.capabilities)
         val source = com.ambient.tv.data.local.SettingsBackup(exportedAtEpochMs = 1,
-            accentColorKey = "red", navSoundsEnabled = true, navSoundsVolume = .65f, navSoundBank = bank,
+            accentColorKey = "red", navSoundsEnabled = true, navSoundsVolume = .65f,
+            navSoundBank = com.ambient.tv.ui.sound.NavSoundBank().encode(),
             servers = listOf(com.ambient.tv.data.local.ServerBackup(com.ambient.tv.domain.model.ServerProfile("reverse", "TV account", "reverse.test"), "reverse-secret")))
-        for (mode in listOf("nav_sounds", "accounts", "settings")) {
-            val payload = CompanionBackupPolicy.prepare(source, mode != "nav_sounds", mode)
-            tv.sendSettings(payload, mode, mode != "nav_sounds", target)
-            await("$mode from TV waits for phone-local approval") { phone.state.value.backupOffer?.mode == mode && tv.state.value.backupStatus == "pending" }
-            allowed = false
-            withContext(Dispatchers.Main) { phone.applyBackup(true, false) }
-            check(phone.state.value.backupOffer != null)
-            allowed = true
-            withContext(Dispatchers.Main) { phone.applyBackup(true, false) }
-            await("$mode from TV applied and acknowledged by phone") { tv.state.value.backupStatus == "applied" }
+        for (mode in listOf("accounts", "settings", "preferences", "nav_sounds")) {
+            check(!tv.sendSettings(CompanionBackupPolicy.prepare(source, false, mode), mode, false, target))
+            check(!phone.requestBackupFromTv(mode, false))
+            check(phone.state.value.backupOffer == null && tv.state.value.pullRequest == null)
         }
-        check(prefs.navSoundBank == bank && prefs.navSoundsVolume == .65f && prefs.navSoundsEnabled)
-        check(prefs.accentColorKey == "red" && tokens.tokenForServer("reverse") == "reverse-secret")
-        tv.sendSettings(CompanionBackupPolicy.prepare(source, false, "accounts"), "accounts", false, target)
-        await("reverse import can be rejected on phone") { phone.state.value.backupOffer != null }
-        withContext(Dispatchers.Main) { phone.rejectBackup() }
-        await("phone rejection is acknowledged by TV") { tv.state.value.backupStatus == "rejected" }
-        tv.sendSettings(CompanionBackupPolicy.prepare(source, false, "accounts"), "accounts", false, target)
-        await("return import remains unapproved before disconnect") { phone.state.value.backupOffer != null }
+        // An old client bypassing the public API still cannot request an export over TLS.
+        check(phone.send(CompanionFrame(type = "backup_request", mode = "accounts", transferId = java.util.UUID.randomUUID().toString())))
+        delay(1_200)
+        check(phone.state.value.online && phone.state.value.backupOffer == null && tv.state.value.pullRequest == null)
+        check(tokens.tokenForServer("reverse").isNullOrEmpty() && prefs.accentColorKey != "red")
+        log("PASS all TV-to-phone sync is blocked, including accounts, sources, settings and menu sounds")
+        if (activity != null) {
+            val tvVm = CompanionViewModel(tv, CompanionMediaMapper(prefs, com.ambient.tv.data.dlna.DlnaStore(isolated("tv_flow_dlna").getSharedPreferences("unused", 0)), com.ambient.tv.data.shared.SharedMediaRepository()), service)
+            withContext(Dispatchers.Main) {
+                activity.setContent {
+                    CompositionLocalProvider(com.ambient.tv.ui.mobile.LocalHandheldUi provides false) {
+                        com.ambient.tv.ui.theme.AmbientTvTheme { CompanionDialogs(tvVm) }
+                    }
+                }
+                tv.showPanel()
+            }
+            delay(800)
+            screenshot("companion-tv-devices")
+            val windows = instrumentation.uiAutomation.windows.mapNotNull { it.root }
+                .filter { it.packageName?.toString() == base.packageName }
+            check(windows.isNotEmpty())
+            for (res in listOf(com.ambient.tv.R.string.sync_title, com.ambient.tv.R.string.sync_direction_from_tv, com.ambient.tv.R.string.sync_phone_to_tv_only)) {
+                check(windows.all { it.findAccessibilityNodeInfosByText(base.getString(res)).isEmpty() })
+            }
+            withContext(Dispatchers.Main) { tv.hidePanel() }
+            log("PASS TV device panel has no sync action or sync explanation")
+            val vm = CompanionViewModel(phone, CompanionMediaMapper(prefs, com.ambient.tv.data.dlna.DlnaStore(isolated("flow_dlna").getSharedPreferences("unused", 0)), com.ambient.tv.data.shared.SharedMediaRepository()), service)
+            withContext(Dispatchers.Main) {
+                activity.setContent {
+                    CompositionLocalProvider(com.ambient.tv.ui.mobile.LocalHandheldUi provides true) {
+                        com.ambient.tv.ui.theme.AmbientTvTheme { CompanionDialogs(vm) }
+                    }
+                }
+                phone.showPanel()
+            }
+            delay(800)
+            screenshot("companion-hub")
+            clickLabel(com.ambient.tv.R.string.companion_remote_control)
+            await("remote is one action from connected device hub") { phone.state.value.remotePanel && phone.state.value.remote?.inputGranted == true }
+            delay(500)
+            screenshot("companion-remote")
+            withContext(Dispatchers.Main) { phone.showPanel() }
+            clickLabel(com.ambient.tv.R.string.sync_title)
+            await("transfer opens from connected device hub") { phone.state.value.settingsPanel }
+            delay(800)
+            screenshot("companion-transfer")
+            clickLabel(com.ambient.tv.R.string.sync_send_action)
+            await("default settings transfer works without selecting the connected TV again") { tv.state.value.backupOffer?.mode == "preferences" }
+            check(tv.state.value.backupOffer!!.accounts == 0)
+            withContext(Dispatchers.Main) { tv.rejectBackup() }
+            await("UI transfer rejection completes") { phone.state.value.backupStatus == "rejected" }
+            withContext(Dispatchers.Main) { phone.hideSettingsTransfer() }
+        }
         phone.foreground(false, false)
         check(phone.state.value.backupOffer == null)
-        await("phone return channel closes in background") { tv.state.value.syncPeers.isEmpty() }
+        await("phone disconnects in background") { !phone.state.value.online }
         phone.foreground(true, false)
-        await("phone resumes original TV connection") { phone.state.value.online }
+        check(!phone.state.value.online)
+        phone.connect(requireNotNull(phone.state.value.target))
+        await("phone reconnects original TV on explicit request") { phone.state.value.online }
         tv.hideSettingsTransfer(); tv.disconnect()
+    }
+
+    private fun screenshot(name: String) {
+        instrumentation.waitForIdleSync()
+        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+            java.io.File(base.filesDir, "$name.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+        }
+    }
+
+    private suspend fun clickLabel(res: Int) {
+        val label = base.getString(res)
+        fun find(root: android.view.accessibility.AccessibilityNodeInfo): android.view.accessibility.AccessibilityNodeInfo? {
+            if (root.text?.toString() == label) return root
+            for (index in 0 until root.childCount) root.getChild(index)?.let { find(it)?.let { found -> return found } }
+            return null
+        }
+        var target: android.view.accessibility.AccessibilityNodeInfo? = null
+        await("enabled action: $label") {
+            target = instrumentation.uiAutomation.windows.mapNotNull { it.root }
+                .filter { it.packageName?.toString() == base.packageName }.firstNotNullOfOrNull { find(it) }
+            target?.let { node ->
+                var button = node
+                while (!button.isClickable && button.parent != null) button = button.parent
+                target = button
+                button.isEnabled && button.isClickable
+            } == true
+        }
+        check(target!!.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK))
     }
 
     private suspend fun boundWakePackets() = withContext(Dispatchers.IO) {
@@ -461,8 +542,10 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
         val manager = com.ambient.tv.wol.WolManager(context, preferences, controller)
         val connectivity = base.getSystemService(android.net.ConnectivityManager::class.java)
         val network = connectivity.allNetworks.first { candidate ->
-            connectivity.getNetworkCapabilities(candidate)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == false &&
-                connectivity.getLinkProperties(candidate)?.linkAddresses?.any { it.address is java.net.Inet4Address && isPrivateV4(it.address.hostAddress.orEmpty()) } == true
+            connectivity.getNetworkCapabilities(candidate)?.let {
+                !it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) &&
+                    (it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET))
+            } == true && connectivity.getLinkProperties(candidate)?.linkAddresses?.any { it.address is java.net.Inet4Address && isPrivateV4(it.address.hostAddress.orEmpty()) } == true
         }
         val host = connectivity.getLinkProperties(network)!!.linkAddresses.first { it.address is java.net.Inet4Address && isPrivateV4(it.address.hostAddress.orEmpty()) }.address
         val alive = java.util.concurrent.atomic.AtomicBoolean(true)

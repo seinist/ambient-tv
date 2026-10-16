@@ -67,7 +67,7 @@ class CompanionSyncTest {
         listOf("start", "play", "pause", "stop", "input_claim", "input", "queue_add", "select", "anything").forEach {
             assertFalse(it, companionCommandAllowed(false, it))
         }
-        listOf("status", "input_release", "backup_begin", "backup_chunk", "backup_finish", "backup_cancel").forEach {
+        listOf("status", "input_release").forEach {
             assertTrue(it, companionCommandAllowed(false, it))
         }
         assertTrue(companionCommandAllowed(true, "start"))
@@ -154,6 +154,54 @@ class CompanionSyncTest {
         assertTrue(replaced.spotifyEnabled)
         assertEquals("vpn.test", replaced.wireGuardProfile?.endpointHost); assertEquals("wg-secret", replaced.wireGuardPrivateKey)
         assertTrue(replaced.wireGuardEnabled); assertTrue(replaced.wireGuardPlexEnabled)
+    }
+
+    @Test fun settingsOnlyExcludesEveryAccountAndPreservesReceiverAccountsEvenForUnfilteredInput() {
+        val source = streaming.copy(
+            iptvSources = listOf(com.ambient.tv.data.iptv.IptvSource("iptv", "IPTV", "https://example.test/secret")),
+            openSubtitlesApiKey = "subtitle-key", openSubtitlesUsername = "user", openSubtitlesPassword = "password",
+            uiLanguageKey = "de", uiScale = .8f)
+        val wire = CompanionBackupPolicy.prepare(source, true, "preferences")
+        listOf("servers", "spotifyAccount", "smartTubeAccounts", "wireGuardProfile", "iptvSources", "openSubtitlesApiKey", "tmdbApiKey").forEach {
+            assertFalse(it, CompanionBackupPolicy.json.parseToJsonElement(wire).toString().contains("\"$it\""))
+        }
+        val target = streaming.copy(exportedAtEpochMs = 7, uiLanguageKey = "en", uiScale = 1.3f)
+        // Defend the receiving boundary too: a peer cannot smuggle accounts into this mode.
+        val merged = CompanionBackupPolicy.json.decodeFromString<SettingsBackup>(CompanionBackupPolicy.merge(source, target, "preferences", true, false))
+        assertEquals("de", merged.uiLanguageKey)
+        assertEquals(1.3f, merged.uiScale)
+        assertEquals(target.servers, merged.servers)
+        assertEquals(target.spotifyAccount, merged.spotifyAccount)
+        assertEquals(target.smartTubeAccounts, merged.smartTubeAccounts)
+        assertEquals(target.wireGuardProfile, merged.wireGuardProfile)
+        assertEquals(target.iptvSources, merged.iptvSources)
+        assertEquals(target.openSubtitlesApiKey, merged.openSubtitlesApiKey)
+        assertThrows(IllegalArgumentException::class.java) { CompanionBackupPolicy.merge(source, target, "preferences", false, false) }
+    }
+
+    @Test fun deselectedIptvAndSubtitleCredentialsNeverTravelWithOtherAccounts() {
+        val source = streaming.copy(
+            iptvSources = listOf(com.ambient.tv.data.iptv.IptvSource("iptv", "IPTV", "https://example.test/secret")),
+            openSubtitlesApiKey = "subtitle-key", openSubtitlesUsername = "subtitle-user", openSubtitlesPassword = "subtitle-password")
+        assertTrue(syncAccountChoices(source).map { it.key }.containsAll(listOf("iptv:iptv", "opensubtitles")))
+        val selected = selectSyncAccounts(source, setOf("spotify"))
+        assertTrue(selected.iptvSources.orEmpty().isEmpty())
+        assertNull(selected.openSubtitlesApiKey)
+        val wire = CompanionBackupPolicy.prepare(selected, true, "settings")
+        assertFalse(wire.contains("example.test/secret"))
+        assertFalse(wire.contains("subtitle-key"))
+        assertFalse(wire.contains("subtitle-password"))
+        assertTrue(wire.contains("refresh-secret"))
+    }
+
+    @Test fun transferUsesConnectedTvAndDoesNotGuessBetweenMultipleOfflineTvs() {
+        val first = CompanionPeer(fingerprint = "a".repeat(64), name = "First")
+        val second = first.copy(fingerprint = "b".repeat(64), name = "Second")
+        val paired = listOf(first, second)
+        assertEquals(second.fingerprint, initialSyncTarget(CompanionState(paired = paired, target = second, online = true)))
+        assertNull(initialSyncTarget(CompanionState(paired = paired, target = second)))
+        assertEquals(first.fingerprint, initialSyncTarget(CompanionState(paired = listOf(first))))
+        assertEquals(second.fingerprint, initialSyncTarget(CompanionState(paired = paired, syncPeers = mapOf(second.fingerprint to listOf("settings_sync")))) )
     }
 
     @Test fun returnChannelIsBoundedSettingsOnlyAndLegacyCompatible() {

@@ -46,7 +46,7 @@ internal fun CompanionConnectionSettingsContent(
     val handheld = LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable { mutableStateOf(state.target?.fingerprint ?: state.paired.singleOrNull()?.fingerprint) }
     var working by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<String?>(null) }
     SideEffect { onWorkingChanged(working) }

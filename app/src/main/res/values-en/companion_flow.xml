@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_choose_tv">Choose a TV</string>
+    <string name="companion_remote_for">Remote · %1$s</string>
+    <string name="companion_add_tv">Pair another TV</string>
+    <string name="companion_pair_steps">1. Open “Phone &amp; TV” on your TV and choose “Pair phone”.\n2. Scan the QR code here.\n3. Confirm the comparison code on both devices.</string>
+    <string name="companion_code_alternative">Or choose a TV and enter its code</string>
+    <string name="companion_paste_link">Paste invitation link</string>
+    <string name="companion_manage_devices">Manage devices</string>
+    <string name="companion_change_tv">Choose another device</string>
+    <string name="sync_loading">Loading settings …</string>
+    <string name="sync_save_reload">Save pending settings</string>
+    <string name="sync_send_action">Transfer</string>
+    <string name="sync_retry_connection">Reconnect</string>
+    <string name="sync_direction_label">Direction</string>
+    <string name="sync_content_label">What would you like to transfer?</string>
+    <string name="sync_preferences">Settings only</string>
+    <string name="sync_preferences_hint">Transfers appearance, language, playback preferences and menu sounds. Accounts, sources and sign-ins stay unchanged.</string>
+    <string name="sync_accounts_hint">Choose the accounts and network sources to add or update on the receiving device.</string>
+    <string name="sync_confirmation_hint">Keep Ambient TV open on both devices. Confirm the import on the TV.</string>
+    <string name="sync_wireguard_hint">WireGuard is selected. Do not use the same VPN key on both devices at the same time.</string>
+    <string name="sync_credentials_on">Includes sign-ins and passwords. The receiving device asks for confirmation.</string>
+    <string name="sync_credentials_off">Without sign-ins or passwords. Spotify and SmartTube sign-ins and IPTV access require this option.</string>
+    <string name="sync_more_options">More options</string>
+    <string name="sync_reload">Reload current settings</string>
+    <string name="sync_pull_accounts_hint">Imports accounts and sources from the TV. WireGuard stays on the TV.</string>
+    <string name="companion_setup_phone">TV remote &amp; pairing</string>
+    <string name="companion_setup_tv">Set up with your phone</string>
+    <string name="sync_phone_to_tv_only">Transfers are only available from phone to TV. Start on your phone and confirm here on the TV.</string>
+</resources>

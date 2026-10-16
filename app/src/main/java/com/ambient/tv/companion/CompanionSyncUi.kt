@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -18,31 +19,44 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal fun initialSyncTarget(state: CompanionState): String? =
+    state.target?.fingerprint?.takeIf { state.online && state.paired.any { peer -> peer.fingerprint == it } }
+        ?: state.paired.singleOrNull { it.fingerprint in state.syncPeers }?.fingerprint
+        ?: state.paired.singleOrNull()?.fingerprint
+
+internal fun syncCapability(mode: String) = when (mode) {
+    "preferences" -> "settings_only"
+    "nav_sounds" -> "nav_sounds"
+    else -> "settings_sync"
+}
+
 @Composable
-internal fun CompanionSyncDialog(
-    vm: CompanionViewModel,
-    navSnapshot: SettingsBackup? = null,
-    onDismiss: () -> Unit,
-) {
-    val state by vm.manager.state.collectAsState()
+internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBackup? = null, onDismiss: () -> Unit) {
+    val manager = vm.manager
+    val state by manager.state.collectAsState()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var source by remember { mutableStateOf(navSnapshot) }
-    var mode by remember { mutableStateOf(if (navSnapshot != null) "nav_sounds" else "accounts") }
-    var selected by remember { mutableStateOf<Set<String>?>(null) }
-    var targetId by remember { mutableStateOf<String?>(null) }
-    var credentials by remember { mutableStateOf(false) }
+    var mode by rememberSaveable { mutableStateOf(if (navSnapshot != null) "nav_sounds" else "preferences") }
+    var selected by rememberSaveable { mutableStateOf<List<String>?>(null) }
+    var targetId by rememberSaveable { mutableStateOf(initialSyncTarget(state)) }
+    var credentials by rememberSaveable { mutableStateOf(false) }
+    var sent by rememberSaveable { mutableStateOf(false) }
     var loading by remember { mutableStateOf(navSnapshot == null) }
     var failed by remember { mutableStateOf(false) }
-    var sent by remember { mutableStateOf(false) }
     var fromFile by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        if (navSnapshot == null) {
+    var advanced by rememberSaveable { mutableStateOf(false) }
+    var changeTarget by rememberSaveable { mutableStateOf(false) }
+    var attemptedTarget by remember { mutableStateOf<String?>(null) }
+    fun reload() {
+        scope.launch {
+            loading = true
             val result = withContext(Dispatchers.IO) { runCatching { vm.settings.snapshot() } }
-            source = result.getOrNull(); failed = result.isFailure; loading = false
+            source = result.getOrNull(); failed = result.isFailure; loading = false; fromFile = false
         }
     }
+    LaunchedEffect(Unit) { if (navSnapshot == null) reload() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch {
             loading = true
@@ -57,143 +71,126 @@ internal fun CompanionSyncDialog(
         }
     }
     val choices = remember(source) { source?.let(::syncAccountChoices).orEmpty() }
-    val accountIds = selected.takeUnless { mode == "settings" } ?: defaultSyncAccounts(choices)
+    val accountIds = selected?.toSet() ?: defaultSyncAccounts(choices)
     val target = state.paired.firstOrNull { it.fingerprint == targetId }
     val reverse = state.syncPeers[targetId]
     val connected = target != null && (reverse != null || state.target?.fingerprint == targetId && state.online)
-    val supported = connected && (reverse ?: state.remote?.capabilities)?.contains(if (mode == "nav_sounds") "nav_sounds" else "settings_sync") == true
-    var fromTv by remember { mutableStateOf(false) }
-    val pull = handheld && fromTv && navSnapshot == null
-    // The phone keeps searching while the dialog is open so reachable TVs are recognised.
-    if (handheld) DisposableEffect(vm.manager) { vm.manager.startPageSearch(); onDispose { vm.manager.stopSearchUnlessPanel() } }
+    val supported = connected && (reverse ?: state.remote?.capabilities)?.contains(syncCapability(mode)) == true
+    val directionAllowed = companionReceiveModeAllowed(handheld, mode)
+    val includeAccounts = mode in setOf("accounts", "settings")
+    val sendCredentials = credentials && includeAccounts
+    if (handheld) DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
     val now by produceState(android.os.SystemClock.elapsedRealtime()) {
         while (true) { kotlinx.coroutines.delay(5_000); value = android.os.SystemClock.elapsedRealtime() }
     }
-    val reach = state.paired.associate { it.fingerprint to vm.manager.reachability(it, state, now) }
-    // Phone: any actionable TV (the app connects or wakes it). TV: only phones connected right now.
+    val reach = state.paired.associate { it.fingerprint to manager.reachability(it, state, now) }
     fun selectable(peer: CompanionPeer) = reach[peer.fingerprint]?.let { if (handheld) it.allowsActions() else it == PeerReachability.CONNECTED } == true
-    val connectable = state.paired.filter(::selectable)
     val connecting = target != null && !connected && state.busy && state.target?.fingerprint == targetId
-    val pullSupported = connected && state.target?.fingerprint == targetId && state.remote?.capabilities?.contains("backup_request") == true
-    // A stale "pending" from an earlier transfer no longer locks the dialog; only this one does.
-    val locked = sent || state.backupBusy || state.pulling
-    val dirty = vm.manager.settingsDirty && mode != "nav_sounds" && !pull
-    // Never a dead button: say why sending is not possible yet.
-    val reason: Int? = when {
-        locked || loading || state.paired.isEmpty() -> null
-        target == null -> if (connectable.isEmpty()) null else R.string.sync_reason_pick
-        !connected -> if (connecting) R.string.sync_reason_connecting else if (handheld) R.string.sync_reason_connect_failed else R.string.sync_tv_no_phone
-        pull && !pullSupported -> R.string.nav_sync_update
-        !pull && !supported -> R.string.nav_sync_update
+    val locked = sent || state.backupBusy
+    val dirty = manager.settingsDirty && mode != "nav_sounds"
+    LaunchedEffect(targetId, connected, reach[targetId], locked, attemptedTarget) {
+        if (handheld && target != null && !connected && !locked && selectable(target) && attemptedTarget != targetId) {
+            attemptedTarget = targetId
+            manager.connect(state.devices.firstOrNull { it.fingerprint == targetId } ?: target)
+        }
+    }
+    val reason = when {
+        sent -> when {
+            state.backupBusy -> R.string.companion_transfer_running
+            state.backupStatus == "applied" -> R.string.companion_import_done
+            state.backupStatus in setOf("rejected", "expired") -> R.string.companion_import_cancelled
+            state.backupStatus == "failed" || !connected -> R.string.companion_backup_failed
+            else -> R.string.sync_waiting
+        }
+        state.backupBusy -> R.string.companion_backup_failed_busy
+        target == null -> if (state.paired.isEmpty()) R.string.sync_no_devices else R.string.sync_reason_pick
+        connecting -> R.string.sync_reason_connecting
+        !connected -> if (handheld) R.string.sync_no_connectable else R.string.sync_tv_no_phone
+        !directionAllowed -> R.string.sync_phone_to_tv_only
+        !supported -> R.string.nav_sync_update
         dirty -> R.string.sync_save_first
-        !pull && mode == "accounts" && accountIds.isEmpty() -> R.string.sync_reason_no_accounts
+        loading -> R.string.sync_loading
+        failed -> R.string.companion_backup_failed
+        mode == "accounts" && accountIds.isEmpty() -> R.string.sync_reason_no_accounts
         else -> null
     }
+    val canSend = directionAllowed && supported && !locked && !loading && !failed && !dirty && source != null && (mode != "accounts" || accountIds.isNotEmpty())
     AppDialog(title = stringResource(if (navSnapshot != null) R.string.nav_sync_title else R.string.sync_title),
-        maxWidth = 760.dp, maxHeightFraction = .94f, onDismiss = onDismiss, footer = {
-            TvActionButton(stringResource(R.string.companion_close), onDismiss)
-            if (pull) TvActionButton(stringResource(R.string.sync_pull_action), {
-                vm.manager.requestBackupFromTv(mode, credentials && mode != "nav_sounds")
-            }, enabled = pullSupported && !locked, loading = state.pulling)
-            else TvActionButton(stringResource(R.string.companion_send_to, target?.name.orEmpty()), {
-                val snapshot = source ?: return@TvActionButton
-                val result = runCatching {
-                    val chosen = if (mode == "nav_sounds") snapshot else selectSyncAccounts(snapshot, accountIds)
-                    CompanionBackupPolicy.prepare(chosen, credentials && mode != "nav_sounds", mode)
+        maxWidth = 680.dp, maxHeightFraction = .94f, onDismiss = onDismiss, footer = {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                reason?.let { Text(stringResource(it)) }
+                if (dirty && manager.saveSettingsBeforeTransfer != null) {
+                    TvActionButton(stringResource(R.string.sync_save_reload), {
+                        failed = manager.saveSettingsBeforeTransfer?.invoke { reload() } != true
+                    }, fillWidth = true)
                 }
-                result.onSuccess {
-                    vm.manager.sendSettings(it, mode, credentials && mode != "nav_sounds", target)
-                    sent = true
-                }.onFailure { failed = true }
-            }, enabled = supported && !locked && !loading && !dirty && source != null && (mode != "accounts" || accountIds.isNotEmpty()))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TvActionButton(stringResource(R.string.companion_close), onDismiss)
+                    TvActionButton(stringResource(R.string.sync_send_action), {
+                        val snapshot = source ?: return@TvActionButton
+                        val result = runCatching {
+                            val chosen = if (includeAccounts) selectSyncAccounts(snapshot, accountIds) else snapshot
+                            CompanionBackupPolicy.prepare(chosen, sendCredentials, mode)
+                        }
+                        result.onSuccess { sent = manager.sendSettings(it, mode, sendCredentials, target); failed = !sent }
+                            .onFailure { failed = true }
+                    }, enabled = canSend, selected = canSend, modifier = Modifier.weight(1f))
+                }
+            }
         }) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (handheld && navSnapshot == null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TvActionButton(stringResource(R.string.sync_direction_to_tv), { fromTv = false }, selected = !fromTv, enabled = !locked)
-                TvActionButton(stringResource(R.string.sync_direction_from_tv), { fromTv = true; if (mode == "nav_sounds") mode = "accounts" }, selected = fromTv, enabled = !locked)
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (target != null) {
+                Text(target.name, style = androidx.tv.material3.MaterialTheme.typography.titleLarge)
+                CompanionReachabilityLabel(reach[targetId] ?: PeerReachability.UNREACHABLE)
+                if (state.paired.size > 1) TvActionButton(stringResource(R.string.companion_change_tv), { changeTarget = !changeTarget }, enabled = !locked)
             }
-            Text(stringResource(if (pull) R.string.sync_pull_hint else if (handheld) R.string.sync_to_tv_hint else R.string.sync_to_phone_hint))
-            if (!handheld) Text(stringResource(R.string.sync_tv_pull_hint), style = androidx.tv.material3.MaterialTheme.typography.bodySmall)
-            if (state.paired.isNotEmpty()) Text(stringResource(if (handheld) R.string.sync_pick_device else R.string.sync_pick_phone), style = androidx.tv.material3.MaterialTheme.typography.bodySmall)
-            com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = vm.manager::onLocalNetworkPermissionGranted)
-            if (state.paired.isEmpty()) {
-                Text(stringResource(R.string.sync_no_devices))
-                TvActionButton(stringResource(R.string.companion_devices), { onDismiss(); vm.manager.showPanel() })
+            if (target == null || changeTarget) state.paired.forEach { peer ->
+                TvActionButton(peer.name, { targetId = peer.fingerprint; attemptedTarget = null; changeTarget = false },
+                    selected = targetId == peer.fingerprint, enabled = !locked && selectable(peer), fillWidth = true)
             }
-            else if (connectable.isEmpty() && !state.searching) {
-                // Nothing can be reached: explain what to do instead of offering dead choices.
-                Text(stringResource(if (handheld) R.string.sync_no_connectable else R.string.sync_tv_no_phone))
-                if (handheld) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TvActionButton(stringResource(R.string.companion_search), vm.manager::discover)
-                    TvActionButton(stringResource(R.string.companion_devices), { onDismiss(); vm.manager.showPanel() })
+            com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)
+            if (state.paired.isEmpty()) TvActionButton(stringResource(R.string.companion_pair), manager::pairForTransfer, fillWidth = true)
+            if (target != null && !connected && !connecting && !locked && handheld) {
+                TvActionButton(stringResource(R.string.sync_retry_connection), { attemptedTarget = null; manager.discover() }, fillWidth = true)
+                TvActionButton(stringResource(R.string.companion_connection_settings), manager::showConnectionSettings, fillWidth = true)
+            }
+            if (connecting || loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (!sent) {
+                Text(stringResource(R.string.sync_confirmation_hint))
+                if (navSnapshot == null) {
+                    Text(stringResource(R.string.sync_content_label), style = androidx.tv.material3.MaterialTheme.typography.titleMedium)
+                    listOf("preferences" to R.string.sync_preferences, "accounts" to R.string.sync_accounts, "settings" to R.string.sync_all).forEach { (key, label) ->
+                        TvActionButton(stringResource(label), { mode = key; failed = false }, selected = mode == key, enabled = !locked, fillWidth = true)
+                    }
                 }
-            }
-            state.paired.forEach { peer ->
-                val r = reach[peer.fingerprint] ?: PeerReachability.UNREACHABLE
-                Column(Modifier.reachabilityDim(r)) {
-                    TvActionButton(peer.name, {
-                        targetId = peer.fingerprint
-                        // Picking a TV connects (and wakes) it automatically.
-                        if (handheld && peer.fingerprint !in state.syncPeers && (state.target?.fingerprint != peer.fingerprint || !state.online)) vm.manager.connect(state.devices.firstOrNull { it.fingerprint == peer.fingerprint } ?: peer)
-                    }, selected = targetId == peer.fingerprint, enabled = !locked && selectable(peer), fillWidth = true)
-                    CompanionReachabilityLabel(r)
-                }
-            }
-            if (connecting) {
-                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(stringResource(state.connectionStage ?: R.string.sync_connecting_to, target?.name.orEmpty()))
-            }
-            reason?.let { Text(stringResource(it), style = androidx.tv.material3.MaterialTheme.typography.bodySmall) }
-            if (state.pulling) Text(stringResource(R.string.sync_pull_running))
-            if (navSnapshot == null) {
-                listOf("accounts" to R.string.sync_accounts, "settings" to R.string.sync_all, "nav_sounds" to R.string.sync_sounds).filter { !pull || it.first != "nav_sounds" }.forEach { (key, label) ->
-                    TvActionButton(stringResource(label), { mode = key }, selected = mode == key, enabled = !locked, fillWidth = true)
-                }
-            }
-            Text(stringResource(if (mode == "nav_sounds") R.string.nav_sync_hint else R.string.sync_scope_hint))
-            if (mode != "nav_sounds") {
-                if (mode == "accounts" && !pull) {
+                Text(stringResource(if (mode == "preferences") R.string.sync_preferences_hint else if (mode == "nav_sounds") R.string.nav_sync_hint else R.string.sync_accounts_hint))
+                if (includeAccounts) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TvActionButton(stringResource(R.string.sync_select_all), { selected = choices.map { it.key }.toSet() }, enabled = !locked)
-                        TvActionButton(stringResource(R.string.sync_select_none), { selected = emptySet() }, enabled = !locked)
+                        TvActionButton(stringResource(R.string.sync_select_all), { selected = defaultSyncAccounts(choices).toList() }, enabled = !locked)
+                        TvActionButton(stringResource(R.string.sync_select_none), { selected = emptyList() }, enabled = !locked)
                     }
                     choices.forEach { choice ->
-                        TvActionButton((if (choice.key in accountIds) "✓  " else "○  ") + choice.label,
-                            { selected = if (choice.key in accountIds) accountIds - choice.key else accountIds + choice.key },
-                            selected = choice.key in accountIds, enabled = !locked, fillWidth = true)
+                        TvSettingRow(title = choice.label, checked = choice.key in accountIds, enabled = !locked,
+                            onCheckedChange = { checked -> selected = (if (checked) accountIds + choice.key else accountIds - choice.key).toList() })
+                    }
+                    if (WIREGUARD_CHOICE in accountIds) Text(stringResource(R.string.sync_wireguard_hint))
+                    TvSettingRow(title = stringResource(R.string.companion_include_credentials), checked = credentials, enabled = !locked, onCheckedChange = { credentials = it })
+                    Text(stringResource(if (credentials) R.string.sync_credentials_on else R.string.sync_credentials_off))
+                }
+                if (navSnapshot == null) {
+                    TvActionButton(stringResource(R.string.sync_more_options), { advanced = !advanced }, selected = advanced, enabled = !locked, fillWidth = true)
+                    if (advanced) {
+                        if (handheld) TvActionButton(stringResource(R.string.sync_sounds), { mode = "nav_sounds" }, selected = mode == "nav_sounds", enabled = !locked, fillWidth = true)
+                        Text(stringResource(if (fromFile) R.string.companion_selected_backup else R.string.companion_current_settings))
+                        TvActionButton(stringResource(R.string.companion_choose_backup), {
+                            runCatching { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }.onFailure { failed = true }
+                        }, enabled = !locked && !loading, fillWidth = true)
+                        TvActionButton(stringResource(R.string.sync_reload), { reload() }, enabled = !locked && !loading, fillWidth = true)
                     }
                 }
-                TvSettingRow(title = stringResource(R.string.companion_include_credentials), checked = credentials,
-                    enabled = !locked, onCheckedChange = { credentials = it })
-                if (dirty) Text(stringResource(R.string.sync_save_first))
-            }
-            if (navSnapshot == null && !pull) {
-                Text(stringResource(if (fromFile) R.string.companion_selected_backup else R.string.companion_current_settings))
-                TvActionButton(stringResource(R.string.companion_choose_backup), {
-                    runCatching { picker.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }.onFailure { failed = true }
-                }, enabled = !locked && !loading)
-                if (fromFile) TvActionButton(stringResource(R.string.companion_current_settings), {
-                    scope.launch {
-                        loading = true
-                        val result = withContext(Dispatchers.IO) { runCatching { vm.settings.snapshot() } }
-                        result.onSuccess { source = it; selected = null; fromFile = false }
-                        failed = result.isFailure; loading = false
-                    }
-                }, enabled = !locked && !loading)
-            }
-            if (loading) androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
-            if (failed) Text(stringResource(R.string.companion_backup_failed))
-            if (sent) {
-                Text(stringResource(when (state.backupStatus) {
-                    "applied" -> R.string.companion_import_done
-                    "rejected", "expired" -> R.string.companion_import_cancelled
-                    "failed" -> R.string.companion_backup_failed
-                    "pending" -> R.string.sync_waiting
-                    else -> if (!connected) R.string.companion_backup_failed else R.string.companion_transfer_running
-                }))
-                if (!state.backupBusy && state.backupStatus != "pending") TvActionButton(stringResource(R.string.sync_another), {
-                    sent = false; targetId = null; failed = false
-                })
+                if (failed) TvActionButton(stringResource(R.string.sync_reload), { reload() }, fillWidth = true)
+            } else if (!state.backupBusy && state.backupStatus != "pending") {
+                TvActionButton(stringResource(R.string.sync_another), { sent = false; failed = false; if (navSnapshot == null) reload() }, fillWidth = true)
             }
         }
     }

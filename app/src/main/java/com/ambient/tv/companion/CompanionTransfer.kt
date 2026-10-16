@@ -8,9 +8,9 @@ internal class CompanionTransfer(val id: String, private val bytes: Int, private
     private val content = ByteArrayOutputStream()
     private var next = 0
     init {
-        require(mode != "nav_sounds" || !credentials)
+        require(mode !in setOf("nav_sounds", "preferences") || !credentials)
         require(id.matches(Regex("[a-f0-9-]{36}")) && bytes in 1..CompanionBackupPolicy.MAX_BYTES)
-        require(sha256.matches(Regex("[a-f0-9]{64}")) && mode in setOf("accounts", "settings", "nav_sounds"))
+        require(sha256.matches(Regex("[a-f0-9]{64}")) && mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
     }
     fun append(index: Int, payload: String) {
         require(index == next && payload.length in 1..6000)
@@ -24,3 +24,7 @@ internal class CompanionTransfer(val id: String, private val bytes: Int, private
         return value.toString(Charsets.UTF_8)
     }
 }
+
+/** Companion data transfers are strictly phone to TV, including accounts and sources. */
+internal fun companionReceiveModeAllowed(receiverIsTv: Boolean, mode: String): Boolean =
+    mode in setOf("accounts", "settings", "preferences", "nav_sounds") && receiverIsTv

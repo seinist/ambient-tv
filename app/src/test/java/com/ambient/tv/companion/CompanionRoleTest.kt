@@ -12,6 +12,22 @@ class CompanionRoleTest {
         }
     }
 
+    @Test fun phonesRejectAllSyncIncludingAccountsAndSources() {
+        for (mode in listOf("accounts", "settings", "preferences", "nav_sounds")) {
+            assertFalse(mode, companionReceiveModeAllowed(false, mode))
+            assertTrue(mode, companionReceiveModeAllowed(true, mode))
+        }
+        assertTrue(companionReceiveModeAllowed(true, "accounts"))
+        assertFalse(companionReceiveModeAllowed(true, "unknown"))
+    }
+
+    @Test fun phonesRejectLegacyTransferCommands() {
+        for (command in listOf("backup_begin", "backup_chunk", "backup_finish", "backup_cancel")) {
+            assertFalse(command, companionCommandAllowed(false, command))
+            assertTrue(command, companionCommandAllowed(true, command))
+        }
+    }
+
     @Test fun rolesAreBoundToAuthenticationSignature() {
         val valid = authTranscript("nonce", "server", "client", COMPANION_HANDHELD, COMPANION_TV)
         assertFalse(valid.contentEquals(authTranscript("nonce", "server", "client", COMPANION_TV, COMPANION_TV)))

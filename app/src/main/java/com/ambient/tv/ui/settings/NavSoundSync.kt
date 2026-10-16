@@ -9,6 +9,7 @@ import com.ambient.tv.ui.common.TvActionButton
 
 @Composable
 internal fun NavSoundSync(bank: String, volume: Float, enabled: Boolean) {
+    if (!com.ambient.tv.ui.mobile.LocalHandheldUi.current) return
     val vm: CompanionViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val state by vm.manager.state.collectAsState()
     if (state.paired.isEmpty()) return

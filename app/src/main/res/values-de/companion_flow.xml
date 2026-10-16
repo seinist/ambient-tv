@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_choose_tv">TV auswählen</string>
+    <string name="companion_remote_for">Fernbedienung · %1$s</string>
+    <string name="companion_add_tv">Weiteren TV koppeln</string>
+    <string name="companion_pair_steps">1. Am TV „Handy &amp; TV“ öffnen und „Handy koppeln“ wählen.\n2. Hier den QR-Code scannen.\n3. Den Vergleichscode auf beiden Geräten bestätigen.</string>
+    <string name="companion_code_alternative">Oder einen TV auswählen und seinen Code eingeben</string>
+    <string name="companion_paste_link">Einladungslink einfügen</string>
+    <string name="companion_manage_devices">Geräte verwalten</string>
+    <string name="companion_change_tv">Anderes Gerät wählen</string>
+    <string name="sync_loading">Einstellungen werden geladen …</string>
+    <string name="sync_save_reload">Offene Einstellungen speichern</string>
+    <string name="sync_send_action">Übertragen</string>
+    <string name="sync_retry_connection">Erneut verbinden</string>
+    <string name="sync_direction_label">Richtung</string>
+    <string name="sync_content_label">Was möchtest du übertragen?</string>
+    <string name="sync_preferences">Nur Einstellungen</string>
+    <string name="sync_preferences_hint">Überträgt Darstellung, Sprache, Wiedergabeoptionen und Menütöne. Accounts, Quellen und Anmeldungen bleiben unverändert.</string>
+    <string name="sync_accounts_hint">Wähle die Accounts und Netzwerkquellen aus, die am Ziel ergänzt oder aktualisiert werden sollen.</string>
+    <string name="sync_confirmation_hint">Ambient TV auf beiden Geräten geöffnet lassen. Die Übernahme wird am TV bestätigt.</string>
+    <string name="sync_wireguard_hint">WireGuard ist ausgewählt. Denselben VPN-Schlüssel nicht auf beiden Geräten gleichzeitig verwenden.</string>
+    <string name="sync_credentials_on">Mit Anmeldungen und Passwörtern. Am Zielgerät wird die Übernahme bestätigt.</string>
+    <string name="sync_credentials_off">Ohne Anmeldungen und Passwörter. Spotify- und SmartTube-Anmeldungen sowie IPTV-Zugänge benötigen diese Option.</string>
+    <string name="sync_more_options">Weitere Optionen</string>
+    <string name="sync_reload">Aktuelle Einstellungen neu laden</string>
+    <string name="sync_pull_accounts_hint">Übernimmt die Accounts und Quellen des TVs. WireGuard bleibt auf dem TV.</string>
+    <string name="companion_setup_phone">Fernbedienung &amp; TV koppeln</string>
+    <string name="companion_setup_tv">Mit dem Handy einrichten</string>
+    <string name="sync_phone_to_tv_only">Übertragungen sind nur vom Handy zum TV möglich. Am Handy starten und hier am TV bestätigen.</string>
+</resources>

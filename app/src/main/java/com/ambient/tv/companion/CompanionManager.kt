@@ -82,6 +82,7 @@ data class CompanionState(
     val backupBusy: Boolean = false,
     val backupStatus: String = "",
     val settingsRevision: Int = 0,
+    val settingsDirty: Boolean = false,
     val rollbackAvailable: Boolean = false,
     val restoreDialog: Boolean = false,
     val nowPlayingPanel: Boolean = false,
@@ -123,8 +124,15 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     @Volatile private var receiverServiceActive = false
     private val completedStarts = CompanionStartHistory()
 
-    fun showConnectionSettings() { mutable.update { it.copy(connectionSettingsPanel = true, panel = false) } }
-    fun hideConnectionSettings() { mutable.update { it.copy(connectionSettingsPanel = false) } }
+    private var returnToDevicePanel = false
+    fun showConnectionSettings() {
+        returnToDevicePanel = mutable.value.panel
+        mutable.update { it.copy(connectionSettingsPanel = true, panel = false) }
+    }
+    fun hideConnectionSettings() {
+        mutable.update { it.copy(connectionSettingsPanel = false, panel = it.panel || returnToDevicePanel) }
+        returnToDevicePanel = false
+    }
     fun connectionSettings(peer: CompanionPeer): CompanionConnectionSettings =
         connectionTransport?.store?.get(peer.fingerprint) ?: CompanionConnectionSettings()
     suspend fun saveConnectionSettings(peer: CompanionPeer, settings: CompanionConnectionSettings) {
@@ -374,7 +382,32 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     private var pendingConnection: PendingConnection? = null
     private var pendingPairingOpen = false
     private var execute: (suspend (CompanionFrame) -> Unit)? = null
-    @Volatile var settingsDirty: Boolean = false
+    var settingsDirty: Boolean
+        get() = mutable.value.settingsDirty
+        set(value) { mutable.update { it.copy(settingsDirty = value) } }
+    var saveSettingsBeforeTransfer: ((() -> Unit) -> Boolean)? = null
+    @Volatile private var remoteAfterConnect: String? = null
+    @Volatile private var transferAfterPairing = false
+
+    fun showRemoteOrDevices() {
+        if (mutable.value.online) showRemote() else showPanel()
+    }
+
+    fun connectRemote(peer: CompanionPeer) {
+        if (mutable.value.online && mutable.value.target?.fingerprint == peer.fingerprint) { showRemote(); return }
+        connect(peer, openRemote = true)
+    }
+
+    fun pairForTransfer() {
+        showPanel()
+        transferAfterPairing = true
+        if (television) openPairing()
+    }
+
+    fun showPairing() {
+        showPanel()
+        if (television) openPairing()
+    }
     @Volatile internal var diagnosticFailure: String = ""
         private set
 
@@ -625,8 +658,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     private fun playbackState(requestedQueueOffset: Int = 0): CompanionFrame {
-        if (!television) return CompanionFrame(type = "state", capabilities =
-            if (foreground && settingsService != null) listOf("nav_sounds", "settings_sync") else emptyList())
+        if (!television) return CompanionFrame(type = "state")
         val snapshot = BackgroundPlaybackSession.snapshot.value
         val music = spotify?.playback?.value ?: com.ambient.tv.spotify.SpotifyPlaybackState()
         val useSpotify = useSpotifyPlayback(snapshot, music)
@@ -638,7 +670,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val nativeQueue = if (useSpotify) music.queue.take(64).mapIndexed { i, t -> CompanionQueueItem("spotify:$i:${t.id}", CompanionMedia("spotify:track", t.id), t.name.take(160)) } else playbackQueue.entries
         val capabilities = buildList {
             add("start_confirmation")
-            if (foreground && settingsService != null) addAll(listOf("nav_sounds", "settings_sync", "backup_request"))
+            if (foreground && settingsService != null) addAll(listOf("nav_sounds", "settings_sync", "settings_only"))
             add("queue_page")
             if (useSpotify && spotify?.webAuthorized == true || !useSpotify && playbackQueue.entries.size < 64) add("queue_add")
             if (!useSpotify) {
@@ -795,63 +827,19 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
     }
     fun showSettingsTransfer() {
+        if (television) { showPanel(); return }
         if (mutable.value.remotePanel) hideRemote()
         mutable.update { it.copy(settingsPanel = true, panel = false, nowPlayingPanel = false) }
     }
     fun hideSettingsTransfer() { mutable.update { it.copy(settingsPanel = false) } }
 
-    private var pullJob: Job? = null
-
-    /** Phone: ask the connected TV to send its data back ("Vom TV holen"). The TV confirms first. */
-    fun requestBackupFromTv(mode: String, credentials: Boolean) {
-        val target = mutable.value.target
-        val gate = when {
-            television || target == null || !mutable.value.online -> BackupFailure.NOT_CONNECTED
-            mutable.value.remote?.capabilities?.contains("backup_request") != true || mode !in setOf("accounts", "settings", "nav_sounds") -> BackupFailure.UNSUPPORTED
-            mutable.value.backupBusy || mutable.value.backupOffer != null || mutable.value.pulling -> BackupFailure.BUSY
-            else -> null
-        }
-        if (gate != null || target == null) { notice(companionBackupFailureMessage(gate ?: BackupFailure.NOT_CONNECTED), error = true); return }
-        val id = java.util.UUID.randomUUID().toString()
-        outgoingBackupId = id
-        if (!send(CompanionFrame(type = "backup_request", mode = mode, credentials = credentials && mode != "nav_sounds", transferId = id))) {
-            notice(companionBackupFailureMessage(BackupFailure.NOT_CONNECTED), target.name, error = true); return
-        }
-        mutable.update { it.copy(pulling = true, backupStatus = "") }
-        pullJob?.cancel()
-        pullJob = scope.launch {
-            // Return frames ride on the phone's requests; the client loop polls every second and
-            // every 50 ms while a return transfer runs. Here only wait for the outcome.
-            val done = withTimeoutOrNull(150_000) {
-                state.first { !it.pulling || it.backupOffer != null || !it.online || it.backupStatus in setOf("rejected", "expired", "failed") }
-            }
-            if (mutable.value.pulling) {
-                mutable.update { it.copy(pulling = false) }
-                if (done == null || !mutable.value.online) notice(R.string.companion_pull_failed, target.name, error = true)
-            }
-        }
+    /** Legacy callers cannot request a TV-to-phone transfer, regardless of content. */
+    @Suppress("UNUSED_PARAMETER")
+    fun requestBackupFromTv(mode: String, credentials: Boolean): Boolean {
+        notice(companionBackupFailureMessage(BackupFailure.UNSUPPORTED), error = true)
+        return false
     }
 
-    fun cancelPull() { pullJob?.cancel(); pullJob = null; mutable.update { it.copy(pulling = false) } }
-
-    /** TV: the user allowed (or refused) sending this TV's data to the requesting phone. */
-    fun answerPullRequest(allow: Boolean) {
-        val request = mutable.value.pullRequest ?: return
-        mutable.update { it.copy(pullRequest = null) }
-        val peer = mutable.value.paired.firstOrNull { it.fingerprint == request.pin }
-        val service = settingsService
-        if (!allow || peer == null || service == null) {
-            backupResults[request.session] = request.transferId to "rejected"
-            return
-        }
-        scope.launch {
-            val raw = withContext(Dispatchers.IO) { runCatching { service.export(request.credentials, request.mode) }.getOrNull() }
-            withContext(Dispatchers.Main) {
-                if (raw == null) { backupResults[request.session] = request.transferId to "failed"; notice(companionBackupFailureMessage(BackupFailure.PREPARE), peer.name, error = true) }
-                else sendSettings(raw, request.mode, request.credentials, peer)
-            }
-        }
-    }
     fun remoteInput(input: CompanionInput) {
         if (mutable.value.remote?.inputGranted != true) return
         input.validate()
@@ -880,21 +868,22 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
     }
 
-    fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target) {
+    fun sendSettings(raw: String, mode: String, credentials: Boolean, target: CompanionPeer? = mutable.value.target): Boolean {
         val reverse = target?.let { returnSessions[it.fingerprint] }
         val direct = mutable.value.online && target?.fingerprint == mutable.value.target?.fingerprint
         val s = mutable.value
         val gate = when {
-            mode !in setOf("accounts", "settings", "nav_sounds") -> BackupFailure.UNSUPPORTED
+            !companionReceiveModeAllowed(!television, mode) -> BackupFailure.UNSUPPORTED
             !direct && reverse == null -> BackupFailure.NOT_CONNECTED
             s.backupBusy || s.backupOffer != null || s.restoreDialog || s.prompt != null || s.pullRequest != null -> BackupFailure.BUSY
             settingsDirty && mode != "nav_sounds" -> BackupFailure.UNSAVED
             mode == "nav_sounds" && (credentials || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("nav_sounds") != true) -> BackupFailure.UNSUPPORTED
+            mode == "preferences" && (credentials || (if (reverse != null) s.syncPeers[target.fingerprint] else s.remote?.capabilities)?.contains("settings_only") != true) -> BackupFailure.UNSUPPORTED
             raw.toByteArray().size !in 1..CompanionBackupPolicy.MAX_BYTES -> BackupFailure.TOO_LARGE
             else -> null
         }
         // A stale "pending" from an earlier transfer whose answer never arrived must not block forever.
-        if (gate != null) { notice(companionBackupFailureMessage(gate), target?.name.orEmpty(), error = true); return }
+        if (gate != null) { notice(companionBackupFailureMessage(gate), target?.name.orEmpty(), error = true); return false }
         val bytes = raw.toByteArray()
         val id = java.util.UUID.randomUUID().toString()
         val queue = commands
@@ -942,18 +931,20 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 if (commands === queue && outgoingBackupId == id) { backupAck = null; mutable.update { it.copy(backupBusy = false) } }
             }
         }
+        return true
     }
 
     private fun offerBackup(active: CompanionTransfer, peer: CompanionPeer, nonce: String) {
         check(foreground && mutable.value.backupOffer == null && !mutable.value.backupBusy && !mutable.value.restoreDialog && mutable.value.prompt == null)
+        check(companionReceiveModeAllowed(television, active.mode))
         val service = requireNotNull(settingsService)
         val safe = service.prepareFile(active.finish(), active.credentials, active.mode)
         val parsed = service.preview(safe)
         releaseRemoteControl()
         offerRaw = safe; offerSession = nonce
         mutable.update { it.copy(backupOffer = CompanionBackupOffer(active.id, peer.name, active.mode, active.credentials,
-            parsed.servers.size + parsed.jellyfinServers.size + parsed.embyServers.size + (if (parsed.tvheadendHost.isBlank()) 0 else 1),
-            parsed.fileSources.size + parsed.dlnaServers.size, exportedAt = parsed.exportedAtEpochMs,
+            syncAccountChoices(parsed).count { !it.key.startsWith("files:") && !it.key.startsWith("dlna:") && !it.key.startsWith("iptv:") },
+            parsed.fileSources.size + parsed.dlnaServers.size + parsed.iptvSources.orEmpty().size, exportedAt = parsed.exportedAtEpochMs,
             localAppliedAt = prefs.getLong(KEY_LAST_APPLIED, 0L), fromTelevision = !television), pulling = false) }
         backupResults[nonce] = active.id to "pending"
         notice(R.string.companion_backup_received, peer.name)
@@ -978,7 +969,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         offerSession?.let { backupResults[it] = offer.id to status }
         offerExpiry?.cancel(); offerExpiry = null
         offerRaw = null; offerSession = null
-        mutable.update { it.copy(backupOffer = null) }
+        mutable.update { it.copy(backupOffer = null, backupStatus = status) }
         notice(R.string.companion_backup_declined, offer.sender)
     }
 
@@ -987,7 +978,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val raw = offerRaw ?: return
         val session = offerSession ?: return
         val service = settingsService ?: return
-        if (!foreground || !settingsCanApply() || mutable.value.backupBusy || (offer.mode in setOf("settings", "nav_sounds") && !overwrite)) {
+        if (!foreground || !companionReceiveModeAllowed(television, offer.mode) || !settingsCanApply() || mutable.value.backupBusy || (offer.mode in setOf("settings", "preferences", "nav_sounds") && !overwrite)) {
             notice(R.string.companion_backup_wait, error = true); return
         }
         offerExpiry?.cancel(); offerExpiry = null
@@ -998,7 +989,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 backupResults[session] = offer.id to if (success) "applied" else "failed"
                 if (success) prefs.edit().putLong(KEY_LAST_APPLIED, System.currentTimeMillis()).apply()
                 offerRaw = null; offerSession = null
-                mutable.update { it.copy(backupOffer = null, backupBusy = false, rollbackAvailable = service.hasRollback(),
+                mutable.update { it.copy(backupOffer = null, backupBusy = false, backupStatus = if (success) "applied" else "failed", rollbackAvailable = service.hasRollback(),
                     settingsRevision = it.settingsRevision + if (success) 1 else 0) }
                 notice(if (success) R.string.companion_backup_applied else companionBackupFailureMessage(BackupFailure.APPLY), offer.sender, error = !success)
             }
@@ -1093,6 +1084,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     fun hidePanel() {
+        remoteAfterConnect = null
+        transferAfterPairing = false
         if (mutable.value.sendingTo != null) disconnect(clearTarget = false)
         pendingConnection = null
         pendingPairingOpen = false
@@ -1366,6 +1359,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 returnSession = it; returnSessions.put(sessionPin, it)?.close()
                             }
                             mutable.update { it.copy(syncPeers = it.syncPeers + (sessionPin to request.capabilities)) }
+                            if (transferAfterPairing) { transferAfterPairing = false; showSettingsTransfer() }
                             if (request.syncAck != 0L) {
                                 val pending = requireNotNull(back.pending)
                                 require(request.syncAck == pending.first.sequence)
@@ -1412,6 +1406,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 }
                                 "backup_begin" -> {
                                     check(settingsService != null && transfer == null)
+                                    require(companionReceiveModeAllowed(television, request.mode))
                                     transfer = CompanionTransfer(request.transferId, request.total, request.digest, request.mode, request.credentials)
                                     transferDeadline = SystemClock.elapsedRealtime() + 120_000
                                 }
@@ -1427,14 +1422,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                     transfer = null
                                 }
                                 "backup_cancel" -> { transfer = null; if (offerSession == nonce) rejectBackup() }
-                                "backup_request" -> {
-                                    check(television && settingsService != null && "duplex_sync" in request.capabilities)
-                                    require(request.mode in setOf("accounts", "settings", "nav_sounds") && request.transferId.length in 1..64)
-                                    releaseRemoteControl()
-                                    mutable.update { it.copy(pullRequest = CompanionPullRequest(nonce, sessionPin, peer.name, request.mode,
-                                        request.credentials && request.mode != "nav_sounds", request.transferId)) }
-                                    notice(R.string.companion_pull_request_notice, peer.name)
-                                }
+                                "backup_request" -> error("TV-to-phone transfers are unsupported")
                                 "start" -> {
                                     requireNotNull(request.media)
                                     require(request.startRequestId.length <= 64)
@@ -1516,7 +1504,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         return false
     }
 
-    @Synchronized fun connect(peer: CompanionPeer, invitation: String = "", initialMedia: CompanionMedia? = null, allowWake: Boolean = true) {
+    @Synchronized fun connect(peer: CompanionPeer, invitation: String = "", initialMedia: CompanionMedia? = null, allowWake: Boolean = true, openRemote: Boolean = false) {
         if (television || !foreground || peer.role == COMPANION_HANDHELD) return
         if (invitation.isEmpty() && !guardReachable(peer)) return
         diagnosticFailure = ""
@@ -1531,6 +1519,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         pendingConnection = null
         val keepSettingsPanel = mutable.value.settingsPanel
         disconnect(clearTarget = true)
+        remoteAfterConnect = peer.fingerprint.takeIf { openRemote }
         val queue = Channel<CompanionFrame>(16); commands = queue
         mutable.update { it.copy(target = peer, busy = true, connectionError = "", connectionStage = R.string.companion_connecting, settingsPanel = keepSettingsPanel, sendingTo = if (initialMedia != null) peer.name else null) }
         clientJob = scope.launch {
@@ -1604,6 +1593,10 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     mutable.update { it.copy(target = trusted, online = true, busy = false, lastSeen = it.lastSeen + (trusted.fingerprint to SystemClock.elapsedRealtime())) }
                 }
                 connectionNotice(trusted)
+                withContext(Dispatchers.Main) {
+                    if (transferAfterPairing) { transferAfterPairing = false; showSettingsTransfer() }
+                    else if (remoteAfterConnect == trusted.fingerprint) { remoteAfterConnect = null; showRemote() }
+                }
                 socket.soTimeout = 8_000
                 var sequence = 0L
                 clientSyncNonce = nonce
@@ -1628,7 +1621,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     }
                     val result = withContext(Dispatchers.Main) { backupResults[nonce] }
                     val request = command.copy(nonce = nonce, sequence = ++sequence,
-                        capabilities = if (foreground && settingsService != null) listOf("duplex_sync", "settings_sync", "nav_sounds") else emptyList(),
+                        capabilities = emptyList(),
                         syncAck = returnAck, syncError = returnError,
                         syncResultId = result?.first.orEmpty(), syncResult = result?.second.orEmpty(),
                         syncPort = if (foreground && !route.vpn) server?.localPort ?: 0 else 0)
@@ -1648,6 +1641,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                                 when (frame.type) {
                                     "backup_begin" -> {
                                         check(returnTransfer == null)
+                                        require(companionReceiveModeAllowed(television, frame.mode))
                                         returnTransfer = CompanionTransfer(frame.transferId, frame.total, frame.digest, frame.mode, frame.credentials)
                                         returnDeadline = SystemClock.elapsedRealtime() + 120_000
                                     }
@@ -1725,6 +1719,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     @Synchronized fun disconnect(clearTarget: Boolean = true) {
+        remoteAfterConnect = null
         remoteServiceRequested = false; remoteServiceFailed = false
         context.stopService(Intent(context, CompanionRemotePlaybackService::class.java))
         backupSendJob?.cancel(); backupSendJob = null; backupAck?.complete(false); backupAck = null

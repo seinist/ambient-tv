@@ -81,7 +81,7 @@ internal object CompanionBackupPolicy {
     }
 
     fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): String {
-        require(mode in setOf("accounts", "settings", "nav_sounds"))
+        require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         if (mode == "nav_sounds") {
             require(!credentials)
             com.ambient.tv.ui.sound.NavSoundBank.import(source.navSoundBank.ifBlank { com.ambient.tv.ui.sound.NavSoundBank().encode() })
@@ -89,6 +89,10 @@ internal object CompanionBackupPolicy {
             return JsonObject(obj(source).filterKeys { it in navSounds || it in setOf("schemaVersion", "exportedAtEpochMs") })
                 .toString().also { require(it.toByteArray().size <= MAX_BYTES) }
         }
+        // Preferences never contain account fields, even with credentials requested by an old caller.
+        if (mode == "preferences") return JsonObject(obj(source).filterKeys {
+            it in portable || it in hardware || it in setOf("schemaVersion", "exportedAtEpochMs")
+        }).toString().also { require(it.toByteArray().size <= MAX_BYTES) }
         val allowed = accounts + if (mode == "settings") portable + hardware else emptySet()
         val s = obj(source).filterKeys { it in allowed }.toMutableMap()
         if (!credentials) {
@@ -114,7 +118,7 @@ internal object CompanionBackupPolicy {
     }
 
     fun merge(source: SettingsBackup, target: SettingsBackup, mode: String, overwrite: Boolean, deviceSettings: Boolean): String {
-        require(mode in setOf("accounts", "settings", "nav_sounds"))
+        require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         val incoming = obj(source); val current = obj(target); val result = current.toMutableMap()
         if (mode == "nav_sounds") {
             require(overwrite)
@@ -122,10 +126,11 @@ internal object CompanionBackupPolicy {
             navSounds.forEach { result[it] = incoming.getValue(it) }
             return JsonObject(result).toString()
         }
-        if (mode == "settings") {
+        if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
             (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }
+        if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()
         val ssh = (current["sshKeys"] as? JsonObject).orEmpty().toMutableMap()
         for (field in listOf("servers", "jellyfinServers", "embyServers", "fileSources", "dlnaServers")) {

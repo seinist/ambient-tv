@@ -56,9 +56,9 @@ class CompanionReachabilityTest {
         assertEquals(40, companionDisplayName("Ambient TV " + "x".repeat(80), null).length)
     }
 
-    @Test fun backupRequestOnlyAcceptedByTelevision() {
+    @Test fun backupRequestsAreRejectedByBothRoles() {
         assertFalse(companionCommandAllowed(false, "backup_request"))
-        assertTrue(companionCommandAllowed(true, "backup_request"))
+        assertFalse(companionCommandAllowed(true, "backup_request"))
     }
 
     @Test fun timestampHintWarnsOnlyForOlderExports() {

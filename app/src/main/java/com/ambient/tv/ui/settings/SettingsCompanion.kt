@@ -23,14 +23,9 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 /** One searchable settings page; pairing and transfers retain their confirmation flows. */
 internal fun LazyListScope.companionSettingsItems() {
     item(key = "companion-devices") { CompanionDevicesSection() }
-    item(key = "companion-transfer") { SettingsPageLink(SettingsCategory.TRANSFER, "companion-transfer") }
     item(key = "companion-network") {
         val vm: CompanionViewModel = hiltViewModel()
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingsSectionHeader(stringResource(R.string.settings_companion_network))
-            CompanionHint(if (LocalHandheldUi.current) R.string.settings_companion_network_hint else R.string.companion_receiver_hint)
-            CompanionConnectionSettingsContent(vm.manager)
-        }
+        if (!LocalHandheldUi.current) CompanionConnectionSettingsContent(vm.manager)
     }
 }
 
@@ -43,14 +38,14 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
         SettingsSectionHeader(stringResource(R.string.settings_companion_devices))
         CompanionHint(if (handheld) R.string.settings_companion_devices_hint else R.string.companion_tv_only_hint)
         if (handheld) {
-            HandheldCompanionDevices(manager, state)
+            com.ambient.tv.companion.CompanionDeviceHub(manager, state)
         } else {
             state.connected.forEach { name ->
                 Text(stringResource(R.string.companion_connected, name))
             }
             if (state.paired.isEmpty()) Text(stringResource(R.string.sync_no_devices))
             state.paired.forEach { peer -> com.ambient.tv.companion.CompanionPeerRow(manager, peer) { mod -> Text(peer.name, modifier = mod) } }
-            TvActionButton(stringResource(R.string.companion_pair_phone), manager::showPanel, fillWidth = true)
+            TvActionButton(stringResource(R.string.companion_pair_phone), manager::showPairing, fillWidth = true)
             if (state.online) TvActionButton(stringResource(R.string.companion_disconnect), { manager.disconnect() }, fillWidth = true)
         }
         if (!handheld) {
@@ -71,11 +66,12 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
 
 @Composable
 internal fun CompanionTransferSection(vm: CompanionViewModel = hiltViewModel()) {
+    if (!LocalHandheldUi.current) return
     val state by vm.manager.state.collectAsState()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SettingsSectionHeader(stringResource(R.string.settings_companion_transfer))
-        CompanionHint(R.string.settings_companion_transfer_hint)
-        TvActionButton(stringResource(R.string.sync_title), vm.manager::showSettingsTransfer, fillWidth = true)
+        CompanionHint(if (LocalHandheldUi.current) R.string.settings_companion_transfer_hint else R.string.sync_phone_to_tv_only)
+        if (LocalHandheldUi.current) TvActionButton(stringResource(R.string.sync_title), vm.manager::showSettingsTransfer, fillWidth = true)
         if (state.rollbackAvailable) {
             TvActionButton(stringResource(R.string.companion_restore_backup), vm.manager::showRestore, fillWidth = true)
         }
@@ -86,46 +82,4 @@ internal fun CompanionTransferSection(vm: CompanionViewModel = hiltViewModel()) 
 private fun CompanionHint(res: Int) {
     Text(stringResource(res), style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-/**
- * Phone: TVs already linked to this phone, then - clearly apart - new TVs found on this Wi-Fi.
- * The page searches by itself while it is open.
- */
-@Composable
-private fun HandheldCompanionDevices(manager: com.ambient.tv.companion.CompanionManager, state: com.ambient.tv.companion.CompanionState) {
-    androidx.compose.runtime.DisposableEffect(manager) {
-        manager.startPageSearch()
-        onDispose { manager.stopSearchUnlessPanel() }
-    }
-    SettingsSectionHeader(stringResource(R.string.companion_section_paired))
-    if (state.paired.isEmpty()) Text(stringResource(R.string.companion_no_paired_tv), style = MaterialTheme.typography.bodySmall)
-    state.paired.forEach { peer ->
-        val connected = state.online && state.target?.fingerprint == peer.fingerprint
-        val found = state.devices.firstOrNull { it.fingerprint == peer.fingerprint }
-        val reach = com.ambient.tv.companion.rememberReachability(manager, peer)
-        com.ambient.tv.companion.CompanionPeerRow(manager, peer, reach) { mod ->
-            TvActionButton(
-                if (connected) stringResource(R.string.companion_connected, peer.name) else peer.name,
-                onClick = { if (!connected && !state.busy) manager.connect(found ?: peer) },
-                selected = connected,
-                enabled = connected || reach.allowsActions(),
-                modifier = mod,
-            )
-        }
-    }
-    if (state.online) {
-        TvActionButton(stringResource(R.string.playback_open), manager::showNowPlaying, fillWidth = true)
-        TvActionButton(stringResource(R.string.companion_remote_control), manager::showRemote, fillWidth = true)
-        TvActionButton(stringResource(R.string.companion_disconnect), { manager.disconnect() }, fillWidth = true)
-    }
-
-    SettingsSectionHeader(stringResource(R.string.companion_section_found))
-    CompanionHint(R.string.companion_found_hint)
-    com.ambient.tv.companion.CompanionSearchStatus(state)
-    state.devices.filter { d -> state.paired.none { it.fingerprint == d.fingerprint } }.forEach { peer ->
-        com.ambient.tv.companion.CompanionPairWithCode(manager, peer, enabled = !state.busy)
-    }
-    TvActionButton(stringResource(R.string.companion_search), manager::discover, fillWidth = true, loading = state.searching)
-    TvActionButton(stringResource(R.string.companion_pair_qr_or_link), manager::showPanel, fillWidth = true)
 }

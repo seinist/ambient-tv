@@ -11,6 +11,8 @@ internal fun syncAccountChoices(source: SettingsBackup): List<CompanionAccountCh
     source.embyServers.forEach { add(CompanionAccountChoice("emby:${it.profile.id}", "Emby · ${it.profile.name}")) }
     source.fileSources.filter { it.kind != "local" }.forEach { add(CompanionAccountChoice("files:${it.id}", "${it.kind.uppercase()} · ${it.name}")) }
     source.dlnaServers.forEach { add(CompanionAccountChoice("dlna:${it.id}", "DLNA · ${it.name}")) }
+    source.iptvSources.orEmpty().forEach { add(CompanionAccountChoice("iptv:${it.id}", "IPTV · ${it.name}")) }
+    if (!source.openSubtitlesApiKey.isNullOrBlank()) add(CompanionAccountChoice("opensubtitles", "OpenSubtitles"))
     if (source.tvheadendHost.isNotBlank()) add(CompanionAccountChoice("tvheadend", "TVHeadend · ${source.tvheadendHost}"))
     source.smartTubeAccounts.orEmpty().forEach { add(CompanionAccountChoice("smarttube:${it.id}", "SmartTube · ${it.name}")) }
     if (source.spotifyAccount.signedIn() || source.spotifyClientId.isNotBlank())
@@ -27,6 +29,10 @@ internal fun SpotifyAccountBackup?.signedIn() = this != null && (refreshToken !=
 
 /** Provider-qualified IDs keep coincident IDs on different providers independent. */
 internal fun selectSyncAccounts(source: SettingsBackup, selected: Set<String>): SettingsBackup = source.copy(
+    iptvSources = source.iptvSources?.filter { "iptv:${it.id}" in selected },
+    openSubtitlesApiKey = source.openSubtitlesApiKey.takeIf { "opensubtitles" in selected },
+    openSubtitlesUsername = source.openSubtitlesUsername.takeIf { "opensubtitles" in selected },
+    openSubtitlesPassword = source.openSubtitlesPassword.takeIf { "opensubtitles" in selected },
     servers = source.servers.filter { "plex:${it.profile.id}" in selected },
     jellyfinServers = source.jellyfinServers.filter { "jellyfin:${it.profile.id}" in selected },
     embyServers = source.embyServers.filter { "emby:${it.profile.id}" in selected },

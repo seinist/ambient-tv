@@ -265,7 +265,7 @@
     <string name="companion_sent">Playback requested on %1$s</string>
     <string name="companion_target_removed">This TV target is no longer paired. Please pair it again.</string>
     <string name="companion_shared_youtube">Shared YouTube video</string>
-    <string name="companion_scan_hint">On the TV, open Settings → Phone &amp; TV → Pair device. Then pick the TV below and enter the code from its screen — or scan its QR code with your phone camera and open it in Ambient TV.</string>
+    <string name="companion_scan_hint">On the TV, open Settings → Network → Phone &amp; TV → Pair phone. Scan the QR code or enter that TV’s code.</string>
     <string name="companion_qr_hint">Scan with your phone camera, or enter the code below in Ambient TV on the phone. Valid for two minutes. Then compare the codes on both devices.</string>
     <string name="companion_confirm_title">Confirm pairing</string>
     <string name="companion_pair_with">Pair with</string>

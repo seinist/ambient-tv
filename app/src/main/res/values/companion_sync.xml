@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="sync_title">Sync devices</string>
+    <string name="sync_title">Transfer data</string>
     <string name="sync_to_tv_hint">Send to a paired device. Open Ambient TV on both devices.</string>
     <string name="sync_to_phone_hint">Send to a paired phone or another TV. Open Ambient TV on both devices. Over VPN, connect from the phone first.</string>
     <string name="sync_no_devices">No paired devices yet. Pair the two devices first.</string>
-    <string name="sync_accounts">Sync accounts</string>
-    <string name="sync_all">Sync everything · Accounts + settings</string>
+    <string name="sync_accounts">Accounts &amp; sources only</string>
+    <string name="sync_all">Settings + accounts &amp; sources</string>
     <string name="sync_sounds">Menu sounds only</string>
     <string name="sync_scope_hint">Transfers selected accounts or network sources. Everything also includes transferable settings and menu sounds. Credentials require the option below; device settings require selection on the receiver. SmartTube and Spotify sign-ins and WireGuard keys are credentials too. WireGuard is only sent when selected: one key used on two devices at once disconnects both. Local files, VPN routing per source and pairings stay local.</string>
-    <string name="sync_select_all">Select all</string>
+    <string name="sync_select_all">All except WireGuard</string>
     <string name="sync_select_none">Deselect all</string>
     <string name="sync_save_first">Save your pending settings first. The saved configuration is transferred.</string>
     <string name="sync_waiting">Waiting for confirmation on the receiving device.</string>
-    <string name="sync_another">Sync again</string>
+    <string name="sync_another">Another transfer</string>
 </resources>

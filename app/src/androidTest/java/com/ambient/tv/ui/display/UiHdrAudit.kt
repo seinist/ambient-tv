@@ -226,7 +226,7 @@ class UiHdrAudit(private val instrumentation: Instrumentation, private val log: 
                                         Modifier.fillMaxSize().padding(24.dp),
                                         verticalArrangement = Arrangement.spacedBy(16.dp),
                                     ) {
-                                        UiHdrSettings("auto", false, {}, {})
+                                        UiHdrSettings(mode = "auto", sdrToHdrEnabled = false, onSdrToHdrChanged = {}, onModeChanged = {})
                                         Box(
                                             Modifier.size(120.dp)
                                                 .background(uiHdrHighlight(Color(0xFFE5A00D), state.headroom)),
