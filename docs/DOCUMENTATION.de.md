@@ -772,7 +772,7 @@ Unter **App & Daten › Diagnose** (Fehlerprotokoll für Release-Builds):
 ```
 
 Native Engines werden für `arm64-v8a`, `armeabi-v7a`, `x86` und `x86_64` gebaut.  
-Ausgabe typischerweise unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`).
+Ausgabe typischerweise unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Vorab-Suffixe wie `beta`, `alpha` oder `rc` bleiben am Ende, die Build-Nummer steht davor (`ambient-tv-arm64-1.0.270-beta.apk`).
 
 Umgebungsvariablen u. a.: `SKIP_MPV_NATIVE=1`, `REBUILD_MPV=1`, `MPV_ANDROID_REF`, `ADB_DEVICE` für `*-adb`-Modi.
 
@@ -794,7 +794,7 @@ Benötigte Repository-Secrets: `AMBIENT_TV_KEYSTORE_BASE64` (Release-Keystore al
 
 Die Versionierung steht in `version.properties`:
 - `VERSION_CODE` steigt bei jedem lokalen Build, der ein APK/AAB erzeugt (`assemble*`, `bundle*`, `install*`, `package*` – auch aus Android Studio und `./build.sh`), um eins. Sync, reine Tests, `clean` und CI (`CI` gesetzt) ändern ihn nicht; `-PversionCode=N` überschreibt. Die Datei wird nicht automatisch committet.
-- `VERSION_NAME` gilt für lokale Builds. Release-Builds nehmen den Tag ohne führendes `v` (`v1.0.0-beta` → `1.0.0-beta`) über `-PversionName` / `ORG_GRADLE_PROJECT_versionName`; die APK-Dateinamen nutzen denselben Wert.
+- `VERSION_NAME` gilt für lokale Builds. Release-Builds nehmen den Tag ohne führendes `v` (`v1.0.0-beta` → `1.0.0-beta`) über `-PversionName` / `ORG_GRADLE_PROJECT_versionName`. Die APK-Dateinamen nutzen denselben Wert; ein Vorab-Suffix (`beta`, `alpha`, `rc`, …) bleibt am Ende, die aktuelle Build-Nummer steht davor (`1.0-beta` → `1.0.270-beta`).
 - Bei jedem gezählten Build wird die Version zwischen den Markern `<!-- version:start/end -->` und `<!-- version-badge:start/end -->` in beiden READMEs aktualisiert.
 
 ## 15. Grenzen und Hinweise

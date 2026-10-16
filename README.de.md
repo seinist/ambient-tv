@@ -168,7 +168,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 ./build.sh libs-update
 ```
 
-Artefakte landen unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`).
+Artefakte landen unter `dist/` (z. B. `ambient-tv-arm64-<version>.apk`, `ambient-tv-x86_64-<version>.apk`). Vorab-Suffixe wie `beta`, `alpha` oder `rc` bleiben am Ende, die Build-Nummer steht davor (`ambient-tv-arm64-1.0.270-beta.apk`).
 
 Gradle direkt (mit automatischer MPV/FFmpeg-Vorbereitung bei fehlenden Local-Audio-Headern oder -Bibliotheken): `./gradlew :app:assembleDebug` – für produktnahe Builds `./build.sh` bevorzugen. `SKIP_MPV_NATIVE=1` überspringt den nativen MPV-Build (schnelle Builds/CI), z. B. `SKIP_MPV_NATIVE=1 ./gradlew :app:assembleDebug :app:testDebugUnitTest`. Es ist keine Spotify-Client-ID eingebaut; siehe [Spotify einrichten](#spotify-einrichten).
 

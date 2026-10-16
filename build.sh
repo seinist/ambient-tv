@@ -42,6 +42,8 @@
 #   dist/ambient-tv-debug-<version>.apk
 #   dist/ambient-tv-{arm64,armv7,x86,x86_64}-<version>.apk          (signed when configured)
 #   dist/ambient-tv-{arm64,armv7,x86,x86_64}-unsigned-<version>.apk (without signing config)
+#   Pre-release suffixes (beta, alpha, rc, …) also include the build number:
+#   dist/ambient-tv-arm64-1.0.<versionCode>-beta.apk
 #
 # Signing:
 #   If keystore.properties exists (local only, git-ignored) or the AMBIENT_TV_KEYSTORE_FILE,
@@ -186,6 +188,34 @@ version_name() {
         return
     fi
     sed -nE 's/^[[:space:]]*VERSION_NAME[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$ROOT_DIR/version.properties" | head -n 1
+}
+
+version_code() {
+    # Same resolution as Gradle: ORG_GRADLE_PROJECT_versionCode or version.properties.
+    # Call this after Gradle has run so a local build sees the incremented code.
+    if [[ -n "${ORG_GRADLE_PROJECT_versionCode:-}" ]]; then
+        printf '%s\n' "$ORG_GRADLE_PROJECT_versionCode"
+        return
+    fi
+    sed -nE 's/^[[:space:]]*VERSION_CODE[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT_DIR/version.properties" | head -n 1
+}
+
+# Dist APK label. Stable names stay as versionName. A pre-release suffix such as
+# -beta, -alpha or -rc keeps the suffix and inserts the build number before it:
+# 1.0-beta -> 1.0.270-beta.
+apk_version_label() {
+    local name code base suffix
+    name="$(version_name)"
+    if [[ "$name" =~ ^([0-9]+(\.[0-9]+)*)-([A-Za-z].*)$ ]]; then
+        base="${BASH_REMATCH[1]}"
+        suffix="${BASH_REMATCH[3]}"
+        code="$(version_code)"
+        if [[ "$code" =~ ^[0-9]+$ && "$base" != *".${code}" ]]; then
+            printf '%s.%s-%s\n' "$base" "$code" "$suffix"
+            return
+        fi
+    fi
+    printf '%s\n' "$name"
 }
 
 ensure_android_sdk() {
@@ -876,7 +906,7 @@ build_debug() {
     local debug_dir="$ROOT_DIR/app/build/outputs/apk/debug"
     local src
     src="$(find "$debug_dir" -maxdepth 1 -type f -name '*.apk' ! -name '*arm64*' ! -name '*armeabi*' ! -name '*x86*' -print 2>/dev/null | head -n 1 || true)"
-    local dest="$DIST_DIR/ambient-tv-debug-$(version_name).apk"
+    local dest="$DIST_DIR/ambient-tv-debug-$(apk_version_label).apk"
     [[ -n "$src" && -f "$src" ]] || fail "Debug APK was not created under $debug_dir"
     cp "$src" "$dest"
     log "Debug APK: ${dest#$ROOT_DIR/}"
@@ -906,8 +936,8 @@ package_release_variant_output() {
 
     local suffix
     suffix="$(printf '%s' "$variant" | tr '[:upper:]' '[:lower:]')"
-    local signed_dest="$DIST_DIR/ambient-tv-${suffix}-$(version_name).apk"
-    local unsigned_dest="$DIST_DIR/ambient-tv-${suffix}-unsigned-$(version_name).apk"
+    local signed_dest="$DIST_DIR/ambient-tv-${suffix}-$(apk_version_label).apk"
+    local unsigned_dest="$DIST_DIR/ambient-tv-${suffix}-unsigned-$(apk_version_label).apk"
 
     if [[ "$(basename "$src")" != *unsigned* ]]; then
         cp "$src" "$signed_dest"
