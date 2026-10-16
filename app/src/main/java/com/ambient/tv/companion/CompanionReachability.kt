@@ -21,7 +21,8 @@ internal fun companionReachability(
     state.devices.any { it.fingerprint == fingerprint } || fingerprint in state.sessions ||
         state.lastSeen[fingerprint]?.let { nowMs - it in 0 until COMPANION_SEEN_TTL_MS } == true -> PeerReachability.REACHABLE
     wakeable -> PeerReachability.WAKEABLE
-    state.searching -> PeerReachability.SEARCHING
+    // Direct probe of the stored host:port (mDNS may be blocked) still running.
+    state.searching || fingerprint in state.probing -> PeerReachability.SEARCHING
     else -> PeerReachability.UNREACHABLE
 }
 
@@ -53,3 +54,28 @@ enum class SyncTimestampHint { NONE, OLDER_THAN_LOCAL }
 internal fun syncTimestampHint(incomingExportedAt: Long, localLastAppliedAt: Long): SyncTimestampHint =
     if (incomingExportedAt > 0 && localLastAppliedAt > 0 && incomingExportedAt < localLastAppliedAt) SyncTimestampHint.OLDER_THAN_LOCAL
     else SyncTimestampHint.NONE
+
+/** Probe interval per device: low frequency, never hammering a TV. */
+internal const val COMPANION_PROBE_INTERVAL_MS = 30_000L
+
+/**
+ * Whether a paired TV needs a direct host:port probe: not connected, not found by mDNS, not seen
+ * recently, a private LAN address on the current network, not routed through WireGuard, and not
+ * probed within [COMPANION_PROBE_INTERVAL_MS].
+ */
+internal fun companionNeedsProbe(
+    peer: CompanionPeer,
+    state: CompanionState,
+    viaWireGuard: Boolean,
+    onCurrentLan: Boolean,
+    lastProbeMs: Long?,
+    nowMs: Long,
+): Boolean {
+    val fp = peer.fingerprint
+    if (viaWireGuard || !onCurrentLan || !isPrivateV4(peer.host) || peer.port !in 1..65535) return false
+    if (fp in state.probing) return false
+    if (state.online && state.target?.fingerprint == fp || fp in state.syncPeers) return false
+    if (state.devices.any { it.fingerprint == fp } || fp in state.sessions) return false
+    if (state.lastSeen[fp]?.let { nowMs - it in 0 until COMPANION_SEEN_TTL_MS } == true) return false
+    return lastProbeMs == null || nowMs - lastProbeMs >= COMPANION_PROBE_INTERVAL_MS
+}
