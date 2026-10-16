@@ -288,7 +288,13 @@ class HomeViewModel @Inject constructor(
         jellyfinOnly: Boolean = false,
         embyOnly: Boolean = false,
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
-    ) = start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false)
+    ) {
+        val samePage = this.plexOnly == plexOnly && this.jellyfinOnly == jellyfinOnly &&
+            this.embyOnly == embyOnly && homeFocusStateKey == focusStateKey
+        // Re-entering the destination must not cancel an initial/background load in flight.
+        if (samePage && listOf(loadJob, tvPreviewJob, photoJob, trailerJob).any { it?.isActive == true }) return
+        start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false)
+    }
 
     private fun start(
         plexOnly: Boolean,
@@ -297,6 +303,9 @@ class HomeViewModel @Inject constructor(
         focusStateKey: String = homeFocusStateKey,
         refreshing: Boolean,
     ) {
+        val keepSnapshot = _uiState.value is HomeUiState.Loaded &&
+            this.plexOnly == plexOnly && this.jellyfinOnly == jellyfinOnly &&
+            this.embyOnly == embyOnly && homeFocusStateKey == focusStateKey
         loadJob?.cancel()
         jellyfinCollectionJob?.cancel()
         jellyfinCollectionJob = null
@@ -316,11 +325,12 @@ class HomeViewModel @Inject constructor(
         loadGeneration++
         libraryLoading = false
         tvPreviewJob?.cancel()
-        tvPreview = HomeTvPreview()
+        val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
+        if (!keepSnapshot || tvPreviewScope != nextTvScope) tvPreview = HomeTvPreview()
         tvPreviewComplete = false
-        // Each load asks every server again; a server that stays offline drops out of the row.
-        continueBySystem.clear()
-        tvPreviewScope = liveTvRegistry.configured().joinToString { it.source.id }
+        // Retain each provider's last answer until its asynchronous replacement arrives.
+        if (!keepSnapshot) continueBySystem.clear()
+        tvPreviewScope = nextTvScope
         loadPhotoRow()
         loadTrailerRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) {
@@ -1036,7 +1046,10 @@ class HomeViewModel @Inject constructor(
                     if (showLive) channels.take(HOME_LIVE_TV_LIMIT).map(::item) else emptyList(),
                     if (showRecent) recent.mapNotNull { id -> channels.firstOrNull { it.uuid == id }?.let(::item) } else emptyList())
                 // Publish usable channel cards before waiting for EPG.
-                tvPreview = HomeTvPreview(tvPreview.live + preview.live, tvPreview.recent + preview.recent)
+                tvPreview = HomeTvPreview(
+                    tvPreview.live.filterNot { it.channel.sourceId == repo.source.id } + preview.live,
+                    tvPreview.recent.filterNot { it.channel.sourceId == repo.source.id } + preview.recent,
+                )
                 (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
                 val events = suspendResult { repo.nowEvents() }.getOrDefault(emptyList()).associateBy { it.channelUuid }
                 HomeTvPreview(preview.live.map { it.copy(event = events[it.channel.uuid]) },
@@ -1068,17 +1081,24 @@ class HomeViewModel @Inject constructor(
 
     private fun loadTrailerRows() {
         trailerJob?.cancel()
-        trailerRows = emptyList()
-        if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.trailersEnabled || !trailerRepository.configured) return
+        if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.trailersEnabled || !trailerRepository.configured) {
+            trailerRows = emptyList()
+            return
+        }
         val definitions = appPreferences.homeRows.filter { it.enabled && it.system == HomeRowDefinition.SYSTEM_TRAILERS }
             .distinctBy { it.contentKey }
+        val enabledIds = definitions.mapTo(HashSet()) { "trailers.${it.contentKey}" }
+        trailerRows = trailerRows.filter { it.id in enabledIds }
         if (definitions.isEmpty()) return
         trailerJob = viewModelScope.launch {
             val locale = context.resources.configuration.locales[0]
             for (definition in definitions) {
                 val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
                 val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-                val entries = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" }).getOrDefault(emptyList())
+                val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                if (result.isFailure) continue
+                val entries = result.getOrThrow()
+                trailerRows = trailerRows.filterNot { it.id == "trailers.${feed.name}" }
                 if (entries.isNotEmpty()) trailerRows = trailerRows + ContentRowData(
                     title = definition.displayTitle(context),
                     items = entries.distinctBy { it.videos.first().key }.map { entry ->
@@ -1284,7 +1304,7 @@ class HomeViewModel @Inject constructor(
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
-            loading = libraryLoading,
+            loading = libraryLoading && previous?.loading != false,
         )
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
     }
