@@ -1,7 +1,9 @@
 package com.ambient.tv.companion
 
 import androidx.compose.material3.*
+import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.AppDialog
@@ -34,6 +36,8 @@ internal fun companionStartConfirmed(request: CompanionMedia, frame: CompanionFr
 internal fun CompanionPlaybackTargetDialog(manager: CompanionManager, state: CompanionState) {
     val request by manager.playbackRequest.collectAsState()
     val selection = request ?: return
+    // Keep the search running so reachable TVs are recognised while the choice is open.
+    DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
     AppDialog(
         onDismiss = { if (!selection.starting) manager.cancelPlaybackRequest() },
         title = stringResource(R.string.companion_choose_playback),
@@ -53,8 +57,12 @@ internal fun CompanionPlaybackTargetDialog(manager: CompanionManager, state: Com
             if (selection.media == null) Text(stringResource(R.string.companion_source_phone_only))
             state.paired.forEach { peer ->
                 val connected = state.online && state.target?.fingerprint == peer.fingerprint
-                TvActionButton(stringResource(if (connected) R.string.companion_play_on else R.string.companion_reconnect_play, peer.name),
-                    { manager.playRequestOn(peer) }, enabled = selection.media != null, fillWidth = true)
+                val reach = rememberReachability(manager, peer)
+                Column(Modifier.reachabilityDim(reach)) {
+                    TvActionButton(stringResource(if (connected) R.string.companion_play_on else R.string.companion_reconnect_play, peer.name),
+                        { manager.playRequestOn(peer) }, enabled = selection.media != null && reach.allowsActions(), fillWidth = true)
+                    CompanionReachabilityLabel(reach)
+                }
             }
         }
     }
