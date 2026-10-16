@@ -37,7 +37,9 @@ object Media3AudioProcessing {
             val position = target.currentPosition
             val live = target.isCurrentMediaItemLive
             target.stop()
-            if (live) target.seekToDefaultPosition() else target.seekTo(position)
+            if (!target.reopenTimeshiftAtLiveEdge()) {
+                if (live) target.seekToDefaultPosition() else target.seekTo(position)
+            }
             target.prepare()
             target.playWhenReady = playing
         }

@@ -40,6 +40,7 @@ class MpvPlaybackController(
     declaredHdr: com.ambient.tv.ui.player.HdrStandard? = null,
     val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
+    reopeningTimeshift: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
@@ -105,7 +106,7 @@ class MpvPlaybackController(
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, liveStream, declaredHdr, audioOnly, preferOriginalAudio)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift)
             sample()
         }
         main.post(tick)

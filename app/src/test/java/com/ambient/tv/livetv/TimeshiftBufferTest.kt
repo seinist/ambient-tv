@@ -53,6 +53,37 @@ class TimeshiftBufferTest {
         } finally { buffer.stop(); server.close(); dir.deleteRecursively() }
     }
 
+    @Test fun rendererReopenUsesLiveEdgeAndRejectsUnrelatedStreams() {
+        val (url, server) = upstream("video/mp2t", tsPackets(2000))
+        val dir = kotlin.io.path.createTempDirectory("timeshift-reopen").toFile()
+        val buffer = requireNotNull(TimeshiftBuffer.start(OkHttpClient(), url, emptyMap(), dir, 128L * 1024 * 1024))
+        try {
+            val (original, start) = buffer.urlAt(0)
+            // A deterministic recording index: the edge has advanced since the original open.
+            val indexField = TimeshiftBuffer::class.java.getDeclaredField("index").apply { isAccessible = true }
+            val lockField = TimeshiftBuffer::class.java.getDeclaredField("lock").apply { isAccessible = true }
+            synchronized(lockField.get(buffer)) {
+                @Suppress("UNCHECKED_CAST")
+                val index = indexField.get(buffer) as ArrayDeque<Pair<Long, Long>>
+                index.clear()
+                index.addLast(start to 0L)
+                index.addLast((start + 10_000L) to 1880L)
+                index.addLast((start + 12_000L) to 3760L)
+                val reopened = requireNotNull(buffer.reopenedUrl(original))
+                assertEquals(start + 10_000L, reopened.second)
+                assertTrue(reopened.first.endsWith("/1880.ts"))
+                assertNotEquals(original, reopened.first)
+                assertEquals(original, buffer.urlAt(start).first) // Explicit rewind stays available.
+                index.addLast((start + 14_000L) to 5640L)
+                assertEquals(start + 12_000L, buffer.reopenedUrl(original)?.second)
+                assertEquals(start + 12_000L, buffer.reopenedUrl(reopened.first)?.second)
+                assertNull(buffer.reopenedUrl(url))
+                assertNull(buffer.reopenedUrl(original.replace("127.0.0.1", "localhost")))
+                assertNull(buffer.reopenedUrl(original.replace("/0.ts", "/other/0.ts")))
+            }
+        } finally { buffer.stop(); server.close(); dir.deleteRecursively() }
+    }
+
     @Test fun hlsAndOtherStreamsAreLeftToThePlayer() {
         val (playlist, server) = upstream("application/vnd.apple.mpegurl", "#EXTM3U\n#EXT-X-VERSION:3\n".repeat(100).toByteArray())
         val dir = kotlin.io.path.createTempDirectory("timeshift").toFile()

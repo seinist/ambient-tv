@@ -85,10 +85,12 @@ internal class MpvPlaybackEngine(
     private val declaredHdr: HdrStandard? = null,
     private val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
+    reopeningTimeshift: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     init { check(android.os.Looper.myLooper() === workerHandler.looper) }
 
     private val startupConstructionAt = System.nanoTime()
+    private var streamOpened = reopeningTimeshift
     private val networkCacheEnabled = mpvUsesNetworkCache(url, networkCache)
     private var appliedAudioGraph = ""
     private var appliedAc3Filter = false
@@ -445,7 +447,7 @@ internal class MpvPlaybackEngine(
             setProperty("vid", "no")
             setProperty("vo", "null")
             setProperty("force-window", "no")
-            command("loadfile", url, "replace")
+            command("loadfile", playbackUrlForOpen(), "replace")
             loaded = true
             pendingInitialSeekMs = null
             setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
@@ -553,9 +555,9 @@ internal class MpvPlaybackEngine(
             val resume = requestedResume?.takeUnless { prime }
             ended = false
             errorMessage = null
-            if (prime) command("loadfile", url, "replace", "-1", "start=0")
-            else if (resume == null) command("loadfile", url, "replace")
-            else command("loadfile", url, "replace", "-1", "start=${resume / 1000.0}")
+            if (prime) command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=0")
+            else if (resume == null) command("loadfile", playbackUrlForOpen(), "replace")
+            else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${resume / 1000.0}")
             pendingInitialSeekMs = null
             loaded = true
             detachedVideoSelection?.let { setProperty("vid", it) }
@@ -1858,12 +1860,14 @@ internal class MpvPlaybackEngine(
         workerHandler.post { if (!released) pollEvents() }
     }
 
-    /** Retry once with OpenGL. A decoder/profile rejection normally falls through
-     * the hwdec list inside mpv/FFmpeg; a failed VO needs a full file re-open. */
+    /** Resolve a fresh timeshift live edge on every reopen, including surface recovery. */
+    private fun playbackUrlForOpen(): String =
+        com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, streamOpened).also { streamOpened = true }
+
     private fun reopenStream(positionMs: Long) {
         startupOpenedAt = System.nanoTime()
-        if (liveStream) command("loadfile", url, "replace")
-        else command("loadfile", url, "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")
+        if (liveStream) command("loadfile", playbackUrlForOpen(), "replace")
+        else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")
     }
 
     private fun fallbackAcceleration(reason: String, reload: Boolean = true): Boolean {

@@ -127,7 +127,8 @@ fun rememberMpvPlaybackController(
             val resumeMs = com.ambient.tv.ui.player.rendererReopenPositionMs(metadata?.isLive == true,
                 previous?.positionMs()?.takeIf { it > 0L } ?: startPositionMs)
             val create = { MpvPlaybackController(context.applicationContext, url, resumeMs, headers, audioPassthroughEnabled, outputMode, imageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdr,
-                liveStream = metadata?.isLive == true, declaredHdr = declaredHdr, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube").also {
+                liveStream = metadata?.isLive == true, declaredHdr = declaredHdr, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube",
+                reopeningTimeshift = previous?.url == url).also {
                 it.saveImageDefaults = saveDefaults
                 restoreOutputState?.invoke(it)
                 if (previous == null) (title?.mpvDeinterlaceMode ?: resolution?.mpvDeinterlaceMode)?.let { mode ->

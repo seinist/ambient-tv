@@ -228,7 +228,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             player.stop()
             player.setVideoEffects(effects)
             gpuPipelineInitialized = true
-            if (live) player.seekToDefaultPosition() else player.seekTo(index, position)
+            if (!player.reopenTimeshiftAtLiveEdge()) {
+                if (live) player.seekToDefaultPosition() else player.seekTo(index, position)
+            }
             player.playWhenReady = playWhenReady
             player.prepare()
         } else {

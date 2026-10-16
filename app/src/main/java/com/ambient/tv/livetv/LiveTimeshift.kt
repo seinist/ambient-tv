@@ -52,6 +52,13 @@ class TimeshiftBuffer private constructor(
         return "http://127.0.0.1:${server!!.localPort}/$token/$aligned.ts" to time
     }
 
+    /** Only URLs belonging to this buffer may be rebased during a renderer restart. */
+    private fun ownsUrl(url: String): Boolean =
+        url.startsWith("http://127.0.0.1:${server?.localPort}/$token/") &&
+            url.removePrefix("http://127.0.0.1:${server?.localPort}/$token/").removeSuffix(".ts").toLongOrNull() != null
+
+    fun reopenedUrl(url: String): Pair<String, Long>? = if (ownsUrl(url)) liveUrl() else null
+
     /** A little behind the edge, so the player starts with data instead of waiting for it. */
     fun liveUrl(): Pair<String, Long> = urlAt(liveWallMs - LIVE_PREROLL_MS)
 
@@ -311,6 +318,14 @@ object LiveTimeshift {
         current = buffer
         watch(route, buffer)
         return buffer
+    }
+
+    /** A renderer reload must not replay the fixed byte offset of its original URL. */
+    fun playbackUrl(url: String, reopening: Boolean): String {
+        if (!reopening) return url
+        val (liveUrl, wallMs) = current?.reopenedUrl(url) ?: return url
+        setAnchor(wallMs)
+        return liveUrl
     }
 
     fun setAnchor(wallMs: Long?) { mutableAnchor.value = wallMs }

@@ -77,6 +77,7 @@ class VlcPlaybackController(
     val sourceHdrStandard: HdrStandard? = null,
     val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
+    private val reopeningTimeshift: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     private val startupConstructionAt = System.nanoTime()
     private var initialOpenReported = false
@@ -753,6 +754,7 @@ class VlcPlaybackController(
         pendingSeekTask = null
         startupOpenedAt = System.nanoTime()
         startupPlayingReported = false
+        val reopening = initialOpenReported
         if (!initialOpenReported) {
             initialOpenReported = true
             com.ambient.tv.ui.player.logPlaybackStartup("vlc", "initial_open_requested", startupConstructionAt,
@@ -794,7 +796,8 @@ class VlcPlaybackController(
         externalSubtitleRequests.clear()
         externalSubtitleSources.clear()
         pendingExternalSubtitle = null
-        val media = Media(libVlc, Uri.parse(authProxy?.url ?: url))
+        val playbackUrl = com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
+        val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
         media.addOption(":sub-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
@@ -1602,7 +1605,8 @@ fun rememberVlcPlaybackController(
             val resumeMs = previous?.status()?.positionMs?.takeIf { it > 0L } ?: startPositionMs
             val create = { VlcPlaybackController(context.applicationContext, url, resumeMs, headers,
                 deinterlaceMode, deinterlaceFilter, initialScalingFilter, initialAudioVisualization, initialAudioPassthrough, imageOptions, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr,
-                liveStream = metadata?.isLive == true, sourceHdrStandard = metadata?.handheldHdrStandard, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube").also {
+                liveStream = metadata?.isLive == true, sourceHdrStandard = metadata?.handheldHdrStandard, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube",
+                reopeningTimeshift = previous?.url == url).also {
                 it.saveImageDefaults = saveDefaults
                 if (previous == null) title?.vlcOverloadContinueSignature?.let(it::restoreOverloadContinue)
                 else previous.overloadContinueSignature?.let(it::restoreOverloadContinue)
