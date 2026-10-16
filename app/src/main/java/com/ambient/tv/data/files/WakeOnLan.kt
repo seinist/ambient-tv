@@ -26,11 +26,13 @@ class WakeOnLan {
     private val directSend: (suspend (String, String, Int) -> Unit)?
     private val retryCount: () -> Int
     private val machines: com.ambient.tv.wol.WakeMachines?
+    private val notices: com.ambient.tv.notifications.WakeNoticeTracker
 
     @Inject
     constructor(wolManager: WolManager, preferences: AppPreferences, machines: com.ambient.tv.wol.WakeMachines) {
         this.wolManager = wolManager
         this.machines = machines
+        this.notices = WakeNotices
         this.directSend = null
         this.retryCount = { preferences.wolRetryCount }
     }
@@ -39,9 +41,11 @@ class WakeOnLan {
     internal constructor(
         directSend: suspend (mac: String, broadcast: String, port: Int) -> Unit = ::defaultDirectSend,
         retryCount: () -> Int = { 0 },
+        notices: com.ambient.tv.notifications.WakeNoticeTracker = WakeNotices,
     ) {
         this.wolManager = null
         this.machines = null
+        this.notices = notices
         this.directSend = directSend
         this.retryCount = retryCount
     }
@@ -67,10 +71,20 @@ class WakeOnLan {
     fun machineKey(source: FileSource): String =
         machines?.keyFor("files", source.host, source.wolMac) ?: com.ambient.tv.wol.wakeGroupKey(source.wolMac, source.host, "files")
 
-    suspend fun wakeAndWait(source: FileSource) {
+    /** True while any system is waking this source's machine (a manual press is then ignored). */
+    fun isMachineWaking(source: FileSource): Boolean = notices.isWaking(machineKey(source))
+
+    /**
+     * Wakes the source's machine and waits until the source answers. A [manual] press only starts
+     * when nothing on that machine is waking yet and returns false (sending nothing, keeping the
+     * running card) otherwise; automatic callers join a running wake and always wait.
+     */
+    suspend fun wakeAndWait(source: FileSource, manual: Boolean = false): Boolean {
         val machine = machineKey(source)
         val member = "files:${source.id}"
-        WakeNotices.begin(machine, "files", source.name, member)
+        if (manual) {
+            if (!notices.tryBegin(machine, "files", source.name, member)) return false
+        } else notices.begin(machine, "files", source.name, member)
         try {
         val ready = wakeWithRetries(
             retries = retryCount(),
@@ -89,12 +103,13 @@ class WakeOnLan {
         )
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
         rememberOnline(source)
-        WakeNotices.finish(machine, "files", success = true, member = member)
+        notices.finish(machine, "files", success = true, member = member)
+        return true
         } catch (cancelled: CancellationException) {
-            WakeNotices.cancel(machine, "files", member)
+            notices.cancel(machine, "files", member)
             throw cancelled
         } catch (error: Exception) {
-            WakeNotices.finish(machine, "files", success = false, member = member)
+            notices.finish(machine, "files", success = false, member = member)
             throw error
         }
     }
