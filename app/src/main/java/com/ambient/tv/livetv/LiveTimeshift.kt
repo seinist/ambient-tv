@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 class TimeshiftBuffer private constructor(
     private val file: File,
     private val capacity: Long,
-) {
+) : SeekableLiveBuffer {
     private val token = UUID.randomUUID().toString().replace("-", "")
     @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") // wait/notify need a real monitor object
     private val lock = java.lang.Object()
@@ -38,11 +38,11 @@ class TimeshiftBuffer private constructor(
     private val upstream = UpstreamOwner()
     private val connections = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Socket, Boolean>())
 
-    val liveWallMs: Long get() = synchronized(lock) { index.lastOrNull()?.first ?: System.currentTimeMillis() }
-    val oldestWallMs: Long get() = synchronized(lock) { index.firstOrNull { it.second >= written - capacity }?.first ?: liveWallMs }
+    override val liveWallMs: Long get() = synchronized(lock) { index.lastOrNull()?.first ?: System.currentTimeMillis() }
+    override val oldestWallMs: Long get() = synchronized(lock) { index.firstOrNull { it.second >= written - capacity }?.first ?: liveWallMs }
 
     /** URL that starts at [wallMs] (clamped to the buffer) and the moment it really starts at. */
-    fun urlAt(wallMs: Long): Pair<String, Long> {
+    override fun urlAt(wallMs: Long): Pair<String, Long> {
         val (time, offset) = synchronized(lock) {
             val floor = written - capacity
             val candidates = index.filter { it.second >= floor }
@@ -57,12 +57,12 @@ class TimeshiftBuffer private constructor(
         url.startsWith("http://127.0.0.1:${server?.localPort}/$token/") &&
             url.removePrefix("http://127.0.0.1:${server?.localPort}/$token/").removeSuffix(".ts").toLongOrNull() != null
 
-    fun reopenedUrl(url: String): Pair<String, Long>? = if (ownsUrl(url)) liveUrl() else null
+    override fun reopenedUrl(url: String): Pair<String, Long>? = if (ownsUrl(url)) liveUrl() else null
 
     /** A little behind the edge, so the player starts with data instead of waiting for it. */
-    fun liveUrl(): Pair<String, Long> = urlAt(liveWallMs - LIVE_PREROLL_MS)
+    override fun liveUrl(): Pair<String, Long> = urlAt(liveWallMs - LIVE_PREROLL_MS)
 
-    fun stop() {
+    override fun stop() {
         stopped = true
         upstream.close()
         synchronized(lock) { lock.notifyAll() }
@@ -281,7 +281,7 @@ object LiveTimeshift {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
     private var pending: UpstreamOwner? = null
     private var watcher: kotlinx.coroutines.Job? = null
-    @Volatile var current: TimeshiftBuffer? = null
+    @Volatile var current: SeekableLiveBuffer? = null
         private set
 
     private val mutableAnchor = kotlinx.coroutines.flow.MutableStateFlow<Long?>(null)
@@ -323,9 +323,23 @@ object LiveTimeshift {
     /** A renderer reload must not replay the fixed byte offset of its original URL. */
     fun playbackUrl(url: String, reopening: Boolean): String {
         if (!reopening) return url
-        val (liveUrl, wallMs) = current?.reopenedUrl(url) ?: return url
+        val buffer = current ?: return url
+        val reopened = buffer.reopenedUrl(url) ?: return url
+        val (liveUrl, wallMs) = if (buffer.recordingId != null) {
+            // MPV also opens streams on its worker thread; read the published snapshot here.
+            val position = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.status.positionMs
+            buffer.urlAt((anchor.value ?: reopened.second) + position.coerceAtLeast(0L))
+        } else reopened
         setAnchor(wallMs)
         return liveUrl
+    }
+
+    /** Install only after the server recording has become readable. Does not change preferences. */
+    fun useRecording(route: String, buffer: SeekableLiveBuffer, wallMs: Long) {
+        stop()
+        current = buffer
+        setAnchor(wallMs)
+        watch(route, buffer)
     }
 
     fun setAnchor(wallMs: Long?) { mutableAnchor.value = wallMs }
@@ -338,7 +352,7 @@ object LiveTimeshift {
     }
 
     /** Stops the buffer once its playback is gone: closed, or replaced by another title/channel. */
-    private fun watch(route: String, buffer: TimeshiftBuffer) {
+    private fun watch(route: String, buffer: SeekableLiveBuffer) {
         watcher = scope.launch {
             var seen = false
             com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collect { snapshot ->

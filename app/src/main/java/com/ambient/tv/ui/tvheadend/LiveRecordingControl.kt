@@ -19,7 +19,10 @@ internal fun canRecordProgramme(capabilities: LiveTvCapabilities, event: LiveTvP
         event.eventId.isNotBlank() && event.isLive(now)
 
 internal fun hasProgrammeRecording(event: LiveTvProgramme, timers: List<LiveTvRecording>): Boolean =
-    !event.dvrUuid.isNullOrBlank() || timers.any {
+    !event.dvrUuid.isNullOrBlank() || findProgrammeRecording(event, timers) != null
+
+internal fun findProgrammeRecording(event: LiveTvProgramme, timers: List<LiveTvRecording>): LiveTvRecording? =
+    timers.firstOrNull { it.uuid == event.dvrUuid } ?: timers.firstOrNull {
         it.broadcastEventId == event.eventId ||
             (it.channelUuid == event.channelUuid &&
                 it.startEpochSeconds < event.stopEpochSeconds && it.stopEpochSeconds >= event.stopEpochSeconds)

@@ -46,8 +46,9 @@ internal fun handleTimeshiftMediaKey(
 /** Closer to the broadcast than this counts as live (player start-up and network buffering). */
 internal const val TIMESHIFT_LIVE_TOLERANCE_MS = 10_000L
 
-internal fun canJumpToLive(isLive: Boolean, anchorMs: Long?, positionMs: Long, edgeMs: Long?, canSeek: Boolean): Boolean {
+internal fun canJumpToLive(isLive: Boolean, anchorMs: Long?, positionMs: Long, edgeMs: Long?, canSeek: Boolean, recordingFinished: Boolean = false): Boolean {
     if (!isLive || anchorMs == null || edgeMs == null || !canSeek) return false
+    if (recordingFinished) return true
     val elapsed = (edgeMs - anchorMs).coerceAtLeast(0L)
     return elapsed - positionMs.coerceIn(0L, elapsed) > TIMESHIFT_LIVE_TOLERANCE_MS
 }
@@ -56,13 +57,14 @@ internal fun canJumpToLive(isLive: Boolean, anchorMs: Long?, positionMs: Long, e
 internal fun jumpToLiveAvailable(isLive: Boolean, positionMs: Long): Boolean {
     val anchor by LiveTimeshift.anchor.collectAsState()
     // The buffer advances even while playback is paused.
-    val edge by produceState<Long?>(null, isLive, anchor) {
+    val window by produceState<Pair<Long?, Boolean>>(null to false, isLive, anchor) {
         while (isLive && anchor != null) {
-            value = LiveTimeshift.current?.liveWallMs
+            val buffer = LiveTimeshift.current
+            value = buffer?.liveWallMs to (buffer?.finished == true)
             kotlinx.coroutines.delay(1_000L)
         }
     }
-    return canJumpToLive(isLive, anchor, positionMs, edge, LiveTimeshift.seekHandler != null)
+    return canJumpToLive(isLive, anchor, positionMs, window.first, LiveTimeshift.seekHandler != null, window.second)
 }
 
 @Composable

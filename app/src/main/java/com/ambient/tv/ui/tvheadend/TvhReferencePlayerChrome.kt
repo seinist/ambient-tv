@@ -101,7 +101,7 @@ fun BoxScope.TvhReferencePlayerChrome(
         ?: source.subtitle?.takeIf { it.isNotBlank() }
     val contextLine = buildList {
         channel?.name?.takeIf { it.isNotBlank() }?.let(::add)
-        if (source.isLive) add(stringResource(R.string.tvh_live).uppercase())
+        if (source.isLive) add(stringResource(if (com.ambient.tv.livetv.LiveTimeshift.current?.recordingId != null) R.string.live_recording_playback else R.string.tvh_live).uppercase())
         source.streamProfile?.takeIf { it.isNotBlank() }?.let(::add)
     }.joinToString("  •  ")
     val resolvedArtwork = artworkUrl ?: nowEvent?.imageUrl ?: channel?.iconUrl
@@ -112,7 +112,7 @@ fun BoxScope.TvhReferencePlayerChrome(
     ReferencePlayerOverlayBackground()
     ReferencePlayerClock(
         remainingMs = if (!source.isLive && durationMs > 0L) (durationMs - positionMs).coerceAtLeast(0L) else null,
-        liveLabel = if (source.isLive) stringResource(R.string.tvh_live).uppercase() else null,
+        liveLabel = if (source.isLive) stringResource(if (com.ambient.tv.livetv.LiveTimeshift.current?.recordingId != null) R.string.live_recording_playback else R.string.tvh_live).uppercase() else null,
         modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 48.dp),
     )
     ReferencePlayerBottomContent {
@@ -131,7 +131,7 @@ fun BoxScope.TvhReferencePlayerChrome(
             artworkContentScale = if (resolvedArtwork == channel?.iconUrl && nowEvent?.imageUrl.isNullOrBlank()) ContentScale.Fit else ContentScale.Crop,
         )
 
-        // Timeshift (on-device buffer): how far the picture is behind the live broadcast.
+        // The same controls serve local Timeshift and the growing server recording.
         val timeshiftAnchor = com.ambient.tv.livetv.LiveTimeshift.anchor.collectAsState().value
         val timeshiftSeek = com.ambient.tv.livetv.LiveTimeshift.seekHandler
         val shiftable = source.isLive && timeshiftAnchor != null && timeshiftSeek != null
@@ -145,7 +145,9 @@ fun BoxScope.TvhReferencePlayerChrome(
         // in the future: the position is bounded by the time since the stream was opened.
         val sinceAnchor = (System.currentTimeMillis() - (timeshiftAnchor ?: 0L)).coerceAtLeast(0L)
         val watchedWallMs = (timeshiftAnchor ?: 0L) + positionMs.coerceIn(0L, sinceAnchor)
-        val behindMs = if (shiftable) (System.currentTimeMillis() - watchedWallMs).coerceAtLeast(0L) else 0L
+        val seekBuffer = com.ambient.tv.livetv.LiveTimeshift.current
+        val recordingPlayback = seekBuffer?.recordingId != null
+        val behindMs = if (shiftable) ((seekBuffer?.liveWallMs ?: System.currentTimeMillis()) - watchedWallMs).coerceAtLeast(0L) else 0L
         val shifted = behindMs > TIMESHIFT_LIVE_TOLERANCE_MS
         if (source.isLive) {
             Row(
@@ -250,8 +252,9 @@ fun BoxScope.TvhReferencePlayerChrome(
 
         PlayerTechBadgeRow {
             MetaBadge(backendLabel, emphasized = true)
+            if (source.isLive && recordingPlayback) MetaBadge(stringResource(R.string.live_recording_playback), emphasized = true)
             if (source.isLive && shifted) MetaBadge(stringResource(R.string.timeshift_behind, formatTvhChromeDuration(behindMs)), emphasized = true)
-            else if (source.isLive) MetaBadge(stringResource(R.string.tvh_live).uppercase(), emphasized = true)
+            else if (source.isLive && !recordingPlayback) MetaBadge(stringResource(R.string.tvh_live).uppercase(), emphasized = true)
             com.ambient.tv.ui.player.PlayerStreamBadges(mediaBadges)
         }
 

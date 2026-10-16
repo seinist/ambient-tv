@@ -8,7 +8,11 @@ import com.ambient.tv.livetv.LiveTimeshift
 internal fun ExoPlayer.reopenTimeshiftAtLiveEdge(): Boolean {
     val item = currentMediaItem ?: return false
     val url = item.localConfiguration?.uri?.toString() ?: return false
-    val (liveUrl, anchor) = LiveTimeshift.current?.reopenedUrl(url) ?: return false
+    val buffer = LiveTimeshift.current ?: return false
+    val reopened = buffer.reopenedUrl(url) ?: return false
+    val (liveUrl, anchor) = if (buffer.recordingId != null)
+        buffer.urlAt((LiveTimeshift.anchor.value ?: reopened.second) + currentPosition.coerceAtLeast(0L))
+    else reopened
     LiveTimeshift.setAnchor(anchor)
     setMediaItem(item.buildUpon().setUri(liveUrl).build(), 0L)
     return true

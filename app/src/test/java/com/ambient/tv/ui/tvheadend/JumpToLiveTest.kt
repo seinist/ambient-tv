@@ -23,4 +23,8 @@ class JumpToLiveTest {
         assertFalse(canJumpToLive(true, 1000L, 5000L, 6000L, true))
         assertTrue(canJumpToLive(true, 1000L, 5000L, 17000L, true))
     }
+    @org.junit.Test fun completedRecordingCanReturnToBroadcastEvenAtItsEnd() {
+        org.junit.Assert.assertTrue(canJumpToLive(true, 1000L, 9000L, 10000L, true, recordingFinished = true))
+        org.junit.Assert.assertFalse(canJumpToLive(false, 1000L, 9000L, 10000L, true, recordingFinished = true))
+    }
 }
