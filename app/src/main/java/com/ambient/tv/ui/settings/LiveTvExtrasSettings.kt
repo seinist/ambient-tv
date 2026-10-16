@@ -39,6 +39,8 @@ internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel:
             )
         })
         Text(stringResource(R.string.timeshift_storage_hint), style = MaterialTheme.typography.bodySmall)
+    }
+    SettingsGroup(title = stringResource(R.string.settings_live_reminders)) {
         Text(stringResource(R.string.reminder_lead_title), style = MaterialTheme.typography.titleSmall)
         com.ambient.tv.ui.common.TvSettingRow(
             title = stringResource(R.string.reminder_auto_switch),

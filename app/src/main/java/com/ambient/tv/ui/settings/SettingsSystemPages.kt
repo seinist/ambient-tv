@@ -487,7 +487,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
             item { SettingsPageLink(SettingsCategory.WAKE, "tvheadend-network", R.string.settings_network_link) }
                 item { Text(stringResource(R.string.settings_tvh_permissions_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                item { LiveTvExtrasSettingsGroup() }
+                item { SettingsPageLink(SettingsCategory.LIVE_TV, "tvheadend-live-tv") }
                 item {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
                         listOf(

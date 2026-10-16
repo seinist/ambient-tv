@@ -340,6 +340,7 @@ fun SettingsScreen(
                                 UiHdrSettings(
                                     mode = uiState.uiHdrModeKey,
                                     onModeChanged = viewModel::onUiHdrModeChanged,
+                                    showConversion = false,
                                     sdrToHdrEnabled = uiState.sdrToHdrEnabled,
                                     onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
                                     sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
@@ -452,82 +453,6 @@ fun SettingsScreen(
                                     fillWidth = true,
                                 )
                             }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_playback_performance),
-                                    subtitle = stringResource(R.string.settings_playback_performance_hint),
-                                ) {
-                                    PerformanceModeSelect(
-                                        selected = uiState.playbackPerformanceModeKey,
-                                        onSelected = viewModel::onPlaybackPerformanceModeChanged,
-                                    )
-                                }
-                            }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_frame_drop_duration),
-                                    subtitle = stringResource(R.string.settings_frame_drop_duration_hint),
-                                ) {
-                                    SettingsSelect(options = listOf(0, 2, 5, 6, 10, 15, 30, 60).map { seconds ->
-                                        SettingsSelectOption(
-                                            text = if (seconds == 0) stringResource(R.string.player_automatic) else stringResource(R.string.unit_seconds, seconds),
-                                            selected = uiState.frameDropTestSeconds == seconds,
-                                            onClick = { viewModel.onFrameDropTestSecondsChanged(seconds) },
-                                        )
-                                    })
-                                }
-                            }
-                            item {
-                                TvActionButton(
-                                    text = stringResource(R.string.settings_check_playback),
-                                    onClick = viewModel::checkPlaybackPerformance,
-                                    loading = uiState.performanceProbe != null,
-                                    modifier = Modifier.focusRequester(checkPlaybackFocus),
-                                    fillWidth = true,
-                                )
-                            }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_home_hero_style),
-                                    subtitle = stringResource(R.string.settings_home_hero_style_hint),
-                                ) {
-                                    TvSettingRow(
-                                        title = stringResource(R.string.settings_home_background_everywhere),
-                                        body = stringResource(R.string.settings_home_background_everywhere_hint),
-                                        checked = uiState.homeBackgroundEverywhere,
-                                        onCheckedChange = viewModel::onHomeBackgroundEverywhereChanged,
-                                    )
-                                    TvSettingRow(
-                                        title = stringResource(R.string.settings_focus_artwork_backdrop),
-                                        body = stringResource(R.string.settings_focus_artwork_backdrop_hint),
-                                        checked = uiState.focusArtworkBackdrop,
-                                        onCheckedChange = viewModel::onFocusArtworkBackdropChanged,
-                                    )
-                                    SettingsSelect(options = HomeHeroStyle.keys.map { style ->
-                                        SettingsSelectOption(
-                                            text = homeHeroStyleLabel(style),
-                                            selected = uiState.homeHeroStyleKey == style,
-                                            onClick = { viewModel.onHomeHeroStyleChanged(style) },
-                                        )
-                                    })
-                                    com.ambient.tv.ui.common.RightPanelValueSlider(
-                                        title = stringResource(R.string.settings_home_hero_intensity),
-                                        value = uiState.homeHeroIntensityPercent,
-                                        valueRange = 0..100,
-                                        step = 10,
-                                        valueLabel = "${uiState.homeHeroIntensityPercent} %",
-                                        onValueChange = viewModel::onHomeHeroIntensityChanged,
-                                    )
-                                    com.ambient.tv.ui.common.PlayerDropUpSelector(
-                                        label = stringResource(R.string.settings_home_hero_spread),
-                                        value = homeHeroSpreadLabel(uiState.homeHeroSpreadKey),
-                                        options = HomeHeroStyle.spreads.map { it to homeHeroSpreadLabel(it) },
-                                        selectedKey = uiState.homeHeroSpreadKey,
-                                        onSelected = viewModel::onHomeHeroSpreadChanged,
-                                    )
-                                }
-                            }
-
                         }
 
                         SettingsCategory.LANGUAGE -> {
@@ -782,7 +707,7 @@ fun SettingsScreen(
                             }
                         }
 
-                        SettingsCategory.IPTV -> { item { IptvSettingsSection() }; item { LiveTvExtrasSettingsGroup(showRecording = false) } }
+                        SettingsCategory.IPTV -> { item { IptvSettingsSection() }; item { SettingsPageLink(SettingsCategory.LIVE_TV, "iptv-live-tv") } }
 
                         SettingsCategory.TRAILERS -> {
                             item { com.ambient.tv.trailers.TrailerSettings(onConnected = { viewModel.refreshTrailerConfiguration() }) }
@@ -811,6 +736,41 @@ fun SettingsScreen(
                         SettingsCategory.PLAYBACK -> {
                             item {
                                 SettingsGroup(
+                                    title = stringResource(R.string.settings_playback_performance),
+                                    subtitle = stringResource(R.string.settings_playback_performance_hint),
+                                ) {
+                                    PerformanceModeSelect(
+                                        selected = uiState.playbackPerformanceModeKey,
+                                        onSelected = viewModel::onPlaybackPerformanceModeChanged,
+                                    )
+                                }
+                            }
+                            item {
+                                SettingsGroup(
+                                    title = stringResource(R.string.settings_frame_drop_duration),
+                                    subtitle = stringResource(R.string.settings_frame_drop_duration_hint),
+                                ) {
+                                    SettingsSelect(options = listOf(0, 2, 5, 6, 10, 15, 30, 60).map { seconds ->
+                                        SettingsSelectOption(
+                                            text = if (seconds == 0) stringResource(R.string.player_automatic) else stringResource(R.string.unit_seconds, seconds),
+                                            selected = uiState.frameDropTestSeconds == seconds,
+                                            onClick = { viewModel.onFrameDropTestSecondsChanged(seconds) },
+                                        )
+                                    })
+                                }
+                            }
+                            item {
+                                TvActionButton(
+                                    text = stringResource(R.string.settings_check_playback),
+                                    onClick = viewModel::checkPlaybackPerformance,
+                                    loading = uiState.performanceProbe != null,
+                                    modifier = Modifier.focusRequester(checkPlaybackFocus),
+                                    fillWidth = true,
+                                )
+                            }
+
+                            item {
+                                SettingsGroup(
                                     title = stringResource(R.string.settings_playback_backend),
                                     subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
                                 ) {
@@ -837,13 +797,6 @@ fun SettingsScreen(
                                 TvActionButton(
                                     text = stringResource(R.string.settings_playback_overview),
                                     onClick = { playbackOverview = viewModel.savedPlaybackOverview() },
-                                    fillWidth = true,
-                                )
-                            }
-                            item {
-                                TvActionButton(
-                                    text = stringResource(R.string.live_profiles_title),
-                                    onClick = { liveProfiles = viewModel.savedPlaybackOverview() },
                                     fillWidth = true,
                                 )
                             }
@@ -949,11 +902,66 @@ fun SettingsScreen(
                                     }
                                 }
                             }
+                            item { TvSettingRow(stringResource(R.string.settings_auto_display_version), stringResource(R.string.settings_auto_display_version_hint), uiState.autoSelectDisplayVersion, viewModel::onAutoSelectDisplayVersionToggled) }
                             item { PlayerOsdSettingsGroup() }
-                            item { LiveTvExtrasSettingsGroup() }
+                            item { SettingsPageLink(SettingsCategory.LIVE_TV, "player-live-tv") }
+                        }
+
+                        SettingsCategory.LIVE_TV -> {
+                            item {
+                                TvActionButton(
+                                    text = stringResource(R.string.live_profiles_title),
+                                    onClick = { liveProfiles = viewModel.savedPlaybackOverview() },
+                                    fillWidth = true,
+                                )
+                            }
+
+                            item { LiveTvExtrasSettingsGroup(showRecording = uiState.tvheadendEnabled && uiState.tvheadendHost.isNotBlank()) }
                         }
 
                         SettingsCategory.BACKGROUND -> {
+                            item {
+                                SettingsGroup(
+                                    title = stringResource(R.string.settings_home_hero_style),
+                                    subtitle = stringResource(R.string.settings_home_hero_style_hint),
+                                ) {
+                                    TvSettingRow(
+                                        title = stringResource(R.string.settings_home_background_everywhere),
+                                        body = stringResource(R.string.settings_home_background_everywhere_hint),
+                                        checked = uiState.homeBackgroundEverywhere,
+                                        onCheckedChange = viewModel::onHomeBackgroundEverywhereChanged,
+                                    )
+                                    TvSettingRow(
+                                        title = stringResource(R.string.settings_focus_artwork_backdrop),
+                                        body = stringResource(R.string.settings_focus_artwork_backdrop_hint),
+                                        checked = uiState.focusArtworkBackdrop,
+                                        onCheckedChange = viewModel::onFocusArtworkBackdropChanged,
+                                    )
+                                    SettingsSelect(options = HomeHeroStyle.keys.map { style ->
+                                        SettingsSelectOption(
+                                            text = homeHeroStyleLabel(style),
+                                            selected = uiState.homeHeroStyleKey == style,
+                                            onClick = { viewModel.onHomeHeroStyleChanged(style) },
+                                        )
+                                    })
+                                    com.ambient.tv.ui.common.RightPanelValueSlider(
+                                        title = stringResource(R.string.settings_home_hero_intensity),
+                                        value = uiState.homeHeroIntensityPercent,
+                                        valueRange = 0..100,
+                                        step = 10,
+                                        valueLabel = "${uiState.homeHeroIntensityPercent} %",
+                                        onValueChange = viewModel::onHomeHeroIntensityChanged,
+                                    )
+                                    com.ambient.tv.ui.common.PlayerDropUpSelector(
+                                        label = stringResource(R.string.settings_home_hero_spread),
+                                        value = homeHeroSpreadLabel(uiState.homeHeroSpreadKey),
+                                        options = HomeHeroStyle.spreads.map { it to homeHeroSpreadLabel(it) },
+                                        selectedKey = uiState.homeHeroSpreadKey,
+                                        onSelected = viewModel::onHomeHeroSpreadChanged,
+                                    )
+                                }
+                            }
+
                             item {
                                 SettingsGroup {
                                     TvSettingRow(
@@ -1090,7 +1098,6 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.SEEK -> {
-                            item { TvSettingRow(stringResource(R.string.settings_auto_display_version), stringResource(R.string.settings_auto_display_version_hint), uiState.autoSelectDisplayVersion, viewModel::onAutoSelectDisplayVersionToggled) }
                             item {
                                 SettingsGroup(
                                     title = stringResource(R.string.settings_seek_jump),
@@ -1225,6 +1232,17 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.IMAGE -> {
+                            item {
+                                UiHdrSettings(
+                                    mode = uiState.uiHdrModeKey,
+                                    onModeChanged = viewModel::onUiHdrModeChanged,
+                                    showInterface = false,
+                                    sdrToHdrEnabled = uiState.sdrToHdrEnabled,
+                                    onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
+                                    sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
+                                    onSdrToHdrPeakNitsChanged = viewModel::onSdrToHdrPeakNitsChanged,
+                                )
+                            }
                             item { SettingsImageDefaults(uiState, viewModel) }
                         }
                         SettingsCategory.AUDIO -> {

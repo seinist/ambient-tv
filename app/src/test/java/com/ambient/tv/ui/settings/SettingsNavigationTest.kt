@@ -11,6 +11,7 @@ class SettingsNavigationTest {
         assertEquals(5, SettingsArea.entries.size)
         assertEquals(SettingsArea.START, SettingsCategory.APPEARANCE.area)
         assertEquals(SettingsArea.START, SettingsCategory.NAV_SOUNDS.area)
+        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.LIVE_TV.area)
         assertEquals(SettingsArea.PLAYBACK, SettingsCategory.IMAGE.area)
         assertEquals(SettingsArea.PLAYBACK, SettingsCategory.AUDIO.area)
         assertEquals(SettingsArea.APP, SettingsCategory.NOTIFICATIONS.area)
@@ -94,6 +95,8 @@ class SettingsNavigationTest {
             "libraries" to SettingsCategory.LIBRARY, "library" to SettingsCategory.LIBRARY,
             "info" to SettingsCategory.ABOUT, "about" to SettingsCategory.ABOUT,
             "playback" to SettingsCategory.PLAYBACK, "seek" to SettingsCategory.SEEK,
+            "live_tv" to SettingsCategory.LIVE_TV, "timeshift" to SettingsCategory.LIVE_TV,
+            "reminders" to SettingsCategory.LIVE_TV,
             "advanced" to SettingsCategory.SPOTIFY,
             "nav_sounds" to SettingsCategory.NAV_SOUNDS,
             "navigation_sounds" to SettingsCategory.NAV_SOUNDS,
@@ -259,6 +262,10 @@ class SettingsNavigationTest {
         assertEquals(3, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "ui scale"))
         assertEquals(2, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "oled theme"))
         assertEquals(1, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "HDR"))
+        assertEquals(1, settingsSearchScrollIndex(SettingsCategory.PLAYBACK, "Prüfdauer Bildaussetzer"))
+        assertEquals(3, settingsSearchScrollIndex(SettingsCategory.PLAYBACK, "MPV backend"))
+        assertEquals(1, settingsSearchScrollIndex(SettingsCategory.BACKGROUND, "Hintergrundvideo"))
+        assertEquals(0, settingsSearchScrollIndex(SettingsCategory.BACKGROUND, "Lichtstimmung"))
         assertTrue(settingsSearchPrefersStartPageTab("home widgets"))
         assertEquals(SettingsCategory.SPOTIFY, SettingsCategory.fromKey("advanced"))
     }

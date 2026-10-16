@@ -262,11 +262,19 @@ internal fun SettingsHub(
             append(stringResource(category.titleRes)); append(' '); append(category.name)
             if (category == SettingsCategory.APPEARANCE) {
                 append(' '); append(stringResource(R.string.settings_ui_hdr)); append(" hdr sdr")
+            }
+            if (category == SettingsCategory.IMAGE) {
                 if (showSdrToHdr) {
                     append(' '); append(stringResource(R.string.settings_sdr_to_hdr))
                     append(" sdr to hdr sdr video zu hdr sdr->hdr sdr→hdr conversion konvertierung mpv vulkan")
                 }
             }
+            if (category == SettingsCategory.PLAYBACK) {
+                append(" performance leistung prüfen test frame drop bildaussetzer prüfdauer duration version display auflösung resolution")
+                append(' '); append(stringResource(R.string.settings_frame_drop_duration))
+            }
+            if (category == SettingsCategory.LIVE_TV) append(" timeshift aufnahme recording erinnerung reminder vorlauf umschalten buffer puffer")
+            if (category == SettingsCategory.BACKGROUND) append(" lichtstimmung lichtschein hintergrundbilder hintergrundvideo artwork backdrop hero intensity stärke ausbreitung")
             if (category == SettingsCategory.NAV_SOUNDS) {
                 append(" menütöne menutoene navigationssounds navigation sounds sound-editor sound editor hall reverb echo")
                 append(' '); append(stringResource(R.string.nav_editor_title))
@@ -919,7 +927,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
     }
     return when (category) {
         SettingsCategory.PLAYBACK -> if (state.playbackBackendKey == "auto") stringResource(R.string.player_automatic) else state.playbackBackendKey.uppercase()
-        SettingsCategory.BACKGROUND -> if (state.visibleBackgroundVideoPlayback) stringResource(R.string.settings_background_video_visibility, 100 - state.backgroundVideoDimPercent) else stringResource(R.string.player_off)
+        SettingsCategory.BACKGROUND -> null
         SettingsCategory.LIBRARY -> "${state.libraryGridColumns} × ${state.libraryListRows}"
         SettingsCategory.SEEK -> stringResource(R.string.settings_seek_jump_seconds, state.bigSeekJumpSeconds)
         SettingsCategory.AUDIO -> when (state.audioSettings.selectedProfile) { "auto" -> stringResource(R.string.audio_profile_auto); "avr" -> "HDMI / AVR"; "headphones" -> stringResource(R.string.audio_headphones); else -> "TV" }

@@ -43,10 +43,11 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     WIREGUARD(SettingsArea.NETWORK, R.string.settings_vpn_title, R.string.settings_page_vpn_hint),
     WAKE(SettingsArea.NETWORK, R.string.settings_network_wake, R.string.settings_network_wake_hint),
     PLAYBACK(SettingsArea.PLAYBACK, R.string.settings_player_page_title, R.string.settings_page_playback_hint),
+    LIVE_TV(SettingsArea.PLAYBACK, R.string.settings_live_tv_title, R.string.settings_page_live_tv_hint),
     IMAGE(SettingsArea.PLAYBACK, R.string.settings_hub_image, R.string.settings_page_image_hint),
     AUDIO(SettingsArea.PLAYBACK, R.string.settings_hub_audio, R.string.settings_page_audio_hint),
     SUBTITLES(SettingsArea.PLAYBACK, R.string.subtitle_policy_title, R.string.settings_page_subtitles_hint),
-    /** Seek jump + auto display-version / playback behavior. */
+    /** Seek jump distance. */
     SEEK(SettingsArea.PLAYBACK, R.string.settings_seek_page_title, R.string.settings_page_seek_hint),
     NEXT_UP(SettingsArea.PLAYBACK, R.string.settings_skipping_title, R.string.settings_page_next_up_hint),
     VISUALIZER(SettingsArea.PLAYBACK, R.string.settings_audio_visualizer, R.string.settings_page_visualizer_hint),
@@ -70,6 +71,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "sync", "transfer" -> TRANSFER
             "tvh", "tvheadend" -> TVHEADEND
             "iptv", "m3u" -> IPTV
+            "live_tv", "livetv", "timeshift", "reminders" -> LIVE_TV
             "locale", "language" -> LANGUAGE
             "nav", "navigation", "media_selection", "mediaselection" -> MEDIA_SELECTION
             "companion", "phone", "handy", "devices" -> COMPANION
@@ -136,17 +138,18 @@ internal fun settingsSearchScrollIndex(category: SettingsCategory, query: String
         SettingsCategory.APPEARANCE -> when {
             listOf("hdr", "sdr").any { it in q } -> 1
             listOf("scale", "skal", "größe", "groesse", "size", "zoom").any { it in q } -> 3
-            listOf("accent", "akzent", "colour", "color", "farbe").any { it in q } -> 4
+            listOf("accent", "akzent", "colour", "color", "farbe").any { it in q } -> 5
             listOf("theme", "thema", "oled", "dim", "dark", "dunkel").any { it in q } -> 2
             else -> 0
         }
         SettingsCategory.SEEK -> 0
         SettingsCategory.PLAYBACK -> when {
-            listOf("backend", "player", "mpv", "vlc", "media3").any { it in q } -> 1
+            listOf("drop", "bildaussetzer", "prüfdauer", "duration").any { it in q } -> 1
+            listOf("backend", "player", "mpv", "vlc", "media3").any { it in q } -> 3
             else -> 0
         }
         SettingsCategory.BACKGROUND -> when {
-            listOf("dim", "abdunk", "opacity").any { it in q } -> 1
+            listOf("video", "dim", "abdunk", "opacity").any { it in q } -> 1
             else -> 0
         }
         SettingsCategory.SPOTIFY -> when {

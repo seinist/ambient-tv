@@ -35,15 +35,17 @@ internal fun UiHdrSettings(
     sdrToHdrPeakNits: Int = 0,
     onSdrToHdrPeakNitsChanged: (Int) -> Unit = {},
     onModeChanged: (String) -> Unit,
+    showInterface: Boolean = true,
+    showConversion: Boolean = true,
 ) {
     val state = LocalUiHdrState.current
     val facts = rememberHdrControlFacts(mode)
-    val showChoice = hdrInterfaceChoiceVisible(facts.sdk, facts.displayHdr, facts.wideColor)
-    val showSwitch = sdrToHdrSwitchVisible(facts)
+    val showChoice = showInterface && hdrInterfaceChoiceVisible(facts.sdk, facts.displayHdr, facts.wideColor)
+    val showSwitch = showConversion && sdrToHdrSwitchVisible(facts)
     if (!showChoice && !showSwitch) return
     SettingsGroup(
-        title = stringResource(R.string.settings_ui_hdr),
-        subtitle = stringResource(R.string.settings_ui_hdr_hint),
+        title = stringResource(if (showInterface) R.string.settings_ui_hdr else R.string.settings_sdr_to_hdr),
+        subtitle = stringResource(if (showInterface) R.string.settings_ui_hdr_hint else R.string.settings_sdr_to_hdr_hint),
     ) {
         if (showChoice) {
             SettingsSelect(options = listOf(

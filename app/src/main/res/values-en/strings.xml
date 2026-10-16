@@ -189,7 +189,7 @@
     <string name="login_link_no_browser">No browser found for this link. Enter the address and the code by hand.</string>
     <string name="settings_auto_display_version">Best version for this display</string>
     <string name="settings_auto_display_version_hint">When several versions exist, automatically picks the resolution that best matches the TV.</string>
-    <string name="settings_seek_page_title">Seek &amp; playback</string>
+    <string name="settings_seek_page_title">Seek distance</string>
     <string name="settings_seek_jump">Up/Down seek jump</string>
     <string name="settings_seek_jump_hint">Sets how far the seek buttons and Up/Down jump during playback.</string>
     <string name="settings_seek_jump_seconds">%1$ds</string>
@@ -529,7 +529,7 @@
     <string name="settings_defaults_renderer_hint">Choose which player profile to edit. This does not change the default playback player (Playback › Player).</string>
     <string name="settings_defaults_renderer_auto_hint">The default player is Automatic, so the Media3 profile is being edited; choose VLC or MPV above to switch.</string>
     <string name="settings_playback_backend_hint">Default player for Plex, Jellyfin and SmartTube; TVHeadend has its own.</string>
-    <string name="settings_background_page_title">Background video</string>
+    <string name="settings_background_page_title">Background appearance</string>
     <string name="settings_visible_background_video">Show video behind the interface</string>
     <string name="settings_visible_background_video_hint">Keeps the playing video visible behind menus; when off, only audio continues.</string>
     <string name="player_backend_auto">Automatic</string>
@@ -1197,8 +1197,8 @@
     <string name="settings_page_media_selection_hint">What happens when a media card is selected</string>
     <string name="settings_page_language_hint">Interface and metadata language</string>
     <string name="settings_page_library_hint">Grid, lists, artwork and refresh</string>
-    <string name="settings_page_appearance_hint">Theme, accent color and scale</string>
-    <string name="settings_page_background_hint">Background playback and visibility</string>
+    <string name="settings_page_appearance_hint">Theme, colors, interface HDR, size and interface performance.</string>
+    <string name="settings_page_background_hint">Lighting, artwork backgrounds and background video.</string>
     <string name="settings_page_screensaver_hint">Mode, clock, timeout and preview</string>
     <string name="settings_page_network_hint">Plex: sign-in, servers and libraries</string>
     <string name="settings_page_jellyfin_hint">Jellyfin: sign-in, servers and libraries</string>
@@ -1207,11 +1207,11 @@
     <string name="settings_page_youtube_hint">SmartTube: account, sections, quality and SponsorBlock</string>
     <string name="settings_page_spotify_hint">Spotify: account, quality and visualization</string>
     <string name="settings_page_files_hint">Local folders, USB, SMB, NFS, WebDAV, SFTP, NAS and Wake-on-LAN</string>
-    <string name="settings_page_playback_hint">Default player and MPV video output</string>
+    <string name="settings_page_playback_hint">Player, playback performance, frame drop test and display adjustment.</string>
     <string name="settings_page_subtitles_hint">Subtitle mode and language</string>
     <string name="settings_page_next_up_hint">Intro and credits skipping, next episode and autoplay</string>
-    <string name="settings_page_seek_hint">D-pad seek jump and automatic playback version selection</string>
-    <string name="settings_page_image_hint">Renderer output and hardware acceleration</string>
+    <string name="settings_page_seek_hint">Jump distance when seeking forward or backward.</string>
+    <string name="settings_page_image_hint">Video output, acceleration and SDR-to-HDR conversion.</string>
     <string name="settings_page_audio_hint">Audio profiles, passthrough, equalizer, night mode and language</string>
     <string name="settings_page_visualizer_hint">Music visualization and projectM</string>
     <string name="settings_page_backup_hint">Back up, export and restore settings</string>
@@ -1841,4 +1841,7 @@
     <string name="sleep_trigger_input">Without input</string>
     <string name="search_source_partial">%1$s: search results are incomplete. Some sources or sections could not be searched.</string>
     <string name="wol_network_unavailable">Wake-on-LAN unavailable: no LAN/Wi-Fi connection or active WireGuard route to this system.</string>
+    <string name="settings_live_tv_title">Live TV</string>
+    <string name="settings_page_live_tv_hint">Timeshift, recordings and programme reminders for live TV.</string>
+    <string name="settings_live_reminders">Programme reminders</string>
 </resources>

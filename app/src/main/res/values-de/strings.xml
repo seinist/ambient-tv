@@ -189,7 +189,7 @@
     <string name="login_link_no_browser">Kein Browser für diesen Link gefunden. Adresse und Code bitte manuell eingeben.</string>
     <string name="settings_auto_display_version">Beste Version fürs Display</string>
     <string name="settings_auto_display_version_hint">Wählt bei mehreren Versionen automatisch die Auflösung, die am besten zum Fernseher passt.</string>
-    <string name="settings_seek_page_title">Sprungweite &amp; Wiedergabe</string>
+    <string name="settings_seek_page_title">Sprungweite</string>
     <string name="settings_seek_jump">Hoch/Runter-Sprung</string>
     <string name="settings_seek_jump_hint">Legt fest, wie weit Sprungtasten und Hoch/Runter während der Wiedergabe springen.</string>
     <string name="settings_seek_jump_seconds">%1$ds</string>
@@ -530,7 +530,7 @@
     <string name="settings_defaults_renderer_hint">Wählt, welches Player-Profil bearbeitet wird. Ändert nicht den Standard-Wiedergabe-Player (Wiedergabe › Player).</string>
     <string name="settings_defaults_renderer_auto_hint">Der Standard-Player ist Automatisch, bearbeitet wird das Media3-Profil; oben VLC oder MPV zum Wechseln wählen.</string>
     <string name="settings_playback_backend_hint">Standard-Player für Plex, Jellyfin und SmartTube; TVHeadend hat einen eigenen.</string>
-    <string name="settings_background_page_title">Hintergrundvideo</string>
+    <string name="settings_background_page_title">Hintergrundgestaltung</string>
     <string name="settings_visible_background_video">Video hinter der Oberfläche anzeigen</string>
     <string name="settings_visible_background_video_hint">Zeigt das laufende Video hinter den Menüs; ist es aus, läuft nur der Ton weiter.</string>
     <string name="player_backend_auto">Automatisch</string>
@@ -1198,8 +1198,8 @@
     <string name="settings_page_media_selection_hint">Verhalten beim Auswählen eines Mediums</string>
     <string name="settings_page_language_hint">Sprache der Oberfläche und Metadaten</string>
     <string name="settings_page_library_hint">Raster, Listen, Cover und Aktualisierung</string>
-    <string name="settings_page_appearance_hint">Design, Akzentfarbe und Skalierung</string>
-    <string name="settings_page_background_hint">Hintergrundwiedergabe und Sichtbarkeit</string>
+    <string name="settings_page_appearance_hint">Design, Farben, Oberflächen-HDR, Größe und Oberflächenleistung.</string>
+    <string name="settings_page_background_hint">Lichtstimmung, Hintergrundbilder und Hintergrundvideo.</string>
     <string name="settings_page_screensaver_hint">Modus, Uhr, Wartezeit und Vorschau</string>
     <string name="settings_page_network_hint">Plex: Anmeldung, Server und Bibliotheken</string>
     <string name="settings_page_jellyfin_hint">Jellyfin: Anmeldung, Server und Bibliotheken</string>
@@ -1208,11 +1208,11 @@
     <string name="settings_page_youtube_hint">SmartTube: Konto, Bereiche, Qualität und SponsorBlock</string>
     <string name="settings_page_spotify_hint">Spotify: Konto, Qualität und Visualisierung</string>
     <string name="settings_page_files_hint">Lokale Ordner, USB, SMB, NFS, WebDAV, SFTP, NAS und Wake-on-LAN</string>
-    <string name="settings_page_playback_hint">Standard-Player und MPV-Videoausgabe</string>
+    <string name="settings_page_playback_hint">Player, Wiedergabeleistung, Bildaussetzer-Test und Display-Anpassung.</string>
     <string name="settings_page_subtitles_hint">Untertitelmodus und Sprache</string>
     <string name="settings_page_next_up_hint">Intros und Abspann überspringen, nächste Folge und Autoplay</string>
-    <string name="settings_page_seek_hint">Sprungweite und automatische Auswahl der Wiedergabeversion</string>
-    <string name="settings_page_image_hint">Renderer-Ausgabe und Hardwarebeschleunigung</string>
+    <string name="settings_page_seek_hint">Sprungweite beim Vor- und Zurückspringen.</string>
+    <string name="settings_page_image_hint">Videoausgabe, Beschleunigung und SDR-zu-HDR-Konvertierung.</string>
     <string name="settings_page_audio_hint">Audioprofile, Passthrough, Equalizer, Nachtmodus und Sprache</string>
     <string name="settings_page_visualizer_hint">Musikvisualisierung und projectM</string>
     <string name="settings_page_backup_hint">Einstellungen sichern, exportieren und wiederherstellen</string>
@@ -1722,4 +1722,7 @@
     <string name="sleep_trigger_input">Ohne Bedienung</string>
     <string name="search_source_partial">%1$s: Die Suchergebnisse sind unvollständig. Einige Quellen oder Bereiche konnten nicht durchsucht werden.</string>
     <string name="wol_network_unavailable">Wake-on-LAN nicht verfügbar: Keine LAN-/WLAN-Verbindung oder aktive WireGuard-Route zu diesem System.</string>
+    <string name="settings_live_tv_title">Live-TV</string>
+    <string name="settings_page_live_tv_hint">Timeshift, Aufnahmen und Sendungserinnerungen für Live-TV.</string>
+    <string name="settings_live_reminders">Sendungserinnerungen</string>
 </resources>
