@@ -33,7 +33,6 @@ import com.ambient.tv.ui.player.miniFormatDuration
 @Composable
 fun HandheldNavigationHost(
     currentRoute: String,
-    homeRoute: String,
     showNavigation: Boolean,
     playerVisible: Boolean,
     onNavigate: (String) -> Unit,
@@ -85,7 +84,6 @@ fun HandheldNavigationHost(
             if (showNavigation) {
                 HandheldNavigationRail(
                     currentRoute = currentRoute,
-                    homeRoute = homeRoute,
                     showSearch = showSearch,
                     onNavigate = onNavigate,
                     onOpenSources = { showSources = true },
@@ -99,7 +97,6 @@ fun HandheldNavigationHost(
             if (showNavigation) {
                 HandheldNavigationBar(
                     currentRoute = currentRoute,
-                    homeRoute = homeRoute,
                     showSearch = showSearch,
                     onNavigate = onNavigate,
                     onOpenSources = { showSources = true },
@@ -129,7 +126,6 @@ fun HandheldNavigationHost(
 @Composable
 private fun HandheldNavigationBar(
     currentRoute: String,
-    homeRoute: String,
     showSearch: Boolean,
     onNavigate: (String) -> Unit,
     onOpenSources: () -> Unit,
@@ -142,9 +138,9 @@ private fun HandheldNavigationBar(
     val companionState by companion.manager.state.collectAsState()
     val remote = stringResource(R.string.companion_remote_control)
     NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0), tonalElevation = 0.dp) {
-        NavigationBarItem(currentRoute == homeRoute, { onNavigate(homeRoute) },
+        NavigationBarItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home) })
-        NavigationBarItem(currentRoute !in setOf(homeRoute, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
+        NavigationBarItem(currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources) })
         if (showSearch) {
             NavigationBarItem(currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
@@ -160,7 +156,6 @@ private fun HandheldNavigationBar(
 @Composable
 private fun HandheldNavigationRail(
     currentRoute: String,
-    homeRoute: String,
     showSearch: Boolean,
     onNavigate: (String) -> Unit,
     onOpenSources: () -> Unit,
@@ -180,9 +175,9 @@ private fun HandheldNavigationRail(
             .only(WindowInsetsSides.Horizontal),
     ) {
         Spacer(Modifier.weight(1f))
-        NavigationRailItem(currentRoute == homeRoute, { onNavigate(homeRoute) },
+        NavigationRailItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home, maxLines = 1) })
-        NavigationRailItem(currentRoute !in setOf(homeRoute, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
+        NavigationRailItem(currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources, maxLines = 1) })
         if (showSearch) {
             NavigationRailItem(currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },

@@ -1475,7 +1475,6 @@ private fun AmbientTvApp(
             ) {
             com.ambient.tv.ui.mobile.HandheldNavigationHost(
                 currentRoute = currentRoute,
-                homeRoute = rootRoute,
                 // A windowed video page is browsable chrome again: the bottom navigation returns
                 // with the system bars and only the fullscreen orientation hides it.
                 showNavigation = currentRoute !in FULLSCREEN_ROUTES || (handheld && onPlayerScreen && !handheldFullscreen.enabled),
