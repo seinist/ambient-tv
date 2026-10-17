@@ -689,6 +689,7 @@ private fun DvrRow(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     MetaBadge(
                         when {
+                            com.ambient.tv.tvheadend.data.recordingWasAborted(entry.status) -> stringResource(R.string.tvh_aborted)
                             failed -> stringResource(R.string.tvh_failed)
                             completed -> stringResource(R.string.tvh_completed)
                             entry.isActivelyRecording() -> stringResource(R.string.tvh_recording_active)
@@ -795,6 +796,10 @@ private fun RecordingDialog(
         header = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 MetaBadge(stringResource(when {
+                    com.ambient.tv.tvheadend.data.recordingWasAborted(entry.status) -> R.string.tvh_aborted
+                    entry.scheduleStatus.equals("completedError", ignoreCase = true) ||
+                        entry.scheduleStatus.equals("missed", ignoreCase = true) ||
+                        entry.scheduleStatus.equals("invalid", ignoreCase = true) -> R.string.tvh_failed
                     completed -> R.string.tvh_completed
                     entry.isActivelyRecording() -> R.string.tvh_recording_active
                     else -> R.string.tvh_scheduled

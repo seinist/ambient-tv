@@ -30,6 +30,14 @@ class TvheadendRecordingTest {
             assertTrue(runCatching { currentProgrammeRecordingConfig(event, now, "") }.isFailure)
         }
     }
+    @Test fun distinguishesUserAbortFromTechnicalFailureAndNormalCompletion() {
+        assertTrue(recordingWasAborted("Aborted by user"))
+        assertTrue(recordingWasAborted(" aborted BY USER "))
+        for (status in listOf(null, "", "OK", "User request", "No input detected", "Not enough disk space")) {
+            assertFalse(recordingWasAborted(status))
+        }
+    }
+
     @Test fun stopsActiveRecordingsWithoutAbortingAndCancelsOnlyFutureTimers() {
         assertEquals("api/dvr/entry/stop", recordingTerminationPath("recording"))
         assertEquals("api/dvr/entry/stop", recordingTerminationPath("recordingError"))

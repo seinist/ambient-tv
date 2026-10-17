@@ -495,6 +495,7 @@
     <string name="tvh_completed">Abgeschlossen</string>
     <string name="tvh_server_status">%1$s · %2$d Sender</string>
     <string name="tvh_info">Info</string>
+    <string name="tvh_aborted">Abgebrochen</string>
     <string name="tvh_failed">Fehlgeschlagen</string>
     <string name="tvh_series_timers">Serien-Timer</string>
     <string name="tvh_delete_series_timer">Serien-Timer löschen</string>

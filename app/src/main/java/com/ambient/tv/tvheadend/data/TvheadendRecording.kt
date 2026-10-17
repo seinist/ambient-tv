@@ -32,3 +32,7 @@ internal fun recordingTerminationPath(scheduleStatus: String?): String =
         "scheduled" -> "api/dvr/entry/cancel"
         else -> error("Recording is no longer scheduled or running. Refresh the recordings.")
     }
+
+/** TVHeadend reports user aborts in its failed-recordings list. */
+internal fun recordingWasAborted(status: String?): Boolean =
+    status?.trim().equals("Aborted by user", ignoreCase = true)
