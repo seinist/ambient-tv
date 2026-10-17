@@ -1,0 +1,148 @@
+name: Build release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name (empty = version.properties, e.g. 1.0-beta)'
+        type: string
+      version_code:
+        description: 'Android versionCode (empty = version.properties; increase for updates)'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    env:
+      CI: 'true'
+      NDK_VERSION: '30.0.16248370'
+      MPV_SKIP_HOST_DEPS: '1'
+      NATIVE_JOBS: '2'
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        env:
+          INPUT_VERSION: ${{ inputs.version_name }}
+          INPUT_CODE: ${{ inputs.version_code }}
+        run: |
+          python3 - <<'PY_VERSION'
+          import os, re
+          from pathlib import Path
+          props = dict(line.split('=', 1) for line in Path('version.properties').read_text().splitlines()
+                       if '=' in line and not line.lstrip().startswith('#'))
+          version = os.environ['INPUT_VERSION'] or props['VERSION_NAME'].strip()
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          code = os.environ['INPUT_CODE'] or props['VERSION_CODE'].strip()
+          if not re.fullmatch(r'[0-9][0-9A-Za-z._+-]{0,63}', version):
+              raise SystemExit('Invalid version name')
+          if not re.fullmatch(r'[1-9][0-9]*', code) or int(code) > 2100000000:
+              raise SystemExit('Invalid Android versionCode')
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write(f'ORG_GRADLE_PROJECT_versionName={version}\nORG_GRADLE_PROJECT_versionCode={code}\n')
+          PY_VERSION
+
+      - name: Check signing configuration
+        env:
+          KEYSTORE: ${{ secrets.AMBIENT_TV_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.AMBIENT_TV_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.AMBIENT_TV_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.AMBIENT_TV_KEY_PASSWORD }}
+        run: |
+          for key in KEYSTORE STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!key}" ]]; then
+              echo "::error::Missing signing secret: $key (see docs/github-releases.md)"
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake autopoint gettext libtool libtool-bin \
+            pkg-config ninja-build cmake meson gperf nasm yasm bison flex texinfo \
+            curl wget unzip zip xz-utils patch perl python3 python3-venv libssl-dev glslang-tools
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          cargo install cargo-ndk --locked
+
+      - name: Install Android SDK components
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --channel=3 'platforms;android-37.0' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check build scripts
+        run: |
+          bash -n build.sh
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+      - name: Build signed release APKs
+        env:
+          KEYSTORE_BASE64: ${{ secrets.AMBIENT_TV_KEYSTORE_BASE64 }}
+          AMBIENT_TV_KEYSTORE_FILE: ${{ runner.temp }}/ambient-tv-release.jks
+          AMBIENT_TV_KEYSTORE_PASSWORD: ${{ secrets.AMBIENT_TV_KEYSTORE_PASSWORD }}
+          AMBIENT_TV_KEY_ALIAS: ${{ secrets.AMBIENT_TV_KEY_ALIAS }}
+          AMBIENT_TV_KEY_PASSWORD: ${{ secrets.AMBIENT_TV_KEY_PASSWORD }}
+        run: |
+          umask 077
+          trap 'rm -f "$AMBIENT_TV_KEYSTORE_FILE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$AMBIENT_TV_KEYSTORE_FILE"
+          bash build.sh release
+          test -s dist/update.json
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: ambient-tv-release-${{ github.run_id }}
+          path: |
+            dist/*.apk
+            dist/update.json
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Create release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Derive the tag from build.sh output, including its pre-release build number.
+          shopt -s nullglob
+          apks=(dist/ambient-tv-arm64-*.apk)
+          [[ ${#apks[@]} == 1 ]]
+          label="${apks[0]#dist/ambient-tv-arm64-}"
+          label="${label%.apk}"
+          tag="v$label"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then tag="$GITHUB_REF_NAME"; fi
+          args=(--draft --title "Ambient TV $label" --generate-notes)
+          if [[ "$label" == *-* ]]; then args+=(--prerelease); fi
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            args+=(--verify-tag)
+          else
+            args+=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$tag" dist/*.apk dist/update.json "${args[@]}"

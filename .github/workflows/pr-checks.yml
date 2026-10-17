@@ -3,7 +3,7 @@ name: PR checks
 # Compiles the app and runs every JVM unit test on each pull request and on main.
 # Packaging an APK needs native libraries that only ./build.sh produces (mpv/FFmpeg,
 # Spotify, projectM, SVP), so this job stops at compile + unit tests; the full native
-# build stays a local ./build.sh step.
+# release workflow calls ./build.sh to build and package those libraries.
 
 on:
   pull_request:
