@@ -906,11 +906,14 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                             val intent = viewModel.wireGuardPrepareIntent()
                             if (intent != null) consent.launch(intent) else viewModel.startWireGuard()
                         },
-                        enabled = viewModel.wireGuardInUse(),
+                        enabled = viewModel.wireGuardInUse() &&
+                            (uiState.wireGuardStatus is WireGuardRouteState.Idle || uiState.wireGuardStatus is WireGuardRouteState.Failed),
                         modifier = Modifier.weight(1f),
                         fillWidth = true,
                     )
-                    TvActionButton(text = stringResource(R.string.wg_disconnect), onClick = viewModel::stopWireGuard, modifier = Modifier.weight(1f), fillWidth = true)
+                    TvActionButton(text = stringResource(R.string.wg_disconnect), onClick = viewModel::stopWireGuard,
+                        enabled = uiState.wireGuardStatus is WireGuardRouteState.Up || uiState.wireGuardStatus is WireGuardRouteState.Connecting,
+                        modifier = Modifier.weight(1f), fillWidth = true)
                     TvActionButton(text = stringResource(R.string.wg_remove), onClick = { confirmRemove = true }, modifier = Modifier.weight(1f), fillWidth = true)
                 }
             }

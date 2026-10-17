@@ -39,12 +39,30 @@ class WireGuardVpnService : VpnService() {
     private val sessionId = AtomicInteger()
     @Volatile private var stopHook: (() -> Unit)? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        route.stopRunningTunnel = ::disconnectTunnel
+    }
+
+    private fun disconnectTunnel() {
+        sessionId.incrementAndGet()
+        stopTunnel()
+        if (route.status.value !is WireGuardRouteState.Failed) route.note(WireGuardRouteState.Idle)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        route.disconnect()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startAsForeground()
-        if (intent?.action == ACTION_STOP) {
-            sessionId.incrementAndGet(); stopTunnel(); route.note(WireGuardRouteState.Idle)
-            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf(); return START_NOT_STICKY
+        if (intent == null || intent.action == ACTION_STOP || !route.connectionAllowed) {
+            disconnectTunnel()
+            return START_NOT_STICKY
         }
+        startAsForeground()
         val id = sessionId.incrementAndGet()
         stopTunnel()
         val profile = preferences.wireGuardProfile()
@@ -59,7 +77,7 @@ class WireGuardVpnService : VpnService() {
             if (failed != null) route.note(WireGuardRouteState.Failed(failed.message ?: getString(R.string.wg_failed)))
             stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onRevoke() {
@@ -72,6 +90,7 @@ class WireGuardVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        route.stopRunningTunnel = null
         sessionId.incrementAndGet(); stopTunnel()
         if (route.status.value !is WireGuardRouteState.Failed) route.note(WireGuardRouteState.Idle)
         super.onDestroy()

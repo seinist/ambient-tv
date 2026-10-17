@@ -137,7 +137,12 @@ class WireGuardRouteController @Inject constructor(
         .filter { it.isNotBlank() }
         .distinctBy { it.lowercase() }
 
+    private val stopGeneration = java.util.concurrent.atomic.AtomicInteger()
+    internal val connectionAllowed: Boolean get() = !manuallyStopped
+    @Volatile internal var stopRunningTunnel: (() -> Unit)? = null
+
     fun stop() {
+        stopGeneration.incrementAndGet()
         pendingFileHost = null
         appliedRoutes = ""
         stopService()
@@ -156,10 +161,15 @@ class WireGuardRouteController @Inject constructor(
      * the service must close its own interface first (ACTION_STOP).
      */
     private fun stopService() {
-        if (_status.value !is WireGuardRouteState.Idle) runCatching {
-            context.startService(Intent(context, WireGuardVpnService::class.java).setAction(WireGuardVpnService.ACTION_STOP))
+        val stopRunning = stopRunningTunnel
+        if (stopRunning != null) {
+            stopRunning()
+        } else if (_status.value !is WireGuardRouteState.Idle) {
+            // Do not stopService after sending this: Android may discard the queued stop command.
+            runCatching {
+                context.startService(Intent(context, WireGuardVpnService::class.java).setAction(WireGuardVpnService.ACTION_STOP))
+            }.onFailure { context.stopService(Intent(context, WireGuardVpnService::class.java)) }
         }
-        context.stopService(Intent(context, WireGuardVpnService::class.java))
     }
 
     fun wakeTargets(host: String): List<String> {
@@ -187,10 +197,12 @@ class WireGuardRouteController @Inject constructor(
     private suspend fun bringUp(timeoutMs: Long = 12_000): Result<Unit> = gate.withLock {
         if (!anySystemEnabled() && pendingFileHost == null) return Result.success(Unit)
         if (manuallyStopped) return Result.success(Unit)
+        val generation = stopGeneration.get()
         val profile = preferences.wireGuardProfile()
         if (profile == null || !profile.ready()) return fail(context.getString(R.string.wg_missing))
         val selectedHosts = tunnelHosts()
         val hostsValid = withContext(Dispatchers.IO) { selectedHosts.all { resolvedHostCovered(profile.allowedIps, it) } }
+        if (generation != stopGeneration.get() || manuallyStopped) return Result.success(Unit)
         if (!hostsValid) {
             val problem = withContext(Dispatchers.IO) { selectedHosts.firstOrNull { !resolvedHostCovered(profile.allowedIps, it) } }
             return fail(context.getString(problem?.let { hostProblem(it) } ?: R.string.wg_host_outside))
@@ -203,6 +215,7 @@ class WireGuardRouteController @Inject constructor(
         context.startForegroundService(Intent(context, WireGuardVpnService::class.java))
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
+            if (generation != stopGeneration.get() || manuallyStopped) return Result.success(Unit)
             when (val current = _status.value) {
                 is WireGuardRouteState.Up -> return Result.success(Unit)
                 is WireGuardRouteState.Failed -> return Result.failure(IllegalStateException(current.message))

@@ -149,6 +149,7 @@ open class MainActivity : ComponentActivity() {
         super.attachBaseContext(UiLocaleContext.wrap(newBase))
     }
 
+    @Inject lateinit var wireGuardRoute: com.ambient.tv.vpn.WireGuardRouteController
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var performanceProfileResolver: com.ambient.tv.ui.performance.PerformanceProfileResolver
     @Inject lateinit var plexRefreshBus: PlexRefreshBus
@@ -1358,6 +1359,7 @@ private fun AmbientTvApp(
         uiSounds?.playBack()
         BackgroundPlaybackSession.stop()
         spotifyRepository.stop()
+        (activity as? MainActivity)?.wireGuardRoute?.disconnect()
         activity?.finishAndRemoveTask()
     }
 
