@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="update_title">App-Updates</string>
+    <string name="update_automatic">Beim App-Start nach Updates suchen</string>
+    <string name="update_automatic_hint">Höchstens einmal täglich prüfen. Bei einem passenden Release auf der Startseite benachrichtigen. Download und Installation starten manuell.</string>
+    <string name="update_available_notice">Ambient TV %1$s ist verfügbar. Updates auf der Startseite oder unter Einstellungen → Über öffnen.</string>
+    <string name="update_home">Ambient TV %1$s verfügbar · Update öffnen</string>
+    <string name="update_installed">Installiert: %1$s (%2$d)</string>
+    <string name="update_checking">Suche nach Updates…</string>
+    <string name="update_current">Du bist auf dem neuesten Stand.</string>
+    <string name="update_details">Verfügbar: %1$s · %2$s</string>
+    <string name="update_check">Nach Updates suchen</string>
+    <string name="update_progress">Download: %1$d%%</string>
+    <string name="update_cancel">Download abbrechen</string>
+    <string name="update_install">Jetzt installieren</string>
+    <string name="update_download">Herunterladen</string>
+    <string name="update_skip">Diese Version überspringen</string>
+    <string name="update_install_hint">Android bittet um Bestätigung der Installation. Falls nötig, erlaube Ambient TV die Installation unbekannter Apps und kehre hierher zurück. Deine Einstellungen bleiben erhalten.</string>
+    <string name="update_manifest_missing">Im neuesten Release ist noch kein Update-Manifest verfügbar.</string>
+    <string name="update_incompatible">Dieses Release passt nicht zu diesem Gerät oder dieser App-Variante.</string>
+    <string name="update_rate_limited">GitHub begrenzt derzeit die Anfragen. Bitte später erneut versuchen.</string>
+    <string name="update_no_space">Für dieses Update ist nicht genug Speicherplatz verfügbar.</string>
+    <string name="update_invalid_apk">Die Update-Daten oder APK konnten nicht geprüft werden. Bitte erneut prüfen oder herunterladen.</string>
+    <string name="update_network_error">Das Update konnte nicht abgerufen werden. Verbindung prüfen und erneut versuchen.</string>
+    <string name="update_signature_mismatch">Diese APK wurde mit einem anderen Schlüssel signiert und kann die installierte App nicht aktualisieren.</string>
+    <string name="update_install_failed">Die Installation konnte nicht geöffnet werden oder die Berechtigung fehlt. Installation durch Ambient TV erlauben und erneut versuchen.</string>
+</resources>

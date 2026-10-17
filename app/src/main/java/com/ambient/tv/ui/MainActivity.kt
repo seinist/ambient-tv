@@ -161,6 +161,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var resumeConnectivityMonitor: ResumeConnectivityMonitor
     @Inject lateinit var connectionNotifications: com.ambient.tv.notifications.ConnectionNotifications
     @Inject lateinit var launcherOpener: com.ambient.tv.launcher.LauncherOpener
+    @Inject lateinit var appUpdater: com.ambient.tv.update.AppUpdater
     @Inject lateinit var recordingNotifications: com.ambient.tv.notifications.RecordingNotifications
     @Inject lateinit var companionManager: com.ambient.tv.companion.CompanionManager
     @Inject lateinit var companionSettingsRefresh: com.ambient.tv.companion.CompanionSettingsRefresh
@@ -188,6 +189,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        appUpdater.onAppStart()
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = true
         if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(window) {
             registerUserInteraction(); setScreensaverActive(false)

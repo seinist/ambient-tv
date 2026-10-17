@@ -916,23 +916,22 @@ build_debug() {
 package_release_variant_output() {
     local variant="$1"
     local release_dir="$2"
-    local match=""
-    case "$variant" in
-        ARM64) match='arm64' ;;
-        ARMV7) match='armeabi' ;;
-        X86_64) match='x86_64' ;;
-        X86) match='x86' ;;
-    esac
-
     local src=""
-    if [[ -d "$release_dir" ]]; then
-        if [[ "$variant" == "X86" ]]; then
-            # Avoid matching x86_64 when selecting plain x86.
-            src="$(find "$release_dir" -maxdepth 1 -type f -name '*x86*.apk' ! -name '*x86_64*' -print 2>/dev/null | head -n 1 || true)"
-        else
-            src="$(find "$release_dir" -maxdepth 1 -type f -name "*${match}*.apk" -print 2>/dev/null | head -n 1 || true)"
-        fi
-    fi
+    # Select only the output AGP reports for this invocation, never an old matching filename.
+    src="$(python3 - "$release_dir/output-metadata.json" "$variant" <<'PY_METADATA'
+import json
+from pathlib import Path
+import sys
+metadata = Path(sys.argv[1])
+abi = {"ARM64": "arm64-v8a", "ARMV7": "armeabi-v7a", "X86": "x86", "X86_64": "x86_64"}[sys.argv[2]]
+elements = json.loads(metadata.read_text())["elements"]
+matches = [element for element in elements if any(
+    item.get("filterType") == "ABI" and item.get("value", item.get("identifier")) == abi for item in element.get("filters", []))]
+if len(matches) != 1:
+    raise SystemExit(f"Expected exactly one {abi} output in {metadata}")
+print(metadata.parent / matches[0]["outputFile"])
+PY_METADATA
+)"
     [[ -n "$src" && -f "$src" ]] || fail "${variant} release APK was not created under app/build/outputs/apk/release/."
 
     local suffix
@@ -960,10 +959,35 @@ package_release_variant_output() {
     fi
 }
 
+# Only APKs produced by this invocation are eligible; stale dist artifacts must not leak in.
+UPDATE_APKS=()
+UPDATE_ABIS=()
+generate_release_update_manifest() {
+    local output="$DIST_DIR/update.json"
+    rm -f "$output"
+    local apk
+    for apk in "${UPDATE_APKS[@]}"; do
+        if [[ "$apk" == *-unsigned-* ]]; then
+            warn "Update manifest not generated: configure release signing first."
+            return 0
+        fi
+    done
+    local aapt2 apksigner expected
+    aapt2="$(find_build_tool aapt2)"
+    apksigner="$(find_build_tool apksigner)"
+    [[ -n "$aapt2" && -n "$apksigner" ]] || fail "aapt2 and apksigner are required for the update manifest."
+    expected="$(IFS=,; printf '%s' "${UPDATE_ABIS[*]}")"
+    python3 "$ROOT_DIR/scripts/generate_update_manifest.py" --output "$output" \
+        --aapt2 "$aapt2" --apksigner "$apksigner" --expected-abis "$expected" "${UPDATE_APKS[@]}"
+}
+
 build_release_variant() {
     prepare_nnedi3_quality_ladder
     local variant="$1"
     local abi_mode="$2"
+    UPDATE_APKS=()
+    UPDATE_ABIS=("$abi_mode")
+    rm -f "$DIST_DIR/update.json"
 
     ensure_spotify
     ensure_youtube_engine
@@ -976,6 +1000,8 @@ build_release_variant() {
     mkdir -p "$DIST_DIR"
 
     package_release_variant_output "$variant" "$ROOT_DIR/app/build/outputs/apk/release"
+    UPDATE_APKS+=("$LAST_BUILT_APK")
+    generate_release_update_manifest
 }
 
 find_adb_binary() {
@@ -1060,6 +1086,9 @@ build_release_variant_adb() {
 }
 
 build_release() {
+    UPDATE_APKS=()
+    UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
+    rm -f "$DIST_DIR/update.json"
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_youtube_engine
@@ -1075,7 +1104,9 @@ build_release() {
     local variant
     for variant in ARM64 ARMV7 X86 X86_64; do
         package_release_variant_output "$variant" "$release_dir"
+        UPDATE_APKS+=("$LAST_BUILT_APK")
     done
+    generate_release_update_manifest
 }
 
 gen_keystore() {

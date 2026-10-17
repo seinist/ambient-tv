@@ -1449,6 +1449,7 @@ fun SettingsScreen(
 
                         SettingsCategory.ABOUT -> {
                             item { AboutAppCard() }
+                            item { com.ambient.tv.update.UpdateSettingsCard() }
                             item { SettingsSubheader(stringResource(R.string.settings_about_playback)) }
                             items(aboutPlaybackComponents(), key = { "about-playback-${it.name}" }) { component ->
                                 AboutComponentCard(component)

@@ -217,40 +217,43 @@ fun HomeScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        when (val state = uiState) {
-            HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
-            // Connection progress is presented by the global, non-focusable notification host.
-            HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows()
-            is HomeUiState.Loaded -> LibraryContent(
-                state = state,
-                heroContent = viewModel.heroContent,
-                homeHeroStyleKey = homeHeroStyleKey,
-                homeHeroIntensityPercent = homeHeroIntensityPercent,
-                homeHeroSpreadKey = homeHeroSpreadKey,
-                focusSnapshot = focusSnapshot,
-                onItemClick = openItem,
-                onItemFocused = viewModel::onItemFocused,
-                onOpenSettings = openSettings,
-                onWatchLiveChannel = watchLiveChannel,
-                onLiveTvFocused = viewModel::onLiveTvFocused,
-                onShortcutFocused = viewModel::onShortcutFocused,
-                onOpenHomeContent = openHomeContent,
-                tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
-                entranceProgress = entranceProgressProvider,
-            )
-            is HomeUiState.Offline -> Centered {
-                ServerOfflineContent(state.serverName, viewModel::retry, onOpenSettings)
+    Column(Modifier.fillMaxSize()) {
+        if (!plexOnly && !jellyfinOnly && !embyOnly) com.ambient.tv.update.UpdateHomeCard()
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when (val state = uiState) {
+                HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
+                // Connection progress is presented by the global, non-focusable notification host.
+                HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows()
+                is HomeUiState.Loaded -> LibraryContent(
+                    state = state,
+                    heroContent = viewModel.heroContent,
+                    homeHeroStyleKey = homeHeroStyleKey,
+                    homeHeroIntensityPercent = homeHeroIntensityPercent,
+                    homeHeroSpreadKey = homeHeroSpreadKey,
+                    focusSnapshot = focusSnapshot,
+                    onItemClick = openItem,
+                    onItemFocused = viewModel::onItemFocused,
+                    onOpenSettings = openSettings,
+                    onWatchLiveChannel = watchLiveChannel,
+                    onLiveTvFocused = viewModel::onLiveTvFocused,
+                    onShortcutFocused = viewModel::onShortcutFocused,
+                    onOpenHomeContent = openHomeContent,
+                    tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
+                    entranceProgress = entranceProgressProvider,
+                )
+                is HomeUiState.Offline -> Centered {
+                    ServerOfflineContent(state.serverName, viewModel::retry, onOpenSettings)
+                }
+                is HomeUiState.Error -> Centered {
+                    ConnectionErrorContent(state.message, viewModel::retry, onOpenSettings)
+                }
+                is HomeUiState.WakeTimedOut -> Centered {
+                    WakeTimeoutContent(state.serverName, viewModel::retry, onOpenSettings)
+                }
             }
-            is HomeUiState.Error -> Centered {
-                ConnectionErrorContent(state.message, viewModel::retry, onOpenSettings)
-            }
-            is HomeUiState.WakeTimedOut -> Centered {
-                WakeTimeoutContent(state.serverName, viewModel::retry, onOpenSettings)
-            }
-        }
 
-        com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, viewModel.browseProviders, Modifier.align(Alignment.BottomEnd).padding(12.dp))
+            com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, viewModel.browseProviders, Modifier.align(Alignment.BottomEnd).padding(12.dp))
+        }
     }
 }
 

@@ -688,3 +688,27 @@ tasks.configureEach {
     val testOrResources = "UnitTest" in name || "AndroidTest" in name || name.endsWith("Resources") || name.endsWith("Assets")
     if (packagingTask && !testOrResources && name != verifyAppNativeMediaInputs.name) dependsOn(verifyAppNativeMediaInputs)
 }
+
+// Raw Gradle builds can already be signed by a local signing setup. build.sh signs/renames
+// unsigned outputs afterwards and regenerates dist/update.json from those final bytes.
+val generateUpdateManifest = tasks.register<Exec>("generateUpdateManifest") {
+    group = "distribution"
+    description = "Generates update.json from this release's signed APKs (deferred when unsigned)."
+    dependsOn("packageRelease")
+    val output = layout.buildDirectory.file("outputs/update/update.json")
+    doFirst {
+        val tools = File(androidComponents.sdkComponents.sdkDirectory.get().asFile, "build-tools/${android.buildToolsVersion}")
+        val expected = if (apkAbiMode == "universal") listOf("universal")
+            else selectedAbis + if (apkAbiMode == "all") listOf("universal") else emptyList()
+        commandLine("python3", rootProject.file("scripts/generate_update_manifest.py"),
+            "--output", output.get().asFile, "--aapt2", File(tools, "aapt2"),
+            "--apksigner", File(tools, "apksigner"), "--expected-abis", expected.joinToString(","),
+            "--gradle-metadata", layout.buildDirectory.file("outputs/apk/release/output-metadata.json").get().asFile,
+            "--skip-unsigned")
+    }
+}
+tasks.matching { it.name == "packageRelease" }.configureEach {
+    doFirst { layout.buildDirectory.file("outputs/update/update.json").get().asFile.delete() }
+    finalizedBy(generateUpdateManifest)
+}
+generateUpdateManifest.configure { onlyIf { tasks.named("packageRelease").get().state.failure == null } }
