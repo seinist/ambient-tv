@@ -389,6 +389,7 @@ internal fun VlcTvheadendPlaybackSurface(
         PlaybackFpsOverlay(
             enabled = showFpsOverlay,
             fps = snapshot.runtimeStats?.videoFps,
+            svpStatus = snapshot.svpStatus,
             refreshHz = rememberDisplayRefreshHz(),
             nerdStatsVisible = showNerdOverlay,
         )

@@ -48,6 +48,8 @@ fun BoxScope.PlaybackFpsOverlay(
     modifier: Modifier = Modifier,
     alignment: Alignment = Alignment.TopStart,
     cadenceFps: Double? = fps,
+    sourceFps: Double? = null,
+    svpStatus: String? = null,
 ) {
     if (!enabled || nerdStatsVisible) return
     val display = rememberPlaybackDisplayOutput()
@@ -58,7 +60,7 @@ fun BoxScope.PlaybackFpsOverlay(
         androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_cadence_double),
         androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_cadence_pulldown),
     )
-    val text = formatPlaybackFpsOverlay(fps, hz, video, display.resolution, cadence) ?: return
+    val text = formatPlaybackFpsOverlay(fps, hz, video, display.resolution, cadence, sourceFps, svpStatus) ?: return
     Text(
         text = text,
         color = Color.White.copy(alpha = 0.92f),
@@ -82,19 +84,21 @@ fun BoxScope.PlaybackFpsOverlay(
 internal fun formatPlaybackFpsOverlay(
     fps: Double?, refreshHz: Double?, video: String? = null, display: String? = null,
     cadence: String? = playbackCadenceLabel(fps, refreshHz),
+    sourceFps: Double? = null,
+    svpStatus: String? = null,
 ): String? {
-    if (video != null || display != null) return listOf(
-        listOfNotNull("Video ${video ?: "–"}", formatNerdFps(fps)).joinToString(" · "),
-        listOfNotNull("Display ${display ?: "–"}", formatNerdHz(refreshHz), cadence).joinToString(" · "),
+    // A source/display ratio alone cannot identify pulldown while SVP is selected.
+    val displayCadence = cadence.takeIf { svpStatus == null }
+    val fpsText = formatNerdFpsChange(sourceFps, fps)
+    val interpolation = svpStatus?.let { "SVP $it" }
+    if (video != null || display != null) return listOfNotNull(
+        listOfNotNull("Video ${video ?: "–"}", fpsText).joinToString(" · "),
+        listOfNotNull("Display ${display ?: "–"}", formatNerdHz(refreshHz), displayCadence).joinToString(" · "),
+        interpolation,
     ).joinToString("\n")
-    val fpsText = formatNerdFps(fps)
     val hzText = formatNerdHz(refreshHz)
-    return when {
-        fpsText != null && hzText != null -> listOfNotNull(fpsText, hzText, cadence).joinToString(" · ")
-        fpsText != null -> fpsText
-        hzText != null -> hzText
-        else -> null
-    }
+    return listOfNotNull(fpsText, hzText, displayCadence, interpolation)
+        .joinToString(" · ").takeIf { it.isNotEmpty() }
 }
 
 /**

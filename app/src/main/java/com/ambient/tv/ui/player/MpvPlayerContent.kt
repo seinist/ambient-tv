@@ -328,6 +328,8 @@ internal fun MpvPlayerContent(
         PlaybackFpsOverlay(
             enabled = showFpsOverlay,
             fps = playbackOverlayFps(snapshot.fps, snapshot.containerFps),
+            svpStatus = snapshot.svpStatus,
+            sourceFps = snapshot.containerFps,
             refreshHz = snapshot.displayFps ?: displayRefreshHz,
             nerdStatsVisible = showNerdOverlay,
         )

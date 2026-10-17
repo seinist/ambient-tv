@@ -337,7 +337,7 @@ fun rememberMpvPlaybackSnapshot(
                 accelerationFallback = controller.accelerationFallback,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,
                 activeDeinterlace = if (pollNerdStats) controller.activeDeinterlace() else snapshot.activeDeinterlace,
-                svpStatus = if (pollNerdStats) controller.svpStatus() else snapshot.svpStatus,
+                svpStatus = if (refreshMediaInfo || pollNerdStats) controller.svpStatus() else snapshot.svpStatus,
                 gpuScalerExposed = if (pollNerdStats) controller.supportsGpuFilters else snapshot.gpuScalerExposed,
             )
             if (pollNerdStats) lastNerdPollMs = now

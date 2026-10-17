@@ -1560,6 +1560,7 @@ data class VlcPlaybackSnapshot(
     val appliedDeinterlacer: String? = null,
     val appliedUpscaler: String? = null,
     val appliedFrameInterpolation: String? = null,
+    val svpStatus: String? = null,
 )
 
 // Unlike MPV (gated behind MpvBackendAvailability before this is ever called), VLC has no
@@ -1765,6 +1766,7 @@ fun rememberVlcPlaybackSnapshot(
                 hasVideo = runCatching { !controller.trackAccess.getVideoTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasVideo),
                 hasAudio = runCatching { !controller.trackAccess.getAudioTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasAudio),
                 runtimeStats = if (pollStreamInfo) controller.runtimeStats(includeCounters = nerdStatsEnabled) else snapshot.runtimeStats,
+                svpStatus = if (pollStreamInfo) controller.svpStatus() else snapshot.svpStatus,
                 videoOutput = controller.videoOutputDescription,
                 accelerationFallback = controller.accelerationFallback,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,

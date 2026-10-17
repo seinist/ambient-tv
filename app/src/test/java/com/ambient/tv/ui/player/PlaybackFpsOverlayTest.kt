@@ -5,6 +5,21 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PlaybackFpsOverlayTest {
+    @Test fun interpolatedOutputKeepsSourceAndSuppressesPulldown() {
+        assertEquals("24.000 → 60.000 fps · 60.000 Hz · SVP 24 → 60 fps",
+            formatPlaybackFpsOverlay(60.0, 60.0, sourceFps = 24.0, svpStatus = "24 → 60 fps"))
+        // VLC exposes source FPS and configured SVP status, not measured filter output.
+        assertEquals("24.000 fps · 60.000 Hz · SVP 24 → 60 fps",
+            formatPlaybackFpsOverlay(24.0, 60.0, svpStatus = "24 → 60 fps"))
+    }
+
+    @Test fun bypassAndDisabledStatusDoNotInventOutputFrames() {
+        assertEquals("24.000 fps · 60.000 Hz · SVP off (load)",
+            formatPlaybackFpsOverlay(24.0, 60.0, sourceFps = 24.0, svpStatus = "off (load)"))
+        assertEquals("Video 1920×1080 · 24.000 fps\nDisplay 3840×2160 · 60.000 Hz\nSVP 24 → 60 fps · bypassed",
+            formatPlaybackFpsOverlay(24.0, 60.0, "1920×1080", "3840×2160", svpStatus = "24 → 60 fps · bypassed"))
+    }
+
     @Test
     fun formatsFpsAndRefreshTogether() {
         assertEquals("23.976 fps · 59.940 Hz · 3:2 pulldown", formatPlaybackFpsOverlay(23.976, 59.94))

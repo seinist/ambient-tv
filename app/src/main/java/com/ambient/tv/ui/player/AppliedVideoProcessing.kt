@@ -138,7 +138,7 @@ internal fun vlcAppliedProcessing(snapshot: VlcPlaybackSnapshot): AppliedVideoPr
         videoFilters = snapshot.appliedVideoFilters,
         deinterlacer = snapshot.appliedDeinterlacer,
         upscaler = snapshot.appliedUpscaler,
-        frameInterpolation = snapshot.appliedFrameInterpolation,
+        frameInterpolation = snapshot.svpStatus?.let { "SVP $it" } ?: snapshot.appliedFrameInterpolation,
     )
 }
 

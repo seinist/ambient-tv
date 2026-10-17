@@ -325,7 +325,7 @@ internal fun buildMpvNerdOverlayModel(
         formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let {
             add(NerdStatsOverlayRow(labels.cacheSpeed, it))
         }
-        playbackCadenceLabel(playbackOverlayFps(snapshot.fps, snapshot.containerFps), displayRefreshHz, labels.doubleRate, labels.pulldown)?.let {
+        playbackCadenceLabel(playbackOverlayFps(snapshot.fps, snapshot.containerFps).takeIf { snapshot.svpStatus == null }, displayRefreshHz, labels.doubleRate, labels.pulldown)?.let {
             add(NerdStatsOverlayRow(labels.cadence, it))
         }
         formatNerdHz(displayRefreshHz)?.let {
@@ -393,7 +393,7 @@ internal fun buildVlcNerdOverlayModel(
         add(NerdStatsOverlayRow(labels.backend, "VLC"))
         snapshot.videoOutput?.let { add(NerdStatsOverlayRow(labels.vo, it)) }
         snapshot.accelerationFallback?.let { add(NerdStatsOverlayRow("Fallback", it, warn = true)) }
-        playbackCadenceLabel(stats?.videoFps.takeIf { snapshot.hasVideo }, displayRefreshHz, labels.doubleRate, labels.pulldown)?.let {
+        playbackCadenceLabel(stats?.videoFps.takeIf { snapshot.hasVideo && snapshot.svpStatus == null }, displayRefreshHz, labels.doubleRate, labels.pulldown)?.let {
             add(NerdStatsOverlayRow(labels.cadence, it))
         }
         formatNerdBytes(stats?.readBytes)?.let {
