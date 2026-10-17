@@ -190,8 +190,8 @@
     "url": "https://gist.githubusercontent.com/agyild/7e8951915b2bf24526a9343d951db214/raw/05f00864228871ffd157daa9beb2db8fa7412cfa/NVScaler.glsl",
     "revision": "05f00864228871ffd157daa9beb2db8fa7412cfa",
     "license": "MIT",
-    "sha256": "7948bc72bf479c2515672370069e213da58edf078c93409c05e9a602fac50213",
-    "file": "app/src/main/res/raw/quality_nis_nvscaler_7948bc72.glsl"
+    "sha256": "bac778ec0108d272e4dad97794a3c257e65bbebd52aa762f95bce930cbd6b73c",
+    "file": "app/src/main/res/raw/quality_nis_nvscaler_bac778ec.glsl"
   },
   {
     "key": "cfl_lite",

@@ -142,7 +142,10 @@ internal fun PersistentPlayerOverlays() {
     LaunchedEffect(focusLeft) {
         if (focusLeft == 0) return@LaunchedEffect
         withFrameNanos { }
-        if (!chrome.hasFocus) runCatching { chrome.engineFocus.requestFocus() }
+        // An open panel owns recovery when a capability/track row is replaced.
+        // Returning to the engine here strands the still-visible modal.
+        if (navigation.panel == UnifiedPlayerPanel.NONE && !chrome.hasFocus)
+            runCatching { chrome.engineFocus.requestFocus() }
     }
     Box(Modifier.fillMaxSize().onFocusChanged { state ->
         if (hadFocus && !state.hasFocus) focusLeft++

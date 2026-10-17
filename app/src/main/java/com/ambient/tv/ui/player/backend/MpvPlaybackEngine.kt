@@ -841,7 +841,7 @@ internal class MpvPlaybackEngine(
                 ("cas" in shaderKeys && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
-                shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer) } }
+                shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
             } else emptyMap()
             ensureActive()
             val liveSdr = fileReady && isMpvSdrTransfer(currentMpvTransfer())
@@ -1348,12 +1348,14 @@ internal class MpvPlaybackEngine(
         }
     }
 
-    private fun materializeShader(shader: MpvShaderAsset, transfer: String?): File? = runCatching {
+    private fun materializeShader(shader: MpvShaderAsset, transfer: String?, gpuNextVulkan: Boolean): File? = runCatching {
         val shaderDir = File(context.noBackupFilesDir, "mpv-shaders").apply { mkdirs() }
         val transferProfile = if (shader.transferAware) {
             mpvCasTransferProfile(transfer) ?: error("No SDR transfer profile available for " + shader.fileName)
         } else null
-        val cacheBaseName = shader.cacheFileName ?: shader.fileName
+        val artCnnOpenGl = shader.fileName.startsWith("quality_artcnn") && !gpuNextVulkan
+        val cacheBaseName = if (artCnnOpenGl) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
+            else shader.cacheFileName ?: shader.fileName
         val fileName = transferProfile?.let {
             cacheBaseName.removeSuffix(".glsl") + "_" + it.suffix + ".glsl"
         } ?: cacheBaseName
@@ -1368,7 +1370,7 @@ internal class MpvPlaybackEngine(
                 .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + it.sourceTrc)
                 .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + it.targetTrc)
                 .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + it.customGamma)
-        } ?: source
+        } ?: if (artCnnOpenGl) artCnnOpenGlSource(source) else source
         fun valid(file: File): Boolean = shader.nnedi3Preset?.let { preset ->
             runCatching { validateNnedi3ShaderSource(file.readText(), preset) }.getOrDefault(false)
         } ?: if (transferProfile != null) {

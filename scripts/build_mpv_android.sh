@@ -290,6 +290,7 @@ install_arch() {
   bash "$ROOT_DIR/scripts/prepare_svp_sources.sh" --hash mpv > "$dest/.svp-mpv"
   # build.sh rebuilds the shim when its source changes (see mpv_libs_ready).
   sha256sum "$ROOT_DIR/native/ambientmpv/ambientmpv.c" | cut -d ' ' -f1 > "$dest/.ambientmpv-src"
+  bash "$ROOT_DIR/scripts/mpv_patch_hash.sh" > "$dest/.mpv-patches"
     touch "$dest/.projectm-pcm"
   find "$dest" -maxdepth 1 -type f -name '*.so' -printf '  %f\n' 2>/dev/null || ls -1 "$dest"/*.so
 }

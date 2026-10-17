@@ -354,6 +354,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "RGB ACCENT SETTINGS AUDIT PASSED\n$results") })
                     return@thread
                 }
+                if (arguments.getString("mpvUpscalers") == "true") {
+                    MpvUpscalerAudit(this, ::log).run(requireNotNull(arguments.getString("clip")), arguments.getString("output") ?: "gpu", arguments.getString("scalers")?.split(","))
+                    finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "MPV UPSCALER AUDIT PASSED\n$results") })
+                    return@thread
+                }
                 if (arguments.getString("mpvResponsiveness") == "true") {
                     MpvResponsivenessAudit(this, ::log).run(requireNotNull(arguments.getString("clip")))
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "MPV RESPONSIVENESS AUDIT PASSED\n$results") })

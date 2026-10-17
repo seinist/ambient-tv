@@ -30,4 +30,16 @@ class ShaderManifestTest {
         val revisions = entries.filter { it.first.startsWith("artcnn") }.map { field(it.second, "revision") }.toSet()
         assertEquals(setOf("8789539dfae120f2877a89bb6218026d56809612"), revisions)
     }
+
+    @Test fun shaderTextureBodiesContainOnlyTheirDeclaredHexData() {
+        for ((key, block) in entries) {
+            val source = File("../" + field(block, "file")!!).readText()
+            for (texture in source.split("//!TEXTURE ").drop(1)) {
+                val lines = texture.substringBefore("//!HOOK ").substringBefore("//!TEXTURE ").lines()
+                val data = lines.drop(1).filterNot { it.startsWith("//!") || it.isBlank() }.joinToString("") { it.trim() }
+                assertTrue("$key texture ${lines.first()} contains non-hex text", data.isNotEmpty() && data.all { it in "0123456789abcdefABCDEF" })
+                assertEquals("$key texture bytes must have two hex digits", 0, data.length % 2)
+            }
+        }
+    }
 }

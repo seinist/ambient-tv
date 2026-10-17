@@ -369,6 +369,7 @@ mpv_libs_ready() {
         # The JNI shim is compiled with the runtime; a changed shim source needs a rebuild.
         [[ -f "$dir/.projectm-pcm" ]] || return 1
         [[ -f "$dir/.ambientmpv-src" && "$(<"$dir/.ambientmpv-src")" == "$(mpv_shim_hash)" ]] || return 1
+        [[ -f "$dir/.mpv-patches" && "$(<"$dir/.mpv-patches")" == "$(bash "$ROOT_DIR/scripts/mpv_patch_hash.sh")" ]] || return 1
     done
     return 0
 }

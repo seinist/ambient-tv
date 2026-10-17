@@ -61,6 +61,9 @@ class AudioSession(
         manuallyEdited = previous.manuallyEdited
         automaticProfile = previous.automaticProfile
         automaticProfileInitialized = previous.automaticProfileInitialized
+        // Renderer/output/decoder replacement continues this playback, including its diagnostics.
+        performanceHint = previous.performanceHint
+        showFpsOverlay = previous.showFpsOverlay
     }
 
     /** Apply a playback profile without replacing the global audio defaults. */

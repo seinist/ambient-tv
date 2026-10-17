@@ -99,8 +99,8 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "adaptive" to MpvShaderAsset(R.raw.quality_adaptive_44e81f12, "quality_adaptive_44e81f12.glsl", false),
     "fsr" to MpvShaderAsset(R.raw.quality_fsr_56d8597f, "quality_fsr_56d8597f.glsl", true),
     "nis" to MpvShaderAsset(
-        R.raw.quality_nis_nvscaler_7948bc72,
-        "quality_nis_nvscaler_7948bc72.glsl",
+        R.raw.quality_nis_nvscaler_bac778ec,
+        "quality_nis_nvscaler_bac778ec.glsl",
         true,
         requiresCompute = true,
     ),

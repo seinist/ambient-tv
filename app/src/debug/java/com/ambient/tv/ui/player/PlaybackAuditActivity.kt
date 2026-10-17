@@ -22,6 +22,7 @@ class PlaybackAuditActivity : ComponentActivity() {
     var showPlayer by mutableStateOf(true)
     var renderSurface by mutableStateOf(true)
     var showOutputPanel by mutableStateOf(false)
+    var showScalingPanel by mutableStateOf(false)
     private var uri = ""
     private var startPositionMs = 0L
 
@@ -40,6 +41,7 @@ class PlaybackAuditActivity : ComponentActivity() {
         uri = savedInstanceState?.getString("uri") ?: intent.getStringExtra("uri").orEmpty()
         startPositionMs = savedInstanceState?.getLong("startPositionMs") ?: intent.getLongExtra("startPositionMs", 30_000)
         showPlayer = savedInstanceState?.getBoolean("showPlayer") ?: true
+        showScalingPanel = intent.getBooleanExtra("scalingPanel", false)
         renderSurface = savedInstanceState?.getBoolean("renderSurface") ?: !intent.getBooleanExtra("headless", false)
         setContent {
             // Optional lab warm-up for HDMI sinks that renegotiate audio when
@@ -77,8 +79,23 @@ class PlaybackAuditActivity : ComponentActivity() {
                             title = "Video output audit", onBack = { showOutputPanel = false },
                             modifier = Modifier.align(Alignment.CenterEnd),
                         ) { PlayerVideoOutputControls(backend) }
+                        if (showScalingPanel) {
+                            val navigation = remember { com.ambient.tv.ui.common.PlayerPanelNavigation().apply {
+                                videoState.section = "scaling"
+                            } }
+                            CompositionLocalProvider(com.ambient.tv.ui.common.LocalPlayerPanelNavigation provides navigation) {
+                                com.ambient.tv.ui.common.UnifiedPlayerSidePanel(
+                                    title = "Scaling audit", onBack = { showScalingPanel = false },
+                                    modifier = Modifier.align(Alignment.CenterEnd),
+                                ) {
+                                    PlayerVideoSettingsGroups(sectionView = true, isLive = false,
+                                        rendererKey = backend, onRendererSelected = { value, _ -> backend = value },
+                                        showRenderer = true, onDeinterlaceChanged = null)
+                                }
+                            }
+                        }
                     } else Text("Browsing while playback continues", Modifier.align(Alignment.Center))
-                    if (!showOutputPanel) BackgroundPlaybackBar(
+                    if (!showOutputPanel && !showScalingPanel) BackgroundPlaybackBar(
                         onOpen = { showPlayer = true },
                         onPlayNext = {},
                         modifier = Modifier.align(Alignment.BottomCenter),

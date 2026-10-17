@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
@@ -178,6 +179,7 @@ fun RightSidePanel(
     scrollable: Boolean = true,
     header: (@Composable () -> Unit)? = null,
     onOutsideTap: (() -> Unit)? = onBack,
+    retainFocus: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -208,6 +210,7 @@ fun RightSidePanel(
         canScrollForward = scrollable && scrollState.canScrollForward,
         header = header,
         onOutsideTap = onOutsideTap,
+        retainFocus = retainFocus,
     ) {
         Column(
             modifier = Modifier
@@ -294,6 +297,7 @@ private fun RightSidePanelChrome(
     canScrollForward: Boolean,
     header: (@Composable () -> Unit)?,
     onOutsideTap: (() -> Unit)?,
+    retainFocus: Boolean = false,
     body: @Composable () -> Unit,
 ) {
     if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
@@ -307,7 +311,7 @@ private fun RightSidePanelChrome(
                     .pointerInput(onOutsideTap) { detectTapGestures { onOutsideTap() } },
             )
             RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
-                scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, body = body)
+                scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, retainFocus = retainFocus, body = body)
         }
         return
     }
@@ -320,6 +324,19 @@ private fun RightSidePanelChrome(
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
+    var hadPanelFocus by remember { mutableStateOf(false) }
+    val panelFocus = remember { FocusRequester() }
+    val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
+    val isHandheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused) {
+        if (!retainFocus || isHandheld || !hadPanelFocus || panelHasFocus || !windowInfo.isWindowFocused)
+            return@LaunchedEffect
+        // A removed capability row can leave Compose without a focused child. Let
+        // the new rows attach; popup/dialog windows keep ownership while open.
+        androidx.compose.runtime.withFrameNanos { }
+        if (!panelHasFocus && windowInfo.isWindowFocused)
+            runCatching { panelFocus.requestFocus() }
+    }
     if (requestHeaderFocus) {
         LaunchedEffect(Unit) {
             delay(400)
@@ -345,7 +362,12 @@ private fun RightSidePanelChrome(
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
             .focusProperties { onExit = { cancelFocusChange() } }
-            .onFocusChanged { panelHasFocus = it.hasFocus }
+            .focusRequester(panelFocus)
+            .onFocusChanged {
+                panelHasFocus = it.hasFocus
+                if (it.hasFocus) hadPanelFocus = true
+            }
+            .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
             .tvModalFocus(initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
                 footerFocus = footerFocus, scrollToEnd = scrollToEnd)

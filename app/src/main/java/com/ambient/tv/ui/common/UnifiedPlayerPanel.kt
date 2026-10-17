@@ -390,6 +390,7 @@ fun UnifiedPlayerSidePanel(
         } else (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.38f).dp,
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         scrollable = true,
+        retainFocus = true,
         header = header,
         content = content,
     )

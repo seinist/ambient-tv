@@ -16,6 +16,10 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import com.ambient.tv.ui.common.PlayerPanelNavigation
@@ -64,6 +68,16 @@ fun PersistentPlayerChrome(
         Box(Modifier.fillMaxSize()
             .onFocusChanged { chrome.hasFocus = it.hasFocus }
             .onPreviewKeyEvent {
+                // Shared by every renderer, including when the OSD or side panel owns focus.
+                val session = chrome.panelModel.value?.audioSession
+                if (it.key == Key.O && !it.isCtrlPressed && !it.isAltPressed &&
+                    !it.isMetaPressed && !it.isShiftPressed && session != null) {
+                    if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                        it.nativeKeyEvent.repeatCount == 0) {
+                        session.performanceHint = !session.performanceHint
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && it.key !in ZAP_KEYS) chrome.shownByZap.value = false
                 changingItem && it.key != Key.Back && it.key != Key.MediaStop
             }
