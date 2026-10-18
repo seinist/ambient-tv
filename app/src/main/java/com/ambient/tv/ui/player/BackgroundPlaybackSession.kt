@@ -467,7 +467,12 @@ object BackgroundPlaybackSession {
         sleepWarningMs = prefs.sleepWarningMinutes * 60_000L
         // A timer kept for a retry that never came belongs to the old session.
         if (kept != null) setSleepTimer(SleepTimerConfig())
-        if (timerConfig.kind == SleepTimerKind.OFF) setSleepTimer(autoSleepTimerConfig(prefs.sleepAutoStartKey, metadata.isLive, now))
+        if (timerConfig.kind != SleepTimerKind.OFF) return
+        val auto = autoSleepTimerConfig(prefs.sleepAutoStartKey, metadata.isLive, now)
+        val wallNow = System.currentTimeMillis()
+        val dailyStop = dailyStopEpochMs(wallNow, java.time.ZoneId.systemDefault(), prefs.sleepDailyStopMinute,
+            nightFallbackMinutes(prefs.sleepAutoStartKey))?.let { now + (it - wallNow) }
+        setSleepTimer(withDailyStop(auto, dailyStop))
     }
 
     /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */
@@ -512,7 +517,7 @@ object BackgroundPlaybackSession {
         } else {
             timer.warningDue(now, sleepWarningMs)?.let { sleepWarningDeadline = it }
             sleepWarningDeadline?.let { warned ->
-                if (now >= warned || timerConfig.deadlineRealtimeMs != warned) sleepWarningDeadline = null
+                if (now >= warned || timerConfig.timedDeadlineMs != warned) sleepWarningDeadline = null
             }
         }
         if (prompt == null && timer.expired(now, status, player.wantsToPlay())) {
@@ -546,7 +551,8 @@ object BackgroundPlaybackSession {
     fun continueAfterSleep(rearm: Boolean) {
         checkThread()
         val config = timerConfig
-        setSleepTimer(if (rearm) config.copy(deadlineRealtimeMs = null) else SleepTimerConfig())
+        // "Again X min" restarts the user's own timer; a passed daily stop time does not come back.
+        setSleepTimer(if (rearm) config.copy(deadlineRealtimeMs = null, alsoStopRealtimeMs = null) else SleepTimerConfig())
         handle?.play()
         registerUserInteraction()
     }

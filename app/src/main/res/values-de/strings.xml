@@ -1752,4 +1752,7 @@
     <string name="sleep_warning_message_touch">Wiedergabe stoppt in %1$d min</string>
     <string name="sleep_extend_30">+30 min</string>
     <string name="sleep_extend_action">Verlängern</string>
+    <string name="settings_sleep_daily_stop">Täglich stoppen um</string>
+    <string name="settings_sleep_daily_stop_hint">Startet die Wiedergabe bis 6 Stunden danach, stoppt sie nach der automatischen Dauer bzw. 30 min. Der frühere Stopp gewinnt.</string>
+    <string name="player_sleep_clock_summary">Stopp um %1$s</string>
 </resources>
