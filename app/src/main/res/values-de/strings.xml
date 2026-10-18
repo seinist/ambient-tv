@@ -1683,9 +1683,9 @@
     <string name="iptv_delete">Löschen</string>
     <string name="iptv_delete_title">„%1$s“ löschen?</string>
     <string name="timeshift_title">Timeshift</string>
-    <string name="timeshift_hint">Pause, Zurückspulen und zurück zu Live beim Live-TV – in Media3, VLC und MPV. Die App puffert den Sender während der Wiedergabe auf diesem Gerät (TVHeadend und IPTV mit MPEG-TS-Streams).</string>
+    <string name="timeshift_hint">Puffert Live-TV auf diesem Gerät</string>
     <string name="timeshift_off">Aus</string>
-    <string name="timeshift_storage_hint">Die Anfangsgröße wird anhand des freien Gerätespeichers gewählt und kann hier jederzeit geändert werden. Der Puffer nutzt freien Speicher (höchstens den eingestellten Wert, 512 MB bleiben immer frei) und wird am Ende der Wiedergabe gelöscht. Etwa 1 GB reicht für 30–60 Minuten HD.</string>
+    <string name="timeshift_storage_hint">1 GB ≈ 30–60 Min. HD</string>
     <string name="timeshift_behind">−%1$s</string>
     <string name="timeshift_go_live">Zurück zu Live</string>
     <string name="reminder_lead_title">Erinnerungen an Sendungen</string>
@@ -1703,8 +1703,8 @@
     <string name="reminder_dismiss">Schließen</string>
     <string name="player_record_failed">Aufnahme konnte nicht angelegt werden. Bitte Aufnahmeberechtigung und Backend prüfen.</string>
     <string name="live_direct_record">Aufnahme</string>
-    <string name="live_direct_record_hint">Aufnahme-Taste anzeigen, falls unterstützt.</string>
-    <string name="live_timeshift_optional_hint">Live-TV pausieren und zurückspulen. Bei IPTV nur für direkte MPEG-TS-Streams über HTTP(S), nicht für HLS (.m3u8).</string>
+    <string name="live_direct_record_hint">Aufnahme-Taste im Player</string>
+    <string name="live_timeshift_optional_hint">Live-TV pausieren und zurückspulen</string>
     <string name="live_timeshift_failed">Timeshift-Änderung fehlgeschlagen. Bitte Sender erneut starten.</string>
     <string name="timeshift_programme_position">Sendung %1$s / %2$s · Wiedergabe %3$s</string>
     <string name="timeshift_before_programme">Wiedergabe %1$s · vor aktueller Sendung</string>
