@@ -209,8 +209,11 @@ object BackgroundPlaybackSession {
     /** Set while the non-pausing pre-warning is shown; the elapsed-realtime stop deadline. */
     var sleepWarningDeadline by mutableStateOf<Long?>(null)
         private set
-    /** Minutes of pre-warning, read from the settings when a session starts. */
-    private var sleepWarningMs = 0L
+    /** Settings for the pre-warning; read live, so a changed warning applies at once. */
+    private var sleepPrefs: com.ambient.tv.data.local.AppPreferences? = null
+    private val sleepWarningMs: Long get() = (sleepPrefs?.sleepWarningMinutes ?: 0) * 60_000L
+    /** The running timer was armed from the settings ("start automatically"), not by hand. */
+    private var sleepTimerAuto = false
     /** A stop that kept the timer (internal retry/error); the next acquire continues the session. */
     private var keptSleepTimerAtMs: Long? = null
     private val completed = ArrayDeque<Snapshot>()
@@ -258,7 +261,11 @@ object BackgroundPlaybackSession {
         // Duration and inactivity timers belong to the listening session, including zapping,
         // autoplay and renderer switches. An end-of-item timer belongs to its current item.
         if (!samePlayback && sleepTimer.kind == SleepTimerKind.END_OF_ITEM) {
-            setSleepTimer(SleepTimerConfig())
+            // A manual "end of title" belongs to its title. The automatic one applies to every
+            // title of the session and keeps the daily stop time next to it.
+            val auto = sleepTimerAuto
+            setSleepTimer(sleepTimerForNextItem(sleepTimer, auto))
+            sleepTimerAuto = auto
         }
         startSleepSessionIfNew(context, metadata, hadPlayer = previous != null, replacingSource = current.replacingSource)
         val continuesNextUpChain = expectedNextUp == (metadata.source to metadata.mediaId)
@@ -451,6 +458,7 @@ object BackgroundPlaybackSession {
         checkThread()
         sleepPromptDeadline = null
         sleepWarningDeadline = null
+        sleepTimerAuto = false
         timerConfig = timer.arm(value, SystemClock.elapsedRealtime())
     }
 
@@ -464,7 +472,7 @@ object BackgroundPlaybackSession {
         keptSleepTimerAtMs = null
         if (!sleepSessionStarts(hadPlayer, replacingSource, kept, now)) return
         val prefs = runCatching { videoImagePreferences(context) }.getOrNull() ?: return
-        sleepWarningMs = prefs.sleepWarningMinutes * 60_000L
+        sleepPrefs = prefs
         // A timer kept for a retry that never came belongs to the old session.
         if (kept != null) setSleepTimer(SleepTimerConfig())
         if (timerConfig.kind != SleepTimerKind.OFF) return
@@ -473,6 +481,7 @@ object BackgroundPlaybackSession {
         val dailyStop = dailyStopEpochMs(wallNow, java.time.ZoneId.systemDefault(), prefs.sleepDailyStopMinute,
             nightFallbackMinutes(prefs.sleepAutoStartKey))?.let { now + (it - wallNow) }
         setSleepTimer(withDailyStop(auto, dailyStop))
+        sleepTimerAuto = timerConfig.kind != SleepTimerKind.OFF
     }
 
     /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */

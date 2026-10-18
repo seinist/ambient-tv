@@ -82,6 +82,8 @@ class TvheadendRepository @Inject constructor(
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cacheMutex = Mutex()
+    /** The stored guide is read, merged and written by parallel per-channel loads. */
+    private val epgPersistMutex = Mutex()
     private val cache = mutableMapOf<String, CacheValue<*>>()
     private val wakeMutex = Mutex()
     private var cacheScope: List<String>? = null
@@ -265,11 +267,11 @@ class TvheadendRepository @Inject constructor(
                     it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop && (channelId == null || it.channelUuid == channelId)
                 }
             },
-            persist = { events ->
+            persist = { events -> epgPersistMutex.withLock {
                 val now = System.currentTimeMillis() / 1000L
                 val stored = diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST).orEmpty()
                 diskCache.write(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST, TvheadendDiskCache.mergeEpg(stored, events, now))
-            },
+            } },
         ) {
             loadTvhEpgPages(startEpochSeconds, stop, channelId) { params -> getJson("api/epg/events/grid", params) }
                 .mapNotNull(::mapEvent).filter { it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop }

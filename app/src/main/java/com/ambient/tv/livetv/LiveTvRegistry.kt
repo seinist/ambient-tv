@@ -12,6 +12,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withLock
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.HttpUrl
@@ -46,17 +47,22 @@ class LiveTvRegistry @Inject constructor(
     private val knownJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     private val knownSerializer = kotlinx.serialization.builtins.ListSerializer(KnownLiveTvSource.serializer())
     @Volatile private var knownRestored = false
+    private val restoreMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Restored once per process: sources stay in the sidebar after a restart while servers sleep. */
     private suspend fun restoreKnown() {
         if (knownRestored) return
-        knownRestored = true
-        browseDisk.read(KNOWN_SCOPE, KNOWN_KEY)[KNOWN_KEY]
-            ?.let { runCatching { knownJson.decodeFromString(knownSerializer, it) }.getOrNull() }
-            ?.let { records ->
-                val ids = configured().map { it.source.id }.toSet()
-                known.restore(records.filter { it.id in ids })
-            }
+        // A parallel discover waits for the restore instead of answering without the stored sources.
+        restoreMutex.withLock {
+            if (knownRestored) return
+            browseDisk.read(KNOWN_SCOPE, KNOWN_KEY)[KNOWN_KEY]
+                ?.let { runCatching { knownJson.decodeFromString(knownSerializer, it) }.getOrNull() }
+                ?.let { records ->
+                    val ids = configured().map { it.source.id }.toSet()
+                    known.restore(records.filter { it.id in ids })
+                }
+            knownRestored = true
+        }
     }
 
     private fun persistKnown() {

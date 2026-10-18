@@ -17,6 +17,8 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.unit.dp
 
 /**
@@ -72,7 +74,8 @@ fun SleepTimerWarningOverlay(touch: Boolean) {
     }
     val minutes = sleepWarningMinutesLeft(deadline, now)
     androidx.compose.foundation.layout.Box(
-        androidx.compose.ui.Modifier.fillMaxSize().padding(24.dp),
+        // Below the status bar / cutout on phones; TV has no insets.
+        androidx.compose.ui.Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing).padding(24.dp),
         contentAlignment = androidx.compose.ui.Alignment.TopEnd,
     ) {
         androidx.compose.foundation.layout.Row(
