@@ -4,6 +4,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/app/src/main/assets/licenses/open-svpflow"
 mkdir -p "$OUT"
+# Actions runners share anonymous GitHub rate limits. Authenticate the fixed
+# GitHub endpoints below when a token is available; local builds remain optional.
+github_headers=()
+if [[ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
+    github_headers=(-H "Authorization: Bearer ${GH_TOKEN:-$GITHUB_TOKEN}")
+fi
+github_download() {
+    local url="$1"
+    shift
+    if ! curl --fail --silent --show-error --location --retry 3 \
+        "${github_headers[@]}" "$url" "$@"; then
+        echo "SVP license download failed: $url (check GitHub access/rate limits)" >&2
+        return 1
+    fi
+}
 metadata="$(cargo metadata --manifest-path "$ROOT/native/ambientsvp/Cargo.toml" --format-version 1 --locked --filter-platform aarch64-linux-android)"
 printf '%s' "$metadata" | jq -r '.packages[] | [.name,.version,.license,.repository] | @tsv' > "$OUT/dependencies.tsv"
 while IFS=$'\t' read -r name version manifest; do
@@ -40,10 +55,16 @@ while IFS=$'\t' read -r name version manifest; do
         repo="${repo%.git}"
         # Already cached exact-version notices make subsequent builds offline.
         if [[ -n "$(find "$dest" -maxdepth 1 -type f)" ]]; then found=1; else
-            tree="$(curl --fail --silent --show-error "https://api.github.com/repos/$repo/git/trees/$revision")"
+            tree="$(github_download "https://api.github.com/repos/$repo/git/trees/$revision")"
             while IFS= read -r file; do
                 [[ -n "$file" ]] || continue
-                curl --fail --silent --show-error "https://raw.githubusercontent.com/$repo/$revision/$file" -o "$dest/$file"
+                temporary="$(mktemp "$dest/.download-XXXXXX")"
+                if ! github_download "https://raw.githubusercontent.com/$repo/$revision/$file" -o "$temporary"; then
+                    rm -f "$temporary"
+                    exit 1
+                fi
+                [[ -s "$temporary" ]] || { rm -f "$temporary"; echo "Empty license: $name $file" >&2; exit 1; }
+                mv "$temporary" "$dest/$file"
                 found=1
             done < <(printf '%s' "$tree" | jq -r '.tree[] | select(.type=="blob") | .path | select(test("^(license|copying|notice|unlicense)";"i"))')
         fi

@@ -111,6 +111,7 @@ jobs:
 
       - name: Build signed release APKs
         env:
+          GH_TOKEN: ${{ github.token }}
           KEYSTORE_BASE64: ${{ secrets.AMBIENT_TV_KEYSTORE_BASE64 }}
           AMBIENT_TV_KEYSTORE_FILE: ${{ runner.temp }}/ambient-tv-release.jks
           AMBIENT_TV_KEYSTORE_PASSWORD: ${{ secrets.AMBIENT_TV_KEYSTORE_PASSWORD }}
