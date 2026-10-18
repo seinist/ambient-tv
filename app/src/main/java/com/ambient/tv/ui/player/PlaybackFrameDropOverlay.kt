@@ -109,10 +109,12 @@ internal fun PlaybackFrameDropOverlay(visible: Boolean) {
         }
     }
     val inset = with(LocalDensity.current) { IntOffset(24.dp.roundToPx(), 28.dp.roundToPx()) }
-    val position = remember(inset) { object : PopupPositionProvider {
+    val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
+    // The FPS overlay sits in the same corner; stack below it instead of drawing on top.
+    val fpsBounds = PlaybackStatsOverlayLayout.fpsBounds
+    val position = remember(inset, gap, fpsBounds) { object : PopupPositionProvider {
         override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) =
-            IntOffset(inset.x.coerceAtMost((windowSize.width - popupContentSize.width).coerceAtLeast(0)),
-                inset.y.coerceAtMost((windowSize.height - popupContentSize.height).coerceAtLeast(0)))
+            stackedStatsPopupOffset(inset, popupContentSize, windowSize, fpsBounds, gap)
     } }
     Popup(popupPositionProvider = position, properties = PopupProperties(focusable = false, dismissOnBackPress = false, dismissOnClickOutside = false)) {
         AnimatedVisibility(visibility, enter = fadeIn(tween(220)), exit = fadeOut(tween(180))) {

@@ -30,6 +30,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
@@ -61,6 +67,9 @@ fun BoxScope.PlaybackFpsOverlay(
         androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_cadence_pulldown),
     )
     val text = formatPlaybackFpsOverlay(fps, hz, video, display.resolution, cadence, sourceFps, svpStatus) ?: return
+    // Publish the window bounds so the dropped-frames popup can stack below instead of overlapping.
+    val token = remember { Any() }
+    DisposableEffect(token) { onDispose { PlaybackStatsOverlayLayout.clear(token) } }
     Text(
         text = text,
         color = Color.White.copy(alpha = 0.92f),
@@ -74,6 +83,13 @@ fun BoxScope.PlaybackFpsOverlay(
             .focusProperties { canFocus = false }
             .focusable(false)
             .clearAndSetSemantics { }
+            .onGloballyPositioned { coordinates ->
+                val origin = coordinates.positionInWindow()
+                PlaybackStatsOverlayLayout.publish(token, IntRect(
+                    origin.x.roundToInt(), origin.y.roundToInt(),
+                    origin.x.roundToInt() + coordinates.size.width, origin.y.roundToInt() + coordinates.size.height,
+                ))
+            }
             .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
             .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -185,4 +201,45 @@ private fun rememberPlaybackVideoResolution(enabled: Boolean): String? {
         }
     }
     return resolution
+}
+
+/**
+ * Window bounds of the visible FPS overlay. The dropped-frames popup is a separate window
+ * anchored at the same corner; it reads these bounds and stacks itself below.
+ */
+internal object PlaybackStatsOverlayLayout {
+    private var owner: Any? = null
+    var fpsBounds by mutableStateOf<IntRect?>(null)
+        private set
+
+    fun publish(token: Any, bounds: IntRect) {
+        owner = token
+        if (fpsBounds != bounds) fpsBounds = bounds
+    }
+
+    fun clear(token: Any) {
+        if (owner !== token) return
+        owner = null
+        fpsBounds = null
+    }
+}
+
+/**
+ * Top-left offset of the dropped-frames popup: the preferred inset, moved below the FPS
+ * overlay when the two would intersect, and always kept inside the window.
+ */
+internal fun stackedStatsPopupOffset(
+    preferred: IntOffset,
+    popupSize: IntSize,
+    windowSize: IntSize,
+    occupied: IntRect?,
+    gapPx: Int,
+): IntOffset {
+    val x = preferred.x.coerceAtMost((windowSize.width - popupSize.width).coerceAtLeast(0))
+    var y = preferred.y
+    if (occupied != null && occupied.width > 0 && occupied.height > 0) {
+        val popup = IntRect(x, y, x + popupSize.width, y + popupSize.height)
+        if (popup.overlaps(occupied)) y = occupied.bottom + gapPx
+    }
+    return IntOffset(x, y.coerceAtMost((windowSize.height - popupSize.height).coerceAtLeast(0)))
 }
