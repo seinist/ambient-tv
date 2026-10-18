@@ -382,6 +382,7 @@ class MpvPlaybackController(
     fun activeVideoFilters(): String? = read("activeVideoFilters", null, 750L) { activeVideoFilters() }
     fun activeDeinterlace(): String? = read("activeDeinterlace", null, 750L) { activeDeinterlace() }
     fun svpStatus(): String? = read("svpStatus", null, 750L) { svpStatus() }
+    fun svpState(): SvpState? = read("svpState", null, 750L) { svpState() }
     fun activeScaler(): String? = read("activeScaler", null, 750L) { activeScaler() }
     fun activeUpscaling(): Boolean? = read("activeUpscaling", null, 750L) { activeUpscaling() }
     fun activeChromaScaler(): String? = read("activeChromaScaler", null, 750L) { activeChromaScaler() }

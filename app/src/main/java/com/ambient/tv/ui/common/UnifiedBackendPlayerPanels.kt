@@ -230,7 +230,9 @@ fun UnifiedBackendPlayerPanel(
         }
         UnifiedPlayerPanel.RENDERER,
         UnifiedPlayerPanel.VIDEO,
-        UnifiedPlayerPanel.VIDEO_SECTION -> if (!hasVideo) UnifiedPlayerSidePanel(
+        UnifiedPlayerPanel.VIDEO_SECTION,
+        UnifiedPlayerPanel.VIDEO_SVP,
+        UnifiedPlayerPanel.VIDEO_SVP_ADVANCED -> if (!hasVideo) UnifiedPlayerSidePanel(
             title = stringResource(R.string.player_renderer),
             modifier = modifier,
             onBack = back,
@@ -241,15 +243,27 @@ fun UnifiedBackendPlayerPanel(
             }
         } else UnifiedPlayerSidePanel(
             // The list of areas, or one area titled with its name.
-            title = if (panel == UnifiedPlayerPanel.VIDEO_SECTION)
-                stringResource(com.ambient.tv.ui.player.videoSectionTitle(navigation?.videoState?.section.orEmpty()))
-            else stringResource(R.string.player_video_settings),
+            title = when (panel) {
+                UnifiedPlayerPanel.VIDEO_SECTION ->
+                    stringResource(com.ambient.tv.ui.player.videoSectionTitle(navigation?.videoState?.section.orEmpty()))
+                UnifiedPlayerPanel.VIDEO_SVP -> stringResource(R.string.svp_title)
+                UnifiedPlayerPanel.VIDEO_SVP_ADVANCED -> stringResource(R.string.svp_advanced_title)
+                else -> stringResource(R.string.player_video_settings)
+            },
             modifier = modifier,
             onBack = back,
         ) {
-            if (panel != UnifiedPlayerPanel.VIDEO_SECTION) com.ambient.tv.ui.player.HdrMedia3Hint()
+            if (panel == UnifiedPlayerPanel.VIDEO || panel == UnifiedPlayerPanel.RENDERER) com.ambient.tv.ui.player.HdrMedia3Hint()
             com.ambient.tv.ui.player.PlayerVideoSettingsGroups(
-                sectionView = panel == UnifiedPlayerPanel.VIDEO_SECTION,
+                sectionView = panel != UnifiedPlayerPanel.VIDEO && panel != UnifiedPlayerPanel.RENDERER,
+                subPage = when (panel) {
+                    UnifiedPlayerPanel.VIDEO_SVP -> "svp"
+                    UnifiedPlayerPanel.VIDEO_SVP_ADVANCED -> "svp_advanced"
+                    else -> null
+                },
+                onOpenSubPage = { page ->
+                    onPanelChange(if (page == "svp_advanced") UnifiedPlayerPanel.VIDEO_SVP_ADVANCED else UnifiedPlayerPanel.VIDEO_SVP)
+                },
                 onOpenSection = { onPanelChange(UnifiedPlayerPanel.VIDEO_SECTION) },
                 motionSummary = if (!isLive && onSpeedChanged != null && kotlin.math.abs(speed - 1f) >= .01f) "${speed}×" else null,
                 isLive = isLive,

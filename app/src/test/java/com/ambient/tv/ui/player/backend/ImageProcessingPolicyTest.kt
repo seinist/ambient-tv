@@ -216,10 +216,10 @@ class ImageProcessingPolicyTest {
         // 10% of a 2s SVP sample at 60fps is 12 frames.
         assertFalse(mpvRenderOverloaded(12, 60.0, 2.0))
         assertTrue(mpvRenderOverloaded(13, 60.0, 2.0))
-        // Disabled gate is not an overload. Cost and real bypass reasons are.
+        // Disabled gate and engine errors/passthrough are not an overload. Cost and the compute bypass are.
         assertFalse(mpvRenderOverloaded(0, 60.0, 2.0, svpBypassReason = 2))
         assertTrue(mpvRenderOverloaded(0, 60.0, 2.0, svpBypassReason = 1))
-        assertTrue(mpvRenderOverloaded(0, 0.0, 0.0, svpBypassReason = 3))
+        assertFalse(mpvRenderOverloaded(0, 0.0, 0.0, svpBypassReason = 3))
         assertFalse(mpvRenderOverloaded(0, 60.0, 2.0, svpNativeCostUs = 2 * MPV_SVP_SLOW_WINDOW_US))
         assertTrue(mpvRenderOverloaded(0, 60.0, 2.0, svpNativeCostUs = 2 * MPV_SVP_SLOW_WINDOW_US + 1))
         assertFalse(mpvRenderOverloaded(0, 0.0, 0.0, svpNativeCostUs = 5_000_000))

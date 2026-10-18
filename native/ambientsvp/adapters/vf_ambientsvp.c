@@ -18,7 +18,11 @@ struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
     bool eof, bypass; int width, height;
+    /* Why frames pass through unchanged (metadata "passthrough"); 0 while the engine runs.
+     * Kept separate from the engine's bypass_reason so only a real overload reads as one. */
+    int passthrough;
 };
+enum { PASS_NONE, PASS_FORMAT, PASS_UNAVAILABLE, PASS_TIMING, PASS_ERROR };
 
 __attribute__((visibility("default"))) int mpv_ambient_svp_abi(void);
 int mpv_ambient_svp_abi(void) { return AMBIENTSVP_ABI; }
@@ -29,6 +33,7 @@ static void reset(struct mp_filter *f) {
     p->engine = NULL; mp_image_unrefp(&p->reference);
     free(p->buffer); p->buffer = NULL; p->bytes = 0;
     p->eof = p->bypass = false;
+    p->passthrough = PASS_NONE;
 }
 static void destroy(struct mp_filter *f) {
     struct priv *p = f->priv; reset(f); if (p->api.lib) dlclose(p->api.lib);
@@ -84,7 +89,10 @@ static void process(struct mp_filter *f) {
     struct mp_image *img = frame.data;
     if (p->engine && (img->w != p->width || img->h != p->height || !supported(img))) reset(f);
     if (p->bypass || !supported(img) || !p->api.lib || !p->api.enabled()) {
+        int reason = p->passthrough;
+        if (!p->bypass) reason = !p->api.lib ? PASS_UNAVAILABLE : !supported(img) ? PASS_FORMAT : PASS_NONE;
         if (p->engine) reset(f);
+        p->passthrough = reason;
         mp_pin_in_write(f->ppins[1], frame); return;
     }
     if (!p->engine) {
@@ -95,15 +103,17 @@ static void process(struct mp_filter *f) {
         p->width = img->w; p->height = img->h; p->bytes = (size_t)img->w * img->h * 3 / 2;
         p->buffer = p->engine ? malloc(p->bytes) : NULL;
         if (!p->engine || !p->buffer) {
-            reset(f); p->bypass = true; MP_WARN(f, "SVP unavailable for this format/device; passing through\n");
+            reset(f); p->bypass = true; p->passthrough = PASS_UNAVAILABLE;
+            MP_WARN(f, "SVP unavailable for this format/device; passing through\n");
             mp_pin_in_write(f->ppins[1], frame); return;
         }
+        p->passthrough = PASS_NONE;
         MP_INFO(f, "Open-SVPFlow %dx%d %.6f -> %.6f\n", img->w, img->h, p->opts->source, p->opts->fps);
     }
     pack(img, p->buffer);
     int r = p->api.push(p->engine, p->buffer, p->bytes, llround(img->pts * 1000000.0));
     if (r != 0) {
-        reset(f); p->bypass = true;
+        reset(f); p->bypass = true; p->passthrough = r == -3 ? PASS_TIMING : PASS_ERROR;
         MP_WARN(f, "SVP input discontinuity/error %d; passing through until reset\n", r);
         mp_pin_in_write(f->ppins[1], frame); return;
     }
@@ -116,7 +126,9 @@ static bool command(struct mp_filter *f, struct mp_filter_command *cmd) {
     struct mp_tags *tags = talloc_zero(NULL, struct mp_tags);
     AmbientSvpStats s = {0}; if (p->engine) p->api.stats(p->engine, &s);
     mp_tags_set_str(tags, "backend", s.backend == 2 ? "vulkan" : s.backend == 1 ? "cpu" : "off");
-    mp_tags_set_str(tags, "bypass", talloc_asprintf(tags, "%u", p->bypass ? 3 : s.bypass_reason));
+    /* bypass: engine reason only (1 overload, 2 gate, 3 engine error); passthrough: adapter reason. */
+    mp_tags_set_str(tags, "bypass", talloc_asprintf(tags, "%u", p->engine ? s.bypass_reason : 0u));
+    mp_tags_set_str(tags, "passthrough", talloc_asprintf(tags, "%d", p->passthrough));
     mp_tags_set_str(tags, "interpolated-frames", talloc_asprintf(tags, "%llu", (unsigned long long)s.interpolated_frames));
     mp_tags_set_str(tags, "output-frames", talloc_asprintf(tags, "%llu", (unsigned long long)s.output_frames));
     mp_tags_set_str(tags, "analysis-us", talloc_asprintf(tags, "%llu", (unsigned long long)s.analysis_us));

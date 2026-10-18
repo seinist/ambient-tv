@@ -77,13 +77,15 @@ enum class UnifiedPlayerPanel {
     NONE, SETTINGS, CONFIGURATION, RENDERER, VIDEO,
     /** One area of the video panel (Player, Scaling, Filters, ...), opened from its row. */
     VIDEO_SECTION,
+    /** SVP motion smoothing below Motion, and its advanced level. */
+    VIDEO_SVP, VIDEO_SVP_ADVANCED,
     AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES, SLEEP, VISUALIZER, VISUALIZER_SETTINGS;
 
     val isAudio: Boolean get() = this == AUDIO || this == AUDIO_SECTION || this == AUDIO_CODECS
     val isVisualizer: Boolean get() = this == VISUALIZER || this == VISUALIZER_SETTINGS
 
     /** The video list or one of its areas: the action bar's video button stays selected. */
-    val isVideo: Boolean get() = this == VIDEO || this == VIDEO_SECTION
+    val isVideo: Boolean get() = this == VIDEO || this == VIDEO_SECTION || this == VIDEO_SVP || this == VIDEO_SVP_ADVANCED
 }
 
 /**
@@ -374,7 +376,7 @@ fun UnifiedPlayerSidePanel(
     val navigation = LocalPlayerPanelNavigation.current
     val requestInitialFocus = remember {
         navigation?.restoreKey == null &&
-            (navigation?.panel !in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.RENDERER) ||
+            (navigation?.panel !in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.VIDEO_SVP, UnifiedPlayerPanel.VIDEO_SVP_ADVANCED, UnifiedPlayerPanel.RENDERER) ||
                 navigation?.videoState?.focusedSelector == null) &&
             (navigation?.panel?.isAudio != true || navigation.audioState.focusedSelector == null)
     }
@@ -386,7 +388,7 @@ fun UnifiedPlayerSidePanel(
         modifier = modifier,
         // Television: 38 % of the screen; labels that do not fit scroll while focused.
         width = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-            if (navigation?.panel in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.RENDERER)) 420.dp else 500.dp
+            if (navigation?.panel in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.VIDEO_SVP, UnifiedPlayerPanel.VIDEO_SVP_ADVANCED, UnifiedPlayerPanel.RENDERER)) 420.dp else 500.dp
         } else (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.38f).dp,
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         scrollable = true,

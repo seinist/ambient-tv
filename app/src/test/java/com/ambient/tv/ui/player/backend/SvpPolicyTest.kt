@@ -7,10 +7,10 @@ import org.junit.Test
 
 class SvpPolicyTest {
     @Test fun changedDisplayTargetRestartsActiveSvpOnly() {
-        assertTrue(svpTargetChanged("auto", 24.0, 60.0))
+        assertTrue(svpTargetChanged("light", 24.0, 60.0))
         assertTrue(svpTargetChanged("quality", 60.0, 59.94))
         assertFalse(svpTargetChanged("off", 24.0, 60.0))
-        assertFalse(svpTargetChanged("auto", 60.0, 60.000004))
+        assertFalse(svpTargetChanged("light", 60.0, 60.000004))
     }
     @Test fun savedChoicesNeverBypassPerformanceGate() {
         val mpv = MpvImageOptions(svpMode = "quality")
@@ -20,7 +20,7 @@ class SvpPolicyTest {
             assertEquals("off", effectiveVlcImageOptions(vlc, low).svpMode)
         }
         assertEquals("quality", effectiveMpvImageOptions(mpv, false, true).svpMode)
-        assertEquals("auto", effectiveVlcImageOptions(vlc, false, true).svpMode)
+        assertEquals("light", effectiveVlcImageOptions(vlc, false, true).svpMode) // stored "auto" reads as light
         assertEquals("off", effectiveMpvImageOptions(mpv, true, true).svpMode)
         assertEquals("quality", mpv.svpMode) // No destructive preference rewrite.
     }
@@ -30,10 +30,11 @@ class SvpPolicyTest {
         assertNull(mpvSvpFilter("auto", Double.NaN, 60.0))
         assertNull(mpvSvpFilter("auto", 60.0, 59.94))
         assertNull(mpvSvpFilter("auto", 24.0, 144.0))
-        assertTrue(mpvSvpFilter("auto", 24000.0/1001, 60000.0/1001)!!.contains("preset=0"))
+        assertTrue(mpvSvpFilter("light", 24000.0/1001, 60000.0/1001)!!.contains("preset=1"))
+        assertTrue(mpvSvpFilter("auto", 24000.0/1001, 60000.0/1001)!!.contains("preset=1"))
     }
     @Test fun vlcUsesCopyBackWithoutForcingSoftwareDecode() {
-        val options = VlcImageOptions(svpMode = "auto", softwareProcessing = false, denoise = "medium")
+        val options = VlcImageOptions(svpMode = "light", softwareProcessing = false, denoise = "medium")
         val media = vlcImageMediaOptions(options, 59.94)
         assertTrue(":no-mediacodec-dr" in media)
         assertTrue(media.any { "ambientsvp{fps=59.94" in it })

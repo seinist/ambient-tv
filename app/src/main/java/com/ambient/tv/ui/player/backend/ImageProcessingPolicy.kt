@@ -104,9 +104,13 @@ internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<
 /** ambientsvp bypasses after a source-second costs more than 850ms of analysis+synthesis. */
 internal const val MPV_SVP_SLOW_WINDOW_US = 850_000L
 
-/** bypass 2 is the runtime gate, not an overload. Cost is ignored until a sample exists. */
+/**
+ * Only the engine's compute bypass (1) is an overload. The runtime gate (2), engine errors (3)
+ * and the adapter's passthrough reasons (format, timing, unavailable backend) are reported as
+ * status, never as "too slow". Cost is ignored until a sample exists.
+ */
 internal fun mpvSvpNativeOverloaded(bypassReason: Int, nativeCostUs: Long, seconds: Double): Boolean {
-    if (bypassReason != 0 && bypassReason != 2) return true
+    if (bypassReason == SvpNativeReason.BYPASS_OVERLOAD) return true
     return seconds > 0.0 && nativeCostUs > (seconds * MPV_SVP_SLOW_WINDOW_US.toDouble()).toLong()
 }
 

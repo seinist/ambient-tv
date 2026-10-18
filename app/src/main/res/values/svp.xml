@@ -1,11 +1,7 @@
 <resources>
     <string name="settings_performance_maximum">Maximum performance</string>
-    <string name="image_svp">Motion smoothing (experimental)</string>
     <string name="image_svp_locked">SVP is off. Available only in Maximum performance mode; your saved choice is retained.</string>
-    <string name="image_svp_hint">Adds in-between frames for smoother motion, for progressive SDR only, and not with direct MPV output or Media3.</string>
-    <string name="image_svp_auto">Automatic · adaptive protection</string>
-    <string name="image_svp_balanced">Balanced</string>
-    <string name="image_svp_quality">High quality</string>
+    <string name="image_svp_hint">Adds in-between frames for smoother motion. MPV (Vulkan or OpenGL output) and VLC only, progressive 8-bit SDR only.</string>
     <string name="settings_svp_available">Motion smoothing (SVP) available</string>
     <string name="settings_svp_available_hint">Off hides SVP in the player; On still needs SVP turned on in the panel. Requires Maximum performance.</string>
 </resources>

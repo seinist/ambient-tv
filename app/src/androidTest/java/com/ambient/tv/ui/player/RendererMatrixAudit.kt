@@ -114,7 +114,7 @@ internal class RendererMatrixAudit(private val instrumentation: Instrumentation,
             if (args.getString("filters") == "heavy") {
                 p.vlcImageOptions = VlcImageOptions(svpMode = "light")
                 p.mpvImageOptions = MpvImageOptions(scaler = "ewa_robidouxsharp", chromaScaler = "robidoux",
-                    sharpening = "medium", denoise = "medium", svpMode = "auto")
+                    sharpening = "medium", denoise = "medium", svpMode = "light")
                 p.media3ImageOptions = Media3ImageOptions(enabled = true, scaler = "lanczos")
             }
             BackgroundPlaybackSession.stop()

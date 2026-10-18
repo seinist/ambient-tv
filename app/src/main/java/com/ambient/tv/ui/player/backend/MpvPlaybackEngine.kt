@@ -7,6 +7,7 @@ import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
 import com.ambient.tv.data.local.validateNnedi3ShaderSource
 import com.ambient.tv.ui.player.reducedVideoEffects
+import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.videoImagePreferences
 import android.content.Context
 import android.os.SystemClock
@@ -256,6 +257,10 @@ internal class MpvPlaybackEngine(
     private var lastImageTransfer: String? = null
     private var lastSvpSignature: String? = null
     private var svpOverloaded = false
+    /** The SVP filter decision was applied for the loaded file (see [mpvSvpInterpolationIntended]). */
+    private var svpFilterDecided = false
+    /** Last adapter reason read from plex-svp metadata; null while interpolating. */
+    @Volatile private var svpRuntimeReason: SvpInactiveReason? = null
     /** Quality stays on the light preset until that probe survives a short sample. */
     private var svpQualityCleared = false
     /** Probe failed: keep light for the session and do not promote or re-prompt. */
@@ -282,10 +287,16 @@ internal class MpvPlaybackEngine(
     private var imageUpdateJob: Job? = null
     var imageOptions by mutableStateOf(initialImageOptions.normalized())
         private set
+    /** Only an SVP that runs (or can still run for this file) keeps display-mode matching off. */
     override val usesFrameInterpolation: Boolean
-        get() = gpuQualityMode && effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).let {
-            it.svpMode != "off"
-        }
+        get() = gpuQualityMode && mpvSvpInterpolationIntended(
+            modeOn = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).svpMode != "off",
+            overloaded = svpOverloaded,
+            hdr = hdrImageTransfer,
+            decided = fileReady && svpFilterDecided,
+            inChain = "plex-svp" in activeCpuImageFilters,
+            runtimeReason = svpRuntimeReason,
+        )
     var saveImageDefaults by mutableStateOf(false)
     var imageOptionWarnings by mutableStateOf<List<String>>(emptyList())
         private set
@@ -610,6 +621,7 @@ internal class MpvPlaybackEngine(
             pendingInitialSeekMs = resume
             loaded = false
             fileReady = false
+            svpFilterDecided = false
             lastPlaybackPositionMs = resume
         }
         detachedVideoSelection = getPropertyString("vid") ?: "auto"
@@ -911,6 +923,7 @@ internal class MpvPlaybackEngine(
         if (!trySetGpuDecoder(copyBackNeeded)) warnings += "hwdec"
         if (!rebuildMpvVideoFilterChain(desiredFilters, explicitDeinterlaceFilter)) warnings += "vf-order"
         if ("plex-svp" !in activeCpuImageFilters) svpCopyBackSession = false
+        svpFilterDecided = fileReady
         updateGpuDecoder()
         property("scale", o.scaler.takeIf { it in VideoImageCatalog.mpvBuiltins } ?: "lanczos", "lanczos")
         property("cscale", o.chromaScaler.takeIf { it !in VideoImageCatalog.chromaShaders } ?: "lanczos", "lanczos")
@@ -1114,7 +1127,7 @@ internal class MpvPlaybackEngine(
         svpQualityCleared = false
         if (update.persisted) preferences.mpvImageOptions = update.stored
         updateImageOptions(update.live)
-        val level = context.getString(svpModeLabelRes(update.live.svpMode))
+        val level = context.getString(com.ambient.tv.ui.player.svpModeLabelRes(update.live.svpMode))
         com.ambient.tv.notifications.AppNotifications.post(
             com.ambient.tv.notifications.AppNotice(
                 key = "playback:svp-level",
@@ -1127,13 +1140,6 @@ internal class MpvPlaybackEngine(
         )
     }
 
-    private fun svpModeLabelRes(mode: String): Int = when (mode) {
-        "auto" -> com.ambient.tv.R.string.image_svp_auto
-        "light" -> com.ambient.tv.R.string.image_light
-        "balanced" -> com.ambient.tv.R.string.image_svp_balanced
-        "quality" -> com.ambient.tv.R.string.image_svp_quality
-        else -> com.ambient.tv.R.string.player_off
-    }
 
     /**
      * One lighter preset per overload, then the dialog already armed by the caller.
@@ -1291,7 +1297,8 @@ internal class MpvPlaybackEngine(
             // Quality waits on light. Sparsam already forced svpMode off above this call.
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
-            mpvSvpFilter(mode, containerFps(), displayFps() ?: svpDisplayFps(context), tuning)?.let {
+            val size = sourceDimensions()
+            mpvSvpFilter(mode, containerFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second)?.let {
                 put("plex-svp", it)
             }
         }
@@ -1320,10 +1327,12 @@ internal class MpvPlaybackEngine(
             )
         } else lastLumaShaderEligible
         val svpSignature = if (imageOptions.svpMode == "off") "off" else
-            "${svpAllowed(context)}:${containerFps()}:${displayFps() ?: svpDisplayFps(context)}"
-        // A native timing/compute fallback is observable and removes SVP work.
+            "${svpAllowed(context)}:${containerFps()}:${displayFps() ?: svpDisplayFps(context)}:${sourceDimensions()}"
+        // Only a native compute overload removes SVP work; format/timing passthrough is reported, not escalated.
         val svpBypass = if ("plex-svp" in activeCpuImageFilters)
             getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt() else 0
+        svpRuntimeReason = if ("plex-svp" in activeCpuImageFilters) svpRuntimeReason(svpBypass,
+            getPropertyDouble("vf-metadata/plex-svp/passthrough", 0.0).toInt()) else null
         // Do not wait out the frame sample when native already bypassed a heavy mode.
         if (mpvSvpNativeOverloaded(svpBypass, 0L, 0.0) && !svpOverloaded && !renderOverloaded &&
             (renderCheckSignature == null || renderCheckSignature != overloadSuspendedSignature)) {
@@ -1640,19 +1649,40 @@ internal class MpvPlaybackEngine(
     fun activeVideoFilters(): String? = getPropertyString("vf")?.takeIf { it.isNotBlank() && it != "[]" }
     /** Raw mpv `deinterlace` property (yes/no/auto). Explicit vf deinterlacers leave this at "no". */
     fun activeDeinterlace(): String? = getPropertyString("deinterlace")?.takeIf { it.isNotBlank() }
-    fun svpStatus(): String? {
-        val active = "plex-svp" in activeCpuImageFilters
+    /** Live SVP state for the panel; null with SVP off. */
+    fun svpState(): SvpState? {
+        val mode = imageOptions.svpMode
+        if (mode == "off") return null
+        val inChain = "plex-svp" in activeCpuImageFilters
         val effective = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context))
-        return formatSvpStatus(
-            mode = imageOptions.svpMode,
-            allowed = svpAllowed(context) && effective.svpMode != "off",
-            active = active,
+        val unavailable = when {
+            !gpuQualityMode -> SvpInactiveReason.ENGINE
+            !performanceProfile(context).allowSvpInterpolation -> SvpInactiveReason.PERFORMANCE_MODE
+            !SvpNative.isEnabledAndAvailable() -> SvpInactiveReason.LIBRARY
+            effective.svpMode == "off" -> SvpInactiveReason.PERFORMANCE_MODE
+            hdrImageTransfer -> SvpInactiveReason.HDR
+            else -> null
+        }
+        val size = sourceDimensions()
+        val runtime = if (inChain) svpRuntimeReason(
+            getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt(),
+            getPropertyDouble("vf-metadata/plex-svp/passthrough", 0.0).toInt(),
+        ) else null
+        val backend = if (inChain) when (getPropertyString("vf-metadata/plex-svp/backend")) {
+            "vulkan" -> 2; "cpu" -> 1; else -> 0
+        } else 0
+        return svpState(
+            mode = mode,
+            custom = imageOptions.svp.isCustom,
+            unavailable = unavailable,
             overloaded = svpOverloaded,
-            sourceFps = containerFps(),
-            targetFps = svpOutputFps(displayFps() ?: svpDisplayFps(context), effective.svp),
-            bypass = if (active) getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt() else 0,
+            decision = svpDecision(containerFps(), displayFps() ?: svpDisplayFps(context), effective.svp, size?.first, size?.second),
+            inChain = inChain,
+            runtimeReason = runtime,
+            backend = backend,
         )
     }
+    fun svpStatus(): String? = formatSvpStatus(svpState())
     fun activeScaler(): String? = if (supportsGpuFilters) getPropertyString("scale")?.takeIf { it.isNotBlank() } else null
     /** `scale` is a configured property even when the source already fits the output. */
     fun activeUpscaling(): Boolean? = currentMpvFittedScale().takeIf { it.isFinite() }
@@ -1802,6 +1832,7 @@ internal class MpvPlaybackEngine(
                         val rejected = mutableListOf<String>()
                         syncAudioFilters("", false, rejected)
                         fileReady = false
+                        svpFilterDecided = false
                         ended = false
                         // Only a bitstream codec has a different plan to fall back to. A PCM codec
                         // (AAC, MP3, FLAC, Opus) would reopen the same PCM output, so it goes
@@ -1822,6 +1853,7 @@ internal class MpvPlaybackEngine(
                     val endedEarly = error >= 0 && mpvEndedEarly(lastPlaybackPositionMs, durationAtEnd)
                     ended = error >= 0 && !endedEarly
                     fileReady = false
+                    svpFilterDecided = false
                     if (error < 0) errorMessage = if (error == -14) "MPV audio: $error" else "MPV: $error"
                     // Worded so the players treat it as a lost connection (server check, retry).
                     if (endedEarly) errorMessage = "MPV: unexpected end of stream at ${lastPlaybackPositionMs / 1000}s of ${durationAtEnd / 1000}s"
@@ -1905,6 +1937,7 @@ internal class MpvPlaybackEngine(
         }
         if (reload && attached) {
             fileReady = false
+            svpFilterDecided = false
             ended = false
             reopenStream(position)
             setProperty("pause", if (desiredPlayWhenReady || dvPrimeTarget != null) "no" else "yes")
