@@ -42,7 +42,10 @@ data class SidebarUiState(
     val embyEnabled: Boolean = false,
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
+    /** Address entered; TVHeadend stays in the menu even when its login was rejected. */
     val tvheadendEnabled: Boolean = false,
+    /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
+    val tvheadendLoginRejected: Boolean = false,
     val youtubeFeedKeys: List<String> = listOf("home"),
     val spotifySubmenuKeys: List<String> = emptyList(),
     val tvheadendSubmenuKeys: List<String> = emptyList(),
@@ -92,7 +95,8 @@ class SidebarViewModel @Inject constructor(
             embyEnabled = appPreferences.isEmbyConfigured,
             youtubeEnabled = appPreferences.youtubeEnabled,
             spotifyEnabled = appPreferences.spotifyEnabled,
-            tvheadendEnabled = appPreferences.isTvheadendConfigured,
+            tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
+            tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
             spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
             tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
             settingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,
@@ -178,7 +182,7 @@ class SidebarViewModel @Inject constructor(
 
     private fun systemAvailability() = listOf(
         appPreferences.isConfigured, appPreferences.isJellyfinConfigured, appPreferences.isEmbyConfigured,
-        appPreferences.isTvheadendConfigured, appPreferences.youtubeEnabled, appPreferences.spotifyEnabled,
+        appPreferences.isTvheadendConfigured, appPreferences.hasTvheadendEndpoint, appPreferences.youtubeEnabled, appPreferences.spotifyEnabled,
         appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
     )
 
@@ -216,7 +220,8 @@ class SidebarViewModel @Inject constructor(
                 embyEnabled = appPreferences.isEmbyConfigured,
                 youtubeEnabled = appPreferences.youtubeEnabled,
                 spotifyEnabled = appPreferences.spotifyEnabled,
-                tvheadendEnabled = appPreferences.isTvheadendConfigured,
+                tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
+                tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
                 tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
                 settingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,

@@ -2199,7 +2199,7 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = suspendResult {
                     tvheadendRepository.invalidateAll()
-                    tvheadendRepository.testConnection().getOrThrow()
+                    tvheadendRepository.testConnection(explicit = true).getOrThrow()
                 }
                 
                 val error = result.exceptionOrNull()

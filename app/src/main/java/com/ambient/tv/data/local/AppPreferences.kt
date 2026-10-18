@@ -1231,7 +1231,7 @@ class AppPreferences @Inject constructor(
             "plex" -> plexEnabled && serverProfiles.any { scope == "plex:${it.id}" }
             "jellyfin" -> jellyfinEnabled && jellyfinServerProfiles.any { it.authenticated && scope == "jellyfin:${it.id}:${it.userId}" }
             "emby" -> embyEnabled && embyServerProfiles.any { it.authenticated && scope == "emby:${it.id}:${it.userId}" }
-            else -> isTvheadendConfigured && scope == tvheadendHistoryScope
+            else -> hasTvheadendEndpoint && tvheadendLoginVerified && scope == tvheadendHistoryScope
         }
         if (!configured) return
         val histories = recentTvHistories()
@@ -1279,23 +1279,44 @@ class AppPreferences @Inject constructor(
     val hasTvheadendEndpoint: Boolean
         get() = tvheadendEnabled && tvheadendHost.isNotBlank()
 
-    /** Shown in menus, Home and search only once TVHeadend accepted the address and login. */
+    /**
+     * Usable in Home, search and Live TV unless TVHeadend proved the login wrong. A login that is
+     * merely unconfirmed (new address, server asleep, one stray 401) stays visible.
+     */
     val isTvheadendConfigured: Boolean
-        get() = hasTvheadendEndpoint && tvheadendLoginVerified
+        get() = hasTvheadendEndpoint && tvheadendLoginState != TvheadendLoginState.REJECTED
+
+    /** Address set but the login was rejected: the menu keeps TVHeadend with "check sign-in". */
+    val tvheadendLoginRejected: Boolean
+        get() = hasTvheadendEndpoint && tvheadendLoginState == TvheadendLoginState.REJECTED
 
     /**
-     * Whether TVHeadend last accepted the current address and login. Cleared when they change
-     * or a call is rejected with 401, set by the next successful call. Installs from before
-     * this flag count as verified until a call is rejected.
+     * TVHeadend login: unknown (address/login changed, not yet confirmed), verified (last call
+     * succeeded) or rejected (explicit test or repeated 401s, see TvheadendLoginRejection).
+     * Migration: the legacy boolean "true" is verified, "false" becomes unknown; installs that never
+     * stored either count as verified, as before.
      */
-    var tvheadendLoginVerified: Boolean
-        get() = prefs.getBoolean(KEY_TVH_LOGIN_VERIFIED, true)
+    var tvheadendLoginState: TvheadendLoginState
+        get() = storedTvheadendLoginState(
+            prefs.getString(KEY_TVH_LOGIN_STATE, null),
+            if (prefs.contains(KEY_TVH_LOGIN_VERIFIED)) prefs.getBoolean(KEY_TVH_LOGIN_VERIFIED, true) else null,
+        )
         set(value) {
-            val current = prefs.getBoolean(KEY_TVH_LOGIN_VERIFIED, true)
-            if (prefs.contains(KEY_TVH_LOGIN_VERIFIED) && current == value) return
-            prefs.edit { putBoolean(KEY_TVH_LOGIN_VERIFIED, value) }
-            // Recording the legacy default is not a change anyone needs to react to.
+            val current = tvheadendLoginState
+            if (prefs.getString(KEY_TVH_LOGIN_STATE, null) == value.name && !prefs.contains(KEY_TVH_LOGIN_VERIFIED)) return
+            prefs.edit {
+                putString(KEY_TVH_LOGIN_STATE, value.name)
+                remove(KEY_TVH_LOGIN_VERIFIED)
+            }
             if (current != value) LoginStateSignal.changed()
+        }
+
+    /** Compatibility view: true is verified; false only means "not confirmed" (never rejected). */
+    var tvheadendLoginVerified: Boolean
+        get() = tvheadendLoginState == TvheadendLoginState.VERIFIED
+        set(value) {
+            if (value) tvheadendLoginState = TvheadendLoginState.VERIFIED
+            else if (tvheadendLoginState != TvheadendLoginState.UNKNOWN) tvheadendLoginState = TvheadendLoginState.UNKNOWN
         }
 
     val clientIdentifier: String
@@ -1993,6 +2014,7 @@ class AppPreferences @Inject constructor(
         const val KEY_TVH_ENABLED = "tvh_enabled"
         const val KEY_TVH_HOST = "tvh_host"
         const val KEY_TVH_LOGIN_VERIFIED = "tvh_login_verified"
+        const val KEY_TVH_LOGIN_STATE = "tvh_login_state"
         const val KEY_PLEX_LOGIN_VERIFIED = "plex_login_verified"
         const val KEY_LOGIN_REJECTED = "login_rejected_profiles"
         const val KEY_TVH_PORT = "tvh_port"
@@ -2009,3 +2031,14 @@ class AppPreferences @Inject constructor(
         const val KEY_RECENT_SEARCHES = "recent_searches"
     }
 }
+
+/** See [AppPreferences.tvheadendLoginState]. */
+enum class TvheadendLoginState { UNKNOWN, VERIFIED, REJECTED }
+
+/** Stored state wins; otherwise the legacy boolean (false → unknown), otherwise verified. */
+internal fun storedTvheadendLoginState(stored: String?, legacyVerified: Boolean?): TvheadendLoginState =
+    stored?.let { name -> TvheadendLoginState.entries.firstOrNull { it.name == name } }
+        ?: when (legacyVerified) {
+            false -> TvheadendLoginState.UNKNOWN
+            else -> TvheadendLoginState.VERIFIED
+        }
