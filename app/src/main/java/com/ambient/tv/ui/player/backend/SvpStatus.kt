@@ -27,6 +27,17 @@ internal fun svpRates(source: Double?, target: Double?): String? {
 }
 
 /**
+ * OSD chip ("SVP 23.976 → 60") while frames are really interpolated; null otherwise, including
+ * a transient timing passthrough, so the codec bar never advertises SVP that is not running.
+ */
+internal fun svpBadgeLabel(state: SvpState?): String? {
+    if (state?.active != true) return null
+    val s = state.sourceFps?.takeIf { it.isFinite() && it > 0.0 }
+    val t = state.targetFps?.takeIf { it.isFinite() && it > 0.0 }
+    return if (s != null && t != null) "SVP ${svpRate(s)} → ${svpRate(t)}" else "SVP"
+}
+
+/**
  * Builds the state from the engine's facts. [decision] is the static policy for the current
  * source; [runtimeReason] comes from the adapter (MPV metadata, VLC frame counter).
  */

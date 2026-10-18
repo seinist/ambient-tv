@@ -87,6 +87,8 @@ data class MpvPlaybackSnapshot(
     val activeDeinterlace: String? = null,
     /** Live SVP state (source → target fps, preset, bypass); null with SVP off. */
     val svpStatus: String? = null,
+    /** Same sample as [svpStatus]; drives the OSD SVP chip. */
+    val svpState: SvpState? = null,
     /** False on direct output, where mpv's `scale` property is not the path in effect. */
     val gpuScalerExposed: Boolean = false,
 )
@@ -303,6 +305,8 @@ fun rememberMpvPlaybackSnapshot(
             val observedAudioCodec = if (refreshMediaInfo) controller.audioCodec() else snapshot.audioCodec
             if (refreshMediaInfo) controller.noteAudioCodecName(observedAudioCodec)
             val pollNerdStats = nerdStatsEnabled && (lastNerdPollMs == 0L || now - lastNerdPollMs >= 750L)
+            val sampleSvp = refreshMediaInfo || pollNerdStats
+            val svp = if (sampleSvp) controller.svpState() else snapshot.svpState
             snapshot = snapshot.copy(
                 confirmedAudioOnly = if (refreshMediaInfo) controller.isConfirmedAudioOnly() else snapshot.confirmedAudioOnly,
                 audioOutputFormat = if (pollNerdStats) controller.audioOutputFormat() else snapshot.audioOutputFormat,
@@ -340,7 +344,8 @@ fun rememberMpvPlaybackSnapshot(
                 zeroCopyStatus = controller.zeroCopyStatus,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,
                 activeDeinterlace = if (pollNerdStats) controller.activeDeinterlace() else snapshot.activeDeinterlace,
-                svpStatus = if (refreshMediaInfo || pollNerdStats) controller.svpStatus() else snapshot.svpStatus,
+                svpState = svp,
+                svpStatus = if (sampleSvp) formatSvpStatus(svp) else snapshot.svpStatus,
                 gpuScalerExposed = if (pollNerdStats) controller.supportsGpuFilters else snapshot.gpuScalerExposed,
             )
             if (pollNerdStats) lastNerdPollMs = now

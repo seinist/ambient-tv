@@ -69,9 +69,19 @@ internal fun PlayerVideoBadges(
 /** Shared presentation for Live TV and YouTube, including their combined Media3 labels. */
 @Composable
 internal fun PlayerStreamBadges(values: List<String>) {
+    val parts = playerStreamBadgeParts(values)
+    PlayerVideoBadges(dimensions = parts.dimensions, hdrLabel = parts.hdr)
+    parts.extras.forEach { MetaBadge(it.uppercase()) }
+}
+
+internal const val PLAYER_STREAM_EXTRA_BADGES = 4
+
+internal data class PlayerStreamBadgeParts(val dimensions: String?, val hdr: String?, val extras: List<String>)
+
+/** Size and HDR get their own flags; at most [PLAYER_STREAM_EXTRA_BADGES] other labels follow. */
+internal fun playerStreamBadgeParts(values: List<String>): PlayerStreamBadgeParts {
     val parts = values.flatMap { it.split('·') }.map(String::trim).filter(String::isNotBlank).distinct()
     val dimensions = parts.firstOrNull { DisplayRefreshRateMatcher.parseVideoDimensions(it) != null }
     val hdr = parts.firstOrNull { formatHdrMetadata(it) != null }
-    PlayerVideoBadges(dimensions = dimensions, hdrLabel = hdr)
-    parts.filter { it != dimensions && it != hdr }.take(4).forEach { MetaBadge(it.uppercase()) }
+    return PlayerStreamBadgeParts(dimensions, hdr, parts.filter { it != dimensions && it != hdr }.take(PLAYER_STREAM_EXTRA_BADGES))
 }

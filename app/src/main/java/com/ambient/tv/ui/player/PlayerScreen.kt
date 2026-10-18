@@ -1607,7 +1607,7 @@ internal fun PlayerMediaFlag(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp), tint = if (emphasized) Gold else Color.White.copy(alpha = 0.82f))
-        Text(label, color = if (emphasized) Gold else Color.White.copy(alpha = 0.82f), fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Text(label, color = if (emphasized) Gold else Color.White.copy(alpha = 0.82f), fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
     }
 }
 

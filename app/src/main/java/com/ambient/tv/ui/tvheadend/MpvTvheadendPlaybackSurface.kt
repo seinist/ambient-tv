@@ -364,6 +364,7 @@ internal fun MpvTvheadendPlaybackSurface(
                 snapshot.decoder,
             ),
             seekJumpMs = seekJumpMs,
+            svpBadge = com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState),
             onTogglePlayback = controller::playPause,
             onSeekBy = { delta -> controller.seekBy(delta); controlsVisible = true },
             onZap = onZap,

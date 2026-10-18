@@ -1622,6 +1622,8 @@ data class VlcPlaybackSnapshot(
     val appliedUpscaler: String? = null,
     val appliedFrameInterpolation: String? = null,
     val svpStatus: String? = null,
+    /** Same sample as [svpStatus]; drives the OSD SVP chip. */
+    val svpState: SvpState? = null,
 )
 
 // Unlike MPV (gated behind MpvBackendAvailability before this is ever called), VLC has no
@@ -1819,6 +1821,7 @@ fun rememberVlcPlaybackSnapshot(
             val pollStreamInfo = lastNerdPollMs == 0L || now - lastNerdPollMs >= 1000L
             val pollNerdStats = nerdStatsEnabled && pollStreamInfo
             val applied = if (pollNerdStats) controller.appliedVideoProcessing() else null
+            val svp = if (pollStreamInfo) controller.svpState() else snapshot.svpState
             snapshot = snapshot.copy(
                 isPlaying = status.playing,
                 wantsToPlay = controller.wantsToPlay(),
@@ -1827,7 +1830,8 @@ fun rememberVlcPlaybackSnapshot(
                 hasVideo = runCatching { !controller.trackAccess.getVideoTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasVideo),
                 hasAudio = runCatching { !controller.trackAccess.getAudioTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasAudio),
                 runtimeStats = if (pollStreamInfo) controller.runtimeStats(includeCounters = nerdStatsEnabled) else snapshot.runtimeStats,
-                svpStatus = if (pollStreamInfo) controller.svpStatus() else snapshot.svpStatus,
+                svpState = svp,
+                svpStatus = if (pollStreamInfo) formatSvpStatus(svp) else snapshot.svpStatus,
                 videoOutput = controller.videoOutputDescription,
                 accelerationFallback = controller.accelerationFallback,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,

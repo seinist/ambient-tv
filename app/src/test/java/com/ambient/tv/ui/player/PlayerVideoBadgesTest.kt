@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.player
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import com.ambient.tv.ui.display.SdrToHdrStatus
@@ -35,5 +36,31 @@ class PlayerVideoBadgesTest {
         assertNull(playerResolutionLabel(-1, 1080))
         assertNull(playerResolutionLabel(1920, 0))
         assertEquals("1100×600", playerResolutionLabel(1100, 600))
+    }
+
+    @Test fun streamBadgesKeepAtMostFourExtras() {
+        // MPV Live TV passes six values; with SVP as a seventh it would be cut, hence its own slot.
+        val values = listOf("HDR10", "1920x1080", "25 fps", "h264", "mp2", "mediacodec", "SVP 25 → 50")
+        val parts = playerStreamBadgeParts(values)
+        assertEquals("1920x1080", parts.dimensions)
+        assertEquals("HDR10", parts.hdr)
+        assertEquals(PLAYER_STREAM_EXTRA_BADGES, parts.extras.size)
+        assertEquals(listOf("25 fps", "h264", "mp2", "mediacodec"), parts.extras)
+        assertFalse(parts.extras.any { it.startsWith("SVP") })
+    }
+
+    @Test fun streamBadgesSplitCombinedLabels() {
+        val parts = playerStreamBadgeParts(listOf("1280x720 · H264", "AAC · AAC"))
+        assertEquals("1280x720", parts.dimensions)
+        assertEquals(listOf("H264", "AAC"), parts.extras)
+    }
+
+    @Test fun badgeLineFadesOnlyWhereCut() {
+        assertEquals(false to false, playerBadgeRowFades(overflowing = false, marquee = true, scrollPx = 0, maxScrollPx = 0))
+        assertEquals(false to false, playerBadgeRowFades(overflowing = false, marquee = false, scrollPx = 0, maxScrollPx = 0))
+        assertEquals(true to true, playerBadgeRowFades(overflowing = true, marquee = true, scrollPx = 0, maxScrollPx = 0))
+        assertEquals(false to true, playerBadgeRowFades(overflowing = true, marquee = false, scrollPx = 0, maxScrollPx = 120))
+        assertEquals(true to true, playerBadgeRowFades(overflowing = true, marquee = false, scrollPx = 60, maxScrollPx = 120))
+        assertEquals(true to false, playerBadgeRowFades(overflowing = true, marquee = false, scrollPx = 120, maxScrollPx = 120))
     }
 }

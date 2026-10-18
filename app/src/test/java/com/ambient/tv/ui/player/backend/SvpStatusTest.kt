@@ -38,4 +38,23 @@ class SvpStatusTest {
         assertNull(svpRates(0.0, 60.0))
         assertEquals("25 → 50 fps", svpRates(25.0, 50.0))
     }
+
+    @Test fun badgeOnlyWhileInterpolating() {
+        assertEquals("SVP 23.976 → 60", svpBadgeLabel(state()))
+        assertEquals("SVP 25 → 50", svpBadgeLabel(state(decision = SvpDecision.Run(25.0, 50.0), backend = 2)))
+        assertNull(svpBadgeLabel(null))
+        assertNull(svpBadgeLabel(state(mode = "off")))
+        for (reason in SvpInactiveReason.entries) {
+            assertNull(reason.name, svpBadgeLabel(SvpState("balanced", reason = reason, sourceFps = 25.0, targetFps = 50.0)))
+        }
+        // Transient timing gap and a filter that is not attached yet also hide the chip.
+        assertNull(svpBadgeLabel(state(runtime = SvpInactiveReason.TIMING)))
+        assertNull(svpBadgeLabel(state(inChain = false)))
+    }
+
+    @Test fun badgeWithoutKnownRatesSaysSvp() {
+        assertEquals("SVP", svpBadgeLabel(SvpState("balanced")))
+        assertEquals("SVP", svpBadgeLabel(SvpState("balanced", sourceFps = 0.0, targetFps = 60.0)))
+        assertEquals("SVP", svpBadgeLabel(SvpState("balanced", sourceFps = 24.0, targetFps = Double.NaN)))
+    }
 }

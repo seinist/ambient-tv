@@ -363,6 +363,7 @@ internal fun MpvPlayerContent(
                         hasVideo = snapshot.videoSize != null,
                     )
                     formatNerdFps(snapshot.containerFps)?.let { MetaBadge(it) }
+                    com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState)?.let { MetaBadge(it, emphasized = true) }
                     snapshot.videoCodec?.let { MetaBadge(it.uppercase()) }
                     snapshot.audioCodec?.let { MetaBadge(it.uppercase()) }
                 }
