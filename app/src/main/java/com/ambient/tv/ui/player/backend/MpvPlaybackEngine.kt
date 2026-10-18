@@ -648,6 +648,19 @@ internal class MpvPlaybackEngine(
         if (ended) { seekTo(0); ended = false }
         setProperty("pause", "no")
     }
+    private var outputMuteRestore: String? = null
+    override fun setOutputMuted(muted: Boolean) {
+        if (released) return
+        if (muted) {
+            if (outputMuteRestore == null) outputMuteRestore = dvPrimeMute ?: getPropertyString("mute") ?: "no"
+            if (dvPrimeMute != null) dvPrimeMute = "yes" else setProperty("mute", "yes")
+        } else {
+            val restore = outputMuteRestore ?: return
+            outputMuteRestore = null
+            if (dvPrimeMute != null) dvPrimeMute = restore else setProperty("mute", restore)
+        }
+    }
+
     override fun pause() {
         conversionSampleStarted = 0L
         desiredPlayWhenReady = false

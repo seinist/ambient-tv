@@ -206,6 +206,7 @@ fun YouTubePlayerScreen(
                 whitelist = prefs.displayModeWhitelist,
                 allowDoubleRate = prefs.allowDoubleRefreshRate,
                 allowThreeTwoPulldown = prefs.allowThreeTwoPulldown,
+                switchPauseMs = prefs.displaySwitchPauseMs,
             )
             val route = if (isTrailer) Destinations.trailerPlayer(playback.videoId) else Destinations.youtubePlayer(playback.videoId)
             val initialFormat = playback.adaptiveFormats.firstOrNull { it.url == playback.adaptiveVideoUri }

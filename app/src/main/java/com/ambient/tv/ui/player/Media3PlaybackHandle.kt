@@ -128,6 +128,16 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
         player.play()
     }
     override fun pause() = player.pause()
+    private var outputMuteVolume: Float? = null
+    override fun setOutputMuted(muted: Boolean) {
+        if (muted) {
+            if (outputMuteVolume == null) outputMuteVolume = player.volume
+            player.volume = 0f
+        } else {
+            outputMuteVolume?.let { player.volume = it }
+            outputMuteVolume = null
+        }
+    }
     override fun seekTo(positionMs: Long) {
         if (!Media3ResumePrimer.retarget(player, positionMs)) player.seekTo(positionMs)
     }

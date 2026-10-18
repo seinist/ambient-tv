@@ -252,6 +252,7 @@ class MpvPlaybackController(
     fun isPaused() = !isPlaying()
     override fun play() { playIntent = true; command("play-state") { play() } }
     override fun pause() { playIntent = false; command("play-state") { pause() } }
+    override fun setOutputMuted(muted: Boolean) { command("output-mute") { setOutputMuted(muted) } }
     fun playPause() { if (wantsToPlay()) pause() else play() }
     /** Target of a seek the engine has not applied yet; quick repeated steps build on it. */
     private var pendingSeekTargetMs: Long? = null

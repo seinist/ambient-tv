@@ -651,6 +651,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, true)
         set(value) = prefs.edit { putBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, value) }
 
+    /** Kodi-style pause after an app-requested display mode change; 0 is off, 0.5 s steps up to 20 s. */
+    var displaySwitchPauseMs: Int
+        get() = normalizeDisplaySwitchPauseMs(prefs.getInt(KEY_DISPLAY_SWITCH_PAUSE_MS, 0))
+        set(value) = prefs.edit { putInt(KEY_DISPLAY_SWITCH_PAUSE_MS, normalizeDisplaySwitchPauseMs(value)) }
+
     /** What a media-card activation does. Details remains the conservative default. */
     var mediaSelectionBehaviorKey: String
         get() = MediaSelectionPreferences.normalize(prefs.getString(KEY_MEDIA_SELECTION_BEHAVIOR, MediaSelectionPreferences.DETAILS))
@@ -1883,6 +1888,17 @@ class AppPreferences @Inject constructor(
         const val DISPLAY_MODE_AUTO_DISPLAY = "auto_display"
         const val KEY_ALLOW_DOUBLE_REFRESH_RATE = "allow_double_refresh_rate"
         const val KEY_ALLOW_THREE_TWO_PULLDOWN = "allow_three_two_pulldown"
+        const val KEY_DISPLAY_SWITCH_PAUSE_MS = "display_switch_pause_ms"
+        const val DISPLAY_SWITCH_PAUSE_STEP_MS = 500
+        const val DISPLAY_SWITCH_PAUSE_MAX_MS = 20_000
+        /** Typical HDMI resync of an AV receiver with passthrough. */
+        const val DISPLAY_SWITCH_PAUSE_RECOMMENDED_MS = 3_000
+
+        /** Rounds to the nearest 0.5 s step within off..20 s. */
+        fun normalizeDisplaySwitchPauseMs(value: Int): Int {
+            val clamped = value.coerceIn(0, DISPLAY_SWITCH_PAUSE_MAX_MS)
+            return ((clamped + DISPLAY_SWITCH_PAUSE_STEP_MS / 2) / DISPLAY_SWITCH_PAUSE_STEP_MS) * DISPLAY_SWITCH_PAUSE_STEP_MS
+        }
         val DISPLAY_REFRESH_ADJUSTMENTS = setOf("off", "always", "start_stop", "start")
         const val DISPLAY_REFRESH_OFF = "off"
         const val DISPLAY_REFRESH_ALWAYS = "always"

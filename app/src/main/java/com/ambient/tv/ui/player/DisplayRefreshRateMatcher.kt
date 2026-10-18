@@ -19,7 +19,10 @@ import android.hardware.display.DisplayManager
 import com.ambient.tv.data.local.AppPreferences
 import timber.log.Timber
 import java.util.Locale
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import kotlin.math.abs
 
 /** Walks [ContextWrapper] chains; Compose's LocalContext is often not the Activity itself. */
@@ -68,13 +71,39 @@ object DisplayRefreshRateMatcher {
     }
 
     fun setPreferredMode(activity: Activity?, key: String, allowedModes: Set<String> = emptySet()) {
-        val target = findMode(activity, key) ?: return
-        if (allowedModes.isNotEmpty() && target.key !in allowedModes) return
-        requestMode(activity, target)
+        requestMode(activity, preferredMode(activity, key, allowedModes))
     }
+
+    fun preferredMode(activity: Activity?, key: String, allowedModes: Set<String> = emptySet()): SupportedDisplayMode? {
+        val target = findMode(activity, key) ?: return null
+        if (allowedModes.isNotEmpty() && target.key !in allowedModes) return null
+        return target
+    }
+
+    /** Requests [mode]; [transitionExtraMs] widens the HDMI-unplug suppression for a configured pause. */
+    fun requestDisplayMode(activity: Activity?, mode: SupportedDisplayMode?, transitionExtraMs: Long = 0L) =
+        requestMode(activity, mode, transitionExtraMs)
 
     /** Selects one of the two automatic policies, or preserves the legacy fixed/system policy. */
     fun matchContentFrameRate(
+        activity: Activity?,
+        contentFrameRate: Float,
+        contentWidth: Int? = null,
+        contentHeight: Int? = null,
+        preferredModeKey: String = "system",
+        fallbackModeKey: String? = null,
+        allowedModes: Set<String> = emptySet(),
+        allowDoubleRate: Boolean = true,
+        allowThreeTwoPulldown: Boolean = true,
+        preserveRefreshRate: Boolean = false,
+        preserveOutputResolution: Boolean = false,
+    ): SupportedDisplayMode? = contentFrameRateMode(
+        activity, contentFrameRate, contentWidth, contentHeight, preferredModeKey, fallbackModeKey,
+        allowedModes, allowDoubleRate, allowThreeTwoPulldown, preserveRefreshRate, preserveOutputResolution,
+    ).also { requestMode(activity, it) }
+
+    /** The mode [matchContentFrameRate] would request, without touching the window. */
+    fun contentFrameRateMode(
         activity: Activity?,
         contentFrameRate: Float,
         contentWidth: Int? = null,
@@ -99,7 +128,6 @@ object DisplayRefreshRateMatcher {
             preferredModeKey, contentWidth, contentHeight, contentFrameRate, selected?.label ?: "unavailable",
             allowedModes.size, preserveRefreshRate, preserveOutputResolution)
         Timber.d("DisplayAuto available=%s", all.joinToString { it.key })
-        requestMode(activity, selected)
         return selected
     }
 
@@ -245,12 +273,12 @@ object DisplayRefreshRateMatcher {
         return display.supportedModes.map(::choice).firstOrNull { it.key == key }
     }
 
-    private fun requestMode(activity: Activity?, mode: SupportedDisplayMode?) {
+    private fun requestMode(activity: Activity?, mode: SupportedDisplayMode?, transitionExtraMs: Long = 0L) {
         val window = activity?.window ?: return
         mode ?: return
         val params = window.attributes
         if (params.preferredDisplayModeId == mode.modeId && currentModeKey(activity) == mode.key) return
-        PlaybackOutputTransition.begin(activity)
+        PlaybackOutputTransition.begin(activity, transitionExtraMs)
         params.preferredDisplayModeId = mode.modeId
         // Keep the renderer clock, audio and play intent running while HDMI renegotiates.
         // VideoSurfaceLayout updates the surface after DisplayManager reports the new mode.
@@ -332,6 +360,7 @@ fun rememberDisplayModeRequest(
     allowDoubleRate: Boolean = true,
     allowThreeTwoPulldown: Boolean = true,
     metadataRoute: String? = LocalPlaybackMetadata.current?.route,
+    switchPauseMs: Int = 0,
 ): (Float, Int?, Int?) -> Unit {
     val interpolation = BackgroundPlaybackSession.activeHandle()?.usesFrameInterpolation == true
     val rendererScaling = BackgroundPlaybackSession.activeHandle()?.usesRendererScaling == true
@@ -345,10 +374,47 @@ fun rememberDisplayModeRequest(
     val latestPreferred by rememberUpdatedState(preferredModeKey)
     val originalModeId = remember(activity) { DisplayRefreshRateMatcher.currentModeId(activity) }
     val originalModeKey = remember(activity) { DisplayRefreshRateMatcher.currentModeKey(activity) }
+    val latestPlaybackKey by rememberUpdatedState(playbackKey)
+    val latestSwitchPauseMs by rememberUpdatedState(switchPauseMs)
+    val holdScope = rememberCoroutineScope()
+    val holdJob = remember(activity, playbackKey) { arrayOfNulls<Job>(1) }
+    // Pause, request, confirm and delay outlive format-driven effect restarts, not the title.
+    fun switchWithPause(target: SupportedDisplayMode?): Job? {
+        target ?: return null
+        val delayMs = AppPreferences.normalizeDisplaySwitchPauseMs(latestSwitchPauseMs)
+        val handle = BackgroundPlaybackSession.activeHandle()
+        val metadata = BackgroundPlaybackSession.snapshot.value.metadata
+        val isLive = metadata?.isLive == true
+        val hold = if (handle == null) DisplaySwitchHold.NONE else displaySwitchHoldFor(
+            target.key, DisplayRefreshRateMatcher.currentModeKey(activity), delayMs, isLive,
+            timeshift = com.ambient.tv.livetv.LiveTimeshift.current != null,
+        )
+        val extraMs = displaySwitchTransitionExtraMs(delayMs)
+        if (hold == DisplaySwitchHold.NONE || handle == null) {
+            DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs)
+            return null
+        }
+        val key = playbackKey
+        val mediaKey = metadata?.let { it.source to it.mediaId }
+        return holdScope.launch {
+            val outcome = holdForDisplaySwitch(
+                handle.asDisplaySwitchPlayer(), hold, delayMs, isLive,
+                request = { DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs) },
+                awaitConfirmed = { timeout -> awaitDisplayMode(activity, target.key, timeout) },
+                stillOwned = {
+                    latestPlaybackKey == key && BackgroundPlaybackSession.activeHandle() === handle &&
+                        BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId } == mediaKey
+                },
+            )
+            Timber.i("DisplaySwitchPause hold=%s delay=%dms target=%s outcome=%s", hold, delayMs, target.key, outcome)
+        }.also { holdJob[0] = it }
+    }
     DisposableEffect(activity, playbackKey, metadataRoute) {
         onDispose {
             // Drop the panel lock with this playback so the next title can cadence-match again.
             metadataRoute?.let(PlaybackDisplayModeRevision::clearSessionFixedFor)
+            // A new title cancels the auto-resume; stillOwned() keeps the engine paused.
+            holdJob[0]?.cancel()
         }
     }
     DisposableEffect(activity) {
@@ -366,9 +432,11 @@ fun rememberDisplayModeRequest(
             else DisplayRefreshRateMatcher.setPreferredMode(activity, fixed)
             return@LaunchedEffect
         }
+        // Let a running hold finish; a newer format must not request a second mode mid-resync.
+        holdJob[0]?.takeIf { it.isActive }?.join()
         if (adjustmentKey == "off") {
             if (preferredModeKey == "system") DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
-            else DisplayRefreshRateMatcher.setPreferredMode(activity, preferredModeKey)
+            else switchWithPause(DisplayRefreshRateMatcher.preferredMode(activity, preferredModeKey))?.join()
         } else if (adjustmentKey == "always" || !switchedAtStart ||
             displayRateUpgradeNeeded(adjustmentKey, preferredModeKey, activity?.let(androidx.core.content.ContextCompat::getDisplayOrDefault)?.refreshRate, content?.fps)) {
             val format = content ?: return@LaunchedEffect
@@ -381,12 +449,15 @@ fun rememberDisplayModeRequest(
             // One bounded retry covers a request issued while the window/HDMI output is settling.
             // Never clear the mode or pause/recreate the decoder to force a physical switch.
             repeat(2) { attempt ->
-                val selected = DisplayRefreshRateMatcher.matchContentFrameRate(
+                val selected = DisplayRefreshRateMatcher.contentFrameRateMode(
                     activity, format.fps, format.width, format.height,
                     preferredModeKey, originalModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
                     preserveRefreshRate = interpolation,
                     preserveOutputResolution = rendererScaling,
                 ) ?: return@LaunchedEffect
+                // Only the first request may pause; a retry must not hold playback a second time.
+                if (attempt == 0) switchWithPause(selected)?.join()
+                else DisplayRefreshRateMatcher.requestDisplayMode(activity, selected)
                 delay(3_000)
                 val actual = DisplayRefreshRateMatcher.currentModeKey(activity)
                 // Do not latch an absent or ignored request. Later format/HDMI updates may retry.

@@ -839,6 +839,13 @@ fun SettingsScreen(
                                             checked = uiState.allowThreeTwoPulldown,
                                             onCheckedChange = viewModel::onAllowThreeTwoPulldownChanged,
                                         )
+                                        if (com.ambient.tv.ui.player.displaySwitchPauseVisible(supportedDisplayModes.size,
+                                                uiState.displayRefreshAdjustmentKey, uiState.preferredDisplayModeKey)) {
+                                            com.ambient.tv.ui.player.DisplaySwitchPauseSlider(
+                                                valueMs = uiState.displaySwitchPauseMs,
+                                                onValueChange = viewModel::onDisplaySwitchPauseChanged,
+                                            )
+                                        }
                                     }
                                 }
                                 item {

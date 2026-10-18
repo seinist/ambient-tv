@@ -189,6 +189,7 @@ fun TvheadendPlayerScreen(
         allowDoubleRate = viewModel.allowDoubleRefreshRate,
         allowThreeTwoPulldown = viewModel.allowThreeTwoPulldown,
         metadataRoute = displayRoute,
+        switchPauseMs = viewModel.displaySwitchPauseMs,
     )
     val recordingControl by viewModel.recordingControl.collectAsState()
     CompositionLocalProvider(

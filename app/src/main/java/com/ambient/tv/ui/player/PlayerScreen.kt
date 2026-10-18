@@ -237,6 +237,7 @@ private fun PlayerContent(
         whitelist = viewModel.displayModeWhitelist(),
         allowDoubleRate = viewModel.allowDoubleRefreshRate(),
         allowThreeTwoPulldown = viewModel.allowThreeTwoPulldown(),
+        switchPauseMs = viewModel.displaySwitchPauseMs(),
     )
     val audioOnlyHint = audioOnlyPlaybackHint(state.sourceRatingKey, state.mediaType, state.videoCodec)
     val requestedBackend = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(state.playbackBackendKey)
