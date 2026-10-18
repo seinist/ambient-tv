@@ -1683,9 +1683,9 @@
     <string name="iptv_delete">Delete</string>
     <string name="iptv_delete_title">Delete “%1$s”?</string>
     <string name="timeshift_title">Timeshift</string>
-    <string name="timeshift_hint">Pause, rewind and jump back to live during live TV – in Media3, VLC and MPV. The app buffers the channel on this device while it plays (TVHeadend and IPTV with MPEG-TS streams).</string>
+    <string name="timeshift_hint">Buffers live TV on this device</string>
     <string name="timeshift_off">Off</string>
-    <string name="timeshift_storage_hint">The initial size is chosen from available device storage and can be changed here at any time. The buffer uses free storage (at most what is set, always keeping 512 MB free) and is deleted when playback ends. About 1 GB holds 30–60 minutes of HD.</string>
+    <string name="timeshift_storage_hint">1 GB ≈ 30–60 min HD</string>
     <string name="timeshift_behind">−%1$s</string>
     <string name="timeshift_go_live">Back to live</string>
     <string name="reminder_lead_title">Programme reminders</string>
@@ -1703,8 +1703,8 @@
     <string name="reminder_dismiss">Dismiss</string>
     <string name="player_record_failed">Could not schedule recording. Please check recording permissions and the backend.</string>
     <string name="live_direct_record">Record</string>
-    <string name="live_direct_record_hint">Show Record button when supported.</string>
-    <string name="live_timeshift_optional_hint">Pause and rewind Live TV. For IPTV, only direct MPEG-TS streams over HTTP(S) are supported, not HLS (.m3u8).</string>
+    <string name="live_direct_record_hint">Record button in player</string>
+    <string name="live_timeshift_optional_hint">Pause and rewind live TV</string>
     <string name="live_timeshift_failed">Could not apply timeshift change. Please restart the channel.</string>
     <string name="timeshift_programme_position">Programme %1$s / %2$s · Playing %3$s</string>
     <string name="timeshift_before_programme">Playing %1$s · before current programme</string>
