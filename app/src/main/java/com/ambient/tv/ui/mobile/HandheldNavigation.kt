@@ -328,6 +328,9 @@ private fun HandheldSources(
                 item(group.system.key) {
                     ListItem(
                         headlineContent = { Text(systemName(group.system)) },
+                        supportingContent = if (group.system == MediaSystem.TVHEADEND && sidebarState.tvheadendOffline) {
+                            { Text(stringResource(R.string.tvh_offline_badge)) }
+                        } else null,
                         leadingContent = { SystemLogo(group.system) },
                         trailingContent = { Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
                         modifier = Modifier.clickable { expanded = if (open) null else group.system.key },

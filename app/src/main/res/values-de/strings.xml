@@ -475,6 +475,9 @@
     <string name="add_system_label_tvheadend">TVHeadend</string>
     <string name="add_system_label_files">Dateien, SMB, NFS, WebDAV und SFTP</string>
     <string name="tvh_live">Live</string>
+    <string name="tvh_offline_hint">Server offline – gespeicherte Daten. Wiedergabe und Aufnahme brauchen den Server.</string>
+    <string name="tvh_wake_server">Server aufwecken</string>
+    <string name="tvh_offline_badge">Offline</string>
     <string name="tvh_login_check">Anmeldung prüfen</string>
     <string name="tvh_guide">Programm</string>
     <string name="tvh_recordings">Aufnahmen</string>

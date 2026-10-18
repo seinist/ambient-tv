@@ -10,6 +10,7 @@ class TvheadendLiveTvRepository(
     private val scope: String,
 ) : LiveTvRepository {
     private fun checkSource() = check(preferences.isTvheadendConfigured && preferences.tvheadendHistoryScope == scope) { "TV source configuration changed." }
+    override val servingCachedData: Boolean get() = delegate.servingCachedData.value
     override fun authHeaders(): Map<String, String> { checkSource(); return delegate.authHeaders() }
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities {
         checkSource()

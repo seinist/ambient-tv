@@ -6,6 +6,8 @@ import kotlinx.coroutines.coroutineScope
 
 interface LiveTvRepository {
     val source: LiveTvSource
+    /** The last answers came from the offline cache (server asleep or unreachable). */
+    val servingCachedData: Boolean get() = false
     fun authHeaders(): Map<String, String> = emptyMap()
     suspend fun capabilities(force: Boolean = false): LiveTvCapabilities
     suspend fun channels(force: Boolean = false): List<LiveTvChannel>

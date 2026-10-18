@@ -229,6 +229,12 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect { refresh() }
         }
+        // TVHeadend woke up after Home showed its cached channels: reload only the TV rows.
+        viewModelScope.launch {
+            tvheadendRepository.revalidated.collect {
+                if (tvPreviewJob?.isActive != true && !plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
+            }
+        }
         // Address/login saved elsewhere (backup import, companion transfer) but not yet confirmed:
         // confirm it once here, so a working server appears without a manual connection test.
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -333,16 +339,7 @@ class HomeViewModel @Inject constructor(
         tvPreviewScope = nextTvScope
         loadPhotoRow()
         loadTrailerRows()
-        if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) {
-            tvPreviewJob = viewModelScope.launch {
-                tvPreview = loadLiveTvPreview()
-                tvPreviewComplete = true
-                val current = _uiState.value as? HomeUiState.Loaded
-                if (current != null) publishRows(current.rows)
-                else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
-                    (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured)) publishRows(emptyList())
-            }
-        }
+        if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
         if ((jellyfinOnly || embyOnly) && !refreshing && _uiState.value !is HomeUiState.Loaded) {
             libraryLoading = true
             // Hydration and cached row construction run in launchLoad, off the UI thread.
@@ -1026,6 +1023,19 @@ class HomeViewModel @Inject constructor(
             "${indexed.value.system}.${indexed.value.contentKey}" to indexed.index
         }
         return if (plexOnly || jellyfinOnly || embyOnly) rows else rows.sortedBy { order[homeRowSource(it.id)] ?: Int.MAX_VALUE }
+    }
+
+    /** Live TV rows; TVHeadend answers from its cache at once while the server sleeps. */
+    private fun startTvPreview() {
+        tvPreviewJob?.cancel()
+        tvPreviewJob = viewModelScope.launch {
+            tvPreview = loadLiveTvPreview()
+            tvPreviewComplete = true
+            val current = _uiState.value as? HomeUiState.Loaded
+            if (current != null) publishRows(current.rows)
+            else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
+                (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured)) publishRows(emptyList())
+        }
     }
 
     private suspend fun loadLiveTvPreview(): HomeTvPreview = kotlinx.coroutines.coroutineScope {

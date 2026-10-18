@@ -46,6 +46,8 @@ data class SidebarUiState(
     val tvheadendEnabled: Boolean = false,
     /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
     val tvheadendLoginRejected: Boolean = false,
+    /** Server asleep or unreachable: TVHeadend stays, marked offline, with its cached data. */
+    val tvheadendOffline: Boolean = false,
     val youtubeFeedKeys: List<String> = listOf("home"),
     val spotifySubmenuKeys: List<String> = emptyList(),
     val tvheadendSubmenuKeys: List<String> = emptyList(),
@@ -80,6 +82,7 @@ class SidebarViewModel @Inject constructor(
     private val spotifyProvider: javax.inject.Provider<SpotifyRepository>,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
+    private val tvheadendRepository: com.ambient.tv.tvheadend.data.TvheadendRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -158,6 +161,9 @@ class SidebarViewModel @Inject constructor(
     private var spotifyAuthJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            tvheadendRepository.servingCachedData.collect { offline -> _uiState.update { it.copy(tvheadendOffline = offline) } }
+        }
         viewModelScope.launch {
             unreachableServers.state.collect { gate ->
                 _uiState.update { it.copy(suppressedSystems = gate.hidden) }

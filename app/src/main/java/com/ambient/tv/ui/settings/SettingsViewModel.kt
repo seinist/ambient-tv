@@ -2141,6 +2141,8 @@ class SettingsViewModel @Inject constructor(
 
     private fun persistTvheadend(state: SettingsUiState = _uiState.value) {
         if (state.tvheadendEnabled && state.tvheadendHost.isNotBlank()) appPreferences.initializeTimeshiftStorage(context)
+        // Disabled: stored channels, guide and recordings of this server are deleted, not kept offline.
+        if (appPreferences.tvheadendEnabled && !state.tvheadendEnabled) tvheadendRepository.clearPersistentCache()
         appPreferences.tvheadendEnabled = state.tvheadendEnabled
         appPreferences.tvheadendHost = state.tvheadendHost.trim()
         appPreferences.tvheadendPort = state.tvheadendPort.toIntOrNull() ?: 9981

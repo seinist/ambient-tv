@@ -222,6 +222,17 @@ fun TvheadendScreen(
             OperationFeedbackContent(state.error!!, Modifier.fillMaxWidth(),
                 actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
         }
+        if (state.offline && state.dashboard != null) Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // Cached data stays browsable; play, record, timers and delete wait for the server.
+            Text(stringResource(R.string.tvh_offline_hint), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, fill = false))
+            if (state.canWake) TvActionButton(text = stringResource(R.string.tvh_wake_server), onClick = viewModel::wakeServer,
+                enabled = !state.waking, loading = state.waking)
+        }
         if (state.tab == TvheadendTab.TIMERS) state.actionFeedback?.takeIf { it.scope == "timers" }?.let {
             OperationFeedbackContent(it, Modifier.fillMaxWidth())
         }
@@ -287,7 +298,7 @@ fun TvheadendScreen(
                         recordings = dashboard?.recordings.orEmpty(),
                         failedRecordings = dashboard?.failedRecordings.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
-                        onPlay = { onPlayRecording(it.uuid) },
+                        onPlay = { if (state.offline) viewModel.selectRecording(it) else onPlayRecording(it.uuid) },
                         onSelect = viewModel::selectRecording,
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
@@ -296,7 +307,7 @@ fun TvheadendScreen(
                     TvheadendTab.TIMERS -> TimerList(
                         timers = dashboard?.upcoming.orEmpty(),
                         autoRecs = dashboard?.autoRecs.orEmpty(),
-                        canManage = state.capabilities.manageTimers,
+                        canManage = state.capabilities.manageTimers && !state.offline,
                         busy = state.actionInProgress,
                         imageHeaders = viewModel.imageHeaders,
                         onSelect = viewModel::selectRecording,
@@ -319,8 +330,8 @@ fun TvheadendScreen(
         EventDialog(
             event = event,
             timer = timer,
-            canRecord = state.capabilities.manageTimers,
-            canRecordSeries = state.capabilities.seriesTimers,
+            canRecord = state.capabilities.manageTimers && !state.offline,
+            canRecordSeries = state.capabilities.seriesTimers && !state.offline,
             canWatch = !state.offline && channel != null && event.isLive(System.currentTimeMillis() / 1000L),
             busy = state.actionInProgress,
             message = state.actionFeedback?.takeIf { it.scope == "event:${event.eventId}" },
