@@ -73,3 +73,21 @@ class SleepTimerDefaultsTest {
         assertEquals(60_000L, timer.warningDue(30_000, 60_000))
     }
 }
+
+class SleepTimerNextItemTest {
+    @Test fun automaticEndOfTitleContinuesWithTheNextTitleAndKeepsTheDailyStop() {
+        val auto = SleepTimerConfig(SleepTimerKind.END_OF_ITEM, alsoStopRealtimeMs = 9_000L)
+        val next = sleepTimerForNextItem(auto, auto = true)
+        assertEquals(SleepTimerKind.END_OF_ITEM, next.kind)
+        assertEquals(9_000L, next.alsoStopRealtimeMs)
+    }
+
+    @Test fun manualEndOfTitleEndsWithItsTitle() {
+        assertEquals(SleepTimerKind.OFF, sleepTimerForNextItem(SleepTimerConfig(SleepTimerKind.END_OF_ITEM), auto = false).kind)
+        val clock = sleepTimerForNextItem(SleepTimerConfig(SleepTimerKind.END_OF_ITEM, alsoStopRealtimeMs = 5L), auto = false)
+        assertEquals(SleepTimerKind.CLOCK_TIME, clock.kind)
+        assertEquals(5L, clock.deadlineRealtimeMs)
+        val duration = SleepTimerConfig(SleepTimerKind.DURATION, 30, 1_800_000L)
+        assertSame(duration, sleepTimerForNextItem(duration, auto = false))
+    }
+}

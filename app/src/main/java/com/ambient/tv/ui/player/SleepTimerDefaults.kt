@@ -88,3 +88,13 @@ internal fun sleepClockLabel(deadlineRealtimeMs: Long?, nowRealtimeMs: Long = an
     val at = Instant.ofEpochMilli(nowEpochMs + ((deadlineRealtimeMs ?: nowRealtimeMs) - nowRealtimeMs)).atZone(zone)
     return "%02d:%02d".format(at.hour, at.minute)
 }
+
+/**
+ * "End of title" when another title starts in the same session: a manual one ends with its title
+ * (the daily stop time, if any, stays); the automatic one goes on with the next title.
+ */
+internal fun sleepTimerForNextItem(current: SleepTimerConfig, auto: Boolean): SleepTimerConfig = when {
+    current.kind != SleepTimerKind.END_OF_ITEM -> current
+    auto -> SleepTimerConfig(SleepTimerKind.END_OF_ITEM, alsoStopRealtimeMs = current.alsoStopRealtimeMs)
+    else -> current.alsoStopRealtimeMs?.let { SleepTimerConfig(SleepTimerKind.CLOCK_TIME, 0, it) } ?: SleepTimerConfig()
+}
