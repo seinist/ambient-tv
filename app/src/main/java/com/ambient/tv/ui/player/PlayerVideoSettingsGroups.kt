@@ -308,7 +308,7 @@ private fun MpvVideoGroups(
     }
     val showMotion = visibility.svp && LocalPerformanceProfile.current.allowSvpInterpolation
     if (section == "motion" && showMotion) {
-        SvpOptionsEditor(options.svpMode, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
+        SvpOptionsEditor(options.svpMode, options.svp, { change(options.copy(svp = it)) }, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }
@@ -437,7 +437,7 @@ private fun VlcVideoGroups(
         }
     }
     if (section == "motion" && visibility.svp && LocalPerformanceProfile.current.allowSvpInterpolation) {
-        SvpOptionsEditor(options.svpMode, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
+        SvpOptionsEditor(options.svpMode, options.svp, { change(options.copy(svp = it)) }, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }

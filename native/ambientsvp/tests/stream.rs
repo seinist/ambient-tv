@@ -2,7 +2,7 @@ use ambientsvp::{Config, AmbientSvp};
 
 fn config() -> Config {
     Config {
-        abi: 1,
+        abi: 2,
         width: 64,
         height: 64,
         source_num: 24,
@@ -12,6 +12,13 @@ fn config() -> Config {
         preset: 1,
         backend: 1,
         threads: 2,
+        artifacts: 0,
+        scene: 0,
+        algo: 0,
+        block: 0,
+        overlap: 0,
+        pel: 0,
+        search: 0,
     }
 }
 
@@ -238,5 +245,78 @@ fn vulkan_synthesizes_without_cpu_fallback() {
         while s.receive(&mut out, false).unwrap().is_some() {}
     }
     assert_eq!(s.stats().backend, 2);
+    assert!(s.stats().interpolated_frames > 0);
+}
+
+#[test]
+fn custom_algorithms_stream_with_correct_lookahead_and_reset() {
+    custom_stream(1);
+}
+
+#[cfg(feature = "vulkan")]
+#[test]
+#[ignore = "requires hardware Vulkan"]
+fn custom_algorithms_vulkan() {
+    custom_stream(2);
+}
+
+fn custom_stream(backend: u32) {
+    for algo in [13, 21, 23] {
+        for artifacts in [0, 1, 2, 3] {
+            let mut c = config();
+            c.backend = backend;
+            c.algo = algo;
+            c.artifacts = artifacts;
+            c.scene = 1;
+            c.block = 16;
+            c.overlap = 3;
+            c.pel = 2;
+            c.search = 1;
+            let mut s = AmbientSvp::new(c).unwrap();
+            let mut out = vec![0; s.frame_len()];
+            for origin in [0, 10_000_000] {
+                s.reset().unwrap();
+                let mut pts = Vec::new();
+                for n in 0..12 {
+                    s.push(&frame(n * 2), origin + n as i64 * 1_000_000 / 24).unwrap();
+                    while let Some(p) = s.receive(&mut out, false).unwrap() { pts.push(p); }
+                }
+                while let Some(p) = s.receive(&mut out, true).unwrap() { pts.push(p); }
+                assert_eq!(pts.len(), 30, "algo={algo}, artifacts={artifacts}");
+                for (n, p) in pts.iter().enumerate() { assert_eq!(*p, origin + n as i64 * 1_000_000 / 60); }
+                assert_eq!(s.stats().bypass_reason, 0);
+                assert_eq!(s.stats().backend, backend);
+                assert!(s.stats().interpolated_frames > 0, "algo={algo}, artifacts={artifacts}");
+            }
+        }
+    }
+}
+
+#[test]
+fn invalid_overrides_and_old_abi_are_rejected() {
+    for field in 0..8 {
+        let mut c = config();
+        match field { 0 => c.abi = 1, 1 => c.algo = 99, 2 => c.block = 7,
+            3 => c.overlap = 5, 4 => c.pel = 3, 5 => c.search = 4,
+            6 => c.artifacts = 4, _ => c.scene = 4 }
+        assert!(AmbientSvp::new(c).is_err());
+    }
+}
+
+#[test]
+fn small_blocks_with_eighth_overlap_still_render_on_cpu() {
+    let mut c = config();
+    c.block = 8;
+    c.overlap = 2;
+    let mut s = AmbientSvp::new(c).unwrap();
+    let mut out = vec![0; s.frame_len()];
+    let mut count = 0;
+    for n in 0..8 {
+        s.push(&frame(n * 2), n as i64 * 1_000_000 / 24).unwrap();
+        while s.receive(&mut out, false).unwrap().is_some() { count += 1; }
+    }
+    while s.receive(&mut out, true).unwrap().is_some() { count += 1; }
+    assert_eq!(count, 20);
+    assert_eq!(s.stats().bypass_reason, 0);
     assert!(s.stats().interpolated_frames > 0);
 }

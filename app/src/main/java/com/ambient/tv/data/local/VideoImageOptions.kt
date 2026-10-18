@@ -57,6 +57,35 @@ object VideoImageCatalog {
     val svpModes = setOf("off", "auto", "light", "balanced", "quality")
 }
 
+/** Zero selects the preset value; overrides are shared by both native players. */
+@Serializable
+data class SvpOptions(
+    val rateDivisor: Int = 1,
+    val artifacts: Int = 0,
+    val scene: Int = 0,
+    val algorithm: Int = 0,
+    val block: Int = 0,
+    val overlap: Int = 0,
+    val pel: Int = 0,
+    val search: Int = 0,
+    val backend: Int = 0,
+    val threads: Int = 0,
+) {
+    fun normalized() = copy(
+        rateDivisor = rateDivisor.takeIf { it in 1..2 } ?: 1,
+        artifacts = artifacts.takeIf { it in 0..3 } ?: 0,
+        scene = scene.takeIf { it in 0..3 } ?: 0,
+        algorithm = algorithm.takeIf { it in setOf(0, 13, 21, 23) } ?: 0,
+        block = block.takeIf { it in setOf(0, 8, 16, 32) } ?: 0,
+        // 1/8 of an 8 px block is odd; CPU synthesis (also Vulkan's fallback) needs even overlap.
+        overlap = if (block == 8 && overlap == 2) 3 else overlap.takeIf { it in 0..4 } ?: 0,
+        pel = pel.takeIf { it in setOf(0, 1, 2, 4) } ?: 0,
+        search = search.takeIf { it in 0..3 } ?: 0,
+        backend = backend.takeIf { it in 0..2 } ?: 0,
+        threads = threads.takeIf { it in 0..8 } ?: 0,
+    )
+}
+
 @Serializable
 data class MpvImageOptions(
     val scaler: String = "lanczos",
@@ -77,6 +106,7 @@ data class MpvImageOptions(
     val ditherDepth: String = "auto",
     /** Open-SVPFlow motion compensation; effective only in Maximum performance mode. */
     val svpMode: String = "off",
+    val svp: SvpOptions = SvpOptions(),
     /** Synthetic film grain on luma, applied after scaling and sharpening. */
     val filmGrain: String = "off",
 ) {
@@ -95,6 +125,7 @@ data class MpvImageOptions(
             contrast = contrast.coerceIn(-20, 20), saturation = saturation.coerceIn(-20, 20), gamma = gamma.coerceIn(-20, 20),
             toneMapping = toneMapping.takeIf { it in VideoImageCatalog.toneMapping } ?: "auto",
             ditherDepth = ditherDepth.takeIf { it in setOf("auto", "no", "8", "10") } ?: "auto",
+            svp = svp.normalized(),
             svpMode = svpMode.takeIf { it in VideoImageCatalog.svpModes } ?: "off",
             filmGrain = filmGrain.takeIf { it in setOf("off", "light", "medium") } ?: "off",
         )
@@ -112,8 +143,10 @@ data class VlcImageOptions(
     val saturation: Int = 0,
     val gamma: Int = 0,
     val svpMode: String = "off",
+    val svp: SvpOptions = SvpOptions(),
 ) {
     fun normalized() = copy(
+        svp = svp.normalized(),
         svpMode = svpMode.takeIf { it in VideoImageCatalog.svpModes } ?: "off",
         scaler = scaler.takeIf { it in VideoImageCatalog.vlcScalers } ?: "bilinear",
         deband = deband.takeIf { it in setOf("off", "light", "medium") } ?: "off",

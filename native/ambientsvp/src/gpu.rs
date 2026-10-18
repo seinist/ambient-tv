@@ -179,6 +179,7 @@ impl Gpu {
             format,
             view_formats: &[],
             usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | if cfg!(test) { wgpu::TextureUsages::COPY_SRC } else { wgpu::TextureUsages::empty() }
                 | wgpu::TextureUsages::COPY_DST
                 | if storage {
                     wgpu::TextureUsages::STORAGE_BINDING
@@ -197,25 +198,41 @@ impl Gpu {
         h: u32,
         stride: u32,
     ) {
-        self.queue.write_texture(
+        // Explicit MAP_WRITE upload buffers avoid the transient mapped staging allocator
+        // used by Queue::write_texture (which faults on the Android emulator at 1440p).
+        // COPY_SRC alone still uses that allocator for mapped_at_creation initialization.
+        // Buffer-to-texture copies require 256-byte rows, unlike write_texture.
+        let pitch = stride.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let mut padded = vec![0u8; pitch as usize * h as usize];
+        for row in 0..h as usize {
+            padded[row * pitch as usize..row * pitch as usize + stride as usize]
+                .copy_from_slice(&data[row * stride as usize..(row + 1) * stride as usize]);
+        }
+        let staging = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("SVP texture upload"),
+            contents: &padded,
+            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_WRITE,
+        });
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(pitch),
+                    rows_per_image: Some(h),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
                 texture,
                 mip_level: 0,
                 origin,
                 aspect: wgpu::TextureAspect::All,
             },
-            data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(stride),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+        self.queue.submit([encoder.finish()]);
     }
 
     fn source(&mut self, n: i32, data: &[u8]) {
@@ -493,4 +510,61 @@ fn params_bytes(p: &GpuParams, base: u32, stride: u32) -> Vec<u8> {
     data.extend(stride.to_le_bytes());
     data.resize(96, 0);
     data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Also runnable as an Android test executable via cargo ndk test --lib --no-run.
+    // The original write_texture path SIGSEGVs on the emulator at 2560x1440.
+    #[test]
+    #[ignore = "requires hardware Vulkan"]
+    fn texture_upload_round_trip_at_video_resolutions() {
+        for (w, h) in [(128, 72), (1920, 1080), (2560, 1440), (3840, 2160)] {
+            for cycle in 0..3 {
+                let mut gpu = Gpu::new(w, h).unwrap();
+                let data: Vec<u8> = (0..w as usize * h as usize * 3 / 2)
+                    .map(|n| ((n * 17 + n / w as usize + cycle * 31) % 251) as u8).collect();
+                gpu.source(0, &data);
+                let pitch = w.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+                let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("SVP upload regression readback"),
+                    size: pitch as u64 * (h * 3 / 2) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                // The production source texture needs COPY_SRC only for this readback test.
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                encoder.copy_texture_to_buffer(
+                    gpu.sources[&0].packed.as_image_copy(),
+                    wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0, bytes_per_row: Some(pitch), rows_per_image: Some(h * 3 / 2),
+                    } },
+                    wgpu::Extent3d { width: w, height: h * 3 / 2, depth_or_array_layers: 1 },
+                );
+                gpu.queue.submit([encoder.finish()]);
+                let (tx, rx) = mpsc::sync_channel(1);
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+                gpu.device.poll(wgpu::Maintain::Wait);
+                rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+                let mapped = readback.slice(..).get_mapped_range();
+                for row in 0..h as usize * 3 / 2 {
+                    let actual = &mapped[row * pitch as usize..row * pitch as usize + w as usize];
+                    if row < h as usize {
+                        assert_eq!(actual, &data[row * w as usize..(row + 1) * w as usize]);
+                    } else {
+                        let chroma_row = row - h as usize;
+                        let luma = (w * h) as usize;
+                        let half = w as usize / 2;
+                        assert_eq!(&actual[..half], &data[luma + chroma_row * half..luma + (chroma_row + 1) * half]);
+                        assert_eq!(&actual[half..], &data[luma * 5 / 4 + chroma_row * half..luma * 5 / 4 + (chroma_row + 1) * half]);
+                    }
+                }
+                drop(mapped);
+                readback.unmap();
+                eprintln!("PASS upload {w}x{h} cycle={cycle}");
+            }
+        }
+    }
 }

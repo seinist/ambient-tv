@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="svp_preset_value">Preset-Standard</string>
+    <string name="svp_target">Zielbildrate</string>
+    <string name="svp_display_rate">Displayfrequenz</string>
+    <string name="svp_half_rate">Halbe Displayfrequenz</string>
+    <string name="svp_artifacts">Zusätzliche Artefaktunterdrückung</string>
+    <string name="svp_scene">Szenenwechsel-Empfindlichkeit</string>
+    <string name="svp_sensitive">Empfindlich</string>
+    <string name="svp_normal">Normal</string>
+    <string name="svp_relaxed">Weniger empfindlich</string>
+    <string name="svp_advanced">Erweiterte SVP-Einstellungen</string>
+    <string name="svp_algorithm">Interpolationsalgorithmus</string>
+    <string name="svp_algo_pair">13 · Bildpaar</string>
+    <string name="svp_algo_cover">21 · Verdeckungsmasken</string>
+    <string name="svp_algo_neighbors">23 · Nachbarbilder</string>
+    <string name="svp_block">Bewegungsblockgröße</string>
+    <string name="svp_overlap">Blocküberlappung</string>
+    <string name="svp_pel">Subpixel-Präzision</string>
+    <string name="svp_search">Aufwand der Bewegungssuche</string>
+    <string name="svp_backend">Backend für Bildsynthese</string>
+    <string name="svp_threads">CPU-Arbeitsthreads</string>
+    <string name="svp_advanced_hint">Änderungen wirken während der Wiedergabe; VLC kann das Video kurz neu öffnen. Feinere Analyse benötigt mehr CPU-Zeit. Vulkan beschleunigt nur die Bildsynthese. Der Überlastungsschutz bleibt aktiv.</string>
+    <string name="svp_reset">SVP-Anpassungen zurücksetzen</string>
+    <string name="svp_keep">Aktuelle Einstellungen behalten</string>
+</resources>

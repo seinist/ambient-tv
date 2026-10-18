@@ -63,7 +63,7 @@ internal fun ImageHint(text: String) = Text(text, style = MaterialTheme.typograp
 internal fun HdrMedia3Hint() = ImageHint(stringResource(R.string.hdr_plays_through_media3))
 
 @Composable
-internal fun SvpOptionsEditor(mode: String, status: (() -> String?)? = null, change: (String) -> Unit) {
+internal fun SvpOptionsEditor(mode: String, options: SvpOptions, changeOptions: (SvpOptions) -> Unit, status: (() -> String?)? = null, change: (String) -> Unit) {
     if (!videoImagePreferences(LocalContext.current).svpAvailable) return
     if (!com.ambient.tv.ui.performance.LocalPerformanceProfile.current.allowSvpInterpolation) {
         ImageHint(stringResource(R.string.image_svp_locked))
@@ -76,6 +76,41 @@ internal fun SvpOptionsEditor(mode: String, status: (() -> String?)? = null, cha
         "balanced" to stringResource(R.string.image_svp_balanced),
         "quality" to stringResource(R.string.image_svp_quality),
     ), change)
+    if (mode != "off") {
+        val o = options.normalized()
+        val preset = 0 to stringResource(R.string.svp_preset_value)
+        @Composable fun choice(label: Int, value: Int, values: List<Pair<Int, String>>, set: (Int) -> Unit) {
+            ImageChoice(label, value.toString(), values.map { it.first.toString() to it.second }) { set(it.toInt()) }
+        }
+        choice(R.string.svp_target, o.rateDivisor, listOf(
+            1 to stringResource(R.string.svp_display_rate), 2 to stringResource(R.string.svp_half_rate),
+        )) { changeOptions(o.copy(rateDivisor = it)) }
+        choice(R.string.svp_artifacts, o.artifacts, listOf(preset,
+            1 to stringResource(R.string.player_off), 2 to stringResource(R.string.image_medium),
+            3 to stringResource(R.string.image_strong))) { changeOptions(o.copy(artifacts = it)) }
+        choice(R.string.svp_scene, o.scene, listOf(preset,
+            1 to stringResource(R.string.svp_sensitive), 2 to stringResource(R.string.svp_normal),
+            3 to stringResource(R.string.svp_relaxed))) { changeOptions(o.copy(scene = it)) }
+        var advanced by remember { mutableStateOf(false) }
+        ImageChoice(R.string.svp_advanced, if (advanced) "on" else "off", imageOnOff()) { advanced = it == "on" }
+        if (advanced) {
+            choice(R.string.svp_algorithm, o.algorithm, listOf(preset,
+                13 to stringResource(R.string.svp_algo_pair), 21 to stringResource(R.string.svp_algo_cover),
+                23 to stringResource(R.string.svp_algo_neighbors))) { changeOptions(o.copy(algorithm = it)) }
+            choice(R.string.svp_block, o.block, listOf(preset) + listOf(8, 16, 32).map { it to "${it}×$it" }) { changeOptions(o.copy(block = it)) }
+            choice(R.string.svp_overlap, o.overlap, listOf(preset, 1 to "0 %", 2 to "12.5 %", 3 to "25 %", 4 to "50 %").filter { o.block != 8 || it.first != 2 }) { changeOptions(o.copy(overlap = it)) }
+            choice(R.string.svp_pel, o.pel, listOf(preset, 1 to "1 px", 2 to "½ px", 4 to "¼ px")) { changeOptions(o.copy(pel = it)) }
+            choice(R.string.svp_search, o.search, listOf(preset,
+                1 to stringResource(R.string.image_light), 2 to stringResource(R.string.image_medium),
+                3 to stringResource(R.string.image_strong))) { changeOptions(o.copy(search = it)) }
+            choice(R.string.svp_backend, o.backend, listOf(0 to stringResource(R.string.image_svp_auto), 1 to "CPU", 2 to "Vulkan")) { changeOptions(o.copy(backend = it)) }
+            choice(R.string.svp_threads, o.threads, listOf(0 to stringResource(R.string.image_svp_auto)) + (1..8).map { it to it.toString() }) { changeOptions(o.copy(threads = it)) }
+            ImageHint(stringResource(R.string.svp_advanced_hint))
+        }
+        // Keep this row present after resetting so TV focus remains on the same control.
+        ImageChoice(R.string.svp_reset, "keep", listOf("keep" to stringResource(R.string.svp_keep),
+            "reset" to stringResource(R.string.svp_reset))) { if (it == "reset") changeOptions(SvpOptions()) }
+    }
     // What SVP does right now (rates, preset, bypass), refreshed while the panel is open.
     if (status != null && mode != "off") {
         var live by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(status()) }
@@ -228,7 +263,7 @@ internal fun MpvImageOptionsEditor(
             ImageLevel(R.string.image_saturation, o.saturation) { change(o.copy(saturation = it)) }
             ImageLevel(R.string.image_gamma, o.gamma) { change(o.copy(gamma = it)) }
         }
-        "motion" -> SvpOptionsEditor(o.svpMode) { change(o.copy(svpMode = it)) }
+        "motion" -> SvpOptionsEditor(o.svpMode, o.svp, { change(o.copy(svp = it)) }) { change(o.copy(svpMode = it)) }
         "output" -> {
             ImageChoice(
                 R.string.image_tonemap,
@@ -254,7 +289,7 @@ internal fun VlcImageOptionsEditor(
     // VLC SVP only exists in builds with VLC_SVP; elsewhere the choice would do nothing.
     if (!sparsam && com.ambient.tv.BuildConfig.VLC_SVP && videoImagePreferences(LocalContext.current).svpAvailable) {
         Text(stringResource(R.string.image_motion), style = MaterialTheme.typography.titleSmall)
-        SvpOptionsEditor(o.svpMode) { change(o.copy(svpMode = it)) }
+        SvpOptionsEditor(o.svpMode, o.svp, { change(o.copy(svp = it)) }) { change(o.copy(svpMode = it)) }
     }
     if (!sparsam) ImageChoice(R.string.image_processing, if (o.softwareProcessing) "software" else "hardware", listOf(
         "hardware" to stringResource(R.string.image_vlc_hardware), "software" to stringResource(R.string.image_vlc_software),

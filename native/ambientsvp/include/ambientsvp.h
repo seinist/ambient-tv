@@ -6,7 +6,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define AMBIENTSVP_ABI 1
+#define AMBIENTSVP_ABI 2
 typedef struct AmbientSvp AmbientSvp;
 /* Clear temporal history after a seek; preserve GPU resources, lifetime
  * counters and safety bypass. Recreate the instance to retry after overload. */
@@ -19,6 +19,8 @@ int ambient_svp_reset(AmbientSvp *);
 typedef struct {
     uint32_t abi, width, height, source_num, source_den, target_num, target_den;
     uint32_t preset, backend, threads;
+    /* 0 inherits preset. overlap: 1..4 maps to upstream 0..3. */
+    uint32_t artifacts, scene, algo, block, overlap, pel, search;
 } AmbientSvpConfig;
 typedef struct {
     uint64_t input_frames, output_frames, interpolated_frames;

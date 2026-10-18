@@ -19,6 +19,15 @@ vlc_module_begin()
     add_float_with_range("ambientsvp-fps", 60., 5., 120., N_("Target frame rate"), NULL)
     add_integer_with_range("ambientsvp-preset", 0, 0, 3, N_("Quality preset"), NULL)
     add_integer_with_range("ambientsvp-backend", 0, 0, 2, N_("Compute backend"), NULL)
+    add_integer_with_range("ambientsvp-threads", 0, 0, 8, N_("SVP threads"), NULL)
+    add_integer_with_range("ambientsvp-artifacts", 0, 0, 3, N_("SVP artifacts"), NULL)
+    add_integer_with_range("ambientsvp-scene", 0, 0, 3, N_("SVP scene"), NULL)
+    add_integer_with_range("ambientsvp-algo", 0, 0, 23, N_("SVP algo"), NULL)
+    add_integer_with_range("ambientsvp-block", 0, 0, 32, N_("SVP block"), NULL)
+    add_integer_with_range("ambientsvp-overlap", 0, 0, 4, N_("SVP overlap"), NULL)
+    add_integer_with_range("ambientsvp-pel", 0, 0, 4, N_("SVP pel"), NULL)
+    add_integer_with_range("ambientsvp-search", 0, 0, 3, N_("SVP search"), NULL)
+
     set_callback_video_filter(Open)
 vlc_module_end()
 
@@ -162,11 +171,11 @@ static int Open(filter_t *f) {
     f->p_sys = s;
     s->measure_rate = !v->i_frame_rate || !v->i_frame_rate_base;
     s->rate_last = s->rate_origin = VLC_TICK_INVALID;
-    static const char *const options[] = {"fps", "preset", "backend", NULL};
+    static const char *const options[] = {"fps", "preset", "backend", "threads", "artifacts", "scene", "algo", "block", "overlap", "pel", "search", NULL};
     config_ChainParse(f, "ambientsvp-", options, f->p_cfg);
     s->config = (AmbientSvpConfig){AMBIENTSVP_ABI, v->i_visible_width, v->i_visible_height, v->i_frame_rate, v->i_frame_rate_base,
         llround(var_InheritFloat(f, "ambientsvp-fps")*1000.), 1000, var_InheritInteger(f, "ambientsvp-preset"),
-        var_InheritInteger(f, "ambientsvp-backend"), 0};
+        var_InheritInteger(f, "ambientsvp-backend"), var_InheritInteger(f, "ambientsvp-threads"), var_InheritInteger(f, "ambientsvp-artifacts"), var_InheritInteger(f, "ambientsvp-scene"), var_InheritInteger(f, "ambientsvp-algo"), var_InheritInteger(f, "ambientsvp-block"), var_InheritInteger(f, "ambientsvp-overlap"), var_InheritInteger(f, "ambientsvp-pel"), var_InheritInteger(f, "ambientsvp-search")};
     if ((!s->measure_rate && (uint64_t)s->config.source_num * s->config.target_den >= (uint64_t)s->config.target_num * s->config.source_den)
         || !svp_load(&s->api)) { msg_Dbg(f,"SVP source >= target or library unavailable"); return VLC_EGENERIC; }
     s->bytes = (size_t)s->config.width * s->config.height * 3 / 2;

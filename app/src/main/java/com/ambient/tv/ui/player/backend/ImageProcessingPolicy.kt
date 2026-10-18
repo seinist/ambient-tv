@@ -150,7 +150,7 @@ internal fun mpvSvpLevelAfterHeavyFailure(
     val current = live.normalized()
     if (current.svpMode != "quality") return null
     if (survivedMode !in setOf("light", "balanced")) return null
-    val nextLive = current.copy(svpMode = survivedMode).normalized()
+    val nextLive = current.copy(svpMode = survivedMode, svp = svpProbeOptions(current.svp)).normalized()
     val saved = stored.normalized()
     val nextStored = if (saveImageDefaults) nextLive else saved
     return MpvSvpLevelUpdate(nextLive, nextStored, saveImageDefaults && nextStored != saved)
@@ -446,7 +446,7 @@ internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double
     }
     val target = svpTargetFps?.takeIf { it.isFinite() && it in 5.0..120.0 }
     if (o.svpMode != "off" && target != null) {
-        filters += "ambientsvp{fps=$target,preset=${svpPreset(o.svpMode)},backend=0}"
+        filters += "ambientsvp{fps=$target,preset=${svpPreset(o.svpMode)},${svpNativeOptions(o.svp, ",")}}"
         add(":no-mediacodec-dr")
     }
     if (filters.isNotEmpty()) add(":video-filter=${filters.joinToString(":")}")

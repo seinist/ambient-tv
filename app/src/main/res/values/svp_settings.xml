@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="svp_preset_value">Preset default</string>
+    <string name="svp_target">Target frame rate</string>
+    <string name="svp_display_rate">Display refresh rate</string>
+    <string name="svp_half_rate">Half display refresh rate</string>
+    <string name="svp_artifacts">Additional artifact suppression</string>
+    <string name="svp_scene">Scene cut sensitivity</string>
+    <string name="svp_sensitive">Sensitive</string>
+    <string name="svp_normal">Normal</string>
+    <string name="svp_relaxed">Less sensitive</string>
+    <string name="svp_advanced">Advanced SVP settings</string>
+    <string name="svp_algorithm">Interpolation algorithm</string>
+    <string name="svp_algo_pair">13 · Frame pair</string>
+    <string name="svp_algo_cover">21 · Occlusion masks</string>
+    <string name="svp_algo_neighbors">23 · Neighbor frames</string>
+    <string name="svp_block">Motion block size</string>
+    <string name="svp_overlap">Block overlap</string>
+    <string name="svp_pel">Subpixel precision</string>
+    <string name="svp_search">Motion search effort</string>
+    <string name="svp_backend">Synthesis backend</string>
+    <string name="svp_threads">CPU worker threads</string>
+    <string name="svp_advanced_hint">Changes apply during playback; VLC may briefly reopen the video. Finer analysis costs more CPU time. Vulkan accelerates synthesis only. Overload protection stays active.</string>
+    <string name="svp_reset">Reset SVP overrides</string>
+    <string name="svp_keep">Keep current settings</string>
+</resources>

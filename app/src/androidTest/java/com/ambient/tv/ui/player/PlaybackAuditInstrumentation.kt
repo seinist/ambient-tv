@@ -769,6 +769,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
         check(targetContext.packageName.endsWith(".svpaudit") || targetContext.packageName.endsWith(".selectaudit"))
         shell("input keyevent KEYCODE_WAKEUP")
         val preferences = videoImagePreferences(targetContext)
+        val savedAvailable = preferences.svpAvailable
         val savedMode = preferences.performanceModeKey
         val savedMpv = preferences.mpvImageOptions
         val savedVlc = preferences.vlcImageOptions
@@ -777,6 +778,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
             for (backend in (arguments.getString("backends") ?: "mpv,vlc").split(",")) {
                 main {
                     BackgroundPlaybackSession.stop()
+                    preferences.svpAvailable = true
                     preferences.performanceModeKey = "maximum"
                     preferences.mpvImageOptions = com.ambient.tv.data.local.MpvImageOptions(
                         scaler="bilinear",chromaScaler="bilinear",downscaler="bilinear",deband="off",sigmoid=false,svpMode="auto")
@@ -789,12 +791,19 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                 activity = startActivitySync(Intent(targetContext, PlaybackAuditActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("backend", backend)
                     .putExtra("output", "gpu").putExtra("decoder", "mediacodec")
+                    .putExtra("auditId", "svp-${System.nanoTime()}").putExtra("panelSection", "motion")
                     .putExtra("uri", android.net.Uri.fromFile(file).toString())
                     .putExtra("headless", false)) as PlaybackAuditActivity
                 await("$backend SVP starts",30_000) { BackgroundPlaybackSession.snapshot.value.let {
                     it.playing && it.status.positionMs > 31_000
                 } }
                 assertVideo("$backend SVP picture")
+                main {
+                    when (val handle = BackgroundPlaybackSession.activeHandle()) {
+                        is com.ambient.tv.ui.player.backend.MpvPlaybackController -> log("SVP initial: ${handle.svpStatus()} filters=${handle.activeVideoFilters()} options=${handle.imageOptions} gpu=${handle.supportsGpuFilters}")
+                        is com.ambient.tv.ui.player.backend.VlcPlaybackController -> log("SVP initial: ${handle.svpStatus()} options=${handle.imageOptions}")
+                    }
+                }
                 await("$backend real intermediate pictures",25_000) {
                     com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames() > initial+10
                 }
@@ -802,16 +811,118 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                 await("$backend sustained interpolation",6_000) {
                     com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames() > running+40
                 }
-                main {
+                // MPV getters request asynchronous samples; their first read may be empty.
+                await("$backend SVP audio pipeline") {
                     when (val handle=BackgroundPlaybackSession.activeHandle()) {
-                        is com.ambient.tv.ui.player.backend.MpvPlaybackController -> {
-                            check(handle.audioOutputFormat()!=null && handle.audioOutputDriver()!=null)
-                            log("SVP $backend filters=${handle.activeVideoFilters()} decode=${handle.decoder()}")
-                        }
-                        is com.ambient.tv.ui.player.backend.VlcPlaybackController -> check((handle.runtimeStats()?.decodedAudio ?: 0)>0)
+                        is com.ambient.tv.ui.player.backend.MpvPlaybackController ->
+                            handle.audioOutputFormat()!=null && handle.audioOutputDriver()!=null
+                        is com.ambient.tv.ui.player.backend.VlcPlaybackController -> (handle.runtimeStats()?.decodedAudio ?: 0)>0
+                        else -> false
                     }
                 }
                 log("PASS $backend new pictures=${com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames()-initial} Vulkan jobs=${com.ambient.tv.ui.player.backend.SvpNative.gpuFrames()-gpuInitial}")
+                if (arguments.getString("svpSwitch") == "true") {
+                    val choices = listOf(
+                        com.ambient.tv.data.local.SvpOptions(algorithm = 21, artifacts = 2, scene = 1, search = 1, backend = 1),
+                        com.ambient.tv.data.local.SvpOptions(algorithm = 23, artifacts = 3, block = 16, overlap = 3, pel = 2, search = 1, backend = 1),
+                        com.ambient.tv.data.local.SvpOptions(rateDivisor = 2, algorithm = 13, backend = 1),
+                        com.ambient.tv.data.local.SvpOptions(algorithm = 13, block = 8, overlap = 2, backend = 1),
+                        com.ambient.tv.data.local.SvpOptions(algorithm = 21, backend = 2),
+                        com.ambient.tv.data.local.SvpOptions(algorithm = 23, backend = 2),
+                    )
+                    fun apply(options: com.ambient.tv.data.local.SvpOptions) = main {
+                        when (val handle = BackgroundPlaybackSession.activeHandle()) {
+                            is com.ambient.tv.ui.player.backend.MpvPlaybackController -> {
+                                val next = handle.imageOptions.copy(svp = options)
+                                preferences.mpvImageOptions = next
+                                handle.updateImageOptions(next)
+                            }
+                            is com.ambient.tv.ui.player.backend.VlcPlaybackController -> {
+                                val next = handle.imageOptions.copy(svp = options)
+                                preferences.vlcImageOptions = next
+                                handle.updateImageOptions(next)
+                            }
+                            else -> error("Missing native player")
+                        }
+                    }
+                    for (options in choices) {
+                        val position = main { BackgroundPlaybackSession.snapshot.value.status.positionMs }
+                        val count = com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames()
+                        val gpuCount = com.ambient.tv.ui.player.backend.SvpNative.gpuFrames()
+                        apply(options)
+                        await("$backend live SVP override", 20_000) {
+                            BackgroundPlaybackSession.snapshot.value.let {
+                                it.playing && it.status.positionMs in (position + 500)..(position + 15_000)
+                            } && com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames() > count + 4
+                        }
+                        if (backend == "mpv") await("MPV applied SVP parameters") {
+                            (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.MpvPlaybackController)
+                                ?.activeVideoFilters()?.contains("algo=${options.algorithm}") == true
+                        }
+                        if (options.backend == 2) await("$backend Vulkan output after override") {
+                            com.ambient.tv.ui.player.backend.SvpNative.gpuFrames() > gpuCount + 4
+                        }
+                        assertVideo("$backend after live SVP override")
+                    }
+                    main { BackgroundPlaybackSession.activeHandle()?.pause() }
+                    Thread.sleep(500)
+                    val paused = main { BackgroundPlaybackSession.snapshot.value.status.positionMs }
+                    apply(choices.first())
+                    Thread.sleep(2500)
+                    main {
+                        check(!BackgroundPlaybackSession.snapshot.value.playing)
+                        check(kotlin.math.abs(BackgroundPlaybackSession.snapshot.value.status.positionMs - paused) < 1500)
+                        BackgroundPlaybackSession.activeHandle()?.play()
+                    }
+                    apply(com.ambient.tv.data.local.SvpOptions())
+                    await("$backend resumes after paused SVP switch") { BackgroundPlaybackSession.snapshot.value.playing }
+                    log("PASS $backend live SVP overrides / position / paused switch / reset")
+                    if (arguments.getString("svpPanel") == "true") {
+                        main { activity?.showScalingPanel = true }
+                        waitForIdleSync()
+                        fun openTarget() {
+                            val label = targetContext.getString(com.ambient.tv.R.string.svp_target)
+                            fun find(node: android.view.accessibility.AccessibilityNodeInfo): android.view.accessibility.AccessibilityNodeInfo? {
+                                if (node.text?.toString()?.contains(label) == true) return node
+                                for (i in 0 until node.childCount) node.getChild(i)?.let { find(it)?.let { found -> return found } }
+                                return null
+                            }
+                            repeat(30) {
+                                var node = uiAutomation.rootInActiveWindow?.let(::find)
+                                while (node != null && !node.isClickable) node = node.parent
+                                if (node?.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) == true) {
+                                    Thread.sleep(500)
+                                    return
+                                }
+                                Thread.sleep(200)
+                            }
+                            error("No SVP target control in production panel")
+                        }
+                        for (divisor in listOf(2, 1)) {
+                            openTarget()
+                            sendKeyDownUpSync(if (divisor == 2) android.view.KeyEvent.KEYCODE_DPAD_DOWN else android.view.KeyEvent.KEYCODE_DPAD_UP)
+                            Thread.sleep(150)
+                            sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+                            await("$backend D-pad SVP target $divisor") {
+                                when (val handle = BackgroundPlaybackSession.activeHandle()) {
+                                    is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.imageOptions.svp.rateDivisor == divisor
+                                    is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.imageOptions.svp.rateDivisor == divisor
+                                    else -> false
+                                }
+                            }
+                        }
+                        log("PASS $backend production SVP target via D-pad / restore")
+                        Thread.sleep(800) // Capture the composed production panel for visual inspection.
+                        uiAutomation.takeScreenshot()?.let { bitmap ->
+                            File(targetContext.filesDir, "svp-panel-$backend.png").outputStream().use {
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                            }
+                            bitmap.recycle()
+                        }
+                        main { activity?.showScalingPanel = false }
+                        log("CAPTURE $backend production SVP panel")
+                    }
+                }
                 for (mode in listOf("balanced","auto","low")) {
                     main {
                         preferences.performanceModeKey=mode
@@ -849,6 +960,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
         } finally {
             main {
                 BackgroundPlaybackSession.stop(); activity?.finish()
+                preferences.svpAvailable=savedAvailable
                 preferences.performanceModeKey=savedMode
                 preferences.mpvImageOptions=savedMpv; preferences.vlcImageOptions=savedVlc
                 performanceProfile(targetContext)

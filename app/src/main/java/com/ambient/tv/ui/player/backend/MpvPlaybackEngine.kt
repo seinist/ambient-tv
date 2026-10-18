@@ -260,8 +260,6 @@ internal class MpvPlaybackEngine(
     private var svpQualityCleared = false
     /** Probe failed: keep light for the session and do not promote or re-prompt. */
     private var svpQualityProbeFailed = false
-    /** Quality was lowered to the preset that held. Do not drop that preset later. */
-    private var svpLevelHeld = false
     /** True only while plex-svp is requested and still in the vf chain. */
     private var svpCopyBackSession = false
     private var lastImageUpscaling = true
@@ -799,11 +797,9 @@ internal class MpvPlaybackEngine(
         // Persist the user's selection; Sparsam applies a cheap effective view at the boundary.
         val next = options.normalized()
         if (next != imageOptions) onOutputTransition()
-        if (next.svpMode == "quality" && imageOptions.svpMode != "quality") {
-            svpLevelHeld = false
-            svpQualityCleared = false
-            svpQualityProbeFailed = false
-        } else if (next.svpMode != "quality" && !svpLevelHeld) {
+        // An explicit edit needs a new probe; automatic refreshes keep the safety verdict.
+        if (next.svp != imageOptions.svp || next.svpMode != imageOptions.svpMode) {
+            svpOverloaded = false
             svpQualityCleared = false
             svpQualityProbeFailed = false
         }
@@ -991,7 +987,7 @@ internal class MpvPlaybackEngine(
             while (true) {
                 delay(1_000)
                 val svpNow = "plex-svp" in activeCpuImageFilters
-                val fps = if (svpNow) displayFps() ?: containerFps() else containerFps()
+                val fps = if (svpNow) svpOutputFps(displayFps() ?: svpDisplayFps(context), imageOptions.svp) else containerFps()
                 if (fps == null || !isPlaying() || com.ambient.tv.ui.player.PlaybackOutputTransition.active() ||
                     getPropertyString("paused-for-cache") == "yes" || getPropertyString("seeking") == "yes") {
                     steadySeconds = 0
@@ -1086,8 +1082,6 @@ internal class MpvPlaybackEngine(
             "MPV render overload: drops=%d fps=%.3f bypass=%d costUs=%d sample=%.1f probe=%s sig=%s",
             dropped, fps, bypass, nativeCostUs, sampleSeconds, qualityProbePending(), signature,
         )
-        // The lighter preset is already the saved, running choice.
-        if (svpLevelHeld) return
         val reducedSharpening = mpvSharpeningAfterOverload(imageOptions.sharpening, loadedShaderKeys)
         raiseRenderOverload(com.ambient.tv.ui.player.frameDropPercent(dropped, fps * sampleSeconds), when {
             "plex-svp" in activeCpuImageFilters -> ({ reduceSvpAfterOverload() })
@@ -1109,7 +1103,6 @@ internal class MpvPlaybackEngine(
 
     /** Store and announce the lighter preset instead of leaving quality selected. */
     private fun rememberSurvivedSvpLevel() {
-        if (svpLevelHeld) return
         val preferences = videoImagePreferences(context)
         val update = mpvSvpLevelAfterHeavyFailure(
             live = imageOptions,
@@ -1117,7 +1110,6 @@ internal class MpvPlaybackEngine(
             survivedMode = MPV_SVP_PROBE_MODE,
             saveImageDefaults = saveImageDefaults,
         ) ?: return
-        svpLevelHeld = true
         svpQualityProbeFailed = true
         svpQualityCleared = false
         if (update.persisted) preferences.mpvImageOptions = update.stored
@@ -1298,7 +1290,8 @@ internal class MpvPlaybackEngine(
         if (sdr && !svpOverloaded && svpAllowed(context)) {
             // Quality waits on light. Sparsam already forced svpMode off above this call.
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
-            mpvSvpFilter(mode, containerFps(), displayFps() ?: svpDisplayFps(context))?.let {
+            val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
+            mpvSvpFilter(mode, containerFps(), displayFps() ?: svpDisplayFps(context), tuning)?.let {
                 put("plex-svp", it)
             }
         }
@@ -1332,7 +1325,7 @@ internal class MpvPlaybackEngine(
         val svpBypass = if ("plex-svp" in activeCpuImageFilters)
             getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt() else 0
         // Do not wait out the frame sample when native already bypassed a heavy mode.
-        if (mpvSvpNativeOverloaded(svpBypass, 0L, 0.0) && !svpOverloaded && !svpQualityProbeFailed && !renderOverloaded &&
+        if (mpvSvpNativeOverloaded(svpBypass, 0L, 0.0) && !svpOverloaded && !renderOverloaded &&
             (renderCheckSignature == null || renderCheckSignature != overloadSuspendedSignature)) {
             engageRenderOverload("plex-svp-bypass", 0L, 0.0, svpBypass, 0L, 0.0)
         }
@@ -1656,7 +1649,7 @@ internal class MpvPlaybackEngine(
             active = active,
             overloaded = svpOverloaded,
             sourceFps = containerFps(),
-            targetFps = displayFps() ?: svpDisplayFps(context),
+            targetFps = svpOutputFps(displayFps() ?: svpDisplayFps(context), effective.svp),
             bypass = if (active) getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt() else 0,
         )
     }

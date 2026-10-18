@@ -12,6 +12,22 @@ is packaged; the Maven libVLC fallback has no ambientsvp filter and hides it
 retained when changing performance mode. MPV's older frameInterpolation
 option is temporal resampling, not Open-SVPFlow; the two are not stacked.
 
+Live configuration (ABI 2)
+--------------------------
+The video panel exposes display-rate / half-display-rate targets, artifact
+suppression and scene-cut sensitivity. Advanced controls override algorithm
+(13/21/23), analysis block size, overlap, subpixel precision and search effort,
+plus synthesis backend and CPU threads. Zero-valued native overrides inherit
+the preset; overlap 1..4 maps to upstream overlap 0..3. Reset clears overrides.
+The shared serialized SvpOptions is retained across performance gates.
+MPV replaces the active filter when its full parameter string changes. VLC
+recreates its native instance even when only an override changes, using the
+existing position, track and play/pause restoration path. Live streams reopen
+at the live edge. These transitions can briefly interrupt output.
+Algorithm lookahead follows the actual algorithm, independently of preset.
+The native engine, both adapters and JNI ABI check must be rebuilt together;
+ABI 1 adapters must not load the ABI 2 configuration structure.
+
 Runtime
 -------
 The pinned Open-SVPFlow portable Rust analysis/synthesis API runs without
@@ -153,3 +169,52 @@ Nnedi3QualityCatalogTest.qualityLadderCoversEveryUpstreamNeuronTierForWin8x4,
 SidebarNavigationPolicyTestKt.initializationError,
 PlaybackPerformanceTest.clockRestartsAfterASeek. No clean-baseline rerun was
 performed to attribute those failures; they were not changed as part of SVP.
+
+Verified 2026-10-17: live SVP controls
+------------------------------------
+52 focused Android/JVM tests passed. Portable native tests and hardware Vulkan
+tests cover custom algorithms, additional SAD masks, rational timestamps,
+lookahead, reset and actual novel pixels. Engine and MPV/VLC adapters rebuilt
+for all four ABIs; ARM64 Debug APK built.
+An isolated .svpaudit installation on the emulator passed MPV and VLC live
+configuration changes, same-preset parameter changes, position preservation,
+paused changes, reset, performance gates, reactivation, seek and rendered video
+plus audio-pipeline checks. Production panel screenshots were visually checked.
+The clip was progressive 128x72 SDR at 24 fps with audio; emulator output was
+temporarily 1280x720. This verifies behavior, not HD/4K or physical-TV speed.
+That run did not exercise D-pad interaction or physical-device playback.
+
+Crash and safety regression audit, 2026-10-17
+--------------------------------------------
+The production emulator crash in build 272 was reproduced with the current
+engine in a standalone Android benchmark at 2560x1440. wgpu's transient mapped
+texture staging path faulted in memmove; mapped-at-creation COPY_SRC alone also
+faulted at 4K. Uploads now use explicit MAP_WRITE | COPY_SRC buffers and aligned
+rows, avoiding both transient allocation paths. The regression test reads back
+every luma/chroma byte, including unaligned small-image rows and repeated device
+creation. Host Vulkan passed through 4K; Android passed through 1440p. The added
+4K texture readback test aborted the host emulator in gfxstream, so full 4K
+emulator validation remains open. The 4K Android streaming benchmark survived
+and used the existing overload bypass when analysis exceeded its time budget.
+
+8x8 blocks with 12.5% overlap are normalized to 25% at both Kotlin and native
+boundaries, keeping CPU rendering and GPU fallback valid. The panel omits the
+unsupported combination. MPV's Quality probe and recovery clear costly analysis
+overrides while preserving the requested frame-rate divisor, backend and thread
+count. Later overloads are still handled, and a manual edit starts a fresh probe.
+
+46 focused JVM tests passed. All 15 host native/Vulkan tests passed, including
+the pixel-exact upload regression. Native libraries rebuilt for all four ABIs.
+Android reproduction/verification (benchmark arguments: width height frames
+backend source-fps cycles; cycles rotate algorithms 13/21/23):
+
+  benchmark 2560 1440 6 2 50 3 --verify
+  benchmark 3840 2160 4 2 50 3
+
+The first command requires novel Vulkan frames without bypass. The second also
+allows the real overload protection to engage; it is not a 4K speed claim.
+The isolated Android app passed MPV and VLC live CPU/Vulkan parameter changes,
+paused changes, reset, position preservation, performance gates, reactivation,
+seek, rendered video and audio checks. Both production panels also passed a
+D-pad target-rate change and restore. These interaction tests use the small
+128x72 clip; physical-TV playback and sustained HD/4K speed remain unverified.

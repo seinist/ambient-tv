@@ -13,7 +13,7 @@
 #include "video/img_format.h"
 #include "ambientsvp_loader.h"
 
-struct opts { double fps, source; int preset, backend; };
+struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search; };
 struct priv {
     struct opts *opts; SvpApi api; AmbientSvp *engine;
     struct mp_image *reference; uint8_t *buffer; size_t bytes;
@@ -90,7 +90,7 @@ static void process(struct mp_filter *f) {
     if (!p->engine) {
         AVRational src = av_d2q(p->opts->source, 1001000), dst = av_d2q(p->opts->fps, 1001000);
         AmbientSvpConfig cfg = {AMBIENTSVP_ABI, img->w, img->h, src.num, src.den, dst.num, dst.den,
-            p->opts->preset, p->opts->backend, 0};
+            p->opts->preset, p->opts->backend, p->opts->threads, p->opts->artifacts, p->opts->scene, p->opts->algo, p->opts->block, p->opts->overlap, p->opts->pel, p->opts->search};
         p->engine = p->api.create(&cfg);
         p->width = img->w; p->height = img->h; p->bytes = (size_t)img->w * img->h * 3 / 2;
         p->buffer = p->engine ? malloc(p->bytes) : NULL;
@@ -134,7 +134,16 @@ static struct mp_filter *create(struct mp_filter *parent, void *options) {
 #define OPT_BASE_STRUCT struct opts
 static const m_option_t options[] = {
     {"fps", OPT_DOUBLE(fps), M_RANGE(5, 120)}, {"source", OPT_DOUBLE(source), M_RANGE(5, 120)},
-    {"preset", OPT_INT(preset), M_RANGE(0, 3)}, {"backend", OPT_INT(backend), M_RANGE(0, 2)}, {0}
+    {"preset", OPT_INT(preset), M_RANGE(0, 3)}, {"backend", OPT_INT(backend), M_RANGE(0, 2)},
+    {"threads", OPT_INT(threads), M_RANGE(0, 8)},
+    {"artifacts", OPT_INT(artifacts), M_RANGE(0, 3)},
+    {"scene", OPT_INT(scene), M_RANGE(0, 3)},
+    {"algo", OPT_INT(algo), M_RANGE(0, 23)},
+    {"block", OPT_INT(block), M_RANGE(0, 32)},
+    {"overlap", OPT_INT(overlap), M_RANGE(0, 4)},
+    {"pel", OPT_INT(pel), M_RANGE(0, 4)},
+    {"search", OPT_INT(search), M_RANGE(0, 3)},
+    {0}
 };
 const struct mp_user_filter_entry vf_ambientsvp = {
     .desc = {.name = "ambientsvp", .description = "Open-SVPFlow motion-compensated interpolation",

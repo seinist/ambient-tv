@@ -13,7 +13,7 @@ internal object SvpNative {
         // Ordinary playback never loads this optional native library.
         if (allowed && !attempted) {
             attempted = true
-            loaded = runCatching { System.loadLibrary("ambientsvp"); abi() == 1 }.getOrDefault(false)
+            loaded = runCatching { System.loadLibrary("ambientsvp"); abi() == 2 }.getOrDefault(false)
         }
         if (loaded) setEnabled(allowed)
         return allowed && loaded

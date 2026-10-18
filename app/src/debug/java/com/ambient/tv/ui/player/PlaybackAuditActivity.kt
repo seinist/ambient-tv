@@ -55,9 +55,10 @@ class PlaybackAuditActivity : ComponentActivity() {
             AmbientTvTheme {
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
                     if (showPlayer && playbackReady) CompositionLocalProvider(LocalPlaybackMetadata provides
-                        PlaybackMetadata("audit/clip", "Background playback audit", backend, "audit", "clip",
+                        PlaybackMetadata("audit/${intent.getStringExtra("auditId") ?: "clip"}", "Background playback audit", backend, "audit", intent.getStringExtra("auditId") ?: "clip",
                             hasVideo = !intent.getBooleanExtra("audioOnly", false),
-                            handheldHdrStandard = intent.getStringExtra("hdr")?.let { value -> HdrStandard.entries.firstOrNull { it.name == value } })) {
+                            handheldHdrStandard = intent.getStringExtra("hdr")?.let { value -> HdrStandard.entries.firstOrNull { it.name == value } }),
+                        com.ambient.tv.ui.performance.LocalPerformanceProfile provides performanceProfile(this@PlaybackAuditActivity)) {
                         when (backend) {
                             "vlc" -> rememberVlcPlaybackController(this@PlaybackAuditActivity, uri, startPositionMs, emptyMap())
                                 ?.let { if (renderSurface) VlcVideoSurface(it, Modifier.fillMaxSize()) }
@@ -81,7 +82,7 @@ class PlaybackAuditActivity : ComponentActivity() {
                         ) { PlayerVideoOutputControls(backend) }
                         if (showScalingPanel) {
                             val navigation = remember { com.ambient.tv.ui.common.PlayerPanelNavigation().apply {
-                                videoState.section = "scaling"
+                                videoState.section = intent.getStringExtra("panelSection") ?: "scaling"
                             } }
                             CompositionLocalProvider(com.ambient.tv.ui.common.LocalPlayerPanelNavigation provides navigation) {
                                 com.ambient.tv.ui.common.UnifiedPlayerSidePanel(

@@ -105,7 +105,7 @@ class VlcPlaybackController(
     val videoOutputDescription: String get() = if (vulkanOutput) "libplacebo / Vulkan" else "Android Surface / OpenGL ES"
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
         effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard)
-        .let { if (it.svpMode != "off" && !vlcSvpUseful(measuredSourceFps, svpDisplayFps(context))) it.copy(svpMode = "off") else it }
+        .let { if (it.svpMode != "off" && !vlcSvpUseful(measuredSourceFps, svpOutputFps(svpDisplayFps(context), it.svp))) it.copy(svpMode = "off") else it }
     /** Source frame rate of the video track once known; SVP is bypassed when it already meets the target. */
     private var measuredSourceFps: Double? = null
     private fun currentSourceFps(): Double? = runCatching { trackAccess.currentVideoTrack }.getOrNull()
@@ -114,7 +114,8 @@ class VlcPlaybackController(
         effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard).svpMode
     private var configuredSoftwareProcessing = vlcOptionsForNativeHdr(
         effectiveVlcImageOptions(initialImageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard).softwareProcessing
-    private var configuredSvpRate = svpDisplayFps(context)
+    private var configuredSvpOptions = initialImageOptions.svp.normalized()
+    private var configuredSvpRate = svpOutputFps(svpDisplayFps(context), configuredSvpOptions)
     internal var deinterlaceMode by mutableStateOf(initialDeinterlaceMode)
         private set
     internal var deinterlaceFilter by mutableStateOf(com.ambient.tv.data.local.DeinterlaceCatalog.normalize("vlc", initialDeinterlaceFilter))
@@ -136,7 +137,7 @@ class VlcPlaybackController(
             addAll(vlcDeinterlaceOptions(configuredDeinterlaceMode, configuredDeinterlaceFilter))
             // VLC 4's vout filter chain is inherited from the instance/player,
             // not from Media options. Media-only video-filter is silently ignored.
-            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode), configuredSvpRate)
+            addAll(vlcImageMediaOptions(VlcImageOptions(svpMode = configuredSvpMode, svp = configuredSvpOptions), configuredSvpRate)
                 .filter { it.startsWith(":video-filter=") || it == ":no-mediacodec-dr" }
                 .map { "--" + it.removePrefix(":") })
             // VLC 4 owns vout at player level, not at input/media level.
@@ -773,11 +774,11 @@ class VlcPlaybackController(
         pauseAfterRestorePositionMs = null
         if (liveStream) resumeVideoSeekMs = null
         val effectiveImage = effectiveImage()
-        val targetRate = svpDisplayFps(context)
+        val targetRate = svpOutputFps(svpDisplayFps(context), effectiveImage.svp)
         val effectiveDeinterlaceMode = if (preserveHdrSource) "off" else deinterlaceMode
         val effectiveDeinterlace = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
         val reattach = if (configuredSoftwareProcessing != effectiveImage.softwareProcessing ||
-            configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
+            configuredSvpOptions != effectiveImage.svp || configuredSvpMode != effectiveImage.svpMode || svpTargetChanged(effectiveImage.svpMode, configuredSvpRate, targetRate) ||
             configuredDeinterlaceMode != effectiveDeinterlaceMode || configuredDeinterlaceFilter != effectiveDeinterlace) {
             val view = attachedView
             view?.let(::detach)
@@ -785,6 +786,7 @@ class VlcPlaybackController(
             player.vlcVout.removeCallback(surfaceCallback)
             player.stop(); player.release(); libVlc.release()
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
+            configuredSvpOptions = effectiveImage.svp
             configuredSvpMode = effectiveImage.svpMode
             configuredSvpRate = targetRate
             configuredDeinterlaceMode = effectiveDeinterlaceMode
@@ -1091,7 +1093,7 @@ class VlcPlaybackController(
             // prepare() returns early without a valid surface; restarting here would stop/prepare every poll.
             val outputReady = audioOnly || attachedView?.holder?.surface?.isValid == true
             val effectiveMode = effectiveImage().svpMode
-            if (outputReady && (effectiveMode != configuredSvpMode || svpTargetChanged(effectiveMode, configuredSvpRate, svpDisplayFps(context))))
+            if (outputReady && (effectiveMode != configuredSvpMode || svpTargetChanged(effectiveMode, configuredSvpRate, svpOutputFps(svpDisplayFps(context), imageOptions.svp))))
                 refreshEffectiveOverrides(player.isSeekable)
         }
         checkVulkanOutput()

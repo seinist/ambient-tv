@@ -28,6 +28,13 @@ pub struct Config {
     pub preset: u32,
     pub backend: u32,
     pub threads: u32,
+    pub artifacts: u32,
+    pub scene: u32,
+    pub algo: u32,
+    pub block: u32,
+    pub overlap: u32,
+    pub pel: u32,
+    pub search: u32,
 }
 
 #[repr(C)]
@@ -68,13 +75,14 @@ pub struct AmbientSvp {
     slow_windows: u32,
     slow_inputs: u32,
     options: String,
+    needs_neighbors: bool,
     #[cfg(feature = "vulkan")]
     gpu: Option<gpu::Gpu>,
 }
 
 impl AmbientSvp {
     pub fn new(c: Config) -> Result<Self, String> {
-        if c.abi != 1
+        if c.abi != 2
             || c.width < 32
             || c.height < 32
             || c.width > 3840
@@ -87,6 +95,10 @@ impl AmbientSvp {
             || c.target_den == 0
             || c.preset > 3
             || c.backend > 2
+            || c.threads > 8 || c.artifacts > 3 || c.scene > 3
+            || !matches!(c.algo, 0 | 13 | 21 | 23)
+            || !matches!(c.block, 0 | 8 | 16 | 32)
+            || c.overlap > 4 || !matches!(c.pel, 0 | 1 | 2 | 4) || c.search > 3
             || [c.source_num, c.source_den, c.target_num, c.target_den]
                 .iter()
                 .any(|n| *n > 1_000_000)
@@ -111,20 +123,34 @@ impl AmbientSvp {
             .map_err(|e| e.to_string())?;
         // Start automatic mode conservatively. No architecture-wide AVX/NEON requirement.
         let preset = if c.preset == 0 { 1 } else { c.preset };
-        let builder = SuperBuilder::new(
-            c.width as i32,
-            c.height as i32,
-            if preset == 3 { 2 } else { 1 },
-        )?;
-        let block = if preset == 1 { 32 } else { 16 };
-        let analyser = Analyser::new(&builder, block, block, if preset == 1 { 0 } else { 2 }, 3)?;
-        // Include perfect matches in scene classification. Upstream's nonzero
-        // 'zero' threshold otherwise classifies an all-perfect motion field as a cut.
+        let pel = if c.pel != 0 { c.pel } else if preset == 3 { 2 } else { 1 };
+        let builder = SuperBuilder::new(c.width as i32, c.height as i32, pel as i32)?;
+        let block = if c.block != 0 { c.block } else if preset == 1 { 32 } else { 16 };
+        let overlap = if c.overlap != 0 { c.overlap - 1 } else if preset == 1 { 0 } else { 2 };
+        // Keep every configuration CPU-compatible, including a later Vulkan fallback.
+        let overlap = if block == 8 && overlap == 1 { 2 } else { overlap };
+        let search = match c.search {
+            1 => ",main:{search:{type:4,distance:1,coarse:{distance:1,trymany:false}}}",
+            2 => ",main:{search:{type:4,distance:2,coarse:{distance:2,trymany:false}}}",
+            3 => ",main:{search:{type:4,distance:4,coarse:{distance:4,trymany:true}}}",
+            _ => "",
+        };
+        let analyser = Analyser::with_options(&builder,
+            &format!("{{block:{{w:{block},h:{block},overlap:{overlap}}},vectors:3{search}}}"))?;
+        let algo = if c.algo != 0 { c.algo } else if preset == 3 { 23 } else { 13 };
+        // Keep zero=0: perfect motion matches must not be mistaken for scene cuts.
+        let blocks = match c.scene { 1 => 30, 3 => 70, _ => 50 };
+        // SAD masks work for both the pairwise and coverage algorithms.
+        // Keep coverage enabled: cover=0 silently changes upstream algorithms 21/23 to 11.
+        let mask = match c.artifacts {
+            1 => ",mask:{cover:100,area:0}",
+            2 => ",mask:{cover:100,area:50,area_sharp:1,area_blend:0.4}",
+            3 => ",mask:{cover:100,area:100,area_sharp:1,area_blend:0.7}",
+            _ => "",
+        };
         let options = format!(
-            "{{rate:{{abs:true,num:{},den:{}}},algo:{},scene:{{mode:0,limits:{{zero:0,blocks:50}}}},gpu:false}}",
-            c.target_num,
-            c.target_den,
-            if preset == 3 { 23 } else { 13 }
+            "{{rate:{{abs:true,num:{},den:{}}},algo:{algo},scene:{{mode:0,limits:{{zero:0,blocks:{blocks}}}}},gpu:false{mask}}}",
+            c.target_num, c.target_den,
         );
         let smoother = Smoother::new(
             c.width as i32,
@@ -171,6 +197,7 @@ impl AmbientSvp {
             slow_windows: 0,
             slow_inputs: 0,
             options,
+            needs_neighbors: algo == 23,
             #[cfg(feature = "vulkan")]
             gpu,
         })
@@ -337,7 +364,7 @@ impl AmbientSvp {
         // would unnecessarily double latency. Algo 23 really needs neighbors.
         let required = if plan[2] == plan[3] {
             plan[0]
-        } else if self.stats.preset < 3 {
+        } else if !self.needs_neighbors {
             plan[1]
         } else {
             plan[1].max(plan[3])
@@ -425,7 +452,7 @@ impl AmbientSvp {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ambient_svp_abi() -> u32 {
-    1
+    2
 }
 
 #[unsafe(no_mangle)]
@@ -449,7 +476,7 @@ pub extern "system" fn Java_com_ambient_tv_ui_player_backend_SvpNative_abi(
     _env: *mut std::ffi::c_void,
     _class: *mut std::ffi::c_void,
 ) -> i32 {
-    1
+    ambient_svp_abi() as i32
 }
 
 #[unsafe(no_mangle)]
