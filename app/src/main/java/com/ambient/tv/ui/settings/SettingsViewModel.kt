@@ -489,6 +489,7 @@ class SettingsViewModel @Inject constructor(
         nextUpStillWatchingEpisodes = appPreferences.nextUpStillWatchingEpisodes,
         sleepAutoStartKey = appPreferences.sleepAutoStartKey,
         sleepWarningMinutes = appPreferences.sleepWarningMinutes,
+        sleepDailyStopMinute = appPreferences.sleepDailyStopMinute,
         wolRetryCount = appPreferences.wolRetryCount,
         youtubeSponsorBlockEnabled = appPreferences.youtubeSponsorBlockEnabled,
         youtubeAutoplayNextEnabled = appPreferences.youtubeAutoplayNextEnabled,
@@ -2092,6 +2093,9 @@ class SettingsViewModel @Inject constructor(
     fun onSleepAutoStartChanged(value: String) = _uiState.update {
         it.copy(sleepAutoStartKey = value.takeIf(AppPreferences.SLEEP_AUTO_START_KEYS::contains) ?: AppPreferences.SLEEP_AUTO_START_OFF)
     }
+    fun onSleepDailyStopChanged(minuteOfDay: Int) = _uiState.update {
+        it.copy(sleepDailyStopMinute = minuteOfDay.takeIf { m -> m in 0 until 1440 } ?: AppPreferences.SLEEP_DAILY_STOP_OFF)
+    }
     fun onSleepWarningMinutesChanged(value: Int) = _uiState.update {
         it.copy(sleepWarningMinutes = value.takeIf(AppPreferences.SLEEP_WARNING_VALUES::contains) ?: AppPreferences.SLEEP_WARNING_DEFAULT)
     }
@@ -2497,6 +2501,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.nextUpStillWatchingEpisodes = state.nextUpStillWatchingEpisodes
         appPreferences.sleepAutoStartKey = state.sleepAutoStartKey
         appPreferences.sleepWarningMinutes = state.sleepWarningMinutes
+        appPreferences.sleepDailyStopMinute = state.sleepDailyStopMinute
         appPreferences.wolRetryCount = state.wolRetryCount
         appPreferences.youtubeSponsorBlockEnabled = state.youtubeSponsorBlockEnabled
         appPreferences.youtubeAutoplayNextEnabled = state.youtubeAutoplayNextEnabled

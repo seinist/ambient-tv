@@ -1215,6 +1215,7 @@ private fun tvhSleepTimerSummary(config: SleepTimerConfig): String = when (confi
     SleepTimerKind.END_OF_ITEM -> stringResource(R.string.player_sleep_end_item)
     SleepTimerKind.PAUSE_INACTIVITY -> stringResource(R.string.player_sleep_pause_summary, config.minutes)
     SleepTimerKind.USER_INACTIVITY -> stringResource(R.string.player_sleep_input_summary, config.minutes)
+    SleepTimerKind.CLOCK_TIME -> stringResource(R.string.player_sleep_clock_summary, com.ambient.tv.ui.player.sleepClockLabel(config.deadlineRealtimeMs))
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)

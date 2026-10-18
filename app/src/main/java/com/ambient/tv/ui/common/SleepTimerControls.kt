@@ -25,6 +25,9 @@ internal fun SleepTimerControls(config: SleepTimerConfig, isLive: Boolean, chang
         if (!isLive) add(SleepTimerKind.END_OF_ITEM to stringResource(R.string.player_sleep_end_item))
         add(SleepTimerKind.PAUSE_INACTIVITY to stringResource(R.string.sleep_trigger_pause))
         add(SleepTimerKind.USER_INACTIVITY to stringResource(R.string.sleep_trigger_input))
+        // Daily stop time from the settings: shown while active, not offered as a manual choice.
+        if (config.kind == SleepTimerKind.CLOCK_TIME) add(SleepTimerKind.CLOCK_TIME to
+            stringResource(R.string.player_sleep_clock_summary, com.ambient.tv.ui.player.sleepClockLabel(config.deadlineRealtimeMs)))
     }
     PlayerDropUpSelector(
         label = stringResource(R.string.sleep_trigger),
@@ -48,5 +51,8 @@ internal fun SleepTimerControls(config: SleepTimerConfig, isLive: Boolean, chang
         SleepTimerKind.PAUSE_INACTIVITY -> RightPanelSectionTitle(stringResource(R.string.player_sleep_pause_hint))
         SleepTimerKind.USER_INACTIVITY -> RightPanelSectionTitle(stringResource(R.string.player_sleep_input_hint))
         else -> Unit
+    }
+    config.alsoStopRealtimeMs?.let {
+        RightPanelSectionTitle(stringResource(R.string.player_sleep_clock_summary, com.ambient.tv.ui.player.sleepClockLabel(it)))
     }
 }

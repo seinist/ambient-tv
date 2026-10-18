@@ -1121,6 +1121,20 @@ fun SettingsScreen(
                                             onClick = { viewModel.onSleepAutoStartChanged(key) },
                                         )
                                     })
+                                    Text(stringResource(R.string.settings_sleep_daily_stop), style = MaterialTheme.typography.titleSmall)
+                                    SettingsSelect(options = (listOf(AppPreferences.SLEEP_DAILY_STOP_OFF) + AppPreferences.SLEEP_DAILY_STOP_CHOICES).map { minute ->
+                                        SettingsSelectOption(
+                                            text = if (minute < 0) stringResource(R.string.settings_next_up_off)
+                                            else "%02d:%02d".format(minute / 60, minute % 60),
+                                            selected = uiState.sleepDailyStopMinute == minute,
+                                            onClick = { viewModel.onSleepDailyStopChanged(minute) },
+                                        )
+                                    })
+                                    if (uiState.sleepDailyStopMinute >= 0) Text(
+                                        stringResource(R.string.settings_sleep_daily_stop_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                     Text(stringResource(R.string.settings_sleep_warning), style = MaterialTheme.typography.titleSmall)
                                     SettingsSelect(options = AppPreferences.SLEEP_WARNING_VALUES.map { minutes ->
                                         SettingsSelectOption(

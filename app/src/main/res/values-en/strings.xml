@@ -1870,4 +1870,7 @@
     <string name="sleep_warning_message_touch">Playback stops in %1$d min</string>
     <string name="sleep_extend_30">+30 min</string>
     <string name="sleep_extend_action">Extend</string>
+    <string name="settings_sleep_daily_stop">Stop daily at</string>
+    <string name="settings_sleep_daily_stop_hint">Playback started up to 6 hours later stops after the automatic duration or 30 min. The earlier stop wins.</string>
+    <string name="player_sleep_clock_summary">Stops at %1$s</string>
 </resources>

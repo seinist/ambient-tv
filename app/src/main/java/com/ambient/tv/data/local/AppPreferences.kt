@@ -1121,6 +1121,11 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putString(KEY_SLEEP_AUTO_START, value.takeIf { it in SLEEP_AUTO_START_KEYS } ?: SLEEP_AUTO_START_OFF) }
 
     /** Non-pausing notice this many minutes before a timed sleep stop; 0 = off. */
+    /** Daily stop time as minute of day (0..1439), [SLEEP_DAILY_STOP_OFF] when off. */
+    var sleepDailyStopMinute: Int
+        get() = prefs.getInt(KEY_SLEEP_DAILY_STOP, SLEEP_DAILY_STOP_OFF).takeIf { it in 0 until 1440 } ?: SLEEP_DAILY_STOP_OFF
+        set(value) = prefs.edit { putInt(KEY_SLEEP_DAILY_STOP, value.takeIf { it in 0 until 1440 } ?: SLEEP_DAILY_STOP_OFF) }
+
     var sleepWarningMinutes: Int
         get() = prefs.getInt(KEY_SLEEP_WARNING_MINUTES, SLEEP_WARNING_DEFAULT).takeIf { it in SLEEP_WARNING_VALUES } ?: SLEEP_WARNING_DEFAULT
         set(value) = prefs.edit { putInt(KEY_SLEEP_WARNING_MINUTES, value.takeIf { it in SLEEP_WARNING_VALUES } ?: SLEEP_WARNING_DEFAULT) }
@@ -2009,6 +2014,10 @@ class AppPreferences @Inject constructor(
         val NEXT_UP_STILL_WATCHING_VALUES = setOf(0, 2, 3, 5)
         const val KEY_SLEEP_AUTO_START = "sleep_auto_start"
         const val KEY_SLEEP_WARNING_MINUTES = "sleep_warning_minutes"
+        const val KEY_SLEEP_DAILY_STOP = "sleep_daily_stop_minute"
+        const val SLEEP_DAILY_STOP_OFF = -1
+        /** Offered daily stop times: 20:00 to 04:00 in half hours. */
+        val SLEEP_DAILY_STOP_CHOICES = (40..47).map { it * 30 } + (0..8).map { it * 30 }
         const val SLEEP_AUTO_START_OFF = "off"
         const val SLEEP_AUTO_START_END = "end"
         const val SLEEP_AUTO_START_INACTIVITY = "inactivity"

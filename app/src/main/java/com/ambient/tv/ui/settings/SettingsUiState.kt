@@ -173,6 +173,7 @@ data class SettingsUiState(
     val nextUpStillWatchingEpisodes: Int = 3,
     val sleepAutoStartKey: String = com.ambient.tv.data.local.AppPreferences.SLEEP_AUTO_START_OFF,
     val sleepWarningMinutes: Int = com.ambient.tv.data.local.AppPreferences.SLEEP_WARNING_DEFAULT,
+    val sleepDailyStopMinute: Int = com.ambient.tv.data.local.AppPreferences.SLEEP_DAILY_STOP_OFF,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     /**
      * Wake page drafts for NAS/DLNA servers ("files:<id>", "dlna:<id>"), kept like the server MAC
@@ -536,6 +537,7 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     nextUpStillWatchingEpisodes = if (draft.nextUpStillWatchingEpisodes != baseline.nextUpStillWatchingEpisodes) draft.nextUpStillWatchingEpisodes else stored.nextUpStillWatchingEpisodes,
     sleepAutoStartKey = if (draft.sleepAutoStartKey != baseline.sleepAutoStartKey) draft.sleepAutoStartKey else stored.sleepAutoStartKey,
     sleepWarningMinutes = if (draft.sleepWarningMinutes != baseline.sleepWarningMinutes) draft.sleepWarningMinutes else stored.sleepWarningMinutes,
+    sleepDailyStopMinute = if (draft.sleepDailyStopMinute != baseline.sleepDailyStopMinute) draft.sleepDailyStopMinute else stored.sleepDailyStopMinute,
     wolRetryCount = if (draft.wolRetryCount != baseline.wolRetryCount) draft.wolRetryCount else stored.wolRetryCount,
     youtubeSponsorBlockEnabled = if (draft.youtubeSponsorBlockEnabled != baseline.youtubeSponsorBlockEnabled) draft.youtubeSponsorBlockEnabled else stored.youtubeSponsorBlockEnabled,
     youtubeAutoplayNextEnabled = if (draft.youtubeAutoplayNextEnabled != baseline.youtubeAutoplayNextEnabled) draft.youtubeAutoplayNextEnabled else stored.youtubeAutoplayNextEnabled,
