@@ -178,23 +178,14 @@ class TvheadendPlayerViewModel @Inject constructor(
         _recordingControl.value = control.copy(busy = true)
         viewModelScope.launch {
             try {
-                val result = suspendResult {
-                    check(repository.capabilities(true).manageTimers)
-                    val entry = findProgrammeRecording(event, repository.upcomingRecordings(true))
-                    if (stopping) {
-                        // Only cancel a timer still reported by the backend; EPG DVR IDs can be stale.
-                        if (entry != null) repository.cancelRecording(entry.uuid).getOrThrow()
-                    } else if (entry == null) {
-                        repository.recordCurrentProgramme(event).getOrThrow()
-                    }
-                }
+                val result = suspendResult { toggleCurrentProgrammeRecording(repository, event, stopping) }
                 if (_recordingControl.value.eventId == event.eventId) {
                     _recordingControl.value = _recordingControl.value.copy(busy = false,
                         scheduled = if (result.isSuccess) !stopping else _recordingControl.value.scheduled)
                 }
                 android.widget.Toast.makeText(context, context.getString(
                     if (result.isSuccess) {
-                        if (stopping) com.ambient.tv.R.string.player_record_stopped else com.ambient.tv.R.string.tvh_recording_scheduled
+                        if (stopping) com.ambient.tv.R.string.player_record_stopped else com.ambient.tv.R.string.tvh_recording_started
                     } else if (stopping) com.ambient.tv.R.string.player_record_stop_failed
                     else com.ambient.tv.R.string.player_record_failed), android.widget.Toast.LENGTH_LONG).show()
             } finally {

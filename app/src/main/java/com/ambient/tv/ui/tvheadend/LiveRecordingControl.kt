@@ -4,6 +4,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import com.ambient.tv.livetv.LiveTvCapabilities
 import com.ambient.tv.livetv.LiveTvProgramme
 import com.ambient.tv.livetv.LiveTvRecording
+import com.ambient.tv.livetv.LiveTvRepository
 
 internal data class LiveRecordingControl(
     val eventId: String? = null,
@@ -36,3 +37,30 @@ internal fun LiveTvRecording.isActivelyRecording(): Boolean =
         scheduleStatus.equals("recordingError", ignoreCase = true) ||
         status.equals("recording", ignoreCase = true) ||
         status.equals("inprogress", ignoreCase = true)
+
+/**
+ * Guide recording request. A running programme records from now: an EPG-linked timer would
+ * start at the programme's original (already elapsed) start time.
+ */
+internal suspend fun scheduleProgrammeRecording(
+    repository: LiveTvRepository,
+    event: LiveTvProgramme,
+    series: Boolean,
+    nowEpochSeconds: Long,
+): Result<Unit> = when {
+    series -> repository.scheduleSeries(event.eventId)
+    event.isLive(nowEpochSeconds) -> repository.recordCurrentProgramme(event)
+    else -> repository.scheduleRecording(event.eventId)
+}
+
+/** Player record button: records the running programme from now, or stops its timer. */
+internal suspend fun toggleCurrentProgrammeRecording(repository: LiveTvRepository, event: LiveTvProgramme, stopping: Boolean) {
+    check(repository.capabilities(true).manageTimers)
+    val entry = findProgrammeRecording(event, repository.upcomingRecordings(true))
+    if (stopping) {
+        // Only cancel a timer still reported by the backend; EPG DVR IDs can be stale.
+        if (entry != null) repository.cancelRecording(entry.uuid).getOrThrow()
+    } else if (entry == null) {
+        repository.recordCurrentProgramme(event).getOrThrow()
+    }
+}
