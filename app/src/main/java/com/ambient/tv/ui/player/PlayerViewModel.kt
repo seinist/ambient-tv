@@ -153,6 +153,7 @@ class PlayerViewModel @Inject constructor(
     fun displayModeWhitelist(): Set<String> = appPreferences.displayModeWhitelist
     fun allowDoubleRefreshRate(): Boolean = appPreferences.allowDoubleRefreshRate
     fun allowThreeTwoPulldown(): Boolean = appPreferences.allowThreeTwoPulldown
+    fun displaySwitchPauseMs(): Int = appPreferences.displaySwitchPauseMs
 
     private var ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private var mediaIndex: Int = savedStateHandle.get<String>("mediaIndex")?.toIntOrNull() ?: 0

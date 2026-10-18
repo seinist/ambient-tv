@@ -507,6 +507,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     val displayModeWhitelist: Set<String> get() = preferences.displayModeWhitelist
     val allowDoubleRefreshRate: Boolean get() = preferences.allowDoubleRefreshRate
     val allowThreeTwoPulldown: Boolean get() = preferences.allowThreeTwoPulldown
+    val displaySwitchPauseMs: Int get() = preferences.displaySwitchPauseMs
     val seekJumpMs: Long get() = preferences.bigSeekJumpSeconds * 1000L
     val tvheadendDeinterlaceModeKey: String get() = preferences.tvheadendDeinterlaceModeKey
     val tvheadendDeinterlaceFilterKey: String get() = preferences.tvheadendDeinterlaceFilterKey

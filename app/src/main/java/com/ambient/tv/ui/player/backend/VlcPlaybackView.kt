@@ -298,7 +298,23 @@ class VlcPlaybackController(
     private var pendingSeekTask: Runnable? = null
     private var pauseAfterRestorePositionMs: Long? = null
     private var pausedSeekVolume: Int? = null
+    private var outputMuteVolume: Int? = null
+    override fun setOutputMuted(muted: Boolean) {
+        if (released) return
+        if (muted) {
+            if (outputMuteVolume == null) outputMuteVolume = pausedSeekVolume ?: player.volume.takeIf { it >= 0 } ?: 100
+            player.setVolume(0)
+        } else {
+            val volume = outputMuteVolume ?: return
+            outputMuteVolume = null
+            if (pausedSeekVolume == null) player.setVolume(volume)
+        }
+    }
     private fun restorePausedSeekVolume() {
+        if (outputMuteVolume != null) {
+            pausedSeekVolume = null
+            return
+        }
         pausedSeekVolume?.let {
             val result = player.setVolume(it)
             Timber.i("VLC seek volume restored target=%d actual=%d result=%d", it, player.volume, result)

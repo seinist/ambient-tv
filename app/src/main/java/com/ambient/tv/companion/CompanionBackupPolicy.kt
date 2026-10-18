@@ -34,7 +34,7 @@ internal object CompanionBackupPolicy {
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
     private val hardware = setOf(
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
-        "allowDoubleRefreshRate", "allowThreeTwoPulldown", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits",
+        "allowDoubleRefreshRate", "allowThreeTwoPulldown", "displaySwitchPauseMs", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits",
         "performanceModeKey", "uiPerformanceModeKey", "playbackPerformanceModeKey", "frameDropTestSeconds", "highQualityAssetsEnabled", "playbackBackendKey", "tvheadendPlaybackBackendKey",
         "mpvVideoOutputModeKey", "mpvVideoDecoderKey", "vlcVideoOutputModeKey", "mediaAudioPassthroughEnabled",
         "libraryGridColumns", "libraryListRows", "displayChangeNotificationsEnabled",
@@ -128,7 +128,7 @@ internal object CompanionBackupPolicy {
         }
         if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
-            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.forEach { key -> incoming[key]?.let { result[key] = it } }
+            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }
         if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()

@@ -9,13 +9,14 @@ internal class PlaybackOutputChangeWindow(private val durationMs: Long = 10_000L
     private var untilMs = 0L
 
     @Synchronized
-    fun begin(key: Pair<String, String>?, nowMs: Long, television: Boolean, personalOutput: Boolean) {
+    fun begin(key: Pair<String, String>?, nowMs: Long, television: Boolean, personalOutput: Boolean, extraMs: Long = 0L) {
         if (key == null || !television || personalOutput) {
             clear()
             return
         }
+        val until = nowMs + durationMs + extraMs.coerceAtLeast(0L)
+        untilMs = if (key == playbackKey) maxOf(untilMs, until) else until
         playbackKey = key
-        untilMs = nowMs + durationMs
     }
 
     @Synchronized
@@ -30,10 +31,11 @@ internal object PlaybackOutputTransition {
     private val window = PlaybackOutputChangeWindow()
     private fun key() = BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId }
 
-    fun begin(context: Context) {
+    /** [extraMs] covers a configured display-switch pause on top of the HDMI resync. */
+    fun begin(context: Context, extraMs: Long = 0L) {
         if (!com.ambient.tv.ui.mobile.isTelevision(context)) return
         window.begin(key(), SystemClock.elapsedRealtime(), television = true,
-            personalOutput = AudioPassthroughPolicy.probeCached(context).profile == "headphones")
+            personalOutput = AudioPassthroughPolicy.probeCached(context).profile == "headphones", extraMs = extraMs)
     }
 
     fun active(): Boolean = window.active(key(), SystemClock.elapsedRealtime())

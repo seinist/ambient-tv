@@ -17,7 +17,7 @@ import com.ambient.tv.ui.theme.normalizedAccentKey
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class SettingsBackup(
-    val schemaVersion: Int = 60,
+    val schemaVersion: Int = 61,
     val trailersEnabled: Boolean = true,
     val trailerLanguage: String = "auto",
     val tmdbApiKey: String? = null,
@@ -73,6 +73,7 @@ data class SettingsBackup(
     val preferredDisplayModeKey: String = "system",
     val allowDoubleRefreshRate: Boolean = true,
     val allowThreeTwoPulldown: Boolean = true,
+    val displaySwitchPauseMs: Int = 0,
     val mediaSelectionBehaviorKey: String = MediaSelectionPreferences.DETAILS,
     val showLibraryRowsOnHome: Boolean = false,
     @SerialName("showContinueWatchingHub") val showContinueWatchingRow: Boolean = true,
@@ -347,6 +348,7 @@ class SettingsBackupManager @Inject constructor(
             preferredDisplayModeKey = preferences.preferredDisplayModeKey,
             allowDoubleRefreshRate = preferences.allowDoubleRefreshRate,
             allowThreeTwoPulldown = preferences.allowThreeTwoPulldown,
+            displaySwitchPauseMs = preferences.displaySwitchPauseMs,
             mediaSelectionBehaviorKey = preferences.mediaSelectionBehaviorKey,
             showLibraryRowsOnHome = preferences.showLibraryRowsOnHome,
             showContinueWatchingRow = preferences.showContinueWatchingRow,
@@ -669,6 +671,8 @@ class SettingsBackupManager @Inject constructor(
         if (backup.preferredDisplayModeKey in PORTABLE_DISPLAY_MODES) preferences.preferredDisplayModeKey = backup.preferredDisplayModeKey
         preferences.allowDoubleRefreshRate = backup.allowDoubleRefreshRate
         preferences.allowThreeTwoPulldown = backup.allowThreeTwoPulldown
+        // Older backups predate the option; their default must not switch the receiver's pause off.
+        if (backup.schemaVersion >= 61) preferences.displaySwitchPauseMs = backup.displaySwitchPauseMs
         preferences.mediaSelectionBehaviorKey = backup.mediaSelectionBehaviorKey
         preferences.showLibraryRowsOnHome = backup.showLibraryRowsOnHome
         preferences.showContinueWatchingRow = backup.showContinueWatchingRow
@@ -837,7 +841,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 60
+        const val CURRENT_SCHEMA_VERSION = 61
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

@@ -136,6 +136,8 @@ interface PlaybackHandle {
     fun play()
     fun pause()
     fun seekTo(positionMs: Long)
+    /** Silences output without pausing, for live streams that cannot hold their position. */
+    fun setOutputMuted(muted: Boolean) = Unit
     fun chapters(): List<com.ambient.tv.domain.model.VideoChapter> = emptyList()
     /** Restore one logical playback after replacing only its renderer. */
     fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {

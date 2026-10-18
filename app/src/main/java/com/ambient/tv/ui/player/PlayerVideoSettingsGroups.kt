@@ -608,6 +608,11 @@ private fun PlayerDisplayModeRows(showTitle: Boolean = false) {
     if (selected == AppPreferences.DISPLAY_MODE_AUTO_CONTENT || selected == AppPreferences.DISPLAY_MODE_AUTO_DISPLAY) {
         ImageHint(stringResource(R.string.settings_display_mode_auto_hint))
     }
+    if (displaySwitchPauseVisible(modes.size, preferences.displayRefreshAdjustmentKey, selected)) {
+        var pauseMs by remember { mutableStateOf(preferences.displaySwitchPauseMs) }
+        // Applies to the next mode request; the running title keeps its current output.
+        DisplaySwitchPauseSlider(valueMs = pauseMs, onValueChange = { pauseMs = it; preferences.displaySwitchPauseMs = it })
+    }
 }
 
 @Composable

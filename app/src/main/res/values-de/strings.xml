@@ -525,6 +525,11 @@
     <string name="settings_display_mode_system">Systemvorgabe</string>
     <string name="settings_display_allow_double">Doppelte Bildraten erlauben (24→48, 30→60 Hz)</string>
     <string name="settings_display_allow_3_2">3:2-Pulldown erlauben (24→60 Hz)</string>
+    <string name="settings_display_switch_pause">Pause bei Moduswechsel</string>
+    <string name="settings_display_switch_pause_hint">Wartet, bis das Bild steht</string>
+    <string name="settings_display_switch_pause_off">Aus</string>
+    <string name="settings_display_switch_pause_seconds">%1$s s</string>
+    <string name="settings_display_switch_pause_recommended">%1$s · AV-Receiver</string>
     <string name="settings_display_modes_unavailable">Keine alternativen Anzeigemodi verfügbar.</string>
     <string name="settings_playback_backend">Standard-Player</string>
     <string name="settings_defaults_renderer">Profil für Player</string>

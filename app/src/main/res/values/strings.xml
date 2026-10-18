@@ -525,6 +525,11 @@
     <string name="settings_display_mode_system">System default</string>
     <string name="settings_display_allow_double">Allow double refresh rates (24→48, 30→60 Hz)</string>
     <string name="settings_display_allow_3_2">Allow 3:2 pulldown (24→60 Hz)</string>
+    <string name="settings_display_switch_pause">Pause on display switch</string>
+    <string name="settings_display_switch_pause_hint">Waits for the picture</string>
+    <string name="settings_display_switch_pause_off">Off</string>
+    <string name="settings_display_switch_pause_seconds">%1$s s</string>
+    <string name="settings_display_switch_pause_recommended">%1$s · AV receiver</string>
     <string name="settings_display_modes_unavailable">No alternative display modes available.</string>
     <string name="settings_playback_backend">Default player</string>
     <string name="settings_defaults_renderer">Profile for player</string>
