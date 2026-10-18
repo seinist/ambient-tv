@@ -184,7 +184,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item {
                 DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     TvActionButton(
-                        text = if (uiState.isTestingConnection) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_test_connection),
+                        text = if (uiState.isTestingConnection) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testConnection,
                         loading = uiState.isTestingConnection,
                         modifier = Modifier.weight(1f),
@@ -332,7 +332,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
                 item {
                     TvActionButton(
-                        text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_test_connection),
+                        text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testJellyfinConnection,
                         enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
                         modifier = Modifier.fillMaxWidth(), fillWidth = true,
@@ -429,7 +429,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
                 item {
                     TvActionButton(
-                        text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_test_connection),
+                        text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testEmbyConnection,
                         enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
                         modifier = Modifier.fillMaxWidth(), fillWidth = true,

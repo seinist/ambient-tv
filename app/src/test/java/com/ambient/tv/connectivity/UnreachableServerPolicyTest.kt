@@ -66,8 +66,17 @@ class UnreachableServerPolicyTest {
     fun `hiding does not outlive reachability and does not imply deletion`() {
         val hidden = hiddenUnreachableSystems(setOf("plex"), setOf("plex", "jellyfin"))
         assertEquals(setOf("plex"), hidden)
-        assertEquals(emptySet<String>(), reconcileAcknowledged(setOf("plex"), emptySet()))
-        assertEquals(setOf("plex"), reconcileAcknowledged(setOf("plex", "jellyfin"), setOf("plex")))
+        assertEquals(emptySet<String>(), hiddenUnreachableSystems(emptySet(), setOf("plex")))
+    }
+
+    @Test
+    fun `continue remains acknowledged across checking recovery and subsequent failure`() {
+        val acknowledged = setOf("plex")
+        for (failed in listOf(emptySet(), setOf("plex"))) {
+            assertFalse(UnreachableServerGateState(
+                unreachable = failed, acknowledged = acknowledged, canDismiss = true,
+            ).prompt)
+        }
     }
 
     @Test

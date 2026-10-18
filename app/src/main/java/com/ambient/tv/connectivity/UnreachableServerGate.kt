@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 data class UnreachableServerGateState(
     val unreachable: Set<String> = emptySet(),
@@ -46,8 +47,10 @@ class UnreachableServerGate @Inject constructor(
     private val plex: ServerConnectionManager,
     private val jellyfin: JellyfinConnectionManager,
     private val emby: EmbyConnectionManager,
+    private val refreshBus: PlexRefreshBus,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    // Keep Continue acknowledged for this app session, including checks and later outages.
     private val acknowledged = MutableStateFlow<Set<String>>(emptySet())
     private val revision = MutableStateFlow(0)
 
@@ -63,9 +66,14 @@ class UnreachableServerGate @Inject constructor(
 
     init {
         scope.launch {
-            state.collect { current ->
-                val reconciled = reconcileAcknowledged(current.acknowledged, current.unreachable)
-                if (reconciled != acknowledged.value) acknowledged.value = reconciled
+            while (true) {
+                delay(30_000L)
+                val hidden = current().hidden
+                coroutineScope {
+                    if (MediaSystem.PLEX.key in hidden) launch { if (plex.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.JELLYFIN.key in hidden) launch { if (jellyfin.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.EMBY.key in hidden) launch { if (emby.checkInBackground()) refreshBus.requestRefresh() }
+                }
             }
         }
     }
@@ -86,16 +94,21 @@ class UnreachableServerGate @Inject constructor(
     fun confirm() {
         val current = current()
         val next = acknowledgedAfterConfirm(current.acknowledged, current.toDecision())
-        if (next != acknowledged.value) acknowledged.value = next
+        if (next != acknowledged.value) {
+            if (MediaSystem.PLEX.key in current.unreachable) plex.pauseAutomaticReconnect()
+            if (MediaSystem.JELLYFIN.key in current.unreachable) jellyfin.pauseAutomaticReconnect()
+            if (MediaSystem.EMBY.key in current.unreachable) emby.pauseAutomaticReconnect()
+            acknowledged.value = next
+        }
     }
 
     fun retry(refreshBus: PlexRefreshBus) {
         scope.launch {
             val failed = current().unreachable
             coroutineScope {
-                if (MediaSystem.PLEX.key in failed) launch { plex.ensureConnected() }
-                if (MediaSystem.JELLYFIN.key in failed) launch { jellyfin.ensureConnected() }
-                if (MediaSystem.EMBY.key in failed) launch { emby.ensureConnected() }
+                if (MediaSystem.PLEX.key in failed) launch { plex.reconnect() }
+                if (MediaSystem.JELLYFIN.key in failed) launch { jellyfin.reconnect() }
+                if (MediaSystem.EMBY.key in failed) launch { emby.reconnect() }
             }
             refreshBus.requestRefresh()
             refresh()

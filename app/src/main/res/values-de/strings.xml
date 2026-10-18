@@ -93,7 +93,7 @@
     <string name="home_open_settings">Einstellungen öffnen</string>
     <string name="home_startup_unreachable">Server nicht erreichbar</string>
     <string name="home_library_empty">Keine Bibliotheken gefunden</string>
-    <string name="home_library_empty_body">Der Server ist erreichbar, liefert aber aktuell keine verwendbaren Bibliotheken.</string>
+    <string name="home_library_empty_body">Aktuell sind keine Bibliotheken verfügbar. Prüfe in den Einstellungen deine Medienquellen, Bibliotheksauswahl und Serververbindung.</string>
     <string name="home_retry">Erneut versuchen</string>
     <string name="home_connection_problem">Verbindung nicht möglich</string>
     <string name="home_connection_error_details">Details: %1$s</string>
@@ -545,7 +545,7 @@
     <string name="home_server_unreachable_title">Medienserver nicht erreichbar</string>
     <string name="home_server_unreachable_body">„%1$s“ antwortet im lokalen Netzwerk nicht. Prüfe, ob der Server eingeschaltet ist und dein Gerät im gleichen Netzwerk ist. Danach kannst du die Verbindung erneut versuchen.</string>
     <string name="home_server_unreachable_continue">Weiter</string>
-    <string name="home_server_unreachable_continue_hint">Andere Quellen bleiben verfügbar. Diese bleibt ausgeblendet, bis sie antwortet.</string>
+    <string name="home_server_unreachable_continue_hint">Andere Quellen bleiben verfügbar. Wir prüfen die Erreichbarkeit still im Hintergrund, ohne Aufweck- oder Verbindungsversuche. In den Einstellungen kannst du manuell neu verbinden.</string>
     <string name="home_wake_timeout_title">Server wurde nicht rechtzeitig erreichbar</string>
     <string name="home_wake_timeout_body">„%1$s“ wurde per Wake-on-LAN angesprochen, ist aber noch nicht erreichbar. Der Start kann länger dauern – versuche es erneut oder prüfe Netzwerk und Wake-on-LAN-Einstellungen.</string>
     <string name="home_connection_error_body">Die Verbindung zum Medienserver ist fehlgeschlagen.</string>
@@ -1730,4 +1730,5 @@
     <string name="player_record_stopped">Aufnahme gestoppt</string>
     <string name="player_record_stop_failed">Aufnahme konnte nicht gestoppt werden. Bitte erneut versuchen.</string>
     <string name="tvh_recording_active">Wird aufgenommen</string>
+    <string name="settings_reconnect_server">Neu verbinden</string>
 </resources>

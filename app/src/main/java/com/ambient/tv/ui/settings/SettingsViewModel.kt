@@ -90,6 +90,7 @@ private const val WIREGUARD_FILE_LIMIT = 64 * 1024
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
     private val appPreferences: AppPreferences,
     private val tokenStore: TokenStore,
     private val mediaRepository: MediaRepository,
@@ -987,7 +988,8 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = suspendResult {
                     
-                    jellyfinConnectionManager.testCurrentServer().getOrThrow()
+                    check(jellyfinConnectionManager.reconnect()) { context.getString(R.string.server_connection_failed) }
+                    jellyfinConnectionManager.testCurrentServer().getOrThrow().also { refreshBus.requestRefresh() }
                 }
                 
                 finishFeedback(ticket, page, if (result.isSuccess) R.string.notice_test_ok else R.string.notice_failed,
@@ -1203,7 +1205,8 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = suspendResult {
                     
-                    embyConnectionManager.testCurrentServer().getOrThrow()
+                    check(embyConnectionManager.reconnect()) { context.getString(R.string.server_connection_failed) }
+                    embyConnectionManager.testCurrentServer().getOrThrow().also { refreshBus.requestRefresh() }
                 }
                 
                 finishFeedback(ticket, page, if (result.isSuccess) R.string.notice_test_ok else R.string.notice_failed,
@@ -2643,7 +2646,8 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = suspendResult {
                     
-                    connectionManager.testCurrentServer().getOrThrow()
+                    check(connectionManager.reconnect()) { context.getString(R.string.server_connection_failed) }
+                    connectionManager.testCurrentServer().getOrThrow().also { refreshBus.requestRefresh() }
                 }
                 val identity = result.getOrNull()
                 if (identity?.machineIdentifier != null) {

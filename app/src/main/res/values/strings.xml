@@ -93,7 +93,7 @@
     <string name="home_open_settings">Open settings</string>
     <string name="home_startup_unreachable">Server not reachable</string>
     <string name="home_library_empty">No libraries found</string>
-    <string name="home_library_empty_body">The server is reachable but currently returns no usable libraries.</string>
+    <string name="home_library_empty_body">No libraries are currently available. Check your media sources, library selection and server connection in Settings.</string>
     <string name="home_retry">Retry</string>
     <string name="home_connection_problem">Unable to connect</string>
     <string name="home_connection_error_details">Details: %1$s</string>
@@ -545,7 +545,7 @@
     <string name="home_server_unreachable_title">Media server unavailable</string>
     <string name="home_server_unreachable_body">“%1$s” is not responding on the local network. Make sure the server is powered on and this device is on the same network, then try again.</string>
     <string name="home_server_unreachable_continue">Continue</string>
-    <string name="home_server_unreachable_continue_hint">Other sources stay available. This one stays hidden until it responds.</string>
+    <string name="home_server_unreachable_continue_hint">Other sources remain available. We will check quietly in the background, without wake or connection retries. You can reconnect manually in Settings.</string>
     <string name="home_wake_timeout_title">Server did not become reachable</string>
     <string name="home_wake_timeout_body">A Wake-on-LAN request was sent to “%1$s”, but the server is still unavailable. Startup can take longer; try again or check the network and Wake-on-LAN settings.</string>
     <string name="home_connection_error_body">The connection to the media server failed.</string>
@@ -1731,4 +1731,5 @@
     <string name="player_record_stopped">Recording stopped</string>
     <string name="player_record_stop_failed">Could not stop recording. Please try again.</string>
     <string name="tvh_recording_active">Recording in progress</string>
+    <string name="settings_reconnect_server">Reconnect</string>
 </resources>

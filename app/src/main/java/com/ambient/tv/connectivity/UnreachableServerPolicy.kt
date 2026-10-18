@@ -66,9 +66,6 @@ fun acknowledgedAfterConfirm(acknowledged: Set<String>, decision: UnreachableSer
 fun hiddenUnreachableSystems(unreachable: Set<String>, acknowledged: Set<String>): Set<String> =
     unreachable.intersect(acknowledged)
 
-fun reconcileAcknowledged(acknowledged: Set<String>, unreachable: Set<String>): Set<String> =
-    acknowledged.intersect(unreachable)
-
 /** Library routes that belong to a hidden system. Playback and settings are left alone. */
 fun libraryRouteOwnedByHiddenSystem(route: String?, hidden: Set<String>): Boolean {
     if (route.isNullOrBlank() || hidden.isEmpty()) return false
