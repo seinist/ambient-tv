@@ -291,6 +291,12 @@ open class MainActivity : ComponentActivity() {
         if (consumeScreensaverInput(screensaverInput.key(keyIdentity, phase, event.repeatCount,
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
+        // Sleep pre-warning: OK extends by 30 min instead of reaching the focused control.
+        if (BackgroundPlaybackSession.sleepWarningDeadline != null && event.keyCode in setOf(
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) BackgroundPlaybackSession.extendSleepTimer()
+            return true
+        }
         // Some Android TV mouse drivers emit both BUTTON_BACK and KEYCODE_BACK for one side-button
         // press. The generic mouse event already navigated; consume the duplicate key pair.
         if (event.keyCode == KeyEvent.KEYCODE_BACK && SystemClock.elapsedRealtime() <= suppressMouseBackKeyUntilMs) {
@@ -2266,6 +2272,7 @@ private fun AmbientTvApp(
             }
             // Global: the timer can expire on any screen, also while only the mini-player plays.
             com.ambient.tv.ui.player.SleepTimerPromptDialog()
+            com.ambient.tv.ui.player.SleepTimerWarningOverlay(touch = !com.ambient.tv.ui.mobile.isTelevision(androidx.compose.ui.platform.LocalContext.current))
             // A DLNA sender that is not trusted yet asks before anything plays.
             com.ambient.tv.renderer.RendererPromptDialog()
             // A programme reminder that is due while the app is open.

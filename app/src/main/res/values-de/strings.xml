@@ -1741,4 +1741,15 @@
     <string name="player_record_stop_failed">Aufnahme konnte nicht gestoppt werden. Bitte erneut versuchen.</string>
     <string name="tvh_recording_active">Wird aufgenommen</string>
     <string name="settings_reconnect_server">Neu verbinden</string>
+    <string name="settings_sleep_timer">Sleep-Timer</string>
+    <string name="settings_sleep_timer_hint">Startet bei jeder neuen Wiedergabe automatisch. Senderwechsel und nächste Folge setzen ihn nicht zurück; „Aus“ im Player gilt für die laufende Wiedergabe.</string>
+    <string name="settings_sleep_auto_start">Automatisch starten</string>
+    <string name="settings_sleep_end_item">Ende des Titels (Live-TV: 60 min)</string>
+    <string name="settings_sleep_inactivity">Nach Inaktivität %1$d min</string>
+    <string name="settings_sleep_minutes">%1$d min</string>
+    <string name="settings_sleep_warning">Vorwarnung</string>
+    <string name="sleep_warning_message">Wiedergabe stoppt in %1$d min – OK: +30 min</string>
+    <string name="sleep_warning_message_touch">Wiedergabe stoppt in %1$d min</string>
+    <string name="sleep_extend_30">+30 min</string>
+    <string name="sleep_extend_action">Verlängern</string>
 </resources>

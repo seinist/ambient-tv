@@ -1742,4 +1742,15 @@
     <string name="player_record_stop_failed">Could not stop recording. Please try again.</string>
     <string name="tvh_recording_active">Recording in progress</string>
     <string name="settings_reconnect_server">Reconnect</string>
+    <string name="settings_sleep_timer">Sleep timer</string>
+    <string name="settings_sleep_timer_hint">Starts automatically with every new playback. Zapping and the next episode keep it; “Off” in the player applies to the current playback.</string>
+    <string name="settings_sleep_auto_start">Start automatically</string>
+    <string name="settings_sleep_end_item">End of title (live TV: 60 min)</string>
+    <string name="settings_sleep_inactivity">After %1$d min of inactivity</string>
+    <string name="settings_sleep_minutes">%1$d min</string>
+    <string name="settings_sleep_warning">Warning</string>
+    <string name="sleep_warning_message">Playback stops in %1$d min – OK: +30 min</string>
+    <string name="sleep_warning_message_touch">Playback stops in %1$d min</string>
+    <string name="sleep_extend_30">+30 min</string>
+    <string name="sleep_extend_action">Extend</string>
 </resources>

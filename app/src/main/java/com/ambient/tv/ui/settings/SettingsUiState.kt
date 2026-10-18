@@ -171,6 +171,8 @@ data class SettingsUiState(
     val nextUpAutoplayCollections: Boolean = false,
     val nextUpOverlayEnabled: Boolean = true,
     val nextUpStillWatchingEpisodes: Int = 3,
+    val sleepAutoStartKey: String = com.ambient.tv.data.local.AppPreferences.SLEEP_AUTO_START_OFF,
+    val sleepWarningMinutes: Int = com.ambient.tv.data.local.AppPreferences.SLEEP_WARNING_DEFAULT,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     /**
      * Wake page drafts for NAS/DLNA servers ("files:<id>", "dlna:<id>"), kept like the server MAC
@@ -371,6 +373,8 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     nextUpAutoplayCollections,
     nextUpOverlayEnabled,
     nextUpStillWatchingEpisodes,
+    sleepAutoStartKey,
+    sleepWarningMinutes,
     wolRetryCount,
     pendingSourceWakeMacs,
     pendingSourceWakeAuto,
@@ -530,6 +534,8 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     nextUpAutoplayCollections = if (draft.nextUpAutoplayCollections != baseline.nextUpAutoplayCollections) draft.nextUpAutoplayCollections else stored.nextUpAutoplayCollections,
     nextUpOverlayEnabled = if (draft.nextUpOverlayEnabled != baseline.nextUpOverlayEnabled) draft.nextUpOverlayEnabled else stored.nextUpOverlayEnabled,
     nextUpStillWatchingEpisodes = if (draft.nextUpStillWatchingEpisodes != baseline.nextUpStillWatchingEpisodes) draft.nextUpStillWatchingEpisodes else stored.nextUpStillWatchingEpisodes,
+    sleepAutoStartKey = if (draft.sleepAutoStartKey != baseline.sleepAutoStartKey) draft.sleepAutoStartKey else stored.sleepAutoStartKey,
+    sleepWarningMinutes = if (draft.sleepWarningMinutes != baseline.sleepWarningMinutes) draft.sleepWarningMinutes else stored.sleepWarningMinutes,
     wolRetryCount = if (draft.wolRetryCount != baseline.wolRetryCount) draft.wolRetryCount else stored.wolRetryCount,
     youtubeSponsorBlockEnabled = if (draft.youtubeSponsorBlockEnabled != baseline.youtubeSponsorBlockEnabled) draft.youtubeSponsorBlockEnabled else stored.youtubeSponsorBlockEnabled,
     youtubeAutoplayNextEnabled = if (draft.youtubeAutoplayNextEnabled != baseline.youtubeAutoplayNextEnabled) draft.youtubeAutoplayNextEnabled else stored.youtubeAutoplayNextEnabled,

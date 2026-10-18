@@ -490,7 +490,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     fun retry() {
         viewModelScope.launch {
             if (BackgroundPlaybackSession.snapshot.value.metadata?.historyScope == historyScope) {
-                BackgroundPlaybackSession.stop()
+                BackgroundPlaybackSession.stop(keepSleepTimer = true)
             }
             runCatching { repository.invalidateAll() }
             load()
@@ -527,7 +527,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         val current = _uiState.value as? TvheadendPlayerState.Ready
         runCatching { BackgroundPlaybackSession.pause() }
         if (serverUnreachableRetryAttempted) {
-            runCatching { BackgroundPlaybackSession.stop() }
+            runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
             _uiState.value = TvheadendPlayerState.Error(
                 message = reason.ifBlank { context.getString(com.ambient.tv.R.string.player_server_unreachable) },
                 kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
@@ -544,7 +544,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                 fallbackAttempted = false
                 load()
             } else {
-                runCatching { BackgroundPlaybackSession.stop() }
+                runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
                 _uiState.value = TvheadendPlayerState.Error(
                     message = reason.ifBlank { context.getString(com.ambient.tv.R.string.player_server_unreachable) },
                     kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,

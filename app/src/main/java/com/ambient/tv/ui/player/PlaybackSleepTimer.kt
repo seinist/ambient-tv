@@ -17,10 +17,31 @@ class PlaybackSleepTimer {
         }
         lastInputMs = nowMs
         inactiveSinceMs = null
+        warnedDeadlineMs = null
         return config
     }
 
     fun userInput(nowMs: Long) { lastInputMs = nowMs }
+
+    /** Deadline already announced by the pre-warning; one notice per deadline. */
+    private var warnedDeadlineMs: Long? = null
+
+    /** Timed stops only: the deadline, once [warningMs] or less remain and it was not announced yet. */
+    fun warningDue(nowMs: Long, warningMs: Long): Long? {
+        if (warningMs <= 0L || config.kind != SleepTimerKind.DURATION) return null
+        val deadline = config.deadlineRealtimeMs ?: return null
+        if (deadline == warnedDeadlineMs || nowMs >= deadline || deadline - nowMs > warningMs) return null
+        warnedDeadlineMs = deadline
+        return deadline
+    }
+
+    /** "+30 min" from the pre-warning: moves a timed stop, the rest of the timer stays. */
+    fun extend(minutes: Int, nowMs: Long): SleepTimerConfig {
+        if (config.kind != SleepTimerKind.DURATION) return config
+        val base = maxOf(config.deadlineRealtimeMs ?: nowMs, nowMs)
+        config = config.copy(deadlineRealtimeMs = base + minutes * 60_000L)
+        return config
+    }
 
     fun expired(nowMs: Long, status: PlaybackStatus, wantsToPlay: Boolean): Boolean {
         // A renderer buffering with play intent is active playback, even before its first frame.

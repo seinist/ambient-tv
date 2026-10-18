@@ -17,7 +17,7 @@ import com.ambient.tv.ui.theme.normalizedAccentKey
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class SettingsBackup(
-    val schemaVersion: Int = 61,
+    val schemaVersion: Int = 62,
     val trailersEnabled: Boolean = true,
     val trailerLanguage: String = "auto",
     val tmdbApiKey: String? = null,
@@ -193,6 +193,8 @@ data class SettingsBackup(
     val nextUpAutoplayCollections: Boolean = false,
     val nextUpOverlayEnabled: Boolean = true,
     val nextUpStillWatchingEpisodes: Int = 3,
+    val sleepAutoStartKey: String = AppPreferences.SLEEP_AUTO_START_OFF,
+    val sleepWarningMinutes: Int = AppPreferences.SLEEP_WARNING_DEFAULT,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
@@ -460,6 +462,8 @@ class SettingsBackupManager @Inject constructor(
             nextUpAutoplayCollections = preferences.nextUpAutoplayCollections,
             nextUpOverlayEnabled = preferences.nextUpOverlayEnabled,
             nextUpStillWatchingEpisodes = preferences.nextUpStillWatchingEpisodes,
+            sleepAutoStartKey = preferences.sleepAutoStartKey,
+            sleepWarningMinutes = preferences.sleepWarningMinutes,
             wolRetryCount = preferences.wolRetryCount,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
@@ -802,6 +806,10 @@ class SettingsBackupManager @Inject constructor(
         preferences.nextUpAutoplayCollections = backup.nextUpAutoplayCollections
         preferences.nextUpOverlayEnabled = backup.nextUpOverlayEnabled
         preferences.nextUpStillWatchingEpisodes = backup.nextUpStillWatchingEpisodes
+        // Backups before schema 62 have no sleep-timer defaults: they restore the defaults (off, 1 min).
+        val sleepDefaults = backup.schemaVersion >= 62
+        preferences.sleepAutoStartKey = if (sleepDefaults) backup.sleepAutoStartKey else AppPreferences.SLEEP_AUTO_START_OFF
+        preferences.sleepWarningMinutes = if (sleepDefaults) backup.sleepWarningMinutes else AppPreferences.SLEEP_WARNING_DEFAULT
         preferences.wolRetryCount = backup.wolRetryCount
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
@@ -841,7 +849,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 61
+        const val CURRENT_SCHEMA_VERSION = 62
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

@@ -487,6 +487,8 @@ class SettingsViewModel @Inject constructor(
         nextUpAutoplayCollections = appPreferences.nextUpAutoplayCollections,
         nextUpOverlayEnabled = appPreferences.nextUpOverlayEnabled,
         nextUpStillWatchingEpisodes = appPreferences.nextUpStillWatchingEpisodes,
+        sleepAutoStartKey = appPreferences.sleepAutoStartKey,
+        sleepWarningMinutes = appPreferences.sleepWarningMinutes,
         wolRetryCount = appPreferences.wolRetryCount,
         youtubeSponsorBlockEnabled = appPreferences.youtubeSponsorBlockEnabled,
         youtubeAutoplayNextEnabled = appPreferences.youtubeAutoplayNextEnabled,
@@ -2087,6 +2089,12 @@ class SettingsViewModel @Inject constructor(
     fun onNextUpStillWatchingEpisodesChanged(value: Int) = _uiState.update {
         it.copy(nextUpStillWatchingEpisodes = value.takeIf(AppPreferences.NEXT_UP_STILL_WATCHING_VALUES::contains) ?: 3)
     }
+    fun onSleepAutoStartChanged(value: String) = _uiState.update {
+        it.copy(sleepAutoStartKey = value.takeIf(AppPreferences.SLEEP_AUTO_START_KEYS::contains) ?: AppPreferences.SLEEP_AUTO_START_OFF)
+    }
+    fun onSleepWarningMinutesChanged(value: Int) = _uiState.update {
+        it.copy(sleepWarningMinutes = value.takeIf(AppPreferences.SLEEP_WARNING_VALUES::contains) ?: AppPreferences.SLEEP_WARNING_DEFAULT)
+    }
     fun onWolRetryCountChanged(value: Int) = _uiState.update { it.copy(wolRetryCount = com.ambient.tv.wol.normalizedWolRetryCount(value)) }
     fun onYoutubeSponsorBlockChanged(value: Boolean) = _uiState.update { it.copy(youtubeSponsorBlockEnabled = value) }
     fun onYoutubeAutoplayNextChanged(value: Boolean) = _uiState.update { it.copy(youtubeAutoplayNextEnabled = value) }
@@ -2487,6 +2495,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.nextUpAutoplayCollections = state.nextUpAutoplayCollections
         appPreferences.nextUpOverlayEnabled = state.nextUpOverlayEnabled
         appPreferences.nextUpStillWatchingEpisodes = state.nextUpStillWatchingEpisodes
+        appPreferences.sleepAutoStartKey = state.sleepAutoStartKey
+        appPreferences.sleepWarningMinutes = state.sleepWarningMinutes
         appPreferences.wolRetryCount = state.wolRetryCount
         appPreferences.youtubeSponsorBlockEnabled = state.youtubeSponsorBlockEnabled
         appPreferences.youtubeAutoplayNextEnabled = state.youtubeAutoplayNextEnabled

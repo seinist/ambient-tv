@@ -144,7 +144,6 @@ import com.ambient.tv.ui.player.PlayerAspectPreset
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
-import com.ambient.tv.ui.player.pauseSleepTimerMinutes
 import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.delay
 import timber.log.Timber
@@ -1207,37 +1206,6 @@ private fun TvhVideoSettingsPanel(
 }
 
 @Composable
-private fun TvhSleepTimerPanel(config: SleepTimerConfig, allowEndOfItem: Boolean, onChange: (SleepTimerConfig) -> Unit, onBack: () -> Unit) {
-    TvhSidePanel(stringResource(R.string.player_sleep_timer), onBack) {
-        item { Text(stringResource(R.string.player_sleep_after_time), color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf(15, 30, 45, 60, 90).forEach { minutes ->
-                    TvhSpeedChip(if (minutes == 60) "1h" else "${minutes}m", config.kind == SleepTimerKind.DURATION && config.minutes == minutes) {
-                        onChange(SleepTimerConfig(SleepTimerKind.DURATION, minutes, android.os.SystemClock.elapsedRealtime() + minutes * 60_000L))
-                    }
-                }
-            }
-        }
-        item { Text(stringResource(R.string.player_sleep_behavior), color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-        if (allowEndOfItem) item { TvhChoiceRow(stringResource(R.string.player_sleep_end_item), stringResource(R.string.player_sleep_end_item_hint), config.kind == SleepTimerKind.END_OF_ITEM) { onChange(SleepTimerConfig(SleepTimerKind.END_OF_ITEM)) } }
-        pauseSleepTimerMinutes.forEach { minutes ->
-            item { TvhChoiceRow(stringResource(R.string.player_sleep_pause_summary, minutes),
-                stringResource(R.string.player_sleep_pause_hint), config.kind == SleepTimerKind.PAUSE_INACTIVITY && config.minutes == minutes) {
-                onChange(SleepTimerConfig(SleepTimerKind.PAUSE_INACTIVITY, minutes))
-            } }
-        }
-        listOf(30, 60, 90, 120).forEach { minutes ->
-            item { TvhChoiceRow(stringResource(R.string.player_sleep_input_summary, minutes),
-                stringResource(R.string.player_sleep_input_hint), config.kind == SleepTimerKind.USER_INACTIVITY && config.minutes == minutes) {
-                onChange(SleepTimerConfig(SleepTimerKind.USER_INACTIVITY, minutes))
-            } }
-        }
-        if (config.kind != SleepTimerKind.OFF) item { TvhChoiceRow(stringResource(R.string.player_sleep_off), stringResource(R.string.player_sleep_off_hint), false) { onChange(SleepTimerConfig()) } }
-    }
-}
-
-@Composable
 private fun tvhSleepTimerSummary(config: SleepTimerConfig): String = when (config.kind) {
     SleepTimerKind.OFF -> stringResource(R.string.player_sleep_off)
     SleepTimerKind.DURATION -> {
@@ -1286,19 +1254,6 @@ private fun TvhChoiceRow(
     onClick: () -> Unit,
 ) {
     RightPanelChoice(text = title, subtitle = detail, selected = selected, onClick = onClick, modifier = modifier)
-}
-
-@Composable
-private fun TvhSpeedChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier.width(70.dp).height(40.dp).onFocusChanged { focused = it.isFocused }
-            .appControlSurface(focused = focused, selected = selected, shape = RoundedCornerShape(6.dp))
-            .activateOnTvKey(onClick = onClick).clickable(onClick = onClick).focusable(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, color = if (selected && !focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-    }
 }
 
 @Composable

@@ -69,7 +69,7 @@ class PlaybackService : Service() {
     private var focusRetryPending = false
     private var lastStartId = 0
     private var lastReport = 0L
-    private var lastNotification: Pair<Long, PlaybackStatus>? = null
+    private var lastNotification: Triple<Long, PlaybackStatus, Int?>? = null
     private var lastMetadata: Triple<String?, String?, Long>? = null
     private var artworkBitmap: Bitmap? = null
     private var artworkRequestKey: String? = null
@@ -196,6 +196,7 @@ class PlaybackService : Service() {
         when (intent?.action) {
             ACTION_TOGGLE -> BackgroundPlaybackSession.toggle()
             ACTION_STOP -> BackgroundPlaybackSession.stop()
+            ACTION_EXTEND_SLEEP -> BackgroundPlaybackSession.extendSleepTimer()
         }
         return START_NOT_STICKY // Never restart an unknown stream after process death.
     }
@@ -292,7 +293,8 @@ class PlaybackService : Service() {
             }, state.status.positionMs + (metadata?.timelineOffsetMs ?: 0), if (state.playing) 1f else 0f)
             .build())
         // Position updates go to MediaSession; avoid rebuilding a notification twice a second.
-        val notificationKey = state.generation to state.status.copy(positionMs = 0, durationMs = 0)
+        val notificationKey = Triple(state.generation, state.status.copy(positionMs = 0, durationMs = 0),
+            BackgroundPlaybackSession.sleepWarningDeadline?.let { sleepWarningMinutesLeft(it, now) })
         if (lastNotification != notificationKey) {
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state))
             lastNotification = notificationKey
@@ -369,6 +371,15 @@ class PlaybackService : Service() {
                 getString(if (state.playing) R.string.player_pause else R.string.player_play), action(ACTION_TOGGLE, 1)).build())
             .addAction(Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
                 getString(R.string.player_stop), action(ACTION_STOP, 2)).build())
+            .apply {
+                // Sleep pre-warning: extend from the phone's notification or lock screen.
+                BackgroundPlaybackSession.sleepWarningDeadline?.let { deadline ->
+                    setContentText(getString(R.string.sleep_warning_message_touch,
+                        sleepWarningMinutesLeft(deadline, SystemClock.elapsedRealtime())))
+                    addAction(Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_menu_recent_history),
+                        getString(R.string.sleep_extend_action), action(ACTION_EXTEND_SLEEP, 3)).build())
+                }
+            }
             .setStyle(Notification.MediaStyle().setMediaSession(mediaSession.sessionToken).setShowActionsInCompactView(0, 1))
         artworkBitmap?.let { builder.setLargeIcon(it) }
         return builder.build()
@@ -488,5 +499,6 @@ class PlaybackService : Service() {
         private const val MAX_FOCUS_RETRIES = 10
         private const val FOCUS_RETRY_MS = 1_500L
         private const val ACTION_STOP = "com.ambient.tv.STOP_PLAYBACK"
+        private const val ACTION_EXTEND_SLEEP = "com.ambient.tv.EXTEND_SLEEP_TIMER"
     }
 }
