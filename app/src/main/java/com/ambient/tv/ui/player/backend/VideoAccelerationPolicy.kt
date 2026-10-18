@@ -57,8 +57,12 @@ data class MpvAccelerationPlan(
         vulkan || output == "gpu" -> "mediacodec-copy"
         else -> "mediacodec"
     }
-    fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean): String = when {
+    /** Decoder set before loadfile; [zeroCopy] only applies to OpenGL. */
+    fun initialHwdec(zeroCopy: Boolean): String = if (zeroCopy && output == "gpu" && decoder != "software") MPV_ZERO_COPY_HWDEC else hwdec
+    /** Decoder for OpenGL with/without copy-back. [zeroCopy]: SHIELD interlaced live (MpvShieldInterlacePolicy). */
+    fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean, zeroCopy: Boolean = false): String = when {
         decoder == "software" -> "no"
+        zeroCopy && output == "gpu" -> MPV_ZERO_COPY_HWDEC
         decoder == "vulkan" && (copyBack || deinterlace) -> "vulkan-copy,mediacodec-copy"
         vulkan || output == "gpu" -> hwdec
         copyBack || deinterlace -> "mediacodec-copy"

@@ -142,7 +142,7 @@ class MpvPlaybackController(
         }
         val next = MpvEngineState(
             status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters,
-            usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback,
+            usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, zeroCopyStatus = player.zeroCopyStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
             deinterlaceModeKey = player.deinterlaceModeKey, deinterlaceFilterKey = player.deinterlaceFilterKey,
             deinterlaceBackoffGeneration = player.deinterlaceBackoffGeneration, deinterlaceFailed = player.deinterlaceFailed,
@@ -180,6 +180,7 @@ class MpvPlaybackController(
     override val usesRendererScaling get() = supportsGpuFilters
     override val usesFrameInterpolation get() = state.usesFrameInterpolation
     val accelerationFallback get() = state.accelerationFallback
+    val zeroCopyStatus get() = state.zeroCopyStatus
     val imageOptions get() = pendingImage?.second ?: state.imageOptions
     private var saveDefaults by mutableStateOf(false)
     var saveImageDefaults: Boolean
@@ -402,6 +403,7 @@ private data class MpvEngineState(
     val supportsGpuFilters: Boolean = false,
     val usesFrameInterpolation: Boolean = false,
     val accelerationFallback: String? = null,
+    val zeroCopyStatus: String? = null,
     val imageOptions: MpvImageOptions = MpvImageOptions(),
     val imageOptionWarnings: List<String> = emptyList(),
     val deinterlaceModeKey: String = "off",
