@@ -73,6 +73,9 @@ class TvheadendRepository @Inject constructor(
     private var cacheGeneration = 0L
     private val requestMutexes = Array(16) { Mutex() }
     @Volatile private var lastReachableAtMs: Long = 0L
+    /** Last time the port was seen closed; a server that just came up counts as waking. */
+    @Volatile private var lastUnreachableAtMs: Long = 0L
+    private val loginRejection = TvheadendLoginRejection()
 
     private val authenticator = TvheadendAuthenticator { preferences.tvheadendUsername to tokenStore.tvheadendPassword }
 
@@ -116,7 +119,18 @@ class TvheadendRepository @Inject constructor(
         }
     }
 
-    suspend fun testConnection(): Result<TvhServerInfo> = suspendResult { serverInfo(force = true) }
+    /**
+     * [explicit] is the settings test button: a 401 there marks the login rejected at once.
+     * Automatic checks (Home, pending logins) only confirm or leave the state to the 401 policy.
+     */
+    suspend fun testConnection(explicit: Boolean = false): Result<TvhServerInfo> =
+        suspendResult { serverInfo(force = true) }.onFailure { error ->
+            if (explicit && error is TvheadendHttpException && error.code == 401 &&
+                loginRejection.on401(TvheadendLoginRejection.PROBE_PATH, explicit = true, portReachable = true, lastWakeAtMs = 0L, nowMs = System.currentTimeMillis())
+            ) {
+                preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.REJECTED
+            }
+        }
 
     suspend fun dashboard(): TvhDashboard = coroutineScope {
         val info = async { serverInfo() }
@@ -498,14 +512,21 @@ class TvheadendRepository @Inject constructor(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     timber.log.Timber.w("TVHeadend API %s returned HTTP %d", path, response.code)
-                    // Rejected login: hide TVHeadend from menus until a call succeeds again. Only the
-                    // endpoints every TV account may use prove that: TVHeadend also answers 401 when
-                    // the account merely lacks a right (recordings, DVR/stream profiles, deletes),
-                    // and that must not take a working login out of the menu.
-                    if (response.code == 401 && path in LOGIN_CHECK_PATHS) preferences.tvheadendLoginVerified = false
+                    // A 401 alone does not hide TVHeadend: right after a wake the port opens before
+                    // the login works, and other paths answer 401 for a missing right. The policy
+                    // rejects only on repeated serverinfo 401s on a settled, reachable server.
+                    if (response.code == 401 && path == TvheadendLoginRejection.PROBE_PATH) {
+                        val now = System.currentTimeMillis()
+                        val lastWake = maxOf(com.ambient.tv.wol.WolManager.lastWakeBurstAtMs, lastUnreachableAtMs)
+                        if (loginRejection.on401(path, explicit = false, portReachable = isTvheadendReachable(), lastWakeAtMs = lastWake, nowMs = now)) {
+                            timber.log.Timber.w("TVHeadend login rejected after repeated HTTP 401")
+                            preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.REJECTED
+                        }
+                    }
                     throw TvheadendHttpException(response.code, "TVHeadend HTTP ${response.code} ${response.message}")
                 }
-                preferences.tvheadendLoginVerified = true
+                loginRejection.onSuccess()
+                preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.VERIFIED
                 lastReachableAtMs = System.currentTimeMillis()
                 val body = response.body.string().orEmpty()
                 if (body.isBlank()) JsonObject(emptyMap()) else json.parseToJsonElement(body)
@@ -611,7 +632,7 @@ class TvheadendRepository @Inject constructor(
             val endpoint = configuredTvheadendEndpoint()
             Socket().use { socket -> socket.connect(InetSocketAddress(endpoint.host, preferences.tvheadendPort), 900) }
             true
-        }.getOrDefault(false)
+        }.getOrDefault(false).also { if (!it) lastUnreachableAtMs = System.currentTimeMillis() }
     }
 
     private fun buildUrl(path: String, params: Map<String, String>): HttpUrl {
@@ -754,5 +775,3 @@ class TvheadendRepository @Inject constructor(
     private data class CacheValue<T>(val createdAtMs: Long, val value: T)
 }
 
-/** API paths every TV account may call; only a 401 on these means the login itself was rejected. */
-internal val LOGIN_CHECK_PATHS = setOf("api/serverinfo", "api/channel/grid", "api/epg/events/grid")

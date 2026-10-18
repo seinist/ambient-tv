@@ -51,7 +51,7 @@ fun HandheldNavigationHost(
         plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
         jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
         embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
-        tvheadendConfigured = sidebarState.tvheadendEnabled,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
     )
@@ -309,7 +309,9 @@ private fun HandheldSources(
             }
             add(withSettings(MediaSystem.SPOTIFY, entries))
         }
-        if (tv) add(withSettings(MediaSystem.TVHEADEND, tvKeys.mapNotNull { key ->
+        if (tv && sidebarState.tvheadendLoginRejected) add(withSettings(MediaSystem.TVHEADEND, listOf(SourceEntry("login",
+            stringResource(R.string.tvh_login_check), Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))))
+        else if (tv) add(withSettings(MediaSystem.TVHEADEND, tvKeys.mapNotNull { key ->
             val label = when (key) { "live" -> R.string.tvh_live; "guide" -> R.string.tvh_guide; "recordings" -> R.string.tvh_recordings; "timers" -> R.string.tvh_timers; else -> null } ?: return@mapNotNull null
             SourceEntry(key, stringResource(label), if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
         }.ifEmpty { listOf(SourceEntry("live", stringResource(R.string.tvh_live), Destinations.LIVE_TV)) }))

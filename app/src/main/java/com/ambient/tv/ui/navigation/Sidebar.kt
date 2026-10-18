@@ -211,6 +211,7 @@ internal fun SidebarContent(
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
     val tvheadendEnabled = sidebarState.tvheadendEnabled
+    val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
     val spotifyNativeAvailable = sidebarState.spotifyNativeAvailable
     val youtubeFeedKeys = sidebarState.youtubeFeedKeys
@@ -292,7 +293,12 @@ internal fun SidebarContent(
             }
             add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
-        if (tvheadendEnabled) {
+        if (tvheadendEnabled && sidebarState.tvheadendLoginRejected) {
+            // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
+            val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
+                Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
+            add(MenuSystem("tvheadend", systemName(MediaSystem.TVHEADEND, "TVHeadend"), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+        } else if (tvheadendEnabled) {
             val entries = listOf(
                 Triple("live", stringResource(R.string.tvh_live), Icons.Filled.Tv),
                 Triple("guide", stringResource(R.string.tvh_guide), Icons.Filled.Schedule),
@@ -334,12 +340,12 @@ internal fun SidebarContent(
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
     // Search: only backends SearchViewModel can query — FilesRepository.search is a stub, so Files is excluded.
-    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendEnabled, youtubeEnabled, spotifyEnabled)
+    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled)
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = plexShown,
         jellyfinConfigured = jellyfinShown,
         embyConfigured = embyShown,
-        tvheadendConfigured = tvheadendEnabled || sidebarState.liveTvSources.any { it.source.system == "iptv" },
+        tvheadendConfigured = tvheadendUsable || sidebarState.liveTvSources.any { it.source.system == "iptv" },
         youtubeEnabled = youtubeEnabled,
         spotifyCanSearch = spotifyEnabled && spotifyAuthorized && spotifyNativeAvailable,
     )

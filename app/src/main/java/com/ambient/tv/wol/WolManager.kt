@@ -65,6 +65,7 @@ class WolManager @Inject constructor(
         if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(network, wireGuardHosts, routeAlive) }) {
             return Result.failure(networkUnavailable(macAddress))
         }
+        lastWakeBurstAtMs = System.currentTimeMillis()
 
         val burst: suspend () -> Result<Unit> = {
             sendMagicPacketBurst(
@@ -216,10 +217,13 @@ class WolManager @Inject constructor(
         }
     }
 
-    private companion object {
-        const val DEFAULT_PACKET_COUNT = 3
-        const val DEFAULT_PACKET_DELAY_MS = 200L
-        const val DEFAULT_COALESCE_WINDOW_MS = 60_000L
-        val FOLLOW_UP_DELAYS_MS = listOf(8_000L, 12_000L)
+    companion object {
+        /** Last wake burst for any system; servers answer 401 or 503 while they start up. */
+        @Volatile var lastWakeBurstAtMs: Long = 0L
+            internal set
+        private const val DEFAULT_PACKET_COUNT = 3
+        private const val DEFAULT_PACKET_DELAY_MS = 200L
+        private const val DEFAULT_COALESCE_WINDOW_MS = 60_000L
+        private val FOLLOW_UP_DELAYS_MS = listOf(8_000L, 12_000L)
     }
 }
