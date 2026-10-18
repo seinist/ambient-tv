@@ -263,30 +263,11 @@ android {
             // to avoid duplicate packaging; combined-engine compatibility still needs a device test.
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
 
-            // AGP 9.4 cannot strip these prebuilt ELFs (already stripped by build.sh, or
-            // upstream JNI that llvm-objcopy rejects). Keep them as packaged.
+            // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
+            // The release strip below still runs llvm-strip --strip-unneeded on every .so.
             keepDebugSymbols += setOf(
                 "**/libandroidx.graphics.path.so",
                 "**/libcronet*.so",
-                "**/libvlc.so",
-                "**/libvlcjni.so",
-                "**/libambientmpv.so",
-                "**/libambientprojectm.so",
-                "**/libambientsvp.so",
-                "**/libambientvulkan.so",
-                "**/libavcodec.so",
-                "**/libavdevice.so",
-                "**/libavfilter.so",
-                "**/libavformat.so",
-                "**/libavutil.so",
-                "**/libc++_shared.so",
-                "**/libj2v8.so",
-                "**/libmpv.so",
-                "**/libprojectM-4-playlist.so",
-                "**/libprojectM-4.so",
-                "**/libspotify_receiver_core.so",
-                "**/libswresample.so",
-                "**/libswscale.so",
             )
         }
     }
@@ -346,27 +327,53 @@ val buildLocalAudio = tasks.register<Exec>("buildLocalAudio") {
 }
 tasks.named("preBuild").configure { dependsOn(buildLocalAudio) }
 
-// AGP can reject stripping some prebuilt JNI libraries on newer NDK/ELF
-// combinations. build.sh supplies the known-good NDK llvm-strip; apply it to
-// the final merged release JNI directory after AGP's best-effort pass.
-val releaseNativeStripTool = providers.gradleProperty("RELEASE_STRIP_TOOL").orNull
+// FFmpeg is configured with --disable-stripping, J2V8 ships with NDK r18 debug
+// info, and SVP keeps its symtab. AGP strips what it can; this pass strips every
+// remaining release .so with the NDK llvm-strip. --strip-unneeded keeps dynsym,
+// so JNI exports stay. build.sh restores the unstripped jniLibs afterwards.
+fun releaseNativeStripTool(): String? {
+    val fromProperty = providers.gradleProperty("RELEASE_STRIP_TOOL").orNull?.trim().orEmpty()
+    if (fromProperty.isNotEmpty() && File(fromProperty).canExecute()) return fromProperty
+    val sdk = loadProjectProperties("local.properties").getProperty("sdk.dir")
+        ?: System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+        ?: return null
+    val prebuilt = File(sdk).resolve("ndk/${android.ndkVersion}/toolchains/llvm/prebuilt")
+    if (!prebuilt.isDirectory) return null
+    return prebuilt.walkTopDown()
+        .firstOrNull { it.isFile && it.name == "llvm-strip" && it.canExecute() }
+        ?.absolutePath
+}
+
 tasks.configureEach {
     if (name == "stripReleaseDebugSymbols") {
         outputs.upToDateWhen { false }
         doLast {
-            if (!releaseNativeStripTool.isNullOrBlank()) {
-                val nativeRoot = layout.buildDirectory.dir(
-                    "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out"
-                ).get().asFile
-                nativeRoot.walkTopDown()
-                    .filter { it.isFile && it.name in setOf("libj2v8.so", "libc++_shared.so") }
-                    .forEach { library ->
-                        ProcessBuilder(releaseNativeStripTool, "--strip-unneeded", library.absolutePath)
-                            .inheritIO()
-                            .start()
-                            .waitFor()
-                    }
+            val stripTool = releaseNativeStripTool()
+            val nativeRoot = layout.buildDirectory.dir(
+                "intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out"
+            ).get().asFile
+            if (stripTool == null) {
+                logger.warn("NDK llvm-strip not found; release native libraries stay unstripped.")
+                return@doLast
             }
+            if (!nativeRoot.isDirectory) return@doLast
+            nativeRoot.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".so") }
+                .forEach { library ->
+                    val before = library.length()
+                    val process = ProcessBuilder(stripTool, "--strip-unneeded", library.absolutePath)
+                        .redirectErrorStream(true)
+                        .start()
+                    val output = process.inputStream.bufferedReader().readText().trim()
+                    val exit = process.waitFor()
+                    if (exit != 0) {
+                        logger.warn("Could not strip ${library.name}: $output")
+                    } else if (library.length() < before) {
+                        logger.lifecycle(
+                            "Stripped ${library.parentFile.name}/${library.name}: $before -> ${library.length()}"
+                        )
+                    }
+                }
         }
     }
 }

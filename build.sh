@@ -710,12 +710,10 @@ find_native_strip_tool() {
     fi
     return 1
 }
+# Every packaged .so. FFmpeg is built with --disable-stripping, and SVP keeps its
+# symtab, so the allow-list used to miss libambientsvp.so and libc++_shared.so.
 native_release_library_selected() {
-    case "$(basename "$1")" in
-        libmpv.so|libambientmpv.so|libavcodec.so|libavdevice.so|libavfilter.so|libavformat.so|libavutil.so|libswresample.so|libswscale.so|libspotify_receiver_core.so|libprojectM-4.so|libprojectM-4-playlist.so|libambientprojectm.so)
-            return 0 ;;
-        *) return 1 ;;
-    esac
+    [[ "$(basename "$1")" == *.so ]]
 }
 
 human_bytes() {
