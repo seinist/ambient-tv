@@ -80,6 +80,8 @@ data class MpvPlaybackSnapshot(
     val configuredScaler: String? = null,
     val videoOutput: String? = null,
     val accelerationFallback: String? = null,
+    /** SHIELD interlaced zero-copy decoder note (shaders/SVP inactive). */
+    val zeroCopyStatus: String? = null,
     /** True after a Stats-for-Nerds poll has read the live filter/scaler properties. */
     val processingSampled: Boolean = false,
     val activeDeinterlace: String? = null,
@@ -335,6 +337,7 @@ fun rememberMpvPlaybackSnapshot(
                 configuredScaler = if (pollNerdStats) controller.imageOptions.scaler else snapshot.configuredScaler,
                 videoOutput = if (pollNerdStats) controller.configuredVideoOutput() else snapshot.videoOutput,
                 accelerationFallback = controller.accelerationFallback,
+                zeroCopyStatus = controller.zeroCopyStatus,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,
                 activeDeinterlace = if (pollNerdStats) controller.activeDeinterlace() else snapshot.activeDeinterlace,
                 svpStatus = if (refreshMediaInfo || pollNerdStats) controller.svpStatus() else snapshot.svpStatus,

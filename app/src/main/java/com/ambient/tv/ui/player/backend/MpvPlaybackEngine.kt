@@ -103,6 +103,19 @@ internal class MpvPlaybackEngine(
         gpuProcessing = mpvNeedsGpuProcessing(effectiveMpvImageOptions(initialImageOptions,
             reducedVideoEffects(context), svpAllowed(context))), nativeHdrPreferred = nativeHdrPreferred)
     private var accelerationRetried = false
+    /**
+     * SHIELD + OpenGL + interlaced live: decode zero-copy through mpv's AImageReader interop
+     * (MpvShieldInterlacePolicy). Known channels start that way before loadfile.
+     */
+    var zeroCopyInterlaced = mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, liveStream) &&
+        MpvShieldInterlacedChannels.isKnown(url)
+        private set
+    /** One reopen per engine at most; the hwdec is never switched under a running decoder. */
+    private var zeroCopyReopened = false
+    /** Per loaded file: the interlace verdict has been taken (fps and height were known). */
+    private var zeroCopyProbeDone = false
+    /** Localized status for Stats for Nerds while [zeroCopyInterlaced] is active. */
+    val zeroCopyStatus: String? get() = if (zeroCopyInterlaced) context.getString(com.ambient.tv.R.string.mpv_shield_interlaced_zero_copy) else null
     private var lastPlaybackPositionMs = initialStartPositionMs
     private var fallbackTrackSelection: List<String?>? = null
     /** First AO init failure re-plans. A second -14 is what forces stereo PCM. */
@@ -396,7 +409,7 @@ internal class MpvPlaybackEngine(
             // direct MediaCodec surface path is more reliable for HDR/Dolby Vision on SHIELD.
             setOption("vo", "gpu")
             setOption("gpu-context", "android")
-            setOption("hwdec", acceleration.hwdec)
+            setOption("hwdec", acceleration.initialHwdec(zeroCopyInterlaced))
         } else {
             setOption("vo", "mediacodec_embed")
             setOption("hwdec", acceleration.hwdec)
@@ -751,7 +764,9 @@ internal class MpvPlaybackEngine(
         // where applyDeinterlace cannot run the software filter chain.
         deinterlaceModeKey = requestedMode
         deinterlaceFilterKey = filter
-        if (!gpuQualityMode) return
+        // The SHIELD zero-copy path has no software frames; the decoder deinterlaces itself,
+        // exactly as on direct output.
+        if (!gpuQualityMode || zeroCopyInterlaced) return
         deinterlaceUpdateJob = imageScope.launch {
             val weights = if (enabled && effectiveFilter in setOf("nnedi", "nnedi2x")) {
                 try {
@@ -872,7 +887,9 @@ internal class MpvPlaybackEngine(
             val gpuNextVulkan = mpvGpuNextVulkan(getPropertyString("current-vo"), getPropertyString("gpu-api"))
             val shaderKeys = requestedShaders.filterNot {
                 (MPV_IMAGE_SHADERS[it]?.requiresCompute == true && computeSupport == MpvComputeSupport.UNSUPPORTED) ||
-                    (MPV_IMAGE_SHADERS[it]?.requiresGpuNext == true && !gpuNextVulkan)
+                    (MPV_IMAGE_SHADERS[it]?.requiresGpuNext == true && !gpuNextVulkan) ||
+                    // Opaque RGB frames: LUMA/CHROMA hooks (NNEDI3, RAVU, ArtCNN, FSRCNNX, Krig …) cannot run.
+                    (zeroCopyInterlaced && MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true)
             }
             val shaderReloadNeeded = shaderKeys != loadedShaderKeys ||
                 ("cas" in shaderKeys && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
@@ -984,6 +1001,7 @@ internal class MpvPlaybackEngine(
         property("dither-depth", o.ditherDepth, "auto")
         property("interpolation", "no")
         property("video-sync", "audio")
+        if (zeroCopyInterlaced) warnings += MPV_ZERO_COPY_WARNING
         imageOptionWarnings = warnings.distinct()
         armRenderCheck()
     }
@@ -1290,7 +1308,7 @@ internal class MpvPlaybackEngine(
         // svpCopyBackSession covers the moment before plex-svp is linked into vf.
         // After the filter leaves the chain the latch is cleared, and copy-back
         // stays only for deinterlace, a CPU filter, or a shader that still needs it.
-        val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested)
+        val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested, zeroCopyInterlaced)
         if (getPropertyString("hwdec") == desired) return true
         onOutputTransition()
         return trySetProperty("hwdec", desired)
@@ -1320,7 +1338,10 @@ internal class MpvPlaybackEngine(
 
     private fun currentMpvUpscaling(): Boolean = currentMpvFittedScale() > MPV_ANY_UPSCALE_SCALE
 
-    private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
+    private fun desiredImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> =
+        mpvZeroCopyCpuFilters(desiredCopyBackImageFilters(o, sdr), zeroCopyInterlaced)
+
+    private fun desiredCopyBackImageFilters(o: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
         putAll(mpvCpuImageFilters(o, sdr))
         if (sdr && !svpOverloaded && svpAllowed(context)) {
             // Quality waits on light. Sparsam already forced svpMode off above this call.
@@ -1341,6 +1362,7 @@ internal class MpvPlaybackEngine(
         if (hdrImageTransfer != hdr) hdrImageTransfer = hdr
         sourceHdrStandard = hdrStandardFromMpvTransfer(sourceGamma)
         if (!gpuQualityMode) return
+        if (probeShieldInterlaced()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
         // field-rate live input switches to the single-rate deinterlacer (50 fps, not 100).
         if (liveStream && deinterlaceRequested && fileReady && deinterlaceUpdateJob?.isActive != true) {
@@ -1904,6 +1926,7 @@ internal class MpvPlaybackEngine(
                     if (endedEarly) errorMessage = "MPV: unexpected end of stream at ${lastPlaybackPositionMs / 1000}s of ${durationAtEnd / 1000}s"
                 }
                 MPV_EVENT_FILE_LOADED -> {
+                    zeroCopyProbeDone = false
                     dvSurfaceRestart = false
                     // A reload/reopen drops sub-add tracks; allow them to be added again.
                     externalSubtitleRequests.clear()
@@ -1935,6 +1958,57 @@ internal class MpvPlaybackEngine(
     /** Resolve a fresh timeshift live edge on every reopen, including surface recovery. */
     private fun playbackUrlForOpen(): String =
         com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, streamOpened).also { streamOpened = true }
+
+    /**
+     * SHIELD + OpenGL + live: once fps and height show an interlaced channel, reopen it a single
+     * time with the zero-copy decoder instead of switching hwdec under the running decoder.
+     */
+    private fun probeShieldInterlaced(): Boolean {
+        if (zeroCopyInterlaced || zeroCopyReopened || zeroCopyProbeDone || !fileReady || !attached) return false
+        if (!mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, liveStream)) {
+            zeroCopyProbeDone = true
+            return false
+        }
+        val fps = containerFps() ?: return false
+        val height = (getPropertyDouble("current-tracks/video/demux-h", 0.0).takeIf { it > 0.0 }
+            ?: getPropertyDouble("video-params/h", 0.0)).toInt().takeIf { it > 0 } ?: return false
+        zeroCopyProbeDone = true
+        if (!mpvLiveInterlacedSource(liveStream, fps, height)) return false
+        switchToZeroCopyInterlaced(fps, height)
+        return true
+    }
+
+    private fun switchToZeroCopyInterlaced(fps: Double, height: Int) {
+        zeroCopyReopened = true
+        zeroCopyInterlaced = true
+        MpvShieldInterlacedChannels.remember(url)
+        Timber.i("%s MPV SHIELD interlaced live (%.2f fps, %d lines): reopen with hwdec=%s (aimagereader, zero-copy)",
+            HDR_AUDIT_TAG, fps, height, MPV_ZERO_COPY_HWDEC)
+        onOutputTransition()
+        deinterlaceUpdateJob?.cancel()
+        fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
+        optionalCommand("vf", "clr", "")
+        activeCpuImageFilters.clear()
+        explicitDeinterlaceFilter = null
+        deinterlaceRequested = false
+        svpCopyBackSession = false
+        loadedShaderKeys = emptyList()
+        lastImageTransfer = null
+        lastImageUpscaling = true
+        lastLumaShaderEligible = true
+        lastSvpSignature = null
+        trySetProperty("glsl-shaders", "")
+        trySetProperty("deinterlace", "no")
+        setProperty("vo", "null")
+        setProperty("hwdec", MPV_ZERO_COPY_HWDEC)
+        setProperty("vo", configuredVo)
+        fileReady = false
+        svpFilterDecided = false
+        ended = false
+        reopenStream(0L)
+        setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
+        updateImageOptions(imageOptions)
+    }
 
     private fun reopenStream(positionMs: Long) {
         startupOpenedAt = System.nanoTime()

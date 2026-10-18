@@ -854,6 +854,7 @@
     <string name="player_info_unknown">Unbekannt</string>
     <string name="player_info_channels">%1$d Kanäle</string>
     <string name="mpv_shutdown">MPV wurde beendet</string>
+    <string name="mpv_shield_interlaced_zero_copy">Shield: Interlaced ohne Kopie – Shader/SVP inaktiv</string>
     <string name="mpv_command_failed">MPV-Befehl fehlgeschlagen (%1$d)</string>
     <string name="vlc_playback_error">VLC-Wiedergabefehler</string>
     <string name="youtube_no_compatible_format">Kein kompatibles SmartTube-Wiedergabeformat gefunden</string>
