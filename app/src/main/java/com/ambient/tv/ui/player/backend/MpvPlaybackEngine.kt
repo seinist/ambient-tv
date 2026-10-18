@@ -218,6 +218,11 @@ internal class MpvPlaybackEngine(
     private var vulkanOutputReported = false
     private var explicitDeinterlaceFilter: String? = null
     private var deinterlaceRequested = false
+    /** Live field-rate input (50/59.94 fps reported): the deinterlacer runs single-rate. */
+    private var deinterlaceSingleRate = false
+    /** Method actually in the chain, after reduced-effects mapping. */
+    private var appliedDeinterlaceKey = "auto"
+    private var deinterlaceSingleRateAttempt: Boolean? = null
     private var deinterlaceAutomatic = false
     private var deinterlaceUpdateJob: Job? = null
     /** Applied mode/filter. The player panel mirrors these after an automatic backoff. */
@@ -774,13 +779,20 @@ internal class MpvPlaybackEngine(
             // Direct surface output cannot execute this app's software vf chain.
             return false
         }
-        val graph = if (enabled) mpvDeinterlaceGraph(effectiveFilter, automatic, weights) else null
+        // Live TS reports interlaced channels at the field rate and decodes one picture per
+        // field. Doubling those again (2x methods, mpv's send_field built-in) produced 100 fps.
+        val singleRate = enabled && liveStream && mpvFieldRateInput(containerFps())
+        val graph = if (enabled) mpvDeinterlaceGraph(effectiveFilter, automatic, weights, singleRate) else null
         val vf = graph?.let { "lavfi=[$it]" }
         val previousEnabled = deinterlaceRequested
         val previousAutomatic = deinterlaceAutomatic
         val previousExplicitFilter = explicitDeinterlaceFilter
+        val previousSingleRate = deinterlaceSingleRate
+        val previousAppliedKey = appliedDeinterlaceKey
         deinterlaceRequested = enabled
         deinterlaceAutomatic = automatic
+        deinterlaceSingleRate = singleRate
+        appliedDeinterlaceKey = effectiveFilter
         deinterlaceFailed = false
         val desiredFilters = desiredImageFilters(
             effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)),
@@ -794,6 +806,8 @@ internal class MpvPlaybackEngine(
         if (!trySetGpuDecoder(copyBackNeeded)) {
             deinterlaceRequested = previousEnabled
             deinterlaceAutomatic = previousAutomatic
+            deinterlaceSingleRate = previousSingleRate
+            appliedDeinterlaceKey = previousAppliedKey
             deinterlaceFailed = true
             return false
         }
@@ -801,6 +815,8 @@ internal class MpvPlaybackEngine(
             // Restore the previous chain if a live remove/add was rejected by mpv.
             deinterlaceRequested = previousEnabled
             deinterlaceAutomatic = previousAutomatic
+            deinterlaceSingleRate = previousSingleRate
+            appliedDeinterlaceKey = previousAppliedKey
             rebuildMpvVideoFilterChain(desiredFilters, previousExplicitFilter)
             updateGpuDecoder()
             deinterlaceFailed = true
@@ -1013,7 +1029,7 @@ internal class MpvPlaybackEngine(
             while (true) {
                 delay(1_000)
                 val svpNow = "plex-svp" in activeCpuImageFilters
-                val fps = if (svpNow) svpOutputFps(displayFps() ?: svpDisplayFps(context), imageOptions.svp) else containerFps()
+                val fps = if (svpNow) svpOutputFps(displayFps() ?: svpDisplayFps(context), imageOptions.svp) else pipelineFps()
                 if (fps == null || !isPlaying() || com.ambient.tv.ui.player.PlaybackOutputTransition.active() ||
                     getPropertyString("paused-for-cache") == "yes" || getPropertyString("seeking") == "yes") {
                     steadySeconds = 0
@@ -1311,7 +1327,7 @@ internal class MpvPlaybackEngine(
             val mode = mpvSvpAppliedMode(o.svpMode, svpQualityCleared && !svpQualityProbeFailed)
             val tuning = if (o.svpMode == "quality" && mode != "quality") svpProbeOptions(o.svp) else o.svp
             val size = sourceDimensions()
-            mpvSvpFilter(mode, containerFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second)?.let {
+            mpvSvpFilter(mode, pipelineFps(), displayFps() ?: svpDisplayFps(context), tuning, size?.first, size?.second)?.let {
                 put("plex-svp", it)
             }
         }
@@ -1325,6 +1341,15 @@ internal class MpvPlaybackEngine(
         if (hdrImageTransfer != hdr) hdrImageTransfer = hdr
         sourceHdrStandard = hdrStandardFromMpvTransfer(sourceGamma)
         if (!gpuQualityMode) return
+        // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
+        // field-rate live input switches to the single-rate deinterlacer (50 fps, not 100).
+        if (liveStream && deinterlaceRequested && fileReady && deinterlaceUpdateJob?.isActive != true) {
+            val fieldRate = mpvFieldRateInput(containerFps())
+            if (fieldRate != deinterlaceSingleRate && fieldRate != deinterlaceSingleRateAttempt) {
+                deinterlaceSingleRateAttempt = fieldRate
+                setDeinterlace(true, appliedDeinterlaceKey, deinterlaceAutomatic)
+            }
+        }
         // Read live source metadata; target-trc changes video-target-params, not video-params.
         if (sdrToHdr.engaged && (sourceGamma == "linear" || !isMpvSdrTransfer(sourceGamma))) {
             sdrToHdr.reset()
@@ -1340,7 +1365,7 @@ internal class MpvPlaybackEngine(
             )
         } else lastLumaShaderEligible
         val svpSignature = if (imageOptions.svpMode == "off") "off" else
-            "${svpAllowed(context)}:${containerFps()}:${displayFps() ?: svpDisplayFps(context)}:${sourceDimensions()}"
+            "${svpAllowed(context)}:${pipelineFps()}:${displayFps() ?: svpDisplayFps(context)}:${sourceDimensions()}"
         // Only a native compute overload removes SVP work; format/timing passthrough is reported, not escalated.
         val svpBypass = if ("plex-svp" in activeCpuImageFilters)
             getPropertyDouble("vf-metadata/plex-svp/bypass", 0.0).toInt() else 0
@@ -1631,6 +1656,13 @@ internal class MpvPlaybackEngine(
         return if (width > 0f && height > 0f) width / height else null
     }
     fun containerFps(): Double? = getPropertyDouble("container-fps", Double.NaN).takeIf { it.isFinite() && it > 0.0 }
+    /**
+     * Picture rate leaving the deinterlacer: the SVP source and the expected render rate.
+     * Live only; VOD keeps container-fps exactly as before.
+     */
+    private fun pipelineFps(): Double? = if (liveStream) {
+        mpvDeinterlacedFps(containerFps(), deinterlaceRequested, appliedDeinterlaceKey, deinterlaceSingleRate)
+    } else containerFps()
     fun videoFps(): Double = getPropertyDouble("estimated-vf-fps", 0.0)
     fun decoder(): String? = getPropertyString("hwdec-current")?.takeIf { it.isNotBlank() && it != "no" }
 
@@ -1689,7 +1721,7 @@ internal class MpvPlaybackEngine(
             custom = imageOptions.svp.isCustom,
             unavailable = unavailable,
             overloaded = svpOverloaded,
-            decision = svpDecision(containerFps(), displayFps() ?: svpDisplayFps(context), effective.svp, size?.first, size?.second),
+            decision = svpDecision(pipelineFps(), displayFps() ?: svpDisplayFps(context), effective.svp, size?.first, size?.second),
             inChain = inChain,
             runtimeReason = runtime,
             backend = backend,
