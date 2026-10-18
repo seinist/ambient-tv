@@ -457,17 +457,3 @@ private fun videoSummary(scalingKey: String, aspectKey: String, zoom: Float, spe
     }
 }
 
-@Composable
-private fun sleepSummary(config: SleepTimerConfig): String = when (config.kind) {
-    SleepTimerKind.OFF -> stringResource(R.string.player_sleep_off)
-    SleepTimerKind.DURATION -> {
-        val now by androidx.compose.runtime.produceState(android.os.SystemClock.elapsedRealtime(), config) {
-            while (true) { kotlinx.coroutines.delay(1_000); value = android.os.SystemClock.elapsedRealtime() }
-        }
-        val remaining = ((config.deadlineRealtimeMs ?: now) - now).coerceAtLeast(0L)
-        stringResource(R.string.player_sleep_remaining, ((remaining + 59_999) / 60_000).toInt())
-    }
-    SleepTimerKind.END_OF_ITEM -> stringResource(R.string.player_sleep_end_item)
-    SleepTimerKind.PAUSE_INACTIVITY -> stringResource(R.string.player_sleep_pause_summary, config.minutes)
-    SleepTimerKind.USER_INACTIVITY -> stringResource(R.string.player_sleep_input_summary, config.minutes)
-}

@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.settings
 
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.ui.common.withTvFocusInsets
 
 import androidx.compose.foundation.focusGroup
@@ -1100,6 +1101,35 @@ fun SettingsScreen(
                                             })
                                         }
                                     }
+                                }
+                            }
+                            item {
+                                SettingsGroup(
+                                    title = stringResource(R.string.settings_sleep_timer),
+                                    subtitle = stringResource(R.string.settings_sleep_timer_hint),
+                                ) {
+                                    Text(stringResource(R.string.settings_sleep_auto_start), style = MaterialTheme.typography.titleSmall)
+                                    SettingsSelect(options = AppPreferences.SLEEP_AUTO_START_KEYS.map { key ->
+                                        SettingsSelectOption(
+                                            text = when (key) {
+                                                AppPreferences.SLEEP_AUTO_START_OFF -> stringResource(R.string.settings_next_up_off)
+                                                AppPreferences.SLEEP_AUTO_START_END -> stringResource(R.string.settings_sleep_end_item)
+                                                AppPreferences.SLEEP_AUTO_START_INACTIVITY -> stringResource(R.string.settings_sleep_inactivity, 60)
+                                                else -> stringResource(R.string.settings_sleep_minutes, key.toInt())
+                                            },
+                                            selected = uiState.sleepAutoStartKey == key,
+                                            onClick = { viewModel.onSleepAutoStartChanged(key) },
+                                        )
+                                    })
+                                    Text(stringResource(R.string.settings_sleep_warning), style = MaterialTheme.typography.titleSmall)
+                                    SettingsSelect(options = AppPreferences.SLEEP_WARNING_VALUES.map { minutes ->
+                                        SettingsSelectOption(
+                                            text = if (minutes == 0) stringResource(R.string.settings_next_up_off)
+                                            else stringResource(R.string.settings_sleep_minutes, minutes),
+                                            selected = uiState.sleepWarningMinutes == minutes,
+                                            onClick = { viewModel.onSleepWarningMinutesChanged(minutes) },
+                                        )
+                                    })
                                 }
                             }
                         }

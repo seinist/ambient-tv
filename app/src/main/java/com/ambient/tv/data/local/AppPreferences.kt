@@ -1115,6 +1115,16 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_NEXT_UP_STILL_WATCHING, 3).takeIf { it in NEXT_UP_STILL_WATCHING_VALUES } ?: 3
         set(value) = prefs.edit { putInt(KEY_NEXT_UP_STILL_WATCHING, value.takeIf { it in NEXT_UP_STILL_WATCHING_VALUES } ?: 3) }
 
+    /** Sleep timer armed at the start of every playback session (not on zapping/next episode). */
+    var sleepAutoStartKey: String
+        get() = prefs.getString(KEY_SLEEP_AUTO_START, null)?.takeIf { it in SLEEP_AUTO_START_KEYS } ?: SLEEP_AUTO_START_OFF
+        set(value) = prefs.edit { putString(KEY_SLEEP_AUTO_START, value.takeIf { it in SLEEP_AUTO_START_KEYS } ?: SLEEP_AUTO_START_OFF) }
+
+    /** Non-pausing notice this many minutes before a timed sleep stop; 0 = off. */
+    var sleepWarningMinutes: Int
+        get() = prefs.getInt(KEY_SLEEP_WARNING_MINUTES, SLEEP_WARNING_DEFAULT).takeIf { it in SLEEP_WARNING_VALUES } ?: SLEEP_WARNING_DEFAULT
+        set(value) = prefs.edit { putInt(KEY_SLEEP_WARNING_MINUTES, value.takeIf { it in SLEEP_WARNING_VALUES } ?: SLEEP_WARNING_DEFAULT) }
+
     /** SmartTube-style YouTube sections visible on the YouTube screen, in display order. */
     var youtubeFeedKeys: List<String>
         get() {
@@ -1997,6 +2007,14 @@ class AppPreferences @Inject constructor(
         const val KEY_NEXT_UP_STILL_WATCHING = "next_up_still_watching_episodes"
         val NEXT_UP_LEAD_SECONDS = setOf(10, 20, 30, 60)
         val NEXT_UP_STILL_WATCHING_VALUES = setOf(0, 2, 3, 5)
+        const val KEY_SLEEP_AUTO_START = "sleep_auto_start"
+        const val KEY_SLEEP_WARNING_MINUTES = "sleep_warning_minutes"
+        const val SLEEP_AUTO_START_OFF = "off"
+        const val SLEEP_AUTO_START_END = "end"
+        const val SLEEP_AUTO_START_INACTIVITY = "inactivity"
+        val SLEEP_AUTO_START_KEYS = listOf(SLEEP_AUTO_START_OFF, "30", "60", "90", "120", SLEEP_AUTO_START_END, SLEEP_AUTO_START_INACTIVITY)
+        val SLEEP_WARNING_VALUES = listOf(0, 1, 2, 5)
+        const val SLEEP_WARNING_DEFAULT = 1
         const val KEY_YOUTUBE_FEEDS = "youtube_feed_keys"
         const val KEY_YOUTUBE_MAX_VIDEO_HEIGHT = "youtube_max_video_height"
         val YOUTUBE_FEED_KEYS = setOf("home", "subscriptions", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")

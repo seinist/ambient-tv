@@ -206,6 +206,13 @@ object BackgroundPlaybackSession {
     /** Set while an expired timer holds playback paused and asks how to continue; elapsed-realtime deadline. */
     var sleepPromptDeadline by mutableStateOf<Long?>(null)
         private set
+    /** Set while the non-pausing pre-warning is shown; the elapsed-realtime stop deadline. */
+    var sleepWarningDeadline by mutableStateOf<Long?>(null)
+        private set
+    /** Minutes of pre-warning, read from the settings when a session starts. */
+    private var sleepWarningMs = 0L
+    /** A stop that kept the timer (internal retry/error); the next acquire continues the session. */
+    private var keptSleepTimerAtMs: Long? = null
     private val completed = ArrayDeque<Snapshot>()
     private var consecutiveAutoAdvances = 0
     private var expectedNextUp: Pair<String, String>? = null
@@ -253,6 +260,7 @@ object BackgroundPlaybackSession {
         if (!samePlayback && sleepTimer.kind == SleepTimerKind.END_OF_ITEM) {
             setSleepTimer(SleepTimerConfig())
         }
+        startSleepSessionIfNew(context, metadata, hadPlayer = previous != null, replacingSource = current.replacingSource)
         val continuesNextUpChain = expectedNextUp == (metadata.source to metadata.mediaId)
         ContextCompat.startForegroundService(context.applicationContext,
             Intent(context.applicationContext, PlaybackService::class.java))
@@ -291,13 +299,15 @@ object BackgroundPlaybackSession {
             if (previous != null && samePlayback) completed.addLast(current.copy(status = previousStatus ?: current.status))
             PlaybackOutputTransition.clear()
             sleepPromptDeadline = null
+            sleepWarningDeadline = null
             handle = null
             identity = null
             mutableVideoPresentation.value = VideoPresentation()
             videoSettingsOverride = null
             consecutiveAutoAdvances = 0
             expectedNextUp = null
-            setSleepTimer(SleepTimerConfig())
+            // A renderer that failed to start is retried or replaced; the listening timer stays.
+            keptSleepTimerAtMs = SystemClock.elapsedRealtime()
             mutableSnapshot.value = Snapshot(generation = ++generation)
             throw error
         }
@@ -440,7 +450,32 @@ object BackgroundPlaybackSession {
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         sleepPromptDeadline = null
+        sleepWarningDeadline = null
         timerConfig = timer.arm(value, SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * New session (nothing playing, no replacement, no kept timer): read the pre-warning and arm
+     * the automatic timer if none is set. Zapping and next episode never get here as "new".
+     */
+    private fun startSleepSessionIfNew(context: Context, metadata: PlaybackMetadata, hadPlayer: Boolean, replacingSource: Boolean) {
+        val now = SystemClock.elapsedRealtime()
+        val kept = keptSleepTimerAtMs
+        keptSleepTimerAtMs = null
+        if (!sleepSessionStarts(hadPlayer, replacingSource, kept, now)) return
+        val prefs = runCatching { videoImagePreferences(context) }.getOrNull() ?: return
+        sleepWarningMs = prefs.sleepWarningMinutes * 60_000L
+        // A timer kept for a retry that never came belongs to the old session.
+        if (kept != null) setSleepTimer(SleepTimerConfig())
+        if (timerConfig.kind == SleepTimerKind.OFF) setSleepTimer(autoSleepTimerConfig(prefs.sleepAutoStartKey, metadata.isLive, now))
+    }
+
+    /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */
+    fun extendSleepTimer() {
+        checkThread()
+        timerConfig = timer.extend(SLEEP_EXTEND_MINUTES, SystemClock.elapsedRealtime())
+        sleepWarningDeadline = null
+        registerUserInteraction()
     }
 
     fun tick() {
@@ -474,7 +509,13 @@ object BackgroundPlaybackSession {
             val settled = now - (prompt - PlaybackSleepTimer.PROMPT_MS) >= 1_500L
             if (settled && player.wantsToPlay()) continueAfterSleep(rearm = false)
             else if (now >= prompt) stopForSleep()
-        } else if (timer.expired(now, status, player.wantsToPlay())) {
+        } else {
+            timer.warningDue(now, sleepWarningMs)?.let { sleepWarningDeadline = it }
+            sleepWarningDeadline?.let { warned ->
+                if (now >= warned || timerConfig.deadlineRealtimeMs != warned) sleepWarningDeadline = null
+            }
+        }
+        if (prompt == null && timer.expired(now, status, player.wantsToPlay())) {
             if (timer.asksBeforeStop()) {
                 player.pause()
                 sleepPromptDeadline = now + PlaybackSleepTimer.PROMPT_MS
@@ -538,11 +579,17 @@ object BackgroundPlaybackSession {
         expectedNextUp = candidate.source to candidate.mediaId
     }
 
-    fun stop(preserveNextUpChain: Boolean = false) {
+    /**
+     * [keepSleepTimer]: an internal stop (TVHeadend retry, server unreachable) that is followed by
+     * a new start; the user's sleep timer survives it for [KEEP_TIMER_WINDOW_MS].
+     */
+    fun stop(preserveNextUpChain: Boolean = false, keepSleepTimer: Boolean = false) {
         AudioEngineRedirectGuard.reset()
         checkThread()
         PlaybackOutputTransition.clear()
         sleepPromptDeadline = null
+        sleepWarningDeadline = null
+        keptSleepTimerAtMs = if (keepSleepTimer) SystemClock.elapsedRealtime() else null
         val previous = handle
         appContext?.let { context ->
             runCatching { TitleVideoSettingsStore.capture(context, snapshot.value.metadata, previous, videoSettingsOverride) }
@@ -555,7 +602,7 @@ object BackgroundPlaybackSession {
         mutableVideoPresentation.value = VideoPresentation()
         videoSettingsOverride = null
         mutableSnapshot.value = Snapshot(generation = ++generation)
-        if (!preserveNextUpChain) setSleepTimer(SleepTimerConfig())
+        if (!preserveNextUpChain && !keepSleepTimer) setSleepTimer(SleepTimerConfig())
         if (!preserveNextUpChain) {
             consecutiveAutoAdvances = 0
             expectedNextUp = null
