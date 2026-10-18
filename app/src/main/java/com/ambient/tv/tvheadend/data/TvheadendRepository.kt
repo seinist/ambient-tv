@@ -33,6 +33,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -64,7 +65,21 @@ class TvheadendRepository @Inject constructor(
     private val wolManager: WolManager,
     private val wireGuardRoute: WireGuardRouteController,
     private val wakeMachines: com.ambient.tv.wol.WakeMachines,
+    browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
+    private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
 ) {
+    /** Last answers per server/account on disk: channels, guide and recordings stay visible offline. */
+    private val diskCache = TvheadendDiskCache(BrowseTvheadendCacheStore(browseDisk))
+    private val background = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    @Volatile private var revalidateJob: kotlinx.coroutines.Job? = null
+    @Volatile private var lastRevalidateAtMs = 0L
+    private val _servingCachedData = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** True while answers come from the cache because the server is asleep or unreachable. */
+    val servingCachedData: kotlinx.coroutines.flow.StateFlow<Boolean> = _servingCachedData
+    private val _revalidated = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    /** The server answered again after cached data was served; screens reload to get fresh data. */
+    val revalidated: kotlinx.coroutines.flow.SharedFlow<Unit> = _revalidated
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val cacheMutex = Mutex()
     private val cache = mutableMapOf<String, CacheValue<*>>()
@@ -176,7 +191,10 @@ class TvheadendRepository @Inject constructor(
         )
     }
 
-    suspend fun serverInfo(force: Boolean = false): TvhServerInfo = cached("server", 60_000, force) {
+    suspend fun serverInfo(force: Boolean = false): TvhServerInfo = cached("server", 60_000, force,
+        stale = { diskCache.read(diskScope(), TvheadendDiskCache.SERVER, TvhServerInfo.serializer()) },
+        persist = { diskCache.write(diskScope(), TvheadendDiskCache.SERVER, TvhServerInfo.serializer(), it) },
+    ) {
         val obj = getJson("api/serverinfo").jsonObject
         TvhServerInfo(
             name = obj.string("name") ?: "TVHeadend",
@@ -185,7 +203,10 @@ class TvheadendRepository @Inject constructor(
         )
     }
 
-    suspend fun channels(force: Boolean = false): List<TvhChannel> = cached("channels", 5 * 60_000, force) { coroutineScope {
+    suspend fun channels(force: Boolean = false): List<TvhChannel> = cached("channels", 5 * 60_000, force,
+        stale = { diskCache.read(diskScope(), TvheadendDiskCache.CHANNELS, CHANNEL_LIST) },
+        persist = { diskCache.write(diskScope(), TvheadendDiskCache.CHANNELS, CHANNEL_LIST, it) },
+    ) { coroutineScope {
         val channelRows = entries(getJson("api/channel/grid", mapOf("limit" to "9999")))
         // Optional metadata must not make channels unavailable to non-admin accounts.
         val tagNames = async { optionalChannelMetadata("api/channeltag/list").let(::tvhTagNames) }
@@ -238,13 +259,33 @@ class TvheadendRepository @Inject constructor(
     ): List<TvhEpgEvent> {
         val stop = startEpochSeconds + windowHours.coerceIn(1, 72) * 3600L
         val key = "epg:$channelId:${startEpochSeconds / 300}:$windowHours"
-        return cached(key, 45_000, force) {
+        return cached(key, 10 * 60_000, force,
+            stale = {
+                diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST)?.filter {
+                    it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop && (channelId == null || it.channelUuid == channelId)
+                }
+            },
+            persist = { events ->
+                val now = System.currentTimeMillis() / 1000L
+                val stored = diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST).orEmpty()
+                diskCache.write(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST, TvheadendDiskCache.mergeEpg(stored, events, now))
+            },
+        ) {
             loadTvhEpgPages(startEpochSeconds, stop, channelId) { params -> getJson("api/epg/events/grid", params) }
                 .mapNotNull(::mapEvent).filter { it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop }
         }
     }
 
-    suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> = cached("epg:now", 20_000, force) {
+    suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> = cached("epg:now", 60_000, force,
+        stale = {
+            val now = System.currentTimeMillis() / 1000L
+            val stored = diskCache.read(diskScope(), TvheadendDiskCache.NOW, EVENT_LIST)
+            val guide = diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST)
+            if (stored == null && guide == null) null
+            else (stored.orEmpty() + guide.orEmpty()).filter { it.isLive(now) }.distinctBy { it.channelUuid }
+        },
+        persist = { diskCache.write(diskScope(), TvheadendDiskCache.NOW, EVENT_LIST, it) },
+    ) {
         entries(
             getJson(
                 "api/epg/events/grid",
@@ -253,17 +294,26 @@ class TvheadendRepository @Inject constructor(
         ).mapNotNull(::mapEvent)
     }
 
-    suspend fun upcomingRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:upcoming", 15_000, force) {
+    suspend fun upcomingRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:upcoming", 60_000, force,
+        stale = { diskCache.read(diskScope(), "dvr:upcoming", RECORDING_LIST) },
+        persist = { diskCache.write(diskScope(), "dvr:upcoming", RECORDING_LIST, it) },
+    ) {
         entries(getJson("api/dvr/entry/grid_upcoming", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedBy { it.startEpochSeconds }
     }
 
-    suspend fun finishedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:finished", 20_000, force) {
+    suspend fun finishedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:finished", 60_000, force,
+        stale = { diskCache.read(diskScope(), "dvr:finished", RECORDING_LIST) },
+        persist = { diskCache.write(diskScope(), "dvr:finished", RECORDING_LIST, it) },
+    ) {
         entries(getJson("api/dvr/entry/grid_finished", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedByDescending { it.startEpochSeconds }
     }
 
-    suspend fun failedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:failed", 20_000, force) {
+    suspend fun failedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:failed", 60_000, force,
+        stale = { diskCache.read(diskScope(), "dvr:failed", RECORDING_LIST) },
+        persist = { diskCache.write(diskScope(), "dvr:failed", RECORDING_LIST, it) },
+    ) {
         entries(getJson("api/dvr/entry/grid_failed", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedByDescending { it.startEpochSeconds }
     }
@@ -280,7 +330,10 @@ class TvheadendRepository @Inject constructor(
     }
 
 
-    suspend fun autoRecordings(force: Boolean = false): List<TvhAutoRec> = cached("dvr:autorec", 30_000, force) {
+    suspend fun autoRecordings(force: Boolean = false): List<TvhAutoRec> = cached("dvr:autorec", 60_000, force,
+        stale = { diskCache.read(diskScope(), "dvr:autorec", AUTOREC_LIST) },
+        persist = { diskCache.write(diskScope(), "dvr:autorec", AUTOREC_LIST, it) },
+    ) {
         entries(getJson("api/dvr/autorec/grid", mapOf("limit" to "9999"))).mapNotNull { obj ->
             val uuid = obj.string("uuid") ?: return@mapNotNull null
             TvhAutoRec(
@@ -295,6 +348,7 @@ class TvheadendRepository @Inject constructor(
 
     suspend fun deleteAutoRecording(uuid: String): Result<Unit> = suspendResult {
         getJson("api/idnode/delete", mapOf("uuid" to uuid))
+        patchCached("dvr:autorec", AUTOREC_LIST) { list -> list.filterNot { it.uuid == uuid } }
         invalidateDvrAndEpg()
     }
 
@@ -330,12 +384,17 @@ class TvheadendRepository @Inject constructor(
         val entry = upcomingRecordings(force = true).firstOrNull { it.uuid == uuid }
             ?: error("Recording is no longer scheduled or running. Refresh the recordings.")
         getJson(recordingTerminationPath(entry.scheduleStatus), mapOf("uuid" to uuid))
+        // Patch the stored lists at once; an offline restart must not show the cancelled timer.
+        patchCached("dvr:upcoming", RECORDING_LIST) { list -> list.filterNot { it.uuid == uuid } }
         invalidateDvrAndEpg()
     }
 
     suspend fun deleteRecording(uuid: String): Result<Unit> = suspendResult {
         getJson("api/dvr/entry/remove", mapOf("uuid" to uuid))
-        cacheMutex.withLock { cache.keys.filter { it.startsWith("dvr:") }.forEach(cache::remove) }
+        listOf("dvr:finished", "dvr:failed", "dvr:upcoming").forEach { key ->
+            patchCached(key, RECORDING_LIST) { list -> list.filterNot { it.uuid == uuid } }
+        }
+        invalidateDvrAndEpg()
     }
 
     suspend fun streamProfiles(force: Boolean = false): List<TvhStreamProfile> = cached("profiles", 5 * 60_000, force) {
@@ -454,10 +513,58 @@ class TvheadendRepository @Inject constructor(
         return buildUrl("imagecache/$uuid", emptyMap()).toString()
     }
 
-    suspend fun invalidateAll() = cacheMutex.withLock { cache.clear(); cacheGeneration++; lastReachableAtMs = 0L }
+    /** Refresh: everything is expired, not deleted, so it stays available as offline fallback. */
+    suspend fun invalidateAll() = cacheMutex.withLock {
+        cache.replaceAll { _, value -> value.copy(createdAtMs = 0L) }
+        cacheGeneration++
+        lastReachableAtMs = 0L
+    }
 
     private suspend fun invalidateDvrAndEpg() = cacheMutex.withLock {
-        cache.keys.filter { it.startsWith("dvr:") || it.startsWith("epg:") }.forEach(cache::remove)
+        cache.replaceAll { key, value -> if (key.startsWith("dvr:") || key.startsWith("epg:")) value.copy(createdAtMs = 0L) else value }
+    }
+
+    /** TVHeadend disabled: the stored server data is deleted, not only expired. */
+    fun clearPersistentCache() {
+        diskCache.clear(runCatching { diskScope() }.getOrNull())
+        _servingCachedData.value = false
+        background.launch { cacheMutex.withLock { cache.clear(); cacheGeneration++ } }
+    }
+
+    /** Applies a confirmed change to the memory and disk copy of one list (kept expired). */
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun <T : Any> patchCached(key: String, serializer: kotlinx.serialization.KSerializer<List<T>>, transform: (List<T>) -> List<T>) {
+        cacheMutex.withLock {
+            cache[key]?.let { cache[key] = CacheValue(0L, transform(it.value as List<T>)) }
+        }
+        runCatching {
+            val scope = diskScope()
+            diskCache.read(scope, key, serializer)?.let { diskCache.write(scope, key, serializer, transform(it)) }
+        }
+    }
+
+    private fun diskScope(): String = browseScopes.forProvider("tvheadend")
+
+    /** Without a recent answer, a short socket check decides whether to wait for the server at all. */
+    private suspend fun serverLikelyReachable(): Boolean =
+        System.currentTimeMillis() - lastReachableAtMs < 10_000L || isTvheadendReachable()
+
+    /** One background wake/reachability attempt per minute; success tells screens to reload. */
+    private fun scheduleRevalidate() {
+        _servingCachedData.value = true
+        val now = System.currentTimeMillis()
+        if (revalidateJob?.isActive == true || now - lastRevalidateAtMs < 60_000L) return
+        lastRevalidateAtMs = now
+        revalidateJob = background.launch {
+            runCatching {
+                ensureConfiguredAndAllowed()
+                ensureAwakeIfNeeded()
+                if (isTvheadendReachable()) {
+                    lastReachableAtMs = System.currentTimeMillis()
+                    _revalidated.tryEmit(Unit)
+                }
+            }
+        }
     }
 
     private fun mapEvent(obj: JsonObject): TvhEpgEvent? {
@@ -526,6 +633,7 @@ class TvheadendRepository @Inject constructor(
                     throw TvheadendHttpException(response.code, "TVHeadend HTTP ${response.code} ${response.message}")
                 }
                 loginRejection.onSuccess()
+                _servingCachedData.value = false
                 preferences.tvheadendLoginState = com.ambient.tv.data.local.TvheadendLoginState.VERIFIED
                 lastReachableAtMs = System.currentTimeMillis()
                 val body = response.body.string().orEmpty()
@@ -727,10 +835,26 @@ class TvheadendRepository @Inject constructor(
         preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty(),
     )
 
+    /**
+     * Stale-while-revalidate: a fresh memory value is returned as is. An expired or stored (disk)
+     * value is returned at once when the server does not answer the socket check, while a single
+     * background attempt wakes it ([revalidated] then asks screens to reload); no caller waits for
+     * Wake-on-LAN just to show cached data. A failed load also falls back to it, except for a
+     * rejected login. [force] always asks the server (refresh, re-read before a mutation).
+     */
     @Suppress("UNCHECKED_CAST")
-    private suspend fun <T> cached(key: String, ttlMs: Long, force: Boolean, loader: suspend () -> T): T = withContext(Dispatchers.IO) {
+    private suspend fun <T> cached(
+        key: String,
+        ttlMs: Long,
+        force: Boolean,
+        stale: (suspend () -> T?)? = null,
+        persist: (suspend (T) -> Unit)? = null,
+        loader: suspend () -> T,
+    ): T = withContext(Dispatchers.IO) {
+        check(preferences.hasTvheadendEndpoint) { context.getString(com.ambient.tv.R.string.tvh_not_configured) }
         requestMutexes[(key.hashCode() and Int.MAX_VALUE) % requestMutexes.size].withLock {
             val scope = currentCacheScope()
+            var expired: T? = null
             val generation = cacheMutex.withLock {
                 if (cacheScope != scope) {
                     cache.clear()
@@ -740,9 +864,24 @@ class TvheadendRepository @Inject constructor(
                 }
                 val hit = cache[key]
                 if (!force && hit != null && System.currentTimeMillis() - hit.createdAtMs < ttlMs) return@withContext hit.value as T
+                if (hit != null) expired = hit.value as T
                 cacheGeneration
             }
-            val value = loader()
+            val fallback: T? = if (force) null else expired ?: runCatching { stale?.invoke() }.getOrNull()
+            if (fallback != null && !serverLikelyReachable()) {
+                scheduleRevalidate()
+                return@withContext fallback
+            }
+            val value = try {
+                loader()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (fallback == null || !tvhStoredDataMayReplace(error)) throw error
+                Timber.i("TVHeadend %s unavailable (%s); showing stored data", key, error.javaClass.simpleName)
+                scheduleRevalidate()
+                return@withContext fallback
+            }
             currentCoroutineContext().ensureActive()
             cacheMutex.withLock {
                 check(scope == currentCacheScope() && generation == cacheGeneration) { "TVHeadend configuration changed; please retry" }
@@ -750,6 +889,7 @@ class TvheadendRepository @Inject constructor(
                 // EPG keys include a moving time window; bound them for long-running TV sessions.
                 if (cache.size > 64) cache.minByOrNull { it.value.createdAtMs }?.key?.let(cache::remove)
             }
+            runCatching { persist?.invoke(value) }
             value
         }
     }
@@ -775,3 +915,11 @@ class TvheadendRepository @Inject constructor(
     private data class CacheValue<T>(val createdAtMs: Long, val value: T)
 }
 
+private val CHANNEL_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvChannel.serializer())
+private val EVENT_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvProgramme.serializer())
+private val RECORDING_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvRecording.serializer())
+private val AUTOREC_LIST = kotlinx.serialization.builtins.ListSerializer(com.ambient.tv.livetv.LiveTvSeriesTimer.serializer())
+
+/** A sleeping or failing server may be answered from stored data; a rejected login may not. */
+internal fun tvhStoredDataMayReplace(error: Throwable): Boolean =
+    !(error is TvheadendHttpException && (error.code == 401 || error.code == 403))

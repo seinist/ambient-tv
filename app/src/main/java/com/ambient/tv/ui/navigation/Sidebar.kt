@@ -307,7 +307,10 @@ internal fun SidebarContent(
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), Icons.Filled.Tv, Destinations.LIVE_TV)) }
-            add(MenuSystem("tvheadend", systemName(MediaSystem.TVHEADEND, "TVHeadend"), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+            val label = systemName(MediaSystem.TVHEADEND, "TVHeadend").let { name ->
+                if (sidebarState.tvheadendOffline) "$name · ${stringResource(R.string.tvh_offline_badge)}" else name
+            }
+            add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
         // IPTV playlists (M3U + XMLTV): one entry per playlist and tab, through the shared Live TV screens.
         val iptvSources = sidebarState.liveTvSources.filter { it.source.system == "iptv" }

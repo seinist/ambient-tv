@@ -30,6 +30,7 @@ class LiveTvRegistry @Inject constructor(
     private val iptv: com.ambient.tv.data.iptv.IptvStore,
     @SharedOkHttp pool: ConnectionPool,
     @SharedOkHttp dispatcher: Dispatcher,
+    private val browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
 ) {
     private val client = OkHttpClient.Builder().connectionPool(pool).dispatcher(dispatcher)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
@@ -41,7 +42,27 @@ class LiveTvRegistry @Inject constructor(
         .readTimeout(60, TimeUnit.SECONDS).callTimeout(10, TimeUnit.MINUTES).build()
     private val instances = mutableMapOf<String, Pair<List<Any?>, LiveTvRepository>>()
     private val browseStates = mutableMapOf<String, Pair<LiveTvRepository, LiveTvBrowseState>>()
-    private val known = java.util.concurrent.ConcurrentHashMap<String, AvailableLiveTvSource>()
+    private val known = LiveTvKnownSources()
+    private val knownJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+    private val knownSerializer = kotlinx.serialization.builtins.ListSerializer(KnownLiveTvSource.serializer())
+    @Volatile private var knownRestored = false
+
+    /** Restored once per process: sources stay in the sidebar after a restart while servers sleep. */
+    private suspend fun restoreKnown() {
+        if (knownRestored) return
+        knownRestored = true
+        browseDisk.read(KNOWN_SCOPE, KNOWN_KEY)[KNOWN_KEY]
+            ?.let { runCatching { knownJson.decodeFromString(knownSerializer, it) }.getOrNull() }
+            ?.let { records ->
+                val ids = configured().map { it.source.id }.toSet()
+                known.restore(records.filter { it.id in ids })
+            }
+    }
+
+    private fun persistKnown() {
+        val snapshot = known.snapshot()
+        browseDisk.put(KNOWN_SCOPE, KNOWN_KEY, { true }) { knownJson.encodeToString(knownSerializer, snapshot) }
+    }
 
     @Synchronized fun configured(): List<LiveTvRepository> = buildList {
         fun addServer(system: String, id: String, name: String, host: String, port: Int, https: Boolean, path: String, token: String?, user: String? = null) {
@@ -97,7 +118,7 @@ class LiveTvRegistry @Inject constructor(
     }.also { repos ->
         val ids = repos.map { it.source.id }.toSet()
         instances.keys.retainAll(ids)
-        known.keys.retainAll(ids)
+        known.retain(ids)
         browseStates.entries.removeAll { (id, state) -> repos.none { it.source.id == id && it === state.first } }
     }
 
@@ -119,15 +140,22 @@ class LiveTvRegistry @Inject constructor(
     }
 
     suspend fun discover(force: Boolean = false): List<AvailableLiveTvSource> = coroutineScope {
+        restoreKnown()
+        val before = known.snapshot()
         configured().map { repo -> async {
             suspendResult { repo.capabilities(force) }.fold(
                 onSuccess = { caps ->
-                    if (caps.available) AvailableLiveTvSource(repo.source, caps).also { known[repo.source.id] = it }
-                    else { known.remove(repo.source.id); null }
+                    if (caps.available) known.available(AvailableLiveTvSource(repo.source, caps))
+                    else known.unavailable(repo.source.id)
                 },
-                onFailure = { known[repo.source.id] }, // An offline source must not jump out of the sidebar.
+                onFailure = { known.failed(repo.source.id) }, // An offline source must not jump out of the sidebar.
             )
-        } }.mapNotNull { it.await() }
+        } }.mapNotNull { it.await() }.also { if (known.snapshot() != before) persistKnown() }
+    }
+
+    private companion object {
+        const val KNOWN_SCOPE = "livetv:known"
+        const val KNOWN_KEY = "sources"
     }
 }
 

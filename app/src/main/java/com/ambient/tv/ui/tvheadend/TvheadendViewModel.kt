@@ -34,6 +34,9 @@ enum class TvheadendTab { LIVE, GUIDE, RECORDINGS, TIMERS }
 data class TvheadendUiState(
     val configured: Boolean = false,
     val offline: Boolean = false,
+    /** Offline TVHeadend with a MAC address: "wake server" is offered. */
+    val canWake: Boolean = false,
+    val waking: Boolean = false,
     val guideOptions: GuideOptions = GuideOptions(),
     val source: LiveTvSource = LiveTvSource("tvheadend", "tvheadend", "TVHeadend"),
     val capabilities: LiveTvCapabilities = LiveTvCapabilities(),
@@ -57,6 +60,7 @@ class TvheadendViewModel @Inject constructor(
     private val snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
+    private val tvheadend: TvheadendRepository,
 ) : ViewModel() {
     val reminders = reminderStore.reminders.also { reminderStore.refresh() }
 
@@ -84,6 +88,27 @@ class TvheadendViewModel @Inject constructor(
         } ?: TvheadendTab.LIVE,
     ))
     val uiState: StateFlow<TvheadendUiState> = _uiState.asStateFlow()
+
+    private val isTvheadend get() = repository.source.system == "tvheadend"
+    private fun canWake() = isTvheadend && !preferences.tvheadendMacAddress.isNullOrBlank()
+
+    init {
+        // The server answered again after cached data was shown: reload quietly.
+        if (isTvheadend) viewModelScope.launch {
+            tvheadend.revalidated.collect { if (_uiState.value.offline && refreshJob?.isActive != true) load(force = false) }
+        }
+    }
+
+    /** "Wake server": the shared wake path with its notices, then a normal reload. */
+    fun wakeServer() {
+        if (!canWake() || _uiState.value.waking) return
+        _uiState.update { it.copy(waking = true) }
+        viewModelScope.launch {
+            val awake = suspendResult { tvheadend.ensureReachable() }.getOrDefault(false)
+            _uiState.update { it.copy(waking = false) }
+            if (awake) load(force = false)
+        }
+    }
 
     /** Channel/EPG icon URLs point at the TVHeadend server and need the same Basic Auth
      * credentials as the API calls - Coil doesn't share those with [repository]'s own client. */
@@ -128,7 +153,7 @@ class TvheadendViewModel @Inject constructor(
             val namespace = snapshots.namespace(owner, repository.authHeaders().toSortedMap().toString() +
                 "|${preferences.tvheadendHost}:${preferences.tvheadendPort}:${preferences.tvheadendUsername}")
             snapshots.read<LiveTvDashboard>(namespace, "dashboard")?.let { cached ->
-                if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = !availability.hasNetwork(),
+                if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = !availability.hasNetwork(), canWake = !availability.hasNetwork() && canWake(),
                     capabilities = it.capabilities.copy(available = true, guide = cached.events.isNotEmpty(), recordings = cached.recordings.isNotEmpty()), loading = false, refreshing = true) }
             }
             _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
@@ -166,7 +191,8 @@ class TvheadendViewModel @Inject constructor(
                         system = repository.source.system, subject = repository.source.name, kind = NoticeKind.LIBRARY,
                         delivery = if (force && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
                     )) ?: return@launch
-                    _uiState.update { it.copy(configured = true, offline = false, loading = false, refreshing = false,
+                    val cachedOnly = repository.servingCachedData
+                    _uiState.update { it.copy(configured = true, offline = cachedOnly, canWake = cachedOnly && canWake(), loading = false, refreshing = false,
                         dashboard = dashboard,
                         selectedRecording = it.selectedRecording?.let { selected ->
                             (dashboard.upcoming + dashboard.recordings + dashboard.failedRecordings)
@@ -180,7 +206,7 @@ class TvheadendViewModel @Inject constructor(
                         detail = feedbackFailureDetail(error), system = repository.source.system,
                         subject = repository.source.name, kind = NoticeKind.LIBRARY, delivery = FeedbackDelivery.INLINE,
                     )) ?: return@launch
-                    _uiState.update { it.copy(offline = true, loading = false, refreshing = false, error = result) }
+                    _uiState.update { it.copy(offline = true, canWake = canWake(), loading = false, refreshing = false, error = result) }
                 },
             )
         }
@@ -227,7 +253,8 @@ class TvheadendViewModel @Inject constructor(
         removeAutoRecId: String? = null,
         action: suspend () -> Result<Unit>,
     ) {
-        if (_uiState.value.actionInProgress) return
+        // Offline (cached data): record, timer and delete need the server.
+        if (_uiState.value.actionInProgress || _uiState.value.offline) return
         // Commit busy synchronously, so repeated OK cannot send the mutation twice.
         _uiState.update { it.copy(actionInProgress = true, actionFeedback = null, loading = false, refreshing = false) }
         refreshJob?.cancel()
