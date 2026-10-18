@@ -54,27 +54,39 @@ object VideoImageCatalog {
     val strengths = setOf("off", "light", "medium", "strong")
     val sharpening = setOf("off", "light", "medium", "cas", "adaptive")
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
-    val svpModes = setOf("off", "auto", "light", "balanced", "quality")
+    val svpModes = setOf("off", "light", "balanced", "quality")
 }
 
-/** Zero selects the preset value; overrides are shared by both native players. */
+/**
+ * SVP tuning. Each native player (MPV, VLC) keeps its own copy inside its image options.
+ * Zero in [algorithm], [block], [overlap] and [pel] follows the selected preset; any other
+ * value there or in [search] makes the setup "custom" ([isCustom]).
+ */
 @Serializable
 data class SvpOptions(
+    /** 1 display refresh rate, 2 half of it, 3 at most 60 fps (smallest integer divisor of the display rate). */
     val rateDivisor: Int = 1,
+    /** 0 off, 2 medium, 3 strong. The old value 1 ("off" with an explicit cover mask) reads as 0. */
     val artifacts: Int = 0,
-    val scene: Int = 0,
+    /** 1 sensitive, 2 normal, 3 relaxed. The old preset value 0 was always normal. */
+    val scene: Int = 2,
     val algorithm: Int = 0,
     val block: Int = 0,
     val overlap: Int = 0,
     val pel: Int = 0,
+    /** 0 SVP's standard search, 1..3 light/medium/strong. */
     val search: Int = 0,
     val backend: Int = 0,
     val threads: Int = 0,
+    /** Largest source height that is interpolated: 720, 1080 or 2160. */
+    val maxHeight: Int = 1080,
+    /** Interpolate only sources up to 30 fps (film and TV), not 50/60 fps video. */
+    val filmOnly: Boolean = true,
 ) {
     fun normalized() = copy(
-        rateDivisor = rateDivisor.takeIf { it in 1..2 } ?: 1,
-        artifacts = artifacts.takeIf { it in 0..3 } ?: 0,
-        scene = scene.takeIf { it in 0..3 } ?: 0,
+        rateDivisor = rateDivisor.takeIf { it in 1..3 } ?: 1,
+        artifacts = artifacts.takeIf { it in setOf(2, 3) } ?: 0,
+        scene = scene.takeIf { it in 1..3 } ?: 2,
         algorithm = algorithm.takeIf { it in setOf(0, 13, 21, 23) } ?: 0,
         block = block.takeIf { it in setOf(0, 8, 16, 32) } ?: 0,
         // 1/8 of an 8 px block is odd; CPU synthesis (also Vulkan's fallback) needs even overlap.
@@ -83,7 +95,25 @@ data class SvpOptions(
         search = search.takeIf { it in 0..3 } ?: 0,
         backend = backend.takeIf { it in 0..2 } ?: 0,
         threads = threads.takeIf { it in 0..8 } ?: 0,
+        maxHeight = maxHeight.takeIf { it in SVP_MAX_HEIGHTS } ?: 1080,
     )
+
+    /** Analysis values that differ from the preset: the UI shows "custom". */
+    val isCustom: Boolean get() = normalized().let { it.algorithm != 0 || it.block != 0 || it.overlap != 0 || it.pel != 0 || it.search != 0 }
+
+    /** Choosing a preset again returns the analysis to that preset; output and device choices stay. */
+    fun withoutAnalysisOverrides() = copy(algorithm = 0, block = 0, overlap = 0, pel = 0, search = 0).normalized()
+
+    companion object {
+        val SVP_MAX_HEIGHTS = setOf(720, 1080, 2160)
+    }
+}
+
+/** Stored "auto" was the light preset with a different name; it reads as light. */
+internal fun normalizeSvpMode(mode: String): String = when (mode) {
+    "auto" -> "light"
+    in VideoImageCatalog.svpModes -> mode
+    else -> "off"
 }
 
 @Serializable
@@ -126,7 +156,7 @@ data class MpvImageOptions(
             toneMapping = toneMapping.takeIf { it in VideoImageCatalog.toneMapping } ?: "auto",
             ditherDepth = ditherDepth.takeIf { it in setOf("auto", "no", "8", "10") } ?: "auto",
             svp = svp.normalized(),
-            svpMode = svpMode.takeIf { it in VideoImageCatalog.svpModes } ?: "off",
+            svpMode = normalizeSvpMode(svpMode),
             filmGrain = filmGrain.takeIf { it in setOf("off", "light", "medium") } ?: "off",
         )
     }
@@ -147,7 +177,7 @@ data class VlcImageOptions(
 ) {
     fun normalized() = copy(
         svp = svp.normalized(),
-        svpMode = svpMode.takeIf { it in VideoImageCatalog.svpModes } ?: "off",
+        svpMode = normalizeSvpMode(svpMode),
         scaler = scaler.takeIf { it in VideoImageCatalog.vlcScalers } ?: "bilinear",
         deband = deband.takeIf { it in setOf("off", "light", "medium") } ?: "off",
         denoise = denoise.takeIf { it in setOf("off", "light", "medium") } ?: "off",

@@ -28,4 +28,8 @@ internal object SvpNative {
     external fun enabled(): Boolean
     external fun interpolatedFrames(): Long
     external fun gpuFrames(): Long
+
+    /** Process-wide synthesized frames, or null while the library is not loaded. */
+    @Synchronized
+    fun interpolatedFramesOrNull(): Long? = if (loaded) runCatching { interpolatedFrames() }.getOrNull() else null
 }

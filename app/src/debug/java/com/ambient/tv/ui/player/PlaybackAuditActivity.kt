@@ -89,9 +89,12 @@ class PlaybackAuditActivity : ComponentActivity() {
                                     title = "Scaling audit", onBack = { showScalingPanel = false },
                                     modifier = Modifier.align(Alignment.CenterEnd),
                                 ) {
+                                    // "svp" / "svp_advanced" open the SVP levels directly; the Motion entry opens them too.
+                                    var subPage by remember { mutableStateOf(intent.getStringExtra("panelSection")?.takeIf { it.startsWith("svp") }) }
                                     PlayerVideoSettingsGroups(sectionView = true, isLive = false,
                                         rendererKey = backend, onRendererSelected = { value, _ -> backend = value },
-                                        showRenderer = true, onDeinterlaceChanged = null)
+                                        showRenderer = true, onDeinterlaceChanged = null,
+                                        subPage = subPage, onOpenSubPage = { subPage = it })
                                 }
                             }
                         }

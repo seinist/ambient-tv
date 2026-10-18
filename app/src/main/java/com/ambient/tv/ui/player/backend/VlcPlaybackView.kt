@@ -6,6 +6,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.VlcImageOptions
 import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.videoImagePreferences
+import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.withGlobalSvp
 import android.content.Context
 import android.net.Uri
@@ -105,9 +106,16 @@ class VlcPlaybackController(
     val videoOutputDescription: String get() = if (vulkanOutput) "libplacebo / Vulkan" else "Android Surface / OpenGL ES"
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
         effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard)
-        .let { if (it.svpMode != "off" && !vlcSvpUseful(measuredSourceFps, svpOutputFps(svpDisplayFps(context), it.svp))) it.copy(svpMode = "off") else it }
+        .let { if (it.svpMode != "off" && !vlcSvpApplies(measuredSourceFps, svpOutputFps(svpDisplayFps(context), it.svp), it.svp, measuredSourceSize?.first, measuredSourceSize?.second)) it.copy(svpMode = "off") else it }
     /** Source frame rate of the video track once known; SVP is bypassed when it already meets the target. */
     private var measuredSourceFps: Double? = null
+    /** Source size once known; SVP stays off above the configured resolution limit. */
+    private var measuredSourceSize: Pair<Int, Int>? = null
+    private fun currentSourceSize(): Pair<Int, Int>? = runCatching { trackAccess.currentVideoTrack }.getOrNull()
+        ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width to it.height }
+    /** libVLC exposes no filter metadata: the shared native counter shows whether frames are synthesized. */
+    private var svpFramesSeen = -1L
+    private var svpFramesChangedAt = 0L
     private fun currentSourceFps(): Double? = runCatching { trackAccess.currentVideoTrack }.getOrNull()
         ?.takeIf { it.frameRateDen > 0 && it.frameRateNum > 0 }?.let { it.frameRateNum.toDouble() / it.frameRateDen }
     private var configuredSvpMode = vlcOptionsForNativeHdr(
@@ -1090,6 +1098,7 @@ class VlcPlaybackController(
         if (released) return PlaybackStatus()
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
             if (measuredSourceFps == null) measuredSourceFps = currentSourceFps()
+            if (measuredSourceSize == null) measuredSourceSize = currentSourceSize()
             // prepare() returns early without a valid surface; restarting here would stop/prepare every poll.
             val outputReady = audioOnly || attachedView?.holder?.surface?.isValid == true
             val effectiveMode = effectiveImage().svpMode
@@ -1400,21 +1409,55 @@ class VlcPlaybackController(
         return track.name
     }
 
-    /** Same live SVP line as MPV. LibVLC reports no bypass, so "active" means the filter is configured and useful. */
-    fun svpStatus(): String? {
+    /** Same live SVP state as MPV. libVLC reports no bypass, so the native frame counter decides. */
+    fun svpState(): SvpState? {
+        val mode = imageOptions.svpMode
+        if (mode == "off") return null
         val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val source = track?.takeIf { it.frameRateDen > 0 && it.frameRateNum > 0 }?.let { it.frameRateNum.toDouble() / it.frameRateDen }
-        val target = configuredSvpRate
-        val useful = source != null && target != null && target > source * 1.01 && target / source <= 5.0
-        return formatSvpStatus(
-            mode = imageOptions.svpMode,
-            allowed = configuredSvpMode != "off",
-            active = configuredSvpMode != "off" && useful,
+            ?: measuredSourceFps
+        val size = track?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width to it.height } ?: measuredSourceSize
+        val options = imageOptions.svp.normalized()
+        val unavailable = when {
+            !com.ambient.tv.BuildConfig.VLC_SVP -> SvpInactiveReason.ENGINE
+            !performanceProfile(context).allowSvpInterpolation -> SvpInactiveReason.PERFORMANCE_MODE
+            !SvpNative.isEnabledAndAvailable() -> SvpInactiveReason.LIBRARY
+            nativeHdrPreferred || sourceHdrStandard != null -> SvpInactiveReason.HDR
+            effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)).svpMode == "off" ->
+                SvpInactiveReason.PERFORMANCE_MODE
+            else -> null
+        }
+        val target = configuredSvpRate ?: svpOutputFps(svpDisplayFps(context), options)
+        // VLC probes an unknown MediaCodec rate itself; only known facts can rule SVP out here.
+        val decision = if (source == null) {
+            if (svpWithinResolution(size?.first, size?.second, options)) target?.let { SvpDecision.Run(0.0, it) }
+                ?: SvpDecision.Skip(SvpInactiveReason.DISPLAY_RATE_UNKNOWN)
+            else SvpDecision.Skip(SvpInactiveReason.RESOLUTION)
+        } else svpDecision(source, svpDisplayFps(context), options, size?.first, size?.second)
+        val configured = configuredSvpMode != "off"
+        return svpState(
+            mode = mode,
+            custom = options.isCustom,
+            unavailable = unavailable,
             overloaded = false,
-            sourceFps = source,
-            targetFps = target,
-            bypass = 0,
+            decision = decision,
+            inChain = configured,
+            runtimeReason = if (configured) vlcSvpRuntimeReason() else null,
         )
+    }
+
+    fun svpStatus(): String? = formatSvpStatus(svpState())
+
+    private fun vlcSvpRuntimeReason(): SvpInactiveReason? {
+        val frames = SvpNative.interpolatedFramesOrNull() ?: return SvpInactiveReason.PASSTHROUGH
+        val now = android.os.SystemClock.elapsedRealtime()
+        val playing = !released && runCatching { player.isPlaying }.getOrDefault(false)
+        if (frames != svpFramesSeen || !playing || svpFramesSeen < 0) {
+            svpFramesSeen = frames
+            svpFramesChangedAt = now
+            return null
+        }
+        return if (now - svpFramesChangedAt > VLC_SVP_STALL_MS) SvpInactiveReason.PASSTHROUGH else null
     }
 
     fun runtimeStats(includeCounters: Boolean = true): VlcRuntimeStats? = runCatching {
@@ -1787,6 +1830,20 @@ fun rememberVlcPlaybackSnapshot(
 
 /** SVP for VLC needs both the shared engine gate and a libVLC build that contains the filter. */
 internal fun vlcSvpAllowed(context: Context): Boolean = com.ambient.tv.BuildConfig.VLC_SVP && svpAllowed(context)
+
+/** Without a new synthesized frame for this long while playing, VLC reports passthrough. */
+private const val VLC_SVP_STALL_MS = 4_000L
+
+/**
+ * VLC: known facts that rule SVP out (film-only limit, resolution limit, source >= target).
+ * Unknown rates and sizes keep SVP; the native filter probes the rate itself.
+ */
+internal fun vlcSvpApplies(sourceFps: Double?, targetFps: Double?, options: com.ambient.tv.data.local.SvpOptions, width: Int?, height: Int?): Boolean {
+    val o = options.normalized()
+    if (!svpWithinResolution(width, height, o)) return false
+    if (o.filmOnly && sourceFps != null && sourceFps > 30.5) return false
+    return vlcSvpUseful(sourceFps, targetFps)
+}
 
 /** Interpolation only helps when the target rate is above the source; unknown rates keep SVP. */
 internal fun vlcSvpUseful(sourceFps: Double?, targetFps: Number?): Boolean {

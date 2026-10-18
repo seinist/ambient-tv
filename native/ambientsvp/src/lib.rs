@@ -171,9 +171,8 @@ impl AmbientSvp {
         let backend = if gpu.is_some() { 2 } else { 1 };
         #[cfg(not(feature = "vulkan"))]
         let backend = 1;
-        if c.backend == 2 && backend != 2 {
-            return Err("Vulkan compute unavailable".into());
-        }
+        // An explicitly requested but unavailable Vulkan device falls back to CPU synthesis,
+        // like automatic selection; stats.backend reports what actually runs.
         Ok(Self {
             config: c,
             builder,

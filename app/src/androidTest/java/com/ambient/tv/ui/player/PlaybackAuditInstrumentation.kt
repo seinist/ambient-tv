@@ -781,8 +781,8 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     preferences.svpAvailable = true
                     preferences.performanceModeKey = "maximum"
                     preferences.mpvImageOptions = com.ambient.tv.data.local.MpvImageOptions(
-                        scaler="bilinear",chromaScaler="bilinear",downscaler="bilinear",deband="off",sigmoid=false,svpMode="auto")
-                    preferences.vlcImageOptions = com.ambient.tv.data.local.VlcImageOptions(svpMode="auto")
+                        scaler="bilinear",chromaScaler="bilinear",downscaler="bilinear",deband="off",sigmoid=false,svpMode="light")
+                    preferences.vlcImageOptions = com.ambient.tv.data.local.VlcImageOptions(svpMode="light")
                     check(performanceProfile(targetContext).allowSvpInterpolation)
                     check(com.ambient.tv.ui.player.backend.SvpNative.enabled())
                 }
@@ -791,7 +791,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                 activity = startActivitySync(Intent(targetContext, PlaybackAuditActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("backend", backend)
                     .putExtra("output", "gpu").putExtra("decoder", "mediacodec")
-                    .putExtra("auditId", "svp-${System.nanoTime()}").putExtra("panelSection", "motion")
+                    .putExtra("auditId", "svp-${System.nanoTime()}").putExtra("panelSection", "svp")
                     .putExtra("uri", android.net.Uri.fromFile(file).toString())
                     .putExtra("headless", false)) as PlaybackAuditActivity
                 await("$backend SVP starts",30_000) { BackgroundPlaybackSession.snapshot.value.let {
@@ -941,7 +941,7 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                 }
                 val beforeRestart = com.ambient.tv.ui.player.backend.SvpNative.interpolatedFrames()
                 main {
-                    check(preferences.mpvImageOptions.svpMode=="auto" && preferences.vlcImageOptions.svpMode=="auto")
+                    check(preferences.mpvImageOptions.svpMode=="light" && preferences.vlcImageOptions.svpMode=="light")
                     preferences.performanceModeKey="maximum"
                     check(performanceProfile(targetContext).allowSvpInterpolation)
                 }

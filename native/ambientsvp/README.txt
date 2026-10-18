@@ -12,6 +12,27 @@ is packaged; the Maven libVLC fallback has no ambientsvp filter and hides it
 retained when changing performance mode. MPV's older frameInterpolation
 option is temporal resampling, not Open-SVPFlow; the two are not stacked.
 
+Player UI (2026-10-18)
+----------------------
+Video panel > Motion > "SVP motion smoothing" is its own level; playback speed
+stays directly under Motion. The level offers Off / Light / Balanced / Smooth /
+Custom (shown when analysis values deviate from the preset; stored "auto" was
+identical to Light and is migrated to it), target rate (display, half display,
+at most 60 fps), a resolution limit (720p / 1080p default / 4K), a source filter
+(up to 30 fps default / all), artifact suppression and scene-cut sensitivity.
+"SVP - Advanced" is a further level with algorithm, block, overlap, precision,
+search, synthesis backend and threads. Reset is a button. The entry row and a
+status line name the reason when SVP is not interpolating (player, performance
+mode, HDR, resolution, source rate, format/timing passthrough, overload).
+
+Adapter metadata: "bypass" is the engine's bypass_reason only (1 overload,
+2 runtime gate, 3 engine error); "passthrough" is the MPV adapter's reason for
+handing frames through (1 format, 2 unavailable, 3 timing, 4 error). Only
+bypass 1 or the native cost budget triggers the overload dialog. An explicitly
+selected but unavailable Vulkan backend now falls back to CPU synthesis.
+VLC has no filter metadata; its status uses the process-wide synthesized-frame
+counter (no new frame for 4 s while playing = passthrough).
+
 Live configuration (ABI 2)
 --------------------------
 The video panel exposes display-rate / half-display-rate targets, artifact

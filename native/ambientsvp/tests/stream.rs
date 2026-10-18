@@ -320,3 +320,12 @@ fn small_blocks_with_eighth_overlap_still_render_on_cpu() {
     assert_eq!(s.stats().bypass_reason, 0);
     assert!(s.stats().interpolated_frames > 0);
 }
+
+#[cfg(not(feature = "vulkan"))]
+#[test]
+fn explicit_vulkan_without_vulkan_falls_back_to_cpu() {
+    let mut c = config();
+    c.backend = 2;
+    let s = AmbientSvp::new(c).expect("explicit Vulkan must fall back instead of failing");
+    assert_eq!(s.stats().backend, 1);
+}

@@ -195,6 +195,11 @@ private fun strength(key: String) = when (key) {
     else -> key
 }
 
+/** Preset name in the UI language, "Benutzerdefiniert (…)" with analysis overrides. */
+@Composable
+private fun svpOverview(mode: String, options: com.ambient.tv.data.local.SvpOptions) =
+    com.ambient.tv.ui.player.svpModeLabel(mode, options.isCustom)
+
 @Composable
 private fun MpvOverview(o: MpvImageOptions) {
     OverviewLine(stringResource(R.string.settings_playback_overview_scaler), VideoImageCatalog.mpvScalers[o.scaler] ?: o.scaler)
@@ -211,7 +216,7 @@ private fun MpvOverview(o: MpvImageOptions) {
     OverviewLine(stringResource(R.string.settings_playback_overview_picture), "${o.brightness} / ${o.contrast} / ${o.saturation} / ${o.gamma}")
     OverviewLine(stringResource(R.string.settings_playback_overview_tone_mapping), o.toneMapping)
     OverviewLine(stringResource(R.string.settings_playback_overview_dither), o.ditherDepth)
-    OverviewLine("SVP", strength(o.svpMode))
+    OverviewLine("SVP", svpOverview(o.svpMode, o.svp))
 }
 
 @Composable
@@ -221,7 +226,7 @@ private fun VlcOverview(o: VlcImageOptions) {
     OverviewLine(stringResource(R.string.settings_playback_overview_deband), strength(o.deband))
     OverviewLine(stringResource(R.string.settings_playback_overview_denoise), strength(o.denoise))
     OverviewLine(stringResource(R.string.settings_playback_overview_picture), "${o.brightness} / ${o.contrast} / ${o.saturation} / ${o.gamma}")
-    OverviewLine("SVP", strength(o.svpMode))
+    OverviewLine("SVP", svpOverview(o.svpMode, o.svp))
 }
 
 @Composable

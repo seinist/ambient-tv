@@ -90,6 +90,9 @@ internal fun PlayerVideoSettingsGroups(
     playbackControls: @Composable () -> Unit = {},
     hasOutputExtras: Boolean = false,
     outputExtras: @Composable () -> Unit = {},
+    /** "svp" or "svp_advanced": the SVP sub-levels below Motion, each its own panel level. */
+    subPage: String? = null,
+    onOpenSubPage: ((String) -> Unit)? = null,
 ) {
     val handle = BackgroundPlaybackSession.activeHandle()
     val scale = rememberPlaybackScaleRelation()
@@ -113,7 +116,8 @@ internal fun PlayerVideoSettingsGroups(
             scale = media3Processing?.scaleRelation ?: scale)
         else -> null
     }?.sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, media3 = handle is Media3PlaybackHandle)
-    val svpAllowed = LocalPerformanceProfile.current.allowSvpInterpolation
+    // The SVP row stays visible with its reason (player, performance mode, HDR ...) while the global switch is on.
+    val svpEntryVisible = handle != null && videoImagePreferences(context).svpAvailable
     val hdrFacts = com.ambient.tv.ui.settings.rememberHdrControlFacts(videoImagePreferences(context).uiHdrModeKey)
     val hasSdrToHdrControl = com.ambient.tv.ui.display.sdrToHdrPlaybackControlVisible(hdrFacts)
     val hasOutputControls = rememberAvailableDisplayModes(context).size > 1 ||
@@ -123,7 +127,7 @@ internal fun PlayerVideoSettingsGroups(
         if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) || visible?.upscaler == true ||
             visible?.media3Processing == true) add("scaling" to R.string.image_scaling)
         if (visible?.deinterlace == true || visible?.deband == true || visible?.shaders == true) add("filters" to R.string.image_filters)
-        if (hasPlaybackControls || (visible?.svp == true && svpAllowed)) add("motion" to R.string.image_motion)
+        if (hasPlaybackControls || svpEntryVisible) add("motion" to R.string.image_motion)
         if (visible?.picture == true) add("color" to R.string.image_color)
         if (hasOutputControls) add("output" to R.string.image_output)
     }
@@ -131,7 +135,8 @@ internal fun PlayerVideoSettingsGroups(
         ?: remember { com.ambient.tv.ui.common.VideoPanelState() }
     var section by videoState::section
     val sections = available.map { it.first to stringResource(it.second) }
-    val activeSection = section.takeIf { selected -> sections.any { it.first == selected } } ?: sections.firstOrNull()?.first ?: return
+    val activeSection = subPage
+        ?: section.takeIf { selected -> sections.any { it.first == selected } } ?: sections.firstOrNull()?.first ?: return
     if (!sectionView && onOpenSection != null) {
         // The list: one row per area with what is set there; OK opens the area as its own level.
         if (hasSdrToHdrControl) PlayerSdrToHdrControl()
@@ -161,13 +166,22 @@ internal fun PlayerVideoSettingsGroups(
             }
             backend?.let { PlayerVideoOutputControls(it) }
         }
+        val openSvpAdvanced = { onOpenSubPage?.invoke("svp_advanced"); Unit }
         when (handle) {
-            is MpvPlaybackController -> if (activeSection != "renderer") MpvVideoGroups(handle, onDeinterlaceChanged, activeSection, scale)
-            is VlcPlaybackController -> if (activeSection != "renderer") VlcVideoGroups(handle, isLive, onDeinterlaceChanged, activeSection, scale)
+            is MpvPlaybackController -> if (activeSection != "renderer") MpvVideoGroups(handle, onDeinterlaceChanged, activeSection, scale, openSvpAdvanced)
+            is VlcPlaybackController -> if (activeSection != "renderer") VlcVideoGroups(handle, isLive, onDeinterlaceChanged, activeSection, scale, openSvpAdvanced)
             is Media3PlaybackHandle -> if (activeSection != "renderer") Media3VideoGroups(handle.player, activeSection)
         }
+        // Media3 and other engines: the SVP level only explains why it is not available.
+        if (activeSection == "svp" && handle !is MpvPlaybackController && handle !is VlcPlaybackController) {
+            SvpMainPage("off", com.ambient.tv.data.local.SvpOptions(), { _, _ -> }, com.ambient.tv.ui.player.backend.SvpInactiveReason.ENGINE) {}
+        }
         if (activeSection == "scaling") presentationControls()
-        if (activeSection == "motion") playbackControls()
+        if (activeSection == "motion") {
+            // SVP gets its own level; playback speed stays directly under Motion.
+            if (svpEntryVisible) SvpPanelEntry(handle) { onOpenSubPage?.invoke("svp") }
+            playbackControls()
+        }
         if (activeSection == "output" && (handle !is MpvPlaybackController || !handle.supportsGpuFilters)) PlayerDisplayModeGroup()
         if (activeSection == "output") {
             if (hasSdrToHdrControl) PlayerSdrToHdrControl()
@@ -245,6 +259,7 @@ private fun MpvVideoGroups(
     onDeinterlaceChanged: ((String, String) -> Unit)?,
     section: String,
     scale: VideoScaleRelation,
+    onOpenSvpAdvanced: () -> Unit = {},
 ) {
     val visibility = playerPanelVideoVisibility(
         engine = "mpv",
@@ -306,9 +321,12 @@ private fun MpvVideoGroups(
             }
         }
     }
-    val showMotion = visibility.svp && LocalPerformanceProfile.current.allowSvpInterpolation
-    if (section == "motion" && showMotion) {
-        SvpOptionsEditor(options.svpMode, options.svp, { change(options.copy(svp = it)) }, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
+    if (section == "svp" || section == "svp_advanced") {
+        val changeSvp: (String, com.ambient.tv.data.local.SvpOptions) -> Unit = { mode, svp -> change(options.copy(svpMode = mode, svp = svp)) }
+        if (section == "svp") SvpMainPage(options.svpMode, options.svp, changeSvp,
+            svpUiUnavailable(controller.supportsGpuFilters, LocalPerformanceProfile.current.allowSvpInterpolation),
+            controller::svpState, onOpenSvpAdvanced)
+        else SvpAdvancedPage(options.svpMode, options.svp, changeSvp)
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }
@@ -382,6 +400,7 @@ private fun VlcVideoGroups(
     onDeinterlaceChanged: ((String, String) -> Unit)?,
     section: String,
     scale: VideoScaleRelation,
+    onOpenSvpAdvanced: () -> Unit = {},
 ) {
     val options = controller.imageOptions
     val visibility = playerPanelVideoVisibility(
@@ -436,8 +455,12 @@ private fun VlcVideoGroups(
             ImageChoice(R.string.image_denoise, options.denoise, imageStrengths()) { change(options.copy(denoise = it)) }
         }
     }
-    if (section == "motion" && visibility.svp && LocalPerformanceProfile.current.allowSvpInterpolation) {
-        SvpOptionsEditor(options.svpMode, options.svp, { change(options.copy(svp = it)) }, status = controller::svpStatus) { change(options.copy(svpMode = it)) }
+    if (section == "svp" || section == "svp_advanced") {
+        val changeSvp: (String, com.ambient.tv.data.local.SvpOptions) -> Unit = { mode, svp -> change(options.copy(svpMode = mode, svp = svp)) }
+        if (section == "svp") SvpMainPage(options.svpMode, options.svp, changeSvp,
+            svpUiUnavailable(com.ambient.tv.BuildConfig.VLC_SVP, LocalPerformanceProfile.current.allowSvpInterpolation),
+            controller::svpState, onOpenSvpAdvanced)
+        else SvpAdvancedPage(options.svpMode, options.svp, changeSvp)
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }
@@ -446,6 +469,25 @@ private fun VlcVideoGroups(
         ImageLevel(R.string.image_gamma, options.gamma) { change(options.copy(gamma = it)) }
     }
     if (section == "filters" && controller.imageProcessingFallback) ImageHint(stringResource(R.string.image_vlc_fallback))
+}
+
+/** "SVP-Bewegungsglättung" row under Motion with the live summary of the current engine. */
+@Composable
+private fun SvpPanelEntry(handle: Any?, onOpen: () -> Unit) {
+    val maximum = LocalPerformanceProfile.current.allowSvpInterpolation
+    when (handle) {
+        is MpvPlaybackController -> {
+            val live = rememberSvpState(handle) { handle.svpState() }
+            SvpEntryRow(svpSummary(handle.imageOptions.svpMode, handle.imageOptions.svp, live,
+                svpUiUnavailable(handle.supportsGpuFilters, maximum)), onOpen)
+        }
+        is VlcPlaybackController -> {
+            val live = rememberSvpState(handle) { handle.svpState() }
+            SvpEntryRow(svpSummary(handle.imageOptions.svpMode, handle.imageOptions.svp, live,
+                svpUiUnavailable(com.ambient.tv.BuildConfig.VLC_SVP, maximum)), onOpen)
+        }
+        else -> SvpEntryRow(svpReasonText(com.ambient.tv.ui.player.backend.SvpInactiveReason.ENGINE, com.ambient.tv.data.local.SvpOptions()), onOpen)
+    }
 }
 
 @Composable
