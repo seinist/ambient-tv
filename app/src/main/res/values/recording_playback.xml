@@ -3,4 +3,5 @@
     <string name="live_recording_playback">Recording playback</string>
     <string name="live_recording_playback_failed">Recording continues. Playback during recording is unavailable. MPEG-TS and recording playback permission are required.</string>
     <string name="live_recording_seek_failed">Could not seek in the recording.</string>
+    <string name="tvh_recording_started">Recording started</string>
 </resources>

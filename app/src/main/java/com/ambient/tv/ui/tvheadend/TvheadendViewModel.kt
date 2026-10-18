@@ -188,9 +188,14 @@ class TvheadendViewModel @Inject constructor(
 
     fun schedule(event: TvhEpgEvent, series: Boolean = false) {
         if (!_uiState.value.capabilities.manageTimers || (series && !_uiState.value.capabilities.seriesTimers)) return
-        recordingAction("schedule:${event.eventId}", "event:${event.eventId}", event.title,
-            if (series) R.string.tvh_series_timer_created else R.string.tvh_recording_scheduled) {
-            if (series) repository.scheduleSeries(event.eventId) else repository.scheduleRecording(event.eventId)
+        val now = System.currentTimeMillis() / 1000
+        val message = when {
+            series -> R.string.tvh_series_timer_created
+            event.isLive(now) -> R.string.tvh_recording_started
+            else -> R.string.tvh_recording_scheduled
+        }
+        recordingAction("schedule:${event.eventId}", "event:${event.eventId}", event.title, message) {
+            scheduleProgrammeRecording(repository, event, series, now)
         }
     }
 

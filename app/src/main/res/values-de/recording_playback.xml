@@ -3,4 +3,5 @@
     <string name="live_recording_playback">Aufnahmewiedergabe</string>
     <string name="live_recording_playback_failed">Die Aufnahme läuft weiter. Wiedergabe während der Aufnahme ist nicht verfügbar. MPEG-TS und die Berechtigung zur Aufnahmewiedergabe sind erforderlich.</string>
     <string name="live_recording_seek_failed">Spulen in der Aufnahme fehlgeschlagen.</string>
+    <string name="tvh_recording_started">Aufnahme gestartet</string>
 </resources>
