@@ -344,6 +344,7 @@ internal fun VlcPlayerContent(
                         hasVideo = snapshot.hasVideo,
                     )
                     formatNerdFps(snapshot.runtimeStats?.videoFps)?.let { MetaBadge(it) }
+                    com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState)?.let { MetaBadge(it, emphasized = true) }
                     (snapshot.runtimeStats?.videoCodec ?: state.videoCodec)?.uppercase()?.let { MetaBadge(it) }
                     (snapshot.runtimeStats?.audioCodec ?: state.audioCodec)?.uppercase()?.let { MetaBadge(it) }
                 }

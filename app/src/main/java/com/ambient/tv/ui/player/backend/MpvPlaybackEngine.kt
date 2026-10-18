@@ -1728,7 +1728,7 @@ internal class MpvPlaybackEngine(
             !SvpNative.isEnabledAndAvailable() -> SvpInactiveReason.LIBRARY
             effective.svpMode == "off" -> SvpInactiveReason.PERFORMANCE_MODE
             hdrImageTransfer -> SvpInactiveReason.HDR
-            else -> null
+            else -> mpvZeroCopySvpReason(zeroCopyInterlaced)
         }
         val size = sourceDimensions()
         val runtime = if (inChain) svpRuntimeReason(

@@ -42,7 +42,7 @@ fun MetaBadge(
             .padding(horizontal = 9.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = text, color = foreground, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp))
+        Text(text = text, color = foreground, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp), maxLines = 1, softWrap = false)
     }
 }
 

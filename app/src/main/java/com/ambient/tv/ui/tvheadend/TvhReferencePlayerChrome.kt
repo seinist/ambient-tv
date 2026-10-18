@@ -70,6 +70,8 @@ fun BoxScope.TvhReferencePlayerChrome(
     backendLabel: String,
     mediaBadges: List<String>,
     seekJumpMs: Long,
+    /** Own slot: [mediaBadges] keeps only four extras, which would drop an SVP chip. */
+    svpBadge: String? = null,
     seekFocusRequester: FocusRequester,
     playFocusRequester: FocusRequester,
     onTogglePlayback: () -> Unit,
@@ -255,6 +257,7 @@ fun BoxScope.TvhReferencePlayerChrome(
             if (source.isLive && recordingPlayback) MetaBadge(stringResource(R.string.live_recording_playback), emphasized = true)
             if (source.isLive && shifted) MetaBadge(stringResource(R.string.timeshift_behind, formatTvhChromeDuration(behindMs)), emphasized = true)
             else if (source.isLive && !recordingPlayback) MetaBadge(stringResource(R.string.tvh_live).uppercase(), emphasized = true)
+            svpBadge?.let { MetaBadge(it, emphasized = true) }
             com.ambient.tv.ui.player.PlayerStreamBadges(mediaBadges)
         }
 
@@ -344,6 +347,8 @@ internal data class LiveOsdModel(
     val backendLabel: String,
     val mediaBadges: List<String>,
     val seekJumpMs: Long,
+    /** "SVP 25 → 50" while SVP interpolates; shown outside [mediaBadges]. */
+    val svpBadge: String? = null,
     val onTogglePlayback: () -> Unit,
     val onSeekBy: (Long) -> Unit,
     val onZap: (Int) -> Unit,
@@ -386,6 +391,7 @@ internal data class LiveOsdModel(
                 backendLabel = backendLabel,
                 mediaBadges = mediaBadges,
                 seekJumpMs = seekJumpMs,
+                svpBadge = svpBadge,
                 seekFocusRequester = seekFocusRequester,
                 playFocusRequester = playFocusRequester,
                 onTogglePlayback = onTogglePlayback,

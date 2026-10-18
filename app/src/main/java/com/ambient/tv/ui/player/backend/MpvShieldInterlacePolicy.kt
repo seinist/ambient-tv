@@ -44,6 +44,13 @@ internal fun mpvZeroCopySkippedShaders(keys: List<String>): List<String> =
 internal fun mpvZeroCopyCpuFilters(filters: Map<String, String>, zeroCopy: Boolean): Map<String, String> =
     if (zeroCopy) emptyMap() else filters
 
+/**
+ * Zero-copy removes every CPU filter, plex-svp included, for the interlaced source. Report that
+ * as a format passthrough instead of a filter that is forever "starting".
+ */
+internal fun mpvZeroCopySvpReason(zeroCopy: Boolean): SvpInactiveReason? =
+    if (zeroCopy) SvpInactiveReason.FORMAT else null
+
 /** Image-panel / status key while the SHIELD interlaced zero-copy path is active. */
 internal const val MPV_ZERO_COPY_WARNING = "shield-interlaced-zero-copy"
 

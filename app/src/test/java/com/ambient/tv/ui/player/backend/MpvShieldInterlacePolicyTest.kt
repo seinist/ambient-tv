@@ -95,4 +95,15 @@ class MpvShieldInterlacePolicyTest {
         assertFalse(MpvShieldInterlacedChannels.isKnown("http://tvh/stream/channel/2"))
         MpvShieldInterlacedChannels.clear()
     }
+
+    @Test fun zeroCopyReportsSvpAsFormatPassthroughNotStarting() {
+        assertEquals(SvpInactiveReason.FORMAT, mpvZeroCopySvpReason(true))
+        assertEquals(null, mpvZeroCopySvpReason(false))
+        val state = svpState(
+            mode = "balanced", custom = false, unavailable = mpvZeroCopySvpReason(true), overloaded = false,
+            decision = SvpDecision.Run(25.0, 50.0), inChain = false, runtimeReason = null,
+        )
+        assertEquals("passthrough (format)", formatSvpStatus(state))
+        assertEquals(null, svpBadgeLabel(state))
+    }
 }
