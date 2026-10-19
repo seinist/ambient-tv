@@ -90,6 +90,19 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     }
 }
 
+/**
+ * The remote's Search key opens Settings search like the header chip: a fresh key-down only
+ * (no repeat), TV layout only, never while a text field or the leave dialog has focus.
+ */
+internal fun settingsSearchKeyOpens(
+    isSearchKey: Boolean,
+    keyDown: Boolean,
+    repeatCount: Int,
+    handheld: Boolean,
+    textFieldFocused: Boolean,
+    dialogOpen: Boolean,
+): Boolean = isSearchKey && keyDown && repeatCount == 0 && !handheld && !textFieldFocused && !dialogOpen
+
 /** Search all terms, including aliases such as WOL, even when their words are reordered. */
 internal fun settingsSearchMatches(query: String, text: String): Boolean {
     val terms = query.lowercase(Locale.ROOT).trim().split(Regex("\\s+")).filter(String::isNotBlank)

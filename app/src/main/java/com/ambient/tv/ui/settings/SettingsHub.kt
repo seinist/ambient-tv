@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.settings
 
 import com.ambient.tv.ui.common.withTvFocusInsets
+import com.ambient.tv.ui.common.TvTextFieldFocus
 
 import androidx.compose.ui.focus.FocusTargetModifierNode
 import androidx.compose.ui.focus.Focusability
@@ -377,8 +378,26 @@ internal fun SettingsHub(
         }
     }
 
+    fun openSearch() {
+        if (search && page == null) {
+            runCatching { searchFocus.requestFocus() }
+            return
+        }
+        linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false
+    }
+
     Column(
         Modifier.fillMaxSize()
+            // Remote Search key: same as the header chip (not while typing or in the leave dialog).
+            .onPreviewKeyEvent { event ->
+                if (!settingsSearchKeyOpens(event.key == Key.Search, event.type == KeyEventType.KeyDown,
+                        event.nativeKeyEvent.repeatCount, handheld, TvTextFieldFocus.anyFocused, pendingExit != null)) {
+                    return@onPreviewKeyEvent false
+                }
+                uiSounds?.playSelect()
+                openSearch()
+                true
+            }
             // Only D-pad entry is redirected: a programmatic requestFocus() (e.g. Back focusing the row a
             // page was opened from) must land on its own target, not on the panel's first row.
             .focusProperties {
@@ -419,7 +438,7 @@ internal fun SettingsHub(
                         // Left from the leftmost header chip stays put; only Back leaves Settings.
                         event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                     },
-                    icon = Icons.Filled.Search, iconOnly = true) { linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false }
+                    icon = Icons.Filled.Search, iconOnly = true) { openSearch() }
                 if (area == SettingsArea.SYSTEMS && page != SettingsCategory.NOTIFICATIONS) {
                     TvChip(stringResource(R.string.notice_history), icon = Icons.Filled.Notifications, iconOnly = true) {
                         openPage(SettingsCategory.NOTIFICATIONS)
@@ -467,7 +486,8 @@ internal fun SettingsHub(
                     // Left from the category list always lands on the selected area, not a row at the same height.
                     .focusProperties { onEnter = { if (requestedFocusDirection != FocusDirection.Enter) areaFocus.getValue(area).requestFocus() } }
                     .focusGroup()
-                    .wrapVerticalScrollFocus(areaScroll)
+                    // Up on the first area wraps to the last (not to Search); a held key stops at the ends.
+                    .wrapVerticalScrollFocus(areaScroll, wrapOnRepeat = false)
                     .verticalScroll(areaScroll).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.65f), RoundedCornerShape(14.dp)).padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     SettingsArea.entries.forEach { target ->
@@ -480,8 +500,8 @@ internal fun SettingsHub(
                                     }
                                 }
                                 .onPreviewKeyEvent { event ->
-                                // Vertical wrapping belongs to the list shell. Right enters the
-                                // selected area; Left stays put (only Back opens the main navigation).
+                                // Vertical wrapping (both ends) belongs to the list shell. Right enters
+                                // the selected area; Left stays put (only Back opens the main navigation).
                                 if (event.key == Key.DirectionRight && event.type == KeyEventType.KeyDown) {
                                     if (event.nativeKeyEvent.repeatCount == 0) uiSounds?.playSelect()
                                     if (area != target) selectArea(target)
@@ -490,12 +510,6 @@ internal fun SettingsHub(
                                         requestPanelContentFocus()
                                     }
                                     true
-                                } else if (event.key == Key.DirectionUp && event.type == KeyEventType.KeyDown &&
-                                    target == SettingsArea.entries.first()) {
-                                    // Up from the top row reaches the header buttons instead of wrapping.
-                                    val moved = runCatching { searchButtonFocus.requestFocus() }.getOrDefault(false)
-                                    if (moved) uiSounds?.playFocus()
-                                    moved
                                 } else event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                             }, onClick = {
                                 selectArea(target)
