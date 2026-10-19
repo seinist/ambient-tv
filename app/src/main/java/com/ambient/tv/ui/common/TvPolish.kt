@@ -831,6 +831,7 @@ fun TvTextField(
     val tokens = LocalUiTokens.current
     val visibilityShape = remember(tokens.controlRadius) { RoundedCornerShape(tokens.controlRadius) }
 
+    TvTextFieldFocus.Report(focused || editing)
     val beginEditing = rememberUiSoundAction { editing = true }
     val imeVisible = WindowInsets.isImeVisible
     var imeWasVisible by remember { mutableStateOf(false) }
@@ -1302,6 +1303,8 @@ fun TvActionButton(
  *    [allowUpExit] lets page grids reach controls above them before wrapping.
  *    Disabling [wrapVerticalFocus] consumes Up/Down at the group's endpoints without leaving it.
  *    [scrollToEnd] composes a lazy tail and reveals a regular scrolling column's last row.
+ *    [wrapOnRepeat] false: a held key (repeatCount > 0) stops at the endpoint; only a fresh
+ *    press wraps, so holding Down does not circle through a short list endlessly.
  * 4. [footerFocus]: D-pad Right with nothing further right jumps to the footer's last button
  *    (Back/Close/Cancel). The footer group should cancel Right exits so the walk stops there.
  * Uses [onKeyEvent], so children that handle Up/Down/Right themselves (open selectors, text
@@ -1322,6 +1325,7 @@ fun Modifier.tvModalFocus(
     scrollPastEmptyEdge: (suspend (last: Boolean) -> Boolean)? = null,
     allowUpExit: Boolean = false,
     wrapVerticalFocus: Boolean = true,
+    wrapOnRepeat: Boolean = true,
 ): Modifier = composed {
     val focusManager = LocalFocusManager.current
     val uiSounds = LocalUiSoundPlayer.current
@@ -1445,6 +1449,7 @@ fun Modifier.tvModalFocus(
                 uiSounds?.playFocus()
                 return@onKeyEvent true
             }
+            val held = !wrapOnRepeat && event.nativeKeyEvent.repeatCount > 0
             wrapping = true
             wrapJob = scope.launch {
                 try {
@@ -1462,7 +1467,7 @@ fun Modifier.tvModalFocus(
                             return@launch
                         }
                     }
-                    if (!wrapVerticalFocus) return@launch
+                    if (!wrapVerticalFocus || held) return@launch
                     if (allowUpExit && direction == FocusDirection.Up && footerFocus == null && actionFocus == null &&
                         focusManager.moveFocus(FocusDirection.Up)) {
                         uiSounds?.playFocus()

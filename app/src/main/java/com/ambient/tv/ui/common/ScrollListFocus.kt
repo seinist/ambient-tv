@@ -194,12 +194,18 @@ internal suspend fun LazyGridState.scrollPastUnfocusableEdge(sourceEnd: Boolean)
     return true
 }
 
-fun Modifier.wrapVerticalScrollFocus(state: ScrollState, actionsFocus: FocusRequester? = null, focusActionsOnRight: Boolean = false): Modifier = composed {
+fun Modifier.wrapVerticalScrollFocus(
+    state: ScrollState,
+    actionsFocus: FocusRequester? = null,
+    focusActionsOnRight: Boolean = false,
+    wrapOnRepeat: Boolean = true,
+): Modifier = composed {
     if (LocalHandheldUi.current) Modifier else Modifier.tvModalFocus(
         initialFocus = false,
         scrollToTop = { state.scrollTo(0) },
         scrollToEnd = { state.scrollTo(state.maxValue) },
         footerFocus = actionsFocus,
         focusActionsOnRight = focusActionsOnRight,
+        wrapOnRepeat = wrapOnRepeat,
     )
 }
