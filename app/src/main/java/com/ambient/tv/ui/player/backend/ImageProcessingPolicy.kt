@@ -94,12 +94,14 @@ internal fun mpvRenderOverloaded(
 }
 
 /** Offer a session-only reduction for an actually running sharpening shader. */
-internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<String>): String? =
-    if (sharpening !in loadedShaders) null else when (sharpening) {
-        "adaptive" -> "cas"
-        "cas" -> "off"
-        else -> null
-    }
+internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<String>): String? = when {
+    // Built-in Light/Medium running as CAS on gpu-next.
+    sharpening in setOf("light", "medium") && "cas_$sharpening" in loadedShaders -> "off"
+    sharpening !in loadedShaders -> null
+    sharpening == "adaptive" -> "cas"
+    sharpening == "cas" -> "off"
+    else -> null
+}
 
 /** ambientsvp bypasses after a source-second costs more than 850ms of analysis+synthesis. */
 internal const val MPV_SVP_SLOW_WINDOW_US = 850_000L
@@ -370,27 +372,59 @@ internal fun mpvImageShaderKeys(
     upscaling: Boolean = true,
     fittedScale: Double? = null,
     svpActive: Boolean = false,
-): List<String> = if (!sdr) emptyList() else buildList {
+    /**
+     * Confirmed PQ/HLG source on a GPU VO that tone-maps. Only [MpvShaderAsset.hdrSafe] hooks
+     * load; grain moves to its OUTPUT variant. Unknown transfers (neither flag) load nothing.
+     */
+    hdr: Boolean = false,
+    /** vo=gpu-next: mpv's built-in sharpen does nothing there, Light/Medium become CAS. */
+    gpuNext: Boolean = false,
+): List<String> = if (!sdr && !hdr) emptyList() else buildList {
     val o = options.normalized()
+    val hdrSource = !sdr
     val scale = fittedScale ?: if (upscaling) Double.POSITIVE_INFINITY else 0.0
-    if (o.chromaScaler in VideoImageCatalog.chromaShaders) add(o.chromaScaler)
+    fun allowed(key: String) = !hdrSource || MPV_IMAGE_SHADERS[key]?.hdrSafe == true
+    if (o.chromaScaler in VideoImageCatalog.chromaShaders && allowed(o.chromaScaler)) add(o.chromaScaler)
     // A hook that will skip its own //!WHEN must not be loaded: most luma
     // upscalers force decoder copy-back for as long as the file is attached.
-    if (!svpActive && o.scaler in VideoImageCatalog.mpvShaders && scale > mpvLumaUpscalerMinScale(o.scaler)) {
+    if (!svpActive && o.scaler in VideoImageCatalog.mpvShaders && allowed(o.scaler) &&
+        scale > mpvLumaUpscalerMinScale(o.scaler)) {
         add(o.scaler)
     }
     // FSR and NIS already contain a sharpening stage. Do not silently stack
     // SSimSuperRes on top of their internal edge enhancement. Like the luma
     // hook, it is a renderer upscaler and would run once per SVP output frame.
-    if (!svpActive && scale > MPV_ANY_UPSCALE_SCALE && o.superResolution && o.scaler !in setOf("fsr", "nis")) {
+    if (!svpActive && scale > MPV_ANY_UPSCALE_SCALE && o.superResolution && o.scaler !in setOf("fsr", "nis") &&
+        allowed("ssim_super")) {
         add("ssim_super")
     }
-    if (o.downscaler == "ssim_down") add("ssim_down")
+    if (o.downscaler == "ssim_down" && allowed("ssim_down")) add("ssim_down")
     // FSR contains RCAS and NIS/NVScaler contains its own adaptive sharpening.
-    if (o.scaler !in setOf("fsr", "nis") && o.sharpening in setOf("cas", "adaptive")) add(o.sharpening)
+    mpvSharpeningShader(o.sharpening, o.scaler, gpuNext)?.takeIf(::allowed)?.let(::add)
     // Grain goes last so scalers and sharpeners do not amplify it.
-    if (o.filmGrain != "off") add("filmgrain_${o.filmGrain}")
+    if (o.filmGrain != "off") add(if (hdrSource) "filmgrain_${o.filmGrain}_output" else "filmgrain_${o.filmGrain}")
 }
+
+/**
+ * GLSL hook for the sharpening choice, or null when none is loaded. Light/Medium are mpv's
+ * built-in unsharp mask on vo=gpu (a property, no hook); on gpu-next that property has no
+ * effect, so they map to CAS at a matching strength.
+ */
+internal fun mpvSharpeningShader(sharpening: String, scaler: String, gpuNext: Boolean): String? = when {
+    scaler in setOf("fsr", "nis") -> null
+    sharpening in setOf("cas", "adaptive") -> sharpening
+    gpuNext && sharpening == "light" -> "cas_light"
+    gpuNext && sharpening == "medium" -> "cas_medium"
+    else -> null
+}
+
+/** mpv `sharpen` value: built-in unsharp mask, only on vo=gpu (gpu-next uses [mpvSharpeningShader]). */
+internal fun mpvBuiltinSharpen(sharpening: String, scaler: String, processing: Boolean, gpuNext: Boolean): String =
+    if (!processing || gpuNext || scaler in setOf("fsr", "nis")) "0" else when (sharpening) {
+        "light" -> "0.2"
+        "medium" -> "0.5"
+        else -> "0"
+    }
 
 internal fun mpvCpuImageFilters(options: MpvImageOptions, sdr: Boolean): Map<String, String> = buildMap {
     if (!sdr) return@buildMap

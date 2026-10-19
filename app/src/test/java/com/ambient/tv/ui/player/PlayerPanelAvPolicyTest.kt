@@ -178,4 +178,25 @@ class PlayerPanelAvPolicyTest {
         assertTrue(playerPanelVideoVisibility("vlc", false, false, false).svp)
         assertFalse(playerPanelVideoVisibility("vlc", false, false, false, globalSvp = false).svp)
     }
+
+    @Test
+    fun mpvGpuOnHdrOffersOnlyTheHdrSafeShaderRows() {
+        val v = playerPanelVideoVisibility("mpv", gpuFilters = true, shadersApply = false, media3ScalerApplies = false, hdrInput = true)
+        assertTrue(v.hdrShaders)
+        assertTrue(v.shaders)
+        assertTrue(v.shaderUpscalers)
+        assertTrue(v.deband)
+        assertFalse(v.denoise)
+        assertFalse(v.picture)
+        assertFalse(v.svp)
+        assertFalse(playerPanelVideoVisibility("mpv", gpuFilters = true, shadersApply = true, media3ScalerApplies = false).hdrShaders)
+        assertFalse(playerPanelVideoVisibility("mpv", gpuFilters = false, shadersApply = false, media3ScalerApplies = false, hdrInput = true).shaders)
+        assertFalse(v.sparsam(true).hdrShaders)
+        val hdrSafe = com.ambient.tv.ui.player.backend.MPV_HDR_UPSCALERS
+        val all = com.ambient.tv.data.local.VideoImageCatalog.mpvShaders
+        assertEquals(hdrSafe, panelShaderUpscalers(all, hdr = true, hdrSafe = hdrSafe).keys)
+        assertEquals(all, panelShaderUpscalers(all, hdr = false, hdrSafe = hdrSafe))
+        assertEquals("ravu_lite_r2", panelUpscalerKey("ravu_lite_r2", all.keys, shadersApply = false, stillRunning = hdrSafe))
+        assertEquals("lanczos", panelUpscalerKey("artcnn16", all.keys, shadersApply = false, stillRunning = hdrSafe))
+    }
 }

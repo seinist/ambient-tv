@@ -279,7 +279,8 @@ private fun MpvVideoGroups(
         if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions
     }
     if (section == "scaling" && controller.supportsGpuFilters) {
-        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change)
+        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
+            hdr = visibility.hdrShaders)
     }
     val showFilters = visibility.deinterlace || visibility.deband || visibility.shaders
     if (section == "filters" && showFilters) {
@@ -310,11 +311,15 @@ private fun MpvVideoGroups(
                     PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
                 )) { change(options.copy(sharpening = it)) }
             } else ImageHint(stringResource(if (options.scaler == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
-            ImageChoice(R.string.image_denoise, options.denoise, imageStrengths()) { change(options.copy(denoise = it)) }
-            ImageChoice(R.string.image_deblock, options.deblock, imageStrengths()) { change(options.copy(deblock = it)) }
+            // CPU cleanup filters and SSimSuperRes need an SDR source.
+            if (visibility.denoise) {
+                ImageChoice(R.string.image_denoise, options.denoise, imageStrengths()) { change(options.copy(denoise = it)) }
+                ImageChoice(R.string.image_deblock, options.deblock, imageStrengths()) { change(options.copy(deblock = it)) }
+            }
             ImageChoice(R.string.image_film_grain, options.filmGrain, imageStrengths()) { change(options.copy(filmGrain = it)) }
+            if (visibility.hdrShaders) ImageHint(stringResource(R.string.image_mpv_hdr_limited))
             // SSimSuperRes is only loaded while upscaling and never on top of FSR/NIS.
-            if (mpvSuperResRowVisible(options.scaler, scale)) {
+            if (!visibility.hdrShaders && mpvSuperResRowVisible(options.scaler, scale)) {
                 ImageChoice(R.string.image_superres, if (options.superResolution) "on" else "off", imageOnOff()) {
                     change(options.copy(superResolution = it == "on"))
                 }
@@ -356,14 +361,29 @@ private fun MpvVideoGroups(
 }
 
 @Composable
-private fun MpvScalingRows(options: MpvImageOptions, shadersApply: Boolean, upscaling: Boolean, downscaling: Boolean, change: (MpvImageOptions) -> Unit) {
+private fun MpvScalingRows(
+    options: MpvImageOptions,
+    shaderUpscalers: Boolean,
+    upscaling: Boolean,
+    downscaling: Boolean,
+    change: (MpvImageOptions) -> Unit,
+    /** HDR source on the GPU VO: only HDR-safe upscalers, and no chroma / SSim shaders. */
+    hdr: Boolean = false,
+) {
+    // Chroma shaders and SSimDownscaler stay SDR-only.
+    val shadersApply = shaderUpscalers && !hdr
+    val hdrUpscalers = com.ambient.tv.ui.player.backend.MPV_HDR_UPSCALERS
     if (upscaling) {
         val stored = options.scaler
-        val selected = panelUpscalerKey(stored, VideoImageCatalog.mpvShaders.keys, shadersApply)
+        val selected = panelUpscalerKey(stored, VideoImageCatalog.mpvShaders.keys, shadersApply,
+            stillRunning = if (hdr && shaderUpscalers) hdrUpscalers else emptySet())
         val sections = buildList {
             add(PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), VideoImageCatalog.mpvBuiltins.toList()))
-            if (shadersApply) {
-                add(PlayerDropUpSection(stringResource(R.string.image_scaler_shader), VideoImageCatalog.mpvShaders.toList()))
+            if (shaderUpscalers) {
+                add(PlayerDropUpSection(
+                    stringResource(if (hdr) R.string.image_scaler_shader_hdr else R.string.image_scaler_shader),
+                    panelShaderUpscalers(VideoImageCatalog.mpvShaders, hdr, hdrUpscalers).toList(),
+                ))
             }
         }
         val choices = sections.flatMap { it.options }
