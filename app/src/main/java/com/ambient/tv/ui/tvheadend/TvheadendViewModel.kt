@@ -206,7 +206,10 @@ class TvheadendViewModel @Inject constructor(
                         detail = feedbackFailureDetail(error), system = repository.source.system,
                         subject = repository.source.name, kind = NoticeKind.LIBRARY, delivery = FeedbackDelivery.INLINE,
                     )) ?: return@launch
-                    _uiState.update { it.copy(offline = true, canWake = canWake(), loading = false, refreshing = false, error = result) }
+                    // TVHeadend: offline (record/timer locked) only when the server is really unreachable.
+                    val offline = !isTvheadend || !availability.hasNetwork() ||
+                        com.ambient.tv.tvheadend.data.tvhFallbackMarksOffline(error)
+                    _uiState.update { it.copy(offline = offline, canWake = offline && canWake(), loading = false, refreshing = false, error = result) }
                 },
             )
         }

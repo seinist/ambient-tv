@@ -1755,4 +1755,11 @@
     <string name="settings_sleep_daily_stop">Täglich stoppen um</string>
     <string name="settings_sleep_daily_stop_hint">Startet die Wiedergabe bis 6 Stunden danach, stoppt sie nach der automatischen Dauer bzw. 30 min. Der frühere Stopp gewinnt.</string>
     <string name="player_sleep_clock_summary">Stopp um %1$s</string>
+    <string name="player_sleep_daily_stop">Tägliche Stoppzeit</string>
+    <string name="player_sleep_skip_today">Heute keine Stoppzeit</string>
+    <string name="settings_sleep_hour_minus">− 1 Std</string>
+    <string name="settings_sleep_hour_plus">+ 1 Std</string>
+    <string name="settings_sleep_minutes_minus">− 5 min</string>
+    <string name="settings_sleep_minutes_plus">+ 5 min</string>
+    <string name="settings_sleep_presets">Schnellauswahl</string>
 </resources>

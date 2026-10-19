@@ -49,44 +49,69 @@ class SleepTimerClockTest {
         assertEquals(30, nightFallbackMinutes("off"))
     }
 
-    @Test fun earliestStopWins() {
-        val duration = SleepTimerConfig(SleepTimerKind.DURATION, 60, 3_600_000L)
-        assertSame(duration, withDailyStop(duration, 7_200_000L))
-        val clock = withDailyStop(duration, 1_800_000L)
-        assertEquals(SleepTimerKind.CLOCK_TIME, clock.kind)
-        assertEquals(1_800_000L, clock.deadlineRealtimeMs)
-        assertEquals(SleepTimerKind.CLOCK_TIME, withDailyStop(SleepTimerConfig(), 5L).kind)
-        assertSame(duration, withDailyStop(duration, null))
-        val inactivity = withDailyStop(SleepTimerConfig(SleepTimerKind.USER_INACTIVITY, 60), 1_000L)
-        assertEquals(SleepTimerKind.USER_INACTIVITY, inactivity.kind)
-        assertEquals(1_000L, inactivity.alsoStopRealtimeMs)
+    @Test fun earliestStopWinsAndManualTimersKeepTheDailyStop() {
+        val timer = PlaybackSleepTimer()
+        timer.setDailyStop(1_800_000L)
+        timer.arm(SleepTimerConfig(SleepTimerKind.DURATION, 60), 0)
+        assertEquals(1_800_000L, timer.config.timedDeadlineMs)
+        assertTrue(timer.dailyStopIsNext())
+        timer.arm(SleepTimerConfig(SleepTimerKind.DURATION, 15), 0)
+        assertEquals(900_000L, timer.config.timedDeadlineMs)
+        assertFalse(timer.dailyStopIsNext())
+        assertEquals(1_800_000L, timer.config.alsoStopRealtimeMs)
+        // Manual "off" ends only the user's timer: the daily stop stays as CLOCK_TIME.
+        timer.arm(SleepTimerConfig(), 0)
+        assertEquals(SleepTimerKind.CLOCK_TIME, timer.config.kind)
+        assertEquals(1_800_000L, timer.config.alsoStopRealtimeMs)
+        assertEquals(SleepTimerKind.OFF, timer.userConfig.kind)
+        timer.setDailyStop(null)
+        assertEquals(SleepTimerKind.OFF, timer.config.kind)
     }
 
-    @Test fun clockTimerExpiresAsksWarnsAndExtends() {
+    @Test fun dailyStopAloneExpiresAsksAndWarns() {
         val timer = PlaybackSleepTimer()
-        timer.arm(SleepTimerConfig(SleepTimerKind.CLOCK_TIME, 0, 600_000L), 0)
+        timer.arm(SleepTimerConfig(), 0)
+        timer.setDailyStop(600_000L)
         assertEquals(600_000L, timer.warningDue(540_000, 60_000))
         assertFalse(timer.expired(599_999, PlaybackStatus(playing = true), true))
         assertTrue(timer.expired(600_000, PlaybackStatus(playing = true), true))
+        assertTrue(timer.stoppedByDailyStop)
         assertTrue(timer.asksBeforeStop())
-        assertEquals(2_400_000L, timer.extend(30, 600_000).deadlineRealtimeMs)
-        // Without a moment there is nothing to stop at.
-        assertEquals(SleepTimerKind.OFF, timer.arm(SleepTimerConfig(SleepTimerKind.CLOCK_TIME), 0).kind)
     }
 
     @Test fun dailyStopNextToUntimedTimer() {
         val timer = PlaybackSleepTimer()
-        timer.arm(SleepTimerConfig(SleepTimerKind.END_OF_ITEM, alsoStopRealtimeMs = 600_000L), 0)
+        timer.arm(SleepTimerConfig(SleepTimerKind.END_OF_ITEM), 0)
+        timer.setDailyStop(600_000L)
+        assertEquals(SleepTimerKind.END_OF_ITEM, timer.config.kind)
         assertEquals(600_000L, timer.warningDue(590_000, 60_000))
-        assertFalse(timer.expired(599_999, PlaybackStatus(playing = true), true))
         assertTrue(timer.expired(600_000, PlaybackStatus(playing = true), true))
         assertTrue(timer.asksBeforeStop())
-        assertEquals(2_400_000L, timer.extend(30, 600_000).alsoStopRealtimeMs)
         // The end of the item still stops directly, without asking.
+        timer.setDailyStop(2_400_000L)
         assertTrue(timer.expired(700_000, PlaybackStatus(ended = true), false))
         assertFalse(timer.asksBeforeStop())
-        // A manual duration drops the daily stop.
-        assertNull(timer.arm(SleepTimerConfig(SleepTimerKind.DURATION, 15, alsoStopRealtimeMs = 1L), 0).alsoStopRealtimeMs)
+    }
+
+    @Test fun clockPlanFollowsWallClockAndTimeZone() {
+        val now = at(2026, 6, 10, 22, 0)
+        val plan = dailyStopPlan(now, berlin, one, 30, nowRealtimeMs = 1_000L)!!
+        assertTrue(plan is DailyStopPlan.Clock)
+        assertEquals(1_000L + 3 * 3_600_000L, plan.realtimeMs(1_000L, now, berlin))
+        // The wall clock jumps an hour ahead: the stop is one hour closer in real time.
+        assertEquals(1_000L + 2 * 3_600_000L, plan.realtimeMs(1_000L, now + 3_600_000L, berlin))
+        // Time zone change to London (one hour behind): 01:00 there is an hour later.
+        assertEquals(1_000L + 4 * 3_600_000L, plan.realtimeMs(1_000L, now, ZoneId.of("Europe/London")))
+        // "+30 min" moves the wall-clock stop.
+        assertEquals(1_000L + 3 * 3_600_000L + 1_800_000L, plan.extended(30, 1_000L).realtimeMs(1_000L, now, berlin))
+    }
+
+    @Test fun nightWindowPlanIsAFixedMoment() {
+        val late = at(2026, 6, 10, 1, 30)
+        val plan = dailyStopPlan(late, berlin, one, 45, nowRealtimeMs = 5_000L)
+        assertEquals(DailyStopPlan.Fixed(5_000L + 45 * 60_000L), plan)
+        assertEquals(5_000L + 45 * 60_000L, plan!!.realtimeMs(9_999L, late + 3_600_000L, berlin))
+        assertNull(dailyStopPlan(late, berlin, -1, 30, 0L))
     }
 
     @Test fun clockLabelUsesWallTime() {

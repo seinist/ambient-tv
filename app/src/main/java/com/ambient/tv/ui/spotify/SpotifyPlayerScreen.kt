@@ -111,6 +111,7 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
         else -> configuredVisualizer
     }
     var controlsVisible by remember { mutableStateOf(true) }
+    com.ambient.tv.ui.player.SleepWarningKeyGate.ReportPlayerChrome(controlsVisible)
     var seekModeVersion by remember { mutableIntStateOf(0) }
     var seekModeVisible by remember { mutableStateOf(false) }
     val panelNavigation = rememberPlayerPanelNavigation()
@@ -270,6 +271,7 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
+                        com.ambient.tv.ui.common.PlayerSleepTimerButton({ panel = UnifiedPlayerPanel.SLEEP }, selected = panel == UnifiedPlayerPanel.SLEEP)
                         PlayerIconButton(Icons.Default.Shuffle, stringResource(R.string.spotify_shuffle), viewModel::shuffle)
                         PlayerIconButton(Icons.Default.Repeat, stringResource(R.string.spotify_repeat, state.repeatMode), viewModel::repeat)
                         PlayerIconButton(Icons.AutoMirrored.Filled.VolumeDown, stringResource(R.string.spotify_volume_down), { viewModel.volume(-5) })
@@ -306,8 +308,8 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                 subtitleOptions = emptyList(),
                 selectedSubtitle = "",
                 onSubtitleSelected = {},
-                sleepTimer = SleepTimerConfig(),
-                onSleepChanged = {},
+                sleepTimer = com.ambient.tv.ui.player.SleepSession.config,
+                onSleepChanged = com.ambient.tv.ui.player.SleepSession::set,
                 infoLines = buildList {
                     add(stringResource(R.string.player_nerd_backend) to "Spotify Native")
                     track?.artists?.joinToString(", ") { it.name }?.takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_audio) to it) }

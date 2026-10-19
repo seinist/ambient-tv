@@ -72,14 +72,40 @@ internal fun dailyStopEpochMs(nowEpochMs: Long, zone: ZoneId, minuteOfDay: Int, 
 internal fun nightFallbackMinutes(autoStartKey: String): Int =
     autoStartKey.toIntOrNull()?.takeIf { it > 0 } ?: NIGHT_FALLBACK_MINUTES
 
-/** Automatic timer plus daily stop time ([stopRealtimeMs]): the earlier stop wins. */
-internal fun withDailyStop(auto: SleepTimerConfig, stopRealtimeMs: Long?): SleepTimerConfig = when {
-    stopRealtimeMs == null -> auto
-    auto.kind == SleepTimerKind.OFF -> SleepTimerConfig(SleepTimerKind.CLOCK_TIME, 0, stopRealtimeMs)
-    auto.kind == SleepTimerKind.DURATION ->
-        if ((auto.deadlineRealtimeMs ?: Long.MAX_VALUE) <= stopRealtimeMs) auto
-        else SleepTimerConfig(SleepTimerKind.CLOCK_TIME, 0, stopRealtimeMs)
-    else -> auto.copy(alsoStopRealtimeMs = stopRealtimeMs)
+/**
+ * The daily stop time of one session. [Clock] is resolved from date + minute of day in the
+ * current zone on every tick, so a clock or time-zone change moves it with the wall clock;
+ * [Fixed] (night window) is a plain elapsed-realtime moment.
+ */
+internal sealed interface DailyStopPlan {
+    data class Clock(val date: java.time.LocalDate, val minuteOfDay: Int, val extraMinutes: Int = 0) : DailyStopPlan
+    data class Fixed(val realtimeMs: Long) : DailyStopPlan
+}
+
+/** Plan for a session starting now; null when the daily stop time is off. */
+internal fun dailyStopPlan(nowEpochMs: Long, zone: ZoneId, minuteOfDay: Int, fallbackMinutes: Int, nowRealtimeMs: Long): DailyStopPlan? {
+    if (minuteOfDay !in 0 until 1440) return null
+    if (nowEpochMs - previousDailyStopEpochMs(nowEpochMs, zone, minuteOfDay) < NIGHT_WINDOW_MS) {
+        return DailyStopPlan.Fixed(nowRealtimeMs + fallbackMinutes * 60_000L)
+    }
+    val today = Instant.ofEpochMilli(nowEpochMs).atZone(zone).toLocalDate()
+    val todayStop = dailyStopAt(nowEpochMs, zone, minuteOfDay, 0).toInstant().toEpochMilli()
+    return DailyStopPlan.Clock(if (todayStop > nowEpochMs) today else today.plusDays(1), minuteOfDay)
+}
+
+internal fun DailyStopPlan.realtimeMs(nowRealtimeMs: Long, nowEpochMs: Long, zone: ZoneId): Long = when (this) {
+    is DailyStopPlan.Fixed -> realtimeMs
+    is DailyStopPlan.Clock -> {
+        val epoch = ZonedDateTime.of(date, LocalTime.of(minuteOfDay / 60, minuteOfDay % 60), zone)
+            .plusMinutes(extraMinutes.toLong()).toInstant().toEpochMilli()
+        nowRealtimeMs + (epoch - nowEpochMs)
+    }
+}
+
+/** "+30 min" on the daily stop time. */
+internal fun DailyStopPlan.extended(minutes: Int, nowRealtimeMs: Long): DailyStopPlan = when (this) {
+    is DailyStopPlan.Fixed -> DailyStopPlan.Fixed(maxOf(realtimeMs, nowRealtimeMs) + minutes * 60_000L)
+    is DailyStopPlan.Clock -> copy(extraMinutes = extraMinutes + minutes)
 }
 
 /** Wall-clock "HH:mm" of an elapsed-realtime stop moment, for timer summaries. */
@@ -90,11 +116,11 @@ internal fun sleepClockLabel(deadlineRealtimeMs: Long?, nowRealtimeMs: Long = an
 }
 
 /**
- * "End of title" when another title starts in the same session: a manual one ends with its title
- * (the daily stop time, if any, stays); the automatic one goes on with the next title.
+ * The user's "end of title" when another title starts in the same session: a manual one ends with
+ * its title; the automatic one goes on with the next title. The daily stop time is separate.
  */
 internal fun sleepTimerForNextItem(current: SleepTimerConfig, auto: Boolean): SleepTimerConfig = when {
     current.kind != SleepTimerKind.END_OF_ITEM -> current
-    auto -> SleepTimerConfig(SleepTimerKind.END_OF_ITEM, alsoStopRealtimeMs = current.alsoStopRealtimeMs)
-    else -> current.alsoStopRealtimeMs?.let { SleepTimerConfig(SleepTimerKind.CLOCK_TIME, 0, it) } ?: SleepTimerConfig()
+    auto -> SleepTimerConfig(SleepTimerKind.END_OF_ITEM)
+    else -> SleepTimerConfig()
 }

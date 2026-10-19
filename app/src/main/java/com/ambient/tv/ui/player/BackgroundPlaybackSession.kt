@@ -200,22 +200,17 @@ object BackgroundPlaybackSession {
     }
     private var generation = 0L
     private var appContext: Context? = null
-    private val timer = PlaybackSleepTimer()
-    private var timerConfig by mutableStateOf(SleepTimerConfig())
-    val sleepTimer: SleepTimerConfig get() = timerConfig
-    /** Set while an expired timer holds playback paused and asks how to continue; elapsed-realtime deadline. */
-    var sleepPromptDeadline by mutableStateOf<Long?>(null)
-        private set
-    /** Set while the non-pausing pre-warning is shown; the elapsed-realtime stop deadline. */
-    var sleepWarningDeadline by mutableStateOf<Long?>(null)
-        private set
-    /** Settings for the pre-warning; read live, so a changed warning applies at once. */
-    private var sleepPrefs: com.ambient.tv.data.local.AppPreferences? = null
-    private val sleepWarningMs: Long get() = (sleepPrefs?.sleepWarningMinutes ?: 0) * 60_000L
-    /** The running timer was armed from the settings ("start automatically"), not by hand. */
-    private var sleepTimerAuto = false
-    /** A stop that kept the timer (internal retry/error); the next acquire continues the session. */
-    private var keptSleepTimerAtMs: Long? = null
+    /** The shared sleep timer ([SleepSession]); this session is one of its targets. */
+    val sleepTimer: SleepTimerConfig get() = SleepSession.config
+    val sleepPromptDeadline: Long? get() = SleepSession.promptDeadline
+    val sleepWarningDeadline: Long? get() = SleepSession.warningDeadline
+    private val sleepTarget = object : SleepTarget {
+        override fun sleepStatus() = handle?.status() ?: snapshot.value.status
+        override fun sleepWantsToPlay() = handle?.wantsToPlay() ?: false
+        override fun sleepPause() { handle?.pause() }
+        override fun sleepPlay() { handle?.play() }
+        override fun sleepStop() = stop()
+    }
     private val completed = ArrayDeque<Snapshot>()
     private var consecutiveAutoAdvances = 0
     private var expectedNextUp: Pair<String, String>? = null
@@ -260,14 +255,9 @@ object BackgroundPlaybackSession {
         }
         // Duration and inactivity timers belong to the listening session, including zapping,
         // autoplay and renderer switches. An end-of-item timer belongs to its current item.
-        if (!samePlayback && sleepTimer.kind == SleepTimerKind.END_OF_ITEM) {
-            // A manual "end of title" belongs to its title. The automatic one applies to every
-            // title of the session and keeps the daily stop time next to it.
-            val auto = sleepTimerAuto
-            setSleepTimer(sleepTimerForNextItem(sleepTimer, auto))
-            sleepTimerAuto = auto
-        }
-        startSleepSessionIfNew(context, metadata, hadPlayer = previous != null, replacingSource = current.replacingSource)
+        if (!samePlayback) SleepSession.itemChanged(sleepTarget)
+        SleepSession.begin(sleepTarget, { videoImagePreferences(context) }, metadata.isLive,
+            hadPlayer = previous != null, replacingSource = current.replacingSource)
         val continuesNextUpChain = expectedNextUp == (metadata.source to metadata.mediaId)
         ContextCompat.startForegroundService(context.applicationContext,
             Intent(context.applicationContext, PlaybackService::class.java))
@@ -305,8 +295,6 @@ object BackgroundPlaybackSession {
             // (a renderer switch had deliberately not queued it above).
             if (previous != null && samePlayback) completed.addLast(current.copy(status = previousStatus ?: current.status))
             PlaybackOutputTransition.clear()
-            sleepPromptDeadline = null
-            sleepWarningDeadline = null
             handle = null
             identity = null
             mutableVideoPresentation.value = VideoPresentation()
@@ -314,7 +302,7 @@ object BackgroundPlaybackSession {
             consecutiveAutoAdvances = 0
             expectedNextUp = null
             // A renderer that failed to start is retried or replaced; the listening timer stays.
-            keptSleepTimerAtMs = SystemClock.elapsedRealtime()
+            SleepSession.end(sleepTarget, keep = true)
             mutableSnapshot.value = Snapshot(generation = ++generation)
             throw error
         }
@@ -377,7 +365,7 @@ object BackgroundPlaybackSession {
     fun beginItemTransition(): Long {
         checkThread()
         val current = snapshot.value
-        if (sleepTimer.kind == SleepTimerKind.END_OF_ITEM) setSleepTimer(SleepTimerConfig())
+        SleepSession.itemChanged(sleepTarget)
         mutableSnapshot.value = current.copy(
             generation = ++generation, replacingSource = true, wantsToPlay = true,
             status = current.status.copy(ended = false),
@@ -407,7 +395,7 @@ object BackgroundPlaybackSession {
         videoSettingsOverride = null
         mutableVideoPresentation.value = VideoPresentation()
         AudioEngineRedirectGuard.reset()
-        if (sleepTimer.kind == SleepTimerKind.END_OF_ITEM) setSleepTimer(SleepTimerConfig())
+        SleepSession.itemChanged(sleepTarget)
         mutableSnapshot.value = current.copy(
             metadata = replacementMetadata ?: current.metadata,
             status = if (replacementMetadata != null) PlaybackStatus() else status.copy(playing = false, ended = false, error = null),
@@ -456,39 +444,13 @@ object BackgroundPlaybackSession {
         ?.metadata?.takeIf { it.route == route }?.resumeState
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
-        sleepPromptDeadline = null
-        sleepWarningDeadline = null
-        sleepTimerAuto = false
-        timerConfig = timer.arm(value, SystemClock.elapsedRealtime())
-    }
-
-    /**
-     * New session (nothing playing, no replacement, no kept timer): read the pre-warning and arm
-     * the automatic timer if none is set. Zapping and next episode never get here as "new".
-     */
-    private fun startSleepSessionIfNew(context: Context, metadata: PlaybackMetadata, hadPlayer: Boolean, replacingSource: Boolean) {
-        val now = SystemClock.elapsedRealtime()
-        val kept = keptSleepTimerAtMs
-        keptSleepTimerAtMs = null
-        if (!sleepSessionStarts(hadPlayer, replacingSource, kept, now)) return
-        val prefs = runCatching { videoImagePreferences(context) }.getOrNull() ?: return
-        sleepPrefs = prefs
-        // A timer kept for a retry that never came belongs to the old session.
-        if (kept != null) setSleepTimer(SleepTimerConfig())
-        if (timerConfig.kind != SleepTimerKind.OFF) return
-        val auto = autoSleepTimerConfig(prefs.sleepAutoStartKey, metadata.isLive, now)
-        val wallNow = System.currentTimeMillis()
-        val dailyStop = dailyStopEpochMs(wallNow, java.time.ZoneId.systemDefault(), prefs.sleepDailyStopMinute,
-            nightFallbackMinutes(prefs.sleepAutoStartKey))?.let { now + (it - wallNow) }
-        setSleepTimer(withDailyStop(auto, dailyStop))
-        sleepTimerAuto = timerConfig.kind != SleepTimerKind.OFF
+        SleepSession.set(value)
     }
 
     /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */
     fun extendSleepTimer() {
         checkThread()
-        timerConfig = timer.extend(SLEEP_EXTEND_MINUTES, SystemClock.elapsedRealtime())
-        sleepWarningDeadline = null
+        SleepSession.extend()
         registerUserInteraction()
     }
 
@@ -515,26 +477,7 @@ object BackgroundPlaybackSession {
         val current = snapshot.value
         mutableSnapshot.value = current.copy(status = status,
             wantsToPlay = if (current.replacingSource) current.wantsToPlay else player.wantsToPlay())
-        val prompt = sleepPromptDeadline
-        if (prompt != null) {
-            // Play pressed outside the dialog (player, media key, notification) counts as
-            // "keep watching"; no answer at all lets the sleep timer go ahead.
-            // The first moments are skipped: some renderers report the pause a tick late.
-            val settled = now - (prompt - PlaybackSleepTimer.PROMPT_MS) >= 1_500L
-            if (settled && player.wantsToPlay()) continueAfterSleep(rearm = false)
-            else if (now >= prompt) stopForSleep()
-        } else {
-            timer.warningDue(now, sleepWarningMs)?.let { sleepWarningDeadline = it }
-            sleepWarningDeadline?.let { warned ->
-                if (now >= warned || timerConfig.timedDeadlineMs != warned) sleepWarningDeadline = null
-            }
-        }
-        if (prompt == null && timer.expired(now, status, player.wantsToPlay())) {
-            if (timer.asksBeforeStop()) {
-                player.pause()
-                sleepPromptDeadline = now + PlaybackSleepTimer.PROMPT_MS
-            } else stopForSleep()
-        }
+        SleepSession.tick(sleepTarget)
     }
 
     /** Bumped on every user key/touch; player OSD auto-hide restarts its timeout on it. */
@@ -543,26 +486,14 @@ object BackgroundPlaybackSession {
 
     fun registerUserInteraction() {
         checkThread()
-        timer.userInput(SystemClock.elapsedRealtime())
+        SleepSession.userInput()
         userInputVersion++
-    }
-
-    private fun stopForSleep() {
-        stop()
-        // Visible after the player closes, and in the history for whoever finds the TV stopped.
-        com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
-            "playback:sleep", com.ambient.tv.R.string.notice_sleep_stopped,
-            kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK,
-        ))
     }
 
     /** Answer to the sleep prompt: resume with the timer off, or with the same timer started again. */
     fun continueAfterSleep(rearm: Boolean) {
         checkThread()
-        val config = timerConfig
-        // "Again X min" restarts the user's own timer; a passed daily stop time does not come back.
-        setSleepTimer(if (rearm) config.copy(deadlineRealtimeMs = null, alsoStopRealtimeMs = null) else SleepTimerConfig())
-        handle?.play()
+        SleepSession.continueAfter(rearm)
         registerUserInteraction()
     }
 
@@ -602,9 +533,7 @@ object BackgroundPlaybackSession {
         AudioEngineRedirectGuard.reset()
         checkThread()
         PlaybackOutputTransition.clear()
-        sleepPromptDeadline = null
-        sleepWarningDeadline = null
-        keptSleepTimerAtMs = if (keepSleepTimer) SystemClock.elapsedRealtime() else null
+        if (keepSleepTimer || preserveNextUpChain) SleepSession.end(sleepTarget, keep = true) else SleepSession.end(sleepTarget)
         val previous = handle
         appContext?.let { context ->
             runCatching { TitleVideoSettingsStore.capture(context, snapshot.value.metadata, previous, videoSettingsOverride) }
@@ -617,7 +546,6 @@ object BackgroundPlaybackSession {
         mutableVideoPresentation.value = VideoPresentation()
         videoSettingsOverride = null
         mutableSnapshot.value = Snapshot(generation = ++generation)
-        if (!preserveNextUpChain && !keepSleepTimer) setSleepTimer(SleepTimerConfig())
         if (!preserveNextUpChain) {
             consecutiveAutoAdvances = 0
             expectedNextUp = null

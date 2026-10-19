@@ -40,6 +40,21 @@ import timber.log.Timber
 class SpotifyPlaybackService : Service() {
     @Inject lateinit var engine: SpotifyPlaybackEngine
     @Inject lateinit var repository: SpotifyRepository
+    @Inject lateinit var preferences: com.ambient.tv.data.local.AppPreferences
+    private val trackWatch = SpotifyTrackWatch()
+    private var notPlayingSinceMs: Long? = null
+    private var lastWarningMinutes: Int? = null
+    /** Spotify as a target of the shared sleep timer (auto-start, daily stop, warning, prompt). */
+    private val sleepTarget = object : com.ambient.tv.ui.player.SleepTarget {
+        override fun sleepStatus() = trackWatch.status(engine.state.value)
+        override fun sleepWantsToPlay() = engine.state.value.playing
+        override fun sleepPause() = pause()
+        override fun sleepPlay() { repository.play() }
+        override fun sleepStop() {
+            com.ambient.tv.ui.player.SleepSession.end(this)
+            stopPlaybackCompletely()
+        }
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var session: MediaSession
     private lateinit var audio: AudioManager
@@ -74,12 +89,19 @@ class SpotifyPlaybackService : Service() {
         running = true
         ContextCompat.registerReceiver(this, noisy, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY), ContextCompat.RECEIVER_NOT_EXPORTED)
         scope.launch { engine.state.collect(::update) }
+        scope.launch {
+            while (true) {
+                delay(1_000)
+                sleepTick()
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             TOGGLE -> if (engine.state.value.playing) pause() else repository.play()
             STOP -> stopPlaybackCompletely()
+            EXTEND_SLEEP -> com.ambient.tv.ui.player.SleepSession.extend()
         }
         return START_NOT_STICKY
     }
@@ -116,6 +138,11 @@ class SpotifyPlaybackService : Service() {
         everConnected = true
         connectionGrace?.cancel()
         connectionGrace = null
+        val sleep = com.ambient.tv.ui.player.SleepSession
+        if (trackWatch.update(state)) sleep.itemChanged(sleepTarget)
+        if (state.playing && sleep.target !== sleepTarget) {
+            sleep.begin(sleepTarget, { preferences }, isLive = false, hadPlayer = false, replacingSource = false)
+        }
         if (state.playing) {
             idleStop?.cancel(); idleStop = null
             if (focus == null) {
@@ -174,6 +201,25 @@ class SpotifyPlaybackService : Service() {
         }
     }
 
+    /** Drives the sleep timer while Spotify is its target; a long pause ends the sleep session. */
+    @android.annotation.SuppressLint("NotificationPermission")
+    private fun sleepTick() {
+        val sleep = com.ambient.tv.ui.player.SleepSession
+        if (sleep.target !== sleepTarget) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        val state = engine.state.value
+        notPlayingSinceMs = if (state.playing) null else notPlayingSinceMs ?: now
+        if (sleep.promptDeadline == null && notPlayingSinceMs?.let { now - it >= SPOTIFY_SLEEP_IDLE_END_MS } == true) {
+            sleep.end(sleepTarget)
+        } else sleep.tick(sleepTarget)
+        val minutes = sleep.warningDeadline?.takeIf { sleep.target === sleepTarget }
+            ?.let { com.ambient.tv.ui.player.sleepWarningMinutesLeft(it, now) }
+        if (minutes != lastWarningMinutes && state.connected) {
+            lastWarningMinutes = minutes
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state))
+        }
+    }
+
     /** The name the user gave Spotify in Settings, so the notification matches the menu. */
     private fun displayName() = com.ambient.tv.data.local.SystemNameOverrides.names["spotify"] ?: "Spotify"
 
@@ -194,6 +240,16 @@ class SpotifyPlaybackService : Service() {
                 getString(if (state.playing) R.string.player_pause else R.string.player_play), action(TOGGLE, 1)).build())
             .addAction(Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
                 getString(R.string.player_stop), action(STOP, 2)).build())
+            .apply {
+                // Sleep pre-warning: extend from the notification or lock screen.
+                val sleep = com.ambient.tv.ui.player.SleepSession
+                sleep.warningDeadline?.takeIf { sleep.target === sleepTarget }?.let { deadline ->
+                    setContentText(getString(R.string.sleep_warning_message_touch,
+                        com.ambient.tv.ui.player.sleepWarningMinutesLeft(deadline, android.os.SystemClock.elapsedRealtime())))
+                    addAction(Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this@SpotifyPlaybackService, android.R.drawable.ic_menu_recent_history),
+                        getString(R.string.sleep_extend_action), action(EXTEND_SLEEP, 3)).build())
+                }
+            }
             .setStyle(Notification.MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1))
             .build()
     }
@@ -205,6 +261,7 @@ class SpotifyPlaybackService : Service() {
 
     override fun onDestroy() {
         running = false
+        com.ambient.tv.ui.player.SleepSession.end(sleepTarget)
         connectionGrace?.cancel()
         idleStop?.cancel()
         if (engine.state.value.connected && engine.state.value.playing) engine.pause()
@@ -223,6 +280,7 @@ class SpotifyPlaybackService : Service() {
         private const val NOTIFICATION = 411
         private const val TOGGLE = "com.ambient.tv.SPOTIFY_TOGGLE"
         private const val STOP = "com.ambient.tv.SPOTIFY_STOP"
+        private const val EXTEND_SLEEP = "com.ambient.tv.SPOTIFY_EXTEND_SLEEP"
         private const val IDLE_TIMEOUT_MS = 10 * 60_000L
         private const val CONNECTION_GRACE_MS = 12_000L
         @Volatile private var running = false

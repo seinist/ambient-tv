@@ -19,24 +19,23 @@ internal fun sleepConfig(kind: SleepTimerKind, minutes: Int, now: Long): SleepTi
 
 @Composable
 internal fun SleepTimerControls(config: SleepTimerConfig, isLive: Boolean, change: (SleepTimerConfig) -> Unit) {
+    // CLOCK_TIME: only the daily stop time runs; the user's own timer is off.
+    val userKind = if (config.kind == SleepTimerKind.CLOCK_TIME) SleepTimerKind.OFF else config.kind
     val kinds = buildList {
         add(SleepTimerKind.OFF to stringResource(R.string.player_sleep_off))
         add(SleepTimerKind.DURATION to stringResource(R.string.sleep_trigger_duration))
         if (!isLive) add(SleepTimerKind.END_OF_ITEM to stringResource(R.string.player_sleep_end_item))
         add(SleepTimerKind.PAUSE_INACTIVITY to stringResource(R.string.sleep_trigger_pause))
         add(SleepTimerKind.USER_INACTIVITY to stringResource(R.string.sleep_trigger_input))
-        // Daily stop time from the settings: shown while active, not offered as a manual choice.
-        if (config.kind == SleepTimerKind.CLOCK_TIME) add(SleepTimerKind.CLOCK_TIME to
-            stringResource(R.string.player_sleep_clock_summary, com.ambient.tv.ui.player.sleepClockLabel(config.deadlineRealtimeMs)))
     }
     PlayerDropUpSelector(
         label = stringResource(R.string.sleep_trigger),
-        value = kinds.firstOrNull { it.first == config.kind }?.second ?: stringResource(R.string.player_sleep_off),
+        value = kinds.firstOrNull { it.first == userKind }?.second ?: stringResource(R.string.player_sleep_off),
         options = kinds.map { it.first.name to it.second },
-        selectedKey = config.kind.name,
+        selectedKey = userKind.name,
         onSelected = { key ->
             val kind = SleepTimerKind.valueOf(key)
-            if (kind != config.kind) change(sleepConfig(kind, sleepDurations(kind).firstOrNull() ?: 0, android.os.SystemClock.elapsedRealtime()))
+            if (kind != userKind) change(sleepConfig(kind, sleepDurations(kind).firstOrNull() ?: 0, android.os.SystemClock.elapsedRealtime()))
         },
     )
     val durations = sleepDurations(config.kind)
@@ -52,7 +51,15 @@ internal fun SleepTimerControls(config: SleepTimerConfig, isLive: Boolean, chang
         SleepTimerKind.USER_INACTIVITY -> RightPanelSectionTitle(stringResource(R.string.player_sleep_input_hint))
         else -> Unit
     }
+    // Daily stop time (settings) runs next to the timer above; it can be skipped for today.
     config.alsoStopRealtimeMs?.let {
         RightPanelSectionTitle(stringResource(R.string.player_sleep_clock_summary, com.ambient.tv.ui.player.sleepClockLabel(it)))
+        PlayerDropUpSelector(
+            label = stringResource(R.string.player_sleep_daily_stop),
+            value = stringResource(R.string.player_on),
+            options = listOf("on" to stringResource(R.string.player_on), "skip" to stringResource(R.string.player_sleep_skip_today)),
+            selectedKey = "on",
+            onSelected = { key -> if (key == "skip") com.ambient.tv.ui.player.SleepSession.skipDailyStopToday() },
+        )
     }
 }

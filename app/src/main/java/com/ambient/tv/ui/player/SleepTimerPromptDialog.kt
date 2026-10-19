@@ -37,7 +37,7 @@ fun SleepTimerPromptDialog() {
         }
     }
     val seconds = ((deadline - now + 999) / 1000).coerceAtLeast(0).toInt()
-    val stopNow = { BackgroundPlaybackSession.stop() }
+    val stopNow = { SleepSession.stopNow() }
     AppDialog(
         // Back or outside is "no decision": the countdown keeps running, as if nothing was pressed.
         onDismiss = {},
@@ -86,7 +86,8 @@ fun SleepTimerWarningOverlay(touch: Boolean) {
             horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                stringResource(if (touch) R.string.sleep_warning_message_touch else R.string.sleep_warning_message, minutes),
+                // "OK: +30 min" only where OK really extends (player in front, no panel).
+                stringResource(if (!touch && SleepWarningKeyGate.takesOk(true)) R.string.sleep_warning_message else R.string.sleep_warning_message_touch, minutes),
                 style = MaterialTheme.typography.bodyMedium,
                 color = androidx.compose.ui.graphics.Color.White,
             )

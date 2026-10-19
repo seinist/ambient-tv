@@ -90,8 +90,12 @@ fun PersistentPlayerChrome(
 }
 
 @Composable
-fun rememberPlayerControlsVisible(): MutableState<Boolean> =
-    LocalPlayerChromeState.current?.visible ?: remember { mutableStateOf(true) }
+fun rememberPlayerControlsVisible(): MutableState<Boolean> {
+    val state = LocalPlayerChromeState.current?.visible ?: remember { mutableStateOf(true) }
+    // OK extends the sleep pre-warning only while the player's controls are hidden.
+    SleepWarningKeyGate.ReportPlayerChrome(state.value)
+    return state
+}
 
 @Composable
 fun rememberPlayerPlayFocus(): FocusRequester =
