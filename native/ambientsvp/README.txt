@@ -47,7 +47,22 @@ existing position, track and play/pause restoration path. Live streams reopen
 at the live edge. These transitions can briefly interrupt output.
 Algorithm lookahead follows the actual algorithm, independently of preset.
 The native engine, both adapters and JNI ABI check must be rebuilt together;
-ABI 1 adapters must not load the ABI 2 configuration structure.
+ABI 1 adapters must not load the ABI 2 configuration structure. The ABI lives in
+include/ambientsvp.h (AMBIENTSVP_ABI), src/lib.rs (AMBIENTSVP_ABI) and
+SvpNative.kt (SVP_NATIVE_ABI); SvpNativeAbiTest fails the unit tests when they
+differ. At runtime the adapter loader rejects an engine with another ABI and
+SvpNative logs the mismatch and keeps SVP unavailable. build.sh hashes the
+adapter sources (prepare_svp_sources.sh --hash) and rebuilds mpv/VLC when they
+change, so libmpv, libvlc and libambientsvp are rebuilt in one run.
+
+Timing gaps (2026-10-19)
+------------------------
+A push rejected as discontinuous (-3) no longer passes frames through for the
+rest of the file. Both adapters pass through for a cool-down (25 source frames,
+doubling per further gap up to 32x) and then start SVP again; 750 clean frames
+forget earlier gaps (include/svp_retry.h, tests/svp_retry_test.c). VLC still
+tries its five quick history resets first. Format, unavailable and engine
+errors stay sticky.
 
 Runtime
 -------

@@ -58,13 +58,13 @@ class ServerConnectionManager @Inject constructor(
     private fun endpointKey() = "${preferences.activeServerId}|${preferences.host}:${preferences.port}"
 
 
-    @Volatile private var pausedEndpoint: String? = null
+    private val reconnectPause = ReconnectPause()
 
-    fun pauseAutomaticReconnect() { pausedEndpoint = endpointKey() }
+    fun pauseAutomaticReconnect() { reconnectPause.pause(endpointKey()) }
 
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            pausedEndpoint = null
+            reconnectPause.clear()
             lastSuccessfulCheckMs = 0L
             ensureConnectedLocked()
         }
@@ -73,13 +73,14 @@ class ServerConnectionManager @Inject constructor(
     /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
     suspend fun checkInBackground(): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            if (pausedEndpoint != endpointKey() || !preferences.hasPlexEndpoint) return@withLock false
+            if (!reconnectPause.isPaused(endpointKey()) || !preferences.hasPlexEndpoint) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
             val identity = repository.getIdentity().getOrNull() ?: return@withLock false
             if (checkedEndpoint != endpointKey()) return@withLock false
             _state.value = ServerConnectionState.Online(identity)
+            reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastConnectedServerId = checkedEndpoint
             true
@@ -112,7 +113,7 @@ class ServerConnectionManager @Inject constructor(
         wakeRetries: Int = preferences.wolRetryCount,
         onWaking: (() -> Unit)? = null,
     ): Boolean {
-        if (pausedEndpoint == endpointKey()) return _state.value is ServerConnectionState.Online
+        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online
         if (!preferences.hasPlexEndpoint) {
             _state.value = ServerConnectionState.NotConfigured
             return false

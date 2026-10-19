@@ -19,16 +19,54 @@ internal val currentDeviceIsShield: Boolean by lazy {
 }
 
 /**
- * Live TS reports interlaced channels at the field rate ([mpvFieldRateInput]). 720p50 shares that
- * rate but is progressive, so the coded height decides: 1080/1088 lines or SD (≤ 576).
+ * What the source says about interlacing. [frameInterlaced] is mpv's per-frame flag
+ * (video-frame-info/interlaced); it is only trusted when the decoder fills it, i.e. software or
+ * copy decoding of the codec itself ([frameFlagReliable]). MediaCodec output never carries it.
  */
-internal fun mpvLiveInterlacedSource(liveStream: Boolean, containerFps: Double?, height: Int?): Boolean =
-    liveStream && mpvFieldRateInput(containerFps) && height != null &&
-        (height in 1080..1088 || height in 1..576)
+internal data class MpvInterlaceSignals(
+    val codec: String?,
+    val frameInterlaced: Boolean?,
+    val frameFlagReliable: Boolean,
+    val fps: Double?,
+    val height: Int?,
+)
 
-/** Only OpenGL (vo=gpu) on a SHIELD with live interlaced content takes the zero-copy decoder. */
-internal fun mpvShieldZeroCopyEligible(shield: Boolean, plan: MpvAccelerationPlan, liveStream: Boolean): Boolean =
-    shield && liveStream && plan.output == "gpu" && !plan.vulkan && plan.decoder != "software" && plan.decoder != "vulkan"
+/** Codecs broadcast never codes as interlaced fields (DVB HEVC/AV1 is progressive). */
+private val PROGRESSIVE_ONLY_CODECS = listOf("hevc", "h265", "av1", "vp9", "vp8")
+
+internal fun mpvCodecProgressiveOnly(codec: String?): Boolean {
+    val name = codec?.lowercase() ?: return false
+    return PROGRESSIVE_ONLY_CODECS.any { it in name }
+}
+
+/**
+ * Interlace verdict for broadcast sources (live TV and TVHeadend recordings).
+ * 1. Progressive-only codecs (HEVC 1080p50) are never interlaced.
+ * 2. A reliable decoder flag decides.
+ * 3. Otherwise MPEG-2/H.264 cadence: field rate (50/59.94) at 1080 or SD lines, or SD at the
+ *    frame rate (576i/480i reported as 25/29.97). 720p50 and 1080p25 stay progressive.
+ */
+internal fun mpvBroadcastInterlacedSource(broadcast: Boolean, signals: MpvInterlaceSignals): Boolean {
+    if (!broadcast) return false
+    if (mpvCodecProgressiveOnly(signals.codec)) return false
+    if (signals.frameInterlaced == true) return true
+    if (signals.frameFlagReliable && signals.frameInterlaced == false) return false
+    val fps = signals.fps?.takeIf { it.isFinite() && it > 0.0 } ?: return false
+    val height = signals.height?.takeIf { it > 0 } ?: return false
+    val sd = height <= 576
+    return when {
+        mpvFieldRateInput(fps) -> height in 1080..1088 || sd
+        else -> sd && fps in 24.5..30.5
+    }
+}
+
+/** Kept for callers that only know cadence; equals [mpvBroadcastInterlacedSource] without flags. */
+internal fun mpvLiveInterlacedSource(liveStream: Boolean, containerFps: Double?, height: Int?, codec: String? = null): Boolean =
+    mpvBroadcastInterlacedSource(liveStream, MpvInterlaceSignals(codec, null, false, containerFps, height))
+
+/** Only OpenGL (vo=gpu) on a SHIELD with interlaced broadcast (live or recording) takes the zero-copy decoder. */
+internal fun mpvShieldZeroCopyEligible(shield: Boolean, plan: MpvAccelerationPlan, broadcast: Boolean): Boolean =
+    shield && broadcast && plan.output == "gpu" && !plan.vulkan && plan.decoder != "software" && plan.decoder != "vulkan"
 
 internal const val MPV_ZERO_COPY_HWDEC = "mediacodec"
 

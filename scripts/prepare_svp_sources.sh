@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SVP="$ROOT/native/ambientsvp"
 if [[ "${1:-}" == --hash ]]; then
     case "${2:-}" in mpv) adapter=vf_ambientsvp.c;; vlc) adapter=vlc_ambientsvp.c;; *) exit 2;; esac
-    sha256sum "$SVP/adapters/$adapter" "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$0" \
+    sha256sum "$SVP/adapters/$adapter" "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$0" \
         | cut -d ' ' -f1 | sha256sum | cut -d ' ' -f1
     exit 0
 fi
@@ -13,7 +13,7 @@ case "${1:?mpv or vlc}" in
 mpv)
     SOURCE="${2:-$ROOT/.native/mpv-android/buildscripts/deps/mpv}"
     cp "$SVP/adapters/vf_ambientsvp.c" "$SOURCE/video/filter/vf_ambientsvp.c"
-    cp "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SOURCE/video/filter/"
+    cp "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$SOURCE/video/filter/"
     if ! grep -q 'vf_ambientsvp.c' "$SOURCE/meson.build"; then
         sed -i "/'video\/filter\/vf_sub.c',/a\    'video/filter/vf_ambientsvp.c'," "$SOURCE/meson.build"
     fi
@@ -28,7 +28,7 @@ mpv)
 vlc)
     SOURCE="${2:-$ROOT/.native/libvlcjni/vlc}"
     cp "$SVP/adapters/vlc_ambientsvp.c" "$SOURCE/modules/video_filter/ambientsvp.c"
-    cp "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SOURCE/modules/video_filter/"
+    cp "$SVP/include/ambientsvp.h" "$SVP/include/ambientsvp_loader.h" "$SVP/include/svp_retry.h" "$SOURCE/modules/video_filter/"
     if ! grep -q 'libambientsvp_plugin_la_SOURCES' "$SOURCE/modules/video_filter/Makefile.am"; then
         sed -i '/libfps_plugin_la_SOURCES =/a\libambientsvp_plugin_la_SOURCES = video_filter/ambientsvp.c\nlibambientsvp_plugin_la_LIBADD = $(LIBDL)' "$SOURCE/modules/video_filter/Makefile.am"
         sed -i '/^[[:space:]]*libfps_plugin.la /a\	libambientsvp_plugin.la \\' "$SOURCE/modules/video_filter/Makefile.am"

@@ -26,6 +26,8 @@ class DisplaySwitchPauseTest {
         override fun pause() { playing = false; events += "pause" }
         override fun seekTo(positionMs: Long) { position = positionMs; events += "seek:$positionMs" }
         override fun setOutputMuted(muted: Boolean) { events += if (muted) "mute" else "unmute" }
+        var generation = 0
+        override fun reopenGeneration() = generation
     }
 
     @Test fun holdOnlyForARealModeChangeWithADelay() {
@@ -180,5 +182,60 @@ class DisplaySwitchPauseTest {
         assertEquals(DisplaySwitchOutcome.NOT_HELD, holdForDisplaySwitch(none, DisplaySwitchHold.NONE, 3_000, false,
             request = { none.events += "request" }, awaitConfirmed = { true }, stillOwned = { true }))
         assertEquals(listOf("request"), none.events)
+    }
+
+    @Test fun liveTvResumesAfterAnInternalReopenMovesThePosition() = runTest {
+        // K1: SHIELD zero-copy reopen jumps a paused timeshift stream to the live edge.
+        val player = FakePlayer(position = 120_000)
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 3_000, isLive = true, request = {},
+                awaitConfirmed = { true }, stillOwned = { true })
+        }
+        advanceTimeBy(1_000); player.position = 0; player.generation++
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertTrue(player.playing)
+        assertEquals(listOf("pause", "play"), player.events)
+    }
+
+    @Test fun vodReopenByTheEngineIsNoUserSeek() = runTest {
+        val player = FakePlayer(position = 600_000)
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 3_000, isLive = false, request = {},
+                awaitConfirmed = { true }, stillOwned = { true })
+        }
+        advanceTimeBy(1_000); player.position = 597_000; player.generation++
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertTrue(player.playing)
+        assertFalse(player.events.any { it.startsWith("seek") })
+    }
+
+    @Test fun startHoldKeepsAResumePositionAppliedLater() = runTest {
+        // M6: the hold read 0 before the start seek landed; it must not rewind to 0 afterwards.
+        val player = FakePlayer(position = 0)
+        val result = async {
+            holdForDisplaySwitch(player, DisplaySwitchHold.PAUSE, 3_000, isLive = false, request = {},
+                awaitConfirmed = { true }, stillOwned = { true })
+        }
+        runCurrent(); player.position = 1_800_000; player.generation++
+        assertEquals(DisplaySwitchOutcome.RESUMED, result.await())
+        assertEquals(listOf("pause", "play"), player.events)
+        assertNull(displaySwitchResumeSeekMs(0, isLive = false, currentMs = 1_800_000))
+    }
+
+    @Test fun muteIsUndoneEvenWhenTheTitleChanged() = runTest {
+        val player = FakePlayer()
+        val job = launch {
+            holdForDisplaySwitch(player, DisplaySwitchHold.MUTE, 5_000, isLive = true, request = {},
+                awaitConfirmed = { true }, stillOwned = { false })
+        }
+        advanceTimeBy(1_000); job.cancel(); advanceUntilIdle()
+        assertEquals(listOf("mute", "unmute"), player.events)
+    }
+
+    @Test fun onlyAnExplicitPlayTakesOverLiveTv() {
+        assertFalse(displaySwitchUserTookOver(false, isLive = true, pausedAtMs = 0, positionMs = 90_000, reopened = false))
+        assertTrue(displaySwitchUserTookOver(true, isLive = true, pausedAtMs = 0, positionMs = 0, reopened = false))
+        assertTrue(displaySwitchUserTookOver(false, isLive = false, pausedAtMs = 0, positionMs = 90_000, reopened = false))
+        assertFalse(displaySwitchUserTookOver(false, isLive = false, pausedAtMs = 0, positionMs = 90_000, reopened = true))
     }
 }

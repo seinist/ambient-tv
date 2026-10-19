@@ -38,9 +38,23 @@ internal fun displaySwitchHoldFor(targetKey: String?, currentKey: String?, delay
     else -> DisplaySwitchHold.PAUSE
 }
 
-/** Null keeps the paused position; live streams are never rewound. */
-internal fun displaySwitchResumeSeekMs(pausedAtMs: Long, isLive: Boolean): Long? =
-    if (!isLive && pausedAtMs < DisplaySwitchPause.RESTART_BELOW_MS) 0L else null
+/**
+ * Null keeps the current position; live streams are never rewound. A title paused right at its
+ * start restarts at 0 only while it is still there: a resume position applied after the pause
+ * (pausedAt read before the start seek landed) must not be thrown away.
+ */
+internal fun displaySwitchResumeSeekMs(pausedAtMs: Long, isLive: Boolean, currentMs: Long = pausedAtMs): Long? =
+    if (!isLive && pausedAtMs < DisplaySwitchPause.RESTART_BELOW_MS && currentMs < DisplaySwitchPause.RESTART_BELOW_MS) 0L else null
+
+/**
+ * Whether the held player was taken over by the user. Only an explicit play does that for live
+ * TV: its position moves on internal reopens (zero-copy switch, timeshift live edge). For VOD a
+ * jump counts as a user seek, unless the engine reopened the stream itself in between.
+ */
+internal fun displaySwitchUserTookOver(
+    wantsToPlay: Boolean, isLive: Boolean, pausedAtMs: Long, positionMs: Long, reopened: Boolean,
+): Boolean = wantsToPlay ||
+    (!isLive && !reopened && abs(positionMs - pausedAtMs) > DisplaySwitchPause.USER_SEEK_TOLERANCE_MS)
 
 /** The window covering an app-requested HDMI change must outlast confirmation plus delay. */
 internal fun displaySwitchTransitionExtraMs(delayMs: Int): Long =
@@ -54,6 +68,8 @@ internal interface DisplaySwitchPlayer {
     fun pause()
     fun seekTo(positionMs: Long)
     fun setOutputMuted(muted: Boolean)
+    /** Bumped by the engine whenever it reopens the stream on its own (decoder switch, fallback). */
+    fun reopenGeneration(): Int = 0
 }
 
 internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
@@ -65,6 +81,7 @@ internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
         override fun pause() = handle.pause()
         override fun seekTo(positionMs: Long) = handle.seekTo(positionMs)
         override fun setOutputMuted(muted: Boolean) = handle.setOutputMuted(muted)
+        override fun reopenGeneration() = handle.reopenGeneration()
     }
 }
 
@@ -88,7 +105,8 @@ internal suspend fun holdForDisplaySwitch(
         request()
         return DisplaySwitchOutcome.NOT_HELD
     }
-    val pausedAt = player.positionMs()
+    var pausedAt = player.positionMs()
+    var generation = player.reopenGeneration()
     var userTookOver = false
     var completed = false
     if (effective == DisplaySwitchHold.PAUSE) player.pause() else player.setOutputMuted(true)
@@ -101,11 +119,17 @@ internal suspend fun holdForDisplaySwitch(
                 ok
             }
             while (waiting.isActive) {
+                val reopened = player.reopenGeneration() != generation
                 if (effective == DisplaySwitchHold.PAUSE &&
-                    (player.wantsToPlay() || abs(player.positionMs() - pausedAt) > DisplaySwitchPause.USER_SEEK_TOLERANCE_MS)) {
+                    displaySwitchUserTookOver(player.wantsToPlay(), isLive, pausedAt, player.positionMs(), reopened)) {
                     userTookOver = true
                     waiting.cancel()
                     break
+                }
+                if (reopened) {
+                    // The engine restarted the stream itself: its new position is the held one.
+                    generation = player.reopenGeneration()
+                    pausedAt = player.positionMs()
                 }
                 delay(DisplaySwitchPause.POLL_MS)
             }
@@ -121,9 +145,10 @@ internal suspend fun holdForDisplaySwitch(
         withContext(NonCancellable) {
             val owned = stillOwned()
             if (effective == DisplaySwitchHold.MUTE) {
-                if (owned) player.setOutputMuted(false)
+                // Unmute even when the title changed: the engine can be reused by the next title.
+                runCatching { player.setOutputMuted(false) }
             } else if (!userTookOver && owned) {
-                displaySwitchResumeSeekMs(pausedAt, isLive)?.let(player::seekTo)
+                displaySwitchResumeSeekMs(pausedAt, isLive, player.positionMs())?.let(player::seekTo)
                 player.play()
             }
             if (!completed) Timber.i("DisplaySwitchPause cancelled owned=%s", owned)

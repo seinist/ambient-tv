@@ -33,6 +33,7 @@ class MpvShieldInterlacePolicyTest {
         assertTrue(mpvLiveInterlacedSource(true, 50.0, 1088))
         assertTrue(mpvLiveInterlacedSource(true, 59.94, 1080))
         assertTrue(mpvLiveInterlacedSource(true, 50.0, 576))
+        assertTrue(mpvLiveInterlacedSource(true, 25.0, 576))
         // 720p50 shares the field rate but is progressive.
         assertFalse(mpvLiveInterlacedSource(true, 50.0, 720))
         assertFalse(mpvLiveInterlacedSource(true, 25.0, 1080))
@@ -105,5 +106,39 @@ class MpvShieldInterlacePolicyTest {
         )
         assertEquals("passthrough (format)", formatSvpStatus(state))
         assertEquals(null, svpBadgeLabel(state))
+    }
+
+    private fun signals(codec: String?, fps: Double?, height: Int?, flag: Boolean? = null, reliable: Boolean = false) =
+        MpvInterlaceSignals(codec, flag, reliable, fps, height)
+
+    @Test fun hevc1080p50IsNeverInterlaced() {
+        // M1: same cadence and lines as 1080i, but HEVC broadcast is progressive.
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("H.265 / HEVC (High Efficiency Video Coding) (hevc)", 50.0, 1080)))
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("hevc", 50.0, 1088, flag = null)))
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("av1", 50.0, 1080)))
+        assertTrue(mpvBroadcastInterlacedSource(true, signals("h264", 50.0, 1080)))
+        assertTrue(mpvBroadcastInterlacedSource(true, signals("MPEG-2 video (mpeg2video)", 50.0, 1080)))
+    }
+
+    @Test fun aReliableDecoderFlagDecides() {
+        assertFalse("software decoder says progressive", mpvBroadcastInterlacedSource(true, signals("h264", 50.0, 1080, flag = false, reliable = true)))
+        assertTrue("flag set on 1080p25-looking stream", mpvBroadcastInterlacedSource(true, signals("h264", 25.0, 1080, flag = true)))
+        assertTrue("MediaCodec has no flag, cadence decides", mpvBroadcastInterlacedSource(true, signals("h264", 50.0, 1080, flag = false, reliable = false)))
+    }
+
+    @Test fun sdReportedAtFrameRateIsInterlaced() {
+        // M3: MPEG-2 576i arrives as 25 fps, 480i as 29.97.
+        assertTrue(mpvBroadcastInterlacedSource(true, signals("mpeg2video", 25.0, 576)))
+        assertTrue(mpvBroadcastInterlacedSource(true, signals("mpeg2video", 29.97, 480)))
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("h264", 25.0, 1080)))
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("h264", 50.0, 720)))
+        assertFalse(mpvBroadcastInterlacedSource(true, signals("mpeg2video", 12.5, 576)))
+    }
+
+    @Test fun recordingsAreBroadcastToo() {
+        // A TVHeadend recording is no live stream but takes the same path on the SHIELD.
+        assertTrue(mpvShieldZeroCopyEligible(true, openGl, broadcast = true) &&
+            mpvBroadcastInterlacedSource(true, signals("mpeg2video", 25.0, 576)))
+        assertFalse(mpvBroadcastInterlacedSource(false, signals("mpeg2video", 25.0, 576)))
     }
 }

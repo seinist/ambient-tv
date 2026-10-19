@@ -306,5 +306,5 @@ class TvheadendViewModel @Inject constructor(
             ?.minByOrNull { it.startEpochSeconds }
 
     fun timerFor(event: TvhEpgEvent): TvhDvrEntry? = _uiState.value.dashboard?.upcoming
-        ?.firstOrNull { it.broadcastEventId == event.eventId }
+        ?.let { findProgrammeRecording(event, it) }
 }

@@ -2,6 +2,13 @@ package com.ambient.tv.ui.player.backend
 
 import androidx.annotation.Keep
 
+/**
+ * Native configuration ABI shared by libambientsvp, the mpv/VLC adapters and this JNI check
+ * (include/ambientsvp.h, src/lib.rs). A mismatch means the native libraries were not rebuilt
+ * together; SVP then stays unavailable instead of reading a foreign config struct.
+ */
+internal const val SVP_NATIVE_ABI = 2
+
 /** A process-wide native gate also stops filters which are already running. Default is OFF. */
 @Keep
 internal object SvpNative {
@@ -13,7 +20,14 @@ internal object SvpNative {
         // Ordinary playback never loads this optional native library.
         if (allowed && !attempted) {
             attempted = true
-            loaded = runCatching { System.loadLibrary("ambientsvp"); abi() == 2 }.getOrDefault(false)
+            loaded = runCatching {
+                System.loadLibrary("ambientsvp")
+                val native = abi()
+                if (native != SVP_NATIVE_ABI) {
+                    timber.log.Timber.w("SVP disabled: libambientsvp ABI %d, app expects %d (rebuild native libs together)", native, SVP_NATIVE_ABI)
+                }
+                native == SVP_NATIVE_ABI
+            }.getOrDefault(false)
         }
         if (loaded) setEnabled(allowed)
         return allowed && loaded

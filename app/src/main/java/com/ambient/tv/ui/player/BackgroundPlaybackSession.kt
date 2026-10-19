@@ -138,6 +138,8 @@ interface PlaybackHandle {
     fun seekTo(positionMs: Long)
     /** Silences output without pausing, for live streams that cannot hold their position. */
     fun setOutputMuted(muted: Boolean) = Unit
+    /** Counts stream reopens the engine did on its own; a position jump across one is no seek. */
+    fun reopenGeneration(): Int = 0
     fun chapters(): List<com.ambient.tv.domain.model.VideoChapter> = emptyList()
     /** Restore one logical playback after replacing only its renderer. */
     fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {

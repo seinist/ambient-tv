@@ -15,6 +15,10 @@ static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 static INTERPOLATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static GPU_FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Must equal AMBIENTSVP_ABI in include/ambientsvp.h and SVP_NATIVE_ABI in SvpNative.kt.
+/// The engine, both player adapters and the JNI check are rebuilt together when it changes.
+pub const AMBIENTSVP_ABI: u32 = 2;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
@@ -82,7 +86,7 @@ pub struct AmbientSvp {
 
 impl AmbientSvp {
     pub fn new(c: Config) -> Result<Self, String> {
-        if c.abi != 2
+        if c.abi != AMBIENTSVP_ABI
             || c.width < 32
             || c.height < 32
             || c.width > 3840
@@ -451,7 +455,7 @@ impl AmbientSvp {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn ambient_svp_abi() -> u32 {
-    2
+    AMBIENTSVP_ABI
 }
 
 #[unsafe(no_mangle)]

@@ -85,4 +85,13 @@ class ProgrammeRecordingRequestTest {
         assertTrue(body.contains("toggleCurrentProgrammeRecording(repository, event, stopping)"))
         assertFalse(source.contains("scheduleRecording("))
     }
+
+    @Test fun guideDialogFindsTheFromNowTimerWithoutEpgLink() {
+        // M2: the from-now timer carries no broadcastEventId; the dialog must still offer "cancel".
+        val fromNow = timer("now")
+        assertNull(fromNow.broadcastEventId)
+        assertEquals("now", findProgrammeRecording(event, listOf(fromNow))?.uuid)
+        val other = timer("other").copy(channelUuid = "elsewhere")
+        assertNull(findProgrammeRecording(event, listOf(other)))
+    }
 }
