@@ -141,6 +141,9 @@ internal class MpvPlaybackEngine(
     val supportsGpuFilters: Boolean get() = gpuQualityMode
     override val usesRendererScaling: Boolean get() = gpuQualityMode
     private val configuredVo: String get() = acceleration.vo
+    /** gpu-next ignores mpv's --sharpen; before the VO is up, the configured one decides. */
+    private fun rendersWithGpuNext(): Boolean =
+        (getPropertyString("current-vo")?.takeIf { it.isNotBlank() } ?: configuredVo).trim().lowercase() == "gpu-next"
     private val handle: Long
     // Event-driven state (declared before init, which starts the pump).
     /** Owner-thread values; the public controller publishes immutable UI snapshots. */
@@ -870,6 +873,9 @@ internal class MpvPlaybackEngine(
             val effective = effectiveMpvImageOptions(optionsSnapshot, reducedVideoEffects(context), svpAllowed(context))
             val transfer = currentMpvTransfer()
             val sdr = fileReady && isMpvSdrTransfer(transfer)
+            // PQ/HLG on this GPU VO: mpv tone-maps; only HDR-safe hooks may load.
+            val hdr = fileReady && isMpvHdrTransfer(transfer)
+            val gpuNext = rendersWithGpuNext()
             val fittedScale = currentMpvFittedScale()
             val upscaling = fittedScale > MPV_ANY_UPSCALE_SCALE
             // Renderer hooks cannot run before vf. Skip them while SVP will
@@ -881,7 +887,7 @@ internal class MpvPlaybackEngine(
             val sourceTransfer = currentMpvSourceTransfer()
             hdrImageTransfer = isMpvHdrTransfer(sourceTransfer)
             sourceHdrStandard = hdrStandardFromMpvTransfer(sourceTransfer)
-            val requestedShaders = mpvImageShaderKeys(effective, sdr, upscaling, fittedScale, svpActive)
+            val requestedShaders = mpvImageShaderKeys(effective, sdr, upscaling, fittedScale, svpActive, hdr = hdr, gpuNext = gpuNext)
             val hasComputeShader = requestedShaders.any { MPV_IMAGE_SHADERS[it]?.requiresCompute == true }
             val computeSupport = if (hasComputeShader) {
                 mpvComputeSupport(getPropertyString("gpu-api"))
@@ -894,7 +900,7 @@ internal class MpvPlaybackEngine(
                     (zeroCopyInterlaced && MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true)
             }
             val shaderReloadNeeded = shaderKeys != loadedShaderKeys ||
-                ("cas" in shaderKeys && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+                (mpvTransferAwareShaderLoaded(shaderKeys) && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
                 shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
@@ -902,7 +908,8 @@ internal class MpvPlaybackEngine(
             ensureActive()
             val liveSdr = fileReady && isMpvSdrTransfer(currentMpvTransfer())
             val liveSvp = "plex-svp" in desiredImageFilters(effective, liveSdr)
-            if (released || optionsSnapshot != imageOptions ||
+            val liveGpuNext = rendersWithGpuNext()
+            if (released || optionsSnapshot != imageOptions || gpuNext != liveGpuNext ||
                 transfer != currentMpvTransfer() || fittedScale != currentMpvFittedScale() ||
                 svpActive != liveSvp ||
                 sdr != liveSdr) {
@@ -910,7 +917,7 @@ internal class MpvPlaybackEngine(
                 if (!released && optionsSnapshot == imageOptions) imageApplyStale = true
                 return@launch
             }
-            applyImageOptions(effective, requestedShaders, shaderKeys, shaderFiles, sdr, transfer, computeSupport)
+            applyImageOptions(effective, requestedShaders, shaderKeys, shaderFiles, sdr, transfer, computeSupport, hdr, gpuNext)
         }
     }
 
@@ -922,6 +929,8 @@ internal class MpvPlaybackEngine(
         sdr: Boolean,
         transfer: String?,
         computeSupport: MpvComputeSupport,
+        hdr: Boolean = false,
+        gpuNext: Boolean = false,
     ) {
         conversionSampleStarted = 0L
         val warnings = mutableListOf<String>()
@@ -945,7 +954,7 @@ internal class MpvPlaybackEngine(
             }
         }
         if (shaderKeys != loadedShaderKeys ||
-            ("cas" in shaderKeys && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+            (mpvTransferAwareShaderLoaded(shaderKeys) && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
         ) {
             if (optionalCommand("change-list", "glsl-shaders", "clr", "")) {
                 loadedShaderKeys = shaderKeys.filter { shaderKey ->
@@ -953,7 +962,7 @@ internal class MpvPlaybackEngine(
                     (path != null && optionalCommand("change-list", "glsl-shaders", "append", path.absolutePath))
                         .also { if (!it) warnings += shaderKey }
                 }
-                loadedShaderTransferKey = if ("cas" in loadedShaderKeys) mpvCasTransferProfile(transfer)?.suffix else null
+                loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) mpvCasTransferProfile(transfer)?.suffix else null
             } else warnings += "glsl-shaders"
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
@@ -994,7 +1003,9 @@ internal class MpvPlaybackEngine(
             property("deband-range", "16")
             property("deband-grain", if (o.deband == "light") "8" else "24")
         }
-        property("sharpen", if (sdr && o.scaler !in setOf("fsr", "nis")) when (o.sharpening) { "light" -> "0.2"; "medium" -> "0.5"; else -> "0" } else "0")
+        // vo=gpu: mpv's unsharp mask, also on a tone-mapped HDR source. gpu-next ignores it,
+        // so Light/Medium run as CAS there (see mpvSharpeningShader).
+        property("sharpen", mpvBuiltinSharpen(o.sharpening, o.scaler, sdr || hdr, gpuNext))
         property("brightness", if (sdr) o.brightness.toString() else "0")
         property("contrast", if (sdr) o.contrast.toString() else "0")
         property("saturation", if (sdr) o.saturation.toString() else "0")
@@ -1379,8 +1390,8 @@ internal class MpvPlaybackEngine(
             sdrToHdr.reset()
             if (sdrToHdr.rollbackFailed) stopUnsafeConversionOutput()
         }
-        // Geometry only matters once SDR shaders can load; skip the extra property reads otherwise.
-        val sdrTransfer = transfer != null && isMpvSdrTransfer(transfer)
+        // Geometry only matters once SDR (or HDR-safe) shaders can load; skip the reads otherwise.
+        val sdrTransfer = transfer != null && (isMpvSdrTransfer(transfer) || isMpvHdrTransfer(transfer))
         val upscaling = if (sdrTransfer) currentMpvUpscaling() else lastImageUpscaling
         val lumaEligible = if (sdrTransfer) {
             mpvLumaUpscalerWouldRun(
@@ -1415,7 +1426,7 @@ internal class MpvPlaybackEngine(
     private fun materializeShader(shader: MpvShaderAsset, transfer: String?, gpuNextVulkan: Boolean): File? = runCatching {
         val shaderDir = File(context.noBackupFilesDir, "mpv-shaders").apply { mkdirs() }
         val transferProfile = if (shader.transferAware) {
-            mpvCasTransferProfile(transfer) ?: error("No SDR transfer profile available for " + shader.fileName)
+            mpvCasTransferProfile(transfer) ?: error("No transfer profile available for " + shader.fileName)
         } else null
         val artCnnOpenGl = shader.fileName.startsWith("quality_artcnn") && !gpuNextVulkan
         val cacheBaseName = if (artCnnOpenGl) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
@@ -1429,12 +1440,7 @@ internal class MpvPlaybackEngine(
             ?.takeIf { it != 0 }
             ?: error("Bundled shader resource is missing: ${shader.resourceName ?: shader.fileName}")
         val source = context.resources.openRawResource(resolvedResourceId).bufferedReader().use { it.readText() }
-        val transformed = transferProfile?.let {
-            source
-                .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + it.sourceTrc)
-                .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + it.targetTrc)
-                .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + it.customGamma)
-        } ?: if (artCnnOpenGl) artCnnOpenGlSource(source) else source
+        val transformed = mpvShaderSourceFor(shader, source, transferProfile, artCnnOpenGl)
         fun valid(file: File): Boolean = shader.nnedi3Preset?.let { preset ->
             runCatching { validateNnedi3ShaderSource(file.readText(), preset) }.getOrDefault(false)
         } ?: if (transferProfile != null) {

@@ -11,7 +11,7 @@ internal data class PlayerPanelVideoVisibility(
     val shaderUpscalers: Boolean,
     /** HQDN3D and the other SDR-only cleanup filters. */
     val denoise: Boolean = false,
-    /** Sharpen shaders and other user-shader stages. HDR and direct output leave this false. */
+    /** Sharpen shaders and other user-shader stages. Direct output leaves this false; HDR limits it (see [hdrShaders]). */
     val shaders: Boolean = false,
     /** SVP / motion interpolation this renderer can run. */
     val svp: Boolean = false,
@@ -27,6 +27,11 @@ internal data class PlayerPanelVideoVisibility(
     val downscaler: Boolean = false,
     /** Actual HDR input is converted to SDR by the renderer. */
     val toneMapping: Boolean = false,
+    /**
+     * MPV GPU VO with a confirmed HDR source: [shaders] and [shaderUpscalers] only offer the
+     * HDR-safe subset (sharpening, grain, RAVU Lite / FSR as experimental), see hdrSafe.
+     */
+    val hdrShaders: Boolean = false,
 )
 
 /**
@@ -36,7 +41,7 @@ internal data class PlayerPanelVideoVisibility(
  */
 internal fun PlayerPanelVideoVisibility.sparsam(reduced: Boolean, media3: Boolean = false): PlayerPanelVideoVisibility =
     if (!reduced) this else copy(
-        shaderUpscalers = false, denoise = false, shaders = false, svp = false, deband = false,
+        shaderUpscalers = false, denoise = false, shaders = false, svp = false, deband = false, hdrShaders = false,
         media3Processing = media3Processing && !media3,
         picture = picture && !media3, pictureGamma = pictureGamma && !media3,
         upscaler = upscaler && !media3,
@@ -69,8 +74,9 @@ internal data class PlayerPanelAudioVisibility(
 
 /**
  * Groups follow the renderer that is actually presenting the frame.
- * MPV direct output does not run the vf chain or user shaders. HDR skips MPV shaders
- * (and Media3's SDR effect chain) but MPV's built-in scaler still runs on a GPU VO.
+ * MPV direct output does not run the vf chain or user shaders. On a GPU VO an HDR source
+ * keeps the built-in scaler and the HDR-safe shader subset ([PlayerPanelVideoVisibility.hdrShaders]);
+ * denoise/deblock, picture controls and SVP stay SDR-only. Media3's effect chain is SDR-only.
  */
 internal fun playerPanelVideoVisibility(
     engine: String,
@@ -91,9 +97,10 @@ internal fun playerPanelVideoVisibility(
     "mpv" -> PlayerPanelVideoVisibility(
         deinterlace = gpuFilters,
         upscaler = gpuFilters && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.UPSCALE),
-        shaderUpscalers = gpuFilters && shadersApply && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.UPSCALE),
+        shaderUpscalers = gpuFilters && (shadersApply || hdrInput) && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.UPSCALE),
         denoise = gpuFilters && shadersApply,
-        shaders = gpuFilters && shadersApply,
+        shaders = gpuFilters && (shadersApply || hdrInput),
+        hdrShaders = gpuFilters && hdrInput && !shadersApply,
         svp = gpuFilters && shadersApply && globalSvp,
         picture = gpuFilters && shadersApply,
         pictureGamma = gpuFilters && shadersApply,
@@ -148,8 +155,17 @@ internal fun routeOffersBitstream(passthroughCodecs: Set<String>, rejectedCodecs
  * When HDR blocks MPV shaders, the GPU scaler falls back to Lanczos. Show that applied key
  * instead of a shader name that is not running. The stored preference is left unchanged.
  */
-internal fun panelUpscalerKey(stored: String, shaderKeys: Set<String>, shadersApply: Boolean): String =
-    if (!shadersApply && stored in shaderKeys) "lanczos" else stored
+internal fun panelUpscalerKey(
+    stored: String,
+    shaderKeys: Set<String>,
+    shadersApply: Boolean,
+    /** Shader upscalers that still run on this (HDR) source. */
+    stillRunning: Set<String> = emptySet(),
+): String = if (!shadersApply && stored in shaderKeys && stored !in stillRunning) "lanczos" else stored
+
+/** Upscaler shaders the panel offers: all for SDR, the HDR-safe subset for an HDR source. */
+internal fun panelShaderUpscalers(all: Map<String, String>, hdr: Boolean, hdrSafe: Set<String>): Map<String, String> =
+    if (!hdr) all else all.filterKeys { it in hdrSafe }
 
 /** True when the filters group has at least one control this renderer will run. */
 internal fun PlayerPanelVideoVisibility.hasFilters(svpAllowed: Boolean): Boolean =

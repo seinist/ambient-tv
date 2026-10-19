@@ -1042,7 +1042,8 @@
     <string name="image_mpv_shader_hint">Für SDR-Videos. Hochwertige Skalierer benötigen mehr Rechenleistung; Anime4K ist für Animationen ausgelegt.</string>
     <string name="image_mpv_filter_hint">Entrauschen und Deblock benötigen CPU-lesbare Frames. Mit niedrigen Stufen beginnen. FSR und NIS enthalten bereits Schärfung; zusätzliche Schärfung und SSimSuperRes werden gegen Doppelschärfung ausgesetzt.</string>
     <string name="image_sdr_only">Diese Bildanpassungen sind nur für SDR-Videos verfügbar.</string>
-    <string name="image_mpv_needs_sdr">Braucht SDR.</string>
+    <string name="image_mpv_hdr_limited">HDR-Quelle (Tone-Mapping auf SDR): Schärfen, Filmkorn, Deband sowie die Skalierer RAVU Lite / FSR wirken. Entrauschen, Deblock, SSimSuperRes, Bildanpassungen und die übrigen Shader brauchen SDR.</string>
+    <string name="image_scaler_shader_hdr">GPU-Shader · HDR (experimentell)</string>
     <string name="image_vlc_scaler_bypassed">Die Android-Surface umgeht diesen Scaler.</string>
     <string name="hdr_plays_through_media3">HDR läuft über Media3.</string>
     <string name="image_nis_compute_unsupported">NIS ist mit dieser Videoausgabe nicht verfügbar. Der Standard-Skalierer wird verwendet.</string>

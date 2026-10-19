@@ -15,6 +15,16 @@ internal data class MpvShaderAsset(
     /** Uses libplacebo-only hook syntax (//!PARAM, C-style initialisers): only vo=gpu-next on Vulkan. */
     val requiresGpuNext: Boolean = false,
     val cacheFileName: String? = null,
+    /**
+     * Correct on a PQ/HLG source while mpv tone-maps to SDR: a hook that linearises with the
+     * source curve (CAS), runs on the tone-mapped OUTPUT (Adaptive Sharpen, OUTPUT grain), or
+     * is a light upscaler accepted as experimental (RAVU Lite, FSR). Everything else stays SDR-only.
+     */
+    val hdrSafe: Boolean = false,
+    /** CAS only: replaces the shader's `SHARPENING` define (built-in Light/Medium on gpu-next). */
+    val casSharpening: String? = null,
+    /** Film grain only: hook OUTPUT (after tone mapping, RGB) instead of source LUMA. */
+    val outputHook: Boolean = false,
 )
 
 internal data class MpvCasTransferProfile(
@@ -34,6 +44,9 @@ internal fun mpvCasTransferProfile(transfer: String?): MpvCasTransferProfile? = 
     "gamma2.6" -> MpvCasTransferProfile("gamma26", sourceTrc = 6, targetTrc = 6, customGamma = "2.6")
     "gamma2.8" -> MpvCasTransferProfile("gamma28", sourceTrc = 6, targetTrc = 6, customGamma = "2.8")
     "linear" -> MpvCasTransferProfile("linear", sourceTrc = 0, targetTrc = 0)
+    // HDR sources while mpv tone-maps: CAS linearises with the source curve and re-encodes it.
+    "pq", "smpte2084", "st2084" -> MpvCasTransferProfile("pq", sourceTrc = 2, targetTrc = 2)
+    "hlg", "arib-std-b67" -> MpvCasTransferProfile("hlg", sourceTrc = 5, targetTrc = 5)
     else -> null
 }
 
@@ -65,10 +78,10 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "nnedi3_nns128" to bundledNnedi3("nnedi3_nns128"),
     "nnedi3_nns256" to bundledNnedi3("nnedi3_nns256"),
     "nnedi3_nns256_win8x6" to bundledNnedi3("nnedi3_nns256_win8x6"),
-    "ravu_lite_r2" to MpvShaderAsset(R.raw.quality_ravu_lite_r2_cbbabe0a, "quality_ravu_lite_r2_cbbabe0a.glsl", true),
-    "ravu_lite_r3" to MpvShaderAsset(R.raw.quality_ravu_lite_r3_6225c236, "quality_ravu_lite_r3_6225c236.glsl", true),
+    "ravu_lite_r2" to MpvShaderAsset(R.raw.quality_ravu_lite_r2_cbbabe0a, "quality_ravu_lite_r2_cbbabe0a.glsl", true, hdrSafe = true),
+    "ravu_lite_r3" to MpvShaderAsset(R.raw.quality_ravu_lite_r3_6225c236, "quality_ravu_lite_r3_6225c236.glsl", true, hdrSafe = true),
     "ravu_zoom_r3" to MpvShaderAsset(R.raw.quality_ravu_zoom_r3_eb0c3744, "quality_ravu_zoom_r3_eb0c3744.glsl", true),
-    "ravu_lite_r4" to MpvShaderAsset(R.raw.quality_ravu_lite_r4_ee844074, "quality_ravu_lite_r4_ee844074.glsl", true),
+    "ravu_lite_r4" to MpvShaderAsset(R.raw.quality_ravu_lite_r4_ee844074, "quality_ravu_lite_r4_ee844074.glsl", true, hdrSafe = true),
     "anime4k" to MpvShaderAsset(R.raw.quality_anime4k_4c53ec2e, "quality_anime4k_4c53ec2e.glsl", false),
     "anime4k_denoise" to MpvShaderAsset(R.raw.quality_anime4k_denoise_1a45ad3a, "quality_anime4k_denoise_1a45ad3a.glsl", false),
     "anime4k_m" to MpvShaderAsset(R.raw.quality_anime4k_m_9b8e956d, "quality_anime4k_m_9b8e956d.glsl", false),
@@ -92,12 +105,20 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "krig" to MpvShaderAsset(R.raw.quality_krig_8a4798ab, "quality_krig_8a4798ab.glsl", true),
     "filmgrain_light" to MpvShaderAsset(R.raw.quality_filmgrain_light_4aee719a, "quality_filmgrain_light_4aee719a.glsl", true),
     "filmgrain_medium" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", true),
+    // Same sources hooked on OUTPUT for HDR sources: after tone mapping the grain no longer
+    // depends on the PQ/HLG code values (LUMA grain in PQ would be far too strong in highlights).
+    // An OUTPUT hook reads rendered RGB, so it needs no decoder copy-back. SDR keeps the LUMA
+    // hook: on OUTPUT the grain would be generated at display size (finer when upscaling).
+    "filmgrain_light_output" to MpvShaderAsset(R.raw.quality_filmgrain_light_4aee719a, "quality_filmgrain_light_4aee719a.glsl", false,
+        hdrSafe = true, outputHook = true, cacheFileName = "quality_filmgrain_light_4aee719a_output.glsl"),
+    "filmgrain_medium_output" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", false,
+        hdrSafe = true, outputHook = true, cacheFileName = "quality_filmgrain_medium_4921afc1_output.glsl"),
     "cfl_lite" to MpvShaderAsset(R.raw.quality_cfl_lite_159c1dad, "quality_cfl_lite_159c1dad.glsl", true, requiresGpuNext = true),
     "cfl" to MpvShaderAsset(R.raw.quality_cfl_f9d12d38, "quality_cfl_f9d12d38.glsl", true, requiresGpuNext = true),
     "ssim_down" to MpvShaderAsset(R.raw.quality_ssim_down_f46f4710, "quality_ssim_down_f46f4710.glsl", false),
     "ssim_super" to MpvShaderAsset(R.raw.quality_ssim_super_a8b27115, "quality_ssim_super_a8b27115.glsl", false),
-    "adaptive" to MpvShaderAsset(R.raw.quality_adaptive_44e81f12, "quality_adaptive_44e81f12.glsl", false),
-    "fsr" to MpvShaderAsset(R.raw.quality_fsr_56d8597f, "quality_fsr_56d8597f.glsl", true),
+    "adaptive" to MpvShaderAsset(R.raw.quality_adaptive_44e81f12, "quality_adaptive_44e81f12.glsl", false, hdrSafe = true),
+    "fsr" to MpvShaderAsset(R.raw.quality_fsr_56d8597f, "quality_fsr_56d8597f.glsl", true, hdrSafe = true),
     "nis" to MpvShaderAsset(
         R.raw.quality_nis_nvscaler_bac778ec,
         "quality_nis_nvscaler_bac778ec.glsl",
@@ -110,5 +131,70 @@ internal val MPV_IMAGE_SHADERS = mapOf(
         true,
         transferAware = true,
         cacheFileName = "quality_cas_939ed74a.glsl",
+        hdrSafe = true,
+    ),
+    // Built-in sharpen Light/Medium on vo=gpu-next, where mpv's --sharpen has no effect.
+    "cas_light" to MpvShaderAsset(
+        R.raw.quality_cas_a945e104,
+        "quality_cas_a945e104.glsl",
+        true,
+        transferAware = true,
+        cacheFileName = "quality_cas_939ed74a_s30.glsl",
+        hdrSafe = true,
+        casSharpening = MPV_CAS_LIGHT_SHARPENING,
+    ),
+    "cas_medium" to MpvShaderAsset(
+        R.raw.quality_cas_a945e104,
+        "quality_cas_a945e104.glsl",
+        true,
+        transferAware = true,
+        cacheFileName = "quality_cas_939ed74a_s70.glsl",
+        hdrSafe = true,
+        casSharpening = MPV_CAS_MEDIUM_SHARPENING,
     ),
 )
+
+/**
+ * CAS strengths standing in for mpv's unsharp mask (sharpen=0.2 / 0.5). CAS at 0.0 is the
+ * plain "AMD CAS" choice; Light/Medium sit above it so the three stay distinguishable.
+ */
+internal const val MPV_CAS_LIGHT_SHARPENING = "0.3"
+internal const val MPV_CAS_MEDIUM_SHARPENING = "0.7"
+
+/** CAS keys whose materialised file depends on the source transfer. */
+internal fun mpvTransferAwareShaderLoaded(keys: Collection<String>): Boolean =
+    keys.any { MPV_IMAGE_SHADERS[it]?.transferAware == true }
+
+/** Shader-based upscalers usable on an HDR source; the UI marks them experimental. */
+internal val MPV_HDR_UPSCALERS: Set<String> get() =
+    com.ambient.tv.data.local.VideoImageCatalog.mpvShaders.keys.filterTo(linkedSetOf()) { MPV_IMAGE_SHADERS[it]?.hdrSafe == true }
+
+/** Film grain source hooked on OUTPUT instead of LUMA (same noise on R, G and B = luma grain). */
+internal fun mpvOutputGrainSource(source: String): String =
+    source.replace("//!HOOK LUMA", "//!HOOK OUTPUT")
+        .replace("//!DESC Ambient TV film grain (", "//!DESC Ambient TV film grain, output (")
+        .replace("color.x += INTENSITY * 2.0 * g;", "color.rgb += vec3(INTENSITY * 2.0 * g);")
+
+/** CAS source with the given `SHARPENING` define. */
+internal fun mpvCasSharpeningSource(source: String, sharpening: String): String =
+    source.replace("#define SHARPENING 0.0", "#define SHARPENING $sharpening")
+
+/**
+ * Text written to the shader cache: CAS gets its transfer curve (and Light/Medium strength),
+ * ArtCNN its OpenGL variant, OUTPUT grain its hook change. Other sources stay byte-identical.
+ */
+internal fun mpvShaderSourceFor(
+    shader: MpvShaderAsset,
+    source: String,
+    transferProfile: MpvCasTransferProfile?,
+    artCnnOpenGl: Boolean,
+): String = when {
+    transferProfile != null -> source
+        .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + transferProfile.sourceTrc)
+        .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + transferProfile.targetTrc)
+        .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + transferProfile.customGamma)
+        .let { cas -> shader.casSharpening?.let { mpvCasSharpeningSource(cas, it) } ?: cas }
+    artCnnOpenGl -> artCnnOpenGlSource(source)
+    shader.outputHook -> mpvOutputGrainSource(source)
+    else -> source
+}

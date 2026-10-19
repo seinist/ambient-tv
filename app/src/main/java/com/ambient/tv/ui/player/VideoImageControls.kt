@@ -167,7 +167,7 @@ internal fun MpvImageOptionsEditor(
 ) {
     var group by remember { mutableStateOf("scaling") }
     val sparsam = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals
-    if (hdrTransfer) ImageHint(stringResource(R.string.image_mpv_needs_sdr))
+    if (hdrTransfer) ImageHint(stringResource(R.string.image_mpv_hdr_limited))
     if (sparsam) ImageHint(stringResource(R.string.image_filters_sparsam_hint))
     // Sparsam: filters and motion interpolation do not run, so their groups are hidden.
     val groups = listOfNotNull(
@@ -183,7 +183,11 @@ internal fun MpvImageOptionsEditor(
         "scaling" -> {
             val scalerSections = buildList {
                 add(PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), VideoImageCatalog.mpvBuiltins.toList()))
-                if (!hdrTransfer) add(PlayerDropUpSection(stringResource(R.string.image_scaler_shader), VideoImageCatalog.mpvShaders.toList()))
+                add(PlayerDropUpSection(
+                    stringResource(if (hdrTransfer) R.string.image_scaler_shader_hdr else R.string.image_scaler_shader),
+                    panelShaderUpscalers(VideoImageCatalog.mpvShaders, hdrTransfer,
+                        com.ambient.tv.ui.player.backend.MPV_HDR_UPSCALERS).toList(),
+                ))
             }
             GroupedImageChoice(R.string.player_upscaler, o.scaler, scalerSections) { change(o.copy(scaler = it)) }
             ImageChoice(R.string.image_chroma, o.chromaScaler, VideoImageCatalog.chromaScalers.toList()) { change(o.copy(chromaScaler = it)) }
@@ -203,10 +207,13 @@ internal fun MpvImageOptionsEditor(
                     PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
                 )) { change(o.copy(sharpening = it)) }
             } else ImageHint(stringResource(if (o.scaler == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
-            ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
-            ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }
+            // CPU cleanup filters and SSimSuperRes need an SDR source.
+            if (!hdrTransfer) {
+                ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
+                ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }
+            }
             ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
-            ImageChoice(R.string.image_superres, if (o.superResolution) "on" else "off", imageOnOff()) { change(o.copy(superResolution = it == "on")) }
+            if (!hdrTransfer) ImageChoice(R.string.image_superres, if (o.superResolution) "on" else "off", imageOnOff()) { change(o.copy(superResolution = it == "on")) }
             ImageHint(stringResource(R.string.image_mpv_filter_hint))
         }
         "color" -> if (!hdrTransfer) {

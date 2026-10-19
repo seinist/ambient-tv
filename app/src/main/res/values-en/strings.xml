@@ -1041,7 +1041,8 @@
     <string name="image_mpv_shader_hint">For SDR video. High-quality upscalers need more processing power; Anime4K is designed for animation.</string>
     <string name="image_mpv_filter_hint">Denoise and deblock use CPU-readable frames. Start with light settings. FSR and NIS include sharpening; additional sharpening and SSimSuperRes are bypassed to avoid double sharpening.</string>
     <string name="image_sdr_only">These picture adjustments are available only for SDR video.</string>
-    <string name="image_mpv_needs_sdr">Needs SDR.</string>
+    <string name="image_mpv_hdr_limited">HDR source (tone-mapped to SDR): sharpening, film grain, deband and the RAVU Lite / FSR upscalers apply. Denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
+    <string name="image_scaler_shader_hdr">GPU shaders · HDR (experimental)</string>
     <string name="image_vlc_scaler_bypassed">The Android surface bypasses this scaler.</string>
     <string name="hdr_plays_through_media3">HDR plays through Media3.</string>
     <string name="image_nis_compute_unsupported">NIS is unavailable with this video output. The standard scaler is used.</string>

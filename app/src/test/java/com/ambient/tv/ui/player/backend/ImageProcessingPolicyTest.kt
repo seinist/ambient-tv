@@ -71,12 +71,14 @@ class ImageProcessingPolicyTest {
         ))
     }
 
-    @Test fun casUsesTheDetectedSdrTransferProfile() {
+    @Test fun casUsesTheDetectedTransferProfile() {
         assertEquals(4, mpvCasTransferProfile("bt.1886")?.sourceTrc)
         assertEquals(3, mpvCasTransferProfile("srgb")?.sourceTrc)
         assertEquals("2.4", mpvCasTransferProfile("gamma2.4")?.customGamma)
         assertEquals(0, mpvCasTransferProfile("linear")?.targetTrc)
-        assertNull(mpvCasTransferProfile("pq"))
+        // HDR sources while mpv tone-maps (see HdrShaderGateTest); unknown curves still have none.
+        assertEquals(2, mpvCasTransferProfile("pq")?.sourceTrc)
+        assertNull(mpvCasTransferProfile("v-log"))
     }
 
     @Test fun fsrDoesNotDoubleSharpen() {
