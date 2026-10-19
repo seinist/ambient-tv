@@ -316,8 +316,12 @@ private fun MpvVideoGroups(
                 ImageChoice(R.string.image_denoise, options.denoise, imageStrengths()) { change(options.copy(denoise = it)) }
                 ImageChoice(R.string.image_deblock, options.deblock, imageStrengths()) { change(options.copy(deblock = it)) }
             }
-            ImageChoice(R.string.image_film_grain, options.filmGrain, imageStrengths()) { change(options.copy(filmGrain = it)) }
-            if (visibility.hdrShaders) ImageHint(stringResource(R.string.image_mpv_hdr_limited))
+            // PQ output (HDR über GPU): grain is not loaded, see mpvImageShaderKeys(pqOutput).
+            if (!visibility.hdrPassthrough) {
+                ImageChoice(R.string.image_film_grain, options.filmGrain, imageStrengths()) { change(options.copy(filmGrain = it)) }
+            }
+            if (visibility.hdrShaders) ImageHint(stringResource(
+                if (visibility.hdrPassthrough) R.string.image_mpv_hdr_passthrough else R.string.image_mpv_hdr_limited))
             // SSimSuperRes is only loaded while upscaling and never on top of FSR/NIS.
             if (!visibility.hdrShaders && mpvSuperResRowVisible(options.scaler, scale)) {
                 ImageChoice(R.string.image_superres, if (options.superResolution) "on" else "off", imageOnOff()) {

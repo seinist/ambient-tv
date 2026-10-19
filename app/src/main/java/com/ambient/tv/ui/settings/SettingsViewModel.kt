@@ -466,6 +466,7 @@ class SettingsViewModel @Inject constructor(
         tvheadendPlaybackBackendKey = appPreferences.tvheadendPlaybackBackendKey,
         mpvVideoOutputModeKey = appPreferences.mpvVideoOutputModeKey,
         mpvVideoDecoderKey = appPreferences.mpvVideoDecoderKey,
+        mpvHdrGpuEnabled = appPreferences.mpvHdrGpuEnabled,
         vlcVideoOutputModeKey = appPreferences.vlcVideoOutputModeKey,
         visibleBackgroundVideoPlayback = appPreferences.visibleBackgroundVideoPlayback,
         backgroundVideoDimPercent = appPreferences.backgroundVideoDimPercent,
@@ -2057,6 +2058,8 @@ class SettingsViewModel @Inject constructor(
         it.copy(mpvVideoDecoderKey = value.takeIf { key -> key in AppPreferences.MPV_VIDEO_DECODERS } ?: "auto")
     }
 
+    fun onMpvHdrGpuChanged(value: Boolean) = _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
+
     fun onVlcVideoOutputModeChanged(value: String) = _uiState.update {
         it.copy(vlcVideoOutputModeKey = value.takeIf { key -> key in AppPreferences.VLC_VIDEO_OUTPUT_MODES } ?: "auto")
     }
@@ -2478,6 +2481,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.tvheadendPlaybackBackendKey = state.tvheadendPlaybackBackendKey
         appPreferences.mpvVideoOutputModeKey = state.mpvVideoOutputModeKey
         appPreferences.mpvVideoDecoderKey = state.mpvVideoDecoderKey
+        appPreferences.mpvHdrGpuEnabled = state.mpvHdrGpuEnabled
         appPreferences.vlcVideoOutputModeKey = state.vlcVideoOutputModeKey
         appPreferences.visibleBackgroundVideoPlayback = state.visibleBackgroundVideoPlayback
         appPreferences.backgroundVideoDimPercent = state.backgroundVideoDimPercent
