@@ -93,6 +93,8 @@ class TvheadendRepository @Inject constructor(
     /** Last time the port was seen closed; a server that just came up counts as waking. */
     @Volatile private var lastUnreachableAtMs: Long = 0L
     private val loginRejection = TvheadendLoginRejection()
+    /** Shared socket check (2 s, below the 2.5 s wake poll). */
+    private val reachabilityProbe = SharedReachabilityProbe(2_000L)
 
     private val authenticator = TvheadendAuthenticator { preferences.tvheadendUsername to tokenStore.tvheadendPassword }
 
@@ -517,6 +519,7 @@ class TvheadendRepository @Inject constructor(
 
     /** Refresh: everything is expired, not deleted, so it stays available as offline fallback. */
     suspend fun invalidateAll() = cacheMutex.withLock {
+        reachabilityProbe.invalidate()
         cache.replaceAll { _, value -> value.copy(createdAtMs = 0L) }
         cacheGeneration++
         lastReachableAtMs = 0L
@@ -553,7 +556,6 @@ class TvheadendRepository @Inject constructor(
 
     /** One background wake/reachability attempt per minute; success tells screens to reload. */
     private fun scheduleRevalidate() {
-        _servingCachedData.value = true
         val now = System.currentTimeMillis()
         if (revalidateJob?.isActive == true || now - lastRevalidateAtMs < 60_000L) return
         lastRevalidateAtMs = now
@@ -738,11 +740,13 @@ class TvheadendRepository @Inject constructor(
     }
 
     private suspend fun isTvheadendReachable(): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val endpoint = configuredTvheadendEndpoint()
-            Socket().use { socket -> socket.connect(InetSocketAddress(endpoint.host, preferences.tvheadendPort), 900) }
-            true
-        }.getOrDefault(false).also { if (!it) lastUnreachableAtMs = System.currentTimeMillis() }
+        val endpoint = runCatching { configuredTvheadendEndpoint() }.getOrNull()
+        reachabilityProbe.check(endpoint?.host to preferences.tvheadendPort) {
+            runCatching {
+                Socket().use { socket -> socket.connect(InetSocketAddress(endpoint!!.host, preferences.tvheadendPort), 900) }
+                true
+            }.getOrDefault(false)
+        }.also { if (!it) lastUnreachableAtMs = System.currentTimeMillis() }
     }
 
     private fun buildUrl(path: String, params: Map<String, String>): HttpUrl {
@@ -871,6 +875,7 @@ class TvheadendRepository @Inject constructor(
             }
             val fallback: T? = if (force) null else expired ?: runCatching { stale?.invoke() }.getOrNull()
             if (fallback != null && !serverLikelyReachable()) {
+                _servingCachedData.value = true
                 scheduleRevalidate()
                 return@withContext fallback
             }
@@ -881,7 +886,11 @@ class TvheadendRepository @Inject constructor(
             } catch (error: Exception) {
                 if (fallback == null || !tvhStoredDataMayReplace(error)) throw error
                 Timber.i("TVHeadend %s unavailable (%s); showing stored data", key, error.javaClass.simpleName)
-                scheduleRevalidate()
+                // Offline only when the server is gone; one failing endpoint keeps the rest usable.
+                if (tvhFallbackMarksOffline(error)) {
+                    _servingCachedData.value = true
+                    scheduleRevalidate()
+                }
                 return@withContext fallback
             }
             currentCoroutineContext().ensureActive()

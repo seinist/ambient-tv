@@ -300,6 +300,7 @@ private fun RightSidePanelChrome(
     retainFocus: Boolean = false,
     body: @Composable () -> Unit,
 ) {
+    com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
     if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
         // Handheld: the screen beside the panel is a dismiss area. It takes the tap, so the
         // player underneath does not toggle its controls at the same time.

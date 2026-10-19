@@ -71,7 +71,7 @@ internal fun VideoPresentation.playerAspectPreset(): PlayerAspectPreset = when (
     else -> PlayerAspectPreset.AUTO
 }
 
-/** CLOCK_TIME: daily stop time (Settings → Playback), a wall-clock moment converted to elapsed realtime. */
+/** CLOCK_TIME: only the daily stop time is running (moment in [SleepTimerConfig.alsoStopRealtimeMs]). */
 enum class SleepTimerKind { OFF, DURATION, END_OF_ITEM, PAUSE_INACTIVITY, USER_INACTIVITY, CLOCK_TIME }
 
 // Keep the unified and legacy player menus in sync.
@@ -81,14 +81,10 @@ data class SleepTimerConfig(
     val kind: SleepTimerKind = SleepTimerKind.OFF,
     val minutes: Int = 0,
     val deadlineRealtimeMs: Long? = null,
-    /** Daily stop time next to an untimed timer (end of title, inactivity): whichever comes first. */
+    /** Daily stop time (Settings → Playback), next to the user's timer; whichever comes first stops. */
     val alsoStopRealtimeMs: Long? = null,
 ) {
-    /** The fixed moment this timer stops at, if any: DURATION/CLOCK_TIME deadline or the daily stop. */
+    /** The earliest fixed moment this timer stops at: a DURATION deadline or the daily stop time. */
     val timedDeadlineMs: Long?
-        get() = when (kind) {
-            SleepTimerKind.DURATION, SleepTimerKind.CLOCK_TIME -> deadlineRealtimeMs
-            SleepTimerKind.OFF -> null
-            else -> alsoStopRealtimeMs
-        }
+        get() = listOfNotNull(deadlineRealtimeMs?.takeIf { kind == SleepTimerKind.DURATION }, alsoStopRealtimeMs).minOrNull()
 }

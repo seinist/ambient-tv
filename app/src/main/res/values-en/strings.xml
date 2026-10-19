@@ -1873,4 +1873,11 @@
     <string name="settings_sleep_daily_stop">Stop daily at</string>
     <string name="settings_sleep_daily_stop_hint">Playback started up to 6 hours later stops after the automatic duration or 30 min. The earlier stop wins.</string>
     <string name="player_sleep_clock_summary">Stops at %1$s</string>
+    <string name="player_sleep_daily_stop">Daily stop time</string>
+    <string name="player_sleep_skip_today">No stop time today</string>
+    <string name="settings_sleep_hour_minus">− 1 h</string>
+    <string name="settings_sleep_hour_plus">+ 1 h</string>
+    <string name="settings_sleep_minutes_minus">− 5 min</string>
+    <string name="settings_sleep_minutes_plus">+ 5 min</string>
+    <string name="settings_sleep_presets">Quick picks</string>
 </resources>

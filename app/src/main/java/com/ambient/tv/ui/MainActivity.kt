@@ -292,7 +292,7 @@ open class MainActivity : ComponentActivity() {
                 screensaverActive.value, screensaverOverlayPresent.value))) return true
         if (event.action == KeyEvent.ACTION_DOWN) registerUserInteraction()
         // Sleep pre-warning: OK extends by 30 min instead of reaching the focused control.
-        if (BackgroundPlaybackSession.sleepWarningDeadline != null && event.keyCode in setOf(
+        if (com.ambient.tv.ui.player.SleepWarningKeyGate.takesOk(BackgroundPlaybackSession.sleepWarningDeadline != null) && event.keyCode in setOf(
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) BackgroundPlaybackSession.extendSleepTimer()
             return true
@@ -1206,6 +1206,8 @@ private fun AmbientTvApp(
         }
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
+    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.SPOTIFY_PLAYER)
+    androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
     val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || backgroundPlayback.active
 
     val activity = androidx.activity.compose.LocalActivity.current

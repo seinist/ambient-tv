@@ -2016,8 +2016,6 @@ class AppPreferences @Inject constructor(
         const val KEY_SLEEP_WARNING_MINUTES = "sleep_warning_minutes"
         const val KEY_SLEEP_DAILY_STOP = "sleep_daily_stop_minute"
         const val SLEEP_DAILY_STOP_OFF = -1
-        /** Offered daily stop times: 20:00 to 04:00 in half hours. */
-        val SLEEP_DAILY_STOP_CHOICES = (40..47).map { it * 30 } + (0..8).map { it * 30 }
         const val SLEEP_AUTO_START_OFF = "off"
         const val SLEEP_AUTO_START_END = "end"
         const val SLEEP_AUTO_START_INACTIVITY = "inactivity"
