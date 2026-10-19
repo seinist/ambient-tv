@@ -919,6 +919,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString("mpv_video_decoder", "auto").takeIf { it in MPV_VIDEO_DECODERS } ?: "auto"
         set(value) = prefs.edit { putString("mpv_video_decoder", value.takeIf { it in MPV_VIDEO_DECODERS } ?: "auto") }
 
+    /** MPV: HDR10 on an HDR10 display through gpu-next/Vulkan so shaders run (off = direct surface). */
+    var mpvHdrGpuEnabled: Boolean
+        get() = prefs.getBoolean("mpv_hdr_gpu", false)
+        set(value) = prefs.edit { putBoolean("mpv_hdr_gpu", value) }
+
     var vlcVideoOutputModeKey: String
         get() = prefs.getString("vlc_video_output_mode", "auto").takeIf { it in VLC_VIDEO_OUTPUT_MODES } ?: "auto"
         set(value) = prefs.edit { putString("vlc_video_output_mode", value.takeIf { it in VLC_VIDEO_OUTPUT_MODES } ?: "auto") }

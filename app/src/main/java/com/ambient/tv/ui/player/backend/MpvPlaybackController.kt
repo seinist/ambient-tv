@@ -42,6 +42,8 @@ class MpvPlaybackController(
     private val preferOriginalAudio: Boolean = false,
     reopeningTimeshift: Boolean = false,
     broadcastSource: Boolean = liveStream,
+    /** gpu-next/Vulkan HDR passthrough chosen by [mpvHdrGpuDecision]. */
+    val hdrGpuPassthrough: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
@@ -107,7 +109,7 @@ class MpvPlaybackController(
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource)
             sample()
         }
         main.post(tick)
@@ -149,6 +151,7 @@ class MpvPlaybackController(
             deinterlaceBackoffGeneration = player.deinterlaceBackoffGeneration, deinterlaceFailed = player.deinterlaceFailed,
             subtitleDelayMs = player.subtitleDelayMs, sdrImageProcessing = player.sdrImageProcessing,
             hdrImageTransfer = player.hdrImageTransfer, sourceHdrStandard = player.sourceHdrStandard,
+            hdrGpuFailure = player.hdrGpuFailure,
             overloadDropPercent = player.overloadDropPercent, renderOverloaded = player.renderOverloaded, canReduceAfterOverload = player.canReduceAfterOverload,
             overloadContinueSignature = player.overloadContinueSignature, renderCheckSignature = player.renderCheckSignature,
             mediaInfoGeneration = player.mediaInfoGeneration, reopenGeneration = player.reopenGeneration,
@@ -199,6 +202,8 @@ class MpvPlaybackController(
     val sdrImageProcessing get() = state.sdrImageProcessing
     val hdrImageTransfer get() = state.hdrImageTransfer
     val sourceHdrStandard get() = state.sourceHdrStandard
+    /** Passthrough failed for this player; the view reopens the title on the direct surface. */
+    val hdrGpuFailure get() = state.hdrGpuFailure
     val overloadDropPercent get() = state.overloadDropPercent
     val renderOverloaded get() = state.renderOverloaded
     val canReduceAfterOverload get() = state.canReduceAfterOverload
@@ -416,6 +421,7 @@ private data class MpvEngineState(
     val sdrImageProcessing: Boolean = false,
     val hdrImageTransfer: Boolean = false,
     val sourceHdrStandard: HdrStandard? = null,
+    val hdrGpuFailure: MpvHdrGpuReason? = null,
     val overloadDropPercent: Double? = null,
     val renderOverloaded: Boolean = false,
     val canReduceAfterOverload: Boolean = false,

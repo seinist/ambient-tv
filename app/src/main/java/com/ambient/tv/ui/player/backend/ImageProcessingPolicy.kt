@@ -334,7 +334,10 @@ internal fun mpvRenderCheckSignature(
     automaticDeinterlace: Boolean,
     explicitDeinterlaceFilter: String?,
     options: MpvImageOptions,
+    /** HDR passthrough on gpu-next: watched even without filters, the direct surface is the fallback. */
+    hdrPassthrough: Boolean = false,
 ): String? = buildList {
+    if (hdrPassthrough) add("hdr-gpu")
     shaderKeys.forEach { add("shader:$it") }
     cpuFilters.toSortedMap().forEach { (label, filter) -> add("filter:$label=$filter") }
     if (deinterlaceEnabled) add(
@@ -379,6 +382,11 @@ internal fun mpvImageShaderKeys(
     hdr: Boolean = false,
     /** vo=gpu-next: mpv's built-in sharpen does nothing there, Light/Medium become CAS. */
     gpuNext: Boolean = false,
+    /**
+     * HDR passthrough: OUTPUT hooks see PQ code values for the display. Grain is tuned for an
+     * SDR/tone-mapped OUTPUT and is left out there; LUMA hooks (CAS with PQ TRC, RAVU, FSR) apply.
+     */
+    pqOutput: Boolean = false,
 ): List<String> = if (!sdr && !hdr) emptyList() else buildList {
     val o = options.normalized()
     val hdrSource = !sdr
@@ -402,7 +410,7 @@ internal fun mpvImageShaderKeys(
     // FSR contains RCAS and NIS/NVScaler contains its own adaptive sharpening.
     mpvSharpeningShader(o.sharpening, o.scaler, gpuNext)?.takeIf(::allowed)?.let(::add)
     // Grain goes last so scalers and sharpeners do not amplify it.
-    if (o.filmGrain != "off") add(if (hdrSource) "filmgrain_${o.filmGrain}_output" else "filmgrain_${o.filmGrain}")
+    if (o.filmGrain != "off" && !(hdrSource && pqOutput)) add(if (hdrSource) "filmgrain_${o.filmGrain}_output" else "filmgrain_${o.filmGrain}")
 }
 
 /**

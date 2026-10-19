@@ -37,7 +37,7 @@ internal object CompanionBackupPolicy {
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
         "allowDoubleRefreshRate", "allowThreeTwoPulldown", "displaySwitchPauseMs", "uiScale", "overscanPercent", "uiHdrModeKey", "sdrToHdrEnabled", "sdrToHdrPeakNits",
         "performanceModeKey", "uiPerformanceModeKey", "playbackPerformanceModeKey", "frameDropTestSeconds", "highQualityAssetsEnabled", "playbackBackendKey", "tvheadendPlaybackBackendKey",
-        "mpvVideoOutputModeKey", "mpvVideoDecoderKey", "vlcVideoOutputModeKey", "mediaAudioPassthroughEnabled",
+        "mpvVideoOutputModeKey", "mpvVideoDecoderKey", "mpvHdrGpuEnabled", "vlcVideoOutputModeKey", "mediaAudioPassthroughEnabled",
         "libraryGridColumns", "libraryListRows", "displayChangeNotificationsEnabled",
         "projectmQualityKey", "projectmResolutionKey", "projectmHdr4kAllowed", "screensaverQualityKey", "resolutionVideoProfiles",
         "audioSettings", "mpvImageOptions", "vlcImageOptions", "media3ImageOptions", "mpvScalingFilterKey",
@@ -129,7 +129,7 @@ internal object CompanionBackupPolicy {
         }
         if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
-            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.forEach { key -> incoming[key]?.let { result[key] = it } }
+            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }
         if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()

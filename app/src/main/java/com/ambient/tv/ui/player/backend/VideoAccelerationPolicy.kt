@@ -91,7 +91,14 @@ fun planMpvAcceleration(
     gpuProcessing: Boolean = false,
     forceDefault: Boolean = false,
     nativeHdrPreferred: Boolean = false,
+    /** [mpvHdrGpuDecision] chose gpu-next/Vulkan passthrough for HDR10 on an HDR10 display. */
+    hdrPassthrough: Boolean = false,
 ): MpvAccelerationPlan {
+    if (hdrPassthrough && capabilities.mpvVulkanOutput) return MpvAccelerationPlan("vulkan", when {
+        decoder == "software" -> "software"
+        decoder in setOf("auto", "vulkan") && capabilities.mpvVulkanDecode -> "vulkan"
+        else -> "mediacodec"
+    })
     // A GPU copy is not a verified Android HDR surface. Preserve the codec's native
     // HDR dataspace instead of sending PQ/BT.2020 pixels through an SDR vout.
     if (nativeHdrPreferred) return MpvAccelerationPlan("direct", "mediacodec",

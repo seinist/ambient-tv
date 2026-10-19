@@ -32,6 +32,8 @@ internal data class PlayerPanelVideoVisibility(
      * HDR-safe subset (sharpening, grain, RAVU Lite / FSR as experimental), see hdrSafe.
      */
     val hdrShaders: Boolean = false,
+    /** [hdrShaders] with PQ reaching the display (HDR über GPU): film grain is left out there. */
+    val hdrPassthrough: Boolean = false,
 )
 
 /**
@@ -41,7 +43,7 @@ internal data class PlayerPanelVideoVisibility(
  */
 internal fun PlayerPanelVideoVisibility.sparsam(reduced: Boolean, media3: Boolean = false): PlayerPanelVideoVisibility =
     if (!reduced) this else copy(
-        shaderUpscalers = false, denoise = false, shaders = false, svp = false, deband = false, hdrShaders = false,
+        shaderUpscalers = false, denoise = false, shaders = false, svp = false, deband = false, hdrShaders = false, hdrPassthrough = false,
         media3Processing = media3Processing && !media3,
         picture = picture && !media3, pictureGamma = pictureGamma && !media3,
         upscaler = upscaler && !media3,
@@ -101,6 +103,7 @@ internal fun playerPanelVideoVisibility(
         denoise = gpuFilters && shadersApply,
         shaders = gpuFilters && (shadersApply || hdrInput),
         hdrShaders = gpuFilters && hdrInput && !shadersApply,
+        hdrPassthrough = gpuFilters && hdrInput && hdrOutput && !shadersApply,
         svp = gpuFilters && shadersApply && globalSvp,
         picture = gpuFilters && shadersApply,
         pictureGamma = gpuFilters && shadersApply,

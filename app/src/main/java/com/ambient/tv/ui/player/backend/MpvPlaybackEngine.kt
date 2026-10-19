@@ -82,6 +82,8 @@ internal class MpvPlaybackEngine(
     decoderMode: String = "auto",
     knownAudioCodec: String? = null,
     private val nativeHdrPreferred: Boolean = false,
+    /** HDR10 → HDR10 display via gpu-next/Vulkan passthrough ([mpvHdrGpuDecision]). */
+    private val hdrGpuPassthrough: Boolean = false,
     private val liveStream: Boolean = false,
     private val declaredHdr: HdrStandard? = null,
     private val audioOnly: Boolean = false,
@@ -103,8 +105,16 @@ internal class MpvPlaybackEngine(
     private var acceleration = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
         // Select the processing path from the chosen width/title image settings.
         gpuProcessing = mpvNeedsGpuProcessing(effectiveMpvImageOptions(initialImageOptions,
-            reducedVideoEffects(context), svpAllowed(context))), nativeHdrPreferred = nativeHdrPreferred)
+            reducedVideoEffects(context), svpAllowed(context))), nativeHdrPreferred = nativeHdrPreferred,
+        hdrPassthrough = hdrGpuPassthrough)
     private var accelerationRetried = false
+    /** Runtime verdict for the passthrough route; the UI reopens on the direct surface when set. */
+    var hdrGpuFailure by mutableStateOf<MpvHdrGpuReason?>(null)
+        private set
+    private val hdrPassthroughMonitor = MpvHdrPassthroughMonitor()
+    /** PQ reaches the display through gpu-next: OUTPUT hooks see PQ code values. */
+    private val hdrPassthroughActive: Boolean get() = hdrGpuPassthrough && acceleration.vulkan && hdrGpuFailure == null
+
     /**
      * SHIELD + OpenGL + interlaced live: decode zero-copy through mpv's AImageReader interop
      * (MpvShieldInterlacePolicy). Known channels start that way before loadfile.
@@ -158,13 +168,14 @@ internal class MpvPlaybackEngine(
     private val drainPosted = java.util.concurrent.atomic.AtomicBoolean(false)
     private val eventHandler = workerHandler
     private var eventPump: Thread? = null
-    private val sdrToHdr = MpvSdrToHdrController(object : MpvHdrProperties {
+    private val sdrToHdrProperties: MpvHdrProperties = object : MpvHdrProperties {
         override fun outputDataSpace(): Int = attachedSurface?.takeIf { it.isValid }?.let {
             if (VulkanNativeProbe.available) runCatching { VulkanNativeProbe.dataSpace(it) }.getOrDefault(0) else 0
         } ?: 0
         override fun get(name: String): String? = getPropertyString(name)
         override fun set(name: String, value: String): Boolean = trySetProperty(name, value)
-    })
+    }
+    private val sdrToHdr = MpvSdrToHdrController(sdrToHdrProperties)
     private var conversionSampleStarted = 0L
     private var conversionSampleDrops = 0L
     private var conversionOutputUnsafe = false
@@ -407,6 +418,8 @@ internal class MpvPlaybackEngine(
             setOption("gpu-context", "androidvk")
             setOption("vulkan-device", VideoAccelerationRuntime.capabilities.value.device.device)
             setOption("hwdec", acceleration.hwdec)
+            // Passthrough: the swapchain carries the source's PQ/BT.2020 instead of tone-mapping to SDR.
+            if (hdrGpuPassthrough) MPV_HDR_PASSTHROUGH_OPTIONS.forEach { (name, value) -> setOption(name, value) }
         } else if (gpuQualityMode) {
             // GPU quality path: MediaCodec still decodes in hardware, but frames pass through
             // mpv's Android OpenGL renderer. This is required for scale/cscale/dscale, deband
@@ -563,6 +576,8 @@ internal class MpvPlaybackEngine(
                 hdr10SwapchainSupported = it.hdr10SurfaceSupported
             }) {
             fallbackAcceleration("surface", reload = false)
+            // Passthrough does not switch to OpenGL; the view reopens on the direct surface.
+            if (hdrGpuFailure != null) return
         }
         MpvNativeBridge.nativeAttachSurface(handle, surface)
         surfaceWidth = width
@@ -876,6 +891,7 @@ internal class MpvPlaybackEngine(
             // PQ/HLG on this GPU VO: mpv tone-maps; only HDR-safe hooks may load.
             val hdr = fileReady && isMpvHdrTransfer(transfer)
             val gpuNext = rendersWithGpuNext()
+            val pqOutput = hdr && hdrPassthroughActive
             val fittedScale = currentMpvFittedScale()
             val upscaling = fittedScale > MPV_ANY_UPSCALE_SCALE
             // Renderer hooks cannot run before vf. Skip them while SVP will
@@ -887,7 +903,7 @@ internal class MpvPlaybackEngine(
             val sourceTransfer = currentMpvSourceTransfer()
             hdrImageTransfer = isMpvHdrTransfer(sourceTransfer)
             sourceHdrStandard = hdrStandardFromMpvTransfer(sourceTransfer)
-            val requestedShaders = mpvImageShaderKeys(effective, sdr, upscaling, fittedScale, svpActive, hdr = hdr, gpuNext = gpuNext)
+            val requestedShaders = mpvImageShaderKeys(effective, sdr, upscaling, fittedScale, svpActive, hdr = hdr, gpuNext = gpuNext, pqOutput = pqOutput)
             val hasComputeShader = requestedShaders.any { MPV_IMAGE_SHADERS[it]?.requiresCompute == true }
             val computeSupport = if (hasComputeShader) {
                 mpvComputeSupport(getPropertyString("gpu-api"))
@@ -1036,6 +1052,7 @@ internal class MpvPlaybackEngine(
             automaticDeinterlace = deinterlaceAutomatic,
             explicitDeinterlaceFilter = explicitDeinterlaceFilter,
             options = effective,
+            hdrPassthrough = hdrPassthroughActive,
         )
         // Any other filter state ends a "keep watching anyway" for the previous one.
         if (signature != overloadSuspendedSignature) overloadSuspendedSignature = null
@@ -1159,6 +1176,8 @@ internal class MpvPlaybackEngine(
         raiseRenderOverload(com.ambient.tv.ui.player.frameDropPercent(dropped, fps * sampleSeconds), when {
             "plex-svp" in activeCpuImageFilters -> ({ reduceSvpAfterOverload() })
             reducedSharpening != null -> ({ updateImageOptions(imageOptions.copy(sharpening = reducedSharpening)) })
+            // Nothing lighter on the GPU path: "reduce" reopens the title on the direct surface.
+            hdrPassthroughActive -> ({ failHdrPassthrough(MpvHdrGpuReason.OVERLOAD) })
             else -> null
         })
     }
@@ -1334,6 +1353,40 @@ internal class MpvPlaybackEngine(
     private fun currentMpvTransfer(): String? = getPropertyString("video-params/gamma")
         ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
 
+    private var hdrPassthroughCheckedAt = 0L
+
+    private fun checkHdrPassthrough(sourceGamma: String?) {
+        if (!hdrPassthroughActive || released || !attached) return
+        val now = SystemClock.elapsedRealtime()
+        // The surface dataspace is a JNI query; twice a second is enough for a 3 s window.
+        if (now - hdrPassthroughCheckedAt < 500L && hdr10SwapchainSupported != false) return
+        hdrPassthroughCheckedAt = now
+        val facts = MpvHdrPassthroughFacts(
+            fileReady = fileReady,
+            playing = isPlaying() && getPropertyString("seeking") != "yes" &&
+                getPropertyString("paused-for-cache") != "yes" && !com.ambient.tv.ui.player.PlaybackOutputTransition.active(),
+            sourceGamma = sourceGamma,
+            targetGamma = getPropertyString("video-target-params/gamma"),
+            targetPrimaries = getPropertyString("video-target-params/primaries"),
+            targetPixelFormat = getPropertyString("video-target-params/pixelformat"),
+            dataSpace = if (fileReady && isMpvHdrTransfer(sourceGamma)) sdrToHdrProperties.outputDataSpace() else 0,
+            swapchainHdr10 = hdr10SwapchainSupported,
+        )
+        val wasConfirmed = hdrPassthroughMonitor.confirmed
+        hdrPassthroughMonitor.update(facts, now)?.let(::failHdrPassthrough)
+        if (!wasConfirmed && hdrPassthroughMonitor.confirmed) Timber.i("%s MPV HDR passthrough confirmed (gpu-next, PQ/BT.2020)", HDR_AUDIT_TAG)
+    }
+
+    private fun failHdrPassthrough(reason: MpvHdrGpuReason) {
+        if (hdrGpuFailure != null || !hdrGpuPassthrough) return
+        Timber.w("%s MPV HDR passthrough failed: %s", HDR_AUDIT_TAG, reason)
+        hdrPassthroughMonitor.fail(reason)
+        renderCheckJob?.cancel()
+        renderCheckJob = null
+        pause()
+        hdrGpuFailure = reason
+    }
+
     private fun currentMpvSourceTransfer(): String? {
         val decoded = getPropertyString("video-dec-params/gamma")?.trim()?.lowercase()
         return decoded?.takeIf(::isMpvHdrTransfer) ?: currentMpvTransfer()
@@ -1374,6 +1427,7 @@ internal class MpvPlaybackEngine(
         val hdr = isMpvHdrTransfer(sourceGamma)
         if (hdrImageTransfer != hdr) hdrImageTransfer = hdr
         sourceHdrStandard = hdrStandardFromMpvTransfer(sourceGamma)
+        checkHdrPassthrough(sourceGamma)
         if (!gpuQualityMode) return
         if (probeShieldInterlaced()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
@@ -2038,6 +2092,12 @@ internal class MpvPlaybackEngine(
     }
 
     private fun fallbackAcceleration(reason: String, reload: Boolean = true): Boolean {
+        // OpenGL cannot signal HDR on Android: leave the passthrough player to the direct reopen.
+        if (hdrGpuPassthrough && acceleration.vulkan && !released) {
+            Timber.w("MPV HDR passthrough: Vulkan fallback (%s), reopening on the direct surface", reason)
+            failHdrPassthrough(MpvHdrGpuReason.NOT_CONFIRMED)
+            return true
+        }
         val directDecoderFallback = acceleration.output == "direct" && reason == "mediacodec_unavailable"
         if ((!acceleration.vulkan && !directDecoderFallback) || accelerationRetried || released) return false
         sdrToHdr.reset()

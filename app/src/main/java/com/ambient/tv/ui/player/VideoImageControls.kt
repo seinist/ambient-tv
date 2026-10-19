@@ -119,6 +119,7 @@ internal fun MpvImageControls(controller: MpvPlaybackController) {
         o,
         ::change,
         hdrTransfer = controller.hdrImageTransfer,
+        hdrOutput = controller.uiHdrStandard() != null,
     )
     if (!controller.hdrImageTransfer && !controller.sdrImageProcessing) ImageHint(stringResource(R.string.image_sdr_only))
     if ("nis-compute-unsupported" in controller.imageOptionWarnings) {
@@ -164,10 +165,13 @@ internal fun MpvImageOptionsEditor(
     change: (MpvImageOptions) -> Unit,
     toneMappingEnabled: Boolean = true,
     hdrTransfer: Boolean = false,
+    /** HDR source shown as PQ (HDR über GPU): no film grain. */
+    hdrOutput: Boolean = false,
 ) {
     var group by remember { mutableStateOf("scaling") }
     val sparsam = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals
-    if (hdrTransfer) ImageHint(stringResource(R.string.image_mpv_hdr_limited))
+    val passthrough = hdrTransfer && hdrOutput
+    if (hdrTransfer) ImageHint(stringResource(if (passthrough) R.string.image_mpv_hdr_passthrough else R.string.image_mpv_hdr_limited))
     if (sparsam) ImageHint(stringResource(R.string.image_filters_sparsam_hint))
     // Sparsam: filters and motion interpolation do not run, so their groups are hidden.
     val groups = listOfNotNull(
@@ -212,7 +216,7 @@ internal fun MpvImageOptionsEditor(
                 ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
                 ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }
             }
-            ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
+            if (!passthrough) ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
             if (!hdrTransfer) ImageChoice(R.string.image_superres, if (o.superResolution) "on" else "off", imageOnOff()) { change(o.copy(superResolution = it == "on")) }
             ImageHint(stringResource(R.string.image_mpv_filter_hint))
         }

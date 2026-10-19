@@ -22,10 +22,19 @@ internal fun PlayerVideoOutputControls(backend: String) {
     val caps by VideoAccelerationRuntime.capabilities.collectAsState()
     LaunchedEffect(Unit) { VideoAccelerationRuntime.refresh(context) }
     val mpv = backend == "mpv"
-    val runtimeHdr = (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.MpvPlaybackController)?.sourceHdrStandard
-    val nativeHdr = nativeHdrSurfacePreferred(metadata.handheldHdrStandard ?: runtimeHdr, HdrSupport.displayStandards(context))
+    val activeMpv = BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.MpvPlaybackController
+    val runtimeHdr = activeMpv?.sourceHdrStandard
+    val source = metadata.handheldHdrStandard ?: runtimeHdr
+    val display = HdrSupport.displayStandards(context)
+    fun hdrGpuFor(output: String) = if (!mpv) com.ambient.tv.ui.player.backend.MpvHdrGpuDecision.NOT_APPLICABLE
+        else com.ambient.tv.ui.player.backend.mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, output, source, display,
+            caps, reducedVideoEffects(context), activeMpv?.url?.let(com.ambient.tv.ui.player.backend.MpvHdrGpuSession::failure))
+    val hdrGpu = hdrGpuFor(settings.mpvOutput)
+    // With "Direkt" chosen the passthrough must stay selectable again.
+    val hdrGpuAvailable = hdrGpuFor("vulkan").gpu
+    val nativeHdr = nativeHdrSurfacePreferred(source, display) && !hdrGpu.gpu
     val output = if (mpv) settings.mpvOutput else settings.vlcOutput
-    val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr)
+    val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr && !hdrGpuAvailable, hdrGpuAvailable)
     val outputs = buildList {
         add("auto" to stringResource(R.string.player_automatic))
         if (mpv) {
@@ -41,7 +50,7 @@ internal fun PlayerVideoOutputControls(backend: String) {
         options = outputs, selectedKey = shownOutput,
         disabledKeys = disabledOutputs,
         onSelected = { next ->
-            if (next !in disabledPlayerVideoOutputs(backend, caps, nativeHdr)) {
+            if (next !in disabledOutputs) {
                 BackgroundPlaybackSession.setVideoSettings(metadata,
                     if (mpv) settings.withMpvOutput(next) else settings.copy(vlcOutput = next))
             }
@@ -69,7 +78,22 @@ internal fun PlayerVideoOutputControls(backend: String) {
     }
     ImageHint(stringResource(if (metadata.isLive) R.string.player_output_restart_live else R.string.player_output_restart))
     if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
+    if (hdrGpu.gpu) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))
+    hdrGpu.reason?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
 
+}
+
+/** Why "HDR über GPU verarbeiten" left this HDR title on its usual route. */
+internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrGpuReason): Int = when (reason) {
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OUTPUT_DIRECT -> R.string.player_output_hdr_gpu_output_direct
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DOLBY_VISION -> R.string.player_output_hdr_gpu_dolby_vision
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_HDR10 -> R.string.player_output_hdr_gpu_not_hdr10
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.VULKAN_UNAVAILABLE -> R.string.player_output_hdr_gpu_vulkan
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 -> R.string.player_output_hdr_gpu_swapchain
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DISPLAY_NO_HDR10 -> R.string.player_output_hdr_gpu_display
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.REDUCED_EFFECTS -> R.string.player_output_hdr_gpu_reduced
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_CONFIRMED -> R.string.player_output_hdr_gpu_not_confirmed
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OVERLOAD -> R.string.player_output_hdr_gpu_overload
 }
 
 @Composable

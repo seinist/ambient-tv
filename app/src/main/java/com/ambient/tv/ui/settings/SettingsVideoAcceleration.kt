@@ -35,6 +35,8 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             caps = caps, checking = checking, evidence = evidence[backend] ?: VulkanPlaybackEvidence(),
             changeOutput = { if (backend == "mpv") model.onMpvVideoOutputModeChanged(it) else model.onVlcVideoOutputModeChanged(it) },
             changeDecoder = model::onMpvVideoDecoderChanged,
+            hdrGpu = state.mpvHdrGpuEnabled,
+            changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
     }
@@ -52,6 +54,9 @@ internal fun RendererVideoSettings(
     changeOutput: (String) -> Unit,
     changeDecoder: (String) -> Unit,
     checkAgain: () -> Unit,
+    hdrGpu: Boolean = false,
+    /** Null hides "HDR über GPU verarbeiten" (profile editors, catalog). */
+    changeHdrGpu: ((Boolean) -> Unit)? = null,
 ) {
     val renderer = selectedRendererSettingsKey(backend)
     if (renderer == null || renderer == "media3") {
@@ -104,6 +109,17 @@ internal fun RendererVideoSettings(
                 }
             })
             if (vulkanDecoderAvailable) ImageHint(stringResource(R.string.vulkan_decoder_hint))
+            if (changeHdrGpu != null) {
+                com.ambient.tv.ui.common.TvSettingRow(
+                    title = stringResource(R.string.settings_mpv_hdr_gpu),
+                    body = stringResource(R.string.settings_mpv_hdr_gpu_hint),
+                    checked = hdrGpu,
+                    onCheckedChange = changeHdrGpu,
+                )
+                // Device-level reason; per-title reasons (Dolby Vision, output, failures) show in the player.
+                if (hdrGpu) mpvHdrGpuDeviceReason(caps, com.ambient.tv.ui.player.HdrSupport.displayStandards(LocalContext.current))
+                    ?.let { ImageHint(stringResource(com.ambient.tv.ui.player.mpvHdrGpuReasonRes(it))) }
+            }
         }
         if (outputAvailable) SettingsGroup(title = stringResource(R.string.renderer_test_title)) {
             if (checking || !caps.checked) ImageHint(stringResource(R.string.vulkan_checking))
