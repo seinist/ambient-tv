@@ -12,6 +12,7 @@
 #include "video/mp_image.h"
 #include "video/img_format.h"
 #include "ambientsvp_loader.h"
+#include "svp_retry.h"
 
 struct opts { double fps, source; int preset, backend, threads, artifacts, scene, algo, block, overlap, pel, search; };
 struct priv {
@@ -21,6 +22,8 @@ struct priv {
     /* Why frames pass through unchanged (metadata "passthrough"); 0 while the engine runs.
      * Kept separate from the engine's bypass_reason so only a real overload reads as one. */
     int passthrough;
+    /* Timing-gap cool-down; survives the internal engine reset, cleared on seek. */
+    SvpRetry retry;
 };
 enum { PASS_NONE, PASS_FORMAT, PASS_UNAVAILABLE, PASS_TIMING, PASS_ERROR };
 
@@ -34,6 +37,10 @@ static void reset(struct mp_filter *f) {
     free(p->buffer); p->buffer = NULL; p->bytes = 0;
     p->eof = p->bypass = false;
     p->passthrough = PASS_NONE;
+}
+/* mpv's reset (seek, track switch): a fresh timeline forgets earlier timing gaps. */
+static void seek_reset(struct mp_filter *f) {
+    struct priv *p = f->priv; reset(f); svp_retry_clear(&p->retry);
 }
 static void destroy(struct mp_filter *f) {
     struct priv *p = f->priv; reset(f); if (p->api.lib) dlclose(p->api.lib);
@@ -88,6 +95,9 @@ static void process(struct mp_filter *f) {
     if (frame.type != MP_FRAME_VIDEO) { mp_pin_in_write(f->ppins[1], frame); return; }
     struct mp_image *img = frame.data;
     if (p->engine && (img->w != p->width || img->h != p->height || !supported(img))) reset(f);
+    if (!p->bypass && p->passthrough == PASS_TIMING && svp_retry_waiting(&p->retry)) {
+        mp_pin_in_write(f->ppins[1], frame); return;
+    }
     if (p->bypass || !supported(img) || !p->api.lib || !p->api.enabled()) {
         int reason = p->passthrough;
         if (!p->bypass) reason = !p->api.lib ? PASS_UNAVAILABLE : !supported(img) ? PASS_FORMAT : PASS_NONE;
@@ -112,11 +122,17 @@ static void process(struct mp_filter *f) {
     }
     pack(img, p->buffer);
     int r = p->api.push(p->engine, p->buffer, p->bytes, llround(img->pts * 1000000.0));
-    if (r != 0) {
-        reset(f); p->bypass = true; p->passthrough = r == -3 ? PASS_TIMING : PASS_ERROR;
-        MP_WARN(f, "SVP input discontinuity/error %d; passing through until reset\n", r);
+    if (r == -3) {
+        reset(f); svp_retry_gap(&p->retry); p->passthrough = PASS_TIMING;
+        MP_WARN(f, "SVP timing gap #%d; passing through for %d frames, then retrying\n", p->retry.gaps, p->retry.cooldown);
         mp_pin_in_write(f->ppins[1], frame); return;
     }
+    if (r != 0) {
+        reset(f); p->bypass = true; p->passthrough = PASS_ERROR;
+        MP_WARN(f, "SVP input error %d; passing through until reset\n", r);
+        mp_pin_in_write(f->ppins[1], frame); return;
+    }
+    svp_retry_frame_ok(&p->retry);
     mp_image_unrefp(&p->reference); p->reference = img;
     mp_filter_internal_mark_progress(f);
 }
@@ -136,7 +152,7 @@ static bool command(struct mp_filter *f, struct mp_filter_command *cmd) {
     *(struct mp_tags **)cmd->res = tags; return true;
 }
 static const struct mp_filter_info info = {.name = "ambientsvp", .priv_size = sizeof(struct priv),
-    .process = process, .reset = reset, .destroy = destroy, .command = command};
+    .process = process, .reset = seek_reset, .destroy = destroy, .command = command};
 static struct mp_filter *create(struct mp_filter *parent, void *options) {
     struct mp_filter *f = mp_filter_create(parent, &info);
     if (!f) { talloc_free(options); return NULL; }

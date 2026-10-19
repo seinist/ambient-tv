@@ -56,13 +56,13 @@ class JellyfinConnectionManager @Inject constructor(
     private val connectionMutex = Mutex()
 
 
-    @Volatile private var pausedEndpoint: String? = null
+    private val reconnectPause = ReconnectPause()
 
-    fun pauseAutomaticReconnect() { pausedEndpoint = endpointKey() }
+    fun pauseAutomaticReconnect() { reconnectPause.pause(endpointKey()) }
 
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            pausedEndpoint = null
+            reconnectPause.clear()
             lastSuccessfulCheckMs = 0L
             ensureConnectedLocked()
         }
@@ -71,13 +71,14 @@ class JellyfinConnectionManager @Inject constructor(
     /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
     suspend fun checkInBackground(): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            if (pausedEndpoint != endpointKey() || !preferences.isJellyfinConfigured) return@withLock false
+            if (!reconnectPause.isPaused(endpointKey()) || !preferences.isJellyfinConfigured) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.jellyfinHost)) return@withLock false
             val checkedEndpoint = endpointKey()
             val identity = repository.getIdentity().getOrNull() ?: return@withLock false
             if (checkedEndpoint != endpointKey()) return@withLock false
             _state.value = ServerConnectionState.Online(identity)
+            reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
             true
@@ -106,7 +107,7 @@ class JellyfinConnectionManager @Inject constructor(
         wakeRetries: Int = preferences.wolRetryCount,
         onWaking: (() -> Unit)? = null,
     ): Boolean {
-        if (pausedEndpoint == endpointKey()) return _state.value is ServerConnectionState.Online
+        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online
         if (!preferences.isJellyfinConfigured) { _state.value = ServerConnectionState.NotConfigured; return false }
         val host = NetworkEndpoint.normalizeHost(preferences.jellyfinHost)
         if (preferences.localNetworkOnly && !LocalNetworkPolicy.isPotentiallyLocalHost(host)) {

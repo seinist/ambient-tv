@@ -87,6 +87,8 @@ internal class MpvPlaybackEngine(
     private val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
     reopeningTimeshift: Boolean = false,
+    /** Live TV or a TVHeadend recording: broadcast transport streams that can be interlaced. */
+    private val broadcastSource: Boolean = liveStream,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     init { check(android.os.Looper.myLooper() === workerHandler.looper) }
 
@@ -107,7 +109,7 @@ internal class MpvPlaybackEngine(
      * SHIELD + OpenGL + interlaced live: decode zero-copy through mpv's AImageReader interop
      * (MpvShieldInterlacePolicy). Known channels start that way before loadfile.
      */
-    var zeroCopyInterlaced = mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, liveStream) &&
+    var zeroCopyInterlaced = mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, broadcastSource) &&
         MpvShieldInterlacedChannels.isKnown(url)
         private set
     /** One reopen per engine at most; the hwdec is never switched under a running decoder. */
@@ -796,7 +798,7 @@ internal class MpvPlaybackEngine(
         }
         // Live TS reports interlaced channels at the field rate and decodes one picture per
         // field. Doubling those again (2x methods, mpv's send_field built-in) produced 100 fps.
-        val singleRate = enabled && liveStream && mpvFieldRateInput(containerFps())
+        val singleRate = enabled && broadcastSource && mpvFieldRateInput(containerFps())
         val graph = if (enabled) mpvDeinterlaceGraph(effectiveFilter, automatic, weights, singleRate) else null
         val vf = graph?.let { "lavfi=[$it]" }
         val previousEnabled = deinterlaceRequested
@@ -1365,7 +1367,7 @@ internal class MpvPlaybackEngine(
         if (probeShieldInterlaced()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
         // field-rate live input switches to the single-rate deinterlacer (50 fps, not 100).
-        if (liveStream && deinterlaceRequested && fileReady && deinterlaceUpdateJob?.isActive != true) {
+        if (broadcastSource && deinterlaceRequested && fileReady && deinterlaceUpdateJob?.isActive != true) {
             val fieldRate = mpvFieldRateInput(containerFps())
             if (fieldRate != deinterlaceSingleRate && fieldRate != deinterlaceSingleRateAttempt) {
                 deinterlaceSingleRateAttempt = fieldRate
@@ -1680,9 +1682,9 @@ internal class MpvPlaybackEngine(
     fun containerFps(): Double? = getPropertyDouble("container-fps", Double.NaN).takeIf { it.isFinite() && it > 0.0 }
     /**
      * Picture rate leaving the deinterlacer: the SVP source and the expected render rate.
-     * Live only; VOD keeps container-fps exactly as before.
+     * Broadcast only (live TV, TVHeadend recordings); other VOD keeps container-fps as before.
      */
-    private fun pipelineFps(): Double? = if (liveStream) {
+    private fun pipelineFps(): Double? = if (broadcastSource) {
         mpvDeinterlacedFps(containerFps(), deinterlaceRequested, appliedDeinterlaceKey, deinterlaceSingleRate)
     } else containerFps()
     fun videoFps(): Double = getPropertyDouble("estimated-vf-fps", 0.0)
@@ -1965,20 +1967,28 @@ internal class MpvPlaybackEngine(
      */
     private fun probeShieldInterlaced(): Boolean {
         if (zeroCopyInterlaced || zeroCopyReopened || zeroCopyProbeDone || !fileReady || !attached) return false
-        if (!mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, liveStream)) {
+        if (!mpvShieldZeroCopyEligible(currentDeviceIsShield, acceleration, broadcastSource)) {
             zeroCopyProbeDone = true
             return false
         }
         val fps = containerFps() ?: return false
         val height = (getPropertyDouble("current-tracks/video/demux-h", 0.0).takeIf { it > 0.0 }
             ?: getPropertyDouble("video-params/h", 0.0)).toInt().takeIf { it > 0 } ?: return false
+        // The codec decides HEVC 1080p50 vs H.264 1080i50; wait for it instead of guessing.
+        val codec = videoCodec()?.takeIf { it.isNotBlank() } ?: return false
         zeroCopyProbeDone = true
-        if (!mpvLiveInterlacedSource(liveStream, fps, height)) return false
+        val hwdec = getPropertyString("hwdec-current")
+        val frameFlag = when (getPropertyString("video-frame-info/interlaced")) { "yes" -> true; "no" -> false; else -> null }
+        val signals = MpvInterlaceSignals(codec, frameFlag,
+            frameFlagReliable = hwdec.isNullOrBlank() || hwdec == "no", fps = fps, height = height)
+        if (!mpvBroadcastInterlacedSource(broadcastSource, signals)) return false
         switchToZeroCopyInterlaced(fps, height)
         return true
     }
 
     private fun switchToZeroCopyInterlaced(fps: Double, height: Int) {
+        // Recordings reopen where they were; live always reopens at its live edge.
+        val resumeAt = if (liveStream) 0L else (positionMs().takeIf { it > 0L } ?: lastPlaybackPositionMs)
         zeroCopyReopened = true
         zeroCopyInterlaced = true
         MpvShieldInterlacedChannels.remember(url)
@@ -2005,12 +2015,17 @@ internal class MpvPlaybackEngine(
         fileReady = false
         svpFilterDecided = false
         ended = false
-        reopenStream(0L)
+        reopenStream(resumeAt)
         setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
         updateImageOptions(imageOptions)
     }
 
+    /** Read by the display-switch hold: a reopen moves the position without a user seek. */
+    @Volatile var reopenGeneration = 0
+        private set
+
     private fun reopenStream(positionMs: Long) {
+        reopenGeneration++
         startupOpenedAt = System.nanoTime()
         if (liveStream) command("loadfile", playbackUrlForOpen(), "replace")
         else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")

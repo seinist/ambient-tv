@@ -326,7 +326,8 @@ fun TvheadendScreen(
     state.selectedEvent?.let { event ->
         OperationFeedbackScope(viewModel.feedback, "event:${event.eventId}")
         val channel = state.dashboard?.channels?.firstOrNull { it.uuid == event.channelUuid }
-        val timer = state.dashboard?.upcoming?.firstOrNull { it.broadcastEventId == event.eventId }
+        // A running programme recorded "from now" has its own timer without the EPG link.
+        val timer = state.dashboard?.upcoming?.let { findProgrammeRecording(event, it) }
         EventDialog(
             event = event,
             timer = timer,

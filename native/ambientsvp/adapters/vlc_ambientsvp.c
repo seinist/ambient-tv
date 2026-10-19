@@ -9,6 +9,7 @@
 #include <vlc_picture.h>
 #include <math.h>
 #include "ambientsvp_loader.h"
+#include "svp_retry.h"
 
 static int Open(filter_t *filter);
 vlc_module_begin()
@@ -38,6 +39,8 @@ typedef struct {
     bool measure_rate;
     int rate_samples;
     int timing_resets;
+    /* Cool-down after repeated timing gaps; kept across VLC's frequent flushes. */
+    SvpRetry retry;
     vlc_tick_t rate_origin, rate_last;
 } filter_sys_t;
 // Lossless I420/NV12 packing; retain decoder padding/crop and output format.
@@ -110,6 +113,7 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
         DropEngine(f);
         return pic;
     }
+    if (svp_retry_waiting(&s->retry)) return pic;
     if (!s->engine) {
         // Android MediaCodec may omit frame_rate in fmt_in (0/0). Measure
         // twelve consistent source PTS intervals; pass through during probing.
@@ -148,10 +152,17 @@ static picture_t *Filter(filter_t *f, picture_t *pic) {
             (long long)(s->reference ? US_FROM_VLC_TICK(pic->date-s->reference->date) : 0));
         if (!s->api.reset(s->engine)) r=s->api.push(s->engine,s->buffer,s->bytes,US_FROM_VLC_TICK(pic->date));
     }
+    if (r == -3) {
+        // Still discontinuous after the quick resets: pass through for a cool-down, then retry.
+        DropEngine(f); svp_retry_gap(&s->retry); s->timing_resets = 0;
+        msg_Warn(f, "SVP timing gap #%d; passing through for %d pictures, then retrying", s->retry.gaps, s->retry.cooldown);
+        return pic;
+    }
     if (r != 0) {
         DropEngine(f); s->bypass = true;
-        msg_Warn(f, "SVP discontinuity/error %d; passing through for this instance", r); return pic;
+        msg_Warn(f, "SVP error %d; passing through for this instance", r); return pic;
     }
+    svp_retry_frame_ok(&s->retry);
     if (s->reference) picture_Release(s->reference);
     s->reference = pic;
     return Drain(f, false);

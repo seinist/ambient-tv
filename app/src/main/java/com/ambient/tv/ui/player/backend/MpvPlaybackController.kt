@@ -41,6 +41,7 @@ class MpvPlaybackController(
     val audioOnly: Boolean = false,
     private val preferOriginalAudio: Boolean = false,
     reopeningTimeshift: Boolean = false,
+    broadcastSource: Boolean = liveStream,
 ) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
@@ -106,7 +107,7 @@ class MpvPlaybackController(
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource)
             sample()
         }
         main.post(tick)
@@ -150,7 +151,7 @@ class MpvPlaybackController(
             hdrImageTransfer = player.hdrImageTransfer, sourceHdrStandard = player.sourceHdrStandard,
             overloadDropPercent = player.overloadDropPercent, renderOverloaded = player.renderOverloaded, canReduceAfterOverload = player.canReduceAfterOverload,
             overloadContinueSignature = player.overloadContinueSignature, renderCheckSignature = player.renderCheckSignature,
-            mediaInfoGeneration = player.mediaInfoGeneration,
+            mediaInfoGeneration = player.mediaInfoGeneration, reopenGeneration = player.reopenGeneration,
             restoredOutputAudioSelection = player.restoredOutputAudioSelection,
             restoreOutput = player.captureOutputRestartState(),
         )
@@ -254,6 +255,7 @@ class MpvPlaybackController(
     override fun play() { playIntent = true; command("play-state") { play() } }
     override fun pause() { playIntent = false; command("play-state") { pause() } }
     override fun setOutputMuted(muted: Boolean) { command("output-mute") { setOutputMuted(muted) } }
+    override fun reopenGeneration() = state.reopenGeneration
     fun playPause() { if (wantsToPlay()) pause() else play() }
     /** Target of a seek the engine has not applied yet; quick repeated steps build on it. */
     private var pendingSeekTargetMs: Long? = null
@@ -420,6 +422,7 @@ private data class MpvEngineState(
     val overloadContinueSignature: String? = null,
     val renderCheckSignature: String? = null,
     val mediaInfoGeneration: Int = 0,
+    val reopenGeneration: Int = 0,
     val restoredOutputAudioSelection: Boolean = false,
     val restoreOutput: List<String?>? = null,
 )

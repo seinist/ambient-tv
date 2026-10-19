@@ -170,7 +170,7 @@ internal fun LiveTvChannelBrowser(
                         if (channelList) {
                             val current = rowEvents.firstOrNull { it.isLive(now) }
                             val next = rowEvents.firstOrNull { it.startEpochSeconds >= now }
-                            val recording = current?.let { event -> upcoming.any { it.broadcastEventId == event.eventId } } == true
+                            val recording = current?.let { event -> findProgrammeRecording(event, upcoming) != null } == true
                             ChannelRow(channel, current, next, recording, imageHeaders,
                                 onWatch = { if (canWatch) onWatch(it.uuid) }, onEvent = onEvent,
                                 onFocused = { alphabetTarget = channel.uuid; onFocused(channel.uuid, null) },

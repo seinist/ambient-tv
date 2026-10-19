@@ -132,7 +132,8 @@ fun rememberMpvPlaybackController(
                 previous?.positionMs()?.takeIf { it > 0L } ?: startPositionMs)
             val create = { MpvPlaybackController(context.applicationContext, url, resumeMs, headers, audioPassthroughEnabled, outputMode, imageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdr,
                 liveStream = metadata?.isLive == true, declaredHdr = declaredHdr, audioOnly = metadata?.hasVideo == false, preferOriginalAudio = metadata?.source == "youtube",
-                reopeningTimeshift = previous?.url == url).also {
+                reopeningTimeshift = previous?.url == url,
+                broadcastSource = metadata?.isLive == true || metadata?.liveTvSourceId != null).also {
                 it.saveImageDefaults = saveDefaults
                 restoreOutputState?.invoke(it)
                 if (previous == null) (title?.mpvDeinterlaceMode ?: resolution?.mpvDeinterlaceMode)?.let { mode ->
