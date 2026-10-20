@@ -196,8 +196,13 @@ internal fun formatMpvUpscalerForStats(
     runtimeScaler: String?,
     activeShaderPreset: String?,
     upscaling: Boolean? = null,
+    /** Sparsam: the live scaler is the forced bilinear; keep the saved choice visible next to it. */
+    sparsam: Boolean = false,
 ): String? {
     if (upscaling == false) return "off"
+    if (sparsam) {
+        return formatSparsamStat(formatMpvScalerName(runtimeScaler) ?: "Bilinear", formatMpvScalerName(configuredKey), reduced = true)
+    }
     val shader = formatMpvScalerName(activeShaderPreset)
     val runtime = formatMpvScalerName(runtimeScaler)
     if (shader != null) {
@@ -212,4 +217,15 @@ internal fun formatMpvUpscalerForStats(
         return listOfNotNull("$configuredShader (configured; idle)", runtime?.let { "$it finish" }).joinToString(" → ")
     }
     return runtime ?: formatMpvScalerName(configuredKey)?.let { "$it (configured)" }
+}
+
+/** Chroma/downscaler stat: live value, plus the saved one while Sparsam replaced it. */
+internal fun formatMpvScalerStat(runtime: String?, configured: String, sparsam: Boolean): String? =
+    formatSparsamStat(formatMpvScalerName(runtime), formatMpvScalerName(configured) ?: configured, sparsam)
+
+/** Deband is configured, not read back from mpv; Sparsam turns it off. Null = no row. */
+internal fun formatMpvDebandStat(deband: String, sparsam: Boolean, enabledLabel: String): String? = when {
+    deband == "off" -> null
+    sparsam -> "off (Sparsam; saved: $deband)"
+    else -> enabledLabel
 }

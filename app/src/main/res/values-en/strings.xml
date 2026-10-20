@@ -1751,7 +1751,7 @@
     <string name="settings_display_change_notifications_hint">Shows a brief notification when the display resolution or refresh rate changes.</string>
     <string name="notification_display_changed">Display: %1$s</string>
     <string name="settings_svp_available">Motion smoothing (SVP) available</string>
-    <string name="settings_svp_available_hint">Off hides SVP in the player; On still needs SVP turned on in the panel. Requires Maximum performance.</string>
+    <string name="settings_svp_available_hint">Off hides SVP in the player; On still needs SVP turned on in the panel. Requires Maximum performance, or Auto on a device that is not low-end.</string>
     <string name="youtube_account">Account</string>
     <string name="files_webdav_address">Server name, IP or WebDAV address (https://…)</string>
     <string name="files_webdav_path">Base path (e.g. /remote.php/dav/files/user), empty = server root</string>
@@ -1891,4 +1891,20 @@
     <string name="settings_sleep_minutes_minus">− 5 min</string>
     <string name="settings_sleep_minutes_plus">+ 5 min</string>
     <string name="settings_sleep_presets">Quick picks</string>
+    <string name="settings_performance_auto_low_end">Auto (Low – device detected as low-end)</string>
+    <string name="image_sparsam_auto_low_end">Low performance is active (Auto: this device was detected as low-end). Your saved picture settings are kept but not applied: bilinear scaling, no shaders, no deband, no motion interpolation.</string>
+    <string name="image_sparsam_override">Low performance mode is active. Your saved picture settings are kept but not applied: bilinear scaling, no shaders, no deband, no motion interpolation.</string>
+    <string name="image_svp_needs_maximum">Motion interpolation (SVP) needs Maximum playback performance, or Auto on a device that is not low-end.</string>
+    <string name="image_sparsam_switch_balanced">Set playback performance to Balanced</string>
+    <string name="image_sparsam_switch_maximum">Set playback performance to Maximum</string>
+    <string name="image_sparsam_locked_row">%1$s: off in Low mode (saved: %2$s)</string>
+    <string name="image_upscaler_not_needed_native">Upscaler: not needed – the video is shown 1:1 at this output resolution.</string>
+    <string name="image_upscaler_not_needed_downscale">Upscaler: not needed – the video is larger than the output and is downscaled.</string>
+    <string name="player_output_sparsam_gpu">Low performance mode is active: this GPU output still renders bilinear, without shaders, deband or SVP. Set playback performance to Balanced or Maximum to use them.</string>
+    <string name="sdr_reference_white">SDR brightness (reference white)</string>
+    <string name="sdr_reference_white_auto">Auto (203 nits)</string>
+    <string name="sdr_reference_white_custom">Custom</string>
+    <string name="sdr_reference_white_custom_value">Custom SDR brightness</string>
+    <string name="sdr_reference_white_hint">How bright SDR white appears in the converted HDR signal. Auto uses 203 nits (BT.2408). Higher values look brighter; the value is capped at the peak brightness above. Applies immediately.</string>
+    <string name="player_nerd_sparsam">Playback performance</string>
 </resources>

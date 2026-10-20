@@ -191,6 +191,22 @@ class SettingsBackupRegressionTest {
         assertEquals("maximum", prefs.performanceModeKey)
     }
 
+    @Test fun sdrReferenceWhiteRoundTripsAndOlderBackupsUseAuto() {
+        val (source, _, exporter) = store()
+        source.sdrToHdrReferenceWhiteNits = 300
+        val json = exporter.exportJson()
+        assertEquals("65", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        val (target, _, importer) = store()
+        importer.importJson(json)
+        assertEquals(300, target.sdrToHdrReferenceWhiteNits)
+        importer.importJson("""{"schemaVersion":64,"exportedAtEpochMs":0,"sdrToHdrReferenceWhiteNits":400}""")
+        assertEquals(0, target.sdrToHdrReferenceWhiteNits)
+        target.sdrToHdrReferenceWhiteNits = 5000
+        assertEquals(600, target.sdrToHdrReferenceWhiteNits)
+        target.sdrToHdrReferenceWhiteNits = -3
+        assertEquals(0, target.sdrToHdrReferenceWhiteNits)
+    }
+
     @Test fun oldBackupDoesNotClearSplitPerformanceModes() {
         val (prefs, _, importer) = store()
         prefs.uiPerformanceModeKey = "low"

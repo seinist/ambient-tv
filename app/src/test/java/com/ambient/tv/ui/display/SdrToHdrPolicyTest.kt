@@ -32,6 +32,28 @@ class SdrToHdrPolicyTest {
         assertFalse(sdrToHdrPlaybackControlVisible(ready.copy(player = SdrToHdrPlayerKind.MPV_VULKAN, pathBlocked = true)))
     }
 
+    @Test fun referenceWhiteIsNormalizedAndCappedAtThePeak() {
+        assertEquals(0, normalizedSdrReferenceWhiteNits(0))
+        assertEquals(0, normalizedSdrReferenceWhiteNits(-5))
+        assertEquals(80, normalizedSdrReferenceWhiteNits(10))
+        assertEquals(600, normalizedSdrReferenceWhiteNits(9000))
+        assertEquals(300, normalizedSdrReferenceWhiteNits(300))
+        assertEquals(203, effectiveSdrReferenceWhiteNits(0, 400))
+        assertEquals(400, effectiveSdrReferenceWhiteNits(600, 400))
+        assertEquals(300, effectiveSdrReferenceWhiteNits(300, 0))
+        assertEquals(listOf(0, 100, 203, 300, 400), SDR_REFERENCE_WHITE_PRESETS)
+        assertEquals(400, SdrToHdrRequest(400, 1, 2, 500).effectiveReferenceWhiteNits)
+    }
+
+    @Test fun requestCarriesTheNormalizedReferenceWhiteAndDefaultsToAuto() {
+        assertEquals(0, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = 400)?.referenceWhiteNits)
+        assertEquals(300, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = 400, requestedReferenceWhiteNits = 300)?.referenceWhiteNits)
+        assertEquals(600, sdrToHdrRequest(display, true, 800f, 1, 2, requestedReferenceWhiteNits = 5000)?.referenceWhiteNits)
+        val base = SdrToHdrRequest(400, 1, 2)
+        assertTrue(base.copy(referenceWhiteNits = 100).sameOutput(base))
+        assertFalse(base.copy(displayModeId = 3).sameOutput(base))
+    }
+
     @Test fun defaultsAndMasterSwitchNeverRequestVideoConversion() {
         assertNull(sdrToHdrRequest(display, false, 800f, 1, 2))
         assertNull(sdrToHdrRequest(display.copy(automatic = false), true, 800f, 1, 2))

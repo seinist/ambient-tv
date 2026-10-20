@@ -39,6 +39,7 @@ internal fun mpvAppliedProcessing(snapshot: MpvPlaybackSnapshot): AppliedVideoPr
                 snapshot.activeScaler,
                 snapshot.activeShaderPreset,
                 snapshot.activeUpscaling,
+                sparsam = snapshot.sparsam,
             ) ?: "n/a"
         },
         frameInterpolation = withSvpStatus(

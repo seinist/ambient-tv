@@ -958,8 +958,24 @@ internal class MpvPlaybackEngine(
                 if (!released && optionsSnapshot == imageOptions) imageApplyStale = true
                 return@launch
             }
+            logImageOptions(effective, shaderKeys, fittedScale, sdr, hdr)
             applyImageOptions(effective, requestedShaders, shaderKeys, shaderFiles, sdr, transfer, computeSupport, hdr, gpuNext)
         }
+    }
+
+    private var lastImageLog: String? = null
+
+    /** One line per distinct effective result: confirms Sparsam/Auto, scalers, shaders and SVP on a device. */
+    private fun logImageOptions(effective: MpvImageOptions, shaderKeys: List<String>, fittedScale: Double, sdr: Boolean, hdr: Boolean) {
+        val profile = performanceProfile(context)
+        val line = mpvImageOptionsLogLine(
+            playbackMode = profile.playbackMode.key, lowEnd = profile.lowEndDevice, reduced = profile.gateExpensiveVideoVisuals,
+            stored = imageOptions, effective = effective, shaderKeys = shaderKeys, svpAllowed = svpAllowed(context),
+            fittedScale = fittedScale, sdr = sdr, hdr = hdr, vo = configuredVo,
+        )
+        if (line == lastImageLog) return
+        lastImageLog = line
+        Timber.i("%s %s", HDR_AUDIT_TAG, line)
     }
 
     private fun applyImageOptions(
@@ -1023,9 +1039,10 @@ internal class MpvPlaybackEngine(
         if ("plex-svp" !in activeCpuImageFilters) svpCopyBackSession = false
         svpFilterDecided = fileReady
         updateGpuDecoder()
-        property("scale", o.scaler.takeIf { it in VideoImageCatalog.mpvBuiltins } ?: "lanczos", "lanczos")
-        property("cscale", o.chromaScaler.takeIf { it !in VideoImageCatalog.chromaShaders } ?: "lanczos", "lanczos")
-        property("dscale", o.downscaler.takeIf { it != "ssim_down" } ?: "mitchell", "mitchell")
+        val (scale, cscale, dscale) = mpvEffectiveScalers(o)
+        property("scale", scale, "lanczos")
+        property("cscale", cscale, "lanczos")
+        property("dscale", dscale, "mitchell")
         // SSimDownscaler is tuned for dscale=mitchell on gamma-light input, not linear light.
         val defaultLinearDownscaling = linearDownscalingDefault
             ?: getPropertyString("linear-downscaling")?.also { linearDownscalingDefault = it }

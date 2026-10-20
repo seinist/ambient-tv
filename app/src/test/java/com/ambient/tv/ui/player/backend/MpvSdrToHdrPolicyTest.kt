@@ -701,6 +701,60 @@ class MpvSdrToHdrPolicyTest {
         assertRestored(native)
     }
 
+    @Test fun autoReferenceWhiteLeavesMpvDefaultUntouched() {
+        val native = FakeProperties().apply { values["hdr-reference-white"] = "auto"; target() }
+        val controller = begin(native)
+        assertTrue(controller.active)
+        controller.reset()
+        assertFalse(native.writes.any { it.first == "hdr-reference-white" })
+        assertRestored(native)
+    }
+
+    @Test fun chosenReferenceWhiteIsOwnedClampedToPeakAndRestoredFirst() {
+        val native = FakeProperties().apply { values["hdr-reference-white"] = "auto"; target() }
+        val bright = request.copy(referenceWhiteNits = 600)
+        val controller = beginWith(native, bright)
+        assertTrue(controller.active)
+        assertEquals("400", native.values["hdr-reference-white"])
+        controller.reset()
+        assertEquals("hdr-reference-white" to "auto", native.writes[native.writes.size - restoreOrder.size - 1])
+        assertEquals("auto", native.values["hdr-reference-white"])
+        assertRestored(native)
+    }
+
+    @Test fun referenceWhiteChangesLiveWithoutLeavingHdr() {
+        val native = FakeProperties().apply { values["hdr-reference-white"] = "auto"; target() }
+        val controller = begin(native)
+        native.writes.clear()
+        assertEquals(SdrToHdrStatus.ACTIVE, controller.update(request.copy(referenceWhiteNits = 300), true, 2_000))
+        assertEquals(listOf("hdr-reference-white" to "300"), native.writes)
+        assertEquals(SdrToHdrStatus.ACTIVE, controller.update(request.copy(referenceWhiteNits = 100), true, 2_100))
+        assertEquals("100", native.values["hdr-reference-white"])
+        assertEquals(SdrToHdrStatus.ACTIVE, controller.update(request, true, 2_200))
+        assertEquals("auto", native.values["hdr-reference-white"])
+        assertFalse(native.writes.any { it.first == "target-trc" })
+        controller.reset()
+        assertRestored(native)
+        assertEquals("auto", native.values["hdr-reference-white"])
+    }
+
+    @Test fun peakChangeStillRenegotiatesInsteadOfLiveWhite() {
+        val other = request.copy(peakNits = 500, referenceWhiteNits = 300)
+        assertFalse(other.sameOutput(request))
+        assertTrue(request.copy(referenceWhiteNits = 300).sameOutput(request))
+        assertFalse(request.sameOutput(null))
+    }
+
+    private fun beginWith(native: FakeProperties, start: SdrToHdrRequest): MpvSdrToHdrController =
+        MpvSdrToHdrController(native).also {
+            val eventualTarget = native.values.filterKeys { name -> name.startsWith("video-target-params/") }
+            native.sdrTarget()
+            assertEquals(SdrToHdrStatus.WAITING, it.update(start, true, 0))
+            it.update(start, true, 1_000)
+            native.values.putAll(eventualTarget)
+            it.update(start, true, 1_250)
+        }
+
     private fun begin(native: FakeProperties): MpvSdrToHdrController =
         MpvSdrToHdrController(native).also {
             val eventualTarget = native.values.filterKeys { name -> name.startsWith("video-target-params/") }

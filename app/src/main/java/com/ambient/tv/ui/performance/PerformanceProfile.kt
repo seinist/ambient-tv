@@ -32,7 +32,8 @@ enum class PerformanceMode(val key: String) {
  * - [PerformanceMode.LOW] always applies that side's reduced gates.
  * - [PerformanceMode.AUTO] applies them only on low-end devices.
  * - [PerformanceMode.BALANCED] and [PerformanceMode.MAXIMUM] keep that side full.
- *   SVP still requires playback [PerformanceMode.MAXIMUM].
+ *   SVP requires playback [PerformanceMode.MAXIMUM], or [PerformanceMode.AUTO] on a device
+ *   that is not low-end.
  */
 data class PerformanceProfile(
     val mode: PerformanceMode,
@@ -63,8 +64,14 @@ data class PerformanceProfile(
      * Audio DSP (EQ/night/dialogue/loudness/remix) stays available.
      */
     val gateExpensiveVideoVisuals: Boolean get() = reducedPlayback
-    /** Motion interpolation follows playback mode only, never the interface mode or Auto. */
-    val allowSvpInterpolation: Boolean get() = playbackMode == PerformanceMode.MAXIMUM
+    /**
+     * Motion interpolation follows playback mode only, never the interface mode: Maximum, or
+     * Auto on a device that is not low-end. Balanced and Low (and Auto resolving to Sparsam) stay off.
+     */
+    val allowSvpInterpolation: Boolean get() = playbackMode == PerformanceMode.MAXIMUM ||
+        (playbackMode == PerformanceMode.AUTO && !reducedPlayback)
+    /** Playback is Auto and this device was classified low-end, so Sparsam gates are active. */
+    val playbackAutoReduced: Boolean get() = playbackMode == PerformanceMode.AUTO && reducedPlayback
     /** Screensaver shaders run at Economy (or static ambient fallback) when the interface is reduced. */
     val forceScreensaverEconomy: Boolean get() = reducedEffects
     /** Skip FFT/spectrum work unless a visualizer is visible; throttle polling when playback is reduced. */
@@ -99,14 +106,22 @@ data class PerformanceProfile(
 
 val LocalPerformanceProfile = staticCompositionLocalOf { PerformanceProfile.Full }
 
-/** Heuristic for Amlogic/Rockchip-class TV sticks: low-RAM flag, small heap, or &lt;2 GiB total. */
+/**
+ * Low-end only for a system low-RAM device or less than 2 GiB of total RAM.
+ * memoryClass (dalvik heapgrowthlimit) is not a device-class signal: AOSP assigns 192 MB
+ * to 2–4 GiB configurations, so ordinary TVs and the SHIELD were classified low-end and
+ * Auto silently ran playback in Sparsam (bilinear, no shaders, no SVP).
+ */
 fun detectLowEndDevice(context: Context): Boolean {
     val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
-    if (am.isLowRamDevice) return true
-    if (am.memoryClass > 0 && am.memoryClass <= 192) return true
-    return runCatching {
-        val info = ActivityManager.MemoryInfo()
-        am.getMemoryInfo(info)
-        info.totalMem in 1 until (2L * 1024L * 1024L * 1024L)
-    }.getOrDefault(false)
+    val totalMem = runCatching {
+        ActivityManager.MemoryInfo().also(am::getMemoryInfo).totalMem
+    }.getOrDefault(0L)
+    return isLowEndDevice(am.isLowRamDevice, totalMem)
 }
+
+internal const val LOW_END_TOTAL_RAM_BYTES = 2L * 1024L * 1024L * 1024L
+
+/** [totalMemBytes] <= 0 means unknown and does not classify the device. */
+internal fun isLowEndDevice(lowRamDevice: Boolean, totalMemBytes: Long): Boolean =
+    lowRamDevice || totalMemBytes in 1 until LOW_END_TOTAL_RAM_BYTES

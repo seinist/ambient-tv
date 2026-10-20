@@ -505,6 +505,35 @@ internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double
 }
 
 
+/** mpv's actual scale/cscale/dscale for these effective options (see applyImageOptions). */
+internal fun mpvEffectiveScalers(o: MpvImageOptions): Triple<String, String, String> = Triple(
+    o.scaler.takeIf { it in VideoImageCatalog.mpvBuiltins } ?: "lanczos",
+    o.chromaScaler.takeIf { it !in VideoImageCatalog.chromaShaders } ?: "lanczos",
+    o.downscaler.takeIf { it != "ssim_down" } ?: "mitchell",
+)
+
+/** Stable diagnostic line for `adb logcat | grep "MPV image"`. */
+internal fun mpvImageOptionsLogLine(
+    playbackMode: String,
+    lowEnd: Boolean,
+    reduced: Boolean,
+    stored: MpvImageOptions,
+    effective: MpvImageOptions,
+    shaderKeys: List<String>,
+    svpAllowed: Boolean,
+    fittedScale: Double,
+    sdr: Boolean,
+    hdr: Boolean,
+    vo: String? = null,
+): String {
+    val (scale, cscale, dscale) = mpvEffectiveScalers(effective)
+    val fitted = if (fittedScale.isFinite()) String.format(java.util.Locale.ROOT, "%.3f", fittedScale) else "unknown"
+    return "MPV image profile=$playbackMode lowEnd=$lowEnd reduced=$reduced vo=${vo ?: "?"} " +
+        "scale=$scale cscale=$cscale dscale=$dscale storedScaler=${stored.normalized().scaler} " +
+        "deband=${effective.deband} sharpen=${effective.sharpening} shaders=${shaderKeys.joinToString(",").ifEmpty { "none" }} " +
+        "svpAllowed=$svpAllowed svp=${effective.svpMode} fittedScale=$fitted sdr=$sdr hdr=$hdr"
+}
+
 /**
  * Sparsam / Low (and Auto→low) effective overrides.
  * Saved user prefs stay intact; callers apply these only at the player/render boundary.

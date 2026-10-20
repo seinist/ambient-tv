@@ -7,9 +7,10 @@ import org.junit.Test
 
 class PerformanceProfileTest {
     @Test
-    fun svpRequiresExplicitMaximumModeOnEveryDeviceClass() {
+    fun svpRunsInMaximumAndInAutoOnFullDevices() {
         for (mode in PerformanceMode.entries) for (lowEnd in listOf(false, true)) {
-            assertEquals(mode == PerformanceMode.MAXIMUM,
+            val expected = mode == PerformanceMode.MAXIMUM || (mode == PerformanceMode.AUTO && !lowEnd)
+            assertEquals("$mode lowEnd=$lowEnd", expected,
                 PerformanceProfile.resolve(mode, lowEnd).allowSvpInterpolation)
         }
         assertFalse(PerformanceProfile.Full.allowSvpInterpolation)
@@ -54,6 +55,27 @@ class PerformanceProfileTest {
         assertFalse(full.reducedEffects)
         assertEquals(PerformanceMode.AUTO, low.mode)
         assertEquals(PerformanceMode.AUTO, full.mode)
+    }
+
+    @Test
+    fun autoReducedFlagOnlyForAutoOnLowEnd() {
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true).playbackAutoReduced)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false).playbackAutoReduced)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.LOW, lowEndDevice = true).playbackAutoReduced)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.MAXIMUM, lowEndDevice = true,
+            playbackMode = PerformanceMode.AUTO).copy(reducedPlayback = false).playbackAutoReduced)
+    }
+
+    @Test
+    fun lowEndIsLowRamOrUnderTwoGibOnly() {
+        val gib = 1024L * 1024L * 1024L
+        assertTrue(isLowEndDevice(lowRamDevice = true, totalMemBytes = 8 * gib))
+        assertTrue(isLowEndDevice(lowRamDevice = false, totalMemBytes = 2 * gib - 1))
+        assertTrue(isLowEndDevice(lowRamDevice = false, totalMemBytes = 1 * gib))
+        // 2–4 GiB TVs/SHIELD with a 192 MB memoryClass are full devices now.
+        assertFalse(isLowEndDevice(lowRamDevice = false, totalMemBytes = 2 * gib))
+        assertFalse(isLowEndDevice(lowRamDevice = false, totalMemBytes = 3 * gib))
+        assertFalse(isLowEndDevice(lowRamDevice = false, totalMemBytes = 0))
     }
 
     @Test

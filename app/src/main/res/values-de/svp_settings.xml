@@ -38,7 +38,7 @@
     <string name="svp_unavailable">Nicht verfügbar: %1$s</string>
     <string name="svp_inactive">Inaktiv: %1$s</string>
     <string name="svp_reason_engine">dieser Player (nur MPV oder VLC)</string>
-    <string name="svp_reason_performance">nur in „Maximale Leistung“</string>
+    <string name="svp_reason_performance">nur in „Maximale Leistung“ oder Auto (nicht auf schwachen Geräten)</string>
     <string name="svp_reason_library">auf diesem Gerät nicht unterstützt</string>
     <string name="svp_reason_hdr">HDR</string>
     <string name="svp_reason_resolution">Quelle über %1$s</string>

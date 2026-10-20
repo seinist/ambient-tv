@@ -38,7 +38,7 @@
     <string name="svp_unavailable">Unavailable: %1$s</string>
     <string name="svp_inactive">Inactive: %1$s</string>
     <string name="svp_reason_engine">this player (MPV or VLC only)</string>
-    <string name="svp_reason_performance">Maximum performance only</string>
+    <string name="svp_reason_performance">Maximum or Auto performance only (not on low-end devices)</string>
     <string name="svp_reason_library">not supported on this device</string>
     <string name="svp_reason_hdr">HDR</string>
     <string name="svp_reason_resolution">source above %1$s</string>

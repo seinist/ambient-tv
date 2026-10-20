@@ -88,6 +88,8 @@ data class MpvPlaybackSnapshot(
     val activeDeinterlace: String? = null,
     /** Live SVP state (source → target fps, preset, bypass); null with SVP off. */
     val svpStatus: String? = null,
+    /** Sparsam replaced the saved image options; stats show effective vs saved values. */
+    val sparsam: Boolean = false,
     /** Same sample as [svpStatus]; drives the OSD SVP chip. */
     val svpState: SvpState? = null,
     /** False on direct output, where mpv's `scale` property is not the path in effect. */
@@ -336,6 +338,8 @@ fun rememberMpvPlaybackSnapshot(
     var snapshot by remember(controller) { mutableStateOf(MpvPlaybackSnapshot(wantsToPlay = controller.wantsToPlay())) }
     val appVisible by com.ambient.tv.ui.player.rememberAppVisible()
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
+    val sparsam by androidx.compose.runtime.rememberUpdatedState(
+        com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
     LaunchedEffect(controller, nerdStatsEnabled, changingItem) {
         if (changingItem) return@LaunchedEffect
         var lastNerdPollMs = 0L
@@ -391,6 +395,7 @@ fun rememberMpvPlaybackSnapshot(
                 activeDownscaler = if (pollNerdStats) controller.activeDownscaler() else snapshot.activeDownscaler,
                 activeShaderPreset = if (pollNerdStats) controller.activeShaderPreset() else snapshot.activeShaderPreset,
                 configuredScaler = if (pollNerdStats) controller.imageOptions.scaler else snapshot.configuredScaler,
+                sparsam = controller.supportsGpuFilters && sparsam,
                 videoOutput = if (pollNerdStats) controller.configuredVideoOutput() else snapshot.videoOutput,
                 accelerationFallback = controller.accelerationFallback,
                 zeroCopyStatus = controller.zeroCopyStatus,

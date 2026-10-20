@@ -111,7 +111,7 @@ fun SettingsScreen(
     onDone: () -> Unit,
     initialCategoryKey: String? = null,
     onExitGuardChanged: (SettingsExitGuard?) -> Unit = {},
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int) -> Unit = { _, _, _, _, _, _, _, _, _ -> },
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
     onPerformanceModePreview: (String, String) -> Unit = { _, _ -> },
     onVisibleBackgroundVideoPlaybackPreview: (Boolean, Int) -> Unit = { _, _ -> },
     onUiLanguageSaved: () -> Unit = {},
@@ -126,8 +126,8 @@ fun SettingsScreen(
     val displayContext = LocalContext.current
     val supportedDisplayModes = com.ambient.tv.ui.player.rememberAvailableDisplayModes(displayContext)
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshStoredSettings() }
-    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits) {
-        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits)
+    LaunchedEffect(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits) {
+        onUiPreferencesPreview(uiState.uiScale, uiState.accentColorKey, uiState.customAccentHex, uiState.customPlaybackAccentHex, uiState.dualAccentEnabled, uiState.themeModeKey, uiState.uiHdrModeKey, uiState.sdrToHdrEnabled, uiState.sdrToHdrPeakNits, uiState.sdrToHdrReferenceWhiteNits)
     }
     LaunchedEffect(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey) {
         onPerformanceModePreview(uiState.uiPerformanceModeKey, uiState.playbackPerformanceModeKey)
@@ -135,7 +135,7 @@ fun SettingsScreen(
     androidx.compose.runtime.DisposableEffect(viewModel) {
         onDispose {
             val saved = viewModel.savedAppearance
-            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.themeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled, saved.sdrToHdrPeakNits)
+            onUiPreferencesPreview(saved.uiScale, saved.accentColorKey, saved.customAccentHex, saved.customPlaybackAccentHex, saved.dualAccentEnabled, saved.themeModeKey, saved.uiHdrModeKey, saved.sdrToHdrEnabled, saved.sdrToHdrPeakNits, saved.sdrToHdrReferenceWhiteNits)
             onPerformanceModePreview(saved.uiPerformanceModeKey, saved.playbackPerformanceModeKey)
             onVisibleBackgroundVideoPlaybackPreview(saved.visibleBackgroundVideoPlayback, saved.backgroundVideoDimPercent)
         }
@@ -346,6 +346,8 @@ fun SettingsScreen(
                                     onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
                                     sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
                                     onSdrToHdrPeakNitsChanged = viewModel::onSdrToHdrPeakNitsChanged,
+                                    sdrToHdrReferenceWhiteNits = uiState.sdrToHdrReferenceWhiteNits,
+                                    onSdrToHdrReferenceWhiteNitsChanged = viewModel::onSdrToHdrReferenceWhiteNitsChanged,
                                 )
                             }
                             item {
@@ -743,6 +745,8 @@ fun SettingsScreen(
                                     PerformanceModeSelect(
                                         selected = uiState.playbackPerformanceModeKey,
                                         onSelected = viewModel::onPlaybackPerformanceModeChanged,
+                                        // Auto on a low-end device runs playback in Sparsam; say so.
+                                        autoLowEnd = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.lowEndDevice,
                                     )
                                 }
                             }
@@ -1285,6 +1289,8 @@ fun SettingsScreen(
                                     onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
                                     sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
                                     onSdrToHdrPeakNitsChanged = viewModel::onSdrToHdrPeakNitsChanged,
+                                    sdrToHdrReferenceWhiteNits = uiState.sdrToHdrReferenceWhiteNits,
+                                    onSdrToHdrReferenceWhiteNitsChanged = viewModel::onSdrToHdrReferenceWhiteNitsChanged,
                                 )
                             }
                             item { SettingsImageDefaults(uiState, viewModel) }
@@ -2054,10 +2060,12 @@ private fun themeModeLabel(key: String): String = when (key) {
 private fun PerformanceModeSelect(
     selected: String,
     onSelected: (String) -> Unit,
+    autoLowEnd: Boolean = false,
 ) {
     SettingsSelect(options = listOf("auto", "balanced", "maximum", "low").map { mode ->
         SettingsSelectOption(
-            text = performanceModeLabel(mode),
+            text = if (mode == "auto" && autoLowEnd) stringResource(R.string.settings_performance_auto_low_end)
+                else performanceModeLabel(mode),
             selected = selected == mode,
             onClick = { onSelected(mode) },
         )

@@ -31,6 +31,9 @@ internal fun PlayerSdrToHdrControl() {
             nits.toString() to if (nits == 0) stringResource(R.string.settings_ui_hdr_auto) else "$nits nits"
         }
     val selected = if (selection.first) selection.second.toString() else "off"
+    val referenceWhite by produceState(initialValue = preferences.sdrToHdrReferenceWhiteNits, key1 = preferences) {
+        preferences.changes().collect { value = preferences.sdrToHdrReferenceWhiteNits }
+    }
     PlayerDropUpSelector(
         label = stringResource(R.string.settings_sdr_to_hdr),
         value = options.first { it.first == selected }.second,
@@ -45,4 +48,17 @@ internal fun PlayerSdrToHdrControl() {
             }
         },
     )
+    if (!selection.first) return
+    // SDR white inside the HDR signal; applied live (mpv hdr-reference-white / GL shader uniform).
+    val whiteKey = sdrReferenceWhiteChoiceKey(referenceWhite)
+    val whiteChoices = sdrReferenceWhiteChoices()
+    PlayerDropUpSelector(
+        label = stringResource(R.string.sdr_reference_white),
+        value = whiteChoices.first { it.first == whiteKey }.second +
+            if (whiteKey == SDR_REFERENCE_WHITE_CUSTOM) " · $referenceWhite nits" else "",
+        options = whiteChoices,
+        selectedKey = whiteKey,
+        onSelected = { key -> preferences.sdrToHdrReferenceWhiteNits = sdrReferenceWhiteForChoice(key, referenceWhite) },
+    )
+    SdrReferenceWhiteCustomSlider(referenceWhite) { preferences.sdrToHdrReferenceWhiteNits = it }
 }

@@ -120,7 +120,9 @@ internal class SdrHdrSurfaceOutput(
         }
         if (failed) return SdrToHdrStatus.FAILED.also { status = it }
         if (closing) return SdrToHdrStatus.WAITING
-        val config = Config(request, width, height, fps)
+        // The SDR white is applied live by the running session; it is not part of its identity.
+        val config = Config(request.copy(referenceWhiteNits = 0), width, height, fps)
+        session?.takeIf { candidate == config }?.referenceWhite(request.effectiveReferenceWhiteNits)
         if (candidate != config) {
             if (session != null) {
                 stop(SdrToHdrStatus.WAITING)

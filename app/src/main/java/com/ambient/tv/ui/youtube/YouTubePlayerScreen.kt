@@ -55,6 +55,8 @@ import com.ambient.tv.ui.player.formatNerdFps
 import com.ambient.tv.ui.player.formatNerdHz
 import com.ambient.tv.ui.player.formatMpvScalerName
 import com.ambient.tv.ui.player.formatMpvUpscalerForStats
+import com.ambient.tv.ui.player.formatMpvScalerStat
+import com.ambient.tv.ui.player.formatMpvDebandStat
 import com.ambient.tv.ui.player.formatNerdBytes
 
 import androidx.activity.compose.BackHandler
@@ -1456,10 +1458,11 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                         formatNerdSeconds(snapshot.cacheDurationSeconds)?.let { add(stringResource(R.string.player_nerd_buffer_health) to it) }
                         formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let { add(stringResource(R.string.player_nerd_cache_speed) to it) }
                         if (controller.supportsGpuFilters) {
-                            formatMpvUpscalerForStats(controller.imageOptions.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling)?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
-                            formatMpvScalerName(snapshot.activeChromaScaler)?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
-                            formatMpvScalerName(snapshot.activeDownscaler)?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
-                            if (controller.imageOptions.deband != "off") add(stringResource(R.string.player_nerd_deband_configured) to "Enabled")
+                            formatMpvUpscalerForStats(controller.imageOptions.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling, sparsam = snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
+                            formatMpvScalerStat(snapshot.activeChromaScaler, controller.imageOptions.chromaScaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
+                            formatMpvScalerStat(snapshot.activeDownscaler, controller.imageOptions.downscaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
+                            formatMpvDebandStat(controller.imageOptions.deband, snapshot.sparsam, "Enabled")?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
+                            if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
                         }
                         snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
                         controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add("Shaders (loaded; conditional)" to it.joinToString()) }

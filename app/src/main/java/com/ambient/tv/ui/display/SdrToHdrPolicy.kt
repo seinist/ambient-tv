@@ -3,9 +3,38 @@ package com.ambient.tv.ui.display
 /** ACTIVE confirms the renderer's target, never the physical TV/HDMI output. */
 enum class SdrToHdrStatus { OFF, UNAVAILABLE, WAITING, ACTIVE, FAILED }
 
-data class SdrToHdrRequest(val peakNits: Int, val displayId: Int, val displayModeId: Int)
+data class SdrToHdrRequest(
+    val peakNits: Int,
+    val displayId: Int,
+    val displayModeId: Int,
+    /** SDR white inside the PQ signal in nits; 0 = renderer default ([SDR_REFERENCE_WHITE_DEFAULT]). */
+    val referenceWhiteNits: Int = 0,
+) {
+    /** Never above the output budget: a reference white over the peak would clip all highlights. */
+    val effectiveReferenceWhiteNits: Int
+        get() = effectiveSdrReferenceWhiteNits(referenceWhiteNits, peakNits)
+
+    /** Same output negotiation; only the live brightness differs. */
+    fun sameOutput(other: SdrToHdrRequest?): Boolean =
+        other != null && other.copy(referenceWhiteNits = referenceWhiteNits) == this
+}
 
 fun normalizedSdrToHdrPeakNits(value: Int): Int = if (value == 0) 0 else value.coerceIn(300, 600)
+
+/** BT.2408 / mpv MP_REF_WHITE: the brightness SDR white gets in an HDR container by default. */
+const val SDR_REFERENCE_WHITE_DEFAULT = 203
+const val SDR_REFERENCE_WHITE_MIN = 80
+const val SDR_REFERENCE_WHITE_MAX = 600
+/** Presets offered in Settings and the player; 0 = Auto (default 203). Any other value is custom. */
+val SDR_REFERENCE_WHITE_PRESETS = listOf(0, 100, 203, 300, 400)
+
+fun normalizedSdrReferenceWhiteNits(value: Int): Int =
+    if (value <= 0) 0 else value.coerceIn(SDR_REFERENCE_WHITE_MIN, SDR_REFERENCE_WHITE_MAX)
+
+fun effectiveSdrReferenceWhiteNits(requested: Int, peakNits: Int): Int {
+    val white = normalizedSdrReferenceWhiteNits(requested).takeIf { it > 0 } ?: SDR_REFERENCE_WHITE_DEFAULT
+    return if (peakNits > 0) minOf(white, peakNits) else white
+}
 
 /**
  * The current SDR/HDR ratio may still be 1 before the first HDR frame. A real, reported
@@ -20,6 +49,7 @@ internal fun sdrToHdrRequest(
     displayModeId: Int,
     allowSurfaceProbe: Boolean = false,
     requestedPeakNits: Int = 0,
+    requestedReferenceWhiteNits: Int = 0,
 ): SdrToHdrRequest? {
     if (!enabled || display.sdk < 34 || !display.automatic || !display.windowReady ||
         !display.displayHdr || !display.wideColor || !display.sourceSupported) return null
@@ -33,7 +63,7 @@ internal fun sdrToHdrRequest(
     val automatic = if (measured) peakNits.coerceAtMost(600f).toInt() else 300
     val target = if (requested == 0) automatic else if (measured) minOf(requested, automatic) else requested
     return SdrToHdrRequest(target,
-        displayId, displayModeId)
+        displayId, displayModeId, normalizedSdrReferenceWhiteNits(requestedReferenceWhiteNits))
 }
 
 enum class SdrToHdrPlayerKind { NONE, MPV_VULKAN, MPV_UNSUPPORTED, VLC_GL, VLC_VULKAN, MEDIA3 }

@@ -39,6 +39,14 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
+        if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
+                com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
+            Text(
+                androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_output_sparsam_gpu),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
     }
 }
 

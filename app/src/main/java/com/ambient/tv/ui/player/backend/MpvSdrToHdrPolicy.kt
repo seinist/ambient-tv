@@ -63,6 +63,12 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
             fail()
             return status
         }
+        // Same output, new SDR brightness: change hdr-reference-white live instead of
+        // leaving HDR (a full reset would renegotiate the swapchain and the HDMI mode).
+        if (engaged && candidate != request && request.sameOutput(candidate)) {
+            if (!applyReferenceWhite(request)) return status
+            candidate = request
+        }
         if (candidate != request) {
             reset()
             if (failed) return status
@@ -121,7 +127,7 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
         val previous = snapshot
         snapshot = null
         if (previous != null) {
-            for (name in RESTORE_ORDER) {
+            for (name in RESTORE_ORDER.filter(previous::containsKey)) {
                 // Each option gets an attempt, including after a setter fails or throws.
                 val restored = try {
                     properties.set(name, previous.getValue(name))
@@ -161,6 +167,8 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
             "tone-mapping" to "spline",
             "inverse-tone-mapping" to "yes",
         )
+        // Owned only when the user chose a brightness; Auto keeps mpv's own default (203 on Android).
+        if (request.referenceWhiteNits > 0) values[REFERENCE_WHITE] = request.effectiveReferenceWhiteNits.toString()
         try {
             val previous = linkedMapOf<String, String>()
             for (name in values.keys) {
@@ -186,6 +194,39 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
         return true
     }
 
+    /** Live SDR white change inside an engaged transaction. Restoration keeps the pre-conversion value. */
+    private fun applyReferenceWhite(request: SdrToHdrRequest): Boolean {
+        val previous = snapshot ?: return false
+        try {
+            if (request.referenceWhiteNits > 0) {
+                if (!previous.containsKey(REFERENCE_WHITE)) {
+                    val original = properties.get(REFERENCE_WHITE)
+                    if (original == null) {
+                        fail()
+                        return false
+                    }
+                    previous[REFERENCE_WHITE] = original
+                }
+                if (!properties.set(REFERENCE_WHITE, request.effectiveReferenceWhiteNits.toString())) {
+                    fail()
+                    return false
+                }
+            } else {
+                val original = previous.remove(REFERENCE_WHITE) ?: return true
+                if (!properties.set(REFERENCE_WHITE, original)) {
+                    failed = true
+                    rollbackFailed = true
+                    reset()
+                    return false
+                }
+            }
+        } catch (_: Exception) {
+            fail()
+            return false
+        }
+        return true
+    }
+
     private fun target(name: String): String? =
         properties.get("video-target-params/$name")?.trim()?.lowercase()
 
@@ -195,7 +236,9 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
             "target-prim" to "bt.2020", "target-trc" to "pq",
             "tone-mapping" to "spline", "inverse-tone-mapping" to "yes")
         return options.all { (name, value) -> properties.get(name)?.trim()?.lowercase() == value } &&
-            properties.get("target-peak")?.toDoubleOrNull() == request.peakNits.toDouble()
+            properties.get("target-peak")?.toDoubleOrNull() == request.peakNits.toDouble() &&
+            (request.referenceWhiteNits <= 0 ||
+                properties.get(REFERENCE_WHITE)?.toDoubleOrNull() == request.effectiveReferenceWhiteNits.toDouble())
     }
 
     private fun sdrTargetConfirmed(): Boolean {
@@ -212,7 +255,7 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
         // command.c exposes hdr.max_luma / MP_REF_WHITE (203), not measured pixels.
         // Strict mode respects negotiated metadata: a swapchain may ignore target-peak.
         // Reject an unconfirmed cap rather than treating every PQ target as success.
-        // hdr-reference-white is deliberately neither owned nor overridden.
+        // hdr-reference-white only moves SDR white inside the container, not this cap.
         return peak.isFinite() && peak > 1.0 && peak * 203.0 <= request.peakNits * 1.05
     }
 
@@ -227,7 +270,11 @@ internal class MpvSdrToHdrController(private val properties: MpvHdrProperties) {
         const val TARGET_TIMEOUT_MS = 2_000L
 
         // Keep strict negotiation enabled until all original target/hint options are back.
+        /** mpv 6947452 `--hdr-reference-white=<auto|10-10000>`: SDR white in the HDR container (gpu-next). */
+        const val REFERENCE_WHITE = "hdr-reference-white"
+
         val RESTORE_ORDER = listOf(
+            REFERENCE_WHITE,
             "inverse-tone-mapping",
             "target-trc",
             "target-prim",
