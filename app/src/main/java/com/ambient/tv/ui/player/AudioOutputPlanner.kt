@@ -72,6 +72,8 @@ fun planAudioOutput(
     media3CanDecode: Boolean = true,
     rejectedCodecs: Set<String> = emptySet(),
     sourceChannels: Int? = null,
+    /** The current DTS-HD stream has no core frame (lossless only); it cannot become DTS core. */
+    dtsCoreMissing: Boolean = false,
 ): AudioOutputPlan {
     val requested = options.normalized()
     val blocked = rejectedCodecs.mapNotNull(::normalizeSourceCodec).toSet()
@@ -95,7 +97,7 @@ fun planAudioOutput(
     }
 
     val localEnabled = requested.localFallback != "off"
-    val corePossible = requested.localFallback == "auto" && permitted && source == "dts-hd" &&
+    val corePossible = requested.localFallback == "auto" && permitted && source == "dts-hd" && !dtsCoreMissing &&
         "dts" in confirmed && "dts-hd" !in confirmed && (mpv || media3Core) &&
         (requested.output == "bitstream" || liveRoute.pcmChannels < 6)
     if (corePossible) {
@@ -159,9 +161,18 @@ object AudioCodecRejects {
     @Volatile var version = 0
         private set
 
+    /** Set when a DTS-HD stream of the current item turned out to carry no DTS core. */
+    @Volatile var dtsCoreMissing = false
+        private set
+
     fun clear() {
         rejected.clear()
+        dtsCoreMissing = false
         version++
+    }
+
+    fun markDtsCoreMissing() {
+        if (!dtsCoreMissing) { dtsCoreMissing = true; version++ }
     }
 
     fun reject(codec: String?) {

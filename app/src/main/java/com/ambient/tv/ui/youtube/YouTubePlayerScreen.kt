@@ -1497,6 +1497,8 @@ private data class YouTubeOsdModel(
     val onSeek: (Long) -> Unit,
     val onBack: () -> Unit,
     val info: List<String>,
+    /** "Passthrough", "→ PCM", "E-AC3 5.1 → PCM 5.1"; null for plain AAC/Opus decode. */
+    val audioBadge: String? = null,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
@@ -1539,6 +1541,7 @@ private data class YouTubeOsdModel(
                     MetaBadge(com.ambient.tv.ui.common.systemName(com.ambient.tv.ui.common.MediaSystem.YOUTUBE), emphasized = true)
                     MetaBadge(backend)
                     com.ambient.tv.ui.player.PlayerStreamBadges(info)
+                    audioBadge?.let { MetaBadge(it) }
                 }
                 PlayerControlBar(
                     leftContent = {
@@ -1610,6 +1613,7 @@ private fun YouTubeControls(
         onSeek = onSeek,
         onBack = onBack,
         info = info,
+        audioBadge = com.ambient.tv.ui.player.audioOutputBadge(panelConfig.audioSession),
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,

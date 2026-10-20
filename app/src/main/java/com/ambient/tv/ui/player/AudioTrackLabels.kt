@@ -4,6 +4,7 @@ import java.util.Locale
 
 internal fun audioChannelLabel(count: Int): String = when (count) {
     8 -> "7.1"
+    7 -> "6.1"
     6 -> "5.1"
     2 -> "2.0"
     1 -> "1.0"
