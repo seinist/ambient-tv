@@ -44,7 +44,7 @@ internal data class MpvCasTransferProfile(
     val fullRange: Boolean = false,
 )
 
-/** [levels] is mpv's `video-params/levels` ("limited"/"full"); only HDR profiles use it. */
+/** [levels] is mpv's [MPV_PROP_COLORLEVELS] ("limited"/"full"); only HDR profiles use it. */
 internal fun mpvCasTransferProfile(transfer: String?, levels: String? = null): MpvCasTransferProfile? {
     val full = levels?.trim()?.lowercase() in setOf("full", "pc", "jpeg")
     return when (transfer?.trim()?.lowercase()) {

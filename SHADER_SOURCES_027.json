@@ -186,6 +186,17 @@
     "file": "app/src/main/res/raw/quality_cas_a945e104.glsl"
   },
   {
+    "key": "cas_hdr",
+    "derived_from": "cas",
+    "url": "https://gist.githubusercontent.com/agyild/bbb4e58298b2f86aa24da3032a0d2ee6/raw/1f96a8c50fde6924067a875e03868dea6a0a11dd/CAS.glsl",
+    "revision": "10e4ca1b6ef173b64391ce2c81b9a95fcd095931",
+    "license": "MIT",
+    "upstream_sha256": "939ed74a59d142d77256f6d30d174c07a18d0587cc9dd25891f24020569b0719",
+    "local_patch": "Local HDR derivative of the pinned CAS (single LUMA pass): sharpens in linear light (PQ/HLG EOTF, limited/full range), PQ EOTF from a bundled 1024x2 RGBA8 LUT of float32 values (scripts/check_glsl_shaders.py), min/max on code values so only 7 taps are linearised, flat neighbourhoods and unchanged pixels keep their code (footroom/headroom), strength blend CAS_BLEND injected per variant",
+    "sha256": "02305263b3bdcffb8d97b0f820624c83b5dbd0eb056aec1f9e817cfe98c006f7",
+    "file": "app/src/main/res/raw/quality_cas_hdr.glsl"
+  },
+  {
     "key": "nis",
     "url": "https://gist.githubusercontent.com/agyild/7e8951915b2bf24526a9343d951db214/raw/05f00864228871ffd157daa9beb2db8fa7412cfa/NVScaler.glsl",
     "revision": "05f00864228871ffd157daa9beb2db8fa7412cfa",

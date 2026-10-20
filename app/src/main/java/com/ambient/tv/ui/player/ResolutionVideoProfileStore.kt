@@ -60,7 +60,8 @@ internal object ResolutionVideoProfileStore {
         val key = if (global) GLOBAL_KEY else key(metadata, handle) ?: return null
         val prefs = videoImagePreferences(context)
         val title = TitleVideoSettingsStore.load(context, metadata)
-        val output = BackgroundPlaybackSession.videoSettings(metadata,
+        // The player's automatic HDR "direct" is not saved as the profile's output.
+        val output = BackgroundPlaybackSession.chosenVideoSettings(metadata,
             PlayerVideoSettings.from(prefs).withResolution(load(context, metadata)).withTitle(title))
         val profile = when (handle) {
             is MpvPlaybackController -> ResolutionVideoProfile(

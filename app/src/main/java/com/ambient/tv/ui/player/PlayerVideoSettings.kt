@@ -8,11 +8,26 @@ data class PlayerVideoSettings(
     val mpvOutput: String = "auto",
     val mpvDecoder: String = "auto",
     val vlcOutput: String = "auto",
+    /**
+     * [mpvOutput] "direct" was set by the player itself (HDR found at runtime, the GPU route
+     * does not apply), not chosen by the user: it routes this playback but is neither an
+     * explicit choice for "HDR über GPU" nor stored for the title or a profile.
+     */
+    val automaticHdrDirect: Boolean = false,
 ) {
+    /** A user's output choice; it replaces an automatic "direct". */
     fun withMpvOutput(output: String) = copy(
         mpvOutput = output,
         mpvDecoder = if (mpvDecoder == "vulkan" && output !in setOf("auto", "vulkan")) "auto" else mpvDecoder,
+        automaticHdrDirect = false,
     )
+
+    /** The player's own HDR fallback to the direct surface ([automaticHdrDirect]). */
+    fun withAutomaticHdrDirect() = withMpvOutput("direct").copy(automaticHdrDirect = true)
+
+    /** What the user actually chose: an automatic "direct" falls back to [configured]'s output. */
+    fun chosen(configured: PlayerVideoSettings) =
+        if (automaticHdrDirect) copy(mpvOutput = configured.mpvOutput, automaticHdrDirect = false) else this
 
     fun save(preferences: AppPreferences, backend: String) {
         when (backend) {

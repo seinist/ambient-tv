@@ -14,6 +14,8 @@
     <string name="player_output_hdr_gpu_display">HDR über GPU: das Display meldet kein HDR10, HDR wird auf SDR abgebildet.</string>
     <string name="player_output_hdr_gpu_reduced">HDR über GPU: im Modus Sparsam aus.</string>
     <string name="player_output_hdr_gpu_not_confirmed">HDR über GPU: HDR-Ausgabe nicht bestätigt, die direkte Fläche wird genutzt.</string>
+    <string name="player_output_hdr_gpu_vulkan_fallback">HDR über GPU: Die Vulkan-Ausgabe ist für diesen Titel ausgefallen, die direkte Fläche wird genutzt.</string>
+    <string name="player_output_hdr_gpu_checking">HDR über GPU: HDR10 läuft über Vulkan (gpu-next), die HDR-Ausgabe wird noch bestätigt.</string>
     <string name="player_output_hdr_gpu_overload">HDR über GPU: zu viele ausgelassene Bilder, die direkte Fläche wird genutzt.</string>
     <string name="image_mpv_hdr_passthrough">HDR-Ausgabe über GPU: Schärfen, Deband sowie die Skalierer RAVU Lite / FSR wirken. Filmkorn ist dabei aus; Entrauschen, Deblock, SSimSuperRes, Bildanpassungen und die übrigen Shader brauchen SDR.</string>
     <string name="player_output_hdr_gpu_no_effects">HDR über GPU: kein HDR-tauglicher Shader und kein Debanding gewählt, HDR bleibt auf der direkten Fläche.</string>

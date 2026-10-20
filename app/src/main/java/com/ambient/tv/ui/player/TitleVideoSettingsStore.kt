@@ -141,10 +141,11 @@ internal object TitleVideoSettingsStore {
         }
         if (handle is SubtitleDelayTarget) next = next.copy(subtitleDelayMs = handle.subtitleDelayMs.takeIf { it != 0 })
         // Output/decoder only when changed in this session; otherwise the stored choice stays.
+        // The player's automatic HDR "direct" is no choice: the stored output stays as it was.
         output?.let { chosen ->
             val defaults = PlayerVideoSettings.from(preferences).withResolution(profile)
             next = next.copy(
-                mpvOutput = chosen.mpvOutput.takeIf { full || it != defaults.mpvOutput },
+                mpvOutput = titleMpvOutputToStore(next.mpvOutput, chosen, defaults.mpvOutput, full),
                 mpvDecoder = chosen.mpvDecoder.takeIf { full || it != defaults.mpvDecoder },
                 vlcOutput = chosen.vlcOutput.takeIf { full || it != defaults.vlcOutput },
             )
@@ -162,3 +163,11 @@ internal fun PlayerVideoSettings.withTitle(title: TitleVideoSettings?): PlayerVi
     mpvDecoder = title.mpvDecoder ?: mpvDecoder,
     vlcOutput = title.vlcOutput ?: vlcOutput,
 )
+
+/**
+ * Output stored for a title after a session: the session's choice when it deviates from
+ * [defaultOutput] (or always for an old full [snapshot]). The player's automatic HDR "direct"
+ * ([PlayerVideoSettings.automaticHdrDirect]) is no choice: [stored] stays as it was.
+ */
+internal fun titleMpvOutputToStore(stored: String?, chosen: PlayerVideoSettings, defaultOutput: String, snapshot: Boolean): String? =
+    if (chosen.automaticHdrDirect) stored else chosen.mpvOutput.takeIf { snapshot || it != defaultOutput }

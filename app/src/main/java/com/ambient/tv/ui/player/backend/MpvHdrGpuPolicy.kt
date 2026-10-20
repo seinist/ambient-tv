@@ -23,8 +23,10 @@ enum class MpvHdrGpuReason {
     REDUCED_EFFECTS,
     /** No HDR-safe shader or deband is selected: the GPU path would only add copy-back cost. */
     NO_EFFECTS,
-    /** mpv/Android did not confirm a PQ BT.2020 target in time, or Vulkan fell back. */
+    /** mpv/Android did not confirm a PQ BT.2020 target in time. */
     NOT_CONFIRMED,
+    /** The Vulkan output failed for this title (surface or VO init); kept for the media only. */
+    VULKAN_FALLBACK,
     /** Sustained dropped frames on the GPU path with nothing left to reduce. */
     OVERLOAD,
 }
@@ -110,7 +112,16 @@ internal fun mpvHdrGpuOutputMode(decision: MpvHdrGpuDecision, configured: String
  */
 internal data class MpvHdrFailureHold(val pauseNative: Boolean, val playIntent: Boolean)
 
-internal fun mpvHdrFailureHold(playIntent: Boolean): MpvHdrFailureHold = MpvHdrFailureHold(pauseNative = true, playIntent = playIntent)
+/**
+ * [attached]: a surface is attached. Without one (background audio, vo=null) nothing reopens
+ * until the view returns, so audio keeps playing instead of waiting paused.
+ */
+internal fun mpvHdrFailureHold(playIntent: Boolean, attached: Boolean = true): MpvHdrFailureHold =
+    MpvHdrFailureHold(pauseNative = attached, playIntent = playIntent)
+
+/** mpv may play: no passthrough failure, or no surface the failure would show on. */
+internal fun mpvHdrNativePlayAllowed(playIntent: Boolean, failure: MpvHdrGpuReason?, attached: Boolean): Boolean =
+    playIntent && (failure == null || !attached)
 
 /** OpenGL cannot signal HDR on Android: a passthrough player never takes the OpenGL fallback. */
 internal fun mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough: Boolean, vulkan: Boolean, released: Boolean): Boolean =
@@ -220,16 +231,21 @@ internal val MPV_HDR_TARGET_PIXEL_FORMATS = setOf("rgb10a2", "bgr10a2", "rgba16"
 /**
  * HDR media detected at runtime and passthrough failures for this app process.
  *
+ * Keys are media identities ([mpvHdrGpuMediaKey]): source + media id (+ version) where the
+ * playback has one, otherwise the URL without query (session ids, tickets, tokens). Plex remux
+ * URLs share one path for every title, so the URL alone is only the fallback.
+ *
  * Failures are kept at the level they describe:
  * - display ([SWAPCHAIN_NO_HDR10][MpvHdrGpuReason.SWAPCHAIN_NO_HDR10], and
- *   [NOT_CONFIRMED][MpvHdrGpuReason.NOT_CONFIRMED] after it happened twice on that display),
+ *   [NOT_CONFIRMED][MpvHdrGpuReason.NOT_CONFIRMED] after it happened twice in a row on that
+ *   display; a confirmed passthrough in between resets the count, [recordConfirmed]),
  * - media + resolution (everything else, and a first NOT_CONFIRMED, which may be transient).
- * Media keys drop the query (session ids, tickets, tokens). Both maps are bounded and every
- * entry carries the display it was seen on, so another display starts clean. [clear] runs when
- * the option is toggled and on "Erneut prüfen".
+ * Both maps are bounded and every entry carries the display it was seen on, so another display
+ * starts clean. [clear] runs when the option is toggled and on "Erneut prüfen".
  *
  * Live sources only keep a detection for [LIVE_DETECTION_TTL_MS] and reopen at most once per
  * [LIVE_REOPEN_WINDOW_MS]; an SDR reading forgets it without a reopen ([forgetDetected]).
+ * A Dolby Vision detection of a file is not replaced by the HDR10 reading of its base layer.
  */
 object MpvHdrGpuSession {
     const val MAX_ENTRIES = 64
@@ -251,42 +267,53 @@ object MpvHdrGpuSession {
     /** Compose reads this to recompose when a verdict that changes the route was recorded. */
     private val version = androidx.compose.runtime.mutableIntStateOf(0)
 
+    /** URL fallback of [mpvHdrGpuMediaKey]: without fragment and query. */
     fun mediaKey(url: String): String = url.substringBefore('#').substringBefore('?')
-    private fun mediaFailureKey(url: String, resolution: String?, display: String) = display + "|" + mediaKey(url) + "|" + resolution.orEmpty()
+    private fun mediaFailureKey(media: String, resolution: String?, display: String) = display + "|" + media + "|" + resolution.orEmpty()
     private fun bump() { version.intValue++ }
 
-    fun detectedHdr(url: String, nowMs: Long = android.os.SystemClock.elapsedRealtime()): HdrStandard? {
+    fun detectedHdr(media: String?, nowMs: Long = android.os.SystemClock.elapsedRealtime()): HdrStandard? {
         version.intValue
+        media ?: return null
         return synchronized(lock) {
-            detected[url]?.takeIf { !it.live || nowMs - it.atMs in 0..LIVE_DETECTION_TTL_MS }?.standard
+            detected[media]?.takeIf { !it.live || nowMs - it.atMs in 0..LIVE_DETECTION_TTL_MS }?.standard
         }
     }
 
     /** False when nothing changed or a live source already reopened within the window. */
-    fun recordDetected(url: String, standard: HdrStandard, live: Boolean = false,
+    fun recordDetected(media: String, standard: HdrStandard, live: Boolean = false,
         nowMs: Long = android.os.SystemClock.elapsedRealtime()): Boolean = synchronized(lock) {
-        val previous = detected[url]
+        val previous = detected[media]
         val stillValid = previous != null && (!previous.live || nowMs - previous.atMs in 0..LIVE_DETECTION_TTL_MS)
         if (stillValid && previous!!.standard == standard) return@synchronized false
-        if (live) {
-            val last = liveReopens[url]
-            if (last != null && nowMs - last in 0 until LIVE_REOPEN_WINDOW_MS) return@synchronized false
-            liveReopens[url] = nowMs
+        // The direct reopen of a Dolby Vision file reads its PQ base layer as HDR10.
+        if (stillValid && !live && previous!!.standard == HdrStandard.DOLBY_VISION && standard == HdrStandard.HDR10) {
+            return@synchronized false
         }
-        detected[url] = Detected(standard, live, nowMs)
+        if (live) {
+            val last = liveReopens[media]
+            if (last != null && nowMs - last in 0 until LIVE_REOPEN_WINDOW_MS) return@synchronized false
+            liveReopens[media] = nowMs
+        }
+        detected[media] = Detected(standard, live, nowMs)
         bump()
         true
     }
 
-    /** A live source that now reads SDR: the next tune starts on the normal route. No recompose. */
-    fun forgetDetected(url: String) { synchronized(lock) { detected.remove(url) } }
+    /**
+     * A live source that now reads SDR: the next tune of this channel starts on the normal route.
+     * No recompose; the running SDR playback keeps its route.
+     */
+    fun forgetDetected(media: String) { synchronized(lock) { detected.remove(media) } }
 
-    fun failure(url: String, resolution: String?, display: String): MpvHdrGpuReason? {
+    fun failure(media: String?, resolution: String?, display: String): MpvHdrGpuReason? {
         version.intValue
-        return synchronized(lock) { displayFailures[display] ?: mediaFailures[mediaFailureKey(url, resolution, display)] }
+        return synchronized(lock) {
+            displayFailures[display] ?: media?.let { mediaFailures[mediaFailureKey(it, resolution, display)] }
+        }
     }
 
-    fun recordFailure(url: String, resolution: String?, display: String, reason: MpvHdrGpuReason) {
+    fun recordFailure(media: String, resolution: String?, display: String, reason: MpvHdrGpuReason) {
         synchronized(lock) {
             when (reason) {
                 MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 -> displayFailures[display] = reason
@@ -297,11 +324,14 @@ object MpvHdrGpuSession {
                 }
                 else -> Unit
             }
-            val key = mediaFailureKey(url, resolution, display)
+            val key = mediaFailureKey(media, resolution, display)
             if (key !in mediaFailures) mediaFailures[key] = reason
         }
         bump()
     }
+
+    /** The passthrough was confirmed on [display]: an earlier NOT_CONFIRMED there was transient. */
+    fun recordConfirmed(display: String) { synchronized(lock) { notConfirmed.remove(display) } }
 
     fun clear() {
         synchronized(lock) {
@@ -313,6 +343,31 @@ object MpvHdrGpuSession {
     internal fun sizes(): List<Int> = synchronized(lock) {
         listOf(detected.size, liveReopens.size, mediaFailures.size, displayFailures.size, notConfirmed.size)
     }
+}
+
+/**
+ * Media identity for [MpvHdrGpuSession]: source (+ live server) + media id + version
+ * (`mediaIndex` of the route) when the playback has an id; trailers and playbacks without
+ * metadata fall back to the URL without query. Null when neither is known.
+ */
+internal fun mpvHdrGpuMediaKey(source: String?, mediaId: String?, liveSourceId: String?, route: String?,
+    trailer: Boolean, url: String?): String? {
+    val id = mediaId?.trim().orEmpty()
+    if (!trailer && id.isNotEmpty()) {
+        val version = route?.let { Regex("[?&]mediaIndex=(\\d+)").find(it)?.groupValues?.get(1) }.orEmpty()
+        return listOf("media", source.orEmpty(), liveSourceId.orEmpty(), id, version).joinToString("|")
+    }
+    return url?.let(MpvHdrGpuSession::mediaKey)?.takeIf { it.isNotBlank() }?.let { "url|$it" }
+}
+
+/**
+ * Source standard for the decision: a Dolby Vision reading (this player's track list or an
+ * earlier detection) wins over the HDR10 the base layer reports; otherwise what the server
+ * declared, then what mpv detected.
+ */
+internal fun mpvHdrGpuSourceStandard(declared: HdrStandard?, detected: HdrStandard?, dolbyVisionRuntime: Boolean): HdrStandard? = when {
+    dolbyVisionRuntime || detected == HdrStandard.DOLBY_VISION -> HdrStandard.DOLBY_VISION
+    else -> declared ?: detected
 }
 
 /** Display identity for [MpvHdrGpuSession]: a different TV/AVR or HDR capability set starts clean. */

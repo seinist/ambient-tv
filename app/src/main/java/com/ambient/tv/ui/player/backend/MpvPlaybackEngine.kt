@@ -114,6 +114,11 @@ internal class MpvPlaybackEngine(
     private val hdrPassthroughMonitor = MpvHdrPassthroughMonitor()
     /** PQ reaches the display through gpu-next: OUTPUT hooks see PQ code values. */
     private val hdrPassthroughActive: Boolean get() = hdrGpuPassthrough && acceleration.vulkan && hdrGpuFailure == null
+    /** The passthrough route runs on Vulkan (read by the UI; [hdrPassthroughActive] is engine-internal). */
+    val hdrPassthroughVulkan: Boolean get() = hdrPassthroughActive
+    /** [MpvHdrPassthroughMonitor] confirmed PQ/BT.2020 on the display for this player. */
+    var hdrPassthroughConfirmed by mutableStateOf(false)
+        private set
 
     /**
      * SHIELD + OpenGL + interlaced live: decode zero-copy through mpv's AImageReader interop
@@ -286,9 +291,10 @@ internal class MpvPlaybackEngine(
     private var desiredPlayWhenReady = true
     /**
      * A failed passthrough holds the frame natively but keeps the play intent: the direct reopen
-     * takes it over through [wantsToPlay] ([mpvHdrFailureHold]).
+     * takes it over through [wantsToPlay] ([mpvHdrFailureHold]). It holds only while a surface
+     * shows it; detached (background) audio plays on ([mpvHdrNativePlayAllowed]).
      */
-    private val nativePlayWanted: Boolean get() = desiredPlayWhenReady && hdrGpuFailure == null
+    private val nativePlayWanted: Boolean get() = mpvHdrNativePlayAllowed(desiredPlayWhenReady, hdrGpuFailure, attached)
     private var activeShaderPresetKey: String? = null
     private var loadedShaderKeys = emptyList<String>()
     private var loadedShaderTransferKey: String? = null
@@ -345,6 +351,14 @@ internal class MpvPlaybackEngine(
     var hdrImageTransfer by mutableStateOf(false)
         private set
     var sourceHdrStandard by mutableStateOf<HdrStandard?>(null)
+        private set
+    /**
+     * Dolby Vision profile of the loaded file's video track, read once per file on every route
+     * (null until the track list is known, 0 = no Dolby Vision).
+     */
+    private var dolbyVisionProfile: Int? = null
+    /** The loaded file carries Dolby Vision ([dolbyVisionProfile] > 0), whatever route plays it. */
+    var dolbyVisionDetected by mutableStateOf(false)
         private set
     /** mpv reported an SDR transfer for the loaded file (live TV: an earlier HDR reading is stale). */
     var sourceSdrConfirmed by mutableStateOf(false)
@@ -680,6 +694,9 @@ internal class MpvPlaybackEngine(
         runCatching { MpvNativeBridge.nativeDetachSurface(handle) }
         attached = false
         attachedSurface = null
+        // A failed passthrough only held the picture; in the background its audio plays on and
+        // the view reopens on the direct surface when it returns.
+        if (hdrGpuFailure != null && loaded) setProperty("pause", if (nativePlayWanted) "no" else "yes")
     }
 
     override fun detachVideoOutput() = detachSurface()
@@ -910,7 +927,7 @@ internal class MpvPlaybackEngine(
             lastLumaShaderEligible = mpvLumaUpscalerWouldRun(effective.scaler, fittedScale)
             val sourceTransfer = currentMpvSourceTransfer()
             hdrImageTransfer = isMpvHdrTransfer(sourceTransfer)
-            sourceHdrStandard = hdrStandardFromMpvTransfer(sourceTransfer)
+            sourceHdrStandard = runtimeSourceHdrStandard(sourceTransfer)
             val requestedShaders = mpvImageShaderKeys(effective, sdr, upscaling, fittedScale, svpActive, hdr = hdr, gpuNext = gpuNext, pqOutput = pqOutput)
             val hasComputeShader = requestedShaders.any { MPV_IMAGE_SHADERS[it]?.requiresCompute == true }
             val computeSupport = if (hasComputeShader) {
@@ -1360,7 +1377,8 @@ internal class MpvPlaybackEngine(
         cpuFrames = activeCpuImageFilters.isNotEmpty(),
     )
 
-    private fun currentMpvLevels(): String? = getPropertyString("video-params/levels")
+    private fun currentMpvLevels(): String? = getPropertyString(MPV_PROP_COLORLEVELS)
+        ?.takeIf { it.isNotBlank() } ?: getPropertyString(MPV_PROP_DEC_COLORLEVELS)
 
     /** CAS curve for the current source; HDR also follows the luma range (limited/full). */
     private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? = mpvCasTransferProfile(transfer, currentMpvLevels())
@@ -1392,6 +1410,7 @@ internal class MpvPlaybackEngine(
         val wasConfirmed = hdrPassthroughMonitor.confirmed
         hdrPassthroughMonitor.update(facts, now)?.let(::failHdrPassthrough)
         if (!wasConfirmed && hdrPassthroughMonitor.confirmed) {
+            hdrPassthroughConfirmed = true
             Timber.i("%s MPV HDR passthrough confirmed (gpu-next, PQ/BT.2020) max-luma=%s max-cll=%s plausible=%s",
                 HDR_AUDIT_TAG, facts.targetMaxLuma, facts.targetMaxCll, hdrPassthroughMonitor.metadataPlausible)
         }
@@ -1403,11 +1422,36 @@ internal class MpvPlaybackEngine(
         hdrPassthroughMonitor.fail(reason)
         renderCheckJob?.cancel()
         renderCheckJob = null
-        val hold = mpvHdrFailureHold(desiredPlayWhenReady)
+        val hold = mpvHdrFailureHold(desiredPlayWhenReady, attached)
         conversionSampleStarted = 0L
         if (hold.pauseNative && dvPrimeTarget == null) setProperty("pause", "yes")
         desiredPlayWhenReady = hold.playIntent
         hdrGpuFailure = reason
+    }
+
+    /**
+     * Dolby Vision: the PQ base layer looks like HDR10, only the track's DV profile tells. Read
+     * once per file as soon as the video track is known, on every route, so the view can keep a
+     * DV file off the passthrough before it ever opens there ([dolbyVisionDetected]).
+     */
+    private fun latchDolbyVisionProfile(): Int? {
+        dolbyVisionProfile?.let { return it }
+        if (!fileReady || getPropertyDouble(MPV_PROP_VIDEO_TRACK_ID, 0.0) <= 0.0) return null
+        val profile = getPropertyDouble(MPV_PROP_DOLBY_VISION_PROFILE, 0.0).toInt().coerceAtLeast(0)
+        dolbyVisionProfile = profile
+        if (dolbyVisionDetected != (profile > 0)) dolbyVisionDetected = profile > 0
+        if (profile > 0) Timber.i("%s MPV Dolby Vision profile %d", HDR_AUDIT_TAG, profile)
+        return profile
+    }
+
+    /**
+     * Runtime standard reported to the players. The passthrough player keeps reporting Dolby
+     * Vision after its failure (no flip back to HDR10); the direct route keeps its native DV
+     * handling and reports the transfer, its DV reading is [dolbyVisionDetected].
+     */
+    private fun runtimeSourceHdrStandard(sourceGamma: String?): HdrStandard? {
+        val profile = latchDolbyVisionProfile()
+        return mpvRuntimeHdrStandard(sourceGamma, profile.takeIf { hdrGpuPassthrough && isMpvHdrTransfer(sourceGamma) })
     }
 
     private fun currentMpvSourceTransfer(): String? {
@@ -1451,14 +1495,8 @@ internal class MpvPlaybackEngine(
         if (hdrImageTransfer != hdr) hdrImageTransfer = hdr
         val sdrConfirmed = fileReady && isMpvSdrTransfer(sourceGamma)
         if (sourceSdrConfirmed != sdrConfirmed) sourceSdrConfirmed = sdrConfirmed
-        // Dolby Vision: the PQ base layer looks like HDR10, only the track's DV profile tells.
-        // Read only while passthrough is active; the regular path keeps its native DV handling.
-        val dvProfile = if (fileReady && hdrPassthroughActive && hdr)
-            getPropertyDouble("current-tracks/video/dolby-vision-profile", 0.0).toInt() else null
-        sourceHdrStandard = mpvRuntimeHdrStandard(sourceGamma, dvProfile)
-        if (sourceHdrStandard == HdrStandard.DOLBY_VISION && hdrPassthroughActive) {
-            failHdrPassthrough(MpvHdrGpuReason.DOLBY_VISION)
-        }
+        sourceHdrStandard = runtimeSourceHdrStandard(sourceGamma)
+        if (dolbyVisionDetected && hdrPassthroughActive) failHdrPassthrough(MpvHdrGpuReason.DOLBY_VISION)
         checkHdrPassthrough(sourceGamma)
         if (!gpuQualityMode) return
         if (probeShieldInterlaced()) return
@@ -2020,6 +2058,8 @@ internal class MpvPlaybackEngine(
                 }
                 MPV_EVENT_FILE_LOADED -> {
                     zeroCopyProbeDone = false
+                    // A new file: read its Dolby Vision profile again (latchDolbyVisionProfile).
+                    dolbyVisionProfile = null
                     dvSurfaceRestart = false
                     // A reload/reopen drops sub-add tracks; allow them to be added again.
                     externalSubtitleRequests.clear()
@@ -2126,7 +2166,7 @@ internal class MpvPlaybackEngine(
         // OpenGL cannot signal HDR on Android: leave the passthrough player to the direct reopen.
         if (mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough, acceleration.vulkan, released)) {
             Timber.w("MPV HDR passthrough: Vulkan fallback (%s), reopening on the direct surface", reason)
-            failHdrPassthrough(MpvHdrGpuReason.NOT_CONFIRMED)
+            failHdrPassthrough(MpvHdrGpuReason.VULKAN_FALLBACK)
             return true
         }
         val directDecoderFallback = acceleration.output == "direct" && reason == "mediacodec_unavailable"

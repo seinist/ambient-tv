@@ -86,7 +86,14 @@ class HdrShaderGateTest {
         assertTrue(text.contains("64.0 / 1023.0") && text.contains("876.0 / 1023.0"))
         // Pure black must not divide by zero in the CAS amplitude.
         assertTrue(text.contains("max(mxL, 1e-10)"))
-        assertTrue(text.contains("mix(e, max(sharpened, 0.0), float(CAS_BLEND))"))
+        assertTrue(text.contains("mix(le, max(sharpened, 0.0), float(CAS_BLEND))"))
+        // PQ taps come from the bundled EOTF table (no pow per tap); one LUT, bound by the hook.
+        assertEquals(1, Regex("//!TEXTURE ").findAll(text).count())
+        assertTrue(text.contains("//!TEXTURE CAS_HDR_PQ_LUT") && text.contains("//!BIND CAS_HDR_PQ_LUT"))
+        assertTrue(text.contains("//!SIZE 1024 2") && text.contains("//!FORMAT rgba8") && text.contains("//!FILTER NEAREST"))
+        // Footroom/headroom and flat areas keep their code.
+        assertTrue(text.contains("if (outL == le) return pix;"))
+        assertTrue(text.contains("<= FLAT_CODES) return pix;"))
         assertTrue(text.contains("#define SHARPENING 0.0"))
         // The upstream two-pass file stays byte-identical (manifest hash) and has no blend define.
         assertFalse(raw(MPV_IMAGE_SHADERS.getValue("cas").fileName).contains("CAS_BLEND"))
