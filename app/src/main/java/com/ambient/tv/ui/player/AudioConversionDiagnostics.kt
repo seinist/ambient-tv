@@ -19,3 +19,40 @@ internal fun audioConversionDiagnostic(context: Context, state: PlayerUiState.Re
     val formats = audioConversionFormats(source?.codec, source?.channels, runtimeCodec ?: target, runtimeChannels)
     return "${context.getString(R.string.audio_conversion_server)} · $formats"
 }
+
+/**
+ * Short OSD chip for what happens to the sound on its way out, or null for an ordinary
+ * decode (AAC, Opus, FLAC … to PCM). An actual local conversion wins over the plan because
+ * it names both formats ("DTS-HD 7.1 → DTS 5.1", "E-AC3 5.1 → PCM 5.1").
+ */
+internal fun audioOutputBadgeLabel(
+    localConversion: String?,
+    serverTarget: String?,
+    mode: AudioOutputMode?,
+    sourceCodec: String?,
+    passthroughLabel: String,
+    dtsCoreLabel: String,
+    serverLabel: String,
+): String? = when {
+    localConversion != null -> localConversion
+    serverTarget != null -> "$serverLabel → ${audioCodecLabel(serverTarget)}"
+    mode == AudioOutputMode.PASSTHROUGH -> passthroughLabel
+    mode == AudioOutputMode.DTS_CORE -> dtsCoreLabel
+    // Bitstream codecs decoded by MPV/VLC/MediaCodec: say so, the receiver will not show it.
+    mode == AudioOutputMode.PCM && normalizeSourceCodec(sourceCodec) != null -> "→ PCM"
+    else -> null
+}
+
+@androidx.compose.runtime.Composable
+internal fun audioOutputBadge(session: AudioSession?, serverTarget: String? = null): String? {
+    if (session == null && serverTarget == null) return null
+    return audioOutputBadgeLabel(
+        localConversion = session?.activeLocalConversion,
+        serverTarget = serverTarget,
+        mode = session?.outputPlan()?.mode,
+        sourceCodec = session?.sourceCodec,
+        passthroughLabel = androidx.compose.ui.res.stringResource(R.string.diag_mode_passthrough),
+        dtsCoreLabel = androidx.compose.ui.res.stringResource(R.string.audio_badge_dts_core),
+        serverLabel = androidx.compose.ui.res.stringResource(R.string.audio_badge_server),
+    )
+}

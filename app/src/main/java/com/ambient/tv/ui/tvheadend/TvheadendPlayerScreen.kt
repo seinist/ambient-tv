@@ -584,12 +584,11 @@ private fun TvheadendPlaybackSurface(
     }
     LaunchedEffect(player, playbackState, currentTracks) {
         if (playbackState != Player.STATE_READY || fallbackRequested) return@LaunchedEffect
-        delay(800)
+        delay(com.ambient.tv.ui.player.MEDIA3_AUDIO_CHECK_DELAY_MS)
         if (player.playbackState != Player.STATE_READY ||
             (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player !== player) return@LaunchedEffect
-        val audioGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (audioGroups.isNotEmpty() && player.audioFormat == null &&
-            audioGroups.none { group -> (0 until group.length).any(group::isTrackSupported) }) {
+        // Only unsupported tracks count; an empty track list proves nothing about the channel.
+        if (com.ambient.tv.ui.player.media3AudioUnusable(player.currentTracks, player.audioFormat)) {
             fallbackRequested = true
             onAudioFallback("No locally supported audio track")
         }
@@ -787,6 +786,7 @@ private fun TvheadendPlaybackSurface(
             loading = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
             backendLabel = "Media3",
             mediaBadges = listOfNotNull(videoLabel, audioLabel),
+            audioBadge = com.ambient.tv.ui.player.audioOutputBadge(tvhAudio),
             seekJumpMs = seekJumpMs,
             onTogglePlayback = { if (player.isPlaying) player.pause() else player.play() },
             onSeekBy = { delta ->

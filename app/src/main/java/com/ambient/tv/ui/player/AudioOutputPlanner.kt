@@ -80,6 +80,8 @@ fun planAudioOutput(
     val confirmed = AudioCatalog.codecs.filter { it in requested.allowedCodecs && it in liveRoute.passthrough }
     val source = normalizeSourceCodec(sourceCodec)
     val mpv = backend == "mpv" || liveRoute.mpvAvailable
+    // Media3 sends the DTS core itself (LocalAudioRenderer strips the DTS-HD extension).
+    val media3Core = backend in setOf("auto", "media3")
     val channels = clipChannelMode(requested.channels, liveRoute.pcmChannels)
 
     if (permitted && source != null && source in confirmed) {
@@ -94,14 +96,14 @@ fun planAudioOutput(
 
     val localEnabled = requested.localFallback != "off"
     val corePossible = requested.localFallback == "auto" && permitted && source == "dts-hd" &&
-        "dts" in confirmed && "dts-hd" !in confirmed && mpv &&
+        "dts" in confirmed && "dts-hd" !in confirmed && (mpv || media3Core) &&
         (requested.output == "bitstream" || liveRoute.pcmChannels < 6)
     if (corePossible) {
         return AudioOutputPlan(
             mode = AudioOutputMode.DTS_CORE,
             spdifCodecs = confirmed,
             encoded = true,
-            needsMpv = backend != "mpv",
+            needsMpv = backend != "mpv" && !media3Core,
             channels = "auto",
             applyDsp = false,
         )

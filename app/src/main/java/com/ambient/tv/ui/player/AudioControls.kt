@@ -161,6 +161,7 @@ internal fun AudioProfileEditor(
                 } else AudioCodecRows(codecs, o, change)
                 ImageHint(stringResource(R.string.audio_dts_fallback_hint))
             }
+            BitstreamRouteHint(route)
             if (backend == "vlc") ImageHint(stringResource(R.string.audio_vlc_output_hint))
             ImageChoice(R.string.audio_conversion_location, o.conversionLocation, listOf(
                 "local" to stringResource(R.string.audio_conversion_local),
@@ -182,6 +183,7 @@ internal fun AudioProfileEditor(
                 AudioCodecRows(codecs, o, change)
             }
             ImageHint(stringResource(R.string.audio_dts_fallback_hint))
+            BitstreamRouteHint(route)
         }
         "sound", "eq" -> {
             val suspended = (actualPlan ?: planAudioOutput(
@@ -303,6 +305,31 @@ private fun outputModeLabel(mode: AudioOutputMode): String = when (mode) {
 /** Upmix needs a surround route and is meaningless while a stereo or mono layout is forced. */
 internal fun upmixRowVisible(routePcmChannels: Int, channels: String): Boolean =
     routePcmChannels >= 6 && channels !in setOf("stereo", "mono", "left", "right")
+
+/** Which bitstream formats the current output confirmed; rows exist only for those. */
+internal data class BitstreamRouteSummary(val confirmed: List<String>, val unconfirmed: List<String>)
+
+internal fun bitstreamRouteSummary(route: AudioRouteCapabilities, rejected: Set<String> = emptySet()): BitstreamRouteSummary {
+    val confirmed = visibleBitstreamCodecs(route).filter { it !in rejected }
+    return BitstreamRouteSummary(confirmed, AudioCatalog.codecs.filter { it !in confirmed })
+}
+
+@Composable
+private fun BitstreamRouteHint(route: AudioRouteCapabilities) {
+    val summary = bitstreamRouteSummary(route, AudioCodecRejects.snapshot())
+    if (summary.confirmed.isEmpty()) {
+        ImageHint(stringResource(R.string.audio_route_none))
+        return
+    }
+    val text = buildString {
+        append(stringResource(R.string.audio_route_confirmed, summary.confirmed.joinToString(" · ", transform = ::codecLabel)))
+        if (summary.unconfirmed.isNotEmpty()) {
+            append(". ")
+            append(stringResource(R.string.audio_route_unconfirmed, summary.unconfirmed.joinToString(" · ", transform = ::codecLabel)))
+        }
+    }
+    ImageHint(text)
+}
 
 @Composable
 private fun AudioCodecRows(codecs: List<String>, options: AudioOptions, change: (AudioOptions) -> Unit) {

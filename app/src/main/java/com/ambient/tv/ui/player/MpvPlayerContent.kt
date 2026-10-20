@@ -366,6 +366,7 @@ internal fun MpvPlayerContent(
                     com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState)?.let { MetaBadge(it, emphasized = true) }
                     snapshot.videoCodec?.let { MetaBadge(it.uppercase()) }
                     snapshot.audioCodec?.let { MetaBadge(it.uppercase()) }
+                    audioOutputBadge(controller.audioSession, state.serverAudioConversionCodec)?.let { MetaBadge(it) }
                 }
             },
         ), visible = controlsVisible)

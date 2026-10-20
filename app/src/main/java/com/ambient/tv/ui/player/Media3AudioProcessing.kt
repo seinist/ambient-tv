@@ -120,13 +120,12 @@ object Media3AudioProcessing {
                 out: ArrayList<Renderer>,
             ) {
                 // Separate sink: the ordinary sink deliberately rejects unsupported original
-                // bitstreams. This renderer supplies locally encoded AC3 (or stereo PCM).
-                if (com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE) {
-                    val localSink = DefaultAudioSink.Builder(context)
-                        .setAudioProcessors(arrayOf(ProfileAudioProcessor(session), TeeAudioProcessor(analyzer)))
-                        .build()
-                    out.add(com.ambient.tv.ui.player.audio.LocalAudioRenderer(eventHandler, eventListener, localSink, session))
-                }
+                // bitstreams. This renderer supplies locally decoded PCM, encoded AC3 and the
+                // DTS core of DTS-HD. Without libambientaudio only the DTS core path is active.
+                val localSink = DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf(ProfileAudioProcessor(session), TeeAudioProcessor(analyzer)))
+                    .build()
+                out.add(com.ambient.tv.ui.player.audio.LocalAudioRenderer(eventHandler, eventListener, localSink, session))
                 super.buildAudioRenderers(context, extensionRendererMode, mediaCodecSelector,
                     enableDecoderFallback, audioSink, eventHandler, eventListener, out)
             }

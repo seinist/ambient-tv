@@ -4,4 +4,9 @@
     <string name="audio_conversion_local">Locally on this device</string>
     <string name="audio_conversion_server">By the media server</string>
     <string name="audio_conversion_location_hint">Where unsupported audio is converted; sources without a server transcoder convert locally.</string>
+    <string name="audio_badge_dts_core">DTS core</string>
+    <string name="audio_badge_server">Server</string>
+    <string name="audio_route_confirmed">Output confirms: %1$s</string>
+    <string name="audio_route_unconfirmed">Not confirmed: %1$s</string>
+    <string name="audio_route_none">The current output confirms no bitstream format; audio is sent as PCM.</string>
 </resources>

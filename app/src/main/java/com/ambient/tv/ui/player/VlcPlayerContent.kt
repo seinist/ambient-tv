@@ -347,6 +347,7 @@ internal fun VlcPlayerContent(
                     com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState)?.let { MetaBadge(it, emphasized = true) }
                     (snapshot.runtimeStats?.videoCodec ?: state.videoCodec)?.uppercase()?.let { MetaBadge(it) }
                     (snapshot.runtimeStats?.audioCodec ?: state.audioCodec)?.uppercase()?.let { MetaBadge(it) }
+                    audioOutputBadge(controller.audioSession, state.serverAudioConversionCodec)?.let { MetaBadge(it) }
                 }
             },
         ), visible = controlsVisible)
