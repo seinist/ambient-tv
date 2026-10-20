@@ -190,6 +190,7 @@ open class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         appUpdater.onAppStart()
+        BackgroundPlaybackSession.retryBlockedPlaybackService(this)
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = true
         if (com.ambient.tv.ui.mobile.isTelevision(this)) com.ambient.tv.companion.CompanionRemoteInput.register(window) {
             registerUserInteraction(); setScreensaverActive(false)

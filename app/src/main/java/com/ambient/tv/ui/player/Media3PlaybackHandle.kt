@@ -151,6 +151,7 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
         player.clearVideoSurface()
     }
     override fun release() {
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "release")
         detachVideoOutput()
         released = true
         Media3ResumePrimer.release(player)

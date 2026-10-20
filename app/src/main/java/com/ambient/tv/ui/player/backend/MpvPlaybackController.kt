@@ -52,6 +52,7 @@ class MpvPlaybackController(
     private var engine: MpvPlaybackEngine? = null // owner thread only
     private var ownedSurface: Surface? = null // independent Surface reference; owner thread only
     private var surfaceIdentity: Surface? = null // UI's SurfaceHolder identity
+    private val surfaceGate = MpvSurfaceDetachGate()
     @Volatile private var released = false
     @Volatile private var lastProgress = SystemClock.elapsedRealtime()
     private var revision = 0L // main thread's requested state
@@ -339,6 +340,7 @@ class MpvPlaybackController(
                 player.detachSurface()
                 ownedSurface?.release()
                 ownedSurface = copy
+                surfaceGate.attaching()
                 player.attachSurface(copy, width, height)
                 sample()
             }
@@ -347,16 +349,36 @@ class MpvPlaybackController(
     fun detachSurface(surface: Surface? = null) {
         if (surface != null && surfaceIdentity !== surface) return
         surfaceIdentity = null
-        if (!released) mailbox.submit("surface") {
-            engine?.detachSurface()
-            ownedSurface?.release()
-            ownedSurface = null
+        // Kept across close(): Stop's release() must not drop the detach queued just before it.
+        if (!released) mailbox.submit("surface", keepOnClose = true) {
+            try {
+                engine?.detachSurface()
+                ownedSurface?.release()
+                ownedSurface = null
+            } finally { surfaceGate.detached() }
             sample()
         }
+    }
+
+    /**
+     * SurfaceHolder.surfaceDestroyed: queue the detach and wait, bounded, until the VO is off the
+     * window. Main thread only; the mpv-control thread never waits on itself.
+     */
+    fun detachSurfaceAndWait(surface: Surface, timeoutMs: Long = SURFACE_DETACH_WAIT_MS) {
+        val owner = surfaceIdentity === surface
+        detachSurface(surface)
+        if (!owner && !(released && surfaceGate.inUse)) return
+        if (Looper.myLooper() === thread.looper) return
+        val started = SystemClock.elapsedRealtime()
+        val detached = surfaceGate.await(timeoutMs)
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "surface detach " +
+            (if (detached) "done" else "timeout") + " in ${SystemClock.elapsedRealtime() - started} ms")
+        if (!detached) Timber.w("MPV VO still on the destroyed surface after %d ms", timeoutMs)
     }
     override fun detachVideoOutput() = detachSurface()
     override fun release() {
         if (released) return
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "release")
         released = true
         playIntent = false
         backendUnresponsive = false
@@ -370,7 +392,10 @@ class MpvPlaybackController(
                 engine = null
                 ownedSurface?.release()
                 ownedSurface = null
-            } finally { thread.quitSafely() }
+            } finally {
+                surfaceGate.closed()
+                thread.quitSafely()
+            }
         }
     }
     fun loadedImageShaders(): List<String> = read("loadedImageShaders", emptyList(), 750L) { loadedImageShaders() }
@@ -453,3 +478,6 @@ private data class MpvEngineState(
 /** A step from the not-yet-applied seek target if any, else from the last sampled position. */
 internal fun mpvSeekByTarget(pendingTargetMs: Long?, sampledPositionMs: Long, deltaMs: Long): Long =
     ((pendingTargetMs ?: sampledPositionMs) + deltaMs).coerceAtLeast(0L)
+
+/** Upper bound for surfaceDestroyed waiting on the VO detach (main thread; far below ANR). */
+internal const val SURFACE_DETACH_WAIT_MS = 500L

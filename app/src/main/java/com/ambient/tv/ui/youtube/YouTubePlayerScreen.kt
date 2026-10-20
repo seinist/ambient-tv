@@ -1108,8 +1108,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.player.play() }
-                override fun pause() { controller.player.pause() }
+                override fun play() { controller.play() }
+                override fun pause() { controller.pause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     if (revealOsd) { seekRelative(deltaMs); controls = true } else seekWithBar(deltaMs)

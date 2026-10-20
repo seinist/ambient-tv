@@ -1563,6 +1563,16 @@
     <string name="diagnostics_exported_to">Protokoll gespeichert unter %1$s</string>
     <string name="diagnostics_cleared">Protokoll gelöscht</string>
     <string name="diagnostics_privacy">Die ZIP enthält das Fehlerprotokoll, Geräte- und App-Version sowie das aktuelle Systemprotokoll dieser App. Tokens, Passwörter, API-Schlüssel und Cookies werden entfernt; Serveradressen und Pfade bleiben erhalten. Das Protokoll verlässt das Gerät nur, wenn du es exportierst und weitergibst.</string>
+    <string name="diagnostics_crash_title">Letzter Absturz</string>
+    <string name="diagnostics_crash_hint">Wird immer aufgezeichnet, auch ohne Fehlerprotokoll: Gerät, App-Version, Fehlerstelle und die letzten Wiedergabe-Ereignisse. Zugangsdaten werden entfernt; der Bericht verlässt das Gerät nur, wenn du ihn teilst.</string>
+    <string name="diagnostics_crash_none">Kein Absturz aufgezeichnet.</string>
+    <string name="diagnostics_crash_summary">%1$s · %2$s · %3$s</string>
+    <string name="diagnostics_crash_kind_crash">App-Absturz</string>
+    <string name="diagnostics_crash_kind_native">Nativer Absturz</string>
+    <string name="diagnostics_crash_kind_anr">Keine Reaktion (ANR)</string>
+    <string name="diagnostics_crash_share">Absturzbericht teilen</string>
+    <string name="diagnostics_crash_shared">Absturzbericht geteilt</string>
+    <string name="diagnostics_crash_saved_to">Absturzbericht gespeichert unter %1$s</string>
     <string name="wg_import_failed_reason">WireGuard-Konfiguration nicht importiert: %1$s</string>
     <string name="player_quality_auto">Automatisch (%1$s)</string>
     <string name="youtube_audio_original">Original</string>
