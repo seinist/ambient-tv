@@ -7,6 +7,7 @@ import android.os.Build
 import android.view.Display
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -38,6 +39,8 @@ data class SupportedDisplayMode(
     val width: Int,
     val height: Int,
     val refreshRate: Float,
+    /** Null on Android versions without per-mode HDR reporting. Empty means unsupported. */
+    val hdrTypes: Set<Int>? = null,
 ) {
     val label: String get() = String.format(Locale.ROOT, "%d × %d · %.3f Hz", width, height, refreshRate)
 }
@@ -115,10 +118,15 @@ object DisplayRefreshRateMatcher {
         allowThreeTwoPulldown: Boolean = true,
         preserveRefreshRate: Boolean = false,
         preserveOutputResolution: Boolean = false,
+        requiredHdrType: Int? = playbackHdrType(),
     ): SupportedDisplayMode? {
         if (activity == null) return null
         val display = getDisplayCompat(activity) ?: return null
-        val all = display.supportedModes.map(::choice).distinctBy { it.key }
+        val all = hdrCompatibleDisplayModes(display.supportedModes.map(::choice), requiredHdrType).distinctBy { it.key }
+        if (all.isEmpty()) {
+            Timber.w("DisplayAuto no compatible mode for HDR type=%s; retaining current mode", requiredHdrType)
+            return null
+        }
         val selected = selectContentMode(
             all, choice(display.mode), contentFrameRate, contentWidth, contentHeight,
             preferredModeKey, fallbackModeKey, allowedModes, allowDoubleRate, allowThreeTwoPulldown,
@@ -289,6 +297,7 @@ object DisplayRefreshRateMatcher {
     private fun choice(mode: Display.Mode) = SupportedDisplayMode(
         key = modeKey(mode), modeId = mode.modeId,
         width = mode.physicalWidth, height = mode.physicalHeight, refreshRate = mode.refreshRate,
+        hdrTypes = if (Build.VERSION.SDK_INT >= 34) runCatching { mode.supportedHdrTypes.toSet() }.getOrNull() else null,
     )
 
     private fun getDisplayCompat(activity: Activity): Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -362,6 +371,8 @@ fun rememberDisplayModeRequest(
     metadataRoute: String? = LocalPlaybackMetadata.current?.route,
     switchPauseMs: Int = 0,
 ): (Float, Int?, Int?) -> Unit {
+    val hdrSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+    val requiredHdrType = if (hdrSnapshot.active) playbackHdrType() else null
     val interpolation = BackgroundPlaybackSession.activeHandle()?.usesFrameInterpolation == true
     val rendererScaling = BackgroundPlaybackSession.activeHandle()?.usesRendererScaling == true
     // Panel locks are keyed by PlaybackMetadata.route so they stay aligned with the OSD selector.
@@ -369,7 +380,7 @@ fun rememberDisplayModeRequest(
         .also { PlaybackDisplayModeRevision.tick }
     val availableModes = rememberAvailableDisplayModes(activity)
     var content by remember(activity, playbackKey) { mutableStateOf<DisplayContentFormat?>(null) }
-    var switchedAtStart by remember(activity, playbackKey, adjustmentKey, preferredModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown, interpolation, rendererScaling, availableModes) { mutableStateOf(false) }
+    var switchedAtStart by remember(activity, playbackKey, adjustmentKey, preferredModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown, interpolation, rendererScaling, availableModes, requiredHdrType) { mutableStateOf(false) }
     val latestPolicy by rememberUpdatedState(adjustmentKey)
     val latestPreferred by rememberUpdatedState(preferredModeKey)
     val originalModeId = remember(activity) { DisplayRefreshRateMatcher.currentModeId(activity) }
@@ -424,7 +435,7 @@ fun rememberDisplayModeRequest(
             }
         }
     }
-    LaunchedEffect(activity, playbackKey, adjustmentKey, preferredModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown, interpolation, rendererScaling, content, sessionFixedModeKey, metadataRoute, availableModes) {
+    LaunchedEffect(activity, playbackKey, adjustmentKey, preferredModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown, interpolation, rendererScaling, content, sessionFixedModeKey, metadataRoute, availableModes, requiredHdrType) {
         // Re-read by route so a key change cannot apply the previous title's panel lock.
         val fixed = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)
         if (fixed != null) {
@@ -454,6 +465,7 @@ fun rememberDisplayModeRequest(
                     preferredModeKey, originalModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
                     preserveRefreshRate = interpolation,
                     preserveOutputResolution = rendererScaling,
+                    requiredHdrType = requiredHdrType,
                 ) ?: return@LaunchedEffect
                 // Only the first request may pause; a retry must not hold playback a second time.
                 if (attempt == 0) switchWithPause(selected)?.join()
@@ -473,3 +485,22 @@ fun rememberDisplayModeRequest(
     }
     return remember(activity, playbackKey) { { fps, width, height -> content = mergeDisplayContentFormat(content, fps, width, height) } }
 }
+
+/** Preserve the active output standard (including converted SDR), not merely the title badge. */
+internal fun playbackHdrType(): Int? {
+    val snapshot = BackgroundPlaybackSession.snapshot.value
+    if (!snapshot.active || snapshot.metadata?.hasVideo != true) return null
+    val standard = BackgroundPlaybackSession.activeHandle()?.uiHdrStandard()
+        ?: snapshot.metadata.handheldHdrStandard
+    return when (standard) {
+        HdrStandard.HDR10 -> Display.HdrCapabilities.HDR_TYPE_HDR10
+        HdrStandard.HDR10_PLUS -> Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS
+        HdrStandard.HLG -> Display.HdrCapabilities.HDR_TYPE_HLG
+        HdrStandard.DOLBY_VISION -> Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION
+        null -> null
+    }
+}
+
+/** Unknown capabilities remain eligible; an explicit negative must never be chosen automatically. */
+internal fun hdrCompatibleDisplayModes(modes: List<SupportedDisplayMode>, required: Int?): List<SupportedDisplayMode> =
+    if (required == null) modes else modes.filter { it.hdrTypes == null || required in it.hdrTypes }

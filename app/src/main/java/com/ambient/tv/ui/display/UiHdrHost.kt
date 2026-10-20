@@ -26,6 +26,7 @@ import timber.log.Timber
 
 /** Requested UI mode only. This is not a measurement of the TV's HDMI output. */
 internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
+    internal val conversionExperiment = com.ambient.tv.ui.player.PlayerHdrWindowExperiment(mainWindow)
     var headroom by mutableFloatStateOf(1f)
         private set
     var failed by mutableStateOf(false)
@@ -190,6 +191,7 @@ internal fun rememberUiHdrState(
     sdrToHdrReferenceWhiteNits: Int = 0,
 ): UiHdrState {
     val state = remember(activity) { UiHdrState(activity.window) }
+    com.ambient.tv.ui.player.ObservePlayerHdrEnvironment(activity, state.conversionExperiment)
     // Not a restart key: the renderers apply a new SDR white live, without leaving HDR.
     val referenceWhite by androidx.compose.runtime.rememberUpdatedState(sdrToHdrReferenceWhiteNits)
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current

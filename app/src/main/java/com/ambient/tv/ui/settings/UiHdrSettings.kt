@@ -44,7 +44,7 @@ internal fun UiHdrSettings(
     val facts = rememberHdrControlFacts(mode)
     val showChoice = showInterface && hdrInterfaceChoiceVisible(facts.sdk, facts.displayHdr, facts.wideColor)
     val showSwitch = showConversion && sdrToHdrSwitchVisible(facts)
-    if (!showChoice && !showSwitch) return
+    if (!showChoice && !showConversion) return
     SettingsGroup(
         title = stringResource(if (showInterface) R.string.settings_ui_hdr else R.string.settings_sdr_to_hdr),
         subtitle = stringResource(if (showInterface) R.string.settings_ui_hdr_hint else R.string.settings_sdr_to_hdr_hint),
@@ -60,6 +60,12 @@ internal fun UiHdrSettings(
                 state != null && state.headroom > 1f -> R.string.settings_ui_hdr_requested
                 else -> R.string.settings_ui_hdr_default
             }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (showConversion) {
+            com.ambient.tv.ui.display.sdrToHdrUnavailableReason(facts)?.let { reason ->
+                Text(stringResource(sdrToHdrReasonTextRes(reason)), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         if (showSwitch) {
             TvSettingRow(
@@ -122,6 +128,7 @@ internal fun rememberHdrControlFacts(mode: String, inspectVideoPlayback: Boolean
         frameWidth = path?.width ?: 0,
         frameHeight = path?.height ?: 0,
         frameRate = path?.fps ?: 0f,
+        pathReason = path?.reason,
         pathBlocked = handle != null && (path == null || path.blocked),
         hdr10Supported = display != null && android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 in
             com.ambient.tv.ui.player.HdrSupport.enabledHdrTypes(display),
@@ -142,4 +149,22 @@ internal fun sdrToHdrStatusTextRes(mode: String, sdrToHdrEnabled: Boolean, statu
         SdrToHdrStatus.ACTIVE -> R.string.settings_sdr_to_hdr_active
         SdrToHdrStatus.FAILED -> R.string.settings_sdr_to_hdr_failed
     }
+}
+
+@StringRes
+internal fun sdrToHdrReasonTextRes(reason: com.ambient.tv.ui.display.SdrToHdrUnavailableReason): Int = when (reason) {
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.SOURCE_NOT_SDR -> R.string.sdr_hdr_reason_source
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.NOT_READY -> R.string.sdr_hdr_reason_waiting
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.FILTER_CONFLICT -> R.string.sdr_hdr_reason_filters
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.SWAPCHAIN_NO_HDR10 -> R.string.sdr_hdr_reason_swapchain
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.OUTPUT_FAILED -> R.string.settings_sdr_to_hdr_failed
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.ANDROID_VERSION -> R.string.sdr_hdr_reason_android
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.DISPLAY_HDR10 -> R.string.sdr_hdr_reason_display
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.WIDE_COLOR -> R.string.sdr_hdr_reason_wide_color
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.REDUCED_EFFECTS -> R.string.sdr_hdr_reason_reduced
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.PATH_BLOCKED -> R.string.sdr_hdr_reason_path
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.DISPLAY_BRIGHTNESS_UNKNOWN -> R.string.sdr_hdr_reason_brightness
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.PLAYER_OUTPUT -> R.string.sdr_hdr_reason_output
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.FRAME_BUDGET -> R.string.sdr_hdr_reason_budget
+    com.ambient.tv.ui.display.SdrToHdrUnavailableReason.AUTOMATIC_MODE -> R.string.sdr_hdr_reason_auto
 }

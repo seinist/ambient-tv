@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.display.SdrToHdrUnavailableReason
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -52,13 +53,15 @@ internal class SdrHdrSurfaceOutput(
     private val afterStop = mutableListOf<() -> Unit>()
     val active: Boolean get() = status == SdrToHdrStatus.ACTIVE
     /** Never offer conversion for unknown/HDR input or a surface that already failed. */
-    val canOfferConversion: Boolean get() {
-        val surface = view?.holder?.surface ?: return false
-        if (released || failed || !surface.isValid || quarantinedSurface != null) return false
+    val canOfferConversion: Boolean get() = unavailableReason == null
+    val unavailableReason: SdrToHdrUnavailableReason? get() {
+        if (failed || quarantinedSurface != null) return SdrToHdrUnavailableReason.OUTPUT_FAILED
+        val surface = view?.holder?.surface ?: return SdrToHdrUnavailableReason.NOT_READY
+        if (released || !surface.isValid) return SdrToHdrUnavailableReason.NOT_READY
         // While routed, the output is PQ; retain the verified original SDR transfer.
         val dataSpace = if (session != null || closing) originalDataSpace
             else runCatching { readDataSpace(surface) }.getOrDefault(0)
-        return sdrHdrTransfer(dataSpace) != null
+        return if (sdrHdrTransfer(dataSpace) == null) SdrToHdrUnavailableReason.SOURCE_NOT_SDR else null
     }
     /** Includes asynchronous teardown; another producer must not attach until it completes. */
     val ownsSurface: Boolean get() {

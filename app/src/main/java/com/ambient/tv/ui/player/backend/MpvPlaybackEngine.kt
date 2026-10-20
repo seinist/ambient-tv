@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player.backend
 
+import com.ambient.tv.ui.display.SdrToHdrUnavailableReason
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
@@ -1404,6 +1405,7 @@ internal class MpvPlaybackEngine(
         ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
 
     private var hdrPassthroughCheckedAt = 0L
+    private var lastHdrSurfaceDiagnostic: String? = null
 
     private fun checkHdrPassthrough(sourceGamma: String?) {
         if (!hdrPassthroughActive || released || !attached) return
@@ -1425,10 +1427,17 @@ internal class MpvPlaybackEngine(
             targetMaxCll = getPropertyDouble("video-params/max-cll", 0.0).takeIf { it > 0.0 },
         )
         val wasConfirmed = hdrPassthroughMonitor.confirmed
+        val diagnostic = "target=${facts.targetGamma}/${facts.targetPrimaries}/${facts.targetPixelFormat} " +
+            "dataspace=0x${facts.dataSpace.toString(16)} swapchainHdr10=${facts.swapchainHdr10} " +
+            "maxLuma=${facts.targetMaxLuma} sourceMaxCll=${facts.targetMaxCll}"
+        if (diagnostic != lastHdrSurfaceDiagnostic) {
+            Timber.i("%s MPV HDR surface %s; physical display mode unknown", HDR_AUDIT_TAG, diagnostic)
+            lastHdrSurfaceDiagnostic = diagnostic
+        }
         hdrPassthroughMonitor.update(facts, now)?.let(::failHdrPassthrough)
         if (!wasConfirmed && hdrPassthroughMonitor.confirmed) {
             hdrPassthroughConfirmed = true
-            Timber.i("%s MPV HDR passthrough confirmed (gpu-next, PQ/BT.2020) max-luma=%s max-cll=%s plausible=%s",
+            Timber.i("%s MPV HDR surface confirmed (gpu-next, PQ/BT.2020); physical display mode unknown; max-luma=%s max-cll=%s plausible=%s",
                 HDR_AUDIT_TAG, facts.targetMaxLuma, facts.targetMaxCll, hdrPassthroughMonitor.metadataPlausible)
         }
     }
@@ -2313,14 +2322,20 @@ internal class MpvPlaybackEngine(
         val supportedInput = fileReady && supportsMpvSdrToHdrInput(vo, api,
             getPropertyString("video-dec-params/gamma"), getPropertyString("video-params/gamma"),
             getPropertyString("video-out-params/gamma"), getPropertyString("video-params/primaries"))
+        val reason = when {
+            released || !attached || !fileReady || ended -> SdrToHdrUnavailableReason.NOT_READY
+            errorMessage != null || sdrToHdr.conversionFailed || conversionOutputUnsafe -> SdrToHdrUnavailableReason.OUTPUT_FAILED
+            !vulkanGpuNext || getPropertyString("current-gpu-context") != "androidvk" -> SdrToHdrUnavailableReason.PLAYER_OUTPUT
+            reducedVideoEffects(context) -> SdrToHdrUnavailableReason.REDUCED_EFFECTS
+            hdr10SwapchainSupported == false -> SdrToHdrUnavailableReason.SWAPCHAIN_NO_HDR10
+            !supportedInput -> SdrToHdrUnavailableReason.SOURCE_NOT_SDR
+            listOf("icc-profile", "image-lut", "target-lut").any { !getPropertyString(it).isNullOrBlank() } -> SdrToHdrUnavailableReason.FILTER_CONFLICT
+            else -> null
+        }
         return com.ambient.tv.ui.display.SdrToHdrPath(
             kind = if (vulkanGpuNext) com.ambient.tv.ui.display.SdrToHdrPlayerKind.MPV_VULKAN
             else com.ambient.tv.ui.display.SdrToHdrPlayerKind.MPV_UNSUPPORTED,
-            blocked = released || !attached || !fileReady || ended || errorMessage != null ||
-                sdrToHdr.conversionFailed || !vulkanGpuNext || reducedVideoEffects(context) ||
-                conversionOutputUnsafe || hdr10SwapchainSupported == false || !supportedInput ||
-                (fileReady && getPropertyString("current-gpu-context") != "androidvk") ||
-                listOf("icc-profile", "image-lut", "target-lut").any { !getPropertyString(it).isNullOrBlank() },
+            blocked = reason != null, reason = reason,
         )
     }
 

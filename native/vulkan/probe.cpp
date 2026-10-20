@@ -181,6 +181,12 @@ struct Probe {
                 if (i) out << ",";
                 out << static_cast<int>(surfaceFormats[i].colorSpace);
             }
+            out << "],\"surfaceFormats\":[";
+            for (size_t i = 0; i < surfaceFormats.size(); ++i) {
+                if (i) out << ",";
+                out << "{\"format\":" << static_cast<int>(surfaceFormats[i].format)
+                    << ",\"colorSpace\":" << static_cast<int>(surfaceFormats[i].colorSpace) << "}";
+            }
             out << "]}"; return out.str(); // Keep renderer and decoder capabilities on the SAME device.
         }
         return unsupported;

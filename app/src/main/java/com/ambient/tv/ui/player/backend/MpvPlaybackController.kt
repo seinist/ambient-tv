@@ -213,7 +213,8 @@ class MpvPlaybackController(
     val dolbyVisionDetected get() = state.dolbyVisionDetected
     /**
      * "HDR über GPU" route runs: passthrough player on Vulkan, no failure recorded. Keeps the
-     * route stable while options are edited; [hdrPassthroughConfirmed] says PQ really arrived.
+     * route stable while options are edited; [hdrPassthroughConfirmed] verifies the PQ surface,
+     * never the physical panel or HDMI HDR mode.
      */
     val hdrPassthroughRunning get() = hdrGpuPassthrough && hdrGpuFailure == null && state.hdrPassthroughVulkan
     /** mpv and Android confirmed PQ/BT.2020 on the display for this running passthrough. */

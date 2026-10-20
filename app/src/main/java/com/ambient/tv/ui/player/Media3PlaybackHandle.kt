@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.player
 
+import com.ambient.tv.ui.display.SdrToHdrUnavailableReason
 import androidx.media3.common.Player
 import androidx.media3.common.C
 import android.view.SurfaceView
@@ -91,18 +92,21 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
     override fun sdrToHdrPath(): com.ambient.tv.ui.display.SdrToHdrPath {
         val format = player.videoFormat
         val reduced = surfaceView?.context?.let { reducedVideoEffects(it) } == true
-        val sdr = format != null && media3ImageEffectsAllowed(format) &&
-            format.colorInfo?.colorSpace == C.COLOR_SPACE_BT709 && format.rotationDegrees == 0 &&
-            !Media3ImageProcessing.gpuInitialized(player)
+        val reason = when {
+            released || format == null -> SdrToHdrUnavailableReason.NOT_READY
+            outputError != null || player.playerError != null -> SdrToHdrUnavailableReason.OUTPUT_FAILED
+            reduced -> SdrToHdrUnavailableReason.REDUCED_EFFECTS
+            !media3ImageEffectsAllowed(format) || format.colorInfo?.colorSpace != C.COLOR_SPACE_BT709 -> SdrToHdrUnavailableReason.SOURCE_NOT_SDR
+            format.rotationDegrees != 0 || Media3ImageProcessing.gpuInitialized(player) -> SdrToHdrUnavailableReason.FILTER_CONFLICT
+            hdrOutput.unavailableReason != null -> hdrOutput.unavailableReason
+            surfaceView?.holder?.surfaceFrame == null -> SdrToHdrUnavailableReason.NOT_READY
+            surfaceView?.holder?.surfaceFrame?.let { !sdrHdrSizeAllowed(it.width(), it.height(), format.frameRate) } == true -> SdrToHdrUnavailableReason.FRAME_BUDGET
+            else -> null
+        }
         return com.ambient.tv.ui.display.SdrToHdrPath(
             kind = com.ambient.tv.ui.display.SdrToHdrPlayerKind.MEDIA3,
-            width = format?.width ?: 0,
-            height = format?.height ?: 0,
-            fps = format?.frameRate ?: 0f,
-            blocked = released || outputError != null || player.playerError != null ||
-                !hdrOutput.canOfferConversion || reduced || !sdr || surfaceView?.holder?.surfaceFrame?.let {
-                !sdrHdrSizeAllowed(it.width(), it.height(), format.frameRate)
-            } != false,
+            width = format?.width ?: 0, height = format?.height ?: 0, fps = format?.frameRate ?: 0f,
+            blocked = reason != null, reason = reason,
         )
     }
     private val mutableVideoPresentation = MutableStateFlow(VideoPresentation())

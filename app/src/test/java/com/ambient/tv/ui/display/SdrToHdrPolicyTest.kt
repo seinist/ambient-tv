@@ -6,6 +6,22 @@ import org.junit.Test
 class SdrToHdrPolicyTest {
     private val display = UiHdrEligibility(34, true, true, true, true, true, 1f)
 
+    @Test fun diagnosticReasonsMatchAvailabilityWithoutClaimingPhysicalHdr() {
+        val ready = SdrToHdrSwitchFacts(34, true, true, "auto", false, 1f, 400f,
+            player = SdrToHdrPlayerKind.MEDIA3, frameWidth = 1920, frameHeight = 1080, frameRate = 24f)
+        assertNull(sdrToHdrUnavailableReason(ready))
+        assertEquals(SdrToHdrUnavailableReason.ANDROID_VERSION, sdrToHdrUnavailableReason(ready.copy(sdk = 33)))
+        assertEquals(SdrToHdrUnavailableReason.DISPLAY_HDR10, sdrToHdrUnavailableReason(ready.copy(hdr10Supported = false)))
+        assertEquals(SdrToHdrUnavailableReason.WIDE_COLOR, sdrToHdrUnavailableReason(ready.copy(wideColor = false)))
+        assertEquals(SdrToHdrUnavailableReason.PLAYER_OUTPUT, sdrToHdrUnavailableReason(ready.copy(player = SdrToHdrPlayerKind.VLC_VULKAN)))
+        assertEquals(SdrToHdrUnavailableReason.FRAME_BUDGET, sdrToHdrUnavailableReason(ready.copy(frameWidth = 3840, frameHeight = 2160)))
+        assertEquals(SdrToHdrUnavailableReason.AUTOMATIC_MODE, sdrToHdrUnavailableReason(ready.copy(mode = "sdr")))
+        assertEquals(SdrToHdrUnavailableReason.DISPLAY_BRIGHTNESS_UNKNOWN, sdrToHdrUnavailableReason(ready.copy(ratio = null)))
+        // Missing ratio is allowed on MPV's verified surface probe; 1.0 does not mean failed HDR.
+        assertNull(sdrToHdrUnavailableReason(ready.copy(player = SdrToHdrPlayerKind.MPV_VULKAN, ratio = null, peakNits = null)))
+        assertTrue(sdrToHdrSwitchEnabled(ready))
+    }
+
     @Test fun manualTargetRespectsDisplayAndRendererLimits() {
         assertEquals(400, sdrToHdrRequest(display, true, 800f, 1, 2, requestedPeakNits = 400)?.peakNits)
         assertEquals(350, sdrToHdrRequest(display, true, 350f, 1, 2, requestedPeakNits = 600)?.peakNits)

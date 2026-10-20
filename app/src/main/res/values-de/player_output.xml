@@ -4,8 +4,8 @@
     <string name="player_output_restart_live">Gilt für diesen Sender. Beim Wechsel startet die Wiedergabe kurz neu am Live-Punkt.</string>
     <string name="player_output_hdr_direct">Natives HDR nutzt die direkte Android-Videofläche. GPU-Filter und Vulkan-Ausgabe sind für dieses Video ausgesetzt.</string>
     <string name="settings_mpv_hdr_gpu">HDR über GPU verarbeiten</string>
-    <string name="settings_mpv_hdr_gpu_hint">HDR10 auf einem HDR10-Display läuft über Vulkan (gpu-next) mit HDR-Durchreichung, damit HDR-taugliche Shader (Schärfen, RAVU Lite / FSR) wirken. Dolby Vision, HLG und HDR10+ auf HDR10+-Displays bleiben auf der direkten Fläche. Lässt sich die HDR-Ausgabe nicht bestätigen oder fallen Bilder aus, öffnet das Video auf der direkten Fläche neu.</string>
-    <string name="player_output_hdr_gpu_active">HDR über GPU: HDR10 läuft über Vulkan (gpu-next) mit HDR-Durchreichung.</string>
+    <string name="settings_mpv_hdr_gpu_hint">Verarbeitet HDR10 über Vulkan (gpu-next) mit HDR-tauglichen Shadern. Eine bestätigte PQ/BT.2020-Fläche beweist nicht, dass der TV HDR darstellt. Dolby Vision, HLG und HDR10+ auf HDR10+-Displays bleiben direkt. Bei fehlgeschlagener Flächenaushandlung oder anhaltenden Bildaussetzern wechselt die Wiedergabe auf Direkt.</string>
+    <string name="player_output_hdr_gpu_active">HDR über GPU: HDR10-Ausgabefläche bestätigt (PQ/BT.2020). Tatsächlicher HDR-Modus des Displays unbekannt.</string>
     <string name="player_output_hdr_gpu_output_direct">HDR über GPU: Ausgabe „Direkt“ ist gewählt.</string>
     <string name="player_output_hdr_gpu_dolby_vision">HDR über GPU: Dolby Vision bleibt auf der direkten Fläche.</string>
     <string name="player_output_hdr_gpu_not_hdr10">HDR über GPU: nur für HDR10, dieses Format bleibt auf der direkten Fläche.</string>
@@ -13,9 +13,9 @@
     <string name="player_output_hdr_gpu_swapchain">HDR über GPU: die Vulkan-Fläche bietet kein HDR10.</string>
     <string name="player_output_hdr_gpu_display">HDR über GPU: das Display meldet kein HDR10, HDR wird auf SDR abgebildet.</string>
     <string name="player_output_hdr_gpu_reduced">HDR über GPU: im Modus Sparsam aus.</string>
-    <string name="player_output_hdr_gpu_not_confirmed">HDR über GPU: HDR-Ausgabe nicht bestätigt, die direkte Fläche wird genutzt.</string>
+    <string name="player_output_hdr_gpu_not_confirmed">HDR über GPU: HDR10-Ausgabefläche nicht bestätigt; die direkte Fläche wird genutzt.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">HDR über GPU: Die Vulkan-Ausgabe ist für diesen Titel ausgefallen, die direkte Fläche wird genutzt.</string>
-    <string name="player_output_hdr_gpu_checking">HDR über GPU: HDR10 läuft über Vulkan (gpu-next), die HDR-Ausgabe wird noch bestätigt.</string>
+    <string name="player_output_hdr_gpu_checking">HDR über GPU: HDR10-Ausgabefläche wird geprüft (Vulkan). Tatsächlicher Display-Modus unbekannt.</string>
     <string name="player_output_hdr_gpu_overload">HDR über GPU: zu viele ausgelassene Bilder, die direkte Fläche wird genutzt.</string>
     <string name="image_mpv_hdr_passthrough">HDR-Ausgabe über GPU: Schärfen, Deband sowie die Skalierer RAVU Lite / FSR wirken. Filmkorn ist dabei aus; Entrauschen, Deblock, SSimSuperRes, Bildanpassungen und die übrigen Shader brauchen SDR.</string>
     <string name="player_output_hdr_gpu_no_effects">HDR über GPU: kein HDR-tauglicher Shader und kein Debanding gewählt, HDR bleibt auf der direkten Fläche.</string>

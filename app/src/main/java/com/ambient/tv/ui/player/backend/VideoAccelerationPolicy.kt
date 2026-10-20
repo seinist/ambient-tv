@@ -14,6 +14,9 @@ internal fun mpvNeedsGpuProcessing(o: MpvImageOptions): Boolean =
 data class VulkanDecodeProfile(val codec: String, val bits: Int, val width: Int, val height: Int)
 
 @Serializable
+data class VulkanSurfaceFormat(val format: Int, val colorSpace: Int)
+
+@Serializable
 data class VulkanDeviceCapabilities(
     val render: Boolean = false,
     val device: String = "",
@@ -23,6 +26,7 @@ data class VulkanDeviceCapabilities(
     val hostQueryReset: Boolean = false,
     // Present only in newer probes; absence must not be mistaken for a negative result.
     val surfaceColorSpaces: List<Int>? = null,
+    val surfaceFormats: List<VulkanSurfaceFormat>? = null,
 ) {
     val hdr10SurfaceSupported: Boolean? get() = surfaceColorSpaces?.contains(1000104008)
 }

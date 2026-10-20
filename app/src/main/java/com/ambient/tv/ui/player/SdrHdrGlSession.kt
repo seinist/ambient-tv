@@ -171,8 +171,13 @@ internal class SdrHdrGlSession(
         // Static HDR metadata so the TV tone-maps for what is really sent (peak = requested nits)
         // instead of assuming a 1000/4000-nit master. Optional: drivers without it ignore this.
         for ((attribute, value) in sdrHdrStaticMetadata(request.peakNits.toFloat(), metadataExtensions)) {
-            if (!eglSurfaceAttrib(display, window, attribute, value)) eglGetError()
+            if (!eglSurfaceAttrib(display, window, attribute, value)) {
+                timber.log.Timber.w("HDR-AUDIT EGL metadata rejected attribute=0x%s error=0x%s",
+                    attribute.toString(16), eglGetError().toString(16))
+            }
         }
+        timber.log.Timber.i("HDR-AUDIT EGL PQ surface negotiated peak=%d metadataAttributes=%d; physical display mode unknown",
+            request.peakNits, sdrHdrStaticMetadata(request.peakNits.toFloat(), metadataExtensions).size)
         check(eglMakeCurrent(display, window, window, context))
         check(eglSwapInterval(display, 1))
         drain()

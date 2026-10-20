@@ -75,6 +75,7 @@ data class SdrToHdrPath(
     val height: Int = 0,
     val fps: Float = 0f,
     val blocked: Boolean = false,
+    val reason: SdrToHdrUnavailableReason? = null,
 )
 
 data class SdrToHdrSwitchFacts(
@@ -91,33 +92,43 @@ data class SdrToHdrSwitchFacts(
     val frameRate: Float = 0f,
     val pathBlocked: Boolean = false,
     val hdr10Supported: Boolean = true,
+    val pathReason: SdrToHdrUnavailableReason? = null,
 )
 
 /** The interface mode is only offered when the window can actually enter capped HDR. */
 fun hdrInterfaceChoiceVisible(sdk: Int, displayHdr: Boolean, wideColor: Boolean): Boolean =
     sdk >= 35 && displayHdr && wideColor
 
-/** Hide conversion unless both the display and the current playback path support it. */
-fun sdrToHdrSwitchVisible(facts: SdrToHdrSwitchFacts): Boolean {
-    if (facts.sdk < 34 || !facts.displayHdr || !facts.wideColor) return false
-    if (facts.reducedEffects || facts.pathBlocked || !facts.hdr10Supported) return false
-    val ratio = facts.ratio
-    val peak = facts.peakNits
-    val measured = ratio != null && ratio.isFinite() && ratio >= 1f &&
-        peak != null && peak.isFinite() && peak >= 300f
-    if (!measured && facts.player != SdrToHdrPlayerKind.MPV_VULKAN) return false
-    return when (facts.player) {
-        SdrToHdrPlayerKind.NONE, SdrToHdrPlayerKind.MPV_VULKAN -> true
-        SdrToHdrPlayerKind.MPV_UNSUPPORTED, SdrToHdrPlayerKind.VLC_VULKAN -> false
-        SdrToHdrPlayerKind.VLC_GL, SdrToHdrPlayerKind.MEDIA3 -> {
-            val unknownSize = facts.frameWidth <= 0 || facts.frameHeight <= 0 ||
-                !facts.frameRate.isFinite() || facts.frameRate <= 0f
-            unknownSize || com.ambient.tv.ui.player.sdrHdrSizeAllowed(
-                facts.frameWidth, facts.frameHeight, facts.frameRate,
-            )
-        }
-    }
+enum class SdrToHdrUnavailableReason {
+    ANDROID_VERSION, DISPLAY_HDR10, WIDE_COLOR, REDUCED_EFFECTS, PATH_BLOCKED,
+    DISPLAY_BRIGHTNESS_UNKNOWN, PLAYER_OUTPUT, FRAME_BUDGET, AUTOMATIC_MODE,
+    SOURCE_NOT_SDR, NOT_READY, FILTER_CONFLICT, SWAPCHAIN_NO_HDR10, OUTPUT_FAILED,
 }
+
+/** Same eligibility used by controls and diagnostics; never infer panel HDR from headroom. */
+fun sdrToHdrUnavailableReason(facts: SdrToHdrSwitchFacts, includeMode: Boolean = true): SdrToHdrUnavailableReason? {
+    if (facts.sdk < 34) return SdrToHdrUnavailableReason.ANDROID_VERSION
+    if (!facts.displayHdr || !facts.hdr10Supported) return SdrToHdrUnavailableReason.DISPLAY_HDR10
+    if (!facts.wideColor) return SdrToHdrUnavailableReason.WIDE_COLOR
+    if (facts.reducedEffects) return SdrToHdrUnavailableReason.REDUCED_EFFECTS
+    if (facts.pathBlocked) return facts.pathReason ?: SdrToHdrUnavailableReason.PATH_BLOCKED
+    if (facts.player in setOf(SdrToHdrPlayerKind.MPV_UNSUPPORTED, SdrToHdrPlayerKind.VLC_VULKAN))
+        return SdrToHdrUnavailableReason.PLAYER_OUTPUT
+    val measured = facts.ratio?.let { it.isFinite() && it >= 1f } == true &&
+        facts.peakNits?.let { it.isFinite() && it >= 300f } == true
+    if (!measured && facts.player != SdrToHdrPlayerKind.MPV_VULKAN)
+        return SdrToHdrUnavailableReason.DISPLAY_BRIGHTNESS_UNKNOWN
+    if (facts.player in setOf(SdrToHdrPlayerKind.VLC_GL, SdrToHdrPlayerKind.MEDIA3)) {
+        val knownSize = facts.frameWidth > 0 && facts.frameHeight > 0 && facts.frameRate.isFinite() && facts.frameRate > 0f
+        if (knownSize && !com.ambient.tv.ui.player.sdrHdrSizeAllowed(facts.frameWidth, facts.frameHeight, facts.frameRate))
+            return SdrToHdrUnavailableReason.FRAME_BUDGET
+    }
+    if (includeMode && normalizedUiHdrMode(facts.mode) != "auto") return SdrToHdrUnavailableReason.AUTOMATIC_MODE
+    return null
+}
+
+/** Hide unsupported actions; show their reason separately in settings/output diagnostics. */
+fun sdrToHdrSwitchVisible(facts: SdrToHdrSwitchFacts): Boolean = sdrToHdrUnavailableReason(facts, includeMode = false) == null
 
 /** Playback controls require an actual, fully identified path, unlike pre-playback settings. */
 fun sdrToHdrPlaybackControlVisible(facts: SdrToHdrSwitchFacts): Boolean =

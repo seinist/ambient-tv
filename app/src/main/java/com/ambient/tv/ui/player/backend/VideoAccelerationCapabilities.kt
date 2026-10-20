@@ -88,8 +88,8 @@ object VideoAccelerationRuntime {
         if (!surface.isValid) return false
         val probed = probeDevice(surface)
         onCapabilities(probed)
-        Timber.i("VULKAN surface device=%s render=%s reason=%s colorSpaces=%s hdr10=%s",
-            probed.device, probed.render, probed.reason, probed.surfaceColorSpaces, probed.hdr10SurfaceSupported)
+        Timber.i("VULKAN surface device=%s render=%s reason=%s colorSpaces=%s hdr10=%s formats=%s",
+            probed.device, probed.render, probed.reason, probed.surfaceColorSpaces, probed.hdr10SurfaceSupported, probed.surfaceFormats)
         val supported = probed.render && probed.device == mutable.value.device.device
         if (backend != null) mutableEvidence.update { it + (backend to VulkanPlaybackEvidence(
             if (supported) VulkanPlaybackStage.SURFACE_READY else VulkanPlaybackStage.FAILED,

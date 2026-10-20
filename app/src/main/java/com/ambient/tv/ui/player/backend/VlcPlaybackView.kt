@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player.backend
 
+import com.ambient.tv.ui.display.SdrToHdrUnavailableReason
 import com.ambient.tv.ui.player.withTitle
 import com.ambient.tv.ui.player.withResolution
 import com.ambient.tv.R
@@ -220,18 +221,24 @@ class VlcPlaybackController(
     override fun sdrToHdrPath(): com.ambient.tv.ui.display.SdrToHdrPath {
         val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val fps = track?.takeIf { it.frameRateDen > 0 }?.let { it.frameRateNum.toFloat() / it.frameRateDen } ?: 0f
+        val reason = when {
+            released || !prepared || ended || track == null -> SdrToHdrUnavailableReason.NOT_READY
+            errorMessage != null -> SdrToHdrUnavailableReason.OUTPUT_FAILED
+            preserveHdrSource -> SdrToHdrUnavailableReason.SOURCE_NOT_SDR
+            vulkanOutput -> SdrToHdrUnavailableReason.PLAYER_OUTPUT
+            reducedVideoEffects(context) -> SdrToHdrUnavailableReason.REDUCED_EFFECTS
+            audioVisualizationEnabled || imageOptions.softwareProcessing || imageOptions.svpMode != "off" ||
+                userVideoDisabled || track.orientation != 0 || track.projection != 0 -> SdrToHdrUnavailableReason.FILTER_CONFLICT
+            hdrOutput.unavailableReason != null -> hdrOutput.unavailableReason
+            attachedView?.holder?.surfaceFrame == null -> SdrToHdrUnavailableReason.NOT_READY
+            attachedView?.holder?.surfaceFrame?.let { !com.ambient.tv.ui.player.sdrHdrSizeAllowed(it.width(), it.height(), fps) } == true -> SdrToHdrUnavailableReason.FRAME_BUDGET
+            else -> null
+        }
         return com.ambient.tv.ui.display.SdrToHdrPath(
             kind = if (vulkanOutput) com.ambient.tv.ui.display.SdrToHdrPlayerKind.VLC_VULKAN
             else com.ambient.tv.ui.display.SdrToHdrPlayerKind.VLC_GL,
-            width = track?.width ?: 0,
-            height = track?.height ?: 0,
-            fps = fps,
-            blocked = preserveHdrSource || released || !prepared || ended || errorMessage != null ||
-                !hdrOutput.canOfferConversion || vulkanOutput || reducedVideoEffects(context) || audioVisualizationEnabled ||
-                imageOptions.softwareProcessing || imageOptions.svpMode != "off" || userVideoDisabled ||
-                track?.orientation != 0 || track.projection != 0 || attachedView?.holder?.surfaceFrame?.let {
-                    !com.ambient.tv.ui.player.sdrHdrSizeAllowed(it.width(), it.height(), fps)
-                } != false,
+            width = track?.width ?: 0, height = track?.height ?: 0, fps = fps,
+            blocked = reason != null, reason = reason,
         )
     }
     private val dvResumeWorkaround get() = !liveStream &&

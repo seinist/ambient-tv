@@ -4,8 +4,8 @@
     <string name="player_output_restart_live">Applies to this channel. Switching briefly restarts playback at the live point.</string>
     <string name="player_output_hdr_direct">Native HDR uses the direct Android video surface. GPU filters and Vulkan output are paused for this video.</string>
     <string name="settings_mpv_hdr_gpu">Process HDR on the GPU</string>
-    <string name="settings_mpv_hdr_gpu_hint">HDR10 on an HDR10 display plays through Vulkan (gpu-next) with HDR passthrough, so HDR-safe shaders (sharpening, RAVU Lite / FSR) can run. Dolby Vision, HLG and HDR10+ on HDR10+ displays stay on the direct surface. If the HDR output cannot be confirmed or frames drop, the video reopens on the direct surface.</string>
-    <string name="player_output_hdr_gpu_active">Process HDR on the GPU: HDR10 plays through Vulkan (gpu-next) with HDR passthrough.</string>
+    <string name="settings_mpv_hdr_gpu_hint">Processes HDR10 through Vulkan (gpu-next) for HDR-safe shaders. A confirmed PQ/BT.2020 surface does not prove that the TV displays HDR. Dolby Vision, HLG and HDR10+ on HDR10+ displays stay direct. Failed surface negotiation or sustained dropped frames return playback to direct output.</string>
+    <string name="player_output_hdr_gpu_active">Process HDR on the GPU: HDR10 output surface confirmed (PQ/BT.2020). Physical display HDR mode unknown.</string>
     <string name="player_output_hdr_gpu_output_direct">Process HDR on the GPU: output “Direct” is selected.</string>
     <string name="player_output_hdr_gpu_dolby_vision">Process HDR on the GPU: Dolby Vision stays on the direct surface.</string>
     <string name="player_output_hdr_gpu_not_hdr10">Process HDR on the GPU: HDR10 only, this format stays on the direct surface.</string>
@@ -13,9 +13,9 @@
     <string name="player_output_hdr_gpu_swapchain">Process HDR on the GPU: the Vulkan surface offers no HDR10.</string>
     <string name="player_output_hdr_gpu_display">Process HDR on the GPU: the display reports no HDR10, HDR is mapped to SDR.</string>
     <string name="player_output_hdr_gpu_reduced">Process HDR on the GPU: off in Low performance mode.</string>
-    <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR output was not confirmed, using the direct surface.</string>
+    <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR10 output surface not confirmed; using the direct surface.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">Process HDR on the GPU: the Vulkan output failed for this title, using the direct surface.</string>
-    <string name="player_output_hdr_gpu_checking">Process HDR on the GPU: HDR10 plays through Vulkan (gpu-next), the HDR output is being confirmed.</string>
+    <string name="player_output_hdr_gpu_checking">Process HDR on the GPU: checking the HDR10 output surface (Vulkan). Physical display mode unknown.</string>
     <string name="player_output_hdr_gpu_overload">Process HDR on the GPU: too many dropped frames, using the direct surface.</string>
     <string name="image_mpv_hdr_passthrough">HDR output through the GPU: sharpening, deband and the RAVU Lite / FSR upscalers apply. Film grain is off here; denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
     <string name="player_output_hdr_gpu_no_effects">Process HDR on the GPU: no HDR-safe shader or deband is selected, so HDR stays on the direct surface.</string>
