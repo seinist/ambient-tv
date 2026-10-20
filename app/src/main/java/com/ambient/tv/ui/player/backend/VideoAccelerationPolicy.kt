@@ -5,7 +5,7 @@ import com.ambient.tv.data.local.MpvImageOptions
 
 internal fun mpvNeedsGpuProcessing(o: MpvImageOptions): Boolean =
     o.scaler != "bilinear" || o.chromaScaler != "bilinear" || o.downscaler != "bilinear" ||
-        o.deband != "off" || o.sharpening != "off" || o.denoise != "off" || o.deblock != "off" ||
+        o.deband != "off" || o.sharpening != "off" || o.denoise != "off" || o.deblock != "off" || o.filmGrain != "off" ||
         o.superResolution || o.antiring > 0 || o.sigmoid || o.svpMode != "off" ||
         o.brightness != 0 || o.contrast != 0 || o.saturation != 0 || o.gamma != 0 ||
         o.toneMapping != "auto" || o.ditherDepth !in setOf("auto", "no")
@@ -59,11 +59,15 @@ data class MpvAccelerationPlan(
     }
     /** Decoder set before loadfile; [zeroCopy] only applies to OpenGL. */
     fun initialHwdec(zeroCopy: Boolean): String = if (zeroCopy && output == "gpu" && decoder != "software") MPV_ZERO_COPY_HWDEC else hwdec
-    /** Decoder for OpenGL with/without copy-back. [zeroCopy]: SHIELD interlaced live (MpvShieldInterlacePolicy). */
-    fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean, zeroCopy: Boolean = false): String = when {
+    /**
+     * Decoder for OpenGL with/without copy-back. [zeroCopy]: SHIELD interlaced live (MpvShieldInterlacePolicy).
+     * [cpuFrames]: a CPU filter needs system-memory frames. Vulkan-decoded images are sampled by
+     * libplacebo directly, so shader-only copy-back does not force vulkan-copy.
+     */
+    fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean, zeroCopy: Boolean = false, cpuFrames: Boolean = copyBack): String = when {
         decoder == "software" -> "no"
         zeroCopy && output == "gpu" -> MPV_ZERO_COPY_HWDEC
-        decoder == "vulkan" && (copyBack || deinterlace) -> "vulkan-copy,mediacodec-copy"
+        decoder == "vulkan" && (cpuFrames || deinterlace) -> "vulkan-copy,mediacodec-copy"
         vulkan || output == "gpu" -> hwdec
         copyBack || deinterlace -> "mediacodec-copy"
         else -> hwdec

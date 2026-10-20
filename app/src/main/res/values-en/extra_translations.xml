@@ -361,4 +361,7 @@
     <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR output was not confirmed, using the direct surface.</string>
     <string name="player_output_hdr_gpu_overload">Process HDR on the GPU: too many dropped frames, using the direct surface.</string>
     <string name="image_mpv_hdr_passthrough">HDR output through the GPU: sharpening, deband and the RAVU Lite / FSR upscalers apply. Film grain is off here; denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
+    <string name="player_output_hdr_gpu_no_effects">Process HDR on the GPU: no HDR-safe shader or deband is selected, so HDR stays on the direct surface.</string>
+    <string name="settings_mpv_hdr_gpu_direct_hint">The default output “Direct” stays in place for SDR; HDR10 uses the GPU route as long as a shader or deband is selected. Choosing “Direct” in the player or a title profile keeps HDR direct.</string>
+    <string name="image_mpv_hdr_shader_hint">HDR: only HDR-safe shaders (sharpening, RAVU Lite / FSR luma, deband) apply; chroma and SSim shaders are skipped.</string>
 </resources>

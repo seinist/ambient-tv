@@ -93,6 +93,11 @@ internal fun playerPanelVideoVisibility(
     scale: VideoScaleRelation = VideoScaleRelation.UNKNOWN,
     hdrInput: Boolean = false,
     hdrOutput: Boolean = false,
+    /**
+     * MPV: the player really runs "HDR über GPU" (PQ reaches OUTPUT hooks). Decides passthrough
+     * vs. tone mapping instead of [hdrOutput], which also covers HDR shown on other routes.
+     */
+    hdrGpuPassthrough: Boolean? = null,
     /** Global SVP mode is not off; presets alone never bring the SVP row back. */
     globalSvp: Boolean = true,
 ): PlayerPanelVideoVisibility = when (engine) {
@@ -103,13 +108,13 @@ internal fun playerPanelVideoVisibility(
         denoise = gpuFilters && shadersApply,
         shaders = gpuFilters && (shadersApply || hdrInput),
         hdrShaders = gpuFilters && hdrInput && !shadersApply,
-        hdrPassthrough = gpuFilters && hdrInput && hdrOutput && !shadersApply,
+        hdrPassthrough = gpuFilters && hdrInput && (hdrGpuPassthrough ?: hdrOutput) && !shadersApply,
         svp = gpuFilters && shadersApply && globalSvp,
         picture = gpuFilters && shadersApply,
         pictureGamma = gpuFilters && shadersApply,
         deband = gpuFilters,
         downscaler = gpuFilters && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.DOWNSCALE),
-        toneMapping = gpuFilters && hdrInput && !hdrOutput,
+        toneMapping = gpuFilters && hdrInput && !(hdrGpuPassthrough ?: hdrOutput),
     )
     "vlc" -> PlayerPanelVideoVisibility(
         deinterlace = !hdrInput,

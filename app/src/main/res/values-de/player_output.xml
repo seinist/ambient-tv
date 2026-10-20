@@ -16,4 +16,7 @@
     <string name="player_output_hdr_gpu_not_confirmed">HDR über GPU: HDR-Ausgabe nicht bestätigt, die direkte Fläche wird genutzt.</string>
     <string name="player_output_hdr_gpu_overload">HDR über GPU: zu viele ausgelassene Bilder, die direkte Fläche wird genutzt.</string>
     <string name="image_mpv_hdr_passthrough">HDR-Ausgabe über GPU: Schärfen, Deband sowie die Skalierer RAVU Lite / FSR wirken. Filmkorn ist dabei aus; Entrauschen, Deblock, SSimSuperRes, Bildanpassungen und die übrigen Shader brauchen SDR.</string>
+    <string name="player_output_hdr_gpu_no_effects">HDR über GPU: kein HDR-tauglicher Shader und kein Debanding gewählt, HDR bleibt auf der direkten Fläche.</string>
+    <string name="settings_mpv_hdr_gpu_direct_hint">Die Standard-Ausgabe „Direkt“ bleibt für SDR bestehen; HDR10 nutzt den GPU-Weg, sobald ein Shader oder Debanding gewählt ist. „Direkt“ im Player oder in einem Titelprofil hält HDR direkt.</string>
+    <string name="image_mpv_hdr_shader_hint">HDR: nur HDR-taugliche Shader (Schärfen, RAVU Lite / FSR für Luma, Debanding) wirken; Chroma- und SSim-Shader entfallen.</string>
 </resources>

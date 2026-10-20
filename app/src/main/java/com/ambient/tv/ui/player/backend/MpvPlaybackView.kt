@@ -23,6 +23,7 @@ import timber.log.Timber
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.LocalPlaybackMetadata
 import com.ambient.tv.ui.player.HdrSupport
+import com.ambient.tv.ui.player.HdrStandard
 import com.ambient.tv.ui.player.nativeHdrSurfacePreferred
 import com.ambient.tv.ui.player.VideoSurfaceLayout
 import com.ambient.tv.ui.player.applyUiHdrHeadroom
@@ -117,10 +118,24 @@ fun rememberMpvPlaybackController(
     val declaredHdr = metadata?.handheldHdrStandard
     val displayHdr = HdrSupport.displayStandards(context)
     // HDR über GPU: HDR10 → HDR10 display through gpu-next/Vulkan passthrough instead of the direct surface.
-    val hdrGpu = mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, settings.mpvOutput,
-        declaredHdr ?: MpvHdrGpuSession.detectedHdr(url), displayHdr, VideoAccelerationRuntime.capabilities.value,
-        com.ambient.tv.ui.player.reducedVideoEffects(context), MpvHdrGpuSession.failure(url))
-    val outputMode = if (hdrGpu.gpu) "vulkan" else settings.mpvOutput
+    val capabilities by VideoAccelerationRuntime.capabilities.collectAsState()
+    val displayKey = mpvHdrGpuDisplayKey(context, displayHdr)
+    val resolutionKey = mpvHdrGpuResolutionKey(metadata)
+    val hdrFailure = MpvHdrGpuSession.failure(url, resolutionKey, displayKey)
+    val explicitDirect = mpvHdrGpuExplicitDirect(BackgroundPlaybackSession.videoSettingsOverride(metadata)?.mpvOutput,
+        title?.mpvOutput, resolution?.mpvOutput, preferences.mpvVideoOutputModeKey)
+    val activeSame = (BackgroundPlaybackSession.activeHandle() as? MpvPlaybackController)
+        ?.takeIf { metadata != null && com.ambient.tv.ui.player.sameVideoSettingsPlayback(metadata, BackgroundPlaybackSession.snapshot.value.metadata) }
+    val effectsActive = mpvHdrGpuEffectsActiveFor(context,
+        activeSame?.imageOptions ?: (title?.mpv ?: resolution?.mpv ?: preferences.mpvImageOptions).withGlobalSvp(preferences),
+        passthroughRunning = activeSame?.hdrGpuPassthrough == true && activeSame.hdrGpuFailure == null)
+    val tvDevice = remember { mpvHdrGpuTvDevice(context) }
+    fun decide(source: HdrStandard?) = mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, settings.mpvOutput, source, displayHdr,
+        capabilities, com.ambient.tv.ui.player.reducedVideoEffects(context), hdrFailure,
+        explicitDirect = explicitDirect, effectsActive = effectsActive, tvDevice = tvDevice)
+    val hdrGpu = decide(declaredHdr ?: MpvHdrGpuSession.detectedHdr(url))
+    // A recorded failure plays "Direkt" without a session override, so nothing reaches the title store.
+    val outputMode = mpvHdrGpuOutputMode(hdrGpu, settings.mpvOutput, hdrFailure)
     val nativeHdr = nativeHdrSurfacePreferred(declaredHdr, displayHdr) && !hdrGpu.gpu
     val key = listOf(url, startPositionMs, headers, audioPassthroughEnabled, outputMode, decoderMode, networkCache, nativeHdr, hdrGpu.gpu)
     val controller = remember(metadata?.route, key) {
@@ -164,21 +179,23 @@ fun rememberMpvPlaybackController(
     LaunchedEffect(controller?.sourceHdrStandard, controller, outputMode) {
         val runtimeHdr = controller?.sourceHdrStandard
         // Remembered per URL: with "HDR über GPU" a detected HDR10 reopens on the passthrough route.
-        if (runtimeHdr != null) MpvHdrGpuSession.recordDetected(url, runtimeHdr)
+        // Live channels keep it only for a while and reopen at most once per window.
+        if (runtimeHdr != null) MpvHdrGpuSession.recordDetected(url, runtimeHdr, live = metadata?.isLive == true)
         if (controller != null && metadata != null && controller.supportsGpuFilters && !controller.hdrGpuPassthrough &&
-            nativeHdrSurfacePreferred(runtimeHdr, displayHdr) &&
-            !mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, settings.mpvOutput, runtimeHdr, displayHdr,
-                VideoAccelerationRuntime.capabilities.value, com.ambient.tv.ui.player.reducedVideoEffects(context),
-                MpvHdrGpuSession.failure(url)).gpu) {
+            nativeHdrSurfacePreferred(runtimeHdr, displayHdr) && !decide(runtimeHdr).gpu) {
             BackgroundPlaybackSession.setVideoSettings(metadata, settings.withMpvOutput("direct"))
         }
     }
-    // Passthrough not confirmed, Vulkan fallback or overload: this URL plays on the direct surface.
+    // A live channel that now reads SDR forgets its HDR detection; the next tune starts normally.
+    LaunchedEffect(controller?.sourceSdrConfirmed, controller) {
+        if (controller?.sourceSdrConfirmed == true && metadata?.isLive == true) MpvHdrGpuSession.forgetDetected(url)
+    }
+    // Passthrough not confirmed, Vulkan fallback or overload: recorded for this media (or display),
+    // the decision then routes to "Direkt" without touching the user's output choice.
     LaunchedEffect(controller?.hdrGpuFailure, controller) {
         val failure = controller?.hdrGpuFailure ?: return@LaunchedEffect
         if (!controller.hdrGpuPassthrough) return@LaunchedEffect
-        MpvHdrGpuSession.recordFailure(url, failure)
-        if (metadata != null) BackgroundPlaybackSession.setVideoSettings(metadata, settings.withMpvOutput("direct"))
+        MpvHdrGpuSession.recordFailure(url, resolutionKey, displayKey, failure)
     }
     LaunchedEffect(controller, title, resolution) {
         controller ?: return@LaunchedEffect

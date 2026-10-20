@@ -45,21 +45,51 @@ class HdrShaderGateTest {
     }
 
     @Test fun casHasPqAndHlgProfiles() {
-        assertEquals(MpvCasTransferProfile("pq", sourceTrc = 2, targetTrc = 2), mpvCasTransferProfile("pq"))
-        assertEquals(MpvCasTransferProfile("pq", sourceTrc = 2, targetTrc = 2), mpvCasTransferProfile("smpte2084"))
-        assertEquals(MpvCasTransferProfile("hlg", sourceTrc = 5, targetTrc = 5), mpvCasTransferProfile("hlg"))
-        assertEquals(MpvCasTransferProfile("hlg", sourceTrc = 5, targetTrc = 5), mpvCasTransferProfile("arib-std-b67"))
+        val pqProfile = MpvCasTransferProfile("pq1p", sourceTrc = 2, targetTrc = 2, singlePassHdr = true)
+        val hlgProfile = MpvCasTransferProfile("hlg1p", sourceTrc = 5, targetTrc = 5, singlePassHdr = true)
+        assertEquals(pqProfile, mpvCasTransferProfile("pq"))
+        assertEquals(pqProfile, mpvCasTransferProfile("smpte2084"))
+        assertEquals(pqProfile, mpvCasTransferProfile("pq", "limited"))
+        assertEquals(hlgProfile, mpvCasTransferProfile("hlg"))
+        assertEquals(hlgProfile, mpvCasTransferProfile("arib-std-b67"))
+        assertEquals(MpvCasTransferProfile("pq1p_full", 2, 2, singlePassHdr = true, fullRange = true), mpvCasTransferProfile("pq", "full"))
         assertEquals(4, mpvCasTransferProfile("bt.1886")!!.sourceTrc)
+        // SDR profiles ignore the range: the two-pass upstream shader stays as before.
+        assertEquals(mpvCasTransferProfile("bt.1886"), mpvCasTransferProfile("bt.1886", "full"))
+        assertFalse(mpvCasTransferProfile("bt.1886")!!.singlePassHdr)
         assertNull(mpvCasTransferProfile(null))
         val cas = MPV_IMAGE_SHADERS.getValue("cas")
-        val source = raw(cas.fileName)
-        val pq = mpvShaderSourceFor(cas, source, mpvCasTransferProfile("pq"), artCnnOpenGl = false)
+        val pqFile = mpvCasSourceFile(cas, mpvCasTransferProfile("pq"))
+        assertEquals(MPV_CAS_HDR_FILE, pqFile)
+        val pq = mpvShaderSourceFor(cas, raw(pqFile), mpvCasTransferProfile("pq"), artCnnOpenGl = false)
         assertTrue(pq.contains("#define SOURCE_TRC 2"))
         assertTrue(pq.contains("#define TARGET_TRC 2"))
         assertFalse(pq.contains("#define SOURCE_TRC 4"))
-        assertTrue(pq.contains("#define SHARPENING 0.0"))
-        val hlg = mpvShaderSourceFor(cas, source, mpvCasTransferProfile("hlg"), artCnnOpenGl = false)
+        assertTrue(pq.contains("#define LIMITED_RANGE 1"))
+        assertTrue(pq.contains("#define CAS_BLEND 1.0"))
+        assertTrue(mpvCasSourceValid(pq, mpvCasTransferProfile("pq")!!, null))
+        assertFalse(mpvCasSourceValid(pq, mpvCasTransferProfile("pq", "full")!!, null))
+        val hlg = mpvShaderSourceFor(cas, raw(mpvCasSourceFile(cas, mpvCasTransferProfile("hlg"))), mpvCasTransferProfile("hlg"), artCnnOpenGl = false)
         assertTrue(hlg.contains("#define SOURCE_TRC 5") && hlg.contains("#define TARGET_TRC 5"))
+        val full = mpvShaderSourceFor(cas, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq", "full"), artCnnOpenGl = false)
+        assertTrue(full.contains("#define LIMITED_RANGE 0") && mpvCasSourceValid(full, mpvCasTransferProfile("pq", "full")!!, null))
+        // SDR keeps the pinned two-pass upstream source.
+        assertEquals(cas.fileName, mpvCasSourceFile(cas, mpvCasTransferProfile("bt.1886")))
+    }
+
+    @Test fun hdrCasIsSinglePassAndLinearisesInRegisters() {
+        val text = raw(MPV_CAS_HDR_FILE)
+        assertEquals(1, Regex("//!HOOK ").findAll(text).count())
+        assertFalse(text.contains("//!SAVE"))
+        assertFalse(text.contains("//!BIND LUMA_LINEAR") || text.contains("//!WIDTH"))
+        // Limited-range expansion (64..940 of 1023) before the EOTF and back after the OETF.
+        assertTrue(text.contains("64.0 / 1023.0") && text.contains("876.0 / 1023.0"))
+        // Pure black must not divide by zero in the CAS amplitude.
+        assertTrue(text.contains("max(mxL, 1e-10)"))
+        assertTrue(text.contains("mix(e, max(sharpened, 0.0), float(CAS_BLEND))"))
+        assertTrue(text.contains("#define SHARPENING 0.0"))
+        // The upstream two-pass file stays byte-identical (manifest hash) and has no blend define.
+        assertFalse(raw(MPV_IMAGE_SHADERS.getValue("cas").fileName).contains("CAS_BLEND"))
     }
 
     @Test fun pqSourcesNeverGetLumaGrain() {
@@ -97,11 +127,17 @@ class HdrShaderGateTest {
 
         val light = MPV_IMAGE_SHADERS.getValue("cas_light")
         val medium = MPV_IMAGE_SHADERS.getValue("cas_medium")
-        val lightPq = mpvShaderSourceFor(light, raw(light.fileName), mpvCasTransferProfile("pq"), artCnnOpenGl = false)
-        assertTrue(lightPq.contains("#define SHARPENING $MPV_CAS_LIGHT_SHARPENING") && lightPq.contains("#define SOURCE_TRC 2"))
+        val lightPq = mpvShaderSourceFor(light, raw(MPV_CAS_HDR_FILE), mpvCasTransferProfile("pq"), artCnnOpenGl = false)
+        assertTrue(lightPq.contains("#define CAS_BLEND $MPV_CAS_LIGHT_BLEND") && lightPq.contains("#define SOURCE_TRC 2"))
+        assertTrue(mpvCasSourceValid(lightPq, mpvCasTransferProfile("pq")!!, MPV_CAS_LIGHT_BLEND))
         val mediumSdr = mpvShaderSourceFor(medium, raw(medium.fileName), mpvCasTransferProfile("bt.1886"), artCnnOpenGl = false)
-        assertTrue(mediumSdr.contains("#define SHARPENING $MPV_CAS_MEDIUM_SHARPENING") && mediumSdr.contains("#define SOURCE_TRC 4"))
-        assertTrue(MPV_CAS_LIGHT_SHARPENING.toDouble() < MPV_CAS_MEDIUM_SHARPENING.toDouble())
+        assertTrue(mediumSdr.contains("#define CAS_BLEND $MPV_CAS_MEDIUM_BLEND") && mediumSdr.contains("#define SOURCE_TRC 4"))
+        assertTrue(mediumSdr.contains("\tpix.r = mix(e, pix.r, float(CAS_BLEND));\n\tpix.r = clamp(pix.r, 0.0, 1.0);"))
+        // CAS strength stays at the upstream 0.0: Light < Medium < plain "AMD CAS" (blend 1.0).
+        assertTrue(mediumSdr.contains("#define SHARPENING 0.0"))
+        assertTrue(MPV_CAS_LIGHT_BLEND.toDouble() < MPV_CAS_MEDIUM_BLEND.toDouble())
+        assertTrue(MPV_CAS_MEDIUM_BLEND.toDouble() < 1.0)
+        assertNull(MPV_IMAGE_SHADERS.getValue("cas").casBlend)
         assertTrue(mpvTransferAwareShaderLoaded(listOf("cas_light")))
         assertFalse(mpvTransferAwareShaderLoaded(listOf("adaptive", "filmgrain_light_output")))
     }

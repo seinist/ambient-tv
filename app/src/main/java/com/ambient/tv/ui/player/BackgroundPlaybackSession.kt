@@ -189,6 +189,10 @@ object BackgroundPlaybackSession {
     fun videoSettings(metadata: PlaybackMetadata?, defaults: PlayerVideoSettings): PlayerVideoSettings =
         if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride ?: defaults else defaults
 
+    /** The output/decoder chosen in the player for this playback, null when nothing was chosen. */
+    fun videoSettingsOverride(metadata: PlaybackMetadata?): PlayerVideoSettings? =
+        if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride else null
+
     fun setVideoSettings(metadata: PlaybackMetadata, settings: PlayerVideoSettings) {
         checkThread()
         if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride = settings

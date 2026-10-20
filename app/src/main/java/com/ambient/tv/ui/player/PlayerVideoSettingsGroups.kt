@@ -101,7 +101,7 @@ internal fun PlayerVideoSettingsGroups(
     val visible = when (handle) {
         is MpvPlaybackController -> playerPanelVideoVisibility("mpv", handle.supportsGpuFilters,
             handle.sdrImageProcessing, false, scale = scale, hdrInput = handle.hdrImageTransfer,
-            hdrOutput = handle.uiHdrStandard() != null,
+            hdrOutput = handle.uiHdrStandard() != null, hdrGpuPassthrough = handle.hdrPassthroughRunning,
             globalSvp = videoImagePreferences(context).svpAvailable)
         is VlcPlaybackController -> playerPanelVideoVisibility("vlc", false, false, false,
             globalSvp = videoImagePreferences(context).svpAvailable,
@@ -269,6 +269,7 @@ private fun MpvVideoGroups(
         scale = scale,
         hdrInput = controller.hdrImageTransfer,
         hdrOutput = controller.uiHdrStandard() != null,
+        hdrGpuPassthrough = controller.hdrPassthroughRunning,
         globalSvp = videoImagePreferences(LocalContext.current).svpAvailable,
     ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
     val context = LocalContext.current

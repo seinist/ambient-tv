@@ -53,6 +53,8 @@ object VideoAccelerationRuntime {
     suspend fun refresh(context: Context, force: Boolean = false): VideoAccelerationCapabilities = withContext(Dispatchers.IO) {
         lock.withLock {
             if (mutable.value.checked && !force) return@withLock mutable.value
+            // "Erneut prüfen": HDR über GPU verdicts from before the re-check no longer apply.
+            if (force) MpvHdrGpuSession.clear()
             mutableChecking.value = true
             try {
                 val device = probeDevice()

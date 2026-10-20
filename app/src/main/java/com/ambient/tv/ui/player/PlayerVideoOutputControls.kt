@@ -16,9 +16,10 @@ internal fun PlayerVideoOutputControls(backend: String) {
     val metadata = LocalPlaybackMetadata.current ?: return
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
+    val title = TitleVideoSettingsStore.load(context, metadata)
+    val resolution = ResolutionVideoProfileStore.load(context, metadata)
     val settings = BackgroundPlaybackSession.videoSettings(metadata, PlayerVideoSettings.from(preferences)
-        .withResolution(ResolutionVideoProfileStore.load(context, metadata))
-        .withTitle(TitleVideoSettingsStore.load(context, metadata)))
+        .withResolution(resolution).withTitle(title))
     val caps by VideoAccelerationRuntime.capabilities.collectAsState()
     LaunchedEffect(Unit) { VideoAccelerationRuntime.refresh(context) }
     val mpv = backend == "mpv"
@@ -26,12 +27,24 @@ internal fun PlayerVideoOutputControls(backend: String) {
     val runtimeHdr = activeMpv?.sourceHdrStandard
     val source = metadata.handheldHdrStandard ?: runtimeHdr
     val display = HdrSupport.displayStandards(context)
-    fun hdrGpuFor(output: String) = if (!mpv) com.ambient.tv.ui.player.backend.MpvHdrGpuDecision.NOT_APPLICABLE
+    val passthroughRunning = activeMpv?.hdrGpuPassthrough == true && activeMpv.hdrGpuFailure == null
+    val failure = activeMpv?.url?.let {
+        com.ambient.tv.ui.player.backend.MpvHdrGpuSession.failure(it,
+            com.ambient.tv.ui.player.backend.mpvHdrGpuResolutionKey(metadata),
+            com.ambient.tv.ui.player.backend.mpvHdrGpuDisplayKey(context, display))
+    }
+    val explicitDirect = com.ambient.tv.ui.player.backend.mpvHdrGpuExplicitDirect(
+        BackgroundPlaybackSession.videoSettingsOverride(metadata)?.mpvOutput, title?.mpvOutput, resolution?.mpvOutput,
+        preferences.mpvVideoOutputModeKey)
+    val effectsActive = com.ambient.tv.ui.player.backend.mpvHdrGpuEffectsActiveFor(context,
+        activeMpv?.imageOptions ?: preferences.mpvImageOptions, passthroughRunning)
+    val tvDevice = remember(context) { com.ambient.tv.ui.player.backend.mpvHdrGpuTvDevice(context) }
+    fun hdrGpuFor(output: String, explicit: Boolean) = if (!mpv) com.ambient.tv.ui.player.backend.MpvHdrGpuDecision.NOT_APPLICABLE
         else com.ambient.tv.ui.player.backend.mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, output, source, display,
-            caps, reducedVideoEffects(context), activeMpv?.url?.let(com.ambient.tv.ui.player.backend.MpvHdrGpuSession::failure))
-    val hdrGpu = hdrGpuFor(settings.mpvOutput)
+            caps, reducedVideoEffects(context), failure, explicitDirect = explicit, effectsActive = effectsActive, tvDevice = tvDevice)
+    val hdrGpu = hdrGpuFor(settings.mpvOutput, explicitDirect)
     // With "Direkt" chosen the passthrough must stay selectable again.
-    val hdrGpuAvailable = hdrGpuFor("vulkan").gpu
+    val hdrGpuAvailable = hdrGpuFor("vulkan", explicit = false).gpu
     val nativeHdr = nativeHdrSurfacePreferred(source, display) && !hdrGpu.gpu
     val output = if (mpv) settings.mpvOutput else settings.vlcOutput
     val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr && !hdrGpuAvailable, hdrGpuAvailable)
@@ -78,8 +91,9 @@ internal fun PlayerVideoOutputControls(backend: String) {
     }
     ImageHint(stringResource(if (metadata.isLive) R.string.player_output_restart_live else R.string.player_output_restart))
     if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
-    if (hdrGpu.gpu) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))
-    hdrGpu.reason?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
+    // "Aktiv" only for a player that really runs the passthrough, not for a decision alone.
+    if (passthroughRunning) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))
+    hdrGpu.reason?.takeUnless { passthroughRunning }?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
 
 }
 
@@ -92,6 +106,7 @@ internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrG
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 -> R.string.player_output_hdr_gpu_swapchain
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DISPLAY_NO_HDR10 -> R.string.player_output_hdr_gpu_display
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.REDUCED_EFFECTS -> R.string.player_output_hdr_gpu_reduced
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NO_EFFECTS -> R.string.player_output_hdr_gpu_no_effects
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_CONFIRMED -> R.string.player_output_hdr_gpu_not_confirmed
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OVERLOAD -> R.string.player_output_hdr_gpu_overload
 }
