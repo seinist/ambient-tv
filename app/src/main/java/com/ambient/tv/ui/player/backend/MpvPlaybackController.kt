@@ -152,6 +152,8 @@ class MpvPlaybackController(
             subtitleDelayMs = player.subtitleDelayMs, sdrImageProcessing = player.sdrImageProcessing,
             hdrImageTransfer = player.hdrImageTransfer, sourceHdrStandard = player.sourceHdrStandard,
             hdrGpuFailure = player.hdrGpuFailure, sourceSdrConfirmed = player.sourceSdrConfirmed,
+            dolbyVisionDetected = player.dolbyVisionDetected, hdrPassthroughVulkan = player.hdrPassthroughVulkan,
+            hdrPassthroughConfirmed = player.hdrPassthroughConfirmed,
             overloadDropPercent = player.overloadDropPercent, renderOverloaded = player.renderOverloaded, canReduceAfterOverload = player.canReduceAfterOverload,
             overloadContinueSignature = player.overloadContinueSignature, renderCheckSignature = player.renderCheckSignature,
             mediaInfoGeneration = player.mediaInfoGeneration, reopenGeneration = player.reopenGeneration,
@@ -206,8 +208,15 @@ class MpvPlaybackController(
     val hdrGpuFailure get() = state.hdrGpuFailure
     /** mpv read an SDR transfer for this file; a live channel's earlier HDR detection is stale. */
     val sourceSdrConfirmed get() = state.sourceSdrConfirmed
-    /** "HDR über GPU" runs: PQ reaches the display through gpu-next (no failure recorded yet). */
-    val hdrPassthroughRunning get() = hdrGpuPassthrough && hdrGpuFailure == null
+    /** The loaded file carries Dolby Vision (track list), on every route. */
+    val dolbyVisionDetected get() = state.dolbyVisionDetected
+    /**
+     * "HDR über GPU" route runs: passthrough player on Vulkan, no failure recorded. Keeps the
+     * route stable while options are edited; [hdrPassthroughConfirmed] says PQ really arrived.
+     */
+    val hdrPassthroughRunning get() = hdrGpuPassthrough && hdrGpuFailure == null && state.hdrPassthroughVulkan
+    /** mpv and Android confirmed PQ/BT.2020 on the display for this running passthrough. */
+    val hdrPassthroughConfirmed get() = hdrPassthroughRunning && state.hdrPassthroughConfirmed
     val overloadDropPercent get() = state.overloadDropPercent
     val renderOverloaded get() = state.renderOverloaded
     val canReduceAfterOverload get() = state.canReduceAfterOverload
@@ -427,6 +436,9 @@ private data class MpvEngineState(
     val sourceHdrStandard: HdrStandard? = null,
     val hdrGpuFailure: MpvHdrGpuReason? = null,
     val sourceSdrConfirmed: Boolean = false,
+    val dolbyVisionDetected: Boolean = false,
+    val hdrPassthroughVulkan: Boolean = false,
+    val hdrPassthroughConfirmed: Boolean = false,
     val overloadDropPercent: Double? = null,
     val renderOverloaded: Boolean = false,
     val canReduceAfterOverload: Boolean = false,

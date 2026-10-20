@@ -120,20 +120,26 @@ fun rememberMpvPlaybackController(
     // HDR über GPU: HDR10 → HDR10 display through gpu-next/Vulkan passthrough instead of the direct surface.
     val capabilities by VideoAccelerationRuntime.capabilities.collectAsState()
     val displayKey = mpvHdrGpuDisplayKey(context, displayHdr)
+    // Failures and detections follow the title (source + id), not the URL: Plex remux URLs share one path.
+    val mediaKey = mpvHdrGpuMediaKey(metadata, url)
     val resolutionKey = mpvHdrGpuResolutionKey(metadata)
-    val hdrFailure = MpvHdrGpuSession.failure(url, resolutionKey, displayKey)
+    val hdrFailure = MpvHdrGpuSession.failure(mediaKey, resolutionKey, displayKey)
+    // The player's own HDR "direct" (automaticHdrDirect) is no explicit choice.
     val explicitDirect = mpvHdrGpuExplicitDirect(BackgroundPlaybackSession.videoSettingsOverride(metadata)?.mpvOutput,
         title?.mpvOutput, resolution?.mpvOutput, preferences.mpvVideoOutputModeKey)
     val activeSame = (BackgroundPlaybackSession.activeHandle() as? MpvPlaybackController)
         ?.takeIf { metadata != null && com.ambient.tv.ui.player.sameVideoSettingsPlayback(metadata, BackgroundPlaybackSession.snapshot.value.metadata) }
-    val effectsActive = mpvHdrGpuEffectsActiveFor(context,
-        activeSame?.imageOptions ?: (title?.mpv ?: resolution?.mpv ?: preferences.mpvImageOptions).withGlobalSvp(preferences),
-        passthroughRunning = activeSame?.hdrGpuPassthrough == true && activeSame.hdrGpuFailure == null)
+    val effectsActive = mpvHdrGpuEffectsActiveFor(context, metadata,
+        activeSame?.imageOptions ?: mpvHdrGpuConfiguredImageOptions(preferences, title, resolution),
+        passthroughRunning = activeSame?.hdrPassthroughRunning == true)
     val tvDevice = remember { mpvHdrGpuTvDevice(context) }
     fun decide(source: HdrStandard?) = mpvHdrGpuDecision(preferences.mpvHdrGpuEnabled, settings.mpvOutput, source, displayHdr,
         capabilities, com.ambient.tv.ui.player.reducedVideoEffects(context), hdrFailure,
         explicitDirect = explicitDirect, effectsActive = effectsActive, tvDevice = tvDevice)
-    val hdrGpu = decide(declaredHdr ?: MpvHdrGpuSession.detectedHdr(url))
+    // Dolby Vision read by the running player wins at once, before the server/runtime HDR10 of
+    // its base layer can route this file onto the passthrough.
+    val hdrGpu = decide(mpvHdrGpuSourceStandard(declaredHdr, MpvHdrGpuSession.detectedHdr(mediaKey),
+        dolbyVisionRuntime = activeSame?.dolbyVisionDetected == true))
     // A recorded failure plays "Direkt" without a session override, so nothing reaches the title store.
     val outputMode = mpvHdrGpuOutputMode(hdrGpu, settings.mpvOutput, hdrFailure)
     val nativeHdr = nativeHdrSurfacePreferred(declaredHdr, displayHdr) && !hdrGpu.gpu
@@ -176,26 +182,34 @@ fun rememberMpvPlaybackController(
     }
     // Some live/remote streams report HDR only after the first decoded frame. Reopen
     // once on the direct surface; the session override is retained across recomposition.
-    LaunchedEffect(controller?.sourceHdrStandard, controller, outputMode) {
+    LaunchedEffect(controller?.sourceHdrStandard, controller?.dolbyVisionDetected, controller, outputMode) {
         val runtimeHdr = controller?.sourceHdrStandard
-        // Remembered per URL: with "HDR über GPU" a detected HDR10 reopens on the passthrough route.
+        // Dolby Vision comes from the track list on every route; the HDR10 base layer never replaces it.
+        val detectedHdr = if (controller?.dolbyVisionDetected == true) HdrStandard.DOLBY_VISION else runtimeHdr
+        // Remembered per title: with "HDR über GPU" a detected HDR10 reopens on the passthrough route.
         // Live channels keep it only for a while and reopen at most once per window.
-        if (runtimeHdr != null) MpvHdrGpuSession.recordDetected(url, runtimeHdr, live = metadata?.isLive == true)
+        if (detectedHdr != null && mediaKey != null) MpvHdrGpuSession.recordDetected(mediaKey, detectedHdr, live = metadata?.isLive == true)
         if (controller != null && metadata != null && controller.supportsGpuFilters && !controller.hdrGpuPassthrough &&
-            nativeHdrSurfacePreferred(runtimeHdr, displayHdr) && !decide(runtimeHdr).gpu) {
-            BackgroundPlaybackSession.setVideoSettings(metadata, settings.withMpvOutput("direct"))
+            nativeHdrSurfacePreferred(runtimeHdr, displayHdr) && !decide(detectedHdr).gpu && settings.mpvOutput != "direct") {
+            // Marked automatic: routes this playback, but is neither a choice for "HDR über GPU"
+            // nor stored for the title or a profile.
+            BackgroundPlaybackSession.setVideoSettings(metadata, settings.withAutomaticHdrDirect())
         }
     }
     // A live channel that now reads SDR forgets its HDR detection; the next tune starts normally.
     LaunchedEffect(controller?.sourceSdrConfirmed, controller) {
-        if (controller?.sourceSdrConfirmed == true && metadata?.isLive == true) MpvHdrGpuSession.forgetDetected(url)
+        if (controller?.sourceSdrConfirmed == true && metadata?.isLive == true && mediaKey != null) MpvHdrGpuSession.forgetDetected(mediaKey)
+    }
+    // A confirmed passthrough clears an earlier transient NOT_CONFIRMED of this display.
+    LaunchedEffect(controller?.hdrPassthroughConfirmed, controller) {
+        if (controller?.hdrPassthroughConfirmed == true) MpvHdrGpuSession.recordConfirmed(displayKey)
     }
     // Passthrough not confirmed, Vulkan fallback or overload: recorded for this media (or display),
     // the decision then routes to "Direkt" without touching the user's output choice.
     LaunchedEffect(controller?.hdrGpuFailure, controller) {
         val failure = controller?.hdrGpuFailure ?: return@LaunchedEffect
         if (!controller.hdrGpuPassthrough) return@LaunchedEffect
-        MpvHdrGpuSession.recordFailure(url, resolutionKey, displayKey, failure)
+        MpvHdrGpuSession.recordFailure(mediaKey ?: MpvHdrGpuSession.mediaKey(url), resolutionKey, displayKey, failure)
     }
     LaunchedEffect(controller, title, resolution) {
         controller ?: return@LaunchedEffect

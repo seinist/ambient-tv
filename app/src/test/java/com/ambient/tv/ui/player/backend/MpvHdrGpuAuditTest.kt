@@ -67,6 +67,8 @@ class MpvHdrGpuAuditTest {
     @Test fun failureHoldsTheFrameButKeepsThePlayIntent() {
         assertEquals(MpvHdrFailureHold(pauseNative = true, playIntent = true), mpvHdrFailureHold(playIntent = true))
         assertEquals(MpvHdrFailureHold(pauseNative = true, playIntent = false), mpvHdrFailureHold(playIntent = false))
+        // Detached (background audio): nothing would show the held frame, audio plays on.
+        assertEquals(MpvHdrFailureHold(pauseNative = false, playIntent = true), mpvHdrFailureHold(playIntent = true, attached = false))
     }
 
     @Test fun passthroughNeverTakesTheOpenGlFallback() {
@@ -115,11 +117,15 @@ class MpvHdrGpuAuditTest {
 
     @Test fun mediaKeysDropQueryAndFragment() {
         assertEquals("https://h/v.mkv", MpvHdrGpuSession.mediaKey("https://h/v.mkv?X-Plex-Token=abc&session=1#t=3"))
-        MpvHdrGpuSession.recordFailure("https://h/v.mkv?session=1", "3840x2160", "d1", MpvHdrGpuReason.OVERLOAD)
-        assertEquals(MpvHdrGpuReason.OVERLOAD, MpvHdrGpuSession.failure("https://h/v.mkv?session=2", "3840x2160", "d1"))
+        // Without a media id the URL (query dropped) is the identity.
+        val first = mpvHdrGpuMediaKey(null, null, null, null, trailer = false, url = "https://h/v.mkv?session=1")!!
+        val second = mpvHdrGpuMediaKey(null, null, null, null, trailer = false, url = "https://h/v.mkv?session=2")!!
+        assertEquals(first, second)
+        MpvHdrGpuSession.recordFailure(first, "3840x2160", "d1", MpvHdrGpuReason.OVERLOAD)
+        assertEquals(MpvHdrGpuReason.OVERLOAD, MpvHdrGpuSession.failure(second, "3840x2160", "d1"))
         // Other resolution or display: not affected.
-        assertNull(MpvHdrGpuSession.failure("https://h/v.mkv", "1920x1080", "d1"))
-        assertNull(MpvHdrGpuSession.failure("https://h/v.mkv", "3840x2160", "d2"))
+        assertNull(MpvHdrGpuSession.failure(first, "1920x1080", "d1"))
+        assertNull(MpvHdrGpuSession.failure(first, "3840x2160", "d2"))
     }
 
     @Test fun failuresAreLevelled() {

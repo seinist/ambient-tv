@@ -24,6 +24,20 @@ for entry in manifest:
         errors.append(f'Hash mismatch: {key}')
     source = raw.decode('utf-8')
     copy_back = bool(re.search(r'//!(?:HOOK|BIND) (?:LUMA|CHROMA)\b', source))
+    base = entry.get('derived_from')
+    if base:
+        # A local derivative (e.g. the HDR CAS variant) is selected by its base shader's key,
+        # not registered on its own; it shares the base's upstream and notice.
+        if not entry.get('local_patch'):
+            errors.append(f'Derived shader without local_patch: {key}')
+        if not re.search(rf'R\.raw\.{re.escape(file.stem)}\b', registry) or f'"{file.name}"' not in registry:
+            errors.append(f'Derived shader not referenced by the registry: {key}')
+        if '//!HOOK' not in source:
+            errors.append(f'No MPV shader hook: {key}')
+        notice = ROOT / 'third_party_licenses/image_shaders' / f'{base}-notice.txt'
+        if not notice.is_file() or not notice.read_text().strip():
+            errors.append(f'Missing copyright notice: {key} ({base})')
+        continue
     expected = re.compile(
         rf'"{re.escape(key)}"\s+to\s+MpvShaderAsset\(\s*'
         rf'R\.raw\.{re.escape(file.stem)}\s*,\s*'

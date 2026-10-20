@@ -189,9 +189,16 @@ object BackgroundPlaybackSession {
     fun videoSettings(metadata: PlaybackMetadata?, defaults: PlayerVideoSettings): PlayerVideoSettings =
         if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride ?: defaults else defaults
 
-    /** The output/decoder chosen in the player for this playback, null when nothing was chosen. */
+    /**
+     * The output/decoder chosen in the player for this playback, null when nothing was chosen.
+     * An automatic HDR "direct" ([PlayerVideoSettings.automaticHdrDirect]) is no choice.
+     */
     fun videoSettingsOverride(metadata: PlaybackMetadata?): PlayerVideoSettings? =
-        if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride else null
+        if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride?.takeUnless { it.automaticHdrDirect } else null
+
+    /** [videoSettings] without the player's automatic HDR "direct": what profiles may store. */
+    fun chosenVideoSettings(metadata: PlaybackMetadata?, defaults: PlayerVideoSettings): PlayerVideoSettings =
+        videoSettings(metadata, defaults).chosen(defaults)
 
     fun setVideoSettings(metadata: PlaybackMetadata, settings: PlayerVideoSettings) {
         checkThread()
