@@ -30,7 +30,10 @@ class MpvHdrGpuPolicyTest {
         capabilities: VideoAccelerationCapabilities = caps,
         reduced: Boolean = false,
         failure: MpvHdrGpuReason? = null,
-    ) = mpvHdrGpuDecision(enabled, output, source, display, capabilities, reduced, failure)
+        explicitDirect: Boolean = false,
+        effectsActive: Boolean = true,
+        tvDevice: Boolean = true,
+    ) = mpvHdrGpuDecision(enabled, output, source, display, capabilities, reduced, failure, explicitDirect, effectsActive, tvDevice)
 
     @Test fun hdr10OnAnHdr10DisplayPassesTheVulkanGate() {
         assertEquals(MpvHdrGpuDecision.GPU, decide())
@@ -64,11 +67,11 @@ class MpvHdrGpuPolicyTest {
     }
 
     @Test fun directOutputSparsamAndRuntimeFailuresFallBack() {
-        assertEquals(MpvHdrGpuReason.OUTPUT_DIRECT, decide(output = "direct").reason)
+        assertEquals(MpvHdrGpuReason.OUTPUT_DIRECT, decide(output = "direct", explicitDirect = true).reason)
         assertEquals(MpvHdrGpuReason.REDUCED_EFFECTS, decide(reduced = true).reason)
         assertEquals(MpvHdrGpuReason.OVERLOAD, decide(failure = MpvHdrGpuReason.OVERLOAD).reason)
         // The failure also switched the session to "Direkt"; the cause stays visible.
-        assertEquals(MpvHdrGpuReason.NOT_CONFIRMED, decide(output = "direct", failure = MpvHdrGpuReason.NOT_CONFIRMED).reason)
+        assertEquals(MpvHdrGpuReason.NOT_CONFIRMED, decide(output = "direct", explicitDirect = true, failure = MpvHdrGpuReason.NOT_CONFIRMED).reason)
         assertFalse(decide(failure = MpvHdrGpuReason.NOT_CONFIRMED).gpu)
     }
 
@@ -91,7 +94,7 @@ class MpvHdrGpuPolicyTest {
         // Without the gate the native HDR surface keeps priority.
         assertEquals("direct", planMpvAcceleration("vulkan", "auto", caps.copy(checked = false), nativeHdrPreferred = true, hdrPassthrough = true).output)
         assertEquals(mapOf("target-colorspace-hint" to "yes", "target-colorspace-hint-mode" to "source",
-            "target-colorspace-hint-strict" to "yes"), MPV_HDR_PASSTHROUGH_OPTIONS.toMap())
+            "target-colorspace-hint-strict" to "yes", "hdr-compute-peak" to "no"), MPV_HDR_PASSTHROUGH_OPTIONS.toMap())
     }
 
     @Test fun passthroughKeepsVulkanSelectableButNotOpenGl() {

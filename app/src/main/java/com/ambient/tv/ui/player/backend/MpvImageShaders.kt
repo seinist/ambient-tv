@@ -21,8 +21,11 @@ internal data class MpvShaderAsset(
      * is a light upscaler accepted as experimental (RAVU Lite, FSR). Everything else stays SDR-only.
      */
     val hdrSafe: Boolean = false,
-    /** CAS only: replaces the shader's `SHARPENING` define (built-in Light/Medium on gpu-next). */
-    val casSharpening: String? = null,
+    /**
+     * CAS only: blend of the sharpened result with the original pixel (built-in Light/Medium on
+     * gpu-next). Below 1.0 so Light < Medium < "AMD CAS" in strength.
+     */
+    val casBlend: String? = null,
     /** Film grain only: hook OUTPUT (after tone mapping, RGB) instead of source LUMA. */
     val outputHook: Boolean = false,
 )
@@ -32,23 +35,40 @@ internal data class MpvCasTransferProfile(
     val sourceTrc: Int,
     val targetTrc: Int,
     val customGamma: String = "2.2",
+    /**
+     * PQ/HLG: the single-pass HDR CAS ([MPV_CAS_HDR_RESOURCE]) that expands the range and
+     * linearises the 3x3 neighbourhood in registers instead of writing linear light to an FBO.
+     */
+    val singlePassHdr: Boolean = false,
+    /** Single-pass HDR only: the luma plane is full range (no 64..940 expansion). */
+    val fullRange: Boolean = false,
 )
 
-internal fun mpvCasTransferProfile(transfer: String?): MpvCasTransferProfile? = when (transfer?.trim()?.lowercase()) {
-    "bt.1886" -> MpvCasTransferProfile("bt1886", sourceTrc = 4, targetTrc = 4)
-    "srgb" -> MpvCasTransferProfile("srgb", sourceTrc = 3, targetTrc = 3)
-    "gamma1.8" -> MpvCasTransferProfile("gamma18", sourceTrc = 6, targetTrc = 6, customGamma = "1.8")
-    "gamma2.0" -> MpvCasTransferProfile("gamma20", sourceTrc = 6, targetTrc = 6, customGamma = "2.0")
-    "gamma2.2" -> MpvCasTransferProfile("gamma22", sourceTrc = 6, targetTrc = 6, customGamma = "2.2")
-    "gamma2.4" -> MpvCasTransferProfile("gamma24", sourceTrc = 6, targetTrc = 6, customGamma = "2.4")
-    "gamma2.6" -> MpvCasTransferProfile("gamma26", sourceTrc = 6, targetTrc = 6, customGamma = "2.6")
-    "gamma2.8" -> MpvCasTransferProfile("gamma28", sourceTrc = 6, targetTrc = 6, customGamma = "2.8")
-    "linear" -> MpvCasTransferProfile("linear", sourceTrc = 0, targetTrc = 0)
-    // HDR sources while mpv tone-maps: CAS linearises with the source curve and re-encodes it.
-    "pq", "smpte2084", "st2084" -> MpvCasTransferProfile("pq", sourceTrc = 2, targetTrc = 2)
-    "hlg", "arib-std-b67" -> MpvCasTransferProfile("hlg", sourceTrc = 5, targetTrc = 5)
-    else -> null
+/** [levels] is mpv's `video-params/levels` ("limited"/"full"); only HDR profiles use it. */
+internal fun mpvCasTransferProfile(transfer: String?, levels: String? = null): MpvCasTransferProfile? {
+    val full = levels?.trim()?.lowercase() in setOf("full", "pc", "jpeg")
+    return when (transfer?.trim()?.lowercase()) {
+        "bt.1886" -> MpvCasTransferProfile("bt1886", sourceTrc = 4, targetTrc = 4)
+        "srgb" -> MpvCasTransferProfile("srgb", sourceTrc = 3, targetTrc = 3)
+        "gamma1.8" -> MpvCasTransferProfile("gamma18", sourceTrc = 6, targetTrc = 6, customGamma = "1.8")
+        "gamma2.0" -> MpvCasTransferProfile("gamma20", sourceTrc = 6, targetTrc = 6, customGamma = "2.0")
+        "gamma2.2" -> MpvCasTransferProfile("gamma22", sourceTrc = 6, targetTrc = 6, customGamma = "2.2")
+        "gamma2.4" -> MpvCasTransferProfile("gamma24", sourceTrc = 6, targetTrc = 6, customGamma = "2.4")
+        "gamma2.6" -> MpvCasTransferProfile("gamma26", sourceTrc = 6, targetTrc = 6, customGamma = "2.6")
+        "gamma2.8" -> MpvCasTransferProfile("gamma28", sourceTrc = 6, targetTrc = 6, customGamma = "2.8")
+        "linear" -> MpvCasTransferProfile("linear", sourceTrc = 0, targetTrc = 0)
+        // HDR sources: single-pass CAS that linearises with the source curve and re-encodes it.
+        "pq", "smpte2084", "st2084" -> MpvCasTransferProfile(if (full) "pq1p_full" else "pq1p", sourceTrc = 2, targetTrc = 2,
+            singlePassHdr = true, fullRange = full)
+        "hlg", "arib-std-b67" -> MpvCasTransferProfile(if (full) "hlg1p_full" else "hlg1p", sourceTrc = 5, targetTrc = 5,
+            singlePassHdr = true, fullRange = full)
+        else -> null
+    }
 }
+
+/** Ambient TV's single-pass HDR CAS (see the file header). */
+internal val MPV_CAS_HDR_RESOURCE: Int get() = R.raw.quality_cas_hdr
+internal const val MPV_CAS_HDR_FILE = "quality_cas_hdr.glsl"
 
 private fun bundledNnedi3(key: String): MpvShaderAsset {
     val preset = Nnedi3QualityCatalog.byKey.getValue(key)
@@ -139,27 +159,27 @@ internal val MPV_IMAGE_SHADERS = mapOf(
         "quality_cas_a945e104.glsl",
         true,
         transferAware = true,
-        cacheFileName = "quality_cas_939ed74a_s30.glsl",
+        cacheFileName = "quality_cas_939ed74a_b50.glsl",
         hdrSafe = true,
-        casSharpening = MPV_CAS_LIGHT_SHARPENING,
+        casBlend = MPV_CAS_LIGHT_BLEND,
     ),
     "cas_medium" to MpvShaderAsset(
         R.raw.quality_cas_a945e104,
         "quality_cas_a945e104.glsl",
         true,
         transferAware = true,
-        cacheFileName = "quality_cas_939ed74a_s70.glsl",
+        cacheFileName = "quality_cas_939ed74a_b80.glsl",
         hdrSafe = true,
-        casSharpening = MPV_CAS_MEDIUM_SHARPENING,
+        casBlend = MPV_CAS_MEDIUM_BLEND,
     ),
 )
 
 /**
- * CAS strengths standing in for mpv's unsharp mask (sharpen=0.2 / 0.5). CAS at 0.0 is the
- * plain "AMD CAS" choice; Light/Medium sit above it so the three stay distinguishable.
+ * CAS blends standing in for mpv's unsharp mask (sharpen=0.2 / 0.5) on gpu-next. The plain
+ * "AMD CAS" choice is the full CAS result (blend 1.0), so Light < Medium < AMD CAS.
  */
-internal const val MPV_CAS_LIGHT_SHARPENING = "0.3"
-internal const val MPV_CAS_MEDIUM_SHARPENING = "0.7"
+internal const val MPV_CAS_LIGHT_BLEND = "0.5"
+internal const val MPV_CAS_MEDIUM_BLEND = "0.8"
 
 /** CAS keys whose materialised file depends on the source transfer. */
 internal fun mpvTransferAwareShaderLoaded(keys: Collection<String>): Boolean =
@@ -175,13 +195,32 @@ internal fun mpvOutputGrainSource(source: String): String =
         .replace("//!DESC Ambient TV film grain (", "//!DESC Ambient TV film grain, output (")
         .replace("color.x += INTENSITY * 2.0 * g;", "color.rgb += vec3(INTENSITY * 2.0 * g);")
 
-/** CAS source with the given `SHARPENING` define. */
-internal fun mpvCasSharpeningSource(source: String, sharpening: String): String =
-    source.replace("#define SHARPENING 0.0", "#define SHARPENING $sharpening")
+/**
+ * CAS source with the given blend. The single-pass HDR shader has a `CAS_BLEND` define; the
+ * pinned upstream two-pass source gets the define and the mix injected (its file stays untouched).
+ */
+internal fun mpvCasBlendSource(source: String, blend: String): String =
+    if ("#define CAS_BLEND 1.0" in source) source.replace("#define CAS_BLEND 1.0", "#define CAS_BLEND $blend")
+    else source
+        .replace("#define CAS_BETTER_DIAGONALS 1", "#define CAS_BLEND $blend\n#define CAS_BETTER_DIAGONALS 1")
+        .replace("\tpix.r = clamp(pix.r, 0.0, 1.0);", "\tpix.r = mix(e, pix.r, float(CAS_BLEND));\n\tpix.r = clamp(pix.r, 0.0, 1.0);")
+
+/** Bundled source for a transfer-aware shader: PQ/HLG use the single-pass HDR CAS. */
+internal fun mpvCasSourceFile(shader: MpvShaderAsset, profile: MpvCasTransferProfile?): String =
+    if (profile?.singlePassHdr == true) MPV_CAS_HDR_FILE else shader.fileName
+
+/** A cached CAS file carries exactly the requested curve, range and blend. */
+internal fun mpvCasSourceValid(source: String, profile: MpvCasTransferProfile, blend: String?): Boolean =
+    ("#define SOURCE_TRC " + profile.sourceTrc) in source &&
+        ("#define TARGET_TRC " + profile.targetTrc) in source &&
+        ("#define CUSTOM_GAMMA " + profile.customGamma) in source &&
+        (blend == null || "#define CAS_BLEND $blend" in source) &&
+        (!profile.singlePassHdr || ("#define LIMITED_RANGE " + (if (profile.fullRange) 0 else 1)) in source)
 
 /**
- * Text written to the shader cache: CAS gets its transfer curve (and Light/Medium strength),
- * ArtCNN its OpenGL variant, OUTPUT grain its hook change. Other sources stay byte-identical.
+ * Text written to the shader cache: CAS gets its transfer curve (and Light/Medium blend; the HDR
+ * single-pass variant also its range), ArtCNN its OpenGL variant, OUTPUT grain its hook change.
+ * Other sources stay byte-identical.
  */
 internal fun mpvShaderSourceFor(
     shader: MpvShaderAsset,
@@ -193,7 +232,8 @@ internal fun mpvShaderSourceFor(
         .replace("#define SOURCE_TRC 4", "#define SOURCE_TRC " + transferProfile.sourceTrc)
         .replace("#define TARGET_TRC 4", "#define TARGET_TRC " + transferProfile.targetTrc)
         .replace("#define CUSTOM_GAMMA 2.2", "#define CUSTOM_GAMMA " + transferProfile.customGamma)
-        .let { cas -> shader.casSharpening?.let { mpvCasSharpeningSource(cas, it) } ?: cas }
+        .let { if (transferProfile.singlePassHdr && transferProfile.fullRange) it.replace("#define LIMITED_RANGE 1", "#define LIMITED_RANGE 0") else it }
+        .let { cas -> shader.casBlend?.let { mpvCasBlendSource(cas, it) } ?: cas }
     artCnnOpenGl -> artCnnOpenGlSource(source)
     shader.outputHook -> mpvOutputGrainSource(source)
     else -> source

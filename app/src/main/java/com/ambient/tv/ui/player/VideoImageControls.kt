@@ -119,7 +119,7 @@ internal fun MpvImageControls(controller: MpvPlaybackController) {
         o,
         ::change,
         hdrTransfer = controller.hdrImageTransfer,
-        hdrOutput = controller.uiHdrStandard() != null,
+        hdrOutput = controller.hdrPassthroughRunning,
     )
     if (!controller.hdrImageTransfer && !controller.sdrImageProcessing) ImageHint(stringResource(R.string.image_sdr_only))
     if ("nis-compute-unsupported" in controller.imageOptionWarnings) {
@@ -194,14 +194,17 @@ internal fun MpvImageOptionsEditor(
                 ))
             }
             GroupedImageChoice(R.string.player_upscaler, o.scaler, scalerSections) { change(o.copy(scaler = it)) }
-            ImageChoice(R.string.image_chroma, o.chromaScaler, VideoImageCatalog.chromaScalers.toList()) { change(o.copy(chromaScaler = it)) }
-            ImageChoice(R.string.image_downscaler, o.downscaler, VideoImageCatalog.downscalers.toList()) { change(o.copy(downscaler = it)) }
+            // HDR: chroma shaders and SSimDownscaler never load, so only the built-in scalers are offered.
+            val chroma = mpvEditorChromaScalers(hdrTransfer)
+            val downscalers = mpvEditorDownscalers(hdrTransfer)
+            ImageChoice(R.string.image_chroma, o.chromaScaler.takeIf { c -> chroma.any { it.first == c } } ?: "lanczos", chroma) { change(o.copy(chromaScaler = it)) }
+            ImageChoice(R.string.image_downscaler, o.downscaler.takeIf { d -> downscalers.any { it.first == d } } ?: "lanczos", downscalers) { change(o.copy(downscaler = it)) }
             ImageLevelSlider(
                 R.string.image_antiring, o.antiring,
                 range = 0..100, step = 1, valueLabel = "${o.antiring} %",
             ) { change(o.copy(antiring = it)) }
             ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) { change(o.copy(sigmoid = it == "on")) }
-            ImageHint(stringResource(R.string.image_mpv_shader_hint))
+            ImageHint(stringResource(if (hdrTransfer) R.string.image_mpv_hdr_shader_hint else R.string.image_mpv_shader_hint))
         }
         "filters" -> {
             ImageChoice(R.string.player_deband, o.deband, imageStrengths(true)) { change(o.copy(deband = it)) }
@@ -240,6 +243,14 @@ internal fun MpvImageOptionsEditor(
         }
     }
 }
+
+/** Chroma choices for the MPV editor; an HDR source drops the chroma shaders (SDR-only). */
+internal fun mpvEditorChromaScalers(hdr: Boolean): List<Pair<String, String>> =
+    VideoImageCatalog.chromaScalers.filterKeys { !hdr || it !in VideoImageCatalog.chromaShaders }.toList()
+
+/** Downscaler choices for the MPV editor; an HDR source drops SSimDownscaler (SDR-only). */
+internal fun mpvEditorDownscalers(hdr: Boolean): List<Pair<String, String>> =
+    VideoImageCatalog.downscalers.filterKeys { !hdr || it != "ssim_down" }.toList()
 
 @Composable
 internal fun VlcImageOptionsEditor(

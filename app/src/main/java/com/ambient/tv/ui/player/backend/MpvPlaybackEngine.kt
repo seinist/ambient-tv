@@ -204,7 +204,7 @@ internal class MpvPlaybackEngine(
         dvPrimeSeeking = false
         if (!released) {
             dvPrimeMute?.let { setProperty("mute", it) }
-            setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
+            setProperty("pause", if (nativePlayWanted) "no" else "yes")
         }
         dvPrimeMute = null
     }
@@ -284,6 +284,11 @@ internal class MpvPlaybackEngine(
         private set
     private var released = false
     private var desiredPlayWhenReady = true
+    /**
+     * A failed passthrough holds the frame natively but keeps the play intent: the direct reopen
+     * takes it over through [wantsToPlay] ([mpvHdrFailureHold]).
+     */
+    private val nativePlayWanted: Boolean get() = desiredPlayWhenReady && hdrGpuFailure == null
     private var activeShaderPresetKey: String? = null
     private var loadedShaderKeys = emptyList<String>()
     private var loadedShaderTransferKey: String? = null
@@ -340,6 +345,9 @@ internal class MpvPlaybackEngine(
     var hdrImageTransfer by mutableStateOf(false)
         private set
     var sourceHdrStandard by mutableStateOf<HdrStandard?>(null)
+        private set
+    /** mpv reported an SDR transfer for the loaded file (live TV: an earlier HDR reading is stale). */
+    var sourceSdrConfirmed by mutableStateOf(false)
         private set
     /** Set once when loaded shaders/filters drop frames; the player pauses and asks to adjust them. */
     var overloadDropPercent: Double? = null
@@ -495,7 +503,7 @@ internal class MpvPlaybackEngine(
             command("loadfile", playbackUrlForOpen(), "replace")
             loaded = true
             pendingInitialSeekMs = null
-            setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
+            setProperty("pause", if (nativePlayWanted) "no" else "yes")
         }
         startEventPump()
         updateImageOptions(imageOptions)
@@ -609,7 +617,7 @@ internal class MpvPlaybackEngine(
             loaded = true
             detachedVideoSelection?.let { setProperty("vid", it) }
             detachedVideoSelection = null
-            setProperty("pause", if (desiredPlayWhenReady || dvPrimeTarget != null) "no" else "yes")
+            setProperty("pause", if (nativePlayWanted || dvPrimeTarget != null) "no" else "yes")
         } else {
             setProperty("vo", configuredVo)
             setProperty("force-window", "yes")
@@ -737,7 +745,7 @@ internal class MpvPlaybackEngine(
         command("seek", (positionMs.coerceAtLeast(0L) / 1000.0).toString(), "absolute+keyframes")
         // keep-open pauses mpv internally at EOF without changing the user's play intent.
         // Seeking back must release that automatic pause, while preserving an explicit Pause.
-        if (wasEnded) setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
+        if (wasEnded) setProperty("pause", if (nativePlayWanted) "no" else "yes")
     }
 
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
@@ -838,7 +846,7 @@ internal class MpvPlaybackEngine(
             desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(),
             enabled,
         )
-        if (!trySetGpuDecoder(copyBackNeeded)) {
+        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty())) {
             deinterlaceRequested = previousEnabled
             deinterlaceAutomatic = previousAutomatic
             deinterlaceSingleRate = previousSingleRate
@@ -916,7 +924,7 @@ internal class MpvPlaybackEngine(
                     (zeroCopyInterlaced && MPV_IMAGE_SHADERS[it]?.requiresCopyBack == true)
             }
             val shaderReloadNeeded = shaderKeys != loadedShaderKeys ||
-                (mpvTransferAwareShaderLoaded(shaderKeys) && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+                (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
             // Extract files on IO; all native changes stay on the single MPV owner thread.
             val shaderFiles = if (shaderKeys.isNotEmpty() && shaderReloadNeeded) withContext(Dispatchers.IO) {
                 shaderKeys.associateWith { key -> MPV_IMAGE_SHADERS[key]?.let { materializeShader(it, transfer, gpuNextVulkan) } }
@@ -970,7 +978,7 @@ internal class MpvPlaybackEngine(
             }
         }
         if (shaderKeys != loadedShaderKeys ||
-            (mpvTransferAwareShaderLoaded(shaderKeys) && mpvCasTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
+            (mpvTransferAwareShaderLoaded(shaderKeys) && casTransferProfile(transfer)?.suffix != loadedShaderTransferKey)
         ) {
             if (optionalCommand("change-list", "glsl-shaders", "clr", "")) {
                 loadedShaderKeys = shaderKeys.filter { shaderKey ->
@@ -978,7 +986,7 @@ internal class MpvPlaybackEngine(
                     (path != null && optionalCommand("change-list", "glsl-shaders", "append", path.absolutePath))
                         .also { if (!it) warnings += shaderKey }
                 }
-                loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) mpvCasTransferProfile(transfer)?.suffix else null
+                loadedShaderTransferKey = if (mpvTransferAwareShaderLoaded(loadedShaderKeys)) casTransferProfile(transfer)?.suffix else null
             } else warnings += "glsl-shaders"
         }
         activeShaderPresetKey = o.scaler.takeIf { it in loadedShaderKeys }
@@ -993,7 +1001,7 @@ internal class MpvPlaybackEngine(
             desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty(),
             deinterlaceRequested,
         )
-        if (!trySetGpuDecoder(copyBackNeeded)) warnings += "hwdec"
+        if (!trySetGpuDecoder(copyBackNeeded, cpuFrames = desiredFilters.isNotEmpty() || activeCpuImageFilters.isNotEmpty())) warnings += "hwdec"
         if (!rebuildMpvVideoFilterChain(desiredFilters, explicitDeinterlaceFilter)) warnings += "vf-order"
         if ("plex-svp" !in activeCpuImageFilters) svpCopyBackSession = false
         svpFilterDecided = fileReady
@@ -1335,12 +1343,13 @@ internal class MpvPlaybackEngine(
         return addSuccess
     }
 
-    private fun trySetGpuDecoder(copyBack: Boolean): Boolean {
+    private fun trySetGpuDecoder(copyBack: Boolean, cpuFrames: Boolean = copyBack): Boolean {
         // Image-processing changes must not silently override a Vulkan/software choice.
         // svpCopyBackSession covers the moment before plex-svp is linked into vf.
         // After the filter leaves the chain the latch is cleared, and copy-back
         // stays only for deinterlace, a CPU filter, or a shader that still needs it.
-        val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested, zeroCopyInterlaced)
+        val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested, zeroCopyInterlaced,
+            cpuFrames = cpuFrames || svpCopyBackSession)
         if (getPropertyString("hwdec") == desired) return true
         onOutputTransition()
         return trySetProperty("hwdec", desired)
@@ -1348,7 +1357,13 @@ internal class MpvPlaybackEngine(
 
     private fun updateGpuDecoder(): Boolean = gpuQualityMode && trySetGpuDecoder(
         mpvCopyBackNeeded(loadedShaderKeys, activeCpuImageFilters.isNotEmpty(), deinterlaceRequested),
+        cpuFrames = activeCpuImageFilters.isNotEmpty(),
     )
+
+    private fun currentMpvLevels(): String? = getPropertyString("video-params/levels")
+
+    /** CAS curve for the current source; HDR also follows the luma range (limited/full). */
+    private fun casTransferProfile(transfer: String?): MpvCasTransferProfile? = mpvCasTransferProfile(transfer, currentMpvLevels())
 
     private fun currentMpvTransfer(): String? = getPropertyString("video-params/gamma")
         ?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
@@ -1371,10 +1386,15 @@ internal class MpvPlaybackEngine(
             targetPixelFormat = getPropertyString("video-target-params/pixelformat"),
             dataSpace = if (fileReady && isMpvHdrTransfer(sourceGamma)) sdrToHdrProperties.outputDataSpace() else 0,
             swapchainHdr10 = hdr10SwapchainSupported,
+            targetMaxLuma = getPropertyDouble("video-target-params/max-luma", 0.0).takeIf { it > 0.0 },
+            targetMaxCll = getPropertyDouble("video-params/max-cll", 0.0).takeIf { it > 0.0 },
         )
         val wasConfirmed = hdrPassthroughMonitor.confirmed
         hdrPassthroughMonitor.update(facts, now)?.let(::failHdrPassthrough)
-        if (!wasConfirmed && hdrPassthroughMonitor.confirmed) Timber.i("%s MPV HDR passthrough confirmed (gpu-next, PQ/BT.2020)", HDR_AUDIT_TAG)
+        if (!wasConfirmed && hdrPassthroughMonitor.confirmed) {
+            Timber.i("%s MPV HDR passthrough confirmed (gpu-next, PQ/BT.2020) max-luma=%s max-cll=%s plausible=%s",
+                HDR_AUDIT_TAG, facts.targetMaxLuma, facts.targetMaxCll, hdrPassthroughMonitor.metadataPlausible)
+        }
     }
 
     private fun failHdrPassthrough(reason: MpvHdrGpuReason) {
@@ -1383,7 +1403,10 @@ internal class MpvPlaybackEngine(
         hdrPassthroughMonitor.fail(reason)
         renderCheckJob?.cancel()
         renderCheckJob = null
-        pause()
+        val hold = mpvHdrFailureHold(desiredPlayWhenReady)
+        conversionSampleStarted = 0L
+        if (hold.pauseNative && dvPrimeTarget == null) setProperty("pause", "yes")
+        desiredPlayWhenReady = hold.playIntent
         hdrGpuFailure = reason
     }
 
@@ -1426,7 +1449,16 @@ internal class MpvPlaybackEngine(
         val sourceGamma = if (fileReady) currentMpvSourceTransfer() else null
         val hdr = isMpvHdrTransfer(sourceGamma)
         if (hdrImageTransfer != hdr) hdrImageTransfer = hdr
-        sourceHdrStandard = hdrStandardFromMpvTransfer(sourceGamma)
+        val sdrConfirmed = fileReady && isMpvSdrTransfer(sourceGamma)
+        if (sourceSdrConfirmed != sdrConfirmed) sourceSdrConfirmed = sdrConfirmed
+        // Dolby Vision: the PQ base layer looks like HDR10, only the track's DV profile tells.
+        // Read only while passthrough is active; the regular path keeps its native DV handling.
+        val dvProfile = if (fileReady && hdrPassthroughActive && hdr)
+            getPropertyDouble("current-tracks/video/dolby-vision-profile", 0.0).toInt() else null
+        sourceHdrStandard = mpvRuntimeHdrStandard(sourceGamma, dvProfile)
+        if (sourceHdrStandard == HdrStandard.DOLBY_VISION && hdrPassthroughActive) {
+            failHdrPassthrough(MpvHdrGpuReason.DOLBY_VISION)
+        }
         checkHdrPassthrough(sourceGamma)
         if (!gpuQualityMode) return
         if (probeShieldInterlaced()) return
@@ -1480,7 +1512,7 @@ internal class MpvPlaybackEngine(
     private fun materializeShader(shader: MpvShaderAsset, transfer: String?, gpuNextVulkan: Boolean): File? = runCatching {
         val shaderDir = File(context.noBackupFilesDir, "mpv-shaders").apply { mkdirs() }
         val transferProfile = if (shader.transferAware) {
-            mpvCasTransferProfile(transfer) ?: error("No transfer profile available for " + shader.fileName)
+            casTransferProfile(transfer) ?: error("No transfer profile available for " + shader.fileName)
         } else null
         val artCnnOpenGl = shader.fileName.startsWith("quality_artcnn") && !gpuNextVulkan
         val cacheBaseName = if (artCnnOpenGl) shader.fileName.removeSuffix(".glsl") + "_opengl.glsl"
@@ -1489,7 +1521,8 @@ internal class MpvPlaybackEngine(
             cacheBaseName.removeSuffix(".glsl") + "_" + it.suffix + ".glsl"
         } ?: cacheBaseName
         val shaderFile = File(shaderDir, fileName)
-        val resolvedResourceId = shader.resourceId ?: shader.resourceName
+        val resolvedResourceId = (if (transferProfile?.singlePassHdr == true) MPV_CAS_HDR_RESOURCE else null)
+            ?: shader.resourceId ?: shader.resourceName
             ?.let { name -> context.resources.getIdentifier(name, "raw", context.packageName) }
             ?.takeIf { it != 0 }
             ?: error("Bundled shader resource is missing: ${shader.resourceName ?: shader.fileName}")
@@ -1500,9 +1533,7 @@ internal class MpvPlaybackEngine(
         } ?: if (transferProfile != null) {
             runCatching {
                 val source = file.readText()
-                ("#define SOURCE_TRC " + transferProfile.sourceTrc) in source &&
-                    ("#define TARGET_TRC " + transferProfile.targetTrc) in source &&
-                    ("#define CUSTOM_GAMMA " + transferProfile.customGamma) in source
+                mpvCasSourceValid(source, transferProfile, shader.casBlend)
             }.getOrDefault(false)
         } else file.isFile
 
@@ -2009,7 +2040,7 @@ internal class MpvPlaybackEngine(
                         fallbackTrackSelection = null
                     }
                     logHdrDiagnostics("file-loaded")
-                    setProperty("pause", if (desiredPlayWhenReady || dvPrimeTarget != null) "no" else "yes")
+                    setProperty("pause", if (nativePlayWanted || dvPrimeTarget != null) "no" else "yes")
                 }
                 MPV_EVENT_SHUTDOWN -> { errorMessage = context.getString(com.ambient.tv.R.string.mpv_shutdown); return }
             }
@@ -2076,7 +2107,7 @@ internal class MpvPlaybackEngine(
         svpFilterDecided = false
         ended = false
         reopenStream(resumeAt)
-        setProperty("pause", if (desiredPlayWhenReady) "no" else "yes")
+        setProperty("pause", if (nativePlayWanted) "no" else "yes")
         updateImageOptions(imageOptions)
     }
 
@@ -2093,7 +2124,7 @@ internal class MpvPlaybackEngine(
 
     private fun fallbackAcceleration(reason: String, reload: Boolean = true): Boolean {
         // OpenGL cannot signal HDR on Android: leave the passthrough player to the direct reopen.
-        if (hdrGpuPassthrough && acceleration.vulkan && !released) {
+        if (mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough, acceleration.vulkan, released)) {
             Timber.w("MPV HDR passthrough: Vulkan fallback (%s), reopening on the direct surface", reason)
             failHdrPassthrough(MpvHdrGpuReason.NOT_CONFIRMED)
             return true
@@ -2140,7 +2171,7 @@ internal class MpvPlaybackEngine(
             svpFilterDecided = false
             ended = false
             reopenStream(position)
-            setProperty("pause", if (desiredPlayWhenReady || dvPrimeTarget != null) "no" else "yes")
+            setProperty("pause", if (nativePlayWanted || dvPrimeTarget != null) "no" else "yes")
         }
         return true
     }

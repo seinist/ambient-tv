@@ -2058,7 +2058,11 @@ class SettingsViewModel @Inject constructor(
         it.copy(mpvVideoDecoderKey = value.takeIf { key -> key in AppPreferences.MPV_VIDEO_DECODERS } ?: "auto")
     }
 
-    fun onMpvHdrGpuChanged(value: Boolean) = _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
+    fun onMpvHdrGpuChanged(value: Boolean) {
+        // Old runtime verdicts belong to the previous setting; start clean either way.
+        com.ambient.tv.ui.player.backend.MpvHdrGpuSession.clear()
+        _uiState.update { it.copy(mpvHdrGpuEnabled = value) }
+    }
 
     fun onVlcVideoOutputModeChanged(value: String) = _uiState.update {
         it.copy(vlcVideoOutputModeKey = value.takeIf { key -> key in AppPreferences.VLC_VIDEO_OUTPUT_MODES } ?: "auto")

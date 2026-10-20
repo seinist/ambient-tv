@@ -97,6 +97,8 @@ internal fun mpvRenderOverloaded(
 internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<String>): String? = when {
     // Built-in Light/Medium running as CAS on gpu-next.
     sharpening in setOf("light", "medium") && "cas_$sharpening" in loadedShaders -> "off"
+    // Adaptive Sharpen replaced by CAS (PQ output): the next step is off.
+    sharpening == "adaptive" && "adaptive" !in loadedShaders && "cas" in loadedShaders -> "off"
     sharpening !in loadedShaders -> null
     sharpening == "adaptive" -> "cas"
     sharpening == "cas" -> "off"
@@ -408,7 +410,11 @@ internal fun mpvImageShaderKeys(
     }
     if (o.downscaler == "ssim_down" && allowed("ssim_down")) add("ssim_down")
     // FSR contains RCAS and NIS/NVScaler contains its own adaptive sharpening.
-    mpvSharpeningShader(o.sharpening, o.scaler, gpuNext)?.takeIf(::allowed)?.let(::add)
+    // PQ output: Adaptive Sharpen hooks OUTPUT, which carries PQ code values there; its limits
+    // are tuned for gamma-encoded SDR (bright halos). CAS with the PQ profile takes its place.
+    mpvSharpeningShader(o.sharpening, o.scaler, gpuNext)
+        ?.let { if (it == "adaptive" && hdrSource && pqOutput) "cas" else it }
+        ?.takeIf(::allowed)?.let(::add)
     // Grain goes last so scalers and sharpeners do not amplify it.
     if (o.filmGrain != "off" && !(hdrSource && pqOutput)) add(if (hdrSource) "filmgrain_${o.filmGrain}_output" else "filmgrain_${o.filmGrain}")
 }

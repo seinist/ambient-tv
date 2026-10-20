@@ -109,7 +109,10 @@ internal fun RendererVideoSettings(
                 }
             })
             if (vulkanDecoderAvailable) ImageHint(stringResource(R.string.vulkan_decoder_hint))
-            if (changeHdrGpu != null) {
+            // TV feature only ([mpvHdrGpuTvDevice]); phones keep the direct surface for HDR.
+            val context = LocalContext.current
+            val tvDevice = remember(context) { mpvHdrGpuTvDevice(context) }
+            if (changeHdrGpu != null && tvDevice) {
                 com.ambient.tv.ui.common.TvSettingRow(
                     title = stringResource(R.string.settings_mpv_hdr_gpu),
                     body = stringResource(R.string.settings_mpv_hdr_gpu_hint),
@@ -117,8 +120,10 @@ internal fun RendererVideoSettings(
                     onCheckedChange = changeHdrGpu,
                 )
                 // Device-level reason; per-title reasons (Dolby Vision, output, failures) show in the player.
-                if (hdrGpu) mpvHdrGpuDeviceReason(caps, com.ambient.tv.ui.player.HdrSupport.displayStandards(LocalContext.current))
+                if (hdrGpu) mpvHdrGpuDeviceReason(caps, com.ambient.tv.ui.player.HdrSupport.displayStandards(context))
                     ?.let { ImageHint(stringResource(com.ambient.tv.ui.player.mpvHdrGpuReasonRes(it))) }
+                // The factory output "Direkt" does not block HDR über GPU; say so where both meet.
+                if (hdrGpu && output == "direct") ImageHint(stringResource(R.string.settings_mpv_hdr_gpu_direct_hint))
             }
         }
         if (outputAvailable) SettingsGroup(title = stringResource(R.string.renderer_test_title)) {
