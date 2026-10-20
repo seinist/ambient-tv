@@ -160,6 +160,8 @@ class VlcPlaybackController(
         },
     )
     private var libVlc = createLibVlc()
+    /** A DV-surface swap retires a player asynchronously; its LibVLC must outlive it. */
+    private val libVlcRelease = VlcLibraryReleaseGate<LibVLC> { it.release() }
     var player = MediaPlayer(libVlc)
         private set
     internal var trackAccess = VlcTrackAccess(player)
@@ -562,7 +564,8 @@ class VlcPlaybackController(
         }
     }
 
-    private fun refreshSelectedAudioCodec(trackId: Int = trackAccess.audioTrack) {
+    private fun refreshSelectedAudioCodec(trackId: Int = currentAudioTrackId()) {
+        if (released) return
         trackAccess.mediaTracks(0).firstOrNull { it.id == trackId }?.let { updateSourceCodec(it.codec, it.channels) }
     }
 
@@ -656,9 +659,14 @@ class VlcPlaybackController(
             resumeVideoSeekMs = null
             pendingRestorePositionMs = position
             configurePlayer()
+            val retiringLibVlc = libVlc
+            libVlcRelease.retiring(retiringLibVlc)
             kotlin.concurrent.thread(name = "vlc-dv-surface-stop", isDaemon = true) {
                 runCatching { retiring.stop() }
-                android.os.Handler(android.os.Looper.getMainLooper()).post { runCatching { retiring.release() } }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    runCatching { retiring.release() }
+                    libVlcRelease.retired(retiringLibVlc)
+                }
             }
         }
         attachedView = view
@@ -808,7 +816,7 @@ class VlcPlaybackController(
             view?.let(::detach)
             player.setEventListener(null)
             player.vlcVout.removeCallback(surfaceCallback)
-            player.stop(); player.release(); libVlc.release()
+            player.stop(); player.release(); libVlcRelease.releaseWhenIdle(libVlc)
             configuredSoftwareProcessing = effectiveImage.softwareProcessing
             configuredSvpOptions = effectiveImage.svp
             configuredSvpMode = effectiveImage.svpMode
@@ -906,7 +914,7 @@ class VlcPlaybackController(
                 player.vlcVout.removeCallback(surfaceCallback)
                 player.stop()
                 player.release()
-                libVlc.release()
+                libVlcRelease.releaseWhenIdle(libVlc)
                 libVlc = createLibVlc()
                 player = MediaPlayer(libVlc)
                 trackAccess.rebind(player)
@@ -1105,6 +1113,9 @@ class VlcPlaybackController(
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
 
+    /** Native playing flag for UI snapshots; false once released (the native player may be gone). */
+    fun isPlayingNow(): Boolean = !released && runCatching { player.isPlaying }.getOrDefault(false)
+
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
     fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
 
@@ -1126,6 +1137,9 @@ class VlcPlaybackController(
     }
 
     fun seekBy(deltaMs: Long) {
+        // Key handlers can still fire between Stop and the next recomposition; a released
+        // libVLC MediaPlayer throws IllegalStateException on every native call.
+        if (released) return
         val length = player.length.takeIf { it > 0L } ?: Long.MAX_VALUE
         seekTo((confirmedPlaybackTimeMs() + deltaMs).coerceIn(0L, length))
     }
@@ -1210,6 +1224,7 @@ class VlcPlaybackController(
     }
 
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
+        if (released) return
         desiredPlayWhenReady = playWhenReady
         if (!isLive) {
             val resume = positionMs.coerceAtLeast(0L)
@@ -1237,6 +1252,7 @@ class VlcPlaybackController(
     }
 
     private fun logHdrDiagnostics(reason: String) {
+        if (released) return
         val track = runCatching { trackAccess.currentVideoTrack }.getOrNull()
         val sar = track?.let { if (it.sarNum > 0 && it.sarDen > 0) "${it.sarNum}:${it.sarDen}" else "?" } ?: "?"
         Timber.i(
@@ -1261,6 +1277,7 @@ class VlcPlaybackController(
     }.getOrNull()
 
     fun preferredAudioTrack(language: String?): Pair<Int, String>? {
+        if (released) return null
         val metadata = trackAccess.mediaTracks(org.videolan.libvlc.interfaces.IMedia.Track.Type.Audio).associateBy { it.id }
         return com.ambient.tv.ui.player.choosePreferredAudioTrack(
             audioTracks().filter { it.first >= 0 }, language, audioSession.settings.tracks,
@@ -1294,8 +1311,9 @@ class VlcPlaybackController(
         trackAccess.getVideoTracks().map { it.id to (it.name ?: context.getString(R.string.vlc_video_track_fallback, it.id)) }
     }.getOrDefault(emptyList())
 
-    fun currentVideoTrackId(): Int = trackAccess.videoTrack
+    fun currentVideoTrackId(): Int = if (released) -1 else trackAccess.videoTrack
     fun selectVideoTrack(id: Int) {
+        if (released) return
         userVideoDisabled = id < 0
         trackAccess.setVideoTrack(id)
     }
@@ -1358,6 +1376,7 @@ class VlcPlaybackController(
         ?: com.ambient.tv.ui.player.PlaybackLanguagePolicy.inferLanguageFromLabel(audioTracks().firstOrNull { it.first == currentAudioTrackId() }?.second)
 
     private fun mediaTrackLanguages(type: Int): Map<Int, String?> {
+        if (released) return emptyMap()
         return trackAccess.mediaTracks(type).associate { it.id to it.language }
     }
 
@@ -1378,12 +1397,17 @@ class VlcPlaybackController(
         else -> deinterlaceFilter.takeIf { it.isNotBlank() } ?: deinterlaceMode
     }
     fun selectAudioTrack(id: Int) {
+        if (released) return
         trackAccess.setAudioTrack(id)
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (!released) refreshSelectedAudioCodec(id)
         }, 100L)
     }
-    fun selectSubtitleTrack(id: Int?) { manualExternalSubtitleUrl = null; trackAccess.setSpuTrack(id ?: -1) }
+    fun selectSubtitleTrack(id: Int?) {
+        if (released) return
+        manualExternalSubtitleUrl = null
+        trackAccess.setSpuTrack(id ?: -1)
+    }
 
     /** Actual playback rate, so the panel follows renderer restores and bitstream resets. */
     fun currentSpeed(): Float = if (released) 1f else runCatching { player.rate }.getOrDefault(1f)
@@ -1393,6 +1417,7 @@ class VlcPlaybackController(
     }
 
     fun cycleAudioTrack(): String? {
+        if (released) return null
         val tracks = trackAccess.getAudioTracks()
         if (tracks.isEmpty()) return null
         val current = trackAccess.audioTrack
@@ -1403,6 +1428,7 @@ class VlcPlaybackController(
     }
 
     fun cycleSubtitleTrack(): String? {
+        if (released) return null
         BackgroundPlaybackSession.manualSubtitleSelection()
         val tracks = trackAccess.getSpuTracks()
         if (tracks.isEmpty()) {
@@ -1550,6 +1576,7 @@ class VlcPlaybackController(
 
     override fun release() {
         if (released) return
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "release vulkan=$vulkanOutput")
         pendingSeekTask?.let(pendingSeekHandler::removeCallbacks)
         pendingSeekTask = null
         renderCheckTask?.let(renderCheckHandler::removeCallbacks)
@@ -1576,7 +1603,8 @@ class VlcPlaybackController(
                 .onFailure { Timber.w(it, "VLC native stop failed") }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 runCatching { retiringPlayer.release() }
-                runCatching { retiringLibVlc.release() }
+                libVlcRelease.releaseWhenIdle(retiringLibVlc)
+                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")
                 Timber.i("VLC native release completed in %d ms", android.os.SystemClock.elapsedRealtime() - started)
             }
         }
@@ -1807,7 +1835,7 @@ fun rememberVlcPlaybackSnapshot(
     nerdStatsEnabled: Boolean = false,
 ): VlcPlaybackSnapshot {
     var snapshot by remember(controller) { mutableStateOf(
-        VlcPlaybackSnapshot(isPlaying = controller.player.isPlaying, wantsToPlay = controller.wantsToPlay()),
+        VlcPlaybackSnapshot(isPlaying = controller.isPlayingNow(), wantsToPlay = controller.wantsToPlay()),
     ) }
     val appVisible by com.ambient.tv.ui.player.rememberAppVisible()
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current

@@ -39,6 +39,7 @@ object DiagnosticLog {
         appContext = app
         files = RotatingLogFiles(app.filesDir.resolve("diagnostics"), MAX_FILE_BYTES, MAX_FILES)
         Timber.plant(DiagnosticTree)
+        CrashReports.init(app, ::deviceSummary)
         installCrashHandler()
         setEnabled(enabled)
     }
@@ -83,7 +84,7 @@ object DiagnosticLog {
     fun export(out: OutputStream) {
         val files = files ?: error("Diagnostics not initialized")
         runCatching { writer.submit {}.get(5, TimeUnit.SECONDS) }
-        writeDiagnosticZip(out, files.files(), deviceSummary(), readLogcat())
+        writeDiagnosticZip(out, files.files(), deviceSummary(), readLogcat(), runCatching { CrashReports.report() }.getOrNull())
     }
 
     fun clear() {
@@ -97,6 +98,8 @@ object DiagnosticLog {
     private fun installCrashHandler() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            // Always on, independent of the optional log: Settings → Diagnose → "Letzter Absturz".
+            runCatching { CrashReports.recordUncaught(thread, error, deviceSummary()) }
             if (enabled) {
                 // The process is about to die: write synchronously, the executor may never run.
                 runCatching {

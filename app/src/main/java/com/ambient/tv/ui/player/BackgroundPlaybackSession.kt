@@ -228,6 +228,28 @@ object BackgroundPlaybackSession {
     private var consecutiveAutoAdvances = 0
     private var expectedNextUp: Pair<String, String>? = null
 
+    /** The last start of [PlaybackService] was refused (background start on Android 12+). */
+    @Volatile var playbackServiceBlocked = false
+        private set
+
+    private fun startPlaybackService(context: Context) {
+        playbackServiceBlocked = !startForegroundServiceSafely(
+            start = { ContextCompat.startForegroundService(context, Intent(context, PlaybackService::class.java)) },
+            blocked = { error ->
+                // Playback still runs; notification/MediaSession/progress reports follow once
+                // the app is visible again (retryBlockedPlaybackService from Activity.onStart).
+                timber.log.Timber.w(error, "Playback service could not start; continuing without it")
+                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("session", "service start blocked: ${error.javaClass.simpleName}")
+            },
+        )
+    }
+
+    /** Activity.onStart: a session whose service start was refused in the background gets it now. */
+    fun retryBlockedPlaybackService(context: Context) {
+        if (!playbackServiceBlocked || !snapshot.value.active) return
+        startPlaybackService(context.applicationContext)
+    }
+
     private fun checkThread() = check(Looper.myLooper() == Looper.getMainLooper()) {
         "Playback must be accessed on the main looper"
     }
@@ -272,8 +294,7 @@ object BackgroundPlaybackSession {
         SleepSession.begin(sleepTarget, { videoImagePreferences(context) }, metadata.isLive,
             hadPlayer = previous != null, replacingSource = current.replacingSource)
         val continuesNextUpChain = expectedNextUp == (metadata.source to metadata.mediaId)
-        ContextCompat.startForegroundService(context.applicationContext,
-            Intent(context.applicationContext, PlaybackService::class.java))
+        startPlaybackService(context.applicationContext)
         val previousStatus = previous?.status()
         val previousAudio = if (samePlayback) playbackProfileAudio(previous) else null
         val previousSubtitleDelay = if (samePlayback) (previous as? SubtitleDelayTarget)?.subtitleDelayMs else null
@@ -300,6 +321,8 @@ object BackgroundPlaybackSession {
         // Compose surface (TVHeadend Media3/VLC/MPV) can see that this engine is no longer active
         // and ignore teardown errors instead of marking a live channel unavailable.
         handle = null
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("session",
+            "acquire backend=$backend previous=${current.backend} same=$samePlayback")
         previous?.release()
         val created = try {
             create()
@@ -545,6 +568,8 @@ object BackgroundPlaybackSession {
     fun stop(preserveNextUpChain: Boolean = false, keepSleepTimer: Boolean = false) {
         AudioEngineRedirectGuard.reset()
         checkThread()
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("session",
+            "stop backend=${snapshot.value.backend} live=${snapshot.value.metadata?.isLive} keepTimer=$keepSleepTimer")
         PlaybackOutputTransition.clear()
         if (keepSleepTimer || preserveNextUpChain) SleepSession.end(sleepTarget, keep = true) else SleepSession.end(sleepTarget)
         val previous = handle
@@ -569,4 +594,20 @@ object BackgroundPlaybackSession {
     fun takeCompleted(): List<Snapshot> = buildList {
         while (completed.isNotEmpty()) add(completed.removeFirst())
     }
+}
+
+/**
+ * startForegroundService() throws ForegroundServiceStartNotAllowedException (an
+ * IllegalStateException) from the background on Android 12+, and SecurityException on some
+ * vendor builds. Neither may take down playback; returns false when refused.
+ */
+internal fun startForegroundServiceSafely(start: () -> Unit, blocked: (Throwable) -> Unit): Boolean = try {
+    start()
+    true
+} catch (error: IllegalStateException) {
+    blocked(error)
+    false
+} catch (error: SecurityException) {
+    blocked(error)
+    false
 }

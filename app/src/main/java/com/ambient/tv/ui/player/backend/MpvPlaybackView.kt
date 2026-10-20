@@ -318,12 +318,13 @@ private class MpvSurfaceHost(
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        controller.detachSurface(holder.surface)
+        // The window is gone when this returns; wait (bounded) until the VO stopped using it.
+        controller.detachSurfaceAndWait(holder.surface)
     }
 
     fun release() {
         videoSurface.holder.removeCallback(this)
-        if (videoSurface.holder.surface.isValid) controller.detachSurface(videoSurface.holder.surface)
+        if (videoSurface.holder.surface.isValid) controller.detachSurfaceAndWait(videoSurface.holder.surface)
     }
 }
 

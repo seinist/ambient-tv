@@ -1483,6 +1483,43 @@ fun SettingsScreen(
                                 }
                             }
                             item {
+                                val crash = remember { viewModel.lastCrash() }
+                                val context = LocalContext.current
+                                val chooserTitle = stringResource(R.string.diagnostics_crash_share)
+                                SettingsGroup(
+                                    title = stringResource(R.string.diagnostics_crash_title),
+                                    subtitle = stringResource(R.string.diagnostics_crash_hint),
+                                ) {
+                                    Text(
+                                        crash?.let {
+                                            stringResource(R.string.diagnostics_crash_summary,
+                                                android.text.format.DateFormat.getMediumDateFormat(context).format(java.util.Date(it.timeMs)) + " " +
+                                                    android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(it.timeMs)),
+                                                stringResource(when (it.kind) {
+                                                    "crash_native" -> R.string.diagnostics_crash_kind_native
+                                                    "anr" -> R.string.diagnostics_crash_kind_anr
+                                                    else -> R.string.diagnostics_crash_kind_crash
+                                                }),
+                                                it.headline.ifBlank { "–" })
+                                        } ?: stringResource(R.string.diagnostics_crash_none),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    if (crash != null) DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        TvActionButton(
+                                            text = chooserTitle,
+                                            onClick = {
+                                                viewModel.shareCrashReport(chooserTitle) { intent ->
+                                                    runCatching { context.startActivity(intent) }.isSuccess
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                            fillWidth = true,
+                                        )
+                                    }
+                                }
+                            }
+                            item {
                                 Text(
                                     stringResource(R.string.diagnostics_privacy),
                                     style = MaterialTheme.typography.bodySmall,

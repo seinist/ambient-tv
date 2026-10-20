@@ -101,6 +101,15 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         }
         // Optional file log for release builds; plants its own Timber tree (Settings → Diagnostics).
         com.ambient.tv.diagnostics.DiagnosticLog.init(this, preferences.diagnosticLogEnabled)
+        // Written into a crash report; engine and source only, never URLs or titles.
+        com.ambient.tv.diagnostics.CrashReports.playbackDescription = {
+            val snapshot = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value
+            val handle = com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle()
+            "active=${snapshot.active} backend=${snapshot.backend.ifBlank { "none" }} handle=${handle?.javaClass?.simpleName} " +
+                "source=${snapshot.metadata?.source} live=${snapshot.metadata?.isLive} video=${snapshot.metadata?.hasVideo} " +
+                "playing=${snapshot.playing} positionMs=${snapshot.status.positionMs} replacing=${snapshot.replacingSource} " +
+                "error=${snapshot.status.error != null}"
+        }
         com.ambient.tv.companion.CompanionShareTargets.syncShareEntry(this)
         resumeConnectivityMonitor.start()
         // Off unless enabled in Settings; follows the app's foreground state.

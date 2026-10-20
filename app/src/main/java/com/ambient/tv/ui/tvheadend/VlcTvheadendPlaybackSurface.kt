@@ -322,8 +322,8 @@ internal fun VlcTvheadendPlaybackSurface(
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(controller.status().positionMs, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.player.play() }
-                override fun pause() { controller.player.pause() }
+                override fun play() { controller.play() }
+                override fun pause() { controller.pause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     controller.seekBy(deltaMs)

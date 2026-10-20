@@ -1563,6 +1563,16 @@
     <string name="diagnostics_exported_to">Log saved to %1$s</string>
     <string name="diagnostics_cleared">Log cleared</string>
     <string name="diagnostics_privacy">The ZIP contains the error log, device and app version, and this app\'s recent system log. Tokens, passwords, API keys and cookies are removed; server addresses and paths remain. The log never leaves the device unless you export and share it.</string>
+    <string name="diagnostics_crash_title">Last crash</string>
+    <string name="diagnostics_crash_hint">Always recorded, even without the error log: device, app version, where it failed and the latest playback events. Credentials are removed; the report leaves the device only when you share it.</string>
+    <string name="diagnostics_crash_none">No crash recorded.</string>
+    <string name="diagnostics_crash_summary">%1$s · %2$s · %3$s</string>
+    <string name="diagnostics_crash_kind_crash">App crash</string>
+    <string name="diagnostics_crash_kind_native">Native crash</string>
+    <string name="diagnostics_crash_kind_anr">Not responding (ANR)</string>
+    <string name="diagnostics_crash_share">Share crash report</string>
+    <string name="diagnostics_crash_shared">Crash report shared</string>
+    <string name="diagnostics_crash_saved_to">Crash report saved to %1$s</string>
     <string name="wg_import_failed_reason">WireGuard config not imported: %1$s</string>
     <string name="player_quality_auto">Automatic (%1$s)</string>
     <string name="youtube_audio_original">original</string>

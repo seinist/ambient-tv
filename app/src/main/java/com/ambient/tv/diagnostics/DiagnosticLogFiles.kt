@@ -104,7 +104,7 @@ internal class RotatingLogFiles(private val dir: File, private val maxBytes: Lon
 }
 
 /** Writes the ZIP the user downloads: the app log, a device summary and the logcat excerpt. */
-internal fun writeDiagnosticZip(out: OutputStream, logFiles: List<File>, deviceInfo: String, logcat: String?) {
+internal fun writeDiagnosticZip(out: OutputStream, logFiles: List<File>, deviceInfo: String, logcat: String?, crashReport: String? = null) {
     ZipOutputStream(out.buffered()).use { zip ->
         fun entry(name: String, write: () -> Unit) {
             zip.putNextEntry(ZipEntry(name))
@@ -117,6 +117,7 @@ internal fun writeDiagnosticZip(out: OutputStream, logFiles: List<File>, deviceI
             logFiles.forEach { file -> file.inputStream().use { it.copyTo(zip) } }
         }
         if (logcat != null) entry("logcat.txt") { zip.write(logcat.toByteArray()) }
+        if (crashReport != null) entry("crash.txt") { zip.write(redactDiagnostic(crashReport).toByteArray()) }
     }
 }
 

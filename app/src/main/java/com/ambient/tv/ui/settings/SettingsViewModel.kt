@@ -609,6 +609,38 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Newest recorded crash (uncaught exception, native crash or ANR); file IO, keep it rare. */
+    fun lastCrash(): com.ambient.tv.diagnostics.CrashSummary? = runCatching { com.ambient.tv.diagnostics.CrashReports.latest() }.getOrNull()
+
+    /**
+     * "Absturzbericht teilen": the redacted report through ACTION_SEND; without a share target
+     * (common on TV) a copy is saved to the app's Download folder instead.
+     */
+    fun shareCrashReport(chooserTitle: String, launch: (android.content.Intent) -> Boolean) {
+        val ticket = beginFeedback("diagnostics:crash")
+        viewModelScope.launch {
+            val intent = suspendResult { withContext(Dispatchers.IO) { com.ambient.tv.diagnostics.CrashReports.shareIntent(context, chooserTitle) } }
+            if (intent.isFailure) {
+                finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.notice_failed, false, error = intent.exceptionOrNull())
+                return@launch
+            }
+            val share = intent.getOrNull()
+            if (share == null) {
+                finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.diagnostics_crash_none, true)
+                return@launch
+            }
+            if (launch(share)) {
+                finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.diagnostics_crash_shared, true)
+                return@launch
+            }
+            val path = suspendResult { withContext(Dispatchers.IO) { com.ambient.tv.diagnostics.CrashReports.saveCopy(context) } }
+            when {
+                path.isFailure -> finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.notice_failed, false, error = path.exceptionOrNull())
+                else -> finishFeedback(ticket, SettingsCategory.DIAGNOSTICS, R.string.diagnostics_crash_saved_to, true, args = listOfNotNull(path.getOrNull()))
+            }
+        }
+    }
+
     fun diagnosticZipName(): String =
         "ambient-tv-log-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date()) + ".zip"
 
