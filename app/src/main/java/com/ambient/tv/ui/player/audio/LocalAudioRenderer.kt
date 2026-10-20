@@ -4,26 +4,33 @@ package com.ambient.tv.ui.player.audio
 import android.os.Handler
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.decoder.CryptoConfig
+import androidx.media3.decoder.Decoder
+import androidx.media3.decoder.DecoderException
+import androidx.media3.decoder.DecoderInputBuffer
+import androidx.media3.decoder.SimpleDecoderOutputBuffer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DecoderAudioRenderer
+import com.ambient.tv.ui.player.AudioOutputMode
 import com.ambient.tv.ui.player.AudioSession
 
-/** Keeps Media3's video renderer (including Dolby Vision) and converts audio packets locally. */
+/**
+ * Keeps Media3's video renderer (including Dolby Vision) and converts audio packets locally:
+ * FFmpeg decode/AC3 encode when libambientaudio is present, DTS-HD → DTS core always.
+ */
 internal class LocalAudioRenderer(
     handler: Handler, listener: AudioRendererEventListener, sink: AudioSink,
     private val session: AudioSession,
-) : DecoderAudioRenderer<LocalAudioDecoder>(handler, listener, sink) {
+) : DecoderAudioRenderer<Decoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, DecoderException>>(handler, listener, sink) {
     override fun getName() = "LocalAudioRenderer"
 
-    private fun codec(format: Format): String? = when (format.sampleMimeType) {
-        "audio/eac3", "audio/eac3-joc" -> "eac3"
-        "audio/ac3" -> "ac3"
-        "audio/true-hd" -> "truehd"
-        "audio/vnd.dts", "audio/vnd.dts.hd" -> "dca"
-        else -> null
-    }
+    private fun codec(format: Format): String? = localDecoderName(format.sampleMimeType)
+
+    /** DTS-HD whose plan is DTS core: strip the extension instead of decoding. */
+    private fun dtsCore(format: Format): Boolean = format.sampleMimeType == MimeTypes.AUDIO_DTS_HD &&
+        session.outputPlanFor("dts-hd", format.channelCount.takeIf { it > 0 }).mode == AudioOutputMode.DTS_CORE
 
     private fun encode(format: Format): Boolean = localAc3Eligible(
         session.options.localFallback, session.options.output, session.options.channels,
@@ -51,6 +58,10 @@ internal class LocalAudioRenderer(
 
     override fun supportsFormatInternal(format: Format): Int {
         val codec = codec(format) ?: return C.FORMAT_UNSUPPORTED_TYPE
+        if (dtsCore(format)) {
+            if (format.drmInitData != null) return C.FORMAT_UNSUPPORTED_DRM
+            return if (sinkSupportsFormat(dtsCoreOutputFormat(format))) C.FORMAT_HANDLED else C.FORMAT_UNSUPPORTED_SUBTYPE
+        }
         if (!LocalAudioBridge.AVAILABLE || !LocalAudioBridge.supports(codec) || session.options.localFallback == "off")
             return C.FORMAT_UNSUPPORTED_TYPE
         if (format.drmInitData != null) return C.FORMAT_UNSUPPORTED_DRM
@@ -62,15 +73,25 @@ internal class LocalAudioRenderer(
         return if (sinkSupportsFormat(output(format))) C.FORMAT_HANDLED else C.FORMAT_UNSUPPORTED_SUBTYPE
     }
 
-    override fun createDecoder(format: Format, cryptoConfig: CryptoConfig?): LocalAudioDecoder {
+    override fun createDecoder(format: Format, cryptoConfig: CryptoConfig?): Decoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, DecoderException> {
+        if (dtsCore(format)) return DtsCoreDecoder(format)
         val ac3 = encode(format)
         return LocalAudioDecoder(requireNotNull(codec(format)), format, if (ac3) 6 else pcmChannels(format), ac3).also { decoder ->
             decoder.onReleased = Runnable { publishConversion(null) }
         }
     }
-    override fun getOutputFormat(decoder: LocalAudioDecoder): Format {
-        val input = decoder.inputFormat
-        val output = decoder.outputFormat
+
+    override fun onDisabled() {
+        super.onDisabled()
+        publishConversion(null)
+    }
+
+    override fun getOutputFormat(decoder: Decoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, DecoderException>): Format {
+        val (input, output) = when (decoder) {
+            is DtsCoreDecoder -> decoder.inputFormat to decoder.outputFormat
+            is LocalAudioDecoder -> decoder.inputFormat to decoder.outputFormat
+            else -> error("Unknown local audio decoder")
+        }
         publishConversion(com.ambient.tv.ui.player.audioConversionFormats(
             input.sampleMimeType, input.channelCount, output.sampleMimeType, output.channelCount))
         return output
@@ -90,3 +111,22 @@ internal fun localPcmChannelCandidates(sourceChannels: Int, routeChannels: Int, 
     if (sourceChannels >= 6 && routeChannels >= 6 && planned in setOf("auto", "5.1", "7.1")) add(6)
     add(2)
 }
+
+/**
+ * FFmpeg decoder name for a Media3 sample MIME type. MPEG audio layers I/II are common in
+ * DVB broadcasts; most Android devices have no MediaCodec for them, FFmpeg always does.
+ */
+internal fun localDecoderName(mime: String?): String? = when (mime) {
+    MimeTypes.AUDIO_E_AC3, MimeTypes.AUDIO_E_AC3_JOC -> "eac3"
+    MimeTypes.AUDIO_AC3 -> "ac3"
+    MimeTypes.AUDIO_TRUEHD -> "truehd"
+    MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_DTS_HD -> "dca"
+    MimeTypes.AUDIO_MPEG_L2 -> "mp2"
+    MimeTypes.AUDIO_MPEG_L1 -> "mp1"
+    else -> null
+}
+
+/** Server/container codec names the local renderer can take over from Media3. */
+internal fun localDecodableSourceCodec(codec: String?): Boolean =
+    com.ambient.tv.ui.player.normalizeSourceCodec(codec) != null ||
+        codec?.trim()?.lowercase() in setOf("mp2", "mp1", "mpeg-l2", "mpeg-l1", "audio/mpeg-l2", "audio/mpeg-l1")

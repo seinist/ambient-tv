@@ -125,7 +125,7 @@ class DeviceCodecCapabilities @Inject constructor() {
         }
     }
 
-    private fun audioMimeType(codec: String?): String? = when (codec?.lowercase()) {
+    internal fun audioMimeType(codec: String?): String? = when (codec?.lowercase()) {
         "aac", "aac_latm" -> MimeTypes.AUDIO_AAC
         "ac3" -> MimeTypes.AUDIO_AC3
         "eac3", "eac3_eac3" -> MimeTypes.AUDIO_E_AC3
@@ -134,7 +134,10 @@ class DeviceCodecCapabilities @Inject constructor() {
         "dca", "dts", "dts-es" -> MimeTypes.AUDIO_DTS
         "dca-ma", "dts-hd", "dts-hra" -> MimeTypes.AUDIO_DTS_HD
         "flac" -> MimeTypes.AUDIO_FLAC
-        "mp3", "mp2" -> MimeTypes.AUDIO_MPEG
+        "mp3" -> MimeTypes.AUDIO_MPEG
+        // Layer I/II are not MP3: Android's MP3 decoder rejects them, Media3 keeps their own MIME.
+        "mp2", "mpeg-l2" -> MimeTypes.AUDIO_MPEG_L2
+        "mp1", "mpeg-l1" -> MimeTypes.AUDIO_MPEG_L1
         "opus" -> MimeTypes.AUDIO_OPUS
         "vorbis" -> MimeTypes.AUDIO_VORBIS
         "alac" -> MimeTypes.AUDIO_ALAC

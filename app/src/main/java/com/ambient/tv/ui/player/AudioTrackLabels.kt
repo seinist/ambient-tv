@@ -19,6 +19,9 @@ internal fun audioCodecLabel(codec: String): String = when (val key = codec.lowe
     "dts-hd", "audio/vnd.dts.hd" -> "DTS-HD"
     "aac", "mp4a", "audio/mp4a-latm" -> "AAC"
     "audio/raw", "pcm" -> "PCM"
+    "mp2", "audio/mpeg-l2" -> "MP2"
+    "mp1", "audio/mpeg-l1" -> "MP1"
+    "mp3", "audio/mpeg" -> "MP3"
     else -> if (key.startsWith("mp4a.")) "AAC" else codec.uppercase(Locale.ROOT).substringAfterLast('/')
 }
 

@@ -477,13 +477,10 @@ private fun PlayerContent(
                     // especially on the Android emulator.
                     if ((state.playbackMode == PlaybackMode.DIRECT_PLAY || viewModel.isServerAudioFallbackActive()) && state.audioCodec != null) {
                         coroutineScope.launch {
-                            delay(800)
+                            delay(MEDIA3_AUDIO_CHECK_DELAY_MS)
                             if (exoPlayer.playbackState == Player.STATE_READY &&
                                 (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player === exoPlayer) {
-                                val usableAudio = exoPlayer.currentTracks.groups
-                                    .filter { it.type == C.TRACK_TYPE_AUDIO }
-                                    .any { group -> (0 until group.length).any(group::isTrackSupported) }
-                                if (!usableAudio && exoPlayer.audioFormat == null) {
+                                if (media3AudioUnusable(exoPlayer.currentTracks, exoPlayer.audioFormat, expectAudioWithoutTracks = true)) {
                                     viewModel.requestAudioFallback(
                                         exoPlayer.currentPosition,
                                         noUsableAudioMessage,
@@ -1590,6 +1587,8 @@ private fun PlaybackMediaFlags(state: PlayerUiState.Ready, player: ExoPlayer) {
             val channels = player.audioFormat?.channelCount?.takeIf { it > 0 }?.let(::formatChannelCount)
             PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, listOfNotNull(friendlyCodec(codec), channels).joinToString(" "))
         }
+        audioOutputBadge(Media3AudioProcessing.session(player), state.serverAudioConversionCodec)
+            ?.let { PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, it) }
     }
 }
 

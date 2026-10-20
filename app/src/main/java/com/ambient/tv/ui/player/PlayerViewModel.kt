@@ -714,7 +714,9 @@ class PlayerViewModel @Inject constructor(
         val resolved = when {
             requested in setOf("auto", "media3") &&
                 com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
-                normalizeSourceCodec(audioCodec) != null -> requested
+                com.ambient.tv.ui.player.audio.localDecodableSourceCodec(audioCodec) -> requested
+            // DTS-HD → DTS core needs no native library; Media3 strips the extension itself.
+            requested in setOf("auto", "media3") && audioPlan.mode == AudioOutputMode.DTS_CORE -> requested
             audioPlan.needsMpv && MpvBackendAvailability.isAvailable -> "mpv"
             audioPlan.mode == AudioOutputMode.PCM && !media3CanDecode &&
                 requested in setOf("auto", "media3") && appPreferences.audioSettings.currentForRoute(route.profile).localFallback != "off" -> "vlc"

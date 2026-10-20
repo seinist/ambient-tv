@@ -134,7 +134,14 @@ class AudioSession(
         conversionLocationChanged = {}
     }
 
-    fun outputPlan(media3CanDecode: Boolean = true, options: AudioOptions = this.options): AudioOutputPlan {
+    fun outputPlan(media3CanDecode: Boolean = true, options: AudioOptions = this.options): AudioOutputPlan =
+        outputPlanFor(sourceCodec, sourceChannels, media3CanDecode, options)
+
+    /** [outputPlan] for an explicit source, e.g. a format Media3 queries before onTracksChanged. */
+    fun outputPlanFor(
+        sourceCodec: String?, sourceChannels: Int?,
+        media3CanDecode: Boolean = true, options: AudioOptions = this.options,
+    ): AudioOutputPlan {
         val effective = when {
             forceStereoPcm -> options.copy(output = "pcm", channels = "stereo", localFallback = "pcm", localAc3 = false)
             audioOnly -> options.copy(output = "pcm", localFallback = "pcm", localAc3 = false)
@@ -146,7 +153,7 @@ class AudioSession(
     ).let { plan ->
         if (backend != "media3" || !com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE ||
             normalizeSourceCodec(sourceCodec) == null || options.localFallback == "off") plan
-        else if (plan.mode == AudioOutputMode.PASSTHROUGH) plan
+        else if (plan.mode == AudioOutputMode.PASSTHROUGH || plan.mode == AudioOutputMode.DTS_CORE) plan
         else if (!localEncoderFailed && !audioOnly && !forceStereoPcm &&
             com.ambient.tv.ui.player.audio.localAc3Eligible(options.localFallback, options.output, options.channels,
                 sourceChannels ?: 0, "ac3" in route.passthrough && "ac3" in options.allowedCodecs))

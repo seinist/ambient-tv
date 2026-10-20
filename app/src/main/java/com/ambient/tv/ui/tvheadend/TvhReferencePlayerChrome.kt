@@ -72,6 +72,8 @@ fun BoxScope.TvhReferencePlayerChrome(
     seekJumpMs: Long,
     /** Own slot: [mediaBadges] keeps only four extras, which would drop an SVP chip. */
     svpBadge: String? = null,
+    /** Own slot as well: "Passthrough", "DTS-HD 7.1 → DTS 5.1", "→ PCM". */
+    audioBadge: String? = null,
     seekFocusRequester: FocusRequester,
     playFocusRequester: FocusRequester,
     onTogglePlayback: () -> Unit,
@@ -259,6 +261,7 @@ fun BoxScope.TvhReferencePlayerChrome(
             else if (source.isLive && !recordingPlayback) MetaBadge(stringResource(R.string.tvh_live).uppercase(), emphasized = true)
             svpBadge?.let { MetaBadge(it, emphasized = true) }
             com.ambient.tv.ui.player.PlayerStreamBadges(mediaBadges)
+            audioBadge?.let { MetaBadge(it) }
         }
 
         PlayerControlBar(
@@ -349,6 +352,8 @@ internal data class LiveOsdModel(
     val seekJumpMs: Long,
     /** "SVP 25 → 50" while SVP interpolates; shown outside [mediaBadges]. */
     val svpBadge: String? = null,
+    /** Audio output/conversion chip; shown outside [mediaBadges]. */
+    val audioBadge: String? = null,
     val onTogglePlayback: () -> Unit,
     val onSeekBy: (Long) -> Unit,
     val onZap: (Int) -> Unit,
@@ -392,6 +397,7 @@ internal data class LiveOsdModel(
                 mediaBadges = mediaBadges,
                 seekJumpMs = seekJumpMs,
                 svpBadge = svpBadge,
+                audioBadge = audioBadge,
                 seekFocusRequester = seekFocusRequester,
                 playFocusRequester = playFocusRequester,
                 onTogglePlayback = onTogglePlayback,
