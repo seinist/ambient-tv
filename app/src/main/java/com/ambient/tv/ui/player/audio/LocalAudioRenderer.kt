@@ -74,7 +74,17 @@ internal class LocalAudioRenderer(
     }
 
     override fun createDecoder(format: Format, cryptoConfig: CryptoConfig?): Decoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, DecoderException> {
-        if (dtsCore(format)) return DtsCoreDecoder(format)
+        if (dtsCore(format)) {
+            val local = LocalAudioBridge.AVAILABLE && session.options.localFallback != "off" && LocalAudioBridge.supports("dca")
+            return DtsHdDecoder(format, if (local) ({ localDecoder(format) }) else null) {
+                // The plan follows on the playback thread at once; Compose state stays on main.
+                com.ambient.tv.ui.player.AudioCodecRejects.markDtsCoreMissing()
+            }
+        }
+        return localDecoder(format)
+    }
+
+    private fun localDecoder(format: Format): LocalAudioDecoder {
         val ac3 = encode(format)
         return LocalAudioDecoder(requireNotNull(codec(format)), format, if (ac3) 6 else pcmChannels(format), ac3).also { decoder ->
             decoder.onReleased = Runnable { publishConversion(null) }
@@ -87,9 +97,14 @@ internal class LocalAudioRenderer(
     }
 
     override fun getOutputFormat(decoder: Decoder<DecoderInputBuffer, SimpleDecoderOutputBuffer, DecoderException>): Format {
-        val (input, output) = when (decoder) {
-            is DtsCoreDecoder -> decoder.inputFormat to decoder.outputFormat
-            is LocalAudioDecoder -> decoder.inputFormat to decoder.outputFormat
+        val active = (decoder as? DtsHdDecoder)?.delegate ?: decoder
+        if (active is DtsCoreDecoder) {
+            val output = active.outputFormat
+            publishConversion(dtsCoreConversionText(active.inputFormat, active.header))
+            return output
+        }
+        val (input, output) = when (active) {
+            is LocalAudioDecoder -> active.inputFormat to active.outputFormat
             else -> error("Unknown local audio decoder")
         }
         publishConversion(com.ambient.tv.ui.player.audioConversionFormats(
@@ -130,3 +145,10 @@ internal fun localDecoderName(mime: String?): String? = when (mime) {
 internal fun localDecodableSourceCodec(codec: String?): Boolean =
     com.ambient.tv.ui.player.normalizeSourceCodec(codec) != null ||
         codec?.trim()?.lowercase() in setOf("mp2", "mp1", "mpeg-l2", "mpeg-l1", "audio/mpeg-l2", "audio/mpeg-l1")
+
+/** "DTS-HD 7.1 → DTS 6.1": the target names the core layout from its header, not the AudioTrack's 5.1 cap. */
+internal fun dtsCoreConversionText(input: Format, header: DtsCoreHeader?): String {
+    val base = com.ambient.tv.ui.player.audioConversionFormats(input.sampleMimeType, input.channelCount, MimeTypes.AUDIO_DTS, null)
+    val layout = header?.channelLabel ?: com.ambient.tv.ui.player.audioChannelLabel(dtsCoreOutputFormat(input).channelCount)
+    return "$base $layout"
+}

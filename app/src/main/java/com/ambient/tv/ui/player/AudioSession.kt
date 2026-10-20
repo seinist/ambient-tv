@@ -150,6 +150,7 @@ class AudioSession(
         }
         return planAudioOutput(effective,
         sourceCodec, route, backend, sourcePassthrough, media3CanDecode, AudioCodecRejects.snapshot(), sourceChannels,
+        dtsCoreMissing = AudioCodecRejects.dtsCoreMissing,
     ).let { plan ->
         if (backend != "media3" || !com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE ||
             normalizeSourceCodec(sourceCodec) == null || options.localFallback == "off") plan
