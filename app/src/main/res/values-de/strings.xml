@@ -1773,4 +1773,20 @@
     <string name="settings_sleep_minutes_minus">− 5 min</string>
     <string name="settings_sleep_minutes_plus">+ 5 min</string>
     <string name="settings_sleep_presets">Schnellauswahl</string>
+    <string name="settings_performance_auto_low_end">Automatisch (Sparsam – Gerät als schwach erkannt)</string>
+    <string name="image_sparsam_auto_low_end">Sparsam ist aktiv (Automatisch: Gerät als schwach erkannt). Deine gespeicherten Bildeinstellungen bleiben erhalten, werden aber nicht angewendet: bilineare Skalierung, keine Shader, kein Debanding, keine Zwischenbildberechnung.</string>
+    <string name="image_sparsam_override">Leistungsmodus Sparsam ist aktiv. Deine gespeicherten Bildeinstellungen bleiben erhalten, werden aber nicht angewendet: bilineare Skalierung, keine Shader, kein Debanding, keine Zwischenbildberechnung.</string>
+    <string name="image_svp_needs_maximum">Zwischenbildberechnung (SVP) braucht die Wiedergabe-Leistung „Maximale Leistung“ oder Auto auf einem nicht schwachen Gerät.</string>
+    <string name="image_sparsam_switch_balanced">Wiedergabe-Leistung auf Ausgewogen</string>
+    <string name="image_sparsam_switch_maximum">Wiedergabe-Leistung auf Maximal</string>
+    <string name="image_sparsam_locked_row">%1$s: im Sparsam-Modus aus (gespeichert: %2$s)</string>
+    <string name="image_upscaler_not_needed_native">Hochskalierung: nicht nötig – das Video wird bei dieser Ausgabeauflösung 1:1 gezeigt.</string>
+    <string name="image_upscaler_not_needed_downscale">Hochskalierung: nicht nötig – das Video ist größer als die Ausgabe und wird herunterskaliert.</string>
+    <string name="player_output_sparsam_gpu">Leistungsmodus Sparsam ist aktiv: Auch diese GPU-Ausgabe skaliert bilinear, ohne Shader, Debanding oder SVP. Stelle die Wiedergabe-Leistung auf Ausgewogen oder Maximal, um sie zu nutzen.</string>
+    <string name="sdr_reference_white">SDR-Helligkeit (Referenzweiß)</string>
+    <string name="sdr_reference_white_auto">Auto (203 nits)</string>
+    <string name="sdr_reference_white_custom">Eigene</string>
+    <string name="sdr_reference_white_custom_value">Eigene SDR-Helligkeit</string>
+    <string name="sdr_reference_white_hint">Wie hell SDR-Weiß im umgewandelten HDR-Signal erscheint. Auto nutzt 203 nits (BT.2408). Höhere Werte wirken heller; begrenzt auf die Spitzenhelligkeit oben. Wirkt sofort.</string>
+    <string name="player_nerd_sparsam">Wiedergabe-Leistung</string>
 </resources>

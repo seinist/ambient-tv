@@ -34,6 +34,8 @@ internal fun UiHdrSettings(
     onSdrToHdrChanged: (Boolean) -> Unit = {},
     sdrToHdrPeakNits: Int = 0,
     onSdrToHdrPeakNitsChanged: (Int) -> Unit = {},
+    sdrToHdrReferenceWhiteNits: Int = 0,
+    onSdrToHdrReferenceWhiteNitsChanged: (Int) -> Unit = {},
     onModeChanged: (String) -> Unit,
     showInterface: Boolean = true,
     showConversion: Boolean = true,
@@ -77,6 +79,16 @@ internal fun UiHdrSettings(
                     )
                 })
                 Text(stringResource(R.string.settings_sdr_to_hdr_nits_hint), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.sdr_reference_white), style = MaterialTheme.typography.bodyMedium)
+                val whiteKey = com.ambient.tv.ui.player.sdrReferenceWhiteChoiceKey(sdrToHdrReferenceWhiteNits)
+                SettingsSelect(options = com.ambient.tv.ui.player.sdrReferenceWhiteChoices().map { (key, label) ->
+                    SettingsSelectOption(label, whiteKey == key, {
+                        onSdrToHdrReferenceWhiteNitsChanged(
+                            com.ambient.tv.ui.player.sdrReferenceWhiteForChoice(key, sdrToHdrReferenceWhiteNits))
+                    })
+                })
+                com.ambient.tv.ui.player.SdrReferenceWhiteCustomSlider(sdrToHdrReferenceWhiteNits, onSdrToHdrReferenceWhiteNitsChanged)
+                Text(stringResource(R.string.sdr_reference_white_hint), style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 text = stringResource(sdrToHdrStatusTextRes(mode, sdrToHdrEnabled, state?.sdrToHdrStatus)),

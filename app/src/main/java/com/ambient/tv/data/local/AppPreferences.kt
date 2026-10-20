@@ -754,6 +754,11 @@ class AppPreferences @Inject constructor(
         get() = com.ambient.tv.ui.display.normalizedSdrToHdrPeakNits(prefs.getInt("sdr_to_hdr_peak_nits", 0))
         set(value) = prefs.edit { putInt("sdr_to_hdr_peak_nits", com.ambient.tv.ui.display.normalizedSdrToHdrPeakNits(value)) }
 
+    /** SDR white inside the HDR signal, in nits. 0 keeps the renderer default (203, mpv hdr-reference-white=auto). */
+    var sdrToHdrReferenceWhiteNits: Int
+        get() = com.ambient.tv.ui.display.normalizedSdrReferenceWhiteNits(prefs.getInt("sdr_to_hdr_reference_white_nits", 0))
+        set(value) = prefs.edit { putInt("sdr_to_hdr_reference_white_nits", com.ambient.tv.ui.display.normalizedSdrReferenceWhiteNits(value)) }
+
     /** Stored opt-in; the HDR mode and output capabilities gate its runtime effect. */
     var sdrToHdrEnabled: Boolean
         get() = prefs.getBoolean(KEY_SDR_TO_HDR_ENABLED, false)

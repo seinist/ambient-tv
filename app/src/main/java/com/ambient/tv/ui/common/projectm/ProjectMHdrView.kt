@@ -109,7 +109,7 @@ internal class ProjectMHdrView(context: Context) : GLSurfaceView(context) {
         if (request == null || !enabled || released || unsafe || !hostRunning || Build.VERSION.SDK_INT < 34)
             return stopHdr()
         val frame = holder.surfaceFrame
-        return output.update(request.copy(peakNits = 300), VulkanNativeProbe.available,
+        return output.update(request.copy(peakNits = 300, referenceWhiteNits = 0), VulkanNativeProbe.available,
             frame.width(), frame.height(), display?.refreshRate ?: 0f)
     }
 

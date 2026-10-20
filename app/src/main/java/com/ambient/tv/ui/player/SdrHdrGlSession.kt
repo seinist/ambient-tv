@@ -22,6 +22,8 @@ internal interface SdrHdrSession {
     fun connect(surface: Surface)
     fun close(done: (Boolean) -> Unit)
     fun discontinuity() {}
+    /** Live SDR white in nits; the output (PQ surface, metadata, peak) stays as negotiated. */
+    fun referenceWhite(nits: Int) {}
 }
 
 internal fun interface SdrHdrSessionFactory {
@@ -56,6 +58,8 @@ internal class SdrHdrGlSession(
     private var videoLocation = -1
     private var transferLocation = -1
     private var peakNitsLocation = -1
+    private var referenceWhiteLocation = -1
+    @Volatile private var referenceWhiteNits = request.effectiveReferenceWhiteNits.toFloat()
     private var matrixLocation = -1
     private var positionLocation = -1
     private var textureId = 0
@@ -132,6 +136,7 @@ internal class SdrHdrGlSession(
         videoLocation = glGetUniformLocation(program, "video")
         transferLocation = glGetUniformLocation(program, "transfer")
         peakNitsLocation = glGetUniformLocation(program, "peakNits")
+        referenceWhiteLocation = glGetUniformLocation(program, "referenceWhite")
         matrixLocation = glGetUniformLocation(program, "textureMatrix")
         positionLocation = glGetAttribLocation(program, "position")
         val names = IntArray(1)
@@ -178,6 +183,11 @@ internal class SdrHdrGlSession(
         if (!stopping.get() && frameGate.consume(window != EGL_NO_SURFACE)) render()
     }
 
+    /** Picked up by the next rendered frame; no session restart and no HDR renegotiation. */
+    override fun referenceWhite(nits: Int) {
+        referenceWhiteNits = nits.toFloat()
+    }
+
     override fun discontinuity() = task {
         frameGate.discontinuity()
         slowFrames = 0
@@ -208,6 +218,7 @@ internal class SdrHdrGlSession(
         glUniform1i(videoLocation, 0)
         glUniform1i(transferLocation, transfer)
         glUniform1f(peakNitsLocation, request.peakNits.toFloat())
+        glUniform1f(referenceWhiteLocation, referenceWhiteNits)
         glUniformMatrix4fv(matrixLocation, 1, false, matrix, 0)
         glEnableVertexAttribArray(positionLocation)
         glVertexAttribPointer(positionLocation, 2, GL_FLOAT, false, 0, quad)

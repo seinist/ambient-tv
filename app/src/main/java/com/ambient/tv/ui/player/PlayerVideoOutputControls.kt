@@ -96,6 +96,11 @@ internal fun PlayerVideoOutputControls(backend: String) {
         )
     }
     ImageHint(stringResource(if (metadata.isLive) R.string.player_output_restart_live else R.string.player_output_restart))
+    // An explicit GPU output under Sparsam still renders bilinear without shaders or SVP.
+    if (sparsamGpuOutputHeadsUp(mpv, output, com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
+        ImageHint(stringResource(R.string.player_output_sparsam_gpu))
+        SparsamOverrideNotice(showText = false)
+    }
     if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
     // "Aktiv" only once mpv and Android confirmed PQ for the running passthrough, not for a decision alone.
     if (passthroughConfirmed) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))
@@ -103,6 +108,9 @@ internal fun PlayerVideoOutputControls(backend: String) {
     hdrGpu.reason?.takeUnless { passthroughRunning }?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
 
 }
+
+internal fun sparsamGpuOutputHeadsUp(mpv: Boolean, output: String, reduced: Boolean): Boolean =
+    mpv && reduced && output in setOf("vulkan", "gpu")
 
 /** Why "HDR über GPU verarbeiten" left this HDR title on its usual route. */
 internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrGpuReason): Int = when (reason) {

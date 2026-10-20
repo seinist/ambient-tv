@@ -17,7 +17,7 @@ import com.ambient.tv.ui.theme.normalizedAccentKey
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class SettingsBackup(
-    val schemaVersion: Int = 64,
+    val schemaVersion: Int = 65,
     val trailersEnabled: Boolean = true,
     val trailerLanguage: String = "auto",
     val tmdbApiKey: String? = null,
@@ -198,6 +198,8 @@ data class SettingsBackup(
     val sleepDailyStopMinute: Int = AppPreferences.SLEEP_DAILY_STOP_OFF,
     /** Since schema 64. */
     val mpvHdrGpuEnabled: Boolean = false,
+    /** SDR→HDR reference white in nits (0 = mpv/renderer default 203). Since schema 65. */
+    val sdrToHdrReferenceWhiteNits: Int = 0,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
@@ -469,6 +471,7 @@ class SettingsBackupManager @Inject constructor(
             sleepWarningMinutes = preferences.sleepWarningMinutes,
             sleepDailyStopMinute = preferences.sleepDailyStopMinute,
             mpvHdrGpuEnabled = preferences.mpvHdrGpuEnabled,
+            sdrToHdrReferenceWhiteNits = preferences.sdrToHdrReferenceWhiteNits,
             wolRetryCount = preferences.wolRetryCount,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
@@ -819,6 +822,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.sleepDailyStopMinute = if (backup.schemaVersion >= 63) backup.sleepDailyStopMinute else AppPreferences.SLEEP_DAILY_STOP_OFF
         // HDR über GPU since schema 64; older backups restore "off".
         preferences.mpvHdrGpuEnabled = backup.schemaVersion >= 64 && backup.mpvHdrGpuEnabled
+        // SDR→HDR reference white since schema 65; older backups keep the default (auto).
+        preferences.sdrToHdrReferenceWhiteNits = if (backup.schemaVersion >= 65) backup.sdrToHdrReferenceWhiteNits else 0
         preferences.wolRetryCount = backup.wolRetryCount
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
@@ -858,7 +863,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 64
+        const val CURRENT_SCHEMA_VERSION = 65
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

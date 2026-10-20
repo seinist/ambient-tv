@@ -86,6 +86,7 @@ internal object SdrHdrShader {
         uniform samplerExternalOES video;
         uniform int transfer;
         uniform float peakNits;
+        uniform float referenceWhite;
         varying vec2 uv;
         float linearize(float v) {
             if (transfer == 1) return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4);
@@ -106,10 +107,11 @@ internal object SdrHdrShader {
             vec3 wide = mat3(0.627404, 0.069097, 0.016391,
                              0.329283, 0.919540, 0.088013,
                              0.043313, 0.011362, 0.895595) * linear;
-            // Keep darks/midtones at 203-nit reference; expand only highlights, preserving hue.
+            // Keep darks/midtones at the SDR reference white (default 203 nits); expand only
+            // highlights up to the output peak, preserving hue.
             float luma = dot(linear, vec3(0.2126, 0.7152, 0.0722));
             float highlight = smoothstep(0.5, 1.0, luma);
-            float scale = 203.0 + (peakNits - 203.0) * highlight * highlight;
+            float scale = referenceWhite + max(peakNits - referenceWhite, 0.0) * highlight * highlight;
             gl_FragColor = vec4(pq(wide * scale), 1.0);
         }
     """

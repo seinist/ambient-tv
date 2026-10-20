@@ -584,10 +584,12 @@ open class MainActivity : ComponentActivity() {
             var uiHdrModeKey by remember { mutableStateOf(appPreferences.uiHdrModeKey) }
             var sdrToHdrEnabled by remember { mutableStateOf(appPreferences.sdrToHdrEnabled) }
             var sdrToHdrPeakNits by remember { mutableStateOf(appPreferences.sdrToHdrPeakNits) }
+            var sdrToHdrReferenceWhiteNits by remember { mutableStateOf(appPreferences.sdrToHdrReferenceWhiteNits) }
             // Panel writes apply immediately; unrelated preference writes must not erase a settings preview.
             LaunchedEffect(appPreferences) {
                 var storedEnabled = appPreferences.sdrToHdrEnabled
                 var storedPeak = appPreferences.sdrToHdrPeakNits
+                var storedWhite = appPreferences.sdrToHdrReferenceWhiteNits
                 appPreferences.changes().collect {
                     val enabled = appPreferences.sdrToHdrEnabled
                     val peak = appPreferences.sdrToHdrPeakNits
@@ -595,14 +597,24 @@ open class MainActivity : ComponentActivity() {
                     if (peak != storedPeak) sdrToHdrPeakNits = peak
                     storedEnabled = enabled
                     storedPeak = peak
+                    val white = appPreferences.sdrToHdrReferenceWhiteNits
+                    if (white != storedWhite) sdrToHdrReferenceWhiteNits = white
+                    storedWhite = white
                 }
             }
-            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled, sdrToHdrPeakNits)
+            val uiHdrState = com.ambient.tv.ui.display.rememberUiHdrState(this, uiHdrModeKey, sdrToHdrEnabled, sdrToHdrPeakNits, sdrToHdrReferenceWhiteNits)
             var uiPerformanceModeKey by remember { mutableStateOf(appPreferences.effectiveUiPerformanceModeKey()) }
             var playbackPerformanceModeKey by remember { mutableStateOf(appPreferences.effectivePlaybackPerformanceModeKey()) }
             var backgroundVideoDimPercent by remember { mutableStateOf(appPreferences.backgroundVideoDimPercent) }
             var visibleBackgroundVideoPlayback by remember {
                 mutableStateOf(appPreferences.visibleBackgroundVideoPlayback)
+            }
+            // Player one-tap switch (Sparsam override notice): persist and apply like the setting.
+            LaunchedEffect(Unit) {
+                com.ambient.tv.ui.performance.PlaybackPerformanceRequests.requests.collect { key ->
+                    appPreferences.playbackPerformanceModeKey = key
+                    playbackPerformanceModeKey = key
+                }
             }
             val performanceProfile = remember(uiPerformanceModeKey, playbackPerformanceModeKey) {
                 performanceProfileResolver.setPreviewModeKeys(uiPerformanceModeKey, playbackPerformanceModeKey)
@@ -663,7 +675,7 @@ open class MainActivity : ComponentActivity() {
                             }
                         },
                         onRegisterInteraction = ::registerInteraction,
-                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits ->
+                        onUiPreferencesPreview = { scale, accent, customHex, customPlaybackHex, dualAccent, theme, hdr, convertSdr, peakNits, referenceWhite ->
                             uiScale = scale
                             accentColorKey = accent
                             customAccentHex = customHex
@@ -673,6 +685,7 @@ open class MainActivity : ComponentActivity() {
                             uiHdrModeKey = hdr
                             sdrToHdrEnabled = convertSdr
                             sdrToHdrPeakNits = peakNits
+                            sdrToHdrReferenceWhiteNits = referenceWhite
                         },
                         onPerformanceModePreview = { uiMode, playbackMode ->
                             uiPerformanceModeKey = uiMode
@@ -744,7 +757,7 @@ private fun AmbientTvApp(
     onScreensaverHidden: () -> Boolean,
     onScreensaverActiveChanged: (Boolean) -> Unit,
     onRegisterInteraction: () -> Unit,
-    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int) -> Unit,
+    onUiPreferencesPreview: (Float, String, String, String, Boolean, String, String, Boolean, Int, Int) -> Unit,
     onPerformanceModePreview: (String, String) -> Unit,
     visibleBackgroundVideoPlayback: Boolean,
     backgroundVideoDimPercent: Int,

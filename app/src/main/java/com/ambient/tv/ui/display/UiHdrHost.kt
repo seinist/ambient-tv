@@ -182,8 +182,16 @@ internal class UiHdrState(private val mainWindow: Window) : UiHdrOutput {
 internal val LocalUiHdrState = staticCompositionLocalOf<UiHdrState?> { null }
 
 @Composable
-internal fun rememberUiHdrState(activity: Activity, mode: String, sdrToHdrEnabled: Boolean = false, sdrToHdrPeakNits: Int = 0): UiHdrState {
+internal fun rememberUiHdrState(
+    activity: Activity,
+    mode: String,
+    sdrToHdrEnabled: Boolean = false,
+    sdrToHdrPeakNits: Int = 0,
+    sdrToHdrReferenceWhiteNits: Int = 0,
+): UiHdrState {
     val state = remember(activity) { UiHdrState(activity.window) }
+    // Not a restart key: the renderers apply a new SDR white live, without leaving HDR.
+    val referenceWhite by androidx.compose.runtime.rememberUpdatedState(sdrToHdrReferenceWhiteNits)
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(state, mode, sdrToHdrEnabled, sdrToHdrPeakNits, lifecycle) {
@@ -224,6 +232,7 @@ internal fun rememberUiHdrState(activity: Activity, mode: String, sdrToHdrEnable
                             display.displayId, display.mode.modeId,
                             allowSurfaceProbe = handle?.sdrToHdrPath()?.kind == SdrToHdrPlayerKind.MPV_VULKAN,
                             requestedPeakNits = sdrToHdrPeakNits,
+                            requestedReferenceWhiteNits = referenceWhite,
                         ) else null
                         state.updateVideoConversion(handle, request, conversionEnabled)
                         val runtimeSource = if (hasVideo) handle?.uiHdrStandard() else null

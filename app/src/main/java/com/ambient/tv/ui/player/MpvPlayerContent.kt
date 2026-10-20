@@ -432,10 +432,11 @@ internal fun MpvPlayerContent(
                     formatNerdSeconds(snapshot.cacheDurationSeconds)?.let { add(stringResource(R.string.player_nerd_buffer_health) to it) }
                     formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let { add(stringResource(R.string.player_nerd_cache_speed) to it) }
                     if (controller.supportsGpuFilters) {
-                        formatMpvUpscalerForStats(controller.imageOptions.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling)?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
-                        formatMpvScalerName(snapshot.activeChromaScaler)?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
-                        formatMpvScalerName(snapshot.activeDownscaler)?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
-                        if (controller.imageOptions.deband != "off") add(stringResource(R.string.player_nerd_deband_configured) to stringResource(R.string.player_nerd_enabled))
+                        formatMpvUpscalerForStats(controller.imageOptions.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling, sparsam = snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
+                        formatMpvScalerStat(snapshot.activeChromaScaler, controller.imageOptions.chromaScaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
+                        formatMpvScalerStat(snapshot.activeDownscaler, controller.imageOptions.downscaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
+                        formatMpvDebandStat(controller.imageOptions.deband, snapshot.sparsam, stringResource(R.string.player_nerd_enabled))?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
+                        if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
                     }
                     if (controller.deinterlaceModeKey != "off") {
                         add(stringResource(R.string.player_nerd_deinterlace_configured) to listOf(controller.deinterlaceModeKey, controller.deinterlaceFilterKey).filter { it.isNotBlank() && it != "auto" }.joinToString(" · ").ifBlank { controller.deinterlaceModeKey })

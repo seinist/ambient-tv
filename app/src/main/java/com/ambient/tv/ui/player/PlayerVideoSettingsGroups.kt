@@ -272,6 +272,7 @@ private fun MpvVideoGroups(
         hdrGpuPassthrough = controller.hdrPassthroughRunning,
         globalSvp = videoImagePreferences(LocalContext.current).svpAvailable,
     ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
+    val reduced = LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
     val options = controller.imageOptions
@@ -280,8 +281,17 @@ private fun MpvVideoGroups(
         if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions
     }
     if (section == "scaling" && controller.supportsGpuFilters) {
-        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
-            hdr = visibility.hdrShaders)
+        if (reduced) {
+            // Sparsam renders bilinear without shaders, antiring or sigmoid: offering these
+            // choices changed nothing (stats kept showing bilinear). Show them locked instead.
+            SparsamOverrideNotice()
+            MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
+                MpvSparsamField.DOWNSCALER, MpvSparsamField.ANTIRING, MpvSparsamField.SIGMOID))
+        } else {
+            MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
+                hdr = visibility.hdrShaders)
+            upscalerNotNeededHint(scale)?.let { ImageHint(stringResource(it)) }
+        }
     }
     val showFilters = visibility.deinterlace || visibility.deband || visibility.shaders
     if (section == "filters" && showFilters) {
@@ -301,6 +311,11 @@ private fun MpvVideoGroups(
                     onDeinterlaceChanged?.invoke(mode, filter)
                 },
             )
+        }
+        if (reduced) {
+            SparsamOverrideNotice()
+            MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND, MpvSparsamField.SHARPEN, MpvSparsamField.DENOISE,
+                MpvSparsamField.DEBLOCK, MpvSparsamField.FILM_GRAIN, MpvSparsamField.SUPER_RES))
         }
         if (visibility.deband) {
             ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) { change(options.copy(deband = it)) }
@@ -333,6 +348,7 @@ private fun MpvVideoGroups(
     }
     if (section == "svp" || section == "svp_advanced") {
         val changeSvp: (String, com.ambient.tv.data.local.SvpOptions) -> Unit = { mode, svp -> change(options.copy(svpMode = mode, svp = svp)) }
+        if (section == "svp" && controller.supportsGpuFilters) SparsamOverrideNotice(forSvp = true)
         if (section == "svp") SvpMainPage(options.svpMode, options.svp, changeSvp,
             svpUiUnavailable(controller.supportsGpuFilters, LocalPerformanceProfile.current.allowSvpInterpolation),
             controller::svpState, onOpenSvpAdvanced)
@@ -469,8 +485,10 @@ private fun VlcVideoGroups(
             },
         )
         // Sparsam forces hardware processing; the CPU filter rows would have no effect.
-        if (LocalPerformanceProfile.current.gateExpensiveVideoVisuals) ImageHint(stringResource(R.string.image_filters_sparsam_hint))
-        else ImageChoice(R.string.image_processing, if (options.softwareProcessing) "software" else "hardware", listOf(
+        if (LocalPerformanceProfile.current.gateExpensiveVideoVisuals) {
+            ImageHint(stringResource(R.string.image_filters_sparsam_hint))
+            SparsamOverrideNotice(showText = false)
+        } else ImageChoice(R.string.image_processing, if (options.softwareProcessing) "software" else "hardware", listOf(
             "hardware" to stringResource(R.string.image_vlc_hardware),
             "software" to stringResource(R.string.image_vlc_software),
         )) { change(options.copy(softwareProcessing = it == "software")) }
@@ -663,6 +681,13 @@ private fun imageStrengths(strong: Boolean = false) = listOf(
     "light" to stringResource(R.string.image_light),
     "medium" to stringResource(R.string.image_medium),
 ) + if (strong) listOf("strong" to stringResource(R.string.image_strong)) else emptyList()
+
+/** Why the upscaler row is absent on a GPU VO: the fitted output needs no enlargement. */
+internal fun upscalerNotNeededHint(scale: VideoScaleRelation): Int? = when (scale) {
+    VideoScaleRelation.NATIVE -> R.string.image_upscaler_not_needed_native
+    VideoScaleRelation.DOWNSCALE -> R.string.image_upscaler_not_needed_downscale
+    else -> null
+}
 
 internal fun mpvSuperResRowVisible(scaler: String, scale: VideoScaleRelation): Boolean =
     scaler !in setOf("fsr", "nis") && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.UPSCALE)

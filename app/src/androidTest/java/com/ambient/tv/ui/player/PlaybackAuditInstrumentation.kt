@@ -923,7 +923,9 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                         log("CAPTURE $backend production SVP panel")
                     }
                 }
-                for (mode in listOf("balanced","auto","low")) {
+                // Auto keeps SVP on a full device; only test it here when Auto resolves to Sparsam.
+                val autoReduced = performanceProfile(targetContext).lowEndDevice
+                for (mode in listOf("balanced","auto","low").filter { it != "auto" || autoReduced }) {
                     main {
                         preferences.performanceModeKey=mode
                         check(!performanceProfile(targetContext).allowSvpInterpolation)
