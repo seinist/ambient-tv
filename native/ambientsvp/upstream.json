@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/Z1xus/open-svpflow",
-  "revision": "deadbad1c3418a6df162f7e22aafaadc010eea04",
+  "revision": "deadbad870be1cbdfc38db151fcff3688438b613",
   "sha256": {
     "shaders/smooth.wgsl": "824ec51ac76ccc317767ad11fed5afc0bc179f0564e6c18e59352c8887d1fd26",
     "OPEN-SVPFLOW-LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"

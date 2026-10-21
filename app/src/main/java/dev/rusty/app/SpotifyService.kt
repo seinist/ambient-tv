@@ -20,7 +20,9 @@ class SpotifyService {
         /** Visualizer PCM from [dev.rusty.app.audio.PcmTap]: mono f32, 44.1 kHz. */
         @JvmStatic fun onNativePcm(samples: FloatArray, sampleRateHz: Int) =
             com.ambient.tv.spotify.SpotifyAudioAnalysis.onPcm(samples, sampleRateHz)
-        @JvmStatic fun onNativePlaybackEvent(
+        // Rusty 2.8.2 adds autoAdvanced; retain the older JNI signature for cached cores.
+        @Suppress("UNUSED_PARAMETER")
+        @JvmStatic @JvmOverloads fun onNativePlaybackEvent(
             playbackState: String,
             title: String?,
             artist: String?,
@@ -31,6 +33,7 @@ class SpotifyService {
             queueUnavailable: Boolean,
             coverUrl: String?,
             trackId: String?,
+            autoAdvanced: Boolean = false,
         ) = LibrespotNativeStateBus.playback(playbackState, title, artist, elapsedMs, durationMs, queueTitle, queueArtist, coverUrl, trackId)
     }
 }
