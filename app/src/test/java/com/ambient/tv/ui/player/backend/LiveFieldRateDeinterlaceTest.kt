@@ -77,16 +77,18 @@ class LiveFieldRateDeinterlaceTest {
         assertEquals(25.0, mpvDeinterlacedFps(25.0, false, "bwdif2x", singleRate = false)!!, 0.001)
     }
 
-    @Test fun displaySelectsFiftyHzForBothReportings() {
+    @Test fun displayAgreesForBothFieldReportingsAndDoublesWhenTheTvOffersIt() {
         val modes = listOf(
             SupportedDisplayMode("1920x1080@50", 1, 1920, 1080, 50f),
             SupportedDisplayMode("1920x1080@60", 2, 1920, 1080, 60f),
             SupportedDisplayMode("1920x1080@100", 3, 1920, 1080, 100f),
             SupportedDisplayMode("1920x1080@25", 4, 1920, 1080, 25f),
         )
+        val withoutHundred = modes.filter { it.refreshRate != 100f }
         for (reported in listOf(25.0, 50.0)) {
             val fps = rate(reported, "auto").toFloat()
-            assertEquals(reported.toString(), 50f, DisplayRefreshRateMatcher.selectCadenceMode(modes, fps, double = true, threeTwo = true)!!.refreshRate)
+            assertEquals(reported.toString(), 100f, DisplayRefreshRateMatcher.selectCadenceMode(modes, fps, double = true, threeTwo = true)!!.refreshRate)
+            assertEquals(reported.toString(), 50f, DisplayRefreshRateMatcher.selectCadenceMode(withoutHundred, fps, double = true, threeTwo = true)!!.refreshRate)
         }
     }
 }

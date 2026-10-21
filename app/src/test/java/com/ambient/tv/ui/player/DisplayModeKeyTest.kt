@@ -5,14 +5,24 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class DisplayModeKeyTest {
-    @Test fun nativeCadenceWinsIndependentlyOfModeOrderAndPulldownPrecision() {
+    @Test fun enabledDoubleAndPulldownOutrankTheVideoRate() {
         val native = mode("24", 1920, 1080, 24.000002f)
         val double = mode("48", 1920, 1080, 48f)
         val pulldown = mode("60", 1920, 1080, 60f)
-        assertEquals(native, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown, double, native), 24f, true, true))
+        assertEquals(double, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown, double, native), 24f, true, true))
         assertEquals(double, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown, double), 24f, true, true))
+        assertEquals(pulldown, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown, native), 24f, false, true))
         assertEquals(pulldown, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown), 24f, true, true))
+        assertEquals(native, DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown, double, native), 24f, false, false))
         assertNull(DisplayRefreshRateMatcher.selectCadenceMode(listOf(pulldown), 24f, true, false))
+        val hz50 = mode("50", 1920, 1080, 50f)
+        val hz100 = mode("100", 1920, 1080, 100f)
+        val hz60 = mode("60hz", 1920, 1080, 60f)
+        val hz120 = mode("120", 1920, 1080, 120f)
+        assertEquals(hz100, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz50, hz100), 50f, true, true))
+        assertEquals(hz120, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz60, hz120), 59.94f, true, true))
+        assertEquals(hz50, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz100, hz50), 25f, true, true))
+        assertEquals(hz50, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz100, hz50), 50f, false, false))
     }
 
     @Test fun interpolationMatchesResolutionWithoutLosingDesktopTargetRate() {
@@ -51,7 +61,7 @@ class DisplayModeKeyTest {
             allowThreeTwoPulldown = true,
         )
 
-        assertEquals(allowed[0], selected)
+        assertEquals(allowed[1], selected)
     }
 
     @Test fun whitelistFallsBackToDesktopIfNoExactAllowedResolutionAndCadenceMatch() {
@@ -71,12 +81,15 @@ class DisplayModeKeyTest {
         assertEquals(desktop, selected)
     }
 
-    @Test fun sourceAutoPrefersExactResolutionAndNativeCadence() {
+    @Test fun sourceAutoPrefersExactResolutionAndDoubleRate() {
         val desktop = mode("4k60", 3840, 2160, 60f)
         val source = mode("1080p24", 1920, 1080, 23.976f)
         val doubled = mode("1080p48", 1920, 1080, 47.952f)
-        assertEquals(source, DisplayRefreshRateMatcher.selectContentResolutionMode(
+        assertEquals(doubled, DisplayRefreshRateMatcher.selectContentResolutionMode(
             listOf(desktop, doubled, source), 1920, 1080, 23.976f, desktop, true, true, false,
+        ))
+        assertEquals(source, DisplayRefreshRateMatcher.selectContentResolutionMode(
+            listOf(desktop, doubled, source), 1920, 1080, 23.976f, desktop, false, false, false,
         ))
     }
 
@@ -97,7 +110,7 @@ class DisplayModeKeyTest {
         val low = mode("1080p24", 1920, 1080, 24f)
         val full = mode("4k24", 3840, 2160, 24f)
         val fullFast = mode("4k60", 3840, 2160, 60f)
-        assertEquals(full, DisplayRefreshRateMatcher.selectFullDisplayMode(
+        assertEquals(fullFast, DisplayRefreshRateMatcher.selectFullDisplayMode(
             listOf(desktop, low, fullFast, full), 24f, desktop, true, true, false,
         ))
         assertEquals(fullFast, DisplayRefreshRateMatcher.selectFullDisplayMode(
@@ -115,7 +128,7 @@ class DisplayModeKeyTest {
         val modes = listOf(desktop, full, hd)
         assertEquals(hd, DisplayRefreshRateMatcher.selectContentMode(modes, desktop,
             23.976f, 1920, 800, preferredModeKey = "auto_content", preserveOutputResolution = true))
-        assertEquals(full, DisplayRefreshRateMatcher.selectContentMode(modes, desktop,
+        assertEquals(desktop, DisplayRefreshRateMatcher.selectContentMode(modes, desktop,
             23.976f, 1920, 800, preferredModeKey = "auto_display"))
         assertEquals(hd, DisplayRefreshRateMatcher.selectContentMode(modes, desktop,
             23.976f, 1920, 1080, preferredModeKey = "auto_display", allowedModes = setOf(hd.key)))
@@ -175,7 +188,7 @@ class DisplayModeKeyTest {
         }
     }
 
-    @Test fun bothAutoPoliciesPreferNativeThenDoublingThenPulldown() {
+    @Test fun bothAutoPoliciesPreferDoublingThenPulldownThenNative() {
         for (policy in listOf("auto_content", "auto_display")) {
             val desktop = mode("desktop", 1280, 720, 60f)
             val native = mode("native", 1920, 1080, 23.976f)
@@ -184,10 +197,32 @@ class DisplayModeKeyTest {
             fun select(modes: List<SupportedDisplayMode>) = DisplayRefreshRateMatcher.selectContentMode(
                 modes, desktop, 23.976f, 1920, 1080, preferredModeKey = policy,
             )
-            assertEquals(native, select(listOf(pulldown, doubled, native)))
+            assertEquals(doubled, select(listOf(pulldown, doubled, native)))
             assertEquals(doubled, select(listOf(pulldown, doubled)))
-            assertEquals(pulldown, select(listOf(pulldown)))
+            assertEquals(pulldown, select(listOf(pulldown, native)))
+            assertEquals(native, select(listOf(native)))
         }
+    }
+
+    @Test fun manualResolutionKeepsSizeAndUsesDoubleOrPulldown() {
+        val picked = mode("1080p30", 1920, 1080, 30f)
+        val doubled = mode("1080p60", 1920, 1080, 59.94f)
+        val film = mode("1080p24", 1920, 1080, 23.976f)
+        val pulldown = mode("1080p59", 1920, 1080, 59.94f)
+        val uhd = mode("4k60", 3840, 2160, 60f)
+        assertEquals(doubled, DisplayRefreshRateMatcher.selectContentMode(
+            listOf(picked, doubled, uhd), uhd, 29.97f, 1920, 1080, preferredModeKey = picked.key,
+        ))
+        assertEquals(picked, DisplayRefreshRateMatcher.selectContentMode(
+            listOf(picked, doubled), uhd, 29.97f, 1920, 1080, preferredModeKey = picked.key, allowDoubleRate = false,
+        ))
+        assertEquals(pulldown, DisplayRefreshRateMatcher.selectContentMode(
+            listOf(film, pulldown), uhd, 23.976f, 1920, 1080, preferredModeKey = film.key,
+        ))
+        assertEquals(uhd, DisplayRefreshRateMatcher.selectContentMode(
+            listOf(film, pulldown, uhd), uhd, 30f, 1920, 1080, preferredModeKey = uhd.key,
+            allowedModes = setOf(film.key, pulldown.key),
+        ))
     }
 
     private fun mode(key: String, width: Int, height: Int, refreshRate: Float) =

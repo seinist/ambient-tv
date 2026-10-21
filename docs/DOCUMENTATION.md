@@ -365,7 +365,7 @@ For all systems together, at the end of the page:
 | Live TV · Audio and video by width | Editor | — | Live-only presets per source width. |
 | Automatic display switching | Off · Always · On start / stop · On start | On start / stop | Shown when the display reports more than one mode. |
 | Show display changes | On / Off | Off | Short notice on resolution or refresh-rate change. |
-| Allow double refresh rates (24→48, 30→60 Hz) | On / Off | On | |
+| Allow double refresh rates (24→48, 30→60, 50→100, 60→120 Hz) | On / Off | On | Uses 2× when the display lists that mode, including 100 and 120 Hz. 25 fps stays at 50 Hz when both 50 and 100 Hz exist. |
 | Allow 3:2 pulldown (24→60 Hz) | On / Off | On | |
 | Display mode | Auto · video resolution + Hz · Auto · full display resolution + Hz · System default · fixed modes | System default | Picking an Auto mode turns switching on (start/stop) if it was off. |
 | Allowed display modes | Mode list | All supported modes | Limits automatic switching. |

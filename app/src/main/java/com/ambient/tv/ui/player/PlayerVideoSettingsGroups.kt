@@ -35,9 +35,8 @@ import com.ambient.tv.ui.player.backend.VlcPlaybackController
  * Bumped when the playback panel writes [AppPreferences.preferredDisplayModeKey]
  * so the existing display-mode request recomposes and applies the choice.
  *
- * [sessionFixedFor] keeps a manually chosen exact mode for the current playback only. Without it, automatic
- * cadence matching can replace a chosen refresh rate (often back to 60 Hz on phones) and the
- * switch looks like a no-op.
+ * [sessionFixedFor] keeps a manually chosen resolution for the current playback. Refresh rate still
+ * follows the video: double rate (30→60, 50→100, 60→120) and 3:2 pulldown outrank the video's own frame rate.
  */
 internal object PlaybackDisplayModeRevision {
     var tick by mutableIntStateOf(0)
@@ -641,11 +640,9 @@ private fun PlayerDisplayModeRows(showTitle: Boolean = false) {
             if (automatic && preferences.displayRefreshAdjustmentKey == AppPreferences.DISPLAY_REFRESH_OFF) {
                 preferences.displayRefreshAdjustmentKey = AppPreferences.DISPLAY_REFRESH_START_STOP
             }
-            // Fixed selections lock the current session; automatic selections resume format matching.
-            if (!automatic) {
-                if (key == "system") DisplayRefreshRateMatcher.restoreMode(activity, null)
-                else DisplayRefreshRateMatcher.setPreferredMode(activity, key)
-            }
+            // System restores the desktop mode immediately. A fixed resolution is applied by the
+            // playback hook, which still matches double rate and 3:2 pulldown at that size.
+            if (key == "system") DisplayRefreshRateMatcher.restoreMode(activity, null)
             PlaybackDisplayModeRevision.bump(
                 sessionFixedKey = key.takeUnless { automatic },
                 playbackKey = playbackKey ?: "panel",

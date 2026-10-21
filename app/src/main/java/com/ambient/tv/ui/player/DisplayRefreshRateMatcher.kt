@@ -166,7 +166,11 @@ object DisplayRefreshRateMatcher {
             else -> when {
                 preserveOutputResolution -> selectRendererMode(modes, base, cadenceTarget, allowDoubleRate, allowThreeTwoPulldown, preserveRefreshRate)
                 preserveRefreshRate -> selectInterpolationMode(modes, contentWidth, contentHeight, base, allowedModes.isNotEmpty())
-                allowedModes.isNotEmpty() -> selectWhitelistedMode(modes, contentWidth, contentHeight, cadenceTarget, base, allowDoubleRate, allowThreeTwoPulldown)
+                // A chosen mode pins its resolution. A whitelist still limits rates, but must not
+                // jump back to the video size and ignore 30→60 / 3:2 modes at that resolution.
+                // System keeps the whitelist's exact content-size match.
+                allowedModes.isNotEmpty() && all.none { it.key == preferredModeKey } ->
+                    selectWhitelistedMode(modes, contentWidth, contentHeight, cadenceTarget, base, allowDoubleRate, allowThreeTwoPulldown)
                 cadenceTarget == null -> base
                 else -> selectCadenceMode(modes.filter { it.width == base.width && it.height == base.height }, cadenceTarget, allowDoubleRate, allowThreeTwoPulldown) ?: base
             }
@@ -244,9 +248,11 @@ object DisplayRefreshRateMatcher {
 
     internal fun selectCadenceMode(modes: List<SupportedDisplayMode>, fps: Float, double: Boolean, threeTwo: Boolean): SupportedDisplayMode? {
         if (!fps.isFinite() || fps <= 0f) return null
-        // Prefer native cadence, then integer doubling, and only then 3:2 pulldown.
-        val multiples = listOf(1f) + (if (double) listOf(2f) else emptyList()) +
-            (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList())
+        // Enabled double (24→48, 25→50, 30→60, 50→100, 60→120) and 3:2 (24→60) outrank the video rate.
+        // A native mode would otherwise hide them. Only 2× is tried, so 25 fps stays at 50 Hz when
+        // both 50 and 100 Hz exist.
+        val multiples = (if (double) listOf(2f) else emptyList()) +
+            (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList()) + listOf(1f)
         for (multiple in multiples) {
             modes.filter { abs(it.refreshRate - fps * multiple) <= MAX_CADENCE_DIFF_HZ }
                 .minWithOrNull(compareBy<SupportedDisplayMode>({ abs(it.refreshRate - fps * multiple) }, { it.modeId }))
@@ -439,8 +445,26 @@ fun rememberDisplayModeRequest(
         // Re-read by route so a key change cannot apply the previous title's panel lock.
         val fixed = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)
         if (fixed != null) {
-            if (fixed == "system") DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
-            else DisplayRefreshRateMatcher.setPreferredMode(activity, fixed)
+            if (fixed == "system") {
+                DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
+                return@LaunchedEffect
+            }
+            // The picked entry pins the resolution. Refresh still follows double rate and 3:2
+            // pulldown; pinning the entry's own Hz kept 30 fps video on 30 Hz.
+            holdJob[0]?.takeIf { it.isActive }?.join()
+            val format = content
+            if (adjustmentKey == "off" || format == null || !format.hasRate) {
+                switchWithPause(DisplayRefreshRateMatcher.preferredMode(activity, fixed))?.join()
+                return@LaunchedEffect
+            }
+            val selected = DisplayRefreshRateMatcher.contentFrameRateMode(
+                activity, format.fps, format.width, format.height,
+                fixed, originalModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
+                preserveRefreshRate = interpolation,
+                preserveOutputResolution = rendererScaling,
+                requiredHdrType = requiredHdrType,
+            )
+            switchWithPause(selected)?.join()
             return@LaunchedEffect
         }
         // Let a running hold finish; a newer format must not request a second mode mid-resync.

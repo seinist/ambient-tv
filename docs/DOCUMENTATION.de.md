@@ -365,7 +365,7 @@ Für alle Systeme gemeinsam, am Ende der Seite:
 | Live-TV · Audio und Video nach Breite | Editor | — | Nur-Live-Presets je Quellbreite. |
 | Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. |
 | Displaywechsel anzeigen | An / Aus | Aus | Kurze Meldung bei Wechsel von Auflösung oder Bildrate. |
-| Doppelte Bildraten erlauben (24→48, 30→60 Hz) | An / Aus | An | |
+| Doppelte Bildraten erlauben (24→48, 30→60, 50→100, 60→120 Hz) | An / Aus | An | Nimmt 2×, wenn das Display den Modus anbietet, auch 100 und 120 Hz. 25 fps bleibt bei 50 Hz, wenn 50 und 100 Hz beide vorhanden sind. |
 | 3:2-Pulldown erlauben (24→60 Hz) | An / Aus | An | |
 | Bildschirmmodus | Auto · Videoauflösung + Hz · Auto · volle Displayauflösung + Hz · Systemvorgabe · feste Modi | Systemvorgabe | Ein Auto-Modus schaltet die Umschaltung (Start und Ende) ein, wenn sie aus war. |
 | Erlaubte Bildschirmmodi | Modusliste | Alle unterstützten Modi | Begrenzt die automatische Umschaltung. |

@@ -219,8 +219,8 @@ class SettingsSelectAudit(private val instrumentation: Instrumentation, private 
             Thread.sleep(3_500)
             for (next in listOf("auto_display", base.key, "auto_content", "auto_display")) {
                 val automatic = next.startsWith("auto_")
-                val expected = if (automatic) checkNotNull(matcher.selectContentMode(modes, base,
-                    23.976f, 1920, 1080, preferredModeKey = next, fallbackModeKey = base.key)) else base
+                val expected = checkNotNull(matcher.selectContentMode(modes, base,
+                    23.976f, 1920, 1080, preferredModeKey = next, fallbackModeKey = base.key))
                 main {
                     policy.value = next
                     com.ambient.tv.ui.player.PlaybackDisplayModeRevision.bump(
