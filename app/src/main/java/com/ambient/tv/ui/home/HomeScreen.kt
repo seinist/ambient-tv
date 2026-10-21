@@ -381,12 +381,7 @@ internal fun LibraryContent(
 
     val performance = LocalPerformanceProfile.current
     if (LocalHandheldUi.current) {
-        LazyColumn(
-            allowUpExit = true,
-            state = rememberLazyListState(),
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
-        ) {
+        LazyColumn(allowUpExit = true, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
             item("mobile-hero") { HomeHero(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, entranceProgress) }
             items(state.rowKeys, key = { it }) { rowKey ->
                 when {
@@ -1067,6 +1062,9 @@ internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean): Modifier 
     }
     val contentLayer = rememberGraphicsLayer()
     return drawWithCache {
+        // The row list is recorded into one layer. This read redraws that recording while
+        // cover and landscape placeholders pulse; a stable value does not.
+        com.ambient.tv.ui.common.observeSkeletonPulse()
         val fadeHeight = HomeHeroHeight.toPx().coerceAtMost(size.height)
         val fadeBounds = Rect(0f, 0f, size.width, fadeHeight)
         val layerPaint = Paint()

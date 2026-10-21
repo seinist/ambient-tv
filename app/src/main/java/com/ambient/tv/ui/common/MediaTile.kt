@@ -176,6 +176,9 @@ fun MediaTile(
                     // artwork, labels, metadata and playback badges on every spring frame.
                     scaleX = focusScale
                     scaleY = focusScale
+                    // This layer caches its children. The placeholder pulse is draw-only, so
+                    // without this read a loading cover stays a flat gray rectangle.
+                    observeSkeletonPulse()
                 }
                 .then(
                     // Only the focused tile gets a shadow layer; unfocused tiles in a dense grid
@@ -481,6 +484,11 @@ private fun EpisodeLabels(
             )
         }
     }
+}
+
+/** Subscribes the calling draw or graphics layer to [SharedSkeletonPulse]. */
+internal fun observeSkeletonPulse() {
+    SharedSkeletonPulse.alpha.floatValue
 }
 
 /** [showDescription] mirrors [MediaTile]'s flag: off, only the title line sits under the artwork. */
