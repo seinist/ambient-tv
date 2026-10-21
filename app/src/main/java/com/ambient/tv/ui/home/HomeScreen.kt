@@ -381,7 +381,12 @@ internal fun LibraryContent(
 
     val performance = LocalPerformanceProfile.current
     if (LocalHandheldUi.current) {
-        LazyColumn(allowUpExit = true, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)) {
+        LazyColumn(
+            allowUpExit = true,
+            state = rememberLazyListState(),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+        ) {
             item("mobile-hero") { HomeHero(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, entranceProgress) }
             items(state.rowKeys, key = { it }) { rowKey ->
                 when {

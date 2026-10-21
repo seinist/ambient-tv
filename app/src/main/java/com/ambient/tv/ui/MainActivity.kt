@@ -97,6 +97,7 @@ import com.ambient.tv.ui.emby.EmbyLibraryScreen
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.navigation.Destinations
+import com.ambient.tv.ui.navigation.openAppHome
 import com.ambient.tv.ui.navigation.sidebarEntryArmed
 import com.ambient.tv.ui.navigation.LocalSidebarContentPending
 import com.ambient.tv.ui.navigation.LocalSidebarContentReadyReporter
@@ -1320,6 +1321,19 @@ private fun AmbientTvApp(
     val providerNavigationViewModel: com.ambient.tv.ui.navigation.SidebarViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
 
     fun navigateSidebar(route: String) {
+        // The handheld Startseite control always means the app home screen. The shared
+        // top-level navigation restores a saved stack on top of the graph start, so that
+        // tap can leave the current page in place.
+        if (handheld && route == Destinations.HOME) {
+            guardedSettingsExit {
+                if (navController.currentDestination?.route == Destinations.HOME) {
+                    com.ambient.tv.ui.common.NavReselect.fire()
+                } else {
+                    navController.openAppHome()
+                }
+            }
+            return
+        }
         val activeSidebarRoute = when (currentRoute) {
             Destinations.SECTION -> currentSectionKey?.let(Destinations::section)
             Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed)
