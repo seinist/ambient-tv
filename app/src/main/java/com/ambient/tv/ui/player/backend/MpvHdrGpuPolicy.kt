@@ -285,9 +285,9 @@ object MpvHdrGpuSession {
         nowMs: Long = android.os.SystemClock.elapsedRealtime()): Boolean = synchronized(lock) {
         val previous = detected[media]
         val stillValid = previous != null && (!previous.live || nowMs - previous.atMs in 0..LIVE_DETECTION_TTL_MS)
-        if (stillValid && previous!!.standard == standard) return@synchronized false
+        if (stillValid && previous.standard == standard) return@synchronized false
         // The direct reopen of a Dolby Vision file reads its PQ base layer as HDR10.
-        if (stillValid && !live && previous!!.standard == HdrStandard.DOLBY_VISION && standard == HdrStandard.HDR10) {
+        if (stillValid && !live && previous.standard == HdrStandard.DOLBY_VISION && standard == HdrStandard.HDR10) {
             return@synchronized false
         }
         if (live) {
