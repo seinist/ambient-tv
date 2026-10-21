@@ -43,11 +43,11 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +64,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
@@ -399,7 +400,6 @@ fun ArtworkImage(
     /** Crop backdrops around detected faces instead of [alignment] (see rememberArtworkFocusAlignment). */
     focusCrop: Boolean = false,
     fallbackIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
-    animateLoading: Boolean = false,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -416,6 +416,12 @@ fun ArtworkImage(
     // freshly composed tile empty for a frame (e.g. every poster on Back to Home). The key of
     // the last successful load is served as placeholder before the size is resolved.
     val cachedKey = remember(currentModel) { currentModel?.let { ArtworkMemoryKeys[it] } }
+    // The key can outlive the bitmap. A miss must still show the pulse; Coil's placeholder
+    // only draws when the bitmap is actually still in memory.
+    val shownFromMemory = remember(currentModel, cachedKey, context) {
+        val key = cachedKey ?: return@remember false
+        coil3.SingletonImageLoader.get(context).memoryCache?.get(key) != null
+    }
     val request = remember(currentModel, context, headers, constrainDecode) {
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
@@ -429,7 +435,7 @@ fun ArtworkImage(
             }
             .build()
     }
-    var loading by remember(currentModel) { mutableStateOf(hasModel && cachedKey == null) }
+    var loading by remember(currentModel) { mutableStateOf(hasModel && !shownFromMemory) }
     var failed by remember(candidates) { mutableStateOf(false) }
     var visibleFraction by remember(currentModel) { mutableStateOf<Float?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
@@ -446,7 +452,7 @@ fun ArtworkImage(
                 alignment = focus?.alignment ?: alignment,
                 colorFilter = hdrFilter,
                 modifier = Modifier.fillMaxSize(),
-                onLoading = { loading = cachedKey == null; failed = false },
+                onLoading = { loading = !shownFromMemory; failed = false },
                 onSuccess = {
                     loading = false
                     failed = false
@@ -463,18 +469,7 @@ fun ArtworkImage(
                     }
                 },
             )
-            if (loading) {
-                if (animateLoading) {
-                    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "Artwork loading")
-                    val alpha by transition.animateFloat(
-                        initialValue = 0.35f, targetValue = 0.75f,
-                        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                            androidx.compose.animation.core.tween(850), androidx.compose.animation.core.RepeatMode.Reverse),
-                        label = "Artwork pulse",
-                    )
-                    Box(Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha }) { ArtworkLoading() }
-                } else ArtworkLoading()
-            }
+            if (loading) PulsingArtworkPlaceholder()
         }
         if (!hasModel || failed) {
             if (fallbackIcon == null) ArtworkFallback(fallbackText) else Box(
@@ -579,13 +574,21 @@ fun CrossfadeBackdropImage(
 }
 
 @Composable
-private fun ArtworkLoading() {
-    // Opaque enough to read as a real tile placeholder on phone and TV; the old 0.46
-    // surfaceVariant wash disappeared against dark Surface fills on handheld.
+private fun PulsingArtworkPlaceholder() {
+    val reduced = LocalPerformanceProfile.current.reducedEffects
+    if (!reduced) {
+        DisposableEffect(Unit) {
+            SharedSkeletonPulse.acquire()
+            onDispose { SharedSkeletonPulse.release() }
+        }
+    }
+    val fill = MaterialTheme.colorScheme.surfaceVariant
     Box(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceVariant),
+        Modifier.fillMaxSize().drawBehind {
+            // Read at draw time. A flat fill is what made single cover and landscape
+            // loads look like a dead gray tile instead of the library skeleton pulse.
+            drawRect(fill, alpha = if (reduced) 1f else SharedSkeletonPulse.alpha.floatValue)
+        },
     )
 }
 

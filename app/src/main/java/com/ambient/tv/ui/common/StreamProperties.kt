@@ -33,7 +33,6 @@ import androidx.tv.material3.Text
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.model.MediaTrackType
 import com.ambient.tv.domain.model.MediaVersion
-import com.ambient.tv.ui.mobile.LocalHandheldUi
 
 /**
  * Plex-style technical stream properties. These are deliberately icon-led instead of a row of
@@ -63,8 +62,6 @@ fun MediaArtworkWithStreamIcons(
             title = title,
             contentScale = contentScale,
             modifier = Modifier.fillMaxSize(),
-            // Pulse on handheld and DLNA so loading tiles stay visible while Coil fetches.
-            animateLoading = LocalHandheldUi.current || item.ratingKey.startsWith("dlna:"),
             fallbackIcon = if (item.ratingKey.startsWith("dlna:")) when (item.type) {
                 "container" -> Icons.Default.Folder
                 "track" -> Icons.Default.AudioFile

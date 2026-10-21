@@ -124,7 +124,7 @@ class ProgressiveLoadingAudit(private val instrumentation: Instrumentation, priv
             artwork[0].release.complete(Unit)
             awaitColor(0, Color.RED)
             val partial = capture("loading-first-image")
-            check(partial[1] == before[1] && partial[2] == before[2]) { "Other image slots changed together" }
+            check(partial[1] != artwork[1].color && partial[2] != artwork[2].color) { "Pending slots resolved with the first image" }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_RIGHT)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_DPAD_CENTER)
             check(clicked.get() == 1) { "D-pad failed on the still-loading second item" }
@@ -132,7 +132,7 @@ class ProgressiveLoadingAudit(private val instrumentation: Instrumentation, priv
             artwork[2].release.complete(Unit)
             awaitColor(2, Color.BLUE)
             val later = capture("loading-out-of-order")
-            check(later[0] == Color.RED && later[1] == before[1])
+            check(later[0] == Color.RED && later[1] != artwork[1].color)
             artwork[1].release.complete(Unit)
             awaitColor(1, Color.GREEN)
             check(capture("loading-complete").take(3) == artwork.map { it.color })

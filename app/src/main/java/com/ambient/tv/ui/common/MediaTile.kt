@@ -515,8 +515,9 @@ private fun ShimmeringSkeletonTile(
     SkeletonTileContent(modifier, style, showDescription) { pulse.floatValue }
 }
 
-/** Same curve as PulsingLibraryLoading (0.28..0.62, 900 ms, reverse), driven once per frame. */
-private object SharedSkeletonPulse {
+/** Same curve as PulsingLibraryLoading (0.28..0.62, 900 ms, reverse), driven once per frame.
+ *  Artwork placeholders share this clock so a grid does not start one transition per cover. */
+internal object SharedSkeletonPulse {
     val alpha = androidx.compose.runtime.mutableFloatStateOf(0.45f)
     private var users = 0
     private var job: kotlinx.coroutines.Job? = null
