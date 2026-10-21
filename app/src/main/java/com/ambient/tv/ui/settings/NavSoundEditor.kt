@@ -140,11 +140,11 @@ internal fun NavSoundEditor(
                     stop()
                     runCatching { import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
                         .onFailure { message = R.string.nav_editor_file_error }
-                }, modifier = Modifier.focusRequester(transferFocus), enabled = !busy)
+                }, modifier = Modifier.weight(1f).focusRequester(transferFocus), enabled = !busy)
                 TvActionButton(stringResource(R.string.nav_editor_export), {
                     stop(); exportSnapshot = bank.encode()
                     runCatching { export.launch("ambient-navigation-sounds.json") }.onFailure { message = R.string.nav_editor_file_error }
-                }, enabled = !busy)
+                }, modifier = Modifier.weight(1f), enabled = !busy)
     }
     // Suppress ordinary navigation feedback; only the draft preview should be audible.
     CompositionLocalProvider(LocalUiSoundPlayer provides null,
@@ -166,7 +166,6 @@ internal fun NavSoundEditor(
                 Text(stringResource(R.string.settings_nav_sounds_draft_hint),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (!handheld) general()
             val identity: @Composable ColumnScope.() -> Unit = {
                 if (handheld) general()
                 EditorLabel(stringResource(R.string.nav_editor_event))
@@ -205,19 +204,10 @@ internal fun NavSoundEditor(
                     Text(stringResource(it), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (handheld) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TvActionButton(stringResource(R.string.nav_editor_play), playPreview, Modifier.weight(1.2f), enabled = design.enabled, selected = true)
-                        TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence, Modifier.weight(1f))
-                        TvActionButton(stringResource(R.string.nav_editor_stop), ::stop, Modifier.weight(1f))
-                    }
-                } else {
-                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview, Modifier.focusRequester(previewFocus),
-                        enabled = design.enabled, fillWidth = true, selected = true)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence, Modifier.weight(1f).focusRequester(sequenceFocus))
-                        TvActionButton(stringResource(R.string.nav_editor_stop), ::stop)
-                    }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview, Modifier.weight(1.2f), enabled = design.enabled, selected = true)
+                    TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence, Modifier.weight(1f))
+                    TvActionButton(stringResource(R.string.nav_editor_stop), ::stop, Modifier.weight(1f))
                 }
             }
             val controls: @Composable ColumnScope.() -> Unit = {
@@ -257,20 +247,25 @@ internal fun NavSoundEditor(
                 }
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                if (!handheld && maxWidth >= 680.dp) {
+                // The footer owns preview and file actions. A short slot cannot hold two columns
+                // above that bar, so it stacks into the one scrolling panel.
+                val sideBySide = !handheld && maxWidth >= 680.dp && maxHeight >= 220.dp
+                val leaveEditor = { focusFirst(previewFocus, sequenceFocus, transferFocus) }
+                if (sideBySide) {
                     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                        EditorPanel(Modifier.width(260.dp).fillMaxHeight(), focus = identityFocus,
-                            down = { focusFirst(transferFocus) }, content = identity)
-                        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            EditorPanel(Modifier.weight(1f).fillMaxWidth(), content = controls,
-                                down = { focusFirst(previewFocus, sequenceFocus) }, left = { focusFirst(identityFocus) })
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp), content = previewControls)
+                        EditorPanel(Modifier.width(300.dp).fillMaxHeight(), focus = identityFocus,
+                            down = leaveEditor) {
+                            general()
+                            identity()
                         }
+                        EditorPanel(Modifier.weight(1f).fillMaxHeight(), content = controls,
+                            down = leaveEditor, left = { focusFirst(identityFocus) })
                     }
                 } else {
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         EditorPanel(Modifier.weight(1f).fillMaxWidth(), focus = identityFocus,
-                            down = { focusFirst(previewFocus, sequenceFocus) }) {
+                            down = leaveEditor) {
+                            if (!handheld) general()
                             identity()
                             Spacer(Modifier.height(12.dp))
                             controls()
@@ -279,12 +274,24 @@ internal fun NavSoundEditor(
                                 NavSoundSync(bank.encode(), volume, soundsEnabled)
                             }
                         }
-                        Column(content = previewControls)
+                        if (handheld) Column(content = previewControls)
                     }
                 }
             }
             if (!handheld) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = transferActions)
+                message?.let {
+                    Text(stringResource(it), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview,
+                        Modifier.weight(1.2f).focusRequester(previewFocus),
+                        enabled = design.enabled, fillWidth = true, selected = true)
+                    TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence,
+                        Modifier.weight(1f).focusRequester(sequenceFocus))
+                    TvActionButton(stringResource(R.string.nav_editor_stop), ::stop, Modifier.weight(1f))
+                    transferActions()
+                }
                 NavSoundSync(bank.encode(), volume, soundsEnabled)
             }
         }
