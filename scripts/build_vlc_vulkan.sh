@@ -40,12 +40,39 @@ for patch in "$JNI"/libvlc/patches/*.patch; do
         git -C "$JNI/vlc" apply --reverse --check "$patch"
     fi
 done
-for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
+# ffmpeg-9.0.2.patch builds this VLC pin against the same n9.0.2 release as mpv
+# and puts the v308, v408 and v410 decoders back into that contrib FFmpeg.
+# A tree that already carries an older copy of one of these patches matches
+# neither direction. Restore the paths that copy owns, then apply the current file.
+apply_vlc_patch() {
+    local patch=$1 line path
     if git -C "$JNI/vlc" apply --check "$patch" 2>/dev/null; then
         git -C "$JNI/vlc" apply "$patch"
-    else
-        git -C "$JNI/vlc" apply --reverse --check "$patch"
+        return
     fi
+    if git -C "$JNI/vlc" apply --reverse --check "$patch" 2>/dev/null; then
+        return
+    fi
+    while IFS= read -r line; do
+        path=${line#+++ b/}
+        [[ "$path" == "/dev/null" ]] && continue
+        if git -C "$JNI/vlc" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+            git -C "$JNI/vlc" checkout -- "$path"
+        elif [[ -e "$JNI/vlc/$path" ]]; then
+            rm -f "$JNI/vlc/$path"
+        fi
+    done < <(grep -E '^\+\+\+ b/' "$patch")
+    # The first FFmpeg 9 patch guarded these two files. The current patch leaves
+    # them untouched, so an older apply would keep the three fourccs compiled out.
+    if [[ "$(basename "$patch")" == ffmpeg-9.0.2.patch ]]; then
+        git -C "$JNI/vlc" checkout -- \
+            modules/codec/avcodec/fourcc.c \
+            modules/codec/avcodec/avcommon_compat.h
+    fi
+    git -C "$JNI/vlc" apply "$patch"
+}
+for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
+    apply_vlc_patch "$patch"
 done
 # The app minimum is API 29. Vulkan's system loader is available from API 24.
 sed -i 's/ANDROID_API=21/ANDROID_API=29/' "$JNI"/buildsystem/{compile-libvlc,build-libvlc,build-libvlcjni}.sh

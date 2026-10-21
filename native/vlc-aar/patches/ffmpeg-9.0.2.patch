@@ -1,0 +1,468 @@
+diff -ruN a/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch b/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
+--- a/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
++++ b/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
+@@ -0,0 +1,22 @@
++From 03abaac3e22c2e766e9b0bdd11e3150e8dd4dc04 Mon Sep 17 00:00:00 2001
++From: Steve Lhomme <robux4@ycbcr.xyz>
++Date: Wed, 5 Aug 2026 11:45:10 +0200
++Subject: [PATCH] swscale/x86: use HOSTCPPFLAGS instead of CPPFLAGS for native code
++
++The generated assembler is compiled with the host compiler. Cross CPPFLAGS
++point at the Android sysroot and fail that host compile on x86 ABIs.
++Adapted to the n9.0.2 Makefile context.
++---
++ libswscale/x86/Makefile | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/libswscale/x86/Makefile b/libswscale/x86/Makefile
++--- a/libswscale/x86/Makefile
+++++ b/libswscale/x86/Makefile
++@@ -32,5 +32,5 @@ $(SUBDIR)x86/ops_int.o: $(SUBDIR)x86/uops_macros.gen.asm
++ $(SUBDIR)x86/ops_float.o: $(SUBDIR)x86/uops_macros.gen.asm
++ $(SUBDIR)x86/uops_macros.gen.asm: $(SRC_PATH)/libswscale/x86/uops_macros.asm.h \
++                                   $(SRC_PATH)/libswscale/uops_macros.h
++-	$(HOSTCC) $(HOSTCC_E) $(CPPFLAGS) $<
+++	$(HOSTCC) $(HOSTCC_E) $(HOSTCPPFLAGS) $<
++ endif
+diff -ruN a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
+--- a/contrib/src/ffmpeg/rules.mak
++++ b/contrib/src/ffmpeg/rules.mak
+@@ -1,10 +1,11 @@
+ # FFmpeg
+ 
+ FFMPEG_HASH=ec47a3b95f88fc3f820b900038ac439e4eb3fede
+-FFMPEG_MAJVERSION := 8.1
+-FFMPEG_REVISION := 0
+-# FFMPEG_VERSION := $(FFMPEG_MAJVERSION).$(FFMPEG_REVISION)
+-FFMPEG_VERSION := $(FFMPEG_MAJVERSION)
++# Same release as gradle/external-versions.properties FFMPEG_REF (n9.0.2).
++FFMPEG_MAJVERSION := 9.0
++FFMPEG_REVISION := 2
++FFMPEG_VERSION := $(FFMPEG_MAJVERSION).$(FFMPEG_REVISION)
++# FFMPEG_VERSION := $(FFMPEG_MAJVERSION)
+ FFMPEG_BRANCH=release/$(FFMPEG_MAJVERSION)
+ FFMPEG_URL := https://ffmpeg.org/releases/ffmpeg-$(FFMPEG_VERSION).tar.xz
+ FFMPEG_GITURL := https://code.ffmpeg.org/FFmpeg/FFmpeg.git
+@@ -17,6 +18,8 @@
+ 	--extra-ldflags="$(LDFLAGS)" \
+ 	--cc="$(CC)" \
+ 	--host-cc="$(BUILDCC)" \
++	--host-cflags="$(BUILDCFLAGS)" \
++	--host-cppflags="$(BUILDCPPFLAGS)" \
+ 	--pkg-config="$(PKG_CONFIG)" \
+ 	--disable-doc \
+ 	--disable-encoder=vorbis \
+@@ -242,6 +245,8 @@
+ 	$(APPLY) $(SRC)/ffmpeg/0001-fix-mf_utils-compilation-with-mingw64.patch
+ 	$(APPLY) $(SRC)/ffmpeg/0011-avcodec-videotoolboxenc-disable-calls-on-unsupported.patch
+ 	$(APPLY) $(SRC)/ffmpeg/avcodec-fix-compilation-visionos.patch
++	$(APPLY) $(SRC)/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
++	$(APPLY) $(SRC)/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
+ 	$(MOVE)
+ 
+ .ffmpeg: ffmpeg
+diff -ruN a/contrib/src/ffmpeg/SHA512SUMS b/contrib/src/ffmpeg/SHA512SUMS
+--- a/contrib/src/ffmpeg/SHA512SUMS
++++ b/contrib/src/ffmpeg/SHA512SUMS
+@@ -1 +1 @@
+-9deb30b93c27873564ec094693e72ff552f63a09af3175f9118672b88299a4e9495502aa0fb2dfbcd45857ba255f24b829bdd3c3c17d0f1eee75423302a9af8c  ffmpeg-8.1.tar.xz
++7756f8434371b9bc1d01cf578bf49014e058b0869c3c1df05030f5f4035f1def64b2e7dba3cf340da4dc8dd9239dd5f894530c9e45793ac27876807079aa546a  ffmpeg-9.0.2.tar.xz
+diff -ruN a/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch b/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
+--- a/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
++++ b/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
+@@ -0,0 +1,395 @@
++From: ambient-tv
++Subject: [PATCH] avcodec: restore v308, v408 and v410 decoders
++
++FFmpeg 9 removed AV_CODEC_ID_V308/V408/V410 and turned the fourccs into
++raw pixel formats. LibVLC still selects those IDs from its fourcc table
++and rejects AV_CODEC_ID_RAWVIDEO in ffmpeg_AllocContext. Put the three
++decoders back at the end of the video ID list so existing Lavc 63
++numbers stay put, and point the MOV/AVI tags at them again.
++
++The IDs are appended after AV_CODEC_ID_WEBP_ANIM. Encoders stay out.
++---
++diff -ruN a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
++--- a/libavcodec/allcodecs.c
+++++ b/libavcodec/allcodecs.c
++@@ -352,6 +352,9 @@
++ extern const FFCodec ff_v210_encoder;
++ extern const FFCodec ff_v210_decoder;
++ extern const FFCodec ff_v210x_decoder;
+++extern const FFCodec ff_v308_decoder;
+++extern const FFCodec ff_v408_decoder;
+++extern const FFCodec ff_v410_decoder;
++ extern const FFCodec ff_vb_decoder;
++ extern const FFCodec ff_vbn_encoder;
++ extern const FFCodec ff_vbn_decoder;
++diff -ruN a/libavcodec/codec_desc.c b/libavcodec/codec_desc.c
++--- a/libavcodec/codec_desc.c
+++++ b/libavcodec/codec_desc.c
++@@ -1992,6 +1992,27 @@
++         .props     = AV_CODEC_PROP_LOSSY | AV_CODEC_PROP_LOSSLESS,
++         .mime_types= MT("image/webp"),
++     },
+++    {
+++        .id        = AV_CODEC_ID_V308,
+++        .type      = AVMEDIA_TYPE_VIDEO,
+++        .name      = "v308",
+++        .long_name = NULL_IF_CONFIG_SMALL("Uncompressed packed 4:4:4"),
+++        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+++    },
+++    {
+++        .id        = AV_CODEC_ID_V408,
+++        .type      = AVMEDIA_TYPE_VIDEO,
+++        .name      = "v408",
+++        .long_name = NULL_IF_CONFIG_SMALL("Uncompressed packed QT 4:4:4:4"),
+++        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+++    },
+++    {
+++        .id        = AV_CODEC_ID_V410,
+++        .type      = AVMEDIA_TYPE_VIDEO,
+++        .name      = "v410",
+++        .long_name = NULL_IF_CONFIG_SMALL("Uncompressed 4:4:4 10-bit"),
+++        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+++    },
++ 
++     /* various PCM "codecs" */
++     {
++diff -ruN a/libavcodec/codec_id.h b/libavcodec/codec_id.h
++--- a/libavcodec/codec_id.h
+++++ b/libavcodec/codec_id.h
++@@ -324,6 +324,9 @@
++     AV_CODEC_ID_PRORES_RAW,
++     AV_CODEC_ID_JPEGXS,
++     AV_CODEC_ID_WEBP_ANIM,
+++    AV_CODEC_ID_V308,
+++    AV_CODEC_ID_V408,
+++    AV_CODEC_ID_V410,
++ 
++     /* various PCM "codecs" */
++     AV_CODEC_ID_FIRST_AUDIO = 0x10000,     ///< A dummy id pointing at the start of audio codecs
++diff -ruN a/libavcodec/v308dec.c b/libavcodec/v308dec.c
++--- a/libavcodec/v308dec.c
+++++ b/libavcodec/v308dec.c
++@@ -0,0 +1,80 @@
+++/*
+++ * v308 decoder
+++ * Copyright (c) 2011 Carl Eugen Hoyos
+++ *
+++ * This file is part of FFmpeg.
+++ *
+++ * FFmpeg is free software; you can redistribute it and/or
+++ * modify it under the terms of the GNU Lesser General Public
+++ * License as published by the Free Software Foundation; either
+++ * version 2.1 of the License, or (at your option) any later version.
+++ *
+++ * FFmpeg is distributed in the hope that it will be useful,
+++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+++ * Lesser General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU Lesser General Public
+++ * License along with FFmpeg; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+++ */
+++
+++#include "avcodec.h"
+++#include "codec_internal.h"
+++#include "decode.h"
+++
+++static av_cold int v308_decode_init(AVCodecContext *avctx)
+++{
+++    avctx->pix_fmt = AV_PIX_FMT_YUV444P;
+++
+++    if (avctx->width & 1)
+++        av_log(avctx, AV_LOG_WARNING, "v308 requires width to be even.\n");
+++
+++    return 0;
+++}
+++
+++static int v308_decode_frame(AVCodecContext *avctx, AVFrame *pic,
+++                             int *got_frame, AVPacket *avpkt)
+++{
+++    const uint8_t *src = avpkt->data;
+++    uint8_t *y, *u, *v;
+++    int i, j, ret;
+++
+++    if (avpkt->size < 3 * avctx->height * avctx->width) {
+++        av_log(avctx, AV_LOG_ERROR, "Insufficient input data.\n");
+++        return AVERROR(EINVAL);
+++    }
+++
+++    if ((ret = ff_get_buffer(avctx, pic, 0)) < 0)
+++        return ret;
+++
+++    y = pic->data[0];
+++    u = pic->data[1];
+++    v = pic->data[2];
+++
+++    for (i = 0; i < avctx->height; i++) {
+++        for (j = 0; j < avctx->width; j++) {
+++            v[j] = *src++;
+++            y[j] = *src++;
+++            u[j] = *src++;
+++        }
+++
+++        y += pic->linesize[0];
+++        u += pic->linesize[1];
+++        v += pic->linesize[2];
+++    }
+++
+++    *got_frame = 1;
+++
+++    return avpkt->size;
+++}
+++
+++const FFCodec ff_v308_decoder = {
+++    .p.name         = "v308",
+++    CODEC_LONG_NAME("Uncompressed packed 4:4:4"),
+++    .p.type         = AVMEDIA_TYPE_VIDEO,
+++    .p.id           = AV_CODEC_ID_V308,
+++    .init           = v308_decode_init,
+++    FF_CODEC_DECODE_CB(v308_decode_frame),
+++    .p.capabilities = AV_CODEC_CAP_DR1,
+++};
++diff -ruN a/libavcodec/v408dec.c b/libavcodec/v408dec.c
++--- a/libavcodec/v408dec.c
+++++ b/libavcodec/v408dec.c
++@@ -0,0 +1,80 @@
+++/*
+++ * v408 decoder
+++ * Copyright (c) 2012 Carl Eugen Hoyos
+++ *
+++ * This file is part of FFmpeg.
+++ *
+++ * FFmpeg is free software; you can redistribute it and/or
+++ * modify it under the terms of the GNU Lesser General Public
+++ * License as published by the Free Software Foundation; either
+++ * version 2.1 of the License, or (at your option) any later version.
+++ *
+++ * FFmpeg is distributed in the hope that it will be useful,
+++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+++ * Lesser General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU Lesser General Public
+++ * License along with FFmpeg; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+++ */
+++
+++#include "avcodec.h"
+++#include "codec_internal.h"
+++#include "decode.h"
+++
+++static av_cold int v408_decode_init(AVCodecContext *avctx)
+++{
+++    avctx->pix_fmt = AV_PIX_FMT_YUVA444P;
+++
+++    return 0;
+++}
+++
+++static int v408_decode_frame(AVCodecContext *avctx, AVFrame *pic,
+++                             int *got_frame, AVPacket *avpkt)
+++{
+++    const uint8_t *src = avpkt->data;
+++    uint8_t *y, *u, *v, *a;
+++    int i, j, ret;
+++
+++    if (avpkt->size < 4 * avctx->height * avctx->width) {
+++        av_log(avctx, AV_LOG_ERROR, "Insufficient input data.\n");
+++        return AVERROR(EINVAL);
+++    }
+++
+++    if ((ret = ff_get_buffer(avctx, pic, 0)) < 0)
+++        return ret;
+++
+++    y = pic->data[0];
+++    u = pic->data[1];
+++    v = pic->data[2];
+++    a = pic->data[3];
+++
+++    for (i = 0; i < avctx->height; i++) {
+++        for (j = 0; j < avctx->width; j++) {
+++            u[j] = *src++;
+++            y[j] = *src++;
+++            v[j] = *src++;
+++            a[j] = *src++;
+++        }
+++
+++        y += pic->linesize[0];
+++        u += pic->linesize[1];
+++        v += pic->linesize[2];
+++        a += pic->linesize[3];
+++    }
+++
+++    *got_frame = 1;
+++
+++    return avpkt->size;
+++}
+++
+++const FFCodec ff_v408_decoder = {
+++    .p.name         = "v408",
+++    CODEC_LONG_NAME("Uncompressed packed QT 4:4:4:4"),
+++    .p.type         = AVMEDIA_TYPE_VIDEO,
+++    .p.id           = AV_CODEC_ID_V408,
+++    .init           = v408_decode_init,
+++    FF_CODEC_DECODE_CB(v408_decode_frame),
+++    .p.capabilities = AV_CODEC_CAP_DR1,
+++};
++diff -ruN a/libavcodec/v410dec.c b/libavcodec/v410dec.c
++--- a/libavcodec/v410dec.c
+++++ b/libavcodec/v410dec.c
++@@ -0,0 +1,123 @@
+++/*
+++ * v410 decoder
+++ *
+++ * Copyright (c) 2011 Derek Buitenhuis
+++ *
+++ * This file is part of FFmpeg.
+++ *
+++ * FFmpeg is free software; you can redistribute it and/or
+++ * modify it under the terms of the GNU Lesser General Public
+++ * License as published by the Free Software Foundation; either
+++ * version 2.1 of the License, or (at your option) any later version.
+++ *
+++ * FFmpeg is distributed in the hope that it will be useful,
+++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+++ * Lesser General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU Lesser General Public
+++ * License along with FFmpeg; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+++ */
+++
+++#include "libavutil/common.h"
+++#include "libavutil/intreadwrite.h"
+++#include "avcodec.h"
+++#include "codec_internal.h"
+++#include "thread.h"
+++
+++typedef struct ThreadData {
+++    AVFrame *frame;
+++    const uint8_t *buf;
+++    int stride;
+++} ThreadData;
+++
+++static av_cold int v410_decode_init(AVCodecContext *avctx)
+++{
+++    avctx->pix_fmt             = AV_PIX_FMT_YUV444P10;
+++    avctx->bits_per_raw_sample = 10;
+++
+++    if (avctx->width & 1) {
+++        if (avctx->err_recognition & AV_EF_EXPLODE) {
+++            av_log(avctx, AV_LOG_ERROR, "v410 requires width to be even.\n");
+++            return AVERROR_INVALIDDATA;
+++        } else {
+++            av_log(avctx, AV_LOG_WARNING, "v410 requires width to be even, continuing anyway.\n");
+++        }
+++    }
+++
+++    return 0;
+++}
+++
+++static int v410_decode_slice(AVCodecContext *avctx, void *arg, int jobnr, int threadnr)
+++{
+++    ThreadData *td = arg;
+++    AVFrame *pic = td->frame;
+++    int stride = td->stride;
+++    int thread_count = av_clip(avctx->thread_count, 1, avctx->height/4);
+++    int slice_start = (avctx->height *  jobnr) / thread_count;
+++    int slice_end = (avctx->height * (jobnr+1)) / thread_count;
+++    const uint8_t *src = td->buf + stride * slice_start;
+++    uint16_t *y, *u, *v;
+++    uint32_t val;
+++    int i, j;
+++
+++    y = (uint16_t*)pic->data[0] + slice_start * (pic->linesize[0] >> 1);
+++    u = (uint16_t*)pic->data[1] + slice_start * (pic->linesize[1] >> 1);
+++    v = (uint16_t*)pic->data[2] + slice_start * (pic->linesize[2] >> 1);
+++
+++    for (i = slice_start; i < slice_end; i++) {
+++        for (j = 0; j < avctx->width; j++) {
+++            val = AV_RL32(src);
+++
+++            u[j] = (val >>  2) & 0x3FF;
+++            y[j] = (val >> 12) & 0x3FF;
+++            v[j] = (val >> 22);
+++
+++            src += 4;
+++        }
+++
+++        y += pic->linesize[0] >> 1;
+++        u += pic->linesize[1] >> 1;
+++        v += pic->linesize[2] >> 1;
+++    }
+++
+++    return 0;
+++}
+++
+++static int v410_decode_frame(AVCodecContext *avctx, AVFrame *pic,
+++                             int *got_frame, AVPacket *avpkt)
+++{
+++    ThreadData td;
+++    const uint8_t *src = avpkt->data;
+++    int ret;
+++    int thread_count = av_clip(avctx->thread_count, 1, avctx->height/4);
+++
+++    td.stride = avctx->width * 4;
+++    if (avpkt->size < 4 * avctx->height * avctx->width) {
+++        av_log(avctx, AV_LOG_ERROR, "Insufficient input data.\n");
+++        return AVERROR(EINVAL);
+++    }
+++
+++    if ((ret = ff_thread_get_buffer(avctx, pic, 0)) < 0)
+++        return ret;
+++
+++    td.buf = src;
+++    td.frame = pic;
+++    avctx->execute2(avctx, v410_decode_slice, &td, NULL, thread_count);
+++
+++    *got_frame = 1;
+++
+++    return avpkt->size;
+++}
+++
+++const FFCodec ff_v410_decoder = {
+++    .p.name         = "v410",
+++    CODEC_LONG_NAME("Uncompressed 4:4:4 10-bit"),
+++    .p.type         = AVMEDIA_TYPE_VIDEO,
+++    .p.id           = AV_CODEC_ID_V410,
+++    .init           = v410_decode_init,
+++    FF_CODEC_DECODE_CB(v410_decode_frame),
+++    .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_SLICE_THREADS |
+++                      AV_CODEC_CAP_FRAME_THREADS,
+++};
++diff -ruN a/libavformat/isom_tags.c b/libavformat/isom_tags.c
++--- a/libavformat/isom_tags.c
+++++ b/libavformat/isom_tags.c
++@@ -33,9 +33,9 @@
++     { AV_CODEC_ID_RAWVIDEO, MKTAG('y', 'u', 'v', '2') }, /* uncompressed YUV422 */
++     { AV_CODEC_ID_RAWVIDEO, MKTAG('2', 'v', 'u', 'y') }, /* uncompressed 8-bit 4:2:2 */
++     { AV_CODEC_ID_RAWVIDEO, MKTAG('y', 'u', 'v', 's') }, /* same as 2VUY but byte-swapped */
++-    { AV_CODEC_ID_RAWVIDEO, MKTAG('v', '3', '0', '8') }, /* uncompressed  8-bit 4:4:4 */
++-    { AV_CODEC_ID_RAWVIDEO, MKTAG('v', '4', '0', '8') }, /* uncompressed  8-bit 4:4:4:4 */
++-    { AV_CODEC_ID_RAWVIDEO, MKTAG('v', '4', '1', '0') }, /* uncompressed 10-bit 4:4:4 */
+++    { AV_CODEC_ID_V308, MKTAG('v', '3', '0', '8') }, /* uncompressed  8-bit 4:4:4 */
+++    { AV_CODEC_ID_V408, MKTAG('v', '4', '0', '8') }, /* uncompressed  8-bit 4:4:4:4 */
+++    { AV_CODEC_ID_V410, MKTAG('v', '4', '1', '0') }, /* uncompressed 10-bit 4:4:4 */
++ 
++     { AV_CODEC_ID_RAWVIDEO, MKTAG('L', '5', '5', '5') },
++     { AV_CODEC_ID_RAWVIDEO, MKTAG('L', '5', '6', '5') },
++diff -ruN a/libavformat/riff.c b/libavformat/riff.c
++--- a/libavformat/riff.c
+++++ b/libavformat/riff.c
++@@ -300,9 +300,9 @@
++     { AV_CODEC_ID_RAWVIDEO,     MKTAG('I', '4', 'C', 'B') },
++     { AV_CODEC_ID_RAWVIDEO,     MKTAG('I', '0', 'F', 'L') },
++     { AV_CODEC_ID_RAWVIDEO,     MKTAG('I', '0', 'F', 'B') },
++-    { AV_CODEC_ID_RAWVIDEO,     MKTAG('v', '3', '0', '8') },
++-    { AV_CODEC_ID_RAWVIDEO,     MKTAG('v', '4', '0', '8') },
++-    { AV_CODEC_ID_RAWVIDEO,     MKTAG('v', '4', '1', '0') },
+++    { AV_CODEC_ID_V308,         MKTAG('v', '3', '0', '8') },
+++    { AV_CODEC_ID_V408,         MKTAG('v', '4', '0', '8') },
+++    { AV_CODEC_ID_V410,         MKTAG('v', '4', '1', '0') },
++     { AV_CODEC_ID_RAWVIDEO,     MKTAG('y', '4', '0', '8') },
++     { AV_CODEC_ID_FRWU,         MKTAG('F', 'R', 'W', 'U') },
++     { AV_CODEC_ID_R10K,         MKTAG('R', '1', '0', 'k') },
