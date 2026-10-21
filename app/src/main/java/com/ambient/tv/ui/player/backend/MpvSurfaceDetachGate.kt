@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.player.backend
 
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -10,23 +9,29 @@ import java.util.concurrent.TimeUnit
  * the detach itself runs on the mpv-control thread, which must never wait on itself.
  */
 internal class MpvSurfaceDetachGate {
-    private val waiters = ConcurrentLinkedQueue<CountDownLatch>()
+    private val waiters = mutableListOf<CountDownLatch>()
+    private var requestedDetach = 0L
+    private var completedDetach = 0L
     /** The VO is attached to, or is being attached to, a window. Written on the owner thread. */
     @Volatile var inUse = false
         private set
     @Volatile private var closed = false
 
     /** Owner thread, before handing a window to MPV. */
-    fun attaching() { inUse = true }
+    @Synchronized fun attaching() { if (!closed) inUse = true }
+
+    /** Caller thread, before enqueuing detach: includes an attach already taken from the queue. */
+    @Synchronized fun requestDetach(): Long = ++requestedDetach
 
     /** Owner thread: VO is off every window; all current waiters may return. */
-    fun detached() {
+    @Synchronized fun detached(ticket: Long = requestedDetach) {
         inUse = false
-        drain()
+        completedDetach = maxOf(completedDetach, ticket)
+        if (completedDetach >= requestedDetach) drain()
     }
 
     /** Owner thread: the engine is destroyed; nothing will ever render again. */
-    fun closed() {
+    @Synchronized fun closed() {
         closed = true
         inUse = false
         drain()
@@ -38,15 +43,17 @@ internal class MpvSurfaceDetachGate {
      */
     fun await(timeoutMs: Long): Boolean {
         val latch = CountDownLatch(1)
-        waiters.add(latch)
-        // Re-check after publishing: a detach that finished in between never sees this latch.
-        if (closed || !inUse) latch.countDown()
+        synchronized(this) {
+            waiters.add(latch)
+            if (closed || (!inUse && completedDetach >= requestedDetach)) latch.countDown()
+        }
         return try { latch.await(timeoutMs, TimeUnit.MILLISECONDS) }
         catch (_: InterruptedException) { Thread.currentThread().interrupt(); false }
-        finally { waiters.remove(latch) }
+        finally { synchronized(this) { waiters.remove(latch) } }
     }
 
     private fun drain() {
-        while (true) (waiters.poll() ?: return).countDown()
+        waiters.forEach { it.countDown() }
+        waiters.clear()
     }
 }

@@ -81,8 +81,8 @@ data class MpvPlaybackSnapshot(
     val configuredScaler: String? = null,
     val videoOutput: String? = null,
     val accelerationFallback: String? = null,
-    /** SHIELD interlaced zero-copy decoder note (shaders/SVP inactive). */
-    val zeroCopyStatus: String? = null,
+    /** SHIELD broadcast software-decoder workaround; GPU filters remain available. */
+    val shieldSoftwareStatus: String? = null,
     /** True after a Stats-for-Nerds poll has read the live filter/scaler properties. */
     val processingSampled: Boolean = false,
     val activeDeinterlace: String? = null,
@@ -398,7 +398,7 @@ fun rememberMpvPlaybackSnapshot(
                 sparsam = controller.supportsGpuFilters && sparsam,
                 videoOutput = if (pollNerdStats) controller.configuredVideoOutput() else snapshot.videoOutput,
                 accelerationFallback = controller.accelerationFallback,
-                zeroCopyStatus = controller.zeroCopyStatus,
+                shieldSoftwareStatus = controller.shieldSoftwareStatus,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,
                 activeDeinterlace = if (pollNerdStats) controller.activeDeinterlace() else snapshot.activeDeinterlace,
                 svpState = svp,

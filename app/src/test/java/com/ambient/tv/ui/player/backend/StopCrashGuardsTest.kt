@@ -164,10 +164,67 @@ class StopCrashGuardsTest {
         val wait = controller.substring(controller.indexOf("fun detachSurfaceAndWait("))
         assertTrue(wait.indexOf("Looper.myLooper() === thread.looper) return") < wait.indexOf("surfaceGate.await("))
         assertTrue(controller.contains("mailbox.submit(\"surface\", keepOnClose = true)"))
-        assertTrue(controller.contains("} finally { surfaceGate.detached() }"))
+        assertTrue(controller.contains("} finally { surfaceGate.detached(ticket) }"))
         assertTrue(controller.contains("surfaceGate.closed()"))
         assertTrue(controller.indexOf("surfaceGate.attaching()") < controller.indexOf("player.attachSurface(copy, width, height)"))
         assertEquals(500L, SURFACE_DETACH_WAIT_MS)
+    }
+
+    @Test fun detachWaitIncludesAnAttachAlreadyTakenFromTheQueue() {
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val entered = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val done = CountDownLatch(1)
+        val gate = MpvSurfaceDetachGate()
+        val queue = MpvCommandQueue({ executor.execute(it) }, { throw AssertionError(it) })
+        try {
+            queue.submit("surface") {
+                entered.countDown()
+                check(resume.await(5, TimeUnit.SECONDS))
+                gate.attaching()
+            }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            val ticket = gate.requestDetach()
+            queue.submit("surface", keepOnClose = true) { gate.detached(ticket); done.countDown() }
+            assertFalse(gate.await(10))
+            resume.countDown()
+            assertTrue(gate.await(2_000))
+            assertTrue(done.await(2, TimeUnit.SECONDS))
+        } finally { resume.countDown(); executor.shutdownNow() }
+    }
+
+    @Test fun anEarlierDetachCannotAcknowledgeANewerRequest() {
+        val gate = MpvSurfaceDetachGate()
+        val first = gate.requestDetach()
+        val second = gate.requestDetach()
+        gate.detached(first)
+        assertFalse(gate.await(10))
+        gate.detached(second)
+        assertTrue(gate.await(100))
+        gate.requestDetach()
+        gate.closed()
+        assertTrue(gate.await(100))
+    }
+
+    @Test fun closeWaitIncludesAnAttachAlreadyTakenFromTheQueue() {
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val entered = CountDownLatch(1)
+        val resume = CountDownLatch(1)
+        val gate = MpvSurfaceDetachGate()
+        val queue = MpvCommandQueue({ executor.execute(it) }, { throw AssertionError(it) })
+        try {
+            queue.submit("surface") {
+                entered.countDown()
+                check(resume.await(5, TimeUnit.SECONDS))
+                gate.attaching()
+            }
+            assertTrue(entered.await(2, TimeUnit.SECONDS))
+            gate.requestDetach()
+            queue.close { gate.closed() }
+            assertFalse(gate.await(10))
+            resume.countDown()
+            assertTrue(gate.await(2_000))
+        } finally { resume.countDown(); executor.shutdownNow() }
     }
 
     // 3 Foreground service ---------------------------------------------------------------------

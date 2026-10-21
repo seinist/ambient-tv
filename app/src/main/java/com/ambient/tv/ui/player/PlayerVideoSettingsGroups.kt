@@ -277,6 +277,9 @@ private fun MpvVideoGroups(
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
     val options = controller.imageOptions
+    if (section in setOf("scaling", "filters", "svp", "output")) {
+        controller.shieldSoftwareStatus?.let { ImageHint(it) }
+    }
     fun change(next: MpvImageOptions) {
         controller.updateImageOptions(next)
         if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions

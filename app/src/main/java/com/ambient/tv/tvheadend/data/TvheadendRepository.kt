@@ -196,8 +196,8 @@ class TvheadendRepository @Inject constructor(
     }
 
     suspend fun serverInfo(force: Boolean = false): TvhServerInfo = cached("server", 60_000, force,
-        stale = { diskCache.read(diskScope(), TvheadendDiskCache.SERVER, TvhServerInfo.serializer()) },
-        persist = { diskCache.write(diskScope(), TvheadendDiskCache.SERVER, TvhServerInfo.serializer(), it) },
+        stale = { scope -> diskCache.read(scope, TvheadendDiskCache.SERVER, TvhServerInfo.serializer()) },
+        persist = { scope, value -> diskCache.write(scope, TvheadendDiskCache.SERVER, TvhServerInfo.serializer(), value) },
     ) {
         val obj = getJson("api/serverinfo").jsonObject
         TvhServerInfo(
@@ -208,8 +208,8 @@ class TvheadendRepository @Inject constructor(
     }
 
     suspend fun channels(force: Boolean = false): List<TvhChannel> = cached("channels", 5 * 60_000, force,
-        stale = { diskCache.read(diskScope(), TvheadendDiskCache.CHANNELS, CHANNEL_LIST) },
-        persist = { diskCache.write(diskScope(), TvheadendDiskCache.CHANNELS, CHANNEL_LIST, it) },
+        stale = { scope -> diskCache.read(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST) },
+        persist = { scope, value -> diskCache.write(scope, TvheadendDiskCache.CHANNELS, CHANNEL_LIST, value) },
     ) { coroutineScope {
         val channelRows = entries(getJson("api/channel/grid", mapOf("limit" to "9999")))
         // Optional metadata must not make channels unavailable to non-admin accounts.
@@ -264,15 +264,15 @@ class TvheadendRepository @Inject constructor(
         val stop = startEpochSeconds + windowHours.coerceIn(1, 72) * 3600L
         val key = "epg:$channelId:${startEpochSeconds / 300}:$windowHours"
         return cached(key, 10 * 60_000, force,
-            stale = {
-                diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST)?.filter {
+            stale = { scope ->
+                diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST)?.filter {
                     it.stopEpochSeconds >= startEpochSeconds && it.startEpochSeconds <= stop && (channelId == null || it.channelUuid == channelId)
                 }
             },
-            persist = { events -> epgPersistMutex.withLock {
+            persist = { scope, events -> epgPersistMutex.withLock {
                 val now = System.currentTimeMillis() / 1000L
-                val stored = diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST).orEmpty()
-                diskCache.write(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST, TvheadendDiskCache.mergeEpg(stored, events, now))
+                val stored = diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST).orEmpty()
+                diskCache.write(scope, TvheadendDiskCache.EPG, EVENT_LIST, TvheadendDiskCache.mergeEpg(stored, events, now))
             } },
         ) {
             loadTvhEpgPages(startEpochSeconds, stop, channelId) { params -> getJson("api/epg/events/grid", params) }
@@ -281,14 +281,14 @@ class TvheadendRepository @Inject constructor(
     }
 
     suspend fun nowEvents(force: Boolean = false): List<TvhEpgEvent> = cached("epg:now", 60_000, force,
-        stale = {
+        stale = { scope ->
             val now = System.currentTimeMillis() / 1000L
-            val stored = diskCache.read(diskScope(), TvheadendDiskCache.NOW, EVENT_LIST)
-            val guide = diskCache.read(diskScope(), TvheadendDiskCache.EPG, EVENT_LIST)
+            val stored = diskCache.read(scope, TvheadendDiskCache.NOW, EVENT_LIST)
+            val guide = diskCache.read(scope, TvheadendDiskCache.EPG, EVENT_LIST)
             if (stored == null && guide == null) null
             else (stored.orEmpty() + guide.orEmpty()).filter { it.isLive(now) }.distinctBy { it.channelUuid }
         },
-        persist = { diskCache.write(diskScope(), TvheadendDiskCache.NOW, EVENT_LIST, it) },
+        persist = { scope, value -> diskCache.write(scope, TvheadendDiskCache.NOW, EVENT_LIST, value) },
     ) {
         entries(
             getJson(
@@ -299,24 +299,24 @@ class TvheadendRepository @Inject constructor(
     }
 
     suspend fun upcomingRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:upcoming", 60_000, force,
-        stale = { diskCache.read(diskScope(), "dvr:upcoming", RECORDING_LIST) },
-        persist = { diskCache.write(diskScope(), "dvr:upcoming", RECORDING_LIST, it) },
+        stale = { scope -> diskCache.read(scope, "dvr:upcoming", RECORDING_LIST) },
+        persist = { scope, value -> diskCache.write(scope, "dvr:upcoming", RECORDING_LIST, value) },
     ) {
         entries(getJson("api/dvr/entry/grid_upcoming", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedBy { it.startEpochSeconds }
     }
 
     suspend fun finishedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:finished", 60_000, force,
-        stale = { diskCache.read(diskScope(), "dvr:finished", RECORDING_LIST) },
-        persist = { diskCache.write(diskScope(), "dvr:finished", RECORDING_LIST, it) },
+        stale = { scope -> diskCache.read(scope, "dvr:finished", RECORDING_LIST) },
+        persist = { scope, value -> diskCache.write(scope, "dvr:finished", RECORDING_LIST, value) },
     ) {
         entries(getJson("api/dvr/entry/grid_finished", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedByDescending { it.startEpochSeconds }
     }
 
     suspend fun failedRecordings(force: Boolean = false): List<TvhDvrEntry> = cached("dvr:failed", 60_000, force,
-        stale = { diskCache.read(diskScope(), "dvr:failed", RECORDING_LIST) },
-        persist = { diskCache.write(diskScope(), "dvr:failed", RECORDING_LIST, it) },
+        stale = { scope -> diskCache.read(scope, "dvr:failed", RECORDING_LIST) },
+        persist = { scope, value -> diskCache.write(scope, "dvr:failed", RECORDING_LIST, value) },
     ) {
         entries(getJson("api/dvr/entry/grid_failed", mapOf("limit" to "9999"))).mapNotNull(::mapDvr)
             .sortedByDescending { it.startEpochSeconds }
@@ -335,8 +335,8 @@ class TvheadendRepository @Inject constructor(
 
 
     suspend fun autoRecordings(force: Boolean = false): List<TvhAutoRec> = cached("dvr:autorec", 60_000, force,
-        stale = { diskCache.read(diskScope(), "dvr:autorec", AUTOREC_LIST) },
-        persist = { diskCache.write(diskScope(), "dvr:autorec", AUTOREC_LIST, it) },
+        stale = { scope -> diskCache.read(scope, "dvr:autorec", AUTOREC_LIST) },
+        persist = { scope, value -> diskCache.write(scope, "dvr:autorec", AUTOREC_LIST, value) },
     ) {
         entries(getJson("api/dvr/autorec/grid", mapOf("limit" to "9999"))).mapNotNull { obj ->
             val uuid = obj.string("uuid") ?: return@mapNotNull null
@@ -853,13 +853,14 @@ class TvheadendRepository @Inject constructor(
         key: String,
         ttlMs: Long,
         force: Boolean,
-        stale: (suspend () -> T?)? = null,
-        persist: (suspend (T) -> Unit)? = null,
+        stale: (suspend (String) -> T?)? = null,
+        persist: (suspend (String, T) -> Unit)? = null,
         loader: suspend () -> T,
     ): T = withContext(Dispatchers.IO) {
         check(preferences.hasTvheadendEndpoint) { context.getString(com.ambient.tv.R.string.tvh_not_configured) }
         requestMutexes[(key.hashCode() and Int.MAX_VALUE) % requestMutexes.size].withLock {
             val scope = currentCacheScope()
+            val persistedScope = diskScope()
             var expired: T? = null
             val generation = cacheMutex.withLock {
                 if (cacheScope != scope) {
@@ -873,8 +874,15 @@ class TvheadendRepository @Inject constructor(
                 if (hit != null) expired = hit.value as T
                 cacheGeneration
             }
-            val fallback: T? = if (force) null else expired ?: runCatching { stale?.invoke() }.getOrNull()
+            suspend fun ensureCurrentScope() = cacheMutex.withLock {
+                check(preferences.hasTvheadendEndpoint && scope == currentCacheScope() && generation == cacheGeneration) {
+                    "TVHeadend configuration changed; please retry"
+                }
+            }
+            val fallback: T? = if (force) null else expired ?: runCatching { stale?.invoke(persistedScope) }.getOrNull()
+            ensureCurrentScope()
             if (fallback != null && !serverLikelyReachable()) {
+                ensureCurrentScope()
                 _servingCachedData.value = true
                 scheduleRevalidate()
                 return@withContext fallback
@@ -885,6 +893,7 @@ class TvheadendRepository @Inject constructor(
                 throw cancelled
             } catch (error: Exception) {
                 if (fallback == null || !tvhStoredDataMayReplace(error)) throw error
+                ensureCurrentScope()
                 Timber.i("TVHeadend %s unavailable (%s); showing stored data", key, error.javaClass.simpleName)
                 // Offline only when the server is gone; one failing endpoint keeps the rest usable.
                 if (tvhFallbackMarksOffline(error)) {
@@ -900,7 +909,7 @@ class TvheadendRepository @Inject constructor(
                 // EPG keys include a moving time window; bound them for long-running TV sessions.
                 if (cache.size > 64) cache.minByOrNull { it.value.createdAtMs }?.key?.let(cache::remove)
             }
-            runCatching { persist?.invoke(value) }
+            runCatching { persist?.invoke(persistedScope, value) }
             value
         }
     }

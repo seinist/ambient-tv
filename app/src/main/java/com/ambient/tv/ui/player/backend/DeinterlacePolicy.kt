@@ -20,6 +20,10 @@ internal const val MPV_FIELD_RATE_MIN_FPS = 40.0
 internal fun mpvFieldRateInput(sourceFps: Double?): Boolean =
     sourceFps != null && sourceFps.isFinite() && sourceFps > MPV_FIELD_RATE_MIN_FPS
 
+/** SHIELD's software workaround keeps Auto at frame rate; explicit 2x remains selectable. */
+internal fun mpvSingleRateDeinterlace(broadcast: Boolean, sourceFps: Double?, filter: String, shieldSoftware: Boolean): Boolean =
+    broadcast && (mpvFieldRateInput(sourceFps) || (shieldSoftware && filter == "auto"))
+
 /**
  * Whether the deinterlacer emits two pictures per input picture. "auto" is mpv's built-in
  * deinterlacer, which inserts bwdif/yadif in send_field mode. [singleRate] is the field-rate
@@ -84,7 +88,9 @@ internal fun mpvDeinterlaceGraph(key: String, automatic: Boolean, weightsPath: S
  * double-rate is 50 fps; reported at the field rate it stays 50 (never 100). Direct output
  * cannot run the app's deinterlacer, so it keeps the reported rate.
  */
-internal fun mpvLiveDisplayFps(containerFps: Double?, gpuFilters: Boolean, deinterlaceMode: String, deinterlaceFilter: String): Double? {
+internal fun mpvLiveDisplayFps(containerFps: Double?, gpuFilters: Boolean, deinterlaceMode: String, deinterlaceFilter: String,
+    shieldSoftware: Boolean = false): Double? {
     if (!gpuFilters || deinterlaceMode == "off") return containerFps?.takeIf { it.isFinite() && it > 0.0 }
-    return mpvDeinterlacedFps(containerFps, true, deinterlaceFilter, mpvFieldRateInput(containerFps))
+    return mpvDeinterlacedFps(containerFps, true, deinterlaceFilter,
+        mpvSingleRateDeinterlace(true, containerFps, deinterlaceFilter, shieldSoftware))
 }

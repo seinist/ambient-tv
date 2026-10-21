@@ -168,11 +168,12 @@ internal fun MpvTvheadendPlaybackSurface(
     // Live TV and TVHeadend recordings are broadcast: a 576i recording deinterlaces to 50 Hz too.
     val liveSource = com.ambient.tv.ui.player.LocalPlaybackMetadata.current
         ?.let { it.isLive || it.liveTvSourceId != null } == true
-    LaunchedEffect(controller, snapshot.videoSize, snapshot.containerFps, controller.deinterlaceModeKey, controller.deinterlaceFilterKey, liveSource) {
+    LaunchedEffect(controller, snapshot.videoSize, snapshot.containerFps, controller.deinterlaceModeKey, controller.deinterlaceFilterKey, liveSource, controller.shieldSoftwareStatus) {
         val dimensions = com.ambient.tv.ui.player.DisplayRefreshRateMatcher.parseVideoDimensions(snapshot.videoSize)
         // Match the deinterlaced cadence: 25 fps double-rate → 50 Hz; field-rate 50 stays 50 Hz.
         val fps = (if (liveSource) com.ambient.tv.ui.player.backend.mpvLiveDisplayFps(
             snapshot.containerFps, controller.supportsGpuFilters, controller.deinterlaceModeKey, controller.deinterlaceFilterKey,
+            shieldSoftware = controller.shieldSoftwareStatus != null,
         ) else snapshot.containerFps)?.toFloat() ?: 0f
         if (fps > 0f || dimensions != null) onVideoFormatChanged(fps, dimensions?.first, dimensions?.second)
     }

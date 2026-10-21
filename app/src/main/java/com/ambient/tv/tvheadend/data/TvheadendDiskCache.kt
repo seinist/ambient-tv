@@ -31,45 +31,50 @@ internal class BrowseTvheadendCacheStore(private val disk: com.ambient.tv.data.b
  */
 internal class TvheadendDiskCache(private val store: TvheadendCacheStore) {
     private val json = Json { ignoreUnknownKeys = true }
-    @Volatile private var active: String? = null
-    @Volatile private var raw: Map<String, String>? = null
-    private val values = ConcurrentHashMap<String, Any>()
-    private val restoreLock = Mutex()
+    private class Scope(val key: String) {
+        @Volatile var raw: Map<String, String>? = null
+        val values = ConcurrentHashMap<String, Any>()
+        val restoreLock = Mutex()
+    }
+    @Volatile private var active: Scope? = null
 
-    @Synchronized private fun sync(scope: String) {
-        if (scope == active) return
-        active?.let(store::remove)
-        active = scope
-        raw = null
-        values.clear()
+    @Synchronized private fun sync(scope: String): Scope {
+        active?.takeIf { it.key == scope }?.let { return it }
+        active?.let { store.remove(it.key) }
+        return Scope(scope).also { active = it }
     }
 
     /** TVHeadend disabled: forget the active scope's data (memory and disk). */
     @Synchronized fun clear(scope: String?) {
-        setOfNotNull(scope, active).forEach(store::remove)
+        setOfNotNull(scope, active?.key).forEach(store::remove)
         active = null
-        raw = null
-        values.clear()
     }
 
     @Suppress("UNCHECKED_CAST")
     suspend fun <T : Any> read(scope: String, key: String, serializer: KSerializer<T>): T? {
-        sync(scope)
-        (values[key] as? T)?.let { return it }
-        val records = raw ?: restoreLock.withLock {
-            raw ?: store.read(scope).also { if (active == scope) raw = it }
+        val state = sync(scope)
+        synchronized(this) {
+            if (active !== state) return null
+            (state.values[key] as? T)?.let { return it }
         }
-        if (active != scope) return null
+        val records = state.raw ?: state.restoreLock.withLock {
+            state.raw ?: store.read(scope).also { state.raw = it }
+        }
+        if (active !== state) return null
         val decoded = records[key]?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() } ?: return null
-        values.putIfAbsent(key, decoded)
-        return values[key] as? T
+        return synchronized(this) {
+            // Scope identity also rejects A -> B -> A and clear -> reload while decoding.
+            if (active !== state) return null
+            state.values.putIfAbsent(key, decoded)
+            state.values[key] as? T
+        }
     }
 
-    fun <T : Any> write(scope: String, key: String, serializer: KSerializer<T>, value: T) {
-        sync(scope)
+    @Synchronized fun <T : Any> write(scope: String, key: String, serializer: KSerializer<T>, value: T) {
+        val state = sync(scope)
         val stored = displayOnly(value)
-        values[key] = stored
-        store.put(scope, key, { active == scope && values[key] === stored }) { json.encodeToString(serializer, stored) }
+        state.values[key] = stored
+        store.put(scope, key, { active === state && state.values[key] === stored }) { json.encodeToString(serializer, stored) }
     }
 
     @Suppress("UNCHECKED_CAST")

@@ -857,7 +857,7 @@
     <string name="player_info_unknown">Unknown</string>
     <string name="player_info_channels">%1$d ch</string>
     <string name="mpv_shutdown">MPV was stopped</string>
-    <string name="mpv_shield_interlaced_zero_copy">Shield: interlaced without copy – shaders/SVP inactive</string>
+    <string name="mpv_shield_broadcast_software">SHIELD: software decoding for broadcast GPU filters</string>
     <string name="mpv_command_failed">MPV command failed (%1$d)</string>
     <string name="vlc_playback_error">VLC playback error</string>
     <string name="youtube_no_compatible_format">No compatible SmartTube playback format found</string>

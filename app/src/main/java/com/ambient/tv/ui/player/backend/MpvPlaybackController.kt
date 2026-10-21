@@ -146,7 +146,7 @@ class MpvPlaybackController(
         }
         val next = MpvEngineState(
             status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters,
-            usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, zeroCopyStatus = player.zeroCopyStatus,
+            usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, shieldSoftwareStatus = player.shieldSoftwareStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
             deinterlaceModeKey = player.deinterlaceModeKey, deinterlaceFilterKey = player.deinterlaceFilterKey,
             deinterlaceBackoffGeneration = player.deinterlaceBackoffGeneration, deinterlaceFailed = player.deinterlaceFailed,
@@ -187,7 +187,7 @@ class MpvPlaybackController(
     override val usesRendererScaling get() = supportsGpuFilters
     override val usesFrameInterpolation get() = state.usesFrameInterpolation
     val accelerationFallback get() = state.accelerationFallback
-    val zeroCopyStatus get() = state.zeroCopyStatus
+    val shieldSoftwareStatus get() = state.shieldSoftwareStatus
     val imageOptions get() = pendingImage?.second ?: state.imageOptions
     private var saveDefaults by mutableStateOf(false)
     var saveImageDefaults: Boolean
@@ -351,13 +351,16 @@ class MpvPlaybackController(
         if (surface != null && surfaceIdentity !== surface) return
         surfaceIdentity = null
         // Kept across close(): Stop's release() must not drop the detach queued just before it.
-        if (!released) mailbox.submit("surface", keepOnClose = true) {
-            try {
-                engine?.detachSurface()
-                ownedSurface?.release()
-                ownedSurface = null
-            } finally { surfaceGate.detached() }
-            sample()
+        if (!released) {
+            val ticket = surfaceGate.requestDetach()
+            mailbox.submit("surface", keepOnClose = true) {
+                try {
+                    engine?.detachSurface()
+                    ownedSurface?.release()
+                    ownedSurface = null
+                } finally { surfaceGate.detached(ticket) }
+                sample()
+            }
         }
     }
 
@@ -368,7 +371,7 @@ class MpvPlaybackController(
     fun detachSurfaceAndWait(surface: Surface, timeoutMs: Long = SURFACE_DETACH_WAIT_MS) {
         val owner = surfaceIdentity === surface
         detachSurface(surface)
-        if (!owner && !(released && surfaceGate.inUse)) return
+        if (!owner && !released) return
         if (Looper.myLooper() === thread.looper) return
         val started = SystemClock.elapsedRealtime()
         val detached = surfaceGate.await(timeoutMs)
@@ -380,6 +383,8 @@ class MpvPlaybackController(
     override fun release() {
         if (released) return
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "release")
+        // An in-flight attach may not have reached attaching() yet. Wait for close in that case.
+        surfaceGate.requestDetach()
         released = true
         playIntent = false
         backendUnresponsive = false
@@ -449,7 +454,7 @@ private data class MpvEngineState(
     val supportsGpuFilters: Boolean = false,
     val usesFrameInterpolation: Boolean = false,
     val accelerationFallback: String? = null,
-    val zeroCopyStatus: String? = null,
+    val shieldSoftwareStatus: String? = null,
     val imageOptions: MpvImageOptions = MpvImageOptions(),
     val imageOptionWarnings: List<String> = emptyList(),
     val deinterlaceModeKey: String = "off",

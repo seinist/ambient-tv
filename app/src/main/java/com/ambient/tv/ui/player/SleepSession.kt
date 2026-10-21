@@ -157,6 +157,12 @@ object SleepSession {
             daily = null
             timer.setDailyStop(null)
             if (rearm) set(user.copy(deadlineRealtimeMs = null))
+            else if (user.kind == SleepTimerKind.DURATION &&
+                user.deadlineRealtimeMs?.let { it <= clock.realtimeMs() } == true) {
+                // Both deadlines may expire together, or the duration expires while the
+                // daily-stop prompt is open. Continuing must acknowledge both.
+                set(SleepTimerConfig())
+            }
         } else set(if (rearm) user.copy(deadlineRealtimeMs = null) else SleepTimerConfig())
         publish()
         target?.sleepPlay()

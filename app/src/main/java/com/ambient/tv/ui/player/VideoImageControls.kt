@@ -128,12 +128,12 @@ internal fun MpvImageControls(controller: MpvPlaybackController) {
     if ("shader-needs-vulkan" in controller.imageOptionWarnings) {
         ImageHint(stringResource(R.string.image_shader_needs_vulkan))
     }
-    if (com.ambient.tv.ui.player.backend.MPV_ZERO_COPY_WARNING in controller.imageOptionWarnings) {
-        ImageHint(stringResource(R.string.mpv_shield_interlaced_zero_copy))
+    if (com.ambient.tv.ui.player.backend.MPV_SHIELD_SOFTWARE_WARNING in controller.imageOptionWarnings) {
+        ImageHint(stringResource(R.string.mpv_shield_broadcast_software))
     }
     val rejectedWarnings = controller.imageOptionWarnings.filterNot {
         it == "nis-compute-unknown" || it == "nis-compute-unsupported" || it == "shader-needs-vulkan" ||
-            it == com.ambient.tv.ui.player.backend.MPV_ZERO_COPY_WARNING
+            it == com.ambient.tv.ui.player.backend.MPV_SHIELD_SOFTWARE_WARNING
     }
     if (rejectedWarnings.isNotEmpty()) ImageHint(stringResource(R.string.image_rejected, rejectedWarnings.joinToString()))
 }

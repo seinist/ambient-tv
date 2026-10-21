@@ -117,6 +117,45 @@ class SleepSessionTest {
         assertEquals(SleepTimerKind.DURATION, SleepSession.config.kind)
     }
 
+    @Test fun continuingAcknowledgesBothExpiredDeadlines() {
+        val target = Target()
+        SleepSession.begin(target, { prefs(auto = "60", daily = 23 * 60) }, false, false, false)
+        clock.advance(60 * 60_000L)
+        SleepSession.tick(target)
+        assertNotNull(SleepSession.promptDeadline)
+        SleepSession.continueAfter(rearm = false)
+        clock.advance(1_000)
+        SleepSession.tick(target)
+        assertNull(SleepSession.promptDeadline)
+        assertEquals(SleepTimerKind.OFF, SleepSession.config.kind)
+        assertTrue(target.playing)
+    }
+
+    @Test fun continuingAlsoAcknowledgesDurationExpiringDuringDailyPrompt() {
+        val target = Target()
+        SleepSession.begin(target, { prefs(daily = 23 * 60) }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 61, clock.rt + 3_630_000L))
+        clock.advance(3_600_000L)
+        SleepSession.tick(target)
+        clock.advance(40_000)
+        SleepSession.continueAfter(rearm = false)
+        SleepSession.tick(target)
+        assertNull(SleepSession.promptDeadline)
+        assertTrue(target.playing)
+    }
+
+    @Test fun rearmAfterCoincidentDeadlinesStartsANewDuration() {
+        val target = Target()
+        SleepSession.begin(target, { prefs(auto = "60", daily = 23 * 60) }, false, false, false)
+        clock.advance(3_600_000L)
+        SleepSession.tick(target)
+        SleepSession.continueAfter(rearm = true)
+        SleepSession.tick(target)
+        assertNull(SleepSession.promptDeadline)
+        assertFalse(SleepSession.dailyStopActive)
+        assertEquals(clock.rt + 3_600_000L, SleepSession.config.deadlineRealtimeMs)
+    }
+
     @Test fun keptTimerSurvivesAnInternalRestart() {
         val target = Target()
         val p = prefs()

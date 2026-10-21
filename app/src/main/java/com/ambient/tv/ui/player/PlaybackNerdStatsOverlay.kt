@@ -319,7 +319,7 @@ internal fun buildMpvNerdOverlayModel(
             add(NerdStatsOverlayRow(labels.vo, it))
         }
         snapshot.accelerationFallback?.let { add(NerdStatsOverlayRow("Fallback", it, warn = true)) }
-        snapshot.zeroCopyStatus?.let { add(NerdStatsOverlayRow("Zero-copy", it, warn = true)) }
+        snapshot.shieldSoftwareStatus?.let { add(NerdStatsOverlayRow("Decoder", it, warn = true)) }
         formatNerdSeconds(snapshot.cacheDurationSeconds)?.let {
             add(NerdStatsOverlayRow(labels.bufferHealth, it))
         }
