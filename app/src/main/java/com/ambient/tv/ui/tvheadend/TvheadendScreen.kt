@@ -764,7 +764,7 @@ private fun EventDialog(
                 TvActionButton(text = stringResource(R.string.tvh_record), onClick = { pending = R.string.tvh_record; onRecord() }, enabled = !busy, loading = busy && pending == R.string.tvh_record, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
                 if (canRecordSeries && !event.seriesLink.isNullOrBlank()) TvActionButton(text = stringResource(R.string.tvh_record_series), onClick = { pending = R.string.tvh_record_series; onRecordSeries() }, enabled = !busy, loading = busy && pending == R.string.tvh_record_series)
             } else if (timer != null && canRecord && timer.canDelete) {
-                TvActionButton(text = stringResource(if (timer?.isActivelyRecording() == true) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+                TvActionButton(text = stringResource(if (timer.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canWatch && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
             if (canRemind) TvActionButton(text = stringResource(if (reminded) R.string.reminder_remove else R.string.reminder_add), onClick = onToggleReminder,
                 selected = reminded)

@@ -9,6 +9,98 @@ import patch_smarttube_compat as patcher
 
 
 class SmartTubeDeprecationPatchesTest(unittest.TestCase):
+    def test_dns_record_is_qualified_and_patch_is_idempotent(self) -> None:
+        for newline in ("\n", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                path = Path(self.temporary.name) / "PublicDnsResolver.java"
+                path.write_bytes(newline.join([
+                    "import org.xbill.DNS.Record;",
+                    "Record[] records = lookup.run();",
+                    "for (Record record : records) {",
+                    "}", "",
+                ]).encode())
+                with self.assertRaises(SystemExit):
+                    patcher.patch_public_dns_record(path, check=True)
+                self.assertTrue(patcher.patch_public_dns_record(path, check=False))
+                patched = path.read_bytes()
+                self.assertIn(b"org.xbill.DNS.Record[] records", patched)
+                self.assertIn(b"for (org.xbill.DNS.Record record", patched)
+                self.assertNotIn(b"import org.xbill.DNS.Record;", patched)
+                self.assertEqual(patched, path.read_text().replace("\n", newline).encode())
+                self.assertFalse(patcher.patch_public_dns_record(path, check=True))
+                self.assertFalse(patcher.patch_public_dns_record(path, check=False))
+                self.assertEqual(patched, path.read_bytes())
+
+    def subtitle_source(self, client: str) -> str:
+        return """        // TV and others has a limited number of auto generated subtitles
+        if (needMoreSubtitles(result)) {
+            Log.d(TAG, "Enable full list of auto generated subtitles...");
+
+            if (mCachedTranslationLanguages == null || mCachedTranslationLanguages.size() < 100) {
+                mUseAuth = false;
+                VideoInfo webInfo = null;
+                try {
+                    webInfo = getVideoInfo(AppClient.CLIENT, videoId, clickTrackingParams);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+                if (webInfo != null) {
+                    mCachedTranslationLanguages = webInfo.getTranslationLanguages();
+                }
+            }
+            result.setTranslationLanguages(mCachedTranslationLanguages);
+        }
+    private static boolean needMoreSubtitles(VideoInfo videoInfo) {
+""".replace("AppClient.CLIENT", f"AppClient.{client}")
+
+    def test_subtitle_refetch_preserves_client_and_line_endings(self) -> None:
+        for client in ("WEB", "WEB_DUMMY"):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(client=client, newline=repr(newline)):
+                    path = Path(self.temporary.name) / "VideoInfoService.java"
+                    path.write_bytes(self.subtitle_source(client).replace("\n", newline).encode())
+                    with self.assertRaises(SystemExit):
+                        patcher.patch_skip_playable_subtitle_refetch(path, check=True)
+                    self.assertTrue(patcher.patch_skip_playable_subtitle_refetch(path, check=False))
+                    patched = path.read_bytes()
+                    text = path.read_text()
+                    self.assertIn(f"getVideoInfo(AppClient.{client},", text)
+                    self.assertIn("if (!hasPlayableFormats(result) &&", text)
+                    self.assertIn("result.setTranslationLanguages(mCachedTranslationLanguages);", text)
+                    self.assertEqual(patched, text.replace("\n", newline).encode())
+                    patcher.patch_skip_playable_subtitle_refetch(path, check=True)
+                    self.assertFalse(patcher.patch_skip_playable_subtitle_refetch(path, check=False))
+                    self.assertEqual(patched, path.read_bytes())
+
+    def test_subtitle_refetch_rejects_unknown_upstream_client(self) -> None:
+        path = self.write("VideoInfoService.java", self.subtitle_source("UNKNOWN"))
+        original = path.read_bytes()
+        with self.assertRaises(SystemExit):
+            patcher.patch_skip_playable_subtitle_refetch(path, check=False)
+        self.assertEqual(original, path.read_bytes())
+
+    def test_auth_cache_recovery_supports_renamed_class(self) -> None:
+        for name in ("AppServiceIntCached.java", "AppServiceCoreCached.java"):
+            with self.subTest(name=name):
+                msc = Path(self.temporary.name) / name
+                base = msc / "youtubeapi/src/main/java/com/liskovsoft/youtubeapi"
+                auth = base / "auth/V2/AuthService.java"
+                auth.parent.mkdir(parents=True)
+                auth.write_text("// AMBIENT_TV_DEVICE_CODE_RECOVERY\n")
+                cache = base / "app" / name
+                cache.parent.mkdir(parents=True)
+                cache.write_text(
+                    "    public void invalidateCache() {\n"
+                    "        mAppInfo = null;\n"
+                    "        // Don\'t reset Player\'s cache. It\'s too heavy to recreate often.\n"
+                    "        // Better do it inside MediaServiceData after the update\n"
+                    "    }\n"
+                )
+                self.assertEqual([cache], patcher.patch_youtube_auth_device_code_recovery(msc, check=False))
+                self.assertIn("getData().setClientData(null);", cache.read_text())
+                self.assertEqual([], patcher.patch_youtube_auth_device_code_recovery(msc, check=True))
+                self.assertEqual([], patcher.patch_youtube_auth_device_code_recovery(msc, check=False))
+
     def write(self, name: str, text: str) -> Path:
         path = Path(self.temporary.name) / name
         path.write_text(text)

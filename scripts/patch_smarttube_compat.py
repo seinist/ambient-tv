@@ -381,7 +381,7 @@ def patch_logger_quiet(path: Path, check: bool) -> bool:
 
 
 def patch_youtubeapi_okhttp_kotlin(msc: Path, check: bool) -> list[Path]:
-    """Patch OkHttp 4 Kotlin API migrations used by the SmartTube youtubeapi module."""
+    """Patch Kotlin API migrations for the host OkHttp version."""
     base = msc / "youtubeapi/src/main/java"
     changed: list[Path] = []
 
@@ -406,6 +406,12 @@ def patch_youtubeapi_okhttp_kotlin(msc: Path, check: bool) -> list[Path]:
         ],
         "com/liskovsoft/youtubeapi/app/nsigsolver/common/InfoExtractor.kt": [
             (".body()", ".body"),
+            ('return content ?: throw InfoExtractorError(formatError(errorMsg, "Empty content received for the $url"))',
+             "return content"),
+        ],
+        "com/liskovsoft/youtubeapi/app/playerdata/TclPlayerDataExtractor.kt": [
+            ("nResults?.let { results -> nParams?.map { results[it] } }",
+             "nResults?.let { results -> nParams.map { results[it] } }"),
         ],
         "com/liskovsoft/youtubeapi/app/potokennp2/generators/PoTokenV8.kt": [
             (".code()", ".code"),
@@ -433,12 +439,23 @@ def patch_youtubeapi_okhttp_kotlin(msc: Path, check: bool) -> list[Path]:
         ],
         "com/liskovsoft/youtubeapi/app/potokennp2/misc/JavaScriptUtil.kt": [
             (".body()", ".body"),
+            ('\n            ?: throw PoTokenException("Empty response body")', ""),
         ],
         "com/liskovsoft/youtubeapi/innertube/initialresponse/InitialResponseService.kt": [
             (".body()", ".body"),
         ],
     }
     for rel, replacements in patches.items():
+        if (".body()", ".body") in replacements:
+            # OkHttp Response.body is non-null in the host dependency.
+            replacements.append((".body?.string()", ".body.string()"))
+        if "/potokennp2/generators/" in rel:
+            replacements.append((
+                '        if (response.body == null) {\n'
+                '            onInitializationErrorCloseAndCancel(PoTokenException("Response body is empty. Response code: $httpCode"))\n'
+                '        }\n\n',
+                "",
+            ))
         path = base / rel
         if patch_kotlin_text(path, replacements, check):
             changed.append(path)
@@ -495,7 +512,9 @@ def patch_youtube_auth_device_code_recovery(msc: Path, check: bool) -> list[Path
 
     cache = msc / "youtubeapi/src/main/java/com/liskovsoft/youtubeapi/app/AppServiceIntCached.java"
     if not cache.is_file():
-        die(f"SmartTube AppServiceIntCached moved or disappeared: {cache}")
+        cache = cache.with_name("AppServiceCoreCached.java")
+    if not cache.is_file():
+        die(f"SmartTube cached AppService moved or disappeared: {cache}")
     cache_text = cache.read_text()
     cache_marker = "AMBIENT_TV_AUTH_CACHE_RECOVERY"
     if check:
@@ -505,7 +524,7 @@ def patch_youtube_auth_device_code_recovery(msc: Path, check: bool) -> list[Path
         old_invalidate = """    public void invalidateCache() {\n        mAppInfo = null;\n        // Don't reset Player's cache. It's too heavy to recreate often.\n        // Better do it inside MediaServiceData after the update\n    }\n"""
         new_invalidate = """    public void invalidateCache() {\n        mAppInfo = null;\n        // AMBIENT_TV_AUTH_CACHE_RECOVERY: client id/secret belong to the TV bundle too.\n        // Clearing only AppInfo can keep a stale OAuth tuple alive after a failed device-code request.\n        mClientData = null;\n        getData().setClientData(null);\n        // Don't reset Player's cache. It's too heavy to recreate often.\n        // Better do it inside MediaServiceData after the update\n    }\n"""
         if old_invalidate not in cache_text:
-            die(f"cannot locate AppServiceIntCached.invalidateCache in updated SmartTube source: {cache}")
+            die(f"cannot locate cached AppService.invalidateCache in updated SmartTube source: {cache}")
         cache.write_text(cache_text.replace(old_invalidate, new_invalidate, 1))
         changed.append(cache)
 
@@ -803,6 +822,30 @@ def patch_auth_v1_request_body(path: Path, check: bool) -> bool:
     return True
 
 
+def patch_public_dns_record(path: Path, check: bool) -> bool:
+    """Disambiguate dnsjava Record from the inherited OkHttp Dns.Record."""
+    if not path.is_file():
+        die(f"SmartTube PublicDnsResolver moved or disappeared: {path}")
+    raw = path.read_bytes()
+    text = raw.decode("utf-8")
+    replacements = [
+        ("Record[] records = lookup.run();", "org.xbill.DNS.Record[] records = lookup.run();"),
+        ("for (Record record : records)", "for (org.xbill.DNS.Record record : records)"),
+    ]
+    original = text
+    for old, new in replacements:
+        if new in text:
+            continue
+        if check or old not in text:
+            die(f"SmartTube DNS Record patch missing or anchor changed: {path}")
+        text = text.replace(old, new, 1)
+    text = re.sub(r"^import org\.xbill\.DNS\.Record;\r?\n", "", text, flags=re.MULTILINE)
+    if text == original or check:
+        return False
+    path.write_bytes(text.encode("utf-8"))
+    return True
+
+
 def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
     """Skip the second WEB player call when formats are already playable.
 
@@ -854,6 +897,13 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
                 }
             }
 """
+    # Upstream now uses WEB_DUMMY for translation languages. Preserve the
+    # selected client while accepting both known versions of this block.
+    variants = [
+        (legacy, replacement),
+        (legacy.replace("AppClient.WEB,", "AppClient.WEB_DUMMY,"),
+         replacement.replace("AppClient.WEB,", "AppClient.WEB_DUMMY,")),
+    ]
     helper_anchor = "    private static boolean needMoreSubtitles(VideoInfo videoInfo) {\n"
     helper = """    private static boolean hasPlayableFormats(VideoInfo videoInfo) {
         if (videoInfo == null || videoInfo.isUnplayable()) {
@@ -877,17 +927,19 @@ def patch_skip_playable_subtitle_refetch(path: Path, check: bool) -> bool:
     if check:
         if marker not in text or "hasPlayableFormats(result)" not in text or "private static boolean hasPlayableFormats" not in text:
             die(f"SmartTube playable-format subtitle refetch skip is not applied: {path}")
-        if legacy in text:
+        if any(old in text for old, _ in variants):
             die(f"second WEB player round trip still blocks playable formats: {path}")
         return False
     if marker in text:
-        if "private static boolean hasPlayableFormats" not in text or legacy in text:
+        if "private static boolean hasPlayableFormats" not in text or any(old in text for old, _ in variants):
             die(f"SmartTube subtitle refetch skip is only partially applied: {path}")
         return False
-    if legacy not in text:
+    matches = [(old, new) for old, new in variants if old in text]
+    if len(matches) != 1:
         die(f"cannot locate VideoInfoService subtitle refetch in updated SmartTube source: {path}")
     if helper_anchor not in text:
         die(f"cannot locate needMoreSubtitles in updated SmartTube source: {path}")
+    legacy, replacement = matches[0]
     text = text.replace(legacy, replacement, 1)
     text = text.replace(helper_anchor, helper, 1)
     path.write_bytes(text.replace("\n", newline.decode("ascii")).encode("utf-8"))
@@ -957,6 +1009,10 @@ def main() -> int:
     for manifest in manifest_files(msc, shared):
         if patch_manifest(manifest, args.check):
             changed.append(manifest)
+
+    public_dns = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/PublicDnsResolver.java"
+    if patch_public_dns_record(public_dns, args.check):
+        changed.append(public_dns)
 
     doh = shared / "sharedutils/src/main/java/com/liskovsoft/sharedutils/okhttp/DohProviders.kt"
     if patch_doh(doh, args.check):
