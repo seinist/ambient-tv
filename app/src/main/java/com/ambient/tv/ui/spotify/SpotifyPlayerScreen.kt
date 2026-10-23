@@ -132,12 +132,11 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
             else -> onBack()
         }
     }
-    LaunchedEffect(controlsVisible, state.playing, panel, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion) {
-        if (controlsVisible && state.playing && panel == UnifiedPlayerPanel.NONE) {
-            kotlinx.coroutines.delay(PLAYER_CONTROLS_TIMEOUT_MS)
-            runCatching { rootFocusRequester.requestFocus() }
-            controlsVisible = false
-        }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controlsVisible, state.playing, panel != UnifiedPlayerPanel.NONE,
+    ) { visible ->
+        if (!visible) runCatching { rootFocusRequester.requestFocus() }
+        controlsVisible = visible
     }
     RequestPlayerOverlayFocus(
         requester = primaryFocusRequester,

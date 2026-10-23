@@ -260,7 +260,9 @@ internal fun MpvPlayerContent(
     MpvRenderOverloadDialog(controller) { panel = UnifiedPlayerPanel.VIDEO }
     LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
 
-    LaunchedEffect(controlsVisible, snapshot.isPlaying, panel, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) { if (!changingItem && controlsVisible && snapshot.isPlaying && panel == UnifiedPlayerPanel.NONE) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controlsVisible = false } }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controlsVisible, snapshot.isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem,
+    ) { controlsVisible = it }
 
     // One remote handling for the engine and, while the focus is in the panel above it, the panel host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current

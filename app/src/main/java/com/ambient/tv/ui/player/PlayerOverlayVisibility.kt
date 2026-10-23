@@ -51,14 +51,17 @@ fun PlayerOverlayVisibility(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val panelOpen = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.panel
+        ?.let { it != UnifiedPlayerPanel.NONE } == true
+    val show = playerOsdVisible(visible, panelOpen)
     val visibility = remember { MutableTransitionState(false) }
     val controlFocus = LocalPlayerControlFocus.current
-    androidx.compose.runtime.LaunchedEffect(visible, controlFocus) {
-        // Reset only on dismissal. Renderer/channel replacements while visible retain
-        // their control, and panel navigation still owns focus return to its opener.
-        if (!visible) controlFocus?.resetForNextOpen()
+    androidx.compose.runtime.LaunchedEffect(show, panelOpen, controlFocus) {
+        // A panel temporarily hides the OSD but retains its originating control.
+        // A real OSD dismissal resets the next opening to Play/Pause.
+        if (!show && !panelOpen) controlFocus?.resetForNextOpen()
     }
-    visibility.targetState = visible
+    visibility.targetState = show
     AnimatedVisibility(
         visibleState = visibility,
         // Above the nerd stats sibling: zIndex only orders siblings, so the panel's own
@@ -70,13 +73,13 @@ fun PlayerOverlayVisibility(
         Box(
             Modifier.fillMaxSize()
                 // Exiting controls remain drawn but must no longer accept input.
-                .focusProperties { canFocus = visible }
+                .focusProperties { canFocus = show }
                 // Back belongs to the new active level even during the OSD fade-out.
-                .onPreviewKeyEvent { !visible && it.key != Key.Back && it.key != Key.Escape }
+                .onPreviewKeyEvent { !show && it.key != Key.Back && it.key != Key.Escape }
                 // Only while fading out. A pointer node over the whole screen is hit-tested even
                 // when it does nothing, so keeping it while visible stopped taps on free video area
                 // from reaching the touch layer below (tap to hide the controls never arrived).
-                .then(if (visible) Modifier else Modifier.pointerInput(Unit) {
+                .then(if (show) Modifier else Modifier.pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
                             awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }

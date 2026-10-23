@@ -583,12 +583,9 @@ private fun PlayerContent(
         }
     }
 
-    LaunchedEffect(controlsVisible, controlsGeneration, panel, isPlaying, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) {
-        if (!changingItem && controlsVisible && panel == UnifiedPlayerPanel.NONE && isPlaying) {
-            delay(PLAYER_CONTROLS_TIMEOUT_MS)
-            controlsVisible = false
-        }
-    }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controlsVisible, isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem, interactionVersion = controlsGeneration,
+    ) { controlsVisible = it }
 
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     val projectMBrowser = rememberProjectMBrowser(state.projectmPresetCategoryKey)

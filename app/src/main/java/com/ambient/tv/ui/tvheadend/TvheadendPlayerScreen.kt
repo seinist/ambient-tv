@@ -604,12 +604,9 @@ private fun TvheadendPlaybackSurface(
     }
 
 
-    LaunchedEffect(controlsVisible, isPlaying, panel, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) {
-        if (!changingItem && controlsVisible && isPlaying && panel == UnifiedPlayerPanel.NONE) {
-            delay(PLAYER_CONTROLS_TIMEOUT_MS)
-            controlsVisible = false
-        }
-    }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controlsVisible, isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem,
+    ) { controlsVisible = it }
 
     RequestPlayerOverlayFocus(
         requester = playFocusRequester,
@@ -772,7 +769,6 @@ private fun TvheadendPlaybackSurface(
         val audioLabel = audioFormat?.let { it.codecs ?: it.sampleMimeType?.substringAfter('/') }
 
         com.ambient.tv.ui.player.PublishPlayerOsd(LiveOsdModel(
-            showWithPanel = true,
             source = source,
             channel = channel,
             imageHeaders = imageHeaders,

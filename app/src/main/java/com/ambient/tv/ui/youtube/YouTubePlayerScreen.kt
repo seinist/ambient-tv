@@ -742,9 +742,9 @@ private fun YouTubeMedia3Playback(
             delay(250)
         }
     }
-    LaunchedEffect(controls, playing, panelOpen, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) {
-        if (!changingItem && controls && playing && !panelOpen) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controls = false }
-    }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controls, playing, panelOpen, changingItem,
+    ) { controls = it }
     fun seek(delta: Long) {
         if (playback.isLive) return
         userSeeked = true
@@ -1088,7 +1088,9 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
     LaunchedEffect(seekModeVersion) { if (seekModeVersion > 0) { seekModeVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekModeVisible = false } }
-    LaunchedEffect(controls, snapshot.isPlaying, panelOpen, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) { if (!changingItem && controls && snapshot.isPlaying && !panelOpen) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controls = false } }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controls, snapshot.isPlaying, panelOpen, changingItem,
+    ) { controls = it }
     // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
     // keeps background playback. Do not change stop-on-Back to match minimize.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -1344,7 +1346,9 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
     LaunchedEffect(seekModeVersion) { if (seekModeVersion > 0) { seekModeVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekModeVisible = false } }
-    LaunchedEffect(controls, snapshot.isPlaying, panelOpen, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) { if (!changingItem && controls && snapshot.isPlaying && !panelOpen) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controls = false } }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controls, snapshot.isPlaying, panelOpen, changingItem,
+    ) { controls = it }
     // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
     // keeps background playback. Do not change stop-on-Back to match minimize.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -1508,8 +1512,8 @@ private data class YouTubeOsdModel(
         val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         val navigation = LocalPlayerPanelNavigation.current
-        // Panels outlive chrome visibility and own Back until their navigation level closes.
-        PlayerOverlayVisibility(visible = visible && panel == UnifiedPlayerPanel.NONE) {
+        // Shared visibility hides controls while panels own the screen and Back.
+        PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
                 remainingMs = if (!playback.isLive && duration > 0L) (duration - position).coerceAtLeast(0L) else null,

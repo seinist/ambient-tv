@@ -334,8 +334,6 @@ private fun formatTvhChromeDuration(ms: Long): String = com.ambient.tv.ui.common
  * actions, PersistentPlayerOverlays draws it above the engine. Fields keep each engine's details.
  */
 internal data class LiveOsdModel(
-    /** Media3 kept its OSD on screen while a panel was open; VLC/MPV hide it with the timeout. */
-    val showWithPanel: Boolean,
     val source: TvhPlaybackSource,
     val channel: TvhChannel?,
     val imageHeaders: Map<String, String>,
@@ -379,7 +377,7 @@ internal data class LiveOsdModel(
         val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
         val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
         com.ambient.tv.ui.player.PlayerOverlayVisibility(
-            visible = visible || (showWithPanel && panel != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE),
+            visible = visible,
         ) {
             TvhReferencePlayerChrome(
                 source = source,

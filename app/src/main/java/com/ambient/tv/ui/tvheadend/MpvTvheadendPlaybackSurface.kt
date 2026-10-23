@@ -263,7 +263,9 @@ internal fun MpvTvheadendPlaybackSurface(
         panelNavigation = panelNavigation,
     )
     LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
-    LaunchedEffect(controlsVisible, snapshot.isPlaying, panel, com.ambient.tv.ui.player.LocalPlaybackNavigation.current?.interactionVersion, com.ambient.tv.ui.player.BackgroundPlaybackSession.userInputVersion, changingItem) { if (!changingItem && controlsVisible && snapshot.isPlaying && panel == UnifiedPlayerPanel.NONE) { delay(PLAYER_CONTROLS_TIMEOUT_MS); controlsVisible = false } }
+    com.ambient.tv.ui.player.PlayerControlsAutoHide(
+        controlsVisible, snapshot.isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem,
+    ) { controlsVisible = it }
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
@@ -347,7 +349,6 @@ internal fun MpvTvheadendPlaybackSurface(
         )
         // Drawn by PersistentPlayerOverlays above the engine, so it survives a renderer switch.
         com.ambient.tv.ui.player.PublishPlayerOsd(LiveOsdModel(
-            showWithPanel = false,
             source = source,
             channel = channel,
             imageHeaders = imageHeaders,
