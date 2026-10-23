@@ -58,8 +58,7 @@ class ServerConnectionManager @Inject constructor(
 
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        if (service != ServerConnectionState.NotConfigured && hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.OFFLINE)
-            ServerConnectionState.Offline else service
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("plex"))
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
 
     private val connectionMutex = Mutex()
@@ -156,7 +155,7 @@ class ServerConnectionManager @Inject constructor(
         }
 
         _state.value = ServerConnectionState.Checking
-        if (!reachabilityChecker.isReachable() && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.ONLINE) {
+        if (!reachabilityChecker.isReachable() && !hosts.verifySystem("plex")) {
             val mac = preferences.macAddress
             if (preferences.autoWakeEnabled && !mac.isNullOrBlank()) {
                 var reachable = false

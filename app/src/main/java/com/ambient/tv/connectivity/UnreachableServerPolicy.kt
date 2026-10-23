@@ -99,8 +99,15 @@ fun shouldPresentUnreachableDialog(route: String?, prompt: Boolean, canDismiss: 
 
 /** Host recovery clears stale reconnect prompts without claiming service authentication. */
 fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: HostHealth): ServerProbe =
-    if (!configured) ServerProbe.INACTIVE else when (host) {
+    if (!configured) ServerProbe.INACTIVE
+    else if (probeOf(true, service) == ServerProbe.PENDING) ServerProbe.PENDING
+    else when (host) {
         HostHealth.ONLINE -> if (service is ServerConnectionState.Online) ServerProbe.REACHABLE else ServerProbe.HOST_REACHABLE
         HostHealth.OFFLINE -> ServerProbe.UNREACHABLE
         HostHealth.UNKNOWN -> probeOf(true, service)
     }
+
+/** Host outages invalidate a usable connection, never an active attempt or its error detail. */
+internal fun hostAwareConnectionState(service: ServerConnectionState, host: HostHealth): ServerConnectionState =
+    if (host == HostHealth.OFFLINE && service is ServerConnectionState.Online) ServerConnectionState.Offline
+    else service

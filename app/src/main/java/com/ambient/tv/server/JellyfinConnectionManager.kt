@@ -55,8 +55,7 @@ class JellyfinConnectionManager @Inject constructor(
         .addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build()
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        if (service != ServerConnectionState.NotConfigured && hosts.health("jellyfin") == com.ambient.tv.connectivity.HostHealth.OFFLINE)
-            ServerConnectionState.Offline else service
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("jellyfin"))
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
     private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
@@ -152,7 +151,7 @@ class JellyfinConnectionManager @Inject constructor(
         }
         _state.value = ServerConnectionState.Checking
         var reachable = isReachable()
-        if (!reachable && hosts.health("jellyfin") != com.ambient.tv.connectivity.HostHealth.ONLINE) {
+        if (!reachable && !hosts.verifySystem("jellyfin")) {
             val mac = preferences.jellyfinMacAddress
             if (!preferences.jellyfinAutoWakeEnabled || mac.isNullOrBlank()) { _state.value = ServerConnectionState.Offline; return false }
             _state.value = ServerConnectionState.SendingWakePacket
@@ -169,7 +168,7 @@ class JellyfinConnectionManager @Inject constructor(
                         retry = attempt > 0,
                     )
                 },
-                reachable = { hosts.health("jellyfin") == com.ambient.tv.connectivity.HostHealth.ONLINE || isReachable() },
+                reachable = { isReachable() || hosts.verifySystem("jellyfin") },
                 onWaiting = { elapsed ->
                     _state.value = ServerConnectionState.Waking(elapsed)
                     onWaking?.invoke()

@@ -44,6 +44,28 @@ class HostConnectivityTest {
         }
     }
 
+    @Test fun `recovery rechecks an online host that has since gone to sleep`() = runBlocking {
+        val live = ServerSocket(0)
+        preferences.port = live.localPort
+        preferences.tvheadendPort = live.localPort
+        try {
+            assertTrue(hosts.verifySystem("plex"))
+        } finally { live.close() }
+        assertEquals(HostHealth.ONLINE, hosts.health("plex"))
+        // This result controls whether recovery may skip sending a wake packet.
+        assertFalse(hosts.verifySystem("plex"))
+        assertEquals(HostHealth.OFFLINE, hosts.health("plex"))
+    }
+
+    @Test fun `fresh recovery check still accepts a live sibling service`() = runBlocking {
+        preferences.port = ServerSocket(0).use { it.localPort }
+        ServerSocket(0).use { live ->
+            preferences.tvheadendPort = live.localPort
+            assertTrue(hosts.verifySystem("plex"))
+            assertEquals(HostHealth.ONLINE, hosts.health("tvheadend"))
+        }
+    }
+
     @Test fun `old failure cannot recheck and overwrite a newer recovery`() = runBlocking {
         val closed = ServerSocket(0).use { it.localPort }
         preferences.port = closed

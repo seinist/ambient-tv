@@ -71,6 +71,9 @@ class HostConnectivity @Inject constructor(
         }
     }
 
+    /** Fresh passive evidence before an active recovery decides whether to send wake packets. */
+    suspend fun verifySystem(system: String): Boolean = begin(system)?.let { verify(it) } ?: false
+
     fun failure(check: HostCheck?) {
         if (check != null) scope.launch { verify(check) }
     }

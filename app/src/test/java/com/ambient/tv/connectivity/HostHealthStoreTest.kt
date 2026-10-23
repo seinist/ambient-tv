@@ -57,9 +57,30 @@ class HostHealthStoreTest {
         assertTrue(gate.hidden.isEmpty())
     }
 
-    @Test fun `old waking state cannot hold recovery pending`() {
-        assertEquals(ServerProbe.HOST_REACHABLE, hostAwareProbe(true, ServerConnectionState.Waking(20), HostHealth.ONLINE))
+    @Test fun `active waking remains pending until service check finishes`() {
+        assertEquals(ServerProbe.PENDING, hostAwareProbe(true, ServerConnectionState.Waking(20), HostHealth.ONLINE))
         assertEquals(ServerProbe.INACTIVE, hostAwareProbe(false, ServerConnectionState.Offline, HostHealth.OFFLINE))
+    }
+
+    @Test fun `offline host cannot hide recovery progress or present a failure dialog`() {
+        val active = listOf(ServerConnectionState.Checking, ServerConnectionState.SendingWakePacket,
+            ServerConnectionState.Waking(12), ServerConnectionState.Connecting)
+        for (service in active) {
+            for (health in HostHealth.entries) {
+                val visible = hostAwareConnectionState(service, health)
+                assertEquals(service, visible)
+                val decision = decideUnreachableServers(UnreachableServerInput(
+                    mapOf("plex" to hostAwareProbe(true, visible, health)), setOf("youtube")))
+                assertTrue(decision.pending)
+                assertTrue(decision.unreachable.isEmpty())
+                assertFalse(decision.canDismiss)
+            }
+        }
+        val failed = hostAwareConnectionState(ServerConnectionState.WakeTimedOut, HostHealth.OFFLINE)
+        assertEquals(ServerConnectionState.WakeTimedOut, failed)
+        assertEquals(ServerProbe.UNREACHABLE, hostAwareProbe(true, failed, HostHealth.OFFLINE))
+        val error = ServerConnectionState.Error("Wake failed")
+        assertEquals(error, hostAwareConnectionState(error, HostHealth.OFFLINE))
     }
 
     @Test fun `a reachable machine with rejected service access is not a usable alternative`() {

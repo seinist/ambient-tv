@@ -30,7 +30,7 @@ class WakeServerUseCase @Inject constructor(
         // Checked first so a server that's already up (the common case - every Home
         // revisit calls this, not just cold app start) never shows a wake/waiting spinner
         // or sends a needless magic packet.
-        if (hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE || reachabilityChecker.isReachable()) {
+        if (reachabilityChecker.isReachable() || hosts.verifySystem("plex")) {
             emit(WakeState.Reachable)
             return@flow
         }
@@ -47,7 +47,7 @@ class WakeServerUseCase @Inject constructor(
                     retry = attempt > 0,
                 ).getOrThrow()
             },
-            reachable = { hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE || reachabilityChecker.isReachable() },
+            reachable = { reachabilityChecker.isReachable() || hosts.verifySystem("plex") },
             onWaiting = { elapsed -> emit(WakeState.WaitingForServer(elapsed)) },
         )
         emit(if (woke) WakeState.Reachable else WakeState.TimedOut)
