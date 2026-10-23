@@ -22,7 +22,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
@@ -34,6 +38,7 @@ import okhttp3.Request
 class EmbyConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val repository: EmbyRepository,
     private val wolManager: WolManager,
     private val macResolver: MacAddressResolver,
@@ -49,7 +54,10 @@ class EmbyConnectionManager @Inject constructor(
         .readTimeout(3, TimeUnit.SECONDS)
         .addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build()
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
-    val state: StateFlow<ServerConnectionState> = _state.asStateFlow()
+    val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
+        if (service != ServerConnectionState.NotConfigured && hosts.health("emby") == com.ambient.tv.connectivity.HostHealth.OFFLINE)
+            ServerConnectionState.Offline else service
+    }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
     private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
     private fun endpointKey() = listOf(preferences.activeEmbyServerId, preferences.embyHost, preferences.embyPort, preferences.embyUseHttps, preferences.embyBasePath).joinToString("|")
@@ -69,9 +77,9 @@ class EmbyConnectionManager @Inject constructor(
     }
 
     /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
-    suspend fun checkInBackground(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun checkInBackground(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            if (!reconnectPause.isPaused(endpointKey()) || !preferences.isEmbyConfigured) return@withLock false
+            if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.isEmbyConfigured) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.embyHost)) return@withLock false
             val checkedEndpoint = endpointKey()
@@ -107,7 +115,20 @@ class EmbyConnectionManager @Inject constructor(
         wakeRetries: Int = preferences.wolRetryCount,
         onWaking: (() -> Unit)? = null,
     ): Boolean {
-        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online
+        val check = hosts.begin("emby")
+        val endpoint = endpointKey()
+        val result = connectService(wakeTimeoutMs, wakePollMs, wakeRetries, onWaking)
+        if (endpoint == endpointKey() && !result) hosts.failure(check)
+        return result
+    }
+
+    private suspend fun connectService(
+        wakeTimeoutMs: Long = 60_000L,
+        wakePollMs: Long = 2_500L,
+        wakeRetries: Int = preferences.wolRetryCount,
+        onWaking: (() -> Unit)? = null,
+    ): Boolean {
+        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("emby") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.isEmbyConfigured) { _state.value = ServerConnectionState.NotConfigured; return false }
         val host = NetworkEndpoint.normalizeHost(preferences.embyHost)
         if (preferences.localNetworkOnly && !LocalNetworkPolicy.isPotentiallyLocalHost(host)) {
@@ -124,14 +145,14 @@ class EmbyConnectionManager @Inject constructor(
             preferences.embyPort,
             preferences.embyBasePath,
         ).joinToString("|")
-        if (connectionReusable(_state.value is ServerConnectionState.Online, lastServerId, endpointKey,
+        if (connectionReusable(_state.value is ServerConnectionState.Online && hosts.health("emby") != com.ambient.tv.connectivity.HostHealth.OFFLINE, lastServerId, endpointKey,
                 lastSuccessfulCheckMs, System.currentTimeMillis(), windowMs = 30_000L)) {
             resumeConnectivity.get().noteHealthyNow()
             return true
         }
         _state.value = ServerConnectionState.Checking
         var reachable = isReachable()
-        if (!reachable) {
+        if (!reachable && hosts.health("emby") != com.ambient.tv.connectivity.HostHealth.ONLINE) {
             val mac = preferences.embyMacAddress
             if (!preferences.embyAutoWakeEnabled || mac.isNullOrBlank()) { _state.value = ServerConnectionState.Offline; return false }
             _state.value = ServerConnectionState.SendingWakePacket
@@ -148,7 +169,7 @@ class EmbyConnectionManager @Inject constructor(
                         retry = attempt > 0,
                     )
                 },
-                reachable = { isReachable() },
+                reachable = { hosts.health("emby") == com.ambient.tv.connectivity.HostHealth.ONLINE || isReachable() },
                 onWaiting = { elapsed ->
                     _state.value = ServerConnectionState.Waking(elapsed)
                     onWaking?.invoke()
@@ -166,6 +187,7 @@ class EmbyConnectionManager @Inject constructor(
         if (preferences.embyMacAddress.isNullOrBlank()) {
             macResolver.resolve(host, preferences.embyPort)?.macAddress?.let(preferences::updateActiveEmbyServerMac)
         }
+        hosts.online(hosts.begin("emby")) // MAC discovery may have changed the shared machine key.
         resumeConnectivity.get().noteHealthyNow()
         return true
     }

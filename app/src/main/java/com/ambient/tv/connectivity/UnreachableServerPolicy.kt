@@ -9,6 +9,8 @@ enum class ServerProbe {
     /** Still checking or waking. Not a failure yet. */
     PENDING,
     REACHABLE,
+    /** The machine answers, but this service has not yet confirmed usable access. */
+    HOST_REACHABLE,
     UNREACHABLE,
 }
 
@@ -94,3 +96,11 @@ fun shouldPresentUnreachableDialog(route: String?, prompt: Boolean, canDismiss: 
     if (path.startsWith("player/") || path.startsWith("youtube_player") || path.startsWith("tvh_player") || path.startsWith("spotify_player")) return false
     return true
 }
+
+/** Host recovery clears stale reconnect prompts without claiming service authentication. */
+fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: HostHealth): ServerProbe =
+    if (!configured) ServerProbe.INACTIVE else when (host) {
+        HostHealth.ONLINE -> if (service is ServerConnectionState.Online) ServerProbe.REACHABLE else ServerProbe.HOST_REACHABLE
+        HostHealth.OFFLINE -> ServerProbe.UNREACHABLE
+        HostHealth.UNKNOWN -> probeOf(true, service)
+    }

@@ -61,6 +61,7 @@ import timber.log.Timber
 class TvheadendRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val tokenStore: TokenStore,
     private val wolManager: WolManager,
     private val wireGuardRoute: WireGuardRouteController,
@@ -100,6 +101,7 @@ class TvheadendRepository @Inject constructor(
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor(hosts.interceptor())
             .dns(com.ambient.tv.network.LanOnlyDns({ preferences.localNetworkOnly }))
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
@@ -741,12 +743,13 @@ class TvheadendRepository @Inject constructor(
 
     private suspend fun isTvheadendReachable(): Boolean = withContext(Dispatchers.IO) {
         val endpoint = runCatching { configuredTvheadendEndpoint() }.getOrNull()
+        val check = hosts.begin("tvheadend")
         reachabilityProbe.check(endpoint?.host to preferences.tvheadendPort) {
             runCatching {
                 Socket().use { socket -> socket.connect(InetSocketAddress(endpoint!!.host, preferences.tvheadendPort), 900) }
                 true
             }.getOrDefault(false)
-        }.also { if (!it) lastUnreachableAtMs = System.currentTimeMillis() }
+        }.also { if (it) hosts.online(check) else { hosts.failure(check); lastUnreachableAtMs = System.currentTimeMillis() } }
     }
 
     private fun buildUrl(path: String, params: Map<String, String>): HttpUrl {

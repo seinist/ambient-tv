@@ -25,7 +25,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -59,6 +59,7 @@ class TvheadendViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val snapshots: com.ambient.tv.data.browse.DisplaySnapshots,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
     private val tvheadend: TvheadendRepository,
 ) : ViewModel() {
@@ -87,7 +88,11 @@ class TvheadendViewModel @Inject constructor(
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
         } ?: TvheadendTab.LIVE,
     ))
-    val uiState: StateFlow<TvheadendUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<TvheadendUiState> = kotlinx.coroutines.flow.combine(_uiState, hosts.states) { state, _ ->
+        if (hosts.health(repository.source.system) == com.ambient.tv.connectivity.HostHealth.OFFLINE)
+            state.copy(offline = true, canWake = repository.source.system == "tvheadend" && !preferences.tvheadendMacAddress.isNullOrBlank())
+        else state
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, _uiState.value)
 
     private val isTvheadend get() = repository.source.system == "tvheadend"
     private fun canWake() = isTvheadend && !preferences.tvheadendMacAddress.isNullOrBlank()
@@ -95,7 +100,7 @@ class TvheadendViewModel @Inject constructor(
     init {
         // The server answered again after cached data was shown: reload quietly.
         if (isTvheadend) viewModelScope.launch {
-            tvheadend.revalidated.collect { if (_uiState.value.offline && refreshJob?.isActive != true) load(force = false) }
+            tvheadend.revalidated.collect { if (uiState.value.offline && refreshJob?.isActive != true) load(force = false) }
         }
     }
 
@@ -140,7 +145,7 @@ class TvheadendViewModel @Inject constructor(
 
     private var refreshJob: Job? = null
 
-    fun retryOffline() { if (_uiState.value.offline && availability.hasNetwork() && refreshJob?.isActive != true) load(force = false) }
+    fun retryOffline() { if (uiState.value.offline && availability.hasNetwork() && refreshJob?.isActive != true) load(force = false) }
 
     fun refresh() { if (!_uiState.value.actionInProgress) load(force = true) }
 
@@ -257,7 +262,7 @@ class TvheadendViewModel @Inject constructor(
         action: suspend () -> Result<Unit>,
     ) {
         // Offline (cached data): record, timer and delete need the server.
-        if (_uiState.value.actionInProgress || _uiState.value.offline) return
+        if (_uiState.value.actionInProgress || uiState.value.offline) return
         // Commit busy synchronously, so repeated OK cannot send the mutation twice.
         _uiState.update { it.copy(actionInProgress = true, actionFeedback = null, loading = false, refreshing = false) }
         refreshJob?.cancel()

@@ -32,6 +32,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         super.attachBaseContext(UiLocaleContext.wrap(base))
     }
 
+    @Inject lateinit var hostConnectivity: com.ambient.tv.connectivity.HostConnectivity
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var spotifyRepository: Provider<SpotifyRepository>
     @Inject lateinit var filesPhotoSource: Provider<com.ambient.tv.data.photos.FilesPhotoSource>
@@ -111,6 +112,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
                 "error=${snapshot.status.error != null}"
         }
         com.ambient.tv.companion.CompanionShareTargets.syncShareEntry(this)
+        hostConnectivity.start()
         resumeConnectivityMonitor.start()
         // Off unless enabled in Settings; follows the app's foreground state.
         dlnaRenderer.attach()

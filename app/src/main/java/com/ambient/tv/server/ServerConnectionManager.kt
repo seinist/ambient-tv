@@ -23,7 +23,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 
 sealed interface ServerConnectionState {
     data object NotConfigured : ServerConnectionState
@@ -41,6 +45,7 @@ sealed interface ServerConnectionState {
 class ServerConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val repository: MediaRepository,
     private val reachabilityChecker: ServerReachabilityChecker,
     private val wakeServerUseCase: WakeServerUseCase,
@@ -52,7 +57,10 @@ class ServerConnectionManager @Inject constructor(
     private var lastSuccessfulCheckMs: Long = 0L
 
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
-    val state: StateFlow<ServerConnectionState> = _state.asStateFlow()
+    val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
+        if (service != ServerConnectionState.NotConfigured && hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.OFFLINE)
+            ServerConnectionState.Offline else service
+    }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
 
     private val connectionMutex = Mutex()
     private fun endpointKey() = "${preferences.activeServerId}|${preferences.host}:${preferences.port}"
@@ -71,9 +79,9 @@ class ServerConnectionManager @Inject constructor(
     }
 
     /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
-    suspend fun checkInBackground(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun checkInBackground(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
-            if (!reconnectPause.isPaused(endpointKey()) || !preferences.hasPlexEndpoint) return@withLock false
+            if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.hasPlexEndpoint) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
@@ -113,7 +121,20 @@ class ServerConnectionManager @Inject constructor(
         wakeRetries: Int = preferences.wolRetryCount,
         onWaking: (() -> Unit)? = null,
     ): Boolean {
-        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online
+        val check = hosts.begin("plex")
+        val endpoint = endpointKey()
+        val result = connectService(wakeTimeoutMs, wakePollMs, wakeRetries, onWaking)
+        if (endpoint == endpointKey() && !result) hosts.failure(check)
+        return result
+    }
+
+    private suspend fun connectService(
+        wakeTimeoutMs: Long = 60_000L,
+        wakePollMs: Long = 2_500L,
+        wakeRetries: Int = preferences.wolRetryCount,
+        onWaking: (() -> Unit)? = null,
+    ): Boolean {
+        if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.hasPlexEndpoint) {
             _state.value = ServerConnectionState.NotConfigured
             return false
@@ -128,14 +149,14 @@ class ServerConnectionManager @Inject constructor(
             })) return false
 
         val activeServerId = endpointKey()
-        if (connectionReusable(_state.value is ServerConnectionState.Online, lastConnectedServerId, activeServerId,
+        if (connectionReusable(_state.value is ServerConnectionState.Online && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.OFFLINE, lastConnectedServerId, activeServerId,
                 lastSuccessfulCheckMs, System.currentTimeMillis(), CONNECTION_REUSE_MS)) {
             resumeConnectivity.get().noteHealthyNow()
             return true
         }
 
         _state.value = ServerConnectionState.Checking
-        if (!reachabilityChecker.isReachable()) {
+        if (!reachabilityChecker.isReachable() && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.ONLINE) {
             val mac = preferences.macAddress
             if (preferences.autoWakeEnabled && !mac.isNullOrBlank()) {
                 var reachable = false
@@ -182,6 +203,7 @@ class ServerConnectionManager @Inject constructor(
         lastConnectedServerId = activeServerId
         lastSuccessfulCheckMs = System.currentTimeMillis()
         learnMacIfMissing()
+        hosts.online(hosts.begin("plex")) // MAC discovery may have changed the shared machine key.
         resumeConnectivity.get().noteHealthyNow()
         return true
     }
@@ -216,6 +238,7 @@ class ServerConnectionManager @Inject constructor(
             lastConnectedServerId = endpointKey()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             learnMacIfMissing()
+            hosts.online(hosts.begin("plex"))
         }.onFailure {
             if (com.ambient.tv.notifications.failureHttpCode(it) == 401) preferences.plexLoginVerified = false
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.host}:${preferences.port}"))

@@ -22,6 +22,7 @@ import kotlinx.coroutines.runInterruptible
  */
 @Singleton
 class WakeOnLan {
+    private var hosts: com.ambient.tv.connectivity.HostConnectivity? = null
     private val wolManager: WolManager?
     private val directSend: (suspend (String, String, Int) -> Unit)?
     private val retryCount: () -> Int
@@ -29,7 +30,8 @@ class WakeOnLan {
     private val notices: com.ambient.tv.notifications.WakeNoticeTracker
 
     @Inject
-    constructor(wolManager: WolManager, preferences: AppPreferences, machines: com.ambient.tv.wol.WakeMachines) {
+    constructor(wolManager: WolManager, preferences: AppPreferences, machines: com.ambient.tv.wol.WakeMachines, hosts: com.ambient.tv.connectivity.HostConnectivity) {
+        this.hosts = hosts
         this.wolManager = wolManager
         this.machines = machines
         this.notices = WakeNotices
@@ -141,13 +143,16 @@ class WakeOnLan {
         }
     }
 
-    private suspend fun online(source: FileSource): Boolean = runInterruptible(Dispatchers.IO) {
+    private suspend fun online(source: FileSource): Boolean {
+        val check = hosts?.beginEndpoint("files:${source.id}", source.host, source.port)
+        return runInterruptible(Dispatchers.IO) {
         try {
             Socket().use { it.connect(InetSocketAddress(source.host, source.port), 900) }
             true
         } catch (_: java.io.IOException) {
             false
         }
+        }.also { if (it) hosts?.online(check) else hosts?.failure(check) }
     }
 
     companion object {

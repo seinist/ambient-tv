@@ -18,6 +18,7 @@ class WakeServerUseCase @Inject constructor(
     private val wolManager: WolManager,
     private val reachabilityChecker: ServerReachabilityChecker,
     private val preferences: AppPreferences,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
 ) {
     /** [retries] extra wake cycles after the first; a brief resume probe passes 0. */
     fun wakeAndWait(
@@ -29,7 +30,7 @@ class WakeServerUseCase @Inject constructor(
         // Checked first so a server that's already up (the common case - every Home
         // revisit calls this, not just cold app start) never shows a wake/waiting spinner
         // or sends a needless magic packet.
-        if (reachabilityChecker.isReachable()) {
+        if (hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE || reachabilityChecker.isReachable()) {
             emit(WakeState.Reachable)
             return@flow
         }
@@ -46,7 +47,7 @@ class WakeServerUseCase @Inject constructor(
                     retry = attempt > 0,
                 ).getOrThrow()
             },
-            reachable = { reachabilityChecker.isReachable() },
+            reachable = { hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE || reachabilityChecker.isReachable() },
             onWaiting = { elapsed -> emit(WakeState.WaitingForServer(elapsed)) },
         )
         emit(if (woke) WakeState.Reachable else WakeState.TimedOut)

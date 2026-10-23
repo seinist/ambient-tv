@@ -22,9 +22,23 @@ class WireGuardUnavailableException(message: String?) : java.io.IOException(mess
 class FileAccess @Inject constructor(
     @ApplicationContext private val context: Context,
     private val store: FileStore,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val wake: WakeOnLan,
     private val wireGuardRoute: WireGuardRouteController,
 ) {
+    private suspend fun <T> observedIO(source: FileSource, action: () -> T): T =
+        runInterruptible(Dispatchers.IO) { observe(source, action) }
+
+    private fun <T> observe(source: FileSource, action: () -> T): T {
+        val check = if (source.kind == "local") null else hosts.beginEndpoint("files:${source.id}", source.host, source.port)
+        try {
+            return action().also { hosts.online(check) }
+        } catch (error: java.io.IOException) {
+            if (!Thread.currentThread().isInterrupted) hosts.failure(check)
+            throw error
+        }
+    }
+
     private val smb2 = SmbAccess()
     private val smb1 = Smb1Access()
     private val nfs = NfsAccess()
@@ -35,7 +49,7 @@ class FileAccess @Inject constructor(
     fun uri(source: FileSource, path: String): Uri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(source.treeUri), path)
     internal suspend fun list(source: FileSource, path: String, limit: Int = 300, accept: (FileEntry) -> Boolean = FileEntry::playable): FileListing {
         prepare(source)
-        return runInterruptible(Dispatchers.IO) {
+        return observedIO(source) {
         val listing = if (source.kind == "smb") smb(source).list(source, path, store.password(source), limit, accept) else if (source.kind == "nfs") nfs.list(source, path, limit, accept)
         else if (source.kind == FileKinds.WEBDAV) webdav.list(source, path, store.password(source), limit, accept)
         else if (source.kind == FileKinds.SFTP) sftp.list(source, path, store.password(source), store.sshKey(source), limit, accept) else {
@@ -57,7 +71,7 @@ class FileAccess @Inject constructor(
     /** Reads a small text file such as a WireGuard config; larger files are rejected instead of truncated. */
     suspend fun readText(source: FileSource, path: String, maxBytes: Int = 64 * 1024): String {
         prepare(source)
-        return runInterruptible(Dispatchers.IO) {
+        return observedIO(source) {
             open(source, path).use { media ->
                 if (media.size > maxBytes) throw java.io.IOException("File too large")
                 val out = java.io.ByteArrayOutputStream(media.size.toInt()); val chunk = ByteArray(8 * 1024); var position = 0L
@@ -76,13 +90,13 @@ class FileAccess @Inject constructor(
         wireGuardRoute.ensureForFileSource(source).getOrElse { throw WireGuardUnavailableException(it.message) }
         wake.ensureAwake(source)
     }
-    suspend fun testNfs(source: FileSource) = runInterruptible(Dispatchers.IO) { nfs.list(source, "", 1); Unit }
-    suspend fun testSmb(source: FileSource, password: String) = runInterruptible(Dispatchers.IO) { smb(source).list(source, "", password, 1); Unit }
-    suspend fun testWebDav(source: FileSource, password: String) = runInterruptible(Dispatchers.IO) { webdav.test(source, password) }
-    suspend fun testSftp(source: FileSource, password: String, privateKey: String) = runInterruptible(Dispatchers.IO) { sftp.test(source, password, privateKey) }
+    suspend fun testNfs(source: FileSource) = observedIO(source) { nfs.list(source, "", 1); Unit }
+    suspend fun testSmb(source: FileSource, password: String) = observedIO(source) { smb(source).list(source, "", password, 1); Unit }
+    suspend fun testWebDav(source: FileSource, password: String) = observedIO(source) { webdav.test(source, password) }
+    suspend fun testSftp(source: FileSource, password: String, privateKey: String) = observedIO(source) { sftp.test(source, password, privateKey) }
     suspend fun stat(source: FileSource, path: String): FileEntry {
         prepare(source)
-        return runInterruptible(Dispatchers.IO) {
+        return observedIO(source) {
         if (source.kind == "smb") smb(source).stat(source, path, store.password(source)) else if (source.kind == "nfs") nfs.stat(source, path)
         else if (source.kind == FileKinds.WEBDAV) webdav.stat(source, path, store.password(source))
         else if (source.kind == FileKinds.SFTP) sftp.stat(source, path, store.password(source), store.sshKey(source)) else {
@@ -95,6 +109,21 @@ class FileAccess @Inject constructor(
     }
     /** Called only by the bridge's bounded IO workers. A new read handle belongs to one request. */
     fun open(source: FileSource, path: String): SeekableMedia {
+        val media = observe(source) { openSource(source, path) }
+        if (source.kind == "local") return media
+        val binding = hosts.beginEndpoint("files:${source.id}", source.host, source.port)
+        return object : SeekableMedia {
+            override val size get() = media.size
+            override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+                val check = hosts.nextCheck(binding)
+                try { return media.read(position, buffer, count) }
+                catch (error: java.io.IOException) { hosts.failure(check); throw error }
+            }
+            override fun close() = media.close()
+        }
+    }
+
+    private fun openSource(source: FileSource, path: String): SeekableMedia {
         store.withCurrentSource(source) { Unit }
         if (source.kind == "smb") return smb(source).open(source, path, store.password(source))
         if (source.kind == "nfs") return nfs.open(source, path)

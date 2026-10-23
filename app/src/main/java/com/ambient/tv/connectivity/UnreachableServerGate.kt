@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -42,6 +44,7 @@ data class UnreachableServerGateState(
 @Singleton
 class UnreachableServerGate @Inject constructor(
     private val preferences: AppPreferences,
+    private val hosts: HostConnectivity,
     private val tokens: TokenStore,
     private val dlnaStore: DlnaStore,
     private val plex: ServerConnectionManager,
@@ -59,12 +62,26 @@ class UnreachableServerGate @Inject constructor(
         jellyfin.state,
         emby.state,
         acknowledged,
-        revision,
+        combine(revision, hosts.states) { revision, hosts -> revision to hosts },
     ) { plexState, jellyfinState, embyState, acknowledgedIds, _ ->
         snapshot(plexState, jellyfinState, embyState, acknowledgedIds)
     }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
 
     init {
+        scope.launch {
+            hosts.states.map { states -> states.mapValues { it.value.health } }.distinctUntilChanged().collect {
+                refresh()
+                // Refresh actual service identities silently; never manufacture an authenticated state.
+                coroutineScope {
+                    if (hosts.health("plex") == HostHealth.ONLINE && plex.state.value !is ServerConnectionState.Online)
+                        launch { if (plex.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                    if (hosts.health("jellyfin") == HostHealth.ONLINE && jellyfin.state.value !is ServerConnectionState.Online)
+                        launch { if (jellyfin.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                    if (hosts.health("emby") == HostHealth.ONLINE && emby.state.value !is ServerConnectionState.Online)
+                        launch { if (emby.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                }
+            }
+        }
         scope.launch {
             while (true) {
                 delay(30_000L)
@@ -102,13 +119,32 @@ class UnreachableServerGate @Inject constructor(
         }
     }
 
+    private var retryJob: kotlinx.coroutines.Job? = null
+
     fun retry(refreshBus: PlexRefreshBus) {
-        scope.launch {
+        if (retryJob?.isActive == true) return
+        retryJob = scope.launch {
             val failed = current().unreachable
+            // One active recovery per machine. Siblings only refresh their own service identity.
             coroutineScope {
-                if (MediaSystem.PLEX.key in failed) launch { plex.reconnect() }
-                if (MediaSystem.JELLYFIN.key in failed) launch { jellyfin.reconnect() }
-                if (MediaSystem.EMBY.key in failed) launch { emby.reconnect() }
+                failed.groupBy { hosts.machine(it) ?: it }.values.forEach { systems -> launch {
+                    val first = systems.firstOrNull { system -> when (system) {
+                        "plex" -> preferences.autoWakeEnabled && !preferences.macAddress.isNullOrBlank()
+                        "jellyfin" -> preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank()
+                        "emby" -> preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank()
+                        else -> false
+                    } } ?: systems.first()
+                    when (first) {
+                        "plex" -> plex.reconnect()
+                        "jellyfin" -> jellyfin.reconnect()
+                        "emby" -> emby.reconnect()
+                    }
+                    systems.filter { it != first }.forEach { system -> when (system) {
+                        "plex" -> plex.checkInBackground(force = true)
+                        "jellyfin" -> jellyfin.checkInBackground(force = true)
+                        "emby" -> emby.checkInBackground(force = true)
+                    } }
+                } }
             }
             refreshBus.requestRefresh()
             refresh()
@@ -122,9 +158,9 @@ class UnreachableServerGate @Inject constructor(
         acknowledgedIds: Set<String>,
     ): UnreachableServerGateState {
         val probes = mapOf(
-            MediaSystem.PLEX.key to probeOf(preferences.isConfigured, plexState),
-            MediaSystem.JELLYFIN.key to probeOf(preferences.isJellyfinConfigured, jellyfinState),
-            MediaSystem.EMBY.key to probeOf(preferences.isEmbyConfigured, embyState),
+            MediaSystem.PLEX.key to hostProbe("plex", preferences.isConfigured, plexState),
+            MediaSystem.JELLYFIN.key to hostProbe("jellyfin", preferences.isJellyfinConfigured, jellyfinState),
+            MediaSystem.EMBY.key to hostProbe("emby", preferences.isEmbyConfigured, embyState),
         )
         val decision = decideUnreachableServers(
             UnreachableServerInput(probes, independentSystems()),
@@ -139,13 +175,19 @@ class UnreachableServerGate @Inject constructor(
         )
     }
 
+    private fun hostProbe(system: String, configured: Boolean, service: ServerConnectionState): ServerProbe {
+        return hostAwareProbe(configured, service, hosts.health(system))
+    }
+
     private fun independentSystems(): Set<String> = buildSet {
         if (preferences.youtubeEnabled) add(MediaSystem.YOUTUBE.key)
         if (preferences.spotifyEnabled) add(MediaSystem.SPOTIFY.key)
         if (preferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank()) add(MediaSystem.TRAILERS.key)
-        if (preferences.filesEnabled) add(MediaSystem.FILES.key)
-        if (dlnaStore.servers().isNotEmpty()) add(MediaSystem.DLNA.key)
-        if (preferences.isTvheadendConfigured) add(MediaSystem.TVHEADEND.key)
+        if (preferences.filesEnabled && preferences.fileSources.any {
+                it.kind == "local" || hosts.health("files:${it.id}") != HostHealth.OFFLINE
+            }) add(MediaSystem.FILES.key)
+        if (dlnaStore.servers().any { hosts.health("dlna:${it.id}") != HostHealth.OFFLINE }) add(MediaSystem.DLNA.key)
+        if (preferences.isTvheadendConfigured && hosts.health("tvheadend") != HostHealth.OFFLINE) add(MediaSystem.TVHEADEND.key)
         // Another media server counts only when its own probe is REACHABLE (see decideUnreachableServers).
     }
 

@@ -28,9 +28,10 @@ import org.w3c.dom.Element
 class DlnaRepository @Inject constructor(
     private val store: DlnaStore,
     private val preferences: AppPreferences,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val wake: DlnaWake,
 ) : MediaRepository {
-    private val client = dlnaHttpClient(preferences)
+    private val client = dlnaHttpClient(preferences).newBuilder().addInterceptor(hosts.interceptor()).build()
     private val cache = LinkedHashMap<String, MediaItem>()
 
     suspend fun browse(

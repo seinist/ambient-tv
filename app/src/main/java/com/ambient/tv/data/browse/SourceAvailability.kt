@@ -11,18 +11,25 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.Interceptor
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 enum class SourceHealth { UNKNOWN, ONLINE, OFFLINE, AUTH_REQUIRED }
 
 /** Network presence is not internet validation: an isolated LAN can still serve media. */
 @Singleton
-class SourceAvailability @Inject constructor(@ApplicationContext context: Context, private val scopes: BrowseScopes, private val preferences: com.ambient.tv.data.local.AppPreferences) {
+class SourceAvailability @Inject constructor(@ApplicationContext context: Context, private val scopes: BrowseScopes, private val preferences: com.ambient.tv.data.local.AppPreferences, private val hosts: com.ambient.tv.connectivity.HostConnectivity) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val mutable = MutableStateFlow(0L)
     val changes = mutable.asStateFlow()
     private val health = mutableMapOf<String, SourceHealth>()
 
     init {
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            hosts.states.map { states -> states.mapValues { it.value.health } }.distinctUntilChanged().collect { synchronized(this@SourceAvailability) { mutable.value++ } }
+        }
         runCatching {
             connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = changed()
@@ -37,18 +44,23 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         else health.replaceAll { _, value -> if (value == SourceHealth.ONLINE) SourceHealth.UNKNOWN else value }
         mutable.value++
     }
-    fun online(provider: String) = report(scopes.forProvider(provider), SourceHealth.ONLINE)
-    fun unreachable(provider: String) = report(scopes.forProvider(provider), SourceHealth.OFFLINE)
+    fun online(provider: String) { hosts.online(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.ONLINE) }
+    fun unreachable(provider: String) { hosts.failure(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.OFFLINE) }
     fun mediaState(id: String): SourceHealth {
         if (mediaProvider(id) == "files") {
             val source = runCatching { com.ambient.tv.data.files.FileKeys.parse(id).first }.getOrNull()
             if (preferences.fileSources.any { it.id == source && it.kind == "local" }) return SourceHealth.ONLINE
         }
+        val system = hosts.mediaSystem(mediaProvider(id), id)
+        if (system != null && system.contains(':')) return hostState(system, SourceHealth.UNKNOWN)
         return state(mediaProvider(id))
     }
     fun hasNetwork(): Boolean = connectivity.activeNetwork != null
     @Synchronized fun state(provider: String): SourceHealth =
-        if (!hasNetwork()) SourceHealth.OFFLINE else health[scopes.forProvider(provider)] ?: SourceHealth.UNKNOWN
+        if (!hasNetwork()) SourceHealth.OFFLINE else hostState(provider, health[scopes.forProvider(provider)] ?: SourceHealth.UNKNOWN)
+
+    private fun hostState(system: String, service: SourceHealth): SourceHealth =
+        if (!hasNetwork()) SourceHealth.OFFLINE else hostAwareSourceHealth(hosts.health(system), service)
 
     @Synchronized private fun report(scope: String, state: SourceHealth) {
         if (health.put(scope, state) != state) mutable.value++
@@ -56,16 +68,24 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
 
     fun interceptor(provider: String) = Interceptor { chain ->
         val scope = scopes.forProvider(provider)
+        val check = hosts.begin(provider)
         try {
             chain.proceed(chain.request()).also { response ->
-                if (scope == scopes.forProvider(provider)) report(scope, when (response.code) {
-                    401, 403 -> SourceHealth.AUTH_REQUIRED
-                    in 200..499 -> SourceHealth.ONLINE
-                    else -> SourceHealth.UNKNOWN
-                })
+                if (scope == scopes.forProvider(provider)) {
+                    // Even an authentication/server error proves host reachability.
+                    if (response.networkResponse != null) hosts.online(check)
+                    report(scope, when (response.code) {
+                        401, 403 -> SourceHealth.AUTH_REQUIRED
+                        in 200..499 -> SourceHealth.ONLINE
+                        else -> SourceHealth.UNKNOWN
+                    })
+                }
             }
         } catch (error: IOException) {
-            if (!chain.call().isCanceled() && scope == scopes.forProvider(provider)) report(scope, SourceHealth.OFFLINE)
+            if (!chain.call().isCanceled() && scope == scopes.forProvider(provider)) {
+                hosts.failure(check)
+                report(scope, SourceHealth.OFFLINE)
+            }
             throw error
         }
     }
@@ -83,4 +103,12 @@ fun mediaProvider(id: String): String = when {
     com.ambient.tv.data.dlna.DlnaKeys.owns(id) -> "dlna"
     com.ambient.tv.data.shared.SharedMediaRepository.owns(id) -> "shared"
     else -> "plex"
+}
+
+/** Host recovery removes an old offline flag, but never grants service access. */
+internal fun hostAwareSourceHealth(host: com.ambient.tv.connectivity.HostHealth, service: SourceHealth): SourceHealth = when {
+    host == com.ambient.tv.connectivity.HostHealth.OFFLINE -> SourceHealth.OFFLINE
+    service == SourceHealth.AUTH_REQUIRED -> service
+    host == com.ambient.tv.connectivity.HostHealth.ONLINE && service == SourceHealth.OFFLINE -> SourceHealth.UNKNOWN
+    else -> service
 }
