@@ -10,6 +10,58 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AudioOutputPlannerTest {
+    @Test fun pcmLimitsAlsoCapAutomaticMultichannelOutput() {
+        val route = AudioRouteCapabilities(pcmChannels = 8)
+        for ((limit, channels) in listOf(2 to "stereo", 6 to "5.1", 8 to "7.1")) {
+            val plan = planAudioOutput(AudioOptions(output = "pcm", pcmChannelLimit = limit),
+                "truehd", route, "media3", true, sourceChannels = 8)
+            assertEquals(channels, plan.channels)
+        }
+        assertEquals("stereo", planAudioOutput(AudioOptions(output = "pcm", pcmChannelLimit = 6),
+            "truehd", route.copy(pcmChannels = 2), "mpv", true, sourceChannels = 8).channels)
+    }
+
+    @Test fun pcmConnectionLimitDoesNotDownmixBitstreamAndTranscodingIsExplicit() {
+        val route = AudioRouteCapabilities(setOf("ac3", "truehd"), 8, true)
+        for (backend in listOf("auto", "media3", "mpv", "vlc")) {
+            val options = AudioOptions(output = "auto", pcmChannelLimit = 2, localAc3 = true)
+            val raw = planAudioOutput(options, "truehd", route, backend, false, sourceChannels = 8)
+            assertEquals(backend, AudioOutputMode.PASSTHROUGH, raw.mode)
+            val recode = planAudioOutput(options, "eac3", route, backend, false, sourceChannels = 6,
+                media3LocalAvailable = true)
+            assertEquals(backend, AudioOutputMode.LOCAL_AC3, recode.mode)
+            assertEquals("5.1", recode.channels)
+            assertEquals(backend == "vlc", recode.needsMpv)
+            val off = planAudioOutput(options.copy(localAc3 = false), "eac3", route, backend, false, sourceChannels = 6)
+            assertEquals(AudioOutputMode.PCM, off.mode)
+            assertEquals("stereo", off.channels)
+            val downmix = planAudioOutput(options.copy(channels = "stereo"), "truehd", route, backend, false, sourceChannels = 8)
+            assertEquals(AudioOutputMode.PCM, downmix.mode)
+            assertEquals("stereo", downmix.channels)
+        }
+    }
+
+    @Test fun media3EncoderUsesTheSameCapabilityAndFailureGatesWithoutMpv() {
+        val route = AudioRouteCapabilities(setOf("ac3"), 2, false)
+        val options = AudioOptions(output = "auto", localAc3 = true)
+        val ac3 = planAudioOutput(options, "eac3", route, "media3", false,
+            sourceChannels = 6, media3LocalAvailable = true)
+        assertEquals(AudioOutputMode.LOCAL_AC3, ac3.mode)
+        assertFalse(ac3.needsMpv)
+        assertFalse(ac3.applyDsp)
+        for (rejected in listOf(emptySet(), setOf("ac3"))) {
+            val unsupported = planAudioOutput(options, "eac3", route, "media3", false,
+                sourceChannels = 6, rejectedCodecs = rejected, media3LocalAvailable = rejected.isNotEmpty())
+            assertEquals(AudioOutputMode.PCM, unsupported.mode)
+        }
+        assertEquals(AudioOutputMode.PCM, planAudioOutput(options, "eac3", route, "media3", false,
+            sourceChannels = null, media3LocalAvailable = true).mode)
+        val decoded = planAudioOutput(options.copy(localAc3 = false), "eac3", route.copy(mpvAvailable = true),
+            "media3", false, media3CanDecode = false, sourceChannels = 6, media3LocalAvailable = true)
+        assertEquals(AudioOutputMode.PCM, decoded.mode)
+        assertFalse(decoded.needsMpv)
+    }
+
     @Test fun stereoSelectionOverridesPassthroughAndAutomaticPcmFollowsRoute() {
         val route = AudioRouteCapabilities(setOf("ac3"), 2, true)
         for (output in listOf("source", "bitstream", "auto", "pcm")) {
@@ -30,11 +82,11 @@ class AudioOutputPlannerTest {
         assertEquals(null, audioDownmixLabel(6, stereo.copy(encoded = true)))
     }
 
-    @Test fun defaultRecoveryUsesAc3ForArcButPcmForMultichannelHdmi() {
-        val options = AudioOptions()
+    @Test fun enabledTranscodingUsesAc3ForArcButPcmForMultichannelHdmi() {
+        val options = AudioOptions(output = "auto", localAc3 = true)
         val arc = AudioRouteCapabilities(setOf("ac3"), 2, true)
-        assertEquals(AudioOutputMode.LOCAL_AC3, planAudioOutput(options, "truehd", arc, "media3", false).mode)
-        assertTrue(planAudioOutput(options, "truehd", arc, "media3", false).needsMpv)
+        assertEquals(AudioOutputMode.LOCAL_AC3, planAudioOutput(options, "truehd", arc, "media3", false, sourceChannels = 8).mode)
+        assertTrue(planAudioOutput(options, "truehd", arc, "media3", false, sourceChannels = 8).needsMpv)
         assertEquals(AudioOutputMode.PCM, planAudioOutput(options, "truehd", arc.copy(pcmChannels = 8), "mpv", false).mode)
     }
 
@@ -53,7 +105,7 @@ class AudioOutputPlannerTest {
         assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(allowedCodecs = emptyList()), "truehd", arc, "mpv", false).mode)
         assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(), "truehd", arc.copy(passthrough = emptySet()), "mpv", false).mode)
         assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(), "flac", arc, "mpv", false, sourceChannels = 2).mode)
-        assertEquals(AudioOutputMode.LOCAL_AC3, planAudioOutput(AudioOptions(), "flac", arc, "mpv", false, sourceChannels = 6).mode)
+        assertEquals(AudioOutputMode.LOCAL_AC3, planAudioOutput(AudioOptions(output = "auto", localAc3 = true), "flac", arc, "mpv", false, sourceChannels = 6).mode)
         assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(), "truehd", arc, "mpv", false, rejectedCodecs = setOf("ac3")).mode)
     }
 
@@ -66,7 +118,7 @@ class AudioOutputPlannerTest {
     @Test fun pcmFallbackDoesNotExtractLossyDtsCore() {
         val route = AudioRouteCapabilities(setOf("dts"), 2, true)
         assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(output = "bitstream", localFallback = "pcm"), "dts-hd", route, "mpv", true).mode)
-        assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(output = "auto"), "dts-hd", route.copy(pcmChannels = 8), "mpv", true).mode)
+        assertEquals(AudioOutputMode.DTS_CORE, planAudioOutput(AudioOptions(output = "auto"), "dts-hd", route.copy(pcmChannels = 8), "mpv", true).mode)
     }
 
     private val hdmi = AudioRouteCapabilities(
@@ -98,8 +150,8 @@ class AudioOutputPlannerTest {
     }
 
     @Test fun localAc3StaysOnDeviceAndKeepsDspSeparateFromEncoder() {
-        val options = AudioOptions(output = "bitstream", localAc3 = true, eqEnabled = true, dialogue = 2)
-        val plan = planAudioOutput(options, "truehd", AudioRouteCapabilities(setOf("ac3"), 6, true), "vlc", true)
+        val options = AudioOptions(output = "bitstream", localAc3 = true, pcmChannelLimit = 2, eqEnabled = true, dialogue = 2)
+        val plan = planAudioOutput(options, "truehd", AudioRouteCapabilities(setOf("ac3"), 6, true), "vlc", true, sourceChannels = 8)
         assertEquals(AudioOutputMode.LOCAL_AC3, plan.mode)
         assertTrue(plan.needsMpv)
         assertTrue(plan.spdifCodecs.isEmpty())
@@ -123,7 +175,7 @@ class AudioOutputPlannerTest {
     @Test fun rejectedPassthroughCodecIsNotTriedAgain() {
         val route = AudioRouteCapabilities(setOf("ac3", "truehd"), 2, true)
         val options = AudioOptions(output = "auto", localAc3 = true)
-        val blocked = planAudioOutput(options, "truehd", route, "mpv", true, rejectedCodecs = setOf("truehd"))
+        val blocked = planAudioOutput(options, "truehd", route, "mpv", true, rejectedCodecs = setOf("truehd"), sourceChannels = 8)
         assertEquals(AudioOutputMode.LOCAL_AC3, blocked.mode)
         val noAc3 = planAudioOutput(options, "ac3", route, "mpv", true, rejectedCodecs = setOf("ac-3"))
         assertEquals(AudioOutputMode.PCM, noAc3.mode)

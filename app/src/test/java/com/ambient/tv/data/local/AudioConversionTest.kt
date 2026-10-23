@@ -56,11 +56,12 @@ class AudioConversionTest {
     @Test fun onlyExplicitServerModeRequestsServerAndHonorsTheOutputRoute() {
         val route = AudioRouteCapabilities(passthrough = setOf("ac3"))
         assertFalse(shouldConvertAudioOnServer(AudioOptions(), "eac3", 8, route, false))
-        val server = AudioOptions(conversionLocation = "server")
+        val server = AudioOptions(conversionLocation = "server", output = "auto", localAc3 = true)
         assertTrue(shouldConvertAudioOnServer(server, "eac3", 8, route, true))
         assertFalse(shouldConvertAudioOnServer(server, "ac3", 6, route, true))
         assertFalse(shouldConvertAudioOnServer(server.copy(localFallback = "off"), "eac3", 8, route, false))
         assertEquals("ac3", serverAudioTarget(server, route, 8))
+        assertEquals("aac", serverAudioTarget(server.copy(localAc3 = false), route, 8))
         assertEquals("aac", serverAudioTarget(server, route.copy(passthrough = emptySet()), 8))
         assertEquals("aac", serverAudioTarget(server.copy(output = "pcm"), route, 8))
     }

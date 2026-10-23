@@ -32,10 +32,10 @@ internal class LocalAudioRenderer(
     private fun dtsCore(format: Format): Boolean = format.sampleMimeType == MimeTypes.AUDIO_DTS_HD &&
         session.outputPlanFor("dts-hd", format.channelCount.takeIf { it > 0 }).mode == AudioOutputMode.DTS_CORE
 
-    private fun encode(format: Format): Boolean = localAc3Eligible(
-        session.options.localFallback, session.options.output, session.options.channels,
-        format.channelCount, "ac3" in session.route.passthrough && "ac3" in session.options.allowedCodecs,
-    ) && !session.localEncoderFailed && !session.audioOnly && !session.forceStereoPcm
+    private fun encode(format: Format): Boolean = session.outputPlanFor(
+        com.ambient.tv.ui.player.Media3AudioProcessing.codecKey(format.sampleMimeType),
+        format.channelCount.takeIf { it > 0 },
+    ).let { it.mode == AudioOutputMode.LOCAL_AC3 && !it.needsMpv }
 
     private fun output(format: Format): Format = output(encode(format), if (encode(format)) 6 else pcmChannels(format))
 
@@ -117,10 +117,6 @@ internal class LocalAudioRenderer(
         return output
     }
 }
-
-internal fun localAc3Eligible(fallback: String, output: String, channels: String, sourceChannels: Int, ac3Supported: Boolean): Boolean =
-    fallback == "auto" && output != "pcm" && channels !in setOf("mono", "left", "right", "stereo") &&
-        sourceChannels > 2 && ac3Supported
 
 /**
  * Channel counts the local decoder may output for a source, best first. 7.1 needs an 8-channel

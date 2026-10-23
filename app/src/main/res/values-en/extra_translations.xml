@@ -61,7 +61,7 @@
     <string name="feedback_playback_command_failed">Playback command failed</string>
     <string name="audio_local_fallback">Audio fallback</string>
     <string name="audio_fallback_pcm">PCM only</string>
-    <string name="audio_local_fallback_hint">Converts unsupported audio automatically; AC3 keeps 5.1 but drops Atmos height channels.</string>
+    <string name="audio_local_fallback_hint">Decodes unsupported audio locally. Dolby Digital transcoding is enabled separately.</string>
     <string name="player_local_audio_failed">Audio cannot be played locally with the available players and this video format. Try another audio track or change the audio output. Server transcoding was not requested.</string>
     <string name="notice_audio_ac3_conversion">The media server converts the selected audio track to AC3; video remains eligible for stream copy.</string>
     <string name="notice_audio_local_ac3_conversion">Converting audio to AC3 on this device for the current output.</string>

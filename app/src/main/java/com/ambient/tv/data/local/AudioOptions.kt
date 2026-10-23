@@ -22,7 +22,10 @@ data class AudioOptions(
     val eqEnabled: Boolean = false,
     val preampDb: Int = 0,
     val eqDb: List<Int> = List(10) { 0 },
+    /** Explicit Dolby Digital transcoding, independently of PCM connection width. */
     val localAc3: Boolean = false,
+    /** 0 follows the route; this limits PCM transport, not passthrough or AC3. */
+    val pcmChannelLimit: Int = 0,
     /** Automatic local recovery; legacy localAc3 remains readable in saved profiles. */
     val localFallback: String = "auto",
     val conversionLocation: String = "local",
@@ -30,6 +33,7 @@ data class AudioOptions(
     val maintainDownmixVolume: Boolean = false,
 ) {
     fun normalized() = copy(
+        pcmChannelLimit = pcmChannelLimit.takeIf { it in setOf(0, 2, 6, 8) } ?: 0,
         conversionLocation = conversionLocation.takeIf { it in setOf("local", "server") } ?: "local",
         localFallback = localFallback.takeIf { it in setOf("auto", "pcm", "off") } ?: "auto",
         output = output.takeIf { it in setOf("source", "auto", "pcm", "bitstream") } ?: "source",
@@ -45,16 +49,22 @@ data class AudioOptions(
     /**
      * Explicit stereo/mono selections require PCM, including when bitstream was preferred.
      * source: inherit the per-source passthrough switch.
-     * auto: prefer PCM whenever the selected profile requests PCM-only processing; otherwise
-     *       use confirmed encoded output.
+     * auto: use confirmed encoded output; saved DSP settings apply only when decoding.
      * bitstream: prefer encoded output even if saved DSP controls must be suspended.
      */
     fun permitsBitstream(sourceDefault: Boolean): Boolean = channels !in setOf("stereo", "mono", "left", "right") && when (output) {
         "pcm" -> false
         "bitstream" -> true
-        "auto" -> !requestsPcmProcessing()
+        "auto" -> true
         else -> sourceDefault
     }
+
+    fun pcmChannels(routeChannels: Int): Int =
+        if (pcmChannelLimit in setOf(2, 6, 8)) minOf(routeChannels, pcmChannelLimit) else routeChannels
+
+    fun transcodesAc3(sourceDefault: Boolean, sourceChannels: Int?, routeChannels: Int, ac3Supported: Boolean): Boolean =
+        localAc3 && localFallback == "auto" && permitsBitstream(sourceDefault) &&
+            pcmChannels(routeChannels) <= 2 && (sourceChannels ?: 0) > 2 && ac3Supported
 
     fun requestsPcmProcessing(): Boolean =
         channels != "auto" || night || dialogue > 0 || normalize || replayGain != "off" ||

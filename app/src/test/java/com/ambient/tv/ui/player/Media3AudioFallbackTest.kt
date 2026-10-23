@@ -86,9 +86,9 @@ class Media3AudioFallbackTest {
         assertEquals(AudioOutputMode.PCM, planAudioOutput(bitstream, "dts-hd", dtsOnly, "vlc", true).mode)
     }
 
-    @Test fun multichannelPcmStillBeatsTheLossyCoreUnlessBitstreamIsPreferred() {
+    @Test fun permittedDtsCoreIsIndependentOfPcmConnectionWidth() {
         val hdmi = dtsOnly.copy(pcmChannels = 8)
-        assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(output = "source"), "dts-hd", hdmi, "media3", true).mode)
+        assertEquals(AudioOutputMode.DTS_CORE, planAudioOutput(AudioOptions(output = "source"), "dts-hd", hdmi, "media3", true).mode)
         assertEquals(AudioOutputMode.DTS_CORE, planAudioOutput(bitstream, "dts-hd", hdmi, "media3", true).mode)
         // Stereo-only PCM (ARC): the core keeps 5.1.
         assertEquals(AudioOutputMode.DTS_CORE, planAudioOutput(AudioOptions(output = "source"), "dts-hd", dtsOnly, "media3", true).mode)

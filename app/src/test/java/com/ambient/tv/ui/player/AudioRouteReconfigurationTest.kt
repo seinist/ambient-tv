@@ -9,6 +9,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AudioRouteReconfigurationTest {
+    @Test fun ac3PreferenceSurvivesHotplugAndEncoderFailureWithoutForcingUnsupportedOutput() {
+        AudioCodecRejects.clear()
+        val session = AudioSession(AppPreferences(memoryPreferences()), "mpv", false)
+        session.sourceCodec = "eac3"
+        session.sourceChannels = 6
+        val arc = AudioRouteCapabilities(setOf("ac3"), 2, true)
+        session.updateRoute(arc)
+        session.update(AudioOptions(output = "auto", localAc3 = true, pcmChannelLimit = 2))
+        assertEquals(AudioOutputMode.LOCAL_AC3, session.outputPlan().mode)
+        session.updateRoute(arc.copy(passthrough = emptySet(), profile = "headphones"))
+        assertEquals(AudioOutputMode.PCM, session.outputPlan().mode)
+        session.updateRoute(arc)
+        assertEquals(AudioOutputMode.LOCAL_AC3, session.outputPlan().mode)
+        session.localEncoderFailed = true
+        assertEquals(AudioOutputMode.PCM, session.outputPlan().mode)
+        assertEquals("stereo", session.outputPlan().channels)
+        assertTrue(session.options.localAc3)
+    }
+
     private val hdmi = AudioRouteDevice(AudioDeviceInfo.TYPE_HDMI, setOf(AudioFormat.ENCODING_AC3), 8)
     private val headphones = AudioRouteDevice(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, emptySet(), 2)
 
@@ -59,14 +78,16 @@ class AudioRouteReconfigurationTest {
         assertTrue(applied)
         assertTrue(session.options.night)
     }
-    @Test fun dspTransitionsRebuildEncodedMedia3AndChannelChangingUpmix() {
+    @Test fun savedDspDoesNotInterruptPassthroughButTransportChangesReconfigure() {
         val before = AudioOptions(output = "auto")
         for (after in listOf(before.copy(night = true), before.copy(eqEnabled = true), before.copy(dialogue = 2), before.copy(normalize = true))) {
-            assertTrue(Media3AudioProcessing.requiresAudioReconfiguration(before, after, true))
-            assertTrue(Media3AudioProcessing.requiresAudioReconfiguration(after, before, true))
+            assertFalse(Media3AudioProcessing.requiresAudioReconfiguration(before, after, true))
+            assertFalse(Media3AudioProcessing.requiresAudioReconfiguration(after, before, true))
         }
         assertFalse(Media3AudioProcessing.requiresAudioReconfiguration(before.copy(output = "pcm"), before.copy(output = "pcm", night = true), true))
         assertTrue(Media3AudioProcessing.requiresAudioReconfiguration(before.copy(channels = "5.1"), before.copy(channels = "5.1", upmix = true), true))
+        assertTrue(Media3AudioProcessing.requiresAudioReconfiguration(before, before.copy(pcmChannelLimit = 2), true))
+        assertTrue(Media3AudioProcessing.requiresAudioReconfiguration(before, before.copy(localAc3 = true), true))
     }
     @Test fun hotplugReconfiguresSessionWithoutAnAudioPanel() {
         val session = AudioSession(AppPreferences(memoryPreferences()), "mpv", true)

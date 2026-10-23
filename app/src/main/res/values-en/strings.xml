@@ -1079,7 +1079,7 @@
     <string name="audio_delay_hint">Positive: sound later. Negative: sound earlier. Range: −2000 to +2000 ms.</string>
     <string name="audio_codec">Bitstream format</string>
     <string name="audio_codec_allowed">Allow passthrough</string>
-    <string name="audio_vlc_output_hint">VLC switches passthrough for all formats at once. Stereo mixes surround audio down to two channels.</string>
+    <string name="audio_vlc_output_hint">VLC uses the enabled passthrough codecs. Local AC3 transcoding switches to MPV when available.</string>
     <string name="audio_requires_pcm">Effects pause during passthrough and DTS core and apply to PCM and local AC3.</string>
     <string name="audio_channels">Channel output</string>
     <string name="audio_left">Left on both speakers</string>

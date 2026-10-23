@@ -487,7 +487,7 @@ class PlayerViewModel @Inject constructor(
                 if (plan?.mode == PlaybackMode.DIRECT_PLAY && supportsServerAudioConversion(playbackRatingKey) &&
                     shouldConvertAudioOnServer(conversionOptions, preferredAudio?.codec ?: assessment.audioCodec,
                         preferredAudio?.channels, route, assessment.audioSupported)) {
-                    val codec = serverAudioTarget(conversionOptions, route, preferredAudio?.channels)
+                    val codec = serverAudioTarget(conversionOptions, route, preferredAudio?.channels, appPreferences.mediaAudioPassthroughEnabled)
                     val result = mediaRepository.getAudioCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex,
                         startPositionMs, codec, preferredAudio?.id)
                     if (result.isFailure) {
@@ -663,7 +663,7 @@ class PlayerViewModel @Inject constructor(
         val track = current.audioTracks.firstOrNull { it.id == streamId } ?: return
         if (!supportsServerAudioConversion(current.sourceRatingKey)) return
         startServerAudioFallback(current, positionMs,
-            serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels), streamId)
+            serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId)
     }
 
     fun audioConversionLocationChanged(location: String, positionMs: Long) {
@@ -711,6 +711,8 @@ class PlayerViewModel @Inject constructor(
             sourcePassthrough = appPreferences.mediaAudioPassthroughEnabled,
             media3CanDecode = media3CanDecode,
             sourceChannels = audioChannels,
+            media3LocalAvailable = com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
+                com.ambient.tv.ui.player.audio.localDecodableSourceCodec(audioCodec),
         )
         val resolved = when {
             requested in setOf("auto", "media3") &&
@@ -810,7 +812,7 @@ class PlayerViewModel @Inject constructor(
             val track = com.ambient.tv.data.local.audioTrackForConversion(current.audioTracks,
                 current.preferredAudioLanguage, appPreferences.audioSettings.tracks)
             startServerAudioFallback(current, positionMs,
-                serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels), track?.id)
+                serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels, appPreferences.mediaAudioPassthroughEnabled), track?.id)
             return
         }
         val active = if (current.playbackBackendKey == "auto") "media3" else current.playbackBackendKey

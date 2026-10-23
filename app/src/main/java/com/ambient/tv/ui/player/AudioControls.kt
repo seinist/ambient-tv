@@ -145,12 +145,19 @@ internal fun AudioProfileEditor(
             }
             ImageChoice(R.string.audio_output, o.output, outputs) { change(o.copy(output = it, channels = if (it == "bitstream") "auto" else o.channels)) }
             ImageHint(stringResource(R.string.audio_output_hint))
+            ImageChoice(R.string.audio_pcm_channels, o.pcmChannelLimit.toString(), buildList {
+                add("0" to stringResource(R.string.player_automatic))
+                add("2" to "2.0")
+                if (backend != "vlc" && route.pcmChannels >= 6) add("6" to "5.1")
+                if (backend != "vlc" && route.pcmChannels >= 8) add("8" to "7.1")
+            }) { change(o.copy(pcmChannelLimit = it.toInt())) }
+            ImageHint(stringResource(R.string.audio_pcm_channels_hint))
             PlayerDropUpSelector(stringResource(R.string.audio_delay), "${o.delayMs} ms",
                 listOf("-100" to "−100 ms", "-25" to "−25 ms", "0" to stringResource(R.string.audio_reset_delay), "+25" to "+25 ms", "+100" to "+100 ms"),
                 selectedKey = "0", onSelected = { change(o.copy(delayMs = if (it == "0") 0 else o.delayMs + it.toInt())) })
             ImageHint(stringResource(R.string.audio_delay_hint))
             delayScopeHint?.let { ImageHint(it) }
-            if (codecs.isNotEmpty() && liveVisibility?.bitstream != false && backend != "vlc" && o.permitsBitstream(sourcePassthrough)) {
+            if (codecs.isNotEmpty() && liveVisibility?.bitstream != false && o.permitsBitstream(sourcePassthrough)) {
                 if (flatLive && onOpenSection != null) {
                     com.ambient.tv.ui.common.PlayerPanelEntry(
                         icon = androidx.compose.material.icons.Icons.AutoMirrored.Filled.VolumeUp,
@@ -172,14 +179,30 @@ internal fun AudioProfileEditor(
                 "auto" to stringResource(R.string.player_automatic),
                 "pcm" to stringResource(R.string.audio_fallback_pcm),
                 "off" to stringResource(R.string.player_off),
-            )) { change(o.copy(localFallback = it, localAc3 = false)) }
+            )) { change(o.copy(localFallback = it)) }
             ImageHint(stringResource(R.string.audio_local_fallback_hint))
+            val ac3Unavailable = when {
+                "ac3" !in codecs || "ac3" !in o.allowedCodecs -> R.string.audio_ac3_no_route
+                !o.permitsBitstream(sourcePassthrough) -> R.string.audio_ac3_no_passthrough
+                o.localFallback != "auto" -> R.string.audio_ac3_no_fallback
+                o.pcmChannels(route.pcmChannels) > 2 -> R.string.audio_ac3_multichannel_pcm
+                o.conversionLocation != "server" && backend != "mpv" && !route.mpvAvailable &&
+                    !(backend in setOf("auto", "media3") && com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
+                        (sourceCodec == null || com.ambient.tv.ui.player.audio.localDecodableSourceCodec(sourceCodec))) -> R.string.audio_ac3_no_encoder
+                else -> null
+            }
+            if (ac3Unavailable == null) {
+                ImageChoice(R.string.audio_ac3_transcode, if (o.localAc3) "on" else "off", imageOnOff()) {
+                    change(o.copy(localAc3 = it == "on"))
+                }
+                ImageHint(stringResource(R.string.audio_ac3_transcode_hint))
+            } else ImageHint(stringResource(ac3Unavailable))
             val planned = actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough,
                 rejectedCodecs = AudioCodecRejects.snapshot(), sourceChannels = sourceChannels)
             if (sourceCodec != null) ImageHint(outputModeLabel(planned.mode))
         }
         "codecs" -> {
-            if (backend != "vlc" && o.permitsBitstream(sourcePassthrough) && liveVisibility?.bitstream != false) {
+            if (o.permitsBitstream(sourcePassthrough) && liveVisibility?.bitstream != false) {
                 AudioCodecRows(codecs, o, change)
             }
             ImageHint(stringResource(R.string.audio_dts_fallback_hint))
@@ -196,8 +219,8 @@ internal fun AudioProfileEditor(
                 audioDownmixLabel(sourceChannels, actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough, sourceChannels = sourceChannels))?.let { ImageHint(it) }
                 if (liveVisibility?.channels ?: true) {
                     val modes = if (backend == "vlc") listOf("auto", "stereo") else visibleChannelModes(route)
-                    ImageChoice(R.string.audio_channels, o.channels, modes.map { it to channelLabel(it) }) { change(o.copy(channels = it)) }
-                    if (!suspended && backend != "vlc" && upmixRowVisible(route.pcmChannels, o.channels)) {
+                    ImageChoice(R.string.audio_channel_mix, o.channels, modes.map { it to channelLabel(it) }) { change(o.copy(channels = it)) }
+                    if (!suspended && backend != "vlc" && upmixRowVisible(o.pcmChannels(route.pcmChannels), o.channels)) {
                         ImageChoice(R.string.audio_upmix, if (o.upmix) "on" else "off", imageOnOff()) { change(o.copy(upmix = it == "on")) }
                         ImageHint(stringResource(R.string.audio_upmix_hint))
                     }

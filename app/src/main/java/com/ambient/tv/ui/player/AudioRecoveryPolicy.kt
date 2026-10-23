@@ -9,6 +9,6 @@ internal fun shouldConvertAudioOnServer(
 ): Boolean = options.conversionLocation == "server" && options.localFallback != "off" &&
     (!sourceSupported || ((sourceChannels ?: 0) > 2 && normalizeSourceCodec(sourceCodec)?.let { it !in route.passthrough } == true))
 
-internal fun serverAudioTarget(options: AudioOptions, route: AudioRouteCapabilities, sourceChannels: Int?): String =
-    if (com.ambient.tv.ui.player.audio.localAc3Eligible(options.localFallback, options.output, options.channels,
-        sourceChannels ?: 0, "ac3" in route.passthrough && "ac3" in options.allowedCodecs)) "ac3" else "aac"
+internal fun serverAudioTarget(options: AudioOptions, route: AudioRouteCapabilities, sourceChannels: Int?, sourcePassthrough: Boolean = false): String =
+    if (options.transcodesAc3(sourcePassthrough, sourceChannels, route.pcmChannels,
+        "ac3" in route.passthrough && "ac3" in options.allowedCodecs && "ac3" !in AudioCodecRejects.snapshot())) "ac3" else "aac"

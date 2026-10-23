@@ -77,7 +77,8 @@ object Media3AudioProcessing {
     internal fun requiresAudioReconfiguration(old: com.ambient.tv.data.local.AudioOptions, next: com.ambient.tv.data.local.AudioOptions, sourceDefault: Boolean): Boolean =
         old.permitsBitstream(sourceDefault) != next.permitsBitstream(sourceDefault) ||
             old.output != next.output || old.allowedCodecs != next.allowedCodecs || old.channels != next.channels ||
-            old.upmix != next.upmix || old.localAc3 != next.localAc3 || old.localFallback != next.localFallback
+            old.upmix != next.upmix || old.localAc3 != next.localAc3 || old.localFallback != next.localFallback ||
+            old.pcmChannelLimit != next.pcmChannelLimit
 
     fun factory(context: Context, session: AudioSession, analyzer: AudioSpectrumAnalyzer): DefaultRenderersFactory =
         object : DefaultRenderersFactory(context) {

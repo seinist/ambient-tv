@@ -150,20 +150,13 @@ class AudioSession(
             localEncoderFailed -> options.copy(localFallback = "pcm", localAc3 = false)
             else -> options
         }
-        return planAudioOutput(effective,
-        sourceCodec, route, backend, sourcePassthrough, media3CanDecode, AudioCodecRejects.snapshot(), sourceChannels,
-        dtsCoreMissing = AudioCodecRejects.dtsCoreMissing,
-    ).let { plan ->
-        if (backend != "media3" || !com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE ||
-            normalizeSourceCodec(sourceCodec) == null || options.localFallback == "off") plan
-        else if (plan.mode == AudioOutputMode.PASSTHROUGH || plan.mode == AudioOutputMode.DTS_CORE) plan
-        else if (!localEncoderFailed && !audioOnly && !forceStereoPcm &&
-            com.ambient.tv.ui.player.audio.localAc3Eligible(options.localFallback, options.output, options.channels,
-                sourceChannels ?: 0, "ac3" in route.passthrough && "ac3" in options.allowedCodecs))
-            AudioOutputPlan(AudioOutputMode.LOCAL_AC3, encoded = true, channels = "5.1", applyDsp = false, heavyAudio = true)
-        // Local FFmpeg decode keeps the planned PCM layout (stereo only when forced or chosen).
-        else AudioOutputPlan(AudioOutputMode.PCM, channels = localDecodePcmChannelMode(effective.normalized().channels, route.pcmChannels))
-    }
+        return planAudioOutput(
+            effective, sourceCodec, route, backend, sourcePassthrough, media3CanDecode,
+            AudioCodecRejects.snapshot(), sourceChannels,
+            dtsCoreMissing = AudioCodecRejects.dtsCoreMissing,
+            media3LocalAvailable = com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
+                com.ambient.tv.ui.player.audio.localDecodableSourceCodec(sourceCodec),
+        )
     }
 
     private var pcmMemo: AudioOptions? = null

@@ -54,17 +54,17 @@ class AudioOptionsTest {
         assertTrue(AudioOptions(output = "auto").permitsBitstream(false))
     }
 
-    @Test fun automaticOutputUsesPcmWhenProfileRequestsDsp() {
+    @Test fun automaticOutputKeepsPassthroughWithSavedDsp() {
         assertTrue(AudioOptions(output = "auto").permitsBitstream(false))
-        assertFalse(AudioOptions(output = "auto", eqEnabled = true).permitsBitstream(false))
-        assertFalse(AudioOptions(output = "auto", night = true).permitsBitstream(false))
+        assertTrue(AudioOptions(output = "auto", eqEnabled = true).permitsBitstream(false))
+        assertTrue(AudioOptions(output = "auto", night = true).permitsBitstream(false))
         assertTrue(AudioOptions(output = "bitstream", eqEnabled = true).permitsBitstream(false))
     }
 
     @Test fun profilesAndTrackPreferencesSurviveBackup() {
         val preferences = AppPreferences(memoryPreferences())
         val settings = AudioSettings(selectedProfile = "avr", tracks = AudioTrackPreference("description", "surround"))
-            .update(AudioOptions(output = "pcm", localFallback = "pcm", delayMs = 75, night = true, eqEnabled = true, eqDb = List(10) { it - 5 }))
+            .update(AudioOptions(output = "bitstream", localAc3 = true, pcmChannelLimit = 2, delayMs = 75, night = true, eqEnabled = true, eqDb = List(10) { it - 5 }))
         preferences.audioSettings = settings
         val backup = SettingsBackupManager(preferences, TokenStore(memoryPreferences(), preferences)).exportJson()
         val target = AppPreferences(memoryPreferences())

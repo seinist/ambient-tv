@@ -75,6 +75,7 @@ fun planAudioOutput(
     sourceChannels: Int? = null,
     /** The current DTS-HD stream has no core frame (lossless only); it cannot become DTS core. */
     dtsCoreMissing: Boolean = false,
+    media3LocalAvailable: Boolean = false,
 ): AudioOutputPlan {
     val requested = options.normalized()
     val blocked = rejectedCodecs.mapNotNull(::normalizeSourceCodec).toSet()
@@ -85,7 +86,13 @@ fun planAudioOutput(
     val mpv = backend == "mpv" || liveRoute.mpvAvailable
     // Media3 sends the DTS core itself (LocalAudioRenderer strips the DTS-HD extension).
     val media3Core = backend in setOf("auto", "media3")
-    val channels = clipChannelMode(requested.channels, liveRoute.pcmChannels)
+    val pcmMode = if (requested.channels == "auto") when (requested.pcmChannelLimit) {
+        2 -> "stereo"
+        6 -> "5.1"
+        8 -> "7.1"
+        else -> "auto"
+    } else requested.channels
+    val channels = clipChannelMode(pcmMode, requested.pcmChannels(liveRoute.pcmChannels))
 
     if (permitted && source != null && source in confirmed) {
         return AudioOutputPlan(
@@ -99,8 +106,7 @@ fun planAudioOutput(
 
     val localEnabled = requested.localFallback != "off"
     val corePossible = requested.localFallback == "auto" && permitted && source == "dts-hd" && !dtsCoreMissing &&
-        "dts" in confirmed && "dts-hd" !in confirmed && (mpv || media3Core) &&
-        (requested.output == "bitstream" || liveRoute.pcmChannels < 6)
+        "dts" in confirmed && "dts-hd" !in confirmed && (mpv || media3Core)
     if (corePossible) {
         return AudioOutputPlan(
             mode = AudioOutputMode.DTS_CORE,
@@ -114,19 +120,17 @@ fun planAudioOutput(
 
     // PCM preserves the decoded channels without another lossy encode. AC3 is useful for
     // routes such as ARC/SPDIF that accept compressed surround but only stereo PCM.
-    val surroundSource = sourceChannels?.let { it > 2 } ?: (source != null)
-    val ac3Allowed = requested.localFallback == "auto" && requested.output != "pcm" &&
-        requested.channels !in setOf("mono", "left", "right", "stereo")
-    val encodePossible = ac3Allowed && "ac3" in confirmed && mpv && surroundSource &&
-        (requested.localAc3 || liveRoute.pcmChannels < 6) && (!permitted || source !in confirmed)
+    val nativeAc3 = media3Core && media3LocalAvailable
+    val encodePossible = requested.transcodesAc3(sourcePassthrough, sourceChannels,
+        liveRoute.pcmChannels, "ac3" in confirmed) && (mpv || nativeAc3)
     if (encodePossible) {
         return AudioOutputPlan(
             mode = AudioOutputMode.LOCAL_AC3,
             spdifCodecs = emptyList(),
             encoded = true,
-            needsMpv = backend != "mpv",
+            needsMpv = backend != "mpv" && !nativeAc3,
             channels = "5.1",
-            applyDsp = true,
+            applyDsp = !nativeAc3,
             heavyAudio = true,
         )
     }
@@ -136,7 +140,8 @@ fun planAudioOutput(
         mode = AudioOutputMode.PCM,
         channels = channels,
         applyDsp = true,
-        needsMpv = localEnabled && backend in setOf("auto", "media3") && !media3CanDecode && liveRoute.mpvAvailable,
+        needsMpv = localEnabled && backend in setOf("auto", "media3") && !media3CanDecode &&
+            !media3LocalAvailable && liveRoute.mpvAvailable,
         heavyAudio = dsp,
     )
 }

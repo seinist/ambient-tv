@@ -211,7 +211,8 @@ internal fun PlayerPanelAudioGroup(session: AudioSession?) {
     val visibility = playerPanelAudioVisibility(
         session.supportsNight,
         // AAC/MP3/FLAC etc. are never bitstreamed; the toggle would do nothing for them.
-        routeBitstream && bitstreamToggleApplies(session.sourceCodec),
+        routeBitstream && (bitstreamToggleApplies(session.sourceCodec) ||
+            (session.options.localAc3 && (session.sourceChannels ?: 0) > 2)),
         dspSuspended = session.outputPlan().let { it.encoded && !it.applyDsp },
     )
     if (!visibility.night && !visibility.bitstream) return

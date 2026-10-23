@@ -1,0 +1,12 @@
+<resources>
+    <string name="audio_pcm_channels">PCM connection channels</string>
+    <string name="audio_pcm_channels_hint">Limits decoded PCM only. A 2.0 connection can still carry AC3 5.1 through passthrough.</string>
+    <string name="audio_channel_mix">Channel mix / downmix</string>
+    <string name="audio_ac3_transcode">Dolby Digital (AC3) transcoding</string>
+    <string name="audio_ac3_transcode_hint">Keeps native passthrough first. Converts other multichannel audio to AC3 5.1 when PCM is limited to 2.0. Atmos height channels are lost.</string>
+    <string name="audio_ac3_no_route">AC3 transcoding unavailable: AC3 must be confirmed by the output and enabled in the codec list.</string>
+    <string name="audio_ac3_no_passthrough">AC3 transcoding requires passthrough. Select Automatic or Prefer bitstream output and Automatic channel mix.</string>
+    <string name="audio_ac3_no_fallback">AC3 transcoding requires Automatic audio fallback.</string>
+    <string name="audio_ac3_multichannel_pcm">Multichannel PCM preserves surround without re-encoding. AC3 transcoding is available with a 2.0 PCM connection.</string>
+    <string name="audio_ac3_no_encoder">AC3 transcoding is unavailable with the installed players.</string>
+</resources>
