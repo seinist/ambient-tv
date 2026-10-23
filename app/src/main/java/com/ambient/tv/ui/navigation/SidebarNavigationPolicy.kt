@@ -52,6 +52,37 @@ internal fun returnsFromFullscreenPlayer(previousRoute: String?, currentRoute: S
         Destinations.SPOTIFY_PLAYER,
     )
 
+/** Rebuild the concrete route represented by Navigation Compose's parameterized route pattern. */
+internal fun sidebarConcreteRoute(
+    currentRoute: String?,
+    sectionKey: String? = null,
+    youtubeFeedKey: String? = null,
+    trailerFeedKey: String? = null,
+    spotifySectionKey: String? = null,
+    tvheadendTab: String? = null,
+    liveTvSourceId: String? = null,
+    fileSourceId: String? = null,
+    dlnaServerId: String? = null,
+): String? = when (currentRoute) {
+    Destinations.SECTION -> sectionKey?.let(Destinations::section)
+    Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let(Destinations::youtubeFeed)
+    Destinations.TRAILER_FEED -> trailerFeedKey?.let(Destinations::trailerFeed)
+    Destinations.SPOTIFY_SECTION -> spotifySectionKey?.let(Destinations::spotifySection)
+    Destinations.LIVE_TV_SECTION -> tvheadendTab?.let { Destinations.liveTvSection(it, liveTvSourceId) }
+    Destinations.FILE_SOURCE -> fileSourceId?.let(Destinations::fileSource)
+    Destinations.DLNA_SERVER -> dlnaServerId?.let(Destinations::dlnaServer)
+    else -> currentRoute
+}
+
+internal fun isParameterizedSidebarRoute(route: String): Boolean =
+    route.startsWith("section/") ||
+        route.startsWith("youtube_feed/") ||
+        route.startsWith("trailers/feed/") ||
+        route.startsWith("spotify_section/") ||
+        route.startsWith("live_tv/") ||
+        route.startsWith("files_source/") ||
+        route.startsWith("dlna/")
+
 internal enum class SidebarBackAction {
     FOCUS_SETTINGS,
     LEAVE_NESTED_LEVEL,

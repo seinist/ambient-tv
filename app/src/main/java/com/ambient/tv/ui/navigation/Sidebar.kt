@@ -133,10 +133,12 @@ fun Sidebar(
     currentRoute: String?,
     currentSectionKey: String?,
     currentYouTubeFeedKey: String? = null,
+    currentTrailerFeedKey: String? = null,
     currentSpotifySectionKey: String? = null,
     currentTvheadendTab: String? = null,
     currentLiveTvSourceId: String? = null,
     currentFileSourceId: String? = null,
+    currentDlnaServerId: String? = null,
     onNavigate: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
     onOpenPlayback: (String) -> Unit = {},
@@ -162,8 +164,8 @@ fun Sidebar(
         }
     }
     SidebarContent(
-        state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentSpotifySectionKey,
-        currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, onNavigate, onOpenSystemSettings,
+        state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
+        currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
         onFocusOwnershipChanged, modifier,
     )
@@ -187,10 +189,12 @@ internal fun SidebarContent(
     currentRoute: String?,
     currentSectionKey: String?,
     currentYouTubeFeedKey: String? = null,
+    currentTrailerFeedKey: String? = null,
     currentSpotifySectionKey: String? = null,
     currentTvheadendTab: String? = null,
     currentLiveTvSourceId: String? = null,
     currentFileSourceId: String? = null,
+    currentDlnaServerId: String? = null,
     onNavigate: (String) -> Unit,
     onOpenSystemSettings: (String) -> Unit = {},
     onOpenPlayback: (String) -> Unit = {},
@@ -288,8 +292,10 @@ internal fun SidebarContent(
                         if (list.isEmpty()) list.add(MenuDestination("spotify:home", overview, Icons.Filled.Home, Destinations.SPOTIFY))
                     }
             } else {
-                // Unauthenticated: the only entry is sign-in, not a generic Overview row.
-                mutableListOf(MenuDestination("spotify:home", stringResource(R.string.nav_spotify_sign_in), Icons.AutoMirrored.Filled.Login, Destinations.SPOTIFY))
+                // Authorization is already known here; a missing native core needs a truthful
+                // explanation and a route to its settings, not another sign-in attempt.
+                mutableListOf(MenuDestination("spotify:unavailable", stringResource(R.string.spotify_native_missing), Icons.Filled.ErrorOutline,
+                    Destinations.SETTINGS, settingsCategory = MediaSystem.SPOTIFY.key))
             }
             add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
@@ -325,21 +331,17 @@ internal fun SidebarContent(
                         .takeIf { available.capabilities.guide },
                 )
             }
-            add(MenuSystem("iptv", stringResource(R.string.iptv_title), Icons.Filled.LiveTv, entries))
+            add(MenuSystem("iptv", systemName(MediaSystem.IPTV), Icons.Filled.LiveTv, entries, system = MediaSystem.IPTV))
         }
     }.sortedBy { systemOrder.indexOf(it.id).let { index -> if (index < 0) Int.MAX_VALUE else index } }
         .map { it.copy(entries = sidebarOrderedEntries(it.entries, sidebarState.entryOrder[it.id]) { entry -> entry.id }) }
     val systemIds = systems.map { it.id }
     // Exactly one system: its page is the main level (no extra step through a one-row main page).
     val singleSystem: MenuSystem? = systems.singleOrNull()
-    val activeRoute = when (currentRoute) {
-        Destinations.SECTION -> currentSectionKey?.let(Destinations::section)
-        Destinations.YOUTUBE_FEED -> currentYouTubeFeedKey?.let(Destinations::youtubeFeed)
-        Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection)
-        Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) }
-        Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource)
-        else -> currentRoute
-    }
+    val activeRoute = sidebarConcreteRoute(
+        currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey,
+        currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+    )
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
     // Search: only backends SearchViewModel can query — FilesRepository.search is a stub, so Files is excluded.

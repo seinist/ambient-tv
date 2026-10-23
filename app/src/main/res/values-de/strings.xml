@@ -99,6 +99,8 @@
     <string name="home_connection_error_details">Details: %1$s</string>
     <string name="home_continue_watching">Weiterschauen</string>
     <string name="detail_load_failed">Details konnten nicht geladen werden</string>
+    <string name="detail_children_failed">Staffeln oder Episoden konnten nicht geladen werden.</string>
+    <string name="detail_children_empty">Es sind keine Staffeln oder Episoden verfügbar.</string>
     <string name="detail_play">Abspielen</string>
     <string name="detail_resume">Fortsetzen</string>
     <string name="detail_cast">Besetzung</string>

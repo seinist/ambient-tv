@@ -98,6 +98,9 @@ import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.navigation.openAppHome
+import com.ambient.tv.ui.navigation.configuredContentRoute
+import com.ambient.tv.ui.navigation.isParameterizedSidebarRoute
+import com.ambient.tv.ui.navigation.sidebarConcreteRoute
 import com.ambient.tv.ui.navigation.sidebarEntryArmed
 import com.ambient.tv.ui.navigation.LocalSidebarContentPending
 import com.ambient.tv.ui.navigation.LocalSidebarContentReadyReporter
@@ -725,7 +728,7 @@ open class MainActivity : ComponentActivity() {
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -901,19 +904,19 @@ private fun AmbientTvApp(
             is YouTubeSelectionRoute.Ask -> pendingYouTubeVideoId = route.videoId
         }
     }
-    val rootRoute = when {
-        appPreferences.needsInitialSetup -> Destinations.INITIAL_SETUP
-        appPreferences.isConfigured -> Destinations.HOME
-        appPreferences.isJellyfinConfigured -> Destinations.HOME
-        appPreferences.isEmbyConfigured -> Destinations.HOME
-        appPreferences.isTvheadendConfigured -> Destinations.HOME
-        appPreferences.youtubeEnabled -> Destinations.YOUTUBE
-        appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore) -> Destinations.SPOTIFY
-        appPreferences.filesEnabled -> Destinations.FILES
-        appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank() -> Destinations.TRAILERS
-        // Nothing to show: reopen setup instead of an empty Home behind a dialog.
-        else -> Destinations.INITIAL_SETUP
-    }
+    fun configuredStartDestination(): String? = configuredContentRoute(
+        plex = appPreferences.isConfigured,
+        jellyfin = appPreferences.isJellyfinConfigured,
+        emby = appPreferences.isEmbyConfigured,
+        tvheadend = appPreferences.isTvheadendConfigured,
+        youtube = appPreferences.youtubeEnabled,
+        spotify = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore),
+        files = appPreferences.filesEnabled,
+        trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
+        iptvSourceId = com.ambient.tv.data.iptv.IptvStore(tokenStore).sources().firstOrNull { it.enabled }?.let { "iptv:${it.id}" },
+    )
+    val rootRoute = if (appPreferences.needsInitialSetup) Destinations.INITIAL_SETUP
+        else configuredStartDestination() ?: Destinations.INITIAL_SETUP
     val startDestination = if (appPreferences.isConfigured && startupState.shouldChooseAtStartup)
         Destinations.SERVER_SELECT else rootRoute
     val currentBackStackEntry = navController.currentBackStackEntryAsState().value
@@ -1022,15 +1025,10 @@ private fun AmbientTvApp(
         currentRoute == Destinations.SPOTIFY_SECTION ||
         currentRoute == Destinations.LIVE_TV ||
         currentRoute == Destinations.LIVE_TV_SECTION
-    val sidebarDestinationKey = when (currentRoute) {
-        Destinations.SECTION -> currentSectionKey?.let(Destinations::section)
-        Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed)
-        Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed)
-        Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection)
-        Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) }
-        Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource)
-        else -> currentRoute
-    }
+    val sidebarDestinationKey = sidebarConcreteRoute(
+        currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
+        currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+    )
     // Key readiness to the destination itself: a parent effect must not overwrite a child
     // readiness report later in the same composition frame.
     var sidebarContentReady by remember(sidebarDestinationKey) { mutableStateOf(!waitsForSidebarContent) }
@@ -1334,24 +1332,14 @@ private fun AmbientTvApp(
             }
             return
         }
-        val activeSidebarRoute = when (currentRoute) {
-            Destinations.SECTION -> currentSectionKey?.let(Destinations::section)
-            Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed)
-            Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed)
-            Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection)
-            Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) }
-            Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource)
-            else -> currentRoute
-        }
+        val activeSidebarRoute = sidebarConcreteRoute(
+            currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
+            currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+        )
         // Selecting the already active destination is only a focus handoff. Re-navigating a
         // singleton destination destroys its focused subtree and is especially visible when
         // Home/Plex are selected repeatedly with a fast remote.
-        val parameterizedSidebarRoute = route.startsWith("section/") ||
-            route.startsWith("youtube_feed/") ||
-            route.startsWith("trailers/feed/") ||
-            route.startsWith("spotify_section/") ||
-            route.startsWith("live_tv/") ||
-            route.startsWith("files_source/")
+        val parameterizedSidebarRoute = isParameterizedSidebarRoute(route)
         if (route == activeSidebarRoute) {
             // Re-selecting the open page scrolls it back to the top (Plex behaviour).
             com.ambient.tv.ui.common.NavReselect.fire()
@@ -1584,10 +1572,12 @@ private fun AmbientTvApp(
                     currentRoute = if (currentRoute in SIDEBAR_ROUTES) currentRoute else lastTopLevelRoute,
                     currentSectionKey = if (currentRoute == Destinations.SECTION) currentSectionKey else lastSectionKey,
                     currentYouTubeFeedKey = currentFeedKey,
+                    currentTrailerFeedKey = currentTrailerFeedKey,
                     currentSpotifySectionKey = currentSpotifySectionKey,
                     currentTvheadendTab = currentTvheadendTab,
                     currentLiveTvSourceId = currentLiveTvSourceId,
                     currentFileSourceId = currentFileSourceId,
+                    currentDlnaServerId = currentDlnaServerId,
                     onNavigate = ::navigateSidebar,
                     onOpenSystemSettings = ::openSystemSettings,
                     onOpenPlayback = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } },
@@ -1656,19 +1646,6 @@ private fun AmbientTvApp(
                         if (!handheld) ExitTransition.None else fadeOut(tween(700))
                     },
                 ) {
-                    // First screen with content for the systems already set up; null when nothing could be shown.
-                    fun configuredStartDestination(): String? = when {
-                        appPreferences.isConfigured -> Destinations.HOME
-                        appPreferences.isJellyfinConfigured -> Destinations.HOME
-                        appPreferences.isEmbyConfigured -> Destinations.HOME
-                        appPreferences.isTvheadendConfigured -> Destinations.HOME
-                        appPreferences.youtubeEnabled -> Destinations.YOUTUBE
-                        appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore) -> Destinations.SPOTIFY
-                        appPreferences.filesEnabled -> Destinations.FILES
-                        appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank() -> Destinations.TRAILERS
-                        else -> com.ambient.tv.data.iptv.IptvStore(tokenStore).sources().firstOrNull { it.enabled }
-                            ?.let { Destinations.liveTvSection("live", "iptv:${it.id}") }
-                    }
                     composable(Destinations.INITIAL_SETUP) {
                         fun setupSource(category: String) {
                             // First setup must not enable an unchosen provider through a legacy default.
@@ -1702,11 +1679,11 @@ private fun AmbientTvApp(
                             onOpenSettings = { setupSource("appearance") },
                             onRestore = { setupSource("backup") },
                             // Skipping with nothing set up would land on an empty home that leads back here.
-                            onSkip = if (configuredStartDestination() == null) null else ({
+                            onSkip = configuredStartDestination()?.let { destination -> {
                                 if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
                                 appPreferences.initialSetupCompleted = true
-                                navController.navigate(Destinations.HOME) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } }
-                            }),
+                                navController.navigate(destination) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } }
+                            } },
                         )
                     }
                     composable(
@@ -1886,6 +1863,7 @@ private fun AmbientTvApp(
                     ) {
                         SpotifyDetailScreen(
                             onBack = ::navigateBack,
+                            onOpenSettings = ::openSettingsPreservingContext,
                             onNowPlaying = { playOnSelectedTarget(Destinations.spotifyPlayer()) },
                             onOpenAlbum = { albumId -> navController.navigate(Destinations.spotifyDetail("album", albumId)) },
                         )
@@ -1900,6 +1878,7 @@ private fun AmbientTvApp(
                     ) {
                         YouTubeDetailScreen(
                             onBack = ::navigateBack,
+                            onOpenSettings = ::openSettingsPreservingContext,
                             onPlay = { videoId -> playOnSelectedTarget(Destinations.youtubePlayer(videoId)) },
                         )
                     }
@@ -2151,8 +2130,8 @@ private fun AmbientTvApp(
                                 playOnSelectedTarget(Destinations.player(item.ratingKey, mediaIndex, restart, collectionId, collectionSort), title = item.title)
                             },
                             onOpenChild = { child -> handleMediaSelection(child.ratingKey, collectionId, collectionSort) },
-                            onBrowseActor = { id, name -> navController.navigate(Destinations.filteredBrowse("actor", id, name)) },
-                            onBrowseCollection = { id, name -> navController.navigate(Destinations.filteredBrowse("collection", id, name)) },
+                            onBrowseActor = { id, name -> navController.navigate(Destinations.detailFilteredBrowse("actor", id, name)) },
+                            onBrowseCollection = { id, name -> navController.navigate(Destinations.detailFilteredBrowse("collection", id, name)) },
                         )
                         }
                     }
@@ -2170,6 +2149,31 @@ private fun AmbientTvApp(
                             FilteredBrowseScreen(
                                 onBack = ::focusSidebar,
                                 onOpenSettings = ::openSettingsPreservingContext,
+                                onItemClick = { ratingKey, sort ->
+                                    handleMediaSelection(
+                                        ratingKey = ratingKey,
+                                        collectionId = filterId.takeIf { kind == "collection" },
+                                        collectionSort = sort.name,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                    composable(
+                        route = Destinations.DETAIL_FILTERED_BROWSE,
+                        arguments = listOf(
+                            navArgument("kind") { type = NavType.StringType },
+                            navArgument("filterId") { type = NavType.StringType },
+                            navArgument("title") { type = NavType.StringType },
+                        ),
+                    ) { entry ->
+                        val kind = entry.arguments?.getString("kind").orEmpty()
+                        val filterId = entry.arguments?.getString("filterId").orEmpty()
+                        com.ambient.tv.ui.common.HoldHomeBackgroundWhileLeaving {
+                            FilteredBrowseScreen(
+                                onBack = ::navigateBack,
+                                onOpenSettings = ::openSettingsPreservingContext,
+                                leftNavigatesBack = false,
                                 onItemClick = { ratingKey, sort ->
                                     handleMediaSelection(
                                         ratingKey = ratingKey,

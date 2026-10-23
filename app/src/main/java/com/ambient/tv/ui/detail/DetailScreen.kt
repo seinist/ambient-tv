@@ -162,6 +162,12 @@ fun DetailScreen(
                     actionLabel = stringResource(R.string.home_retry),
                     onAction = viewModel::load,
                 )
+                PageUtilityBar(
+                    onBack = onBack,
+                    onSettings = onOpenSettings,
+                    leftNavigatesBack = false,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
             }
             is DetailUiState.Loaded -> DetailContent(
                 onTrailer = onTrailer,
@@ -283,8 +289,24 @@ private fun DetailContent(
     onRemoveFromContinue: () -> Unit,
 ) {
     var showMore by remember(item.ratingKey) { mutableStateOf(false) }
+    var restoreFocusKey by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf<String?>(null) }
     var restoreTrailer by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf(false) }
     val trailerAvailable = rememberTrailerAvailable(item, playbackAvailable && onTrailer != null)
+    val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
+    val heroHasFocusTarget = remember(
+        item.type, item.mediaVersions, item.progressFraction, nextEpisode?.ratingKey,
+        playbackAvailable, trailerAvailable, activePlayback,
+    ) {
+        val directPlayback = playbackAvailable && item.type !in setOf("show", "season") &&
+            (activePlayback != null || item.mediaVersions.any { it.streamUrl != null })
+        val nextPlayback = playbackAvailable && nextEpisode?.mediaVersions?.isNotEmpty() == true
+        directPlayback || nextPlayback || trailerAvailable || detailActionCapabilities(
+            item.type,
+            playbackAvailable,
+            item.mediaVersions.isNotEmpty(),
+            (item.progressFraction ?: 0f) in 0.01f..0.94f,
+        ).hasMenuActions
+    }
     var moreOpened by remember(item.ratingKey) { mutableStateOf(false) }
     val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current || com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current
     // Both utility actions sit in an overlay above the list. Give their Down navigation an
@@ -355,10 +377,12 @@ private fun DetailContent(
             // Detail pages always open at their real beginning. Requesting focus can make the
             // LazyColumn reveal the action geometrically, so restore offset zero once after the
             // focus transaction as well.
-            listState.scrollToItem(0)
-            runCatching { initialActionFocus.requestFocus() }
-            withFrameNanos { }
-            listState.scrollToItem(0)
+            if (restoreFocusKey == null) {
+                listState.scrollToItem(0)
+                runCatching { initialActionFocus.requestFocus() }
+                withFrameNanos { }
+                listState.scrollToItem(0)
+            }
         }
         val focusContentFromUtility = remember(item.ratingKey, listState, scrollScope, initialActionFocus) {
             var pendingFocusJob: Job? = null
@@ -420,7 +444,7 @@ private fun DetailContent(
         }
         val sectionKeys = buildList {
             add("hero")
-            if (children.isNotEmpty() || item.type == "collection") add("children")
+            if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) add("children")
             if (similar.isNotEmpty()) add("similar")
             if (item.collections.isNotEmpty()) add("collections")
             if (item.cast.isNotEmpty()) add("cast")
@@ -492,34 +516,53 @@ private fun DetailContent(
                         moreOpened = true
                         showMore = true
                     },
+                    onHeroFocused = { restoreFocusKey = null },
                     initialActionFocus = initialActionFocus,
                     moreActionFocus = moreActionFocus,
                 )
                 }
             }
 
-            if (children.isNotEmpty() || item.type == "collection") {
+            if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) {
                 item(key = "children") {
                     Section("children") {
                         if (item.type == "collection") {
-                            CollectionItemsSection(children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild)
+                            CollectionItemsSection(
+                                children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild,
+                                restoreFocusKey,
+                            ) { restoreFocusKey = it }
                         } else {
-                            ChildrenSection(item, children, onOpenChild)
+                            ChildrenSection(
+                                item, children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild,
+                                restoreFocusKey,
+                            ) { restoreFocusKey = it }
                         }
                     }
                 }
             }
 
             if (similar.isNotEmpty()) {
-                item(key = "similar") { Section("similar") { SimilarSection(similar, onOpenChild) } }
+                item(key = "similar") {
+                    Section("similar") {
+                        SimilarSection(similar, onOpenChild, restoreFocusKey) { restoreFocusKey = it }
+                    }
+                }
             }
 
             if (item.collections.isNotEmpty()) {
-                item(key = "collections") { Section("collections") { CollectionsSection(item, onBrowseCollection) } }
+                item(key = "collections") {
+                    Section("collections") {
+                        CollectionsSection(item, onBrowseCollection, restoreFocusKey) { restoreFocusKey = it }
+                    }
+                }
             }
 
             if (item.cast.isNotEmpty()) {
-                item(key = "cast") { Section("cast") { CastSection(item, onBrowseActor) } }
+                item(key = "cast") {
+                    Section("cast") {
+                        CastSection(item, onBrowseActor, restoreFocusKey) { restoreFocusKey = it }
+                    }
+                }
             }
 
             if (item.directors.isNotEmpty() || item.writers.isNotEmpty() || item.studio != null) {
@@ -532,8 +575,15 @@ private fun DetailContent(
 
         PageUtilityBar(
             onBack = onBack,
-            onSettings = onOpenSettings,
-            onDown = focusContentFromUtility,
+            onSettings = {
+                restoreFocusKey = null
+                onOpenSettings()
+            },
+            onDown = if (heroHasFocusTarget) ({
+                restoreFocusKey = null
+                focusContentFromUtility()
+            }) else null,
+            requestInitialFocus = !heroHasFocusTarget && restoreFocusKey == null,
             leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -583,7 +633,8 @@ private fun DetailHero(
     nextEpisode: MediaItem?,
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
-    onMore: () -> Unit,
+    onMore: (() -> Unit)?,
+    onHeroFocused: () -> Unit,
     initialActionFocus: FocusRequester,
     moreActionFocus: FocusRequester,
 ) {
@@ -599,11 +650,18 @@ private fun DetailHero(
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
     val primaryPlayable = isPlayable && (currentExact != null || item.mediaVersions.getOrNull(optimalIndex)?.streamUrl != null)
     val playableNextEpisode = nextEpisode?.takeIf { playbackAvailable && it.mediaVersions.isNotEmpty() }
+    val detailActions = detailActionCapabilities(
+        type = item.type,
+        playbackAvailable = playbackAvailable,
+        hasMediaVersions = item.mediaVersions.isNotEmpty(),
+        inProgress = (item.progressFraction ?: 0f) in 0.01f..0.94f,
+    )
 
     DeviceActionRow(
         stack = handheldDetailStacks(LocalConfiguration.current.screenWidthDp),
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { if (it.hasFocus) onHeroFocused() }
             .padding(start = screenGutter(), end = screenGutter(), top = 18.dp, bottom = 22.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.Top,
@@ -756,20 +814,22 @@ private fun DetailHero(
                             modifier = if (!primaryPlayable && !restoreTrailer) Modifier.focusRequester(initialActionFocus) else Modifier,
                         )
                     }
-                    TvActionButton(
-                        text = stringResource(R.string.detail_more_actions),
-                        icon = Icons.Filled.MoreHoriz,
-                        onClick = onMore,
-                        modifier = Modifier
-                            .focusRequester(moreActionFocus)
-                            .then(
-                                if (!primaryPlayable && playableNextEpisode == null && !restoreTrailer) {
-                                    Modifier.focusRequester(initialActionFocus)
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                    )
+                    if (onMore != null && detailActions.hasMenuActions) {
+                        TvActionButton(
+                            text = stringResource(R.string.detail_more_actions),
+                            icon = Icons.Filled.MoreHoriz,
+                            onClick = onMore,
+                            modifier = Modifier
+                                .focusRequester(moreActionFocus)
+                                .then(
+                                    if (!primaryPlayable && playableNextEpisode == null && !restoreTrailer) {
+                                        Modifier.focusRequester(initialActionFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                        )
+                    }
                     if (onTrailer != null && trailerAvailable) {
                         TvActionButton(
                             text = stringResource(R.string.trailers_play),
@@ -905,12 +965,26 @@ private const val VERSION_ROWS_VISIBLE = 4
 private val VERSION_ROW_HEIGHT = 56.dp
 
 @Composable
+private fun RestoreDetailFocus(requested: Boolean, requester: FocusRequester) {
+    val handheld = LocalHandheldUi.current
+    LaunchedEffect(requested, handheld) {
+        if (!requested || handheld) return@LaunchedEffect
+        repeat(3) {
+            withFrameNanos { }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
+}
+
+@Composable
 private fun CollectionItemsSection(
     children: List<MediaItem>,
     loading: Boolean,
     failed: Boolean,
     onRetry: () -> Unit,
     onOpenChild: (MediaItem) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(
@@ -925,7 +999,14 @@ private fun CollectionItemsSection(
                 modifier = Modifier.containRowFocusExit(),
             ) {
                 items(children, key = { it.ratingKey }) { child ->
-                    MediaTile(item = child, style = MediaTileStyle.AUTO, onClick = { onOpenChild(child) })
+                    val focusKey = "children:${child.ratingKey}"
+                    MediaTile(
+                        item = child,
+                        style = MediaTileStyle.AUTO,
+                        onClick = { onOpenChild(child) },
+                        onFocused = { onFocused(focusKey) },
+                        requestInitialFocus = restoreFocusKey == focusKey,
+                    )
                 }
             }
         }
@@ -949,9 +1030,18 @@ private fun CollectionItemsSection(
 }
 
 @Composable
-private fun ChildrenSection(item: MediaItem, children: List<MediaItem>, onOpenChild: (MediaItem) -> Unit) {
+private fun ChildrenSection(
+    item: MediaItem,
+    children: List<MediaItem>,
+    loading: Boolean,
+    failed: Boolean,
+    onRetry: () -> Unit,
+    onOpenChild: (MediaItem) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
-        val seasons = children.firstOrNull()?.type == "season"
+        val seasons = children.firstOrNull()?.type == "season" || (children.isEmpty() && item.type == "show")
         Text(
             stringResource(if (seasons) R.string.detail_seasons else R.string.detail_episodes),
             style = MaterialTheme.typography.titleLarge,
@@ -962,8 +1052,15 @@ private fun ChildrenSection(item: MediaItem, children: List<MediaItem>, onOpenCh
             // render into that margin instead of being clipped by the row's own layout bounds.
             LazyRow(contentPadding = PaddingValues(horizontal = screenGutter()), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                 items(children, key = { it.ratingKey }) { season ->
+                    val focusKey = "children:${season.ratingKey}"
                     // The poster tile carries the season cover plus its own watched/unwatched badge.
-                    MediaTile(item = season, style = MediaTileStyle.POSTER, onClick = { onOpenChild(season) })
+                    MediaTile(
+                        item = season,
+                        style = MediaTileStyle.POSTER,
+                        onClick = { onOpenChild(season) },
+                        onFocused = { onFocused(focusKey) },
+                        requestInitialFocus = restoreFocusKey == focusKey,
+                    )
                 }
             }
         } else {
@@ -1003,14 +1100,33 @@ private fun ChildrenSection(item: MediaItem, children: List<MediaItem>, onOpenCh
             ) {
                 items(children.size, key = { children[it].ratingKey }) { index ->
                     val child = children[index]
+                    val focusKey = "children:${child.ratingKey}"
                     MediaTile(
                         modifier = Modifier.focusRequester(requesters[index]).onFocusChanged { if (it.isFocused) focusedIndex = index },
                         item = child,
                         style = MediaTileStyle.EPISODE,
                         showDescription = false,
                         onClick = { onOpenChild(child) },
+                        onFocused = { onFocused(focusKey) },
+                        requestInitialFocus = restoreFocusKey == focusKey,
                     )
                 }
+            }
+        }
+        if (children.isEmpty()) {
+            Column(
+                modifier = Modifier.padding(horizontal = screenGutter()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    stringResource(when {
+                        loading -> R.string.player_loading
+                        failed -> R.string.detail_children_failed
+                        else -> R.string.detail_children_empty
+                    }),
+                    color = if (failed && !loading) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (failed && !loading) TvActionButton(stringResource(R.string.home_retry), onRetry)
             }
         }
         if (item.type == "season" && children.isNotEmpty()) {
@@ -1027,7 +1143,12 @@ private fun ChildrenSection(item: MediaItem, children: List<MediaItem>, onOpenCh
 
 
 @Composable
-private fun SimilarSection(items: List<MediaItem>, onOpenChild: (MediaItem) -> Unit) {
+private fun SimilarSection(
+    items: List<MediaItem>,
+    onOpenChild: (MediaItem) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(
             stringResource(R.string.detail_more_like_this),
@@ -1036,7 +1157,14 @@ private fun SimilarSection(items: List<MediaItem>, onOpenChild: (MediaItem) -> U
         )
         LazyRow(contentPadding = PaddingValues(horizontal = screenGutter()), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(items, key = { it.ratingKey }) { related ->
-                MediaTile(item = related, style = MediaTileStyle.POSTER, onClick = { onOpenChild(related) })
+                val focusKey = "similar:${related.ratingKey}"
+                MediaTile(
+                    item = related,
+                    style = MediaTileStyle.POSTER,
+                    onClick = { onOpenChild(related) },
+                    onFocused = { onFocused(focusKey) },
+                    requestInitialFocus = restoreFocusKey == focusKey,
+                )
             }
         }
     }
@@ -1056,9 +1184,13 @@ private fun DetailContextMenu(
     val handheld = LocalHandheldUi.current
     // Portrait phones: the TV card fraction leaves only ~40dp beside the cover for the actions.
     val narrow = com.ambient.tv.ui.mobile.isNarrowHandheldWindow()
-    val playable = item.type !in setOf("show", "season")
-    val canRestart = playbackAvailable && playable && item.mediaVersions.isNotEmpty()
     val inProgress = (item.progressFraction ?: 0f) in 0.01f..0.94f
+    val capabilities = detailActionCapabilities(
+        type = item.type,
+        playbackAvailable = playbackAvailable,
+        hasMediaVersions = item.mediaVersions.isNotEmpty(),
+        inProgress = inProgress,
+    )
     val metadata = buildList {
         item.year?.let { add(it.toString()) }
         formatDuration(item.durationMs)?.let(::add)
@@ -1082,7 +1214,7 @@ private fun DetailContextMenu(
             TvActionButton(
                 text = stringResource(R.string.back),
                 onClick = onDismiss,
-                modifier = if (busy || (!canRestart && !playable && !inProgress)) Modifier.focusRequester(firstFocus) else Modifier,
+                modifier = if (busy || !capabilities.hasMenuActions) Modifier.focusRequester(firstFocus) else Modifier,
             )
         },
     ) {
@@ -1106,7 +1238,7 @@ private fun DetailContextMenu(
                         criticRating = item.criticRating,
                     )
                 }
-                if (canRestart) {
+                if (capabilities.canRestart) {
                     DetailContextAction(
                         text = stringResource(R.string.detail_restart),
                         icon = Icons.Filled.RestartAlt,
@@ -1115,22 +1247,22 @@ private fun DetailContextMenu(
                         modifier = if (!busy) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
-                if (playable) {
+                if (capabilities.canSetWatched) {
                     DetailContextAction(
                         text = stringResource(if (item.isWatched) R.string.detail_mark_unwatched else R.string.detail_mark_watched),
                         icon = if (item.isWatched) Icons.Filled.VisibilityOff else Icons.Filled.CheckCircle,
                         onClick = { onSetWatched(!item.isWatched) },
                         enabled = !busy,
-                        modifier = if (!busy && !canRestart) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (!busy && !capabilities.canRestart) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
-                if (inProgress) {
+                if (capabilities.canRemoveFromContinue) {
                     DetailContextAction(
                         text = stringResource(R.string.detail_remove_continue_watching),
                         icon = Icons.Filled.PlaylistRemove,
                         onClick = onRemoveFromContinue,
                         enabled = !busy,
-                        modifier = if (!busy && !canRestart && !playable) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (!busy && !capabilities.canRestart && !capabilities.canSetWatched) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
             }
@@ -1205,15 +1337,24 @@ private fun DetailContextAction(
 }
 
 @Composable
-private fun CollectionsSection(item: MediaItem, onBrowseCollection: (String, String) -> Unit) {
+private fun CollectionsSection(
+    item: MediaItem,
+    onBrowseCollection: (String, String) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_collections), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = screenGutter()), horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.containRowFocusExit()) {
             items(item.collections, key = { "${it.id}-${it.name}" }) { collection ->
+                val focusKey = "collection:${collection.id ?: collection.name}"
+                val requester = remember(collection.id, collection.name) { FocusRequester() }
+                RestoreDetailFocus(restoreFocusKey == focusKey, requester)
                 TvChip(
                     text = collection.name,
                     onClick = { collection.id?.let { onBrowseCollection(it, collection.name) } },
                     enabled = collection.id != null,
+                    modifier = Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(focusKey) },
                 )
             }
         }
@@ -1221,11 +1362,19 @@ private fun CollectionsSection(item: MediaItem, onBrowseCollection: (String, Str
 }
 
 @Composable
-private fun CastSection(item: MediaItem, onBrowseActor: (String, String) -> Unit) {
+private fun CastSection(
+    item: MediaItem,
+    onBrowseActor: (String, String) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_cast), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp))
         LazyRow(contentPadding = PaddingValues(horizontal = screenGutter()), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.containRowFocusExit()) {
             items(item.cast.dedupeCastMembers().take(16), key = { it.id ?: it.name }) { member ->
+                val focusKey = "cast:${member.id ?: member.name}"
+                val requester = remember(member.id, member.name) { FocusRequester() }
+                RestoreDetailFocus(restoreFocusKey == focusKey, requester)
                 var isFocused by remember(member.id, member.name) { mutableStateOf(false) }
                 // Fade the focus ring in/out instead of toggling it, so moving along the row glides.
                 val ringWidth by animateDpAsState(if (isFocused) 2.dp else 0.dp, tween(180), label = "castRing")
@@ -1236,6 +1385,7 @@ private fun CastSection(item: MediaItem, onBrowseActor: (String, String) -> Unit
                 )
                 androidx.tv.material3.Surface(
                     onClick = { member.id?.let { onBrowseActor(it, member.name) } },
+                    enabled = member.id != null,
                     colors = transparentSurfaceColors(),
                     // No Modifier.scale() here, so also no reserved padding for one - rather
                     // than fight Surface's own default pop-and-grow (which had nothing to
@@ -1243,7 +1393,12 @@ private fun CastSection(item: MediaItem, onBrowseActor: (String, String) -> Unit
                     // with a border around the portrait instead, like the rest of the app.
                     scale = noSurfaceScale(),
                     border = noSurfaceBorder(),
-                    modifier = Modifier.width(112.dp).activateOnTvKey(enabled = member.id != null) { member.id?.let { onBrowseActor(it, member.name) } }.onFocusChanged { isFocused = it.isFocused },
+                    modifier = Modifier.width(112.dp).focusRequester(requester)
+                        .activateOnTvKey(enabled = member.id != null) { member.id?.let { onBrowseActor(it, member.name) } }
+                        .onFocusChanged {
+                            isFocused = it.isFocused
+                            if (it.isFocused) onFocused(focusKey)
+                        },
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(6.dp)) {
                         ArtworkImage(

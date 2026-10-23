@@ -2,6 +2,10 @@ package com.ambient.tv.ui.navigation
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import com.ambient.tv.livetv.AvailableLiveTvSource
+import com.ambient.tv.livetv.LiveTvCapabilities
+import com.ambient.tv.livetv.LiveTvSource
+import com.ambient.tv.ui.common.MediaSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -36,5 +40,15 @@ class SidebarRulesTest {
         val entries = listOf("a", "b", "c", "new")
         assertEquals(listOf("c", "a", "b", "new"), sidebarOrderedEntries(entries, listOf("c", "gone", "a", "b")) { it })
         assertEquals(entries, sidebarOrderedEntries(entries, null) { it })
+    }
+
+    @Test fun iptvParticipatesInTheSharedMenuEditor() {
+        val state = SidebarUiState(
+            liveTvSources = listOf(AvailableLiveTvSource(
+                LiveTvSource("iptv:one", "iptv", "One"),
+                LiveTvCapabilities(available = true, guide = true),
+            )),
+        )
+        assertEquals(listOf(MediaSystem.IPTV), menuOrderSystems(state))
     }
 }

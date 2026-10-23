@@ -39,7 +39,9 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
     val state: StateFlow<SpotifyDetailUiState> = _state.asStateFlow()
     init { load() }
     fun retryOffline() { if (_state.value.offline && availability.hasNetwork()) load() }
-    private fun load() = viewModelScope.launch {
+    fun load() {
+        viewModelScope.launch {
+        _state.value = _state.value.copy(loading = true, error = null)
         val identity = scopes.forProvider("spotify")
         val namespace = snapshots.namespace("spotify", identity)
         val key = "detail:$type:$id"
@@ -60,6 +62,7 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
             }
         }.onFailure {
             _state.value = _state.value.copy(loading = false, offline = true, error = it.message.takeIf { _state.value.title.isBlank() })
+        }
         }
     }
     fun playContext(onLocalStarted: () -> Unit = {}) {

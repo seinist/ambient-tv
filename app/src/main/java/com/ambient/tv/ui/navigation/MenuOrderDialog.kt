@@ -87,7 +87,12 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
  */
 @Composable
 internal fun menuOrderItems(state: SidebarUiState): List<MenuOrderItem> {
-    val items = buildList {
+    return menuOrderSystems(state)
+        .map { MenuOrderItem(it.key, systemName(it), menuSystemIcon(it), it) }
+}
+
+internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
+    buildList {
         if (state.dlnaServers.isNotEmpty()) add(MediaSystem.DLNA)
         if (state.filesEnabled) add(MediaSystem.FILES)
         if (state.plexEnabled) add(MediaSystem.PLEX)
@@ -97,11 +102,9 @@ internal fun menuOrderItems(state: SidebarUiState): List<MenuOrderItem> {
         if (state.youtubeEnabled) add(MediaSystem.YOUTUBE)
         if (state.spotifyEnabled && state.spotifyAuthorized) add(MediaSystem.SPOTIFY)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)
+        if (state.liveTvSources.any { it.source.system == "iptv" }) add(MediaSystem.IPTV)
     }
-    return items
         .sortedBy { state.systemOrder.indexOf(it.key).let { index -> if (index < 0) Int.MAX_VALUE else index } }
-        .map { MenuOrderItem(it.key, systemName(it), menuSystemIcon(it), it) }
-}
 
 /**
  * One list row per system: its place, its mark, an inline name field and up/down arrows.

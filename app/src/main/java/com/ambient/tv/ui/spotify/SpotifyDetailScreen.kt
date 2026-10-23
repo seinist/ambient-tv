@@ -1,7 +1,5 @@
 package com.ambient.tv.ui.spotify
 
-import com.ambient.tv.ui.common.leftKeyAction
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.companion.*
@@ -14,8 +12,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -27,11 +27,13 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.ScreensaverArtworkRegistry
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 
 @Composable
 fun SpotifyDetailScreen(
     onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
     onNowPlaying: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     viewModel: SpotifyDetailViewModel = hiltViewModel(),
@@ -43,8 +45,8 @@ fun SpotifyDetailScreen(
     val playLabel = stringResource(if (current != null) R.string.playback_open else R.string.spotify_play)
     val playContext = { if (current != null) openCurrent(current) else { viewModel.playContext(onNowPlaying) } }
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        LazyColumn(allowUpExit = true, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item("back") { com.ambient.tv.ui.common.TvChip(stringResource(R.string.back), icon = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack) }
+        Box(Modifier.fillMaxSize()) {
+        LazyColumn(allowUpExit = true, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 80.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item("header") {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     state.artworkUrl?.let { ArtworkImage(it, state.title, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(16.dp)), contentScale = ContentScale.Crop) }
@@ -55,28 +57,40 @@ fun SpotifyDetailScreen(
                     Text(state.title, style = MaterialTheme.typography.headlineMedium)
                     if (state.offline) Text(stringResource(R.string.browse_offline))
                     state.subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    if (!state.offline) TvActionButton(playLabel, playContext, enabled = !state.loading && state.error == null, fillWidth = true)
+                    state.error?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                        TvActionButton(stringResource(R.string.home_retry), viewModel::load, fillWidth = true)
+                    }
+                    if (!state.offline && state.error == null) TvActionButton(playLabel, playContext, enabled = !state.loading, fillWidth = true)
                 }
             }
+            if (state.tracks.isNotEmpty()) item("tracks-heading") { Text(stringResource(R.string.search_tracks), style = MaterialTheme.typography.titleMedium) }
             itemsIndexed(state.tracks, key = { index, track -> "track:$index:${track.id}" }) { index, track ->
                 val playingTrack = playbackIndicator(CompanionMedia("spotify:track", track.id))
                 PlaybackBadge(playingTrack)
                     if (state.offline) Text("${index + 1}. ${track.name}") else TvActionButton("${index + 1}. ${track.name} · ${track.artists.joinToString(", ") { it.name }}", { if (playingTrack != null) openCurrent(playingTrack) else { viewModel.playTrack(track, onNowPlaying) } }, fillWidth = true)
             }
+            if (state.albums.isNotEmpty()) item("albums-heading") { Text(stringResource(R.string.nav_spotify_albums), style = MaterialTheme.typography.titleMedium) }
             items(state.albums, key = { "album:${it.id}" }) { album -> TvActionButton(album.name, { onOpenAlbum(album.id) }, fillWidth = true) }
+        }
+        PageUtilityBar(onBack, onOpenSettings, leftNavigatesBack = false, modifier = Modifier.align(Alignment.TopCenter))
         }
         return
     }
-    val backFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
+    val primaryFocus = remember { FocusRequester() }
+    var restoreFocusKey by androidx.compose.runtime.saveable.rememberSaveable(viewModel.type, viewModel.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.loading, state.offline, state.error, restoreFocusKey) {
+        if (state.loading || (state.offline && state.error == null) || restoreFocusKey != null) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { backFocus.requestFocus() }
+        runCatching { primaryFocus.requestFocus() }
     }
     LaunchedEffect(state.artworkUrl) { state.artworkUrl?.let { ScreensaverArtworkRegistry.offer(it) } }
-    Row(Modifier.fillMaxSize().padding(screenGutter()), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
+    Box(Modifier.fillMaxSize()) {
+    Row(
+        Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = screenGutter() + 56.dp, bottom = screenGutter()),
+        horizontalArrangement = Arrangement.spacedBy(30.dp),
+    ) {
         Column(Modifier.width(320.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            com.ambient.tv.ui.common.TvChip(stringResource(R.string.back), modifier = Modifier.focusRequester(backFocus).leftKeyAction(onBack), icon = androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
             if (state.loading) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.58f), RoundedCornerShape(16.dp)))
                 Box(Modifier.fillMaxWidth(.82f).height(28.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.64f), RoundedCornerShape(999.dp)))
@@ -89,7 +103,13 @@ fun SpotifyDetailScreen(
                     Text(state.title, style = MaterialTheme.typography.headlineMedium)
                     if (state.offline) Text(stringResource(R.string.browse_offline))
                 state.subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (!state.offline) TvActionButton(playLabel, onClick = playContext, enabled = state.error == null, fillWidth = true)
+                if (!state.offline && state.error == null) TvActionButton(
+                    playLabel,
+                    onClick = playContext,
+                    enabled = state.error == null,
+                    fillWidth = true,
+                    modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) restoreFocusKey = null },
+                )
             }
         }
         val trackListState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -111,16 +131,59 @@ fun SpotifyDetailScreen(
                     }
                 }
             } else {
-                state.error?.let { error -> item("error") { Text(error, color = MaterialTheme.colorScheme.error) } }
+                state.error?.let { error -> item("error") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                        TvActionButton(
+                            stringResource(R.string.home_retry),
+                            viewModel::load,
+                            modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) restoreFocusKey = null },
+                        )
+                    }
+                } }
+                if (state.tracks.isNotEmpty()) item("tracks-heading") { Text(stringResource(R.string.search_tracks), style = MaterialTheme.typography.titleMedium) }
                 itemsIndexed(state.tracks, key = { index, track -> "track:$index:${track.id}" }) { index, track ->
                     val playingTrack = playbackIndicator(CompanionMedia("spotify:track", track.id))
+                    val focusKey = "track:${track.id}"
+                    val requester = remember(track.id) { FocusRequester() }
+                    RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
                     PlaybackBadge(playingTrack)
-                        if (state.offline) Text("${index + 1}. ${track.name}") else TvActionButton(text = "${index + 1}. ${track.name}  •  ${track.artists.joinToString(", ") { it.name }}", onClick = { if (playingTrack != null) openCurrent(playingTrack) else { viewModel.playTrack(track, onNowPlaying) } }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
+                        if (state.offline) Text("${index + 1}. ${track.name}") else TvActionButton(text = "${index + 1}. ${track.name}  •  ${track.artists.joinToString(", ") { it.name }}", onClick = { if (playingTrack != null) openCurrent(playingTrack) else { viewModel.playTrack(track, onNowPlaying) } }, modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) restoreFocusKey = focusKey }, fillWidth = true)
                 }
+                if (state.albums.isNotEmpty()) item("albums-heading") { Text(stringResource(R.string.nav_spotify_albums), style = MaterialTheme.typography.titleMedium) }
                 items(state.albums, key = { "album:${it.id}" }) { album ->
-                    TvActionButton(album.name, { onOpenAlbum(album.id) }, Modifier.fillMaxWidth(), fillWidth = true)
+                    val focusKey = "album:${album.id}"
+                    val requester = remember(album.id) { FocusRequester() }
+                    RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
+                    TvActionButton(album.name, { onOpenAlbum(album.id) }, Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) restoreFocusKey = focusKey }, fillWidth = true)
                 }
             }
+        }
+    }
+    PageUtilityBar(
+        onBack = onBack,
+        onSettings = {
+            restoreFocusKey = null
+            onOpenSettings()
+        },
+        onDown = if (!state.loading && (!state.offline || state.error != null)) ({
+            restoreFocusKey = null
+            runCatching { primaryFocus.requestFocus() }
+        }) else null,
+        requestInitialFocus = state.loading || (state.offline && state.error == null),
+        leftNavigatesBack = false,
+        modifier = Modifier.align(Alignment.TopCenter),
+    )
+    }
+}
+
+@Composable
+private fun RestoreSpotifyFocus(requested: Boolean, requester: FocusRequester) {
+    LaunchedEffect(requested) {
+        if (!requested) return@LaunchedEffect
+        repeat(3) {
+            withFrameNanos { }
+            if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
     }
 }

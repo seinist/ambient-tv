@@ -43,6 +43,7 @@ object Destinations {
     const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}"
     const val SECTION = "section/{sectionKey}"
     const val FILTERED_BROWSE = "browse/{kind}/{filterId}/{title}"
+    const val DETAIL_FILTERED_BROWSE = "detail_browse/{kind}/{filterId}/{title}"
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
@@ -86,4 +87,6 @@ object Destinations {
     }
     fun section(sectionKey: String) = "section/${Uri.encode(sectionKey)}"
     fun filteredBrowse(kind: String, filterId: String, title: String) = "browse/$kind/${Uri.encode(filterId)}/${Uri.encode(title)}"
+    fun detailFilteredBrowse(kind: String, filterId: String, title: String) =
+        "detail_browse/$kind/${Uri.encode(filterId)}/${Uri.encode(title)}"
 }

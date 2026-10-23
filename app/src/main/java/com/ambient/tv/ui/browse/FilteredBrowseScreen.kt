@@ -77,6 +77,7 @@ fun FilteredBrowseScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onItemClick: (String, BrowseSort) -> Unit,
+    leftNavigatesBack: Boolean = true,
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -118,7 +119,12 @@ fun FilteredBrowseScreen(
                 }
             }
         }
-        PageUtilityBar(onBack = onBack, onSettings = onOpenSettings, modifier = Modifier.align(Alignment.TopCenter))
+        PageUtilityBar(
+            onBack = onBack,
+            onSettings = onOpenSettings,
+            leftNavigatesBack = leftNavigatesBack,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 }
 

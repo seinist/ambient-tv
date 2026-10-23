@@ -99,6 +99,8 @@
     <string name="home_connection_error_details">Details: %1$s</string>
     <string name="home_continue_watching">Continue Watching</string>
     <string name="detail_load_failed">Could not load details</string>
+    <string name="detail_children_failed">Could not load seasons or episodes.</string>
+    <string name="detail_children_empty">No seasons or episodes are available.</string>
     <string name="detail_play">Play</string>
     <string name="detail_resume">Resume</string>
     <string name="detail_cast">Cast</string>

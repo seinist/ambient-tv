@@ -47,11 +47,20 @@ fun HandheldNavigationHost(
     val sidebarState by sidebarVm.uiState.collectAsState()
     // Like the television sidebar: a server hidden as unreachable stays out until it answers again.
     val hidden = sidebarState.suppressedSystems
-    val showSearch = sidebarShowsGlobalSearch(
+    val hasIptv = sidebarState.liveTvSources.any { it.source.system == "iptv" }
+    val showHome = sidebarState.trailersConfigured || com.ambient.tv.ui.navigation.sidebarShowsHome(
         plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
         jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
         embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
         tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected,
+        youtubeEnabled = sidebarState.youtubeEnabled,
+        spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
+    )
+    val showSearch = sidebarShowsGlobalSearch(
+        plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
+        jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
+        embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected || hasIptv,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
     )
@@ -84,6 +93,7 @@ fun HandheldNavigationHost(
             if (showNavigation) {
                 HandheldNavigationRail(
                     currentRoute = currentRoute,
+                    showHome = showHome,
                     showSearch = showSearch,
                     onNavigate = onNavigate,
                     onOpenSources = { showSources = true },
@@ -97,6 +107,7 @@ fun HandheldNavigationHost(
             if (showNavigation) {
                 HandheldNavigationBar(
                     currentRoute = currentRoute,
+                    showHome = showHome,
                     showSearch = showSearch,
                     onNavigate = onNavigate,
                     onOpenSources = { showSources = true },
@@ -126,6 +137,7 @@ fun HandheldNavigationHost(
 @Composable
 private fun HandheldNavigationBar(
     currentRoute: String,
+    showHome: Boolean,
     showSearch: Boolean,
     onNavigate: (String) -> Unit,
     onOpenSources: () -> Unit,
@@ -138,7 +150,7 @@ private fun HandheldNavigationBar(
     val companionState by companion.manager.state.collectAsState()
     val remote = stringResource(R.string.companion_remote_control)
     NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0), tonalElevation = 0.dp) {
-        NavigationBarItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
+        if (showHome) NavigationBarItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home) })
         NavigationBarItem(currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources) })
@@ -156,6 +168,7 @@ private fun HandheldNavigationBar(
 @Composable
 private fun HandheldNavigationRail(
     currentRoute: String,
+    showHome: Boolean,
     showSearch: Boolean,
     onNavigate: (String) -> Unit,
     onOpenSources: () -> Unit,
@@ -175,7 +188,7 @@ private fun HandheldNavigationRail(
             .only(WindowInsetsSides.Horizontal),
     ) {
         Spacer(Modifier.weight(1f))
-        NavigationRailItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
+        if (showHome) NavigationRailItem(currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home, maxLines = 1) })
         NavigationRailItem(currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources, maxLines = 1) })
@@ -229,6 +242,7 @@ private fun HandheldSources(
     val tvKeys = sidebarState.tvheadendSubmenuKeys
     val settingsShortcutHidden = sidebarState.settingsShortcutHidden
     val order = sidebarState.systemOrder
+    val canManageMenu = com.ambient.tv.ui.navigation.menuOrderItems(sidebarState).isNotEmpty()
     // Fetch menus only when opened. Content repositories retain their existing caches/async jobs.
     LaunchedEffect(Unit) { viewModel.refresh() }
     val overview = stringResource(R.string.nav_overview)
@@ -263,6 +277,9 @@ private fun HandheldSources(
         if (plex) add(withSettings(MediaSystem.PLEX, listOf(SourceEntry("home", overview, Destinations.PLEX)) + sections.map { SourceEntry(it.key, it.title, Destinations.section(it.key)) } + tvEntries("plex")))
         if (jellyfin) add(withSettings(MediaSystem.JELLYFIN, listOf(SourceEntry("home", overview, Destinations.JELLYFIN)) + jellyfinSections.map { SourceEntry(it.key, it.title, Destinations.section(it.key)) } + tvEntries("jellyfin")))
         if (emby) add(withSettings(MediaSystem.EMBY, listOf(SourceEntry("home", overview, Destinations.EMBY)) + embySections.map { SourceEntry(it.key, it.title, Destinations.section(it.key)) } + tvEntries("emby")))
+        if (sidebarState.liveTvSources.any { it.source.system == "iptv" }) {
+            add(withSettings(MediaSystem.IPTV, tvEntries("iptv")))
+        }
         if (sidebarState.trailersConfigured) add(withSettings(MediaSystem.TRAILERS,
             com.ambient.tv.trailers.TrailerFeed.entries.map { feed ->
                 SourceEntry(
@@ -305,7 +322,8 @@ private fun HandheldSources(
                     })
                 }.ifEmpty { listOf(SourceEntry("home", overview, Destinations.SPOTIFY)) }
             } else {
-                listOf(SourceEntry("home", stringResource(R.string.nav_spotify_sign_in), Destinations.SPOTIFY))
+                listOf(SourceEntry("unavailable", stringResource(R.string.spotify_native_missing), Destinations.SETTINGS,
+                    settingsCategory = MediaSystem.SPOTIFY.key))
             }
             add(withSettings(MediaSystem.SPOTIFY, entries))
         }
@@ -344,7 +362,7 @@ private fun HandheldSources(
                         })
                 }
             }
-            item("order") {
+            if (canManageMenu) item("order") {
                 ListItem(headlineContent = { Text(stringResource(R.string.sidebar_manage_menu)) }, leadingContent = { Icon(Icons.Default.SwapVert, null) },
                     modifier = Modifier.clickable(onClick = onManageMenu))
             }

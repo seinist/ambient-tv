@@ -5,7 +5,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [33], application = android.app.Application::class)
 class SidebarNavigationPolicyTest {
     @Test fun restoresRememberedChildEvenAfterListReordering() {
         assertEquals("series", chooseSidebarChild(listOf("music", "series", "home"), "series", "home"))
@@ -132,5 +137,24 @@ class SidebarNavigationPolicyTest {
                 spotifyEnabled = true,
             ),
         )
+    }
+
+    @Test fun parameterizedRoutesResolveToTheVisibleSidebarEntry() {
+        assertEquals("youtube_feed/history", sidebarConcreteRoute(Destinations.YOUTUBE_FEED, youtubeFeedKey = "history"))
+        assertEquals("trailers/feed/MOVIES", sidebarConcreteRoute(Destinations.TRAILER_FEED, trailerFeedKey = "MOVIES"))
+        assertEquals("dlna/server-1", sidebarConcreteRoute(Destinations.DLNA_SERVER, dlnaServerId = "server-1"))
+    }
+
+    @Test fun everyConcreteSidebarChildUsesArgumentAwareNavigation() {
+        listOf(
+            "section/movies",
+            "youtube_feed/history",
+            "trailers/feed/MOVIES",
+            "spotify_section/liked",
+            "live_tv/guide?sourceId=iptv%3Aone",
+            "files_source/nas",
+            "dlna/server-1",
+        ).forEach { assertTrue(it, isParameterizedSidebarRoute(it)) }
+        assertFalse(isParameterizedSidebarRoute(Destinations.HOME))
     }
 }

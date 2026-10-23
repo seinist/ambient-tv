@@ -36,9 +36,10 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
         }
     }
     fun retryOffline() { if (_uiState.value.offline && availability.hasNetwork() && loadJob?.isActive != true) load() }
-    private fun load() {
+    fun load() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(loading = true, error = null)
             cache.restore()
             val revision = cache.revision()
             cache.metadata(videoId)?.let { _uiState.value = YouTubeDetailState(false, it, offline = !availability.hasNetwork()) }
