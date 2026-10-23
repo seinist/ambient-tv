@@ -45,6 +45,17 @@ class PerformanceProfileTest {
         assertFalse(profile.gateExpensiveVideoVisuals)
         assertFalse(profile.forceScreensaverEconomy)
         assertFalse(profile.throttleSpectrumVisualizer)
+        assertFalse(profile.allowFocusedItemShadow)
+    }
+
+    @Test
+    fun focusedItemShadowIsMaximumUiOnly() {
+        PerformanceMode.entries.forEach { mode ->
+            assertEquals(
+                mode == PerformanceMode.MAXIMUM,
+                PerformanceProfile.resolve(mode, lowEndDevice = false).allowFocusedItemShadow,
+            )
+        }
     }
 
     @Test

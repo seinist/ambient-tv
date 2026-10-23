@@ -17,7 +17,7 @@ data class UiTokens(
     val pillRadius: Dp = 999.dp,
     val focusBorder: Dp = 2.dp,
     val focusElevation: Dp = 10.dp,
-    val focusScale: Float = 1.025f,
+    val focusScale: Float = 1.04f,
     val subtleFocusScale: Float = 1.012f,
     val animationFastMs: Int = 140,
     val animationNormalMs: Int = 200,

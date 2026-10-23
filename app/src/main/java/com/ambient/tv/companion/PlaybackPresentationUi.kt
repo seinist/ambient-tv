@@ -118,9 +118,11 @@ internal fun PlaybackStatusSection(indicator: PlaybackIndicator?) {
         if (frame.isLive) Text("LIVE", style = MaterialTheme.typography.labelMedium)
         else if (frame.duration > 0) {
             Text("${playbackTime(frame.position)} / ${playbackTime(frame.duration)}", style = MaterialTheme.typography.bodySmall)
-            androidx.compose.material3.LinearProgressIndicator(progress = { (frame.position.toFloat() / frame.duration).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(3.dp), color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
-                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f))
+            com.ambient.tv.ui.common.PlaybackStatusBar(
+                progress = (frame.position.toFloat() / frame.duration).coerceIn(0f, 1f),
+                modifier = Modifier.fillMaxWidth(),
+                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f),
+            )
         }
     }
 }

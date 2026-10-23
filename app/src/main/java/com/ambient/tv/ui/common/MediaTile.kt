@@ -70,8 +70,6 @@ import kotlinx.coroutines.launch
 private val POSTER_WIDTH = 160.dp
 private val EPISODE_WIDTH = 300.dp
 private val CONTINUE_WIDTH = 300.dp
-private val PROGRESS_BAR_HEIGHT = 5.dp
-
 /** Nearly opaque: a poster's own bright tagline often sits right where the metadata text goes. */
 private val MetadataBannerFill = Color.Black.copy(alpha = 0.58f)
 
@@ -133,8 +131,8 @@ fun MediaTile(
     // One transform animation is enough to communicate focus. Animating elevation, border width,
     // border color and overlay separately invalidated both the old and new tile on every frame.
     val focusElevation = when {
-        !performance.allowSoftShadow -> 0.dp
-        focused -> 8.dp
+        !performance.allowFocusedItemShadow -> 0.dp
+        focused -> 5.dp
         else -> 0.dp // Do not rasterize a separate shadow for every entering/unfocused card.
     }
     val borderWidth = if (focused) 2.dp else 1.dp
@@ -183,7 +181,7 @@ fun MediaTile(
                 .then(
                     // Only the focused tile gets a shadow layer; unfocused tiles in a dense grid
                     // carry no shadow modifier at all.
-                    if (performance.allowSoftShadow && focused) {
+                    if (performance.allowFocusedItemShadow && focused) {
                         Modifier.shadow(focusElevation, RoundedCornerShape(tokens.cardRadius), clip = false)
                     } else Modifier
                 )
@@ -223,7 +221,7 @@ fun MediaTile(
                     item = item,
                     focused = focused,
                     // The progress bar runs along the bottom edge; the text stays clear of it.
-                    bottomInset = if (progress != null) PROGRESS_BAR_HEIGHT else 0.dp,
+                    bottomInset = if (progress != null) PlaybackStatusBarHeight else 0.dp,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
@@ -242,20 +240,10 @@ fun MediaTile(
                 }
 
                 progress?.let { fraction ->
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .fillMaxWidth()
-                            .height(PROGRESS_BAR_HEIGHT)
-                            .background(Color.Black.copy(alpha = 0.5f)),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .fillMaxWidth(fraction)
-                                .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator),
-                        )
-                    }
+                    PlaybackStatusBar(
+                        progress = fraction,
+                        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+                    )
                 }
             }
         }

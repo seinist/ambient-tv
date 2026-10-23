@@ -894,25 +894,11 @@ internal fun HomeHero(
                         }
                         remainingLabel?.let { label ->
                             val progress = mediaItem.progressFraction ?: 0f
-                            Box(
-                                Modifier
-                                    .width(112.dp)
-                                    .height(4.dp)
-                                    .background(
-                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
-                                        androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
-                                    ),
-                            ) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth(progress)
-                                        .height(4.dp)
-                                        .background(
-                                            MaterialTheme.colorScheme.primary,
-                                            androidx.compose.foundation.shape.RoundedCornerShape(999.dp),
-                                        ),
-                                )
-                            }
+                            com.ambient.tv.ui.common.PlaybackStatusBar(
+                                progress = progress,
+                                modifier = Modifier.width(112.dp),
+                                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
+                            )
                             Text(
                                 text = label,
                                 modifier = Modifier.weight(1f),

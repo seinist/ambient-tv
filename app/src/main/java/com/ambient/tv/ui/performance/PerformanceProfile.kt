@@ -46,6 +46,8 @@ data class PerformanceProfile(
 ) {
     val allowBlur: Boolean get() = !reducedEffects
     val allowSoftShadow: Boolean get() = !reducedEffects
+    /** A small focus shadow is reserved for the explicitly selected highest UI profile. */
+    val allowFocusedItemShadow: Boolean get() = mode == PerformanceMode.MAXIMUM
     val allowSpringFocus: Boolean get() = !reducedEffects
     /** Kodi-like nav clicks; hard-off under interface Sparsam/Low. */
     val allowUiSounds: Boolean get() = !reducedEffects

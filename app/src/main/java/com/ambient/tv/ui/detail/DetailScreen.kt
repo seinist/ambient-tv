@@ -706,10 +706,9 @@ private fun DetailHero(
                                 color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.text,
                                 style = MaterialTheme.typography.bodySmall,
                             )
-                            androidx.compose.material3.LinearProgressIndicator(
-                                progress = { progress },
-                                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth().height(3.dp),
-                                color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                            com.ambient.tv.ui.common.PlaybackStatusBar(
+                                progress = progress,
+                                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
                                 trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = .15f),
                             )
                         }

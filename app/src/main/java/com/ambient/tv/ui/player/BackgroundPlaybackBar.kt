@@ -237,19 +237,11 @@ fun BackgroundPlaybackBar(
         }
 
         progress?.let {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(3.dp)
-                    .background(Color.White.copy(alpha = 0.11f), RoundedCornerShape(99.dp)),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(it)
-                        .height(3.dp)
-                        .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, RoundedCornerShape(99.dp)),
-                )
-            }
+            com.ambient.tv.ui.common.PlaybackStatusBar(
+                progress = it,
+                modifier = Modifier.fillMaxWidth(),
+                trackColor = Color.White.copy(alpha = 0.11f),
+            )
         }
 
         Row(

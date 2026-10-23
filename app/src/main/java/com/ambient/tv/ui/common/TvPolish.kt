@@ -174,7 +174,9 @@ fun Modifier.mediaFocusMotion(
     focused: Boolean,
     focusedScale: Float = LocalUiTokens.current.focusScale,
 ): Modifier {
-    val motionEnabled = LocalPerformanceProfile.current.allowSpringFocus
+    val performance = LocalPerformanceProfile.current
+    val motionEnabled = performance.allowSpringFocus
+    val tokens = LocalUiTokens.current
     val animatedScale = animateFloatAsState(
         targetValue = if (motionEnabled && focused) focusedScale else 1f,
         animationSpec = if (motionEnabled) {
@@ -186,6 +188,11 @@ fun Modifier.mediaFocusMotion(
         label = "mediaFocusMotion",
     )
     return this
+        .then(
+            if (focused && performance.allowFocusedItemShadow) {
+                Modifier.shadow(5.dp, RoundedCornerShape(tokens.cardRadius), clip = false)
+            } else Modifier
+        )
         .zIndex(if (motionEnabled && focused) 1f else 0f)
         .graphicsLayer {
             scaleX = animatedScale.value
