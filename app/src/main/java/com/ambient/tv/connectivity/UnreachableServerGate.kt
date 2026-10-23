@@ -50,6 +50,7 @@ class UnreachableServerGate @Inject constructor(
     private val plex: ServerConnectionManager,
     private val jellyfin: JellyfinConnectionManager,
     private val emby: EmbyConnectionManager,
+    private val resumeConnectivity: ResumeConnectivityMonitor,
     private val refreshBus: PlexRefreshBus,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -62,9 +63,9 @@ class UnreachableServerGate @Inject constructor(
         jellyfin.state,
         emby.state,
         acknowledged,
-        combine(revision, hosts.states) { revision, hosts -> revision to hosts },
-    ) { plexState, jellyfinState, embyState, acknowledgedIds, _ ->
-        snapshot(plexState, jellyfinState, embyState, acknowledgedIds)
+        combine(revision, hosts.states, resumeConnectivity.status) { _, _, resumeStatus -> resumeStatus },
+    ) { plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus ->
+        snapshot(plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus)
     }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
 
     init {
@@ -100,6 +101,7 @@ class UnreachableServerGate @Inject constructor(
         jellyfin.state.value,
         emby.state.value,
         acknowledged.value,
+        resumeConnectivity.status.value,
     )
 
     /** Re-read enabled systems (YouTube and the rest are not connection-state flows). */
@@ -156,6 +158,7 @@ class UnreachableServerGate @Inject constructor(
         jellyfinState: ServerConnectionState,
         embyState: ServerConnectionState,
         acknowledgedIds: Set<String>,
+        resumeStatus: ResumeConnectivityStatus,
     ): UnreachableServerGateState {
         val probes = mapOf(
             MediaSystem.PLEX.key to hostProbe("plex", preferences.isConfigured, plexState),
@@ -168,7 +171,9 @@ class UnreachableServerGate @Inject constructor(
         val names = decision.unreachable.map { displayName(it) }.filter { it.isNotBlank() }
         return UnreachableServerGateState(
             unreachable = decision.unreachable,
-            pending = decision.pending,
+            // A short resume wake publishes WakeTimedOut before Home starts its full wake.
+            // Keep that hand-off pending so the global dialog cannot flash between both jobs.
+            pending = decision.pending || resumeHoldsUnreachablePrompt(resumeStatus),
             canDismiss = decision.canDismiss,
             acknowledged = acknowledgedIds,
             names = names,

@@ -1,6 +1,7 @@
 package com.ambient.tv.connectivity
 
 import com.ambient.tv.server.ServerConnectionState
+import com.ambient.tv.ui.common.MediaSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -113,6 +114,49 @@ class UnreachableServerPolicyTest {
             ServerProbe.REACHABLE,
             probeOf(true, ServerConnectionState.Online(com.ambient.tv.domain.model.PlexServerIdentity("m", "n", false))),
         )
+    }
+
+    @Test
+    fun `resume result handoff keeps unreachable prompt pending until full wake starts`() {
+        val timedOut = decideUnreachableServers(
+            UnreachableServerInput(
+                probes = mapOf("plex" to ServerProbe.UNREACHABLE),
+                activeIndependentSystems = setOf("youtube"),
+            ),
+        )
+        assertTrue(timedOut.canDismiss)
+
+        val completedBriefWake = ResumeConnectivityStatus.Progress(
+            networkOk = true,
+            vpnLabel = null,
+            servers = listOf(
+                ResumeConnectivityStatus.ServerProgress(
+                    MediaSystem.PLEX,
+                    ResumeConnectivityStatus.ServerPhase.OFFLINE,
+                ),
+            ),
+        )
+        val handoff = UnreachableServerGateState(
+            unreachable = timedOut.unreachable,
+            pending = timedOut.pending || resumeHoldsUnreachablePrompt(completedBriefWake),
+            canDismiss = timedOut.canDismiss,
+        )
+        assertFalse(handoff.prompt)
+        assertTrue(resumeHoldsUnreachablePrompt(ResumeConnectivityStatus.Checking))
+        assertFalse(resumeHoldsUnreachablePrompt(ResumeConnectivityStatus.Idle))
+
+        val fullWake = decideUnreachableServers(
+            UnreachableServerInput(
+                probes = mapOf("plex" to ServerProbe.PENDING),
+                activeIndependentSystems = setOf("youtube"),
+            ),
+        )
+        assertTrue(fullWake.pending)
+        assertFalse(UnreachableServerGateState(
+            unreachable = fullWake.unreachable,
+            pending = fullWake.pending,
+            canDismiss = fullWake.canDismiss,
+        ).prompt)
     }
 
     private fun UnreachableServerDecision.promptBlocked(): Boolean = !canDismiss && unreachable.isNotEmpty() && !pending

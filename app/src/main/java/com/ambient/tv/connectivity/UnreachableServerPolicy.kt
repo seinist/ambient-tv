@@ -60,6 +60,14 @@ fun decideUnreachableServers(input: UnreachableServerInput): UnreachableServerDe
     )
 }
 
+/**
+ * A foreground recheck owns connection presentation until its result hand-off has settled.
+ * [ResumeConnectivityStatus.Progress] intentionally includes the short completed-result window:
+ * Home uses that window to replace a brief WakeTimedOut with its full wake attempt.
+ */
+fun resumeHoldsUnreachablePrompt(status: ResumeConnectivityStatus): Boolean =
+    status == ResumeConnectivityStatus.Checking || status is ResumeConnectivityStatus.Progress
+
 /** Continue records a hide only when another system can actually take over. */
 fun acknowledgedAfterConfirm(acknowledged: Set<String>, decision: UnreachableServerDecision): Set<String> =
     if (decision.canDismiss) acknowledged + decision.unreachable else acknowledged
