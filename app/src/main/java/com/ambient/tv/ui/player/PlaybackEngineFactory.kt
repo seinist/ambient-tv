@@ -93,17 +93,19 @@ object PlaybackEngineFactory {
         sourceHdrStandard: HdrStandard? = metadata?.handheldHdrStandard,
         preferOriginalAudio: Boolean = metadata?.source == "youtube",
         audioOnly: Boolean = metadata?.hasVideo == false,
+        mpvAudioAllowed: Boolean = sourceHdrStandard != HdrStandard.DOLBY_VISION,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
                 listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
                 Media3PlaybackHandle(create(context.applicationContext, streamUrl, startPositionMs,
-                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly))
+                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed))
             }.player
         }
         val started = System.nanoTime()
         val spectrumAnalyzer = AudioSpectrumAnalyzer()
         val audioSession = AudioSession(videoImagePreferences(context), "media3", audioPassthroughEnabled, audioOnly = audioOnly)
+        audioSession.updateMpvAllowed(mpvAudioAllowed)
         val renderersFactory = Media3AudioProcessing.factory(context, audioSession, spectrumAnalyzer)
 
         val audioAttributes = AudioAttributes.Builder()

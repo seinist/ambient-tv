@@ -42,7 +42,8 @@ class AudioOnlyOutputTest {
                 assertEquals(requested.normalized(), session.options)
                 assertEquals(AudioOutputMode.PCM, session.outputPlan().mode)
                 assertFalse(session.bitstreamPermitted)
-                assertEquals("5.1", session.outputPlan().channels)
+                assertEquals(if (backend == "vlc") "stereo" else "5.1", session.outputPlan().channels)
+                assertEquals(backend == "vlc", session.outputPlan().pcmLimitFallback)
                 session.restoreProfile(session.settings)
                 assertEquals(AudioOutputMode.PCM, session.outputPlan().mode)
             }

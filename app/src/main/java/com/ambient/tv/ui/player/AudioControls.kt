@@ -22,7 +22,7 @@ import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 
 @Composable
 fun AudioControls(session: AudioSession, section: String? = null, onOpenSection: ((String) -> Unit)? = null) {
-    val route = session.route
+    val route = session.effectiveRoute
     AudioProfileEditor(
         session.displaySettings, session.backend, session.sourcePassthrough, session.supportsNight,
         session::selectProfile, session::update, session::trackPreference,
@@ -30,12 +30,14 @@ fun AudioControls(session: AudioSession, section: String? = null, onOpenSection:
         sourceCodec = session.sourceCodec,
         sourceChannels = session.sourceChannels,
         actualPlan = session.outputPlan(),
+        mpvBlockedByVideo = !session.mpvAllowed,
         flatLive = true,
         panelSection = section,
         onOpenSection = onOpenSection,
         delayScopeHint = if (session.titleScoped) stringResource(R.string.audio_delay_title_scope) else null,
     )
     session.warning?.let { ImageHint(stringResource(R.string.audio_rejected, it)) }
+    if (session.outputPlan().pcmLimitFallback) ImageHint(stringResource(R.string.audio_vlc_pcm_limit_fallback))
 }
 
 @Composable
@@ -72,6 +74,7 @@ internal fun AudioProfileEditor(
     sourceCodec: String? = null,
     sourceChannels: Int? = null,
     actualPlan: AudioOutputPlan? = null,
+    mpvBlockedByVideo: Boolean = false,
     /** Player only: the delay belongs to the playing title, the profile keeps the default. */
     delayScopeHint: String? = null,
     flatLive: Boolean = false,
@@ -188,7 +191,8 @@ internal fun AudioProfileEditor(
                 o.pcmChannels(route.pcmChannels) > 2 -> R.string.audio_ac3_multichannel_pcm
                 o.conversionLocation != "server" && backend != "mpv" && !route.mpvAvailable &&
                     !(backend in setOf("auto", "media3") && com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
-                        (sourceCodec == null || com.ambient.tv.ui.player.audio.localDecodableSourceCodec(sourceCodec))) -> R.string.audio_ac3_no_encoder
+                        (sourceCodec == null || com.ambient.tv.ui.player.audio.localDecodableSourceCodec(sourceCodec))) ->
+                    if (mpvBlockedByVideo) R.string.audio_ac3_video_constraint else R.string.audio_ac3_no_encoder
                 else -> null
             }
             if (ac3Unavailable == null) {

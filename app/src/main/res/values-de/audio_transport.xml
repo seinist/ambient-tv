@@ -1,4 +1,6 @@
 <resources>
+    <string name="audio_ac3_video_constraint">Lokale AC3-Umwandlung dieser Tonspur benötigt MPV, aber dieses Video muss mit Media3 abgespielt werden. Bitte PCM oder Server-Umwandlung verwenden.</string>
+    <string name="audio_vlc_pcm_limit_fallback">VLC kann Mehrkanal-PCM an diesem Ausgang nicht auf 5.1 begrenzen. Stereo hält die Kanalgrenze ein; für 5.1 bitte Media3 oder MPV verwenden.</string>
     <string name="audio_pcm_channels">PCM-Kanäle der Verbindung</string>
     <string name="audio_pcm_channels_hint">Begrenzt nur dekodiertes PCM. Eine 2.0-Verbindung kann weiterhin AC3 5.1 per Passthrough übertragen.</string>
     <string name="audio_channel_mix">Kanalmischung / Downmix</string>

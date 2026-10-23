@@ -264,6 +264,7 @@ private fun PlayerContent(
                 streamHeaders = state.streamHeaders,
                 audioPassthroughEnabled = state.audioPassthroughEnabled,
                 metadata = metadata,
+                mpvAudioAllowed = viewModel.mpvAudioAllowed(state),
             )
     }
 
@@ -280,8 +281,13 @@ private fun PlayerContent(
     var panel by panelNavigation
     val audioSession = com.ambient.tv.ui.player.Media3AudioProcessing.session(exoPlayer)
     DisposableEffect(audioSession, exoPlayer) {
+        audioSession?.let(viewModel::restoreReloadedAudio)
         audioSession?.conversionLocationChanged = { viewModel.audioConversionLocationChanged(it, exoPlayer.currentPosition) }
-        onDispose { audioSession?.conversionLocationChanged = {} }
+        onDispose { audioSession?.conversionLocationChanged = { false } }
+    }
+    DisposableEffect(audioSession, viewModel.mpvAudioAllowed(state)) {
+        audioSession?.updateMpvAllowed(viewModel.mpvAudioAllowed(state))
+        onDispose { }
     }
     val nerdStats = rememberMedia3NerdStats(
         exoPlayer,

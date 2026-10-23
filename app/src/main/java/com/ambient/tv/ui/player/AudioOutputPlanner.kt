@@ -26,6 +26,7 @@ data class AudioOutputPlan(
     val channels: String = "auto",
     val applyDsp: Boolean = true,
     val heavyAudio: Boolean = false,
+    val pcmLimitFallback: Boolean = false,
 )
 
 /** Maps container codec names onto the five bitstream keys the route probe understands. */
@@ -135,10 +136,14 @@ fun planAudioOutput(
         )
     }
 
+    // VLC's Android sink offers only unrestricted PCM or stereo, not a 5.1 cap.
+    // Honour an inherited cap safely instead of advertising a limit the sink ignores.
+    val vlcPcmLimit = backend == "vlc" && channels == "5.1" && liveRoute.pcmChannels > 6
     val dsp = requested.eqEnabled || requested.dialogue > 0 || requested.night || requested.normalize || requested.upmix
     return AudioOutputPlan(
         mode = AudioOutputMode.PCM,
-        channels = channels,
+        channels = if (vlcPcmLimit) "stereo" else channels,
+        pcmLimitFallback = vlcPcmLimit,
         applyDsp = true,
         needsMpv = localEnabled && backend in setOf("auto", "media3") && !media3CanDecode &&
             !media3LocalAvailable && liveRoute.mpvAvailable,

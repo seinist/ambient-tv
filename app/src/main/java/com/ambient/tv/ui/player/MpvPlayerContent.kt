@@ -180,8 +180,9 @@ internal fun MpvPlayerContent(
     var resizeKey by remember(playbackKey) { mutableStateOf(initialVideoPresentation.resizeKey()) }
     var sleepTimer by com.ambient.tv.ui.player.rememberPlaybackSleepTimer(controller)
     DisposableEffect(controller) {
+        viewModel.restoreReloadedAudio(controller.audioSession)
         controller.audioSession.conversionLocationChanged = { viewModel.audioConversionLocationChanged(it, controller.positionMs()) }
-        onDispose { controller.audioSession.conversionLocationChanged = {} }
+        onDispose { controller.audioSession.conversionLocationChanged = { false } }
     }
     // Read from the player: automatic selection and renderer restores change these without the panel.
     val selectedAudio = controller.audioTracks().firstOrNull { it.selected }?.id?.toString() ?: "auto"

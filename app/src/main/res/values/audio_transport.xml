@@ -1,4 +1,6 @@
 <resources>
+    <string name="audio_ac3_video_constraint">Local AC3 conversion of this audio track requires MPV, but this video must stay on Media3. Use PCM or server conversion.</string>
+    <string name="audio_vlc_pcm_limit_fallback">VLC cannot limit multichannel PCM to 5.1 on this output. Stereo is used to respect the channel limit; use Media3 or MPV for 5.1.</string>
     <string name="audio_pcm_channels">PCM connection channels</string>
     <string name="audio_pcm_channels_hint">Limits decoded PCM only. A 2.0 connection can still carry AC3 5.1 through passthrough.</string>
     <string name="audio_channel_mix">Channel mix / downmix</string>

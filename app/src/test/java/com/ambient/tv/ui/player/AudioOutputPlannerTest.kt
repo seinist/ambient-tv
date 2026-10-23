@@ -10,6 +10,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AudioOutputPlannerTest {
+    @Test fun vlcCannotSilentlyIgnoreAnInheritedFiveOneCap() {
+        val route = AudioRouteCapabilities(setOf("truehd"), 8, true)
+        val options = AudioOptions(output = "pcm", pcmChannelLimit = 6)
+        val plan = planAudioOutput(options, "truehd", route, "vlc", true, sourceChannels = 8)
+        assertEquals("stereo", plan.channels)
+        assertTrue(plan.pcmLimitFallback)
+        for (backend in listOf("media3", "mpv")) {
+            val supported = planAudioOutput(options, "truehd", route, backend, true, sourceChannels = 8)
+            assertEquals("5.1", supported.channels)
+            assertFalse(supported.pcmLimitFallback)
+        }
+        val encoded = planAudioOutput(options.copy(output = "bitstream"), "truehd", route, "vlc", true, sourceChannels = 8)
+        assertEquals(AudioOutputMode.PASSTHROUGH, encoded.mode)
+        assertFalse(encoded.pcmLimitFallback)
+        assertFalse(planAudioOutput(options, "aac", route.copy(pcmChannels = 6), "vlc", false,
+            sourceChannels = 6).pcmLimitFallback)
+    }
+
+    @Test fun videoBlockedMpvDoesNotPreventMedia3NativeAc3() {
+        val options = AudioOptions(output = "auto", localAc3 = true, pcmChannelLimit = 2)
+        val route = AudioRouteCapabilities(setOf("ac3"), 2, false)
+        val aac = planAudioOutput(options, "aac", route, "media3", true, sourceChannels = 6)
+        assertEquals(AudioOutputMode.PCM, aac.mode)
+        assertFalse(aac.needsMpv)
+        val native = planAudioOutput(options, "eac3", route, "media3", true, sourceChannels = 6, media3LocalAvailable = true)
+        assertEquals(AudioOutputMode.LOCAL_AC3, native.mode)
+        assertFalse(native.needsMpv)
+    }
+
     @Test fun pcmLimitsAlsoCapAutomaticMultichannelOutput() {
         val route = AudioRouteCapabilities(pcmChannels = 8)
         for ((limit, channels) in listOf(2 to "stereo", 6 to "5.1", 8 to "7.1")) {

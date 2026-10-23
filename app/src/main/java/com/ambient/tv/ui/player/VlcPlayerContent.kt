@@ -180,8 +180,9 @@ internal fun VlcPlayerContent(
     var zoomFactor by remember(playbackKey) { mutableStateOf(initialVideoPresentation.zoom) }
     var sleepTimer by com.ambient.tv.ui.player.rememberPlaybackSleepTimer(controller)
     DisposableEffect(controller) {
+        viewModel.restoreReloadedAudio(controller.audioSession)
         controller.audioSession.conversionLocationChanged = { viewModel.audioConversionLocationChanged(it, controller.status().positionMs) }
-        onDispose { controller.audioSession.conversionLocationChanged = {} }
+        onDispose { controller.audioSession.conversionLocationChanged = { false } }
     }
     // Read from the player: automatic selection and renderer restores change these without the panel.
     val selectedAudio = controller.currentAudioTrackId().toString()

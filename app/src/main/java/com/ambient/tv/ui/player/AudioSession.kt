@@ -88,6 +88,18 @@ class AudioSession(
      */
     var showFpsOverlay by mutableStateOf(false)
     var route by mutableStateOf(AudioRouteCapabilities())
+    var mpvAllowed by mutableStateOf(true)
+        private set
+    val effectiveRoute: AudioRouteCapabilities get() = if (mpvAllowed || !route.mpvAvailable) route else route.copy(mpvAvailable = false)
+
+    fun updateMpvAllowed(allowed: Boolean) {
+        if (mpvAllowed == allowed) return
+        val before = outputPlan()
+        mpvAllowed = allowed
+        renderOptions = optionsForPcm()
+        val after = outputPlan()
+        if (before != after) routeChanged(before, after)
+    }
     val options: AudioOptions get() = settings.currentForRoute(route.profile).let { o -> titleDelayMs?.let { o.copy(delayMs = it) } ?: o }
     /** What the player's audio editor shows: the profile with the title delay applied. */
     val displaySettings: AudioSettings get() = if (titleDelayMs == null) settings else settings.updateForRoute(options, route.profile)
@@ -133,7 +145,7 @@ class AudioSession(
         routeMonitor = null
         routeChanged = { _, _ -> }
         apply = { _, _ -> }
-        conversionLocationChanged = {}
+        conversionLocationChanged = { false }
     }
 
     fun outputPlan(media3CanDecode: Boolean = true, options: AudioOptions = this.options): AudioOutputPlan =
@@ -151,7 +163,7 @@ class AudioSession(
             else -> options
         }
         return planAudioOutput(
-            effective, sourceCodec, route, backend, sourcePassthrough, media3CanDecode,
+            effective, sourceCodec, effectiveRoute, backend, sourcePassthrough, media3CanDecode,
             AudioCodecRejects.snapshot(), sourceChannels,
             dtsCoreMissing = AudioCodecRejects.dtsCoreMissing,
             media3LocalAvailable = com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
@@ -177,7 +189,8 @@ class AudioSession(
         val route = route
         val codec = sourceCodec
         val channels = sourceChannels
-        val flags = (if (forceStereoPcm) 1 else 0) or (if (localEncoderFailed) 2 else 0) or (if (audioOnly) 4 else 0)
+        val flags = (if (forceStereoPcm) 1 else 0) or (if (localEncoderFailed) 2 else 0) or
+            (if (audioOnly) 4 else 0) or (if (mpvAllowed) 8 else 0)
         val rejects = AudioCodecRejects.version
         pcmMemo?.let { memo ->
             if (options == pcmMemoOptions && route == pcmMemoRoute && codec == pcmMemoCodec &&
@@ -201,7 +214,8 @@ class AudioSession(
             .copy(channels = plan.channels)
     }
 
-    var conversionLocationChanged: (String) -> Unit = {}
+    /** Returns true only when the owner accepted a stream reload. */
+    var conversionLocationChanged: (AudioSession) -> Boolean = { false }
 
     fun update(next: AudioOptions) {
         manuallyEdited = true
@@ -237,8 +251,7 @@ class AudioSession(
         settings = next.copy(performanceHint = false).normalized()
         renderOptions = optionsForPcm()
         warning = null
-        if (old.conversionLocation != options.conversionLocation) conversionLocationChanged(options.conversionLocation)
-        else apply(old, options)
+        if (!audioConversionRequiresReload(old, options) || !conversionLocationChanged(this)) apply(old, options)
     }
 
     fun diagnosticSummary(): String = buildList {

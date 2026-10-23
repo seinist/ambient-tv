@@ -182,7 +182,8 @@ class PlayerViewModel @Inject constructor(
 
     private var forcedVersion: Int? = null
     private var versionResumeMs: Long? = null
-    private var conversionLocationOverride: String? = null
+    private var conversionRestart: AudioConversionRestart? = null
+    private var restoreConversionSettings = false
     fun selectCompanionVersion(key: String) {
         if (changingItem) return
         val state = _uiState.value as? PlayerUiState.Ready ?: return
@@ -304,7 +305,8 @@ class PlayerViewModel @Inject constructor(
         savedStateHandle["restart"] = false
         forcedVersion = null
         versionResumeMs = null
-        conversionLocationOverride = null
+        conversionRestart = null
+        restoreConversionSettings = false
         audioFallbackBackends.clear()
         serverUnreachableRetryAttempted = false
         videoFallbackAttempted = false
@@ -476,17 +478,17 @@ class PlayerViewModel @Inject constructor(
                 val route = AudioPassthroughPolicy.probeCached(context)
                 val conversionMetadata = PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey,
                     sourceWidth = version.width, sourceHeight = version.height)
-                val conversionSettings = TitleVideoSettingsStore.load(context, conversionMetadata)?.audio
+                val conversionSettings = conversionRestart?.settings ?: TitleVideoSettingsStore.load(context, conversionMetadata)?.audio
                     ?: ResolutionVideoProfileStore.load(context, conversionMetadata)?.audio ?: appPreferences.audioSettings
-                val conversionOptions = conversionSettings.currentForRoute(route.profile).let {
-                    conversionLocationOverride?.let { location -> it.copy(conversionLocation = location) } ?: it
-                }
-                val preferredAudio = com.ambient.tv.data.local.audioTrackForConversion(version.tracks,
+                val conversionOptions = conversionSettings.currentForRoute(route.profile)
+                val preferredAudio = conversionRestart?.streamId?.let { id -> version.tracks.firstOrNull { it.type == MediaTrackType.AUDIO && it.id == id } }
+                    ?: com.ambient.tv.data.local.audioTrackForConversion(version.tracks,
                     appPreferences.playbackAudioLanguage, conversionSettings.tracks)
                 var convertedStreamId: Long? = null
                 if (plan?.mode == PlaybackMode.DIRECT_PLAY && supportsServerAudioConversion(playbackRatingKey) &&
+                    ((conversionRestart?.wasServerConverted == true && conversionOptions.conversionLocation == "server" && conversionOptions.localFallback != "off") ||
                     shouldConvertAudioOnServer(conversionOptions, preferredAudio?.codec ?: assessment.audioCodec,
-                        preferredAudio?.channels, route, assessment.audioSupported)) {
+                        preferredAudio?.channels, route, assessment.audioSupported))) {
                     val codec = serverAudioTarget(conversionOptions, route, preferredAudio?.channels, appPreferences.mediaAudioPassthroughEnabled)
                     val result = mediaRepository.getAudioCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex,
                         startPositionMs, codec, preferredAudio?.id)
@@ -666,17 +668,31 @@ class PlayerViewModel @Inject constructor(
             serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId)
     }
 
-    fun audioConversionLocationChanged(location: String, positionMs: Long) {
-        val current = _uiState.value as? PlayerUiState.Ready ?: return
-        if (location !in setOf("local", "server") || changingItem) return
-        conversionLocationOverride = location
+    fun restoreReloadedAudio(session: AudioSession) {
+        if (!restoreConversionSettings) return
+        conversionRestart?.restore(session)
+        restoreConversionSettings = false
+    }
+
+    fun mpvAudioAllowed(state: PlayerUiState.Ready): Boolean =
+        RendererCapabilityPolicy.effectiveBackend("mpv", state.videoCodec, state.videoDynamicRange,
+            state.videoProfile, state.runtimeHdrStandard == HdrStandard.DOLBY_VISION) == "mpv"
+
+    fun audioConversionLocationChanged(session: AudioSession, positionMs: Long): Boolean {
+        val current = _uiState.value as? PlayerUiState.Ready ?: return false
+        if (changingItem || !supportsServerAudioConversion(current.sourceRatingKey)) return false
+        val restart = session.conversionRestart(current.serverAudioStreamId ?: conversionRestart?.streamId,
+            positionMs, current.timelineOffsetMs, current.serverAudioConversionCodec != null)
+        conversionRestart = restart
+        restoreConversionSettings = true
         // Re-open the original media version at the absolute position. This also leaves a
         // previous server-converted URL when switching back to local conversion.
-        versionResumeMs = positionMs + current.timelineOffsetMs
+        versionResumeMs = restart.absolutePositionMs
         BackgroundPlaybackSession.stop()
         playbackLoadJob?.cancel()
         _uiState.value = PlayerUiState.Loading
         playbackLoadJob = viewModelScope.launch { loadPlayback() }
+        return true
     }
 
     private fun postAudioRecoveryNotice(message: Int, failed: Boolean = false) {
@@ -701,12 +717,14 @@ class PlayerViewModel @Inject constructor(
         val route = runCatching {
             AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = MpvBackendAvailability.isAvailable)
         }.getOrDefault(AudioRouteCapabilities(mpvAvailable = MpvBackendAvailability.isAvailable))
+        val permittedRoute = route.copy(mpvAvailable = route.mpvAvailable &&
+            RendererCapabilityPolicy.effectiveBackend("mpv", videoCodec, dynamicRange, videoProfile) == "mpv")
         val audioPlan = planAudioOutput(
             options = appPreferences.audioSettings.currentForRoute(route.profile).let {
                 if (audioOnly) it.copy(output = "pcm", localFallback = "pcm", localAc3 = false) else it
             },
             sourceCodec = audioCodec,
-            route = route,
+            route = permittedRoute,
             backend = requested,
             sourcePassthrough = appPreferences.mediaAudioPassthroughEnabled,
             media3CanDecode = media3CanDecode,
@@ -736,6 +754,7 @@ class PlayerViewModel @Inject constructor(
     fun followAudioPlan(positionMs: Long) {
         if (routedAudioOptions().localFallback == "off" || !MpvBackendAvailability.isAvailable) return
         val current = _uiState.value as? PlayerUiState.Ready ?: return
+        if (!mpvAudioAllowed(current)) return
         if (current.playbackBackendKey == "mpv" || "mpv" in audioFallbackBackends) return
         if (!AudioEngineRedirectGuard.once(current.streamUrl)) return
         val plan = when (val handle = BackgroundPlaybackSession.activeHandle()) {
