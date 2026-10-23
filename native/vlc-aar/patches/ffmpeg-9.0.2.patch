@@ -1,4 +1,3 @@
-diff -ruN a/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch b/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
 --- a/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
 +++ b/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPFLAGS-for.patch
 @@ -0,0 +1,22 @@
@@ -24,7 +23,6 @@ diff -ruN a/contrib/src/ffmpeg/0009-swscale-x86-use-HOSTCPPFLAGS-instead-of-CPPF
 +-	$(HOSTCC) $(HOSTCC_E) $(CPPFLAGS) $<
 ++	$(HOSTCC) $(HOSTCC_E) $(HOSTCPPFLAGS) $<
 + endif
-diff -ruN a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
 --- a/contrib/src/ffmpeg/rules.mak
 +++ b/contrib/src/ffmpeg/rules.mak
 @@ -1,10 +1,11 @@
@@ -35,7 +33,7 @@ diff -ruN a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
 -FFMPEG_REVISION := 0
 -# FFMPEG_VERSION := $(FFMPEG_MAJVERSION).$(FFMPEG_REVISION)
 -FFMPEG_VERSION := $(FFMPEG_MAJVERSION)
-+# Same release as gradle/external-versions.properties FFMPEG_REF (n9.0.2).
++# release/9.0 snapshot; build_vlc_vulkan.sh supplies FFMPEG_HASH from shared pins.
 +FFMPEG_MAJVERSION := 9.0
 +FFMPEG_REVISION := 2
 +FFMPEG_VERSION := $(FFMPEG_MAJVERSION).$(FFMPEG_REVISION)
@@ -52,7 +50,29 @@ diff -ruN a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
  	--pkg-config="$(PKG_CONFIG)" \
  	--disable-doc \
  	--disable-encoder=vorbis \
-@@ -242,6 +245,8 @@
+@@ -223,16 +226,11 @@
+ $(TARBALLS)/ffmpeg-$(FFMPEG_BASENAME).tar.xz:
+ 	$(call download_git,$(FFMPEG_GITURL),$(FFMPEG_BRANCH),$(FFMPEG_HASH))
+ 
+-# .sum-ffmpeg: $(TARBALLS)/ffmpeg-$(FFMPEG_BASENAME).tar.xz
+-# 	$(call check_githash,$(FFMPEG_HASH))
+-# 	touch $@
+-
+-$(TARBALLS)/ffmpeg-$(FFMPEG_VERSION).tar.xz:
+-	$(call download_pkg,$(FFMPEG_URL),ffmpeg)
+-
+-.sum-ffmpeg: ffmpeg-$(FFMPEG_VERSION).tar.xz
+-
+-ffmpeg: ffmpeg-$(FFMPEG_VERSION).tar.xz .sum-ffmpeg
++.sum-ffmpeg: $(TARBALLS)/ffmpeg-$(FFMPEG_BASENAME).tar.xz
++	$(call check_githash,$(FFMPEG_HASH))
++	touch $@
++
++ffmpeg: ffmpeg-$(FFMPEG_BASENAME).tar.xz .sum-ffmpeg
+ 	$(UNPACK)
+ 	$(APPLY) $(SRC)/ffmpeg/dxva_vc1_crash.patch
+ 	$(APPLY) $(SRC)/ffmpeg/h264_early_SAR.patch
+@@ -242,6 +240,8 @@
  	$(APPLY) $(SRC)/ffmpeg/0001-fix-mf_utils-compilation-with-mingw64.patch
  	$(APPLY) $(SRC)/ffmpeg/0011-avcodec-videotoolboxenc-disable-calls-on-unsupported.patch
  	$(APPLY) $(SRC)/ffmpeg/avcodec-fix-compilation-visionos.patch
@@ -61,13 +81,6 @@ diff -ruN a/contrib/src/ffmpeg/rules.mak b/contrib/src/ffmpeg/rules.mak
  	$(MOVE)
  
  .ffmpeg: ffmpeg
-diff -ruN a/contrib/src/ffmpeg/SHA512SUMS b/contrib/src/ffmpeg/SHA512SUMS
---- a/contrib/src/ffmpeg/SHA512SUMS
-+++ b/contrib/src/ffmpeg/SHA512SUMS
-@@ -1 +1 @@
--9deb30b93c27873564ec094693e72ff552f63a09af3175f9118672b88299a4e9495502aa0fb2dfbcd45857ba255f24b829bdd3c3c17d0f1eee75423302a9af8c  ffmpeg-8.1.tar.xz
-+7756f8434371b9bc1d01cf578bf49014e058b0869c3c1df05030f5f4035f1def64b2e7dba3cf340da4dc8dd9239dd5f894530c9e45793ac27876807079aa546a  ffmpeg-9.0.2.tar.xz
-diff -ruN a/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch b/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
 --- a/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
 +++ b/contrib/src/ffmpeg/0010-restore-v308-v408-v410-decoders.patch
 @@ -0,0 +1,395 @@

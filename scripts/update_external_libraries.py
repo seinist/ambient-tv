@@ -6,6 +6,7 @@ import os
 import json
 import re
 import sys
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -135,27 +136,16 @@ def mpv_latest() -> dict[str, str]:
 
 
 def ffmpeg_latest() -> dict[str, str]:
-    # FFmpeg does not publish GitHub releases; stable versions are plain tags
-    # named n<major>.<minor>[.<patch>] (e.g. n9.0.2). Exclude -dev/-rc refs.
-    best_key: tuple[int, int, int] | None = None
-    best_tag: str | None = None
-    best_sha: str | None = None
-    page = 1
-    while page <= 20:
-        tags = github(f"/repos/FFmpeg/FFmpeg/tags?per_page=100&page={page}")
-        if not tags:
-            break
-        for t in tags:
-            m = re.fullmatch(r"n(\d+)\.(\d+)(?:\.(\d+))?", t.get("name") or "")
-            if not m:
-                continue
-            key = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
-            if best_key is None or key > best_key:
-                best_key, best_tag, best_sha = key, m.group(0), t["commit"]["sha"]
-        page += 1
-    if best_tag is None:
-        raise RuntimeError("No stable FFmpeg release tag (n<major>.<minor>[.<patch>]) found")
-    return {"FFMPEG_REF": best_tag, "FFMPEG_COMMIT": best_sha}
+    # Stay on the requested maintenance branch, even when newer releases appear.
+    ref = "release/9.0"
+    output = subprocess.check_output(
+        ["git", "ls-remote", "--exit-code", "https://git.ffmpeg.org/ffmpeg.git",
+         f"refs/heads/{ref}"], text=True, timeout=60,
+    )
+    sha, remote_ref = output.strip().split()
+    if remote_ref != f"refs/heads/{ref}" or not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise RuntimeError("Invalid FFmpeg release/9.0 branch head")
+    return {"FFMPEG_REF": ref, "FFMPEG_COMMIT": sha}
 
 
 def projectm_latest() -> dict[str, str]:

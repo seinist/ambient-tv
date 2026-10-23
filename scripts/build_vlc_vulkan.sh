@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Include pins, build flags and both patch sets in the per-ABI cache identity.
 if [[ "${1:-}" == "--hash" ]]; then
-    (cd "$ROOT"; sha256sum scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
+    (cd "$ROOT"; sha256sum gradle/external-versions.properties scripts/build_vlc_vulkan.sh native/vlc-aar/patches/*.patch native/vlc-aar/jni-patches/*.patch) | sha256sum | cut -d ' ' -f1
     exit 0
 fi
 SOURCE_HASH="$(bash "$0" --hash)"
@@ -40,7 +40,7 @@ for patch in "$JNI"/libvlc/patches/*.patch; do
         git -C "$JNI/vlc" apply --reverse --check "$patch"
     fi
 done
-# ffmpeg-9.0.2.patch builds this VLC pin against the same n9.0.2 release as mpv
+# ffmpeg-9.0.2.patch supplies compatibility fixes for the release/9.0 snapshot
 # and puts the v308, v408 and v410 decoders back into that contrib FFmpeg.
 # A tree that already carries an older copy of one of these patches matches
 # neither direction. Restore the paths that copy owns, then apply the current file.
@@ -74,6 +74,11 @@ apply_vlc_patch() {
 for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
     apply_vlc_patch "$patch"
 done
+# Use the same reviewed branch snapshot as MPV. The patch selects VLC's native
+# Git archive + githash verification path instead of a release tarball.
+ffmpeg_commit="$(sed -n 's/^FFMPEG_COMMIT=//p' "$ROOT/gradle/external-versions.properties")"
+[[ "$ffmpeg_commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid FFmpeg commit' >&2; exit 1; }
+sed -i "s/^FFMPEG_HASH=.*/FFMPEG_HASH=$ffmpeg_commit/" "$JNI/vlc/contrib/src/ffmpeg/rules.mak"
 # The app minimum is API 29. Vulkan's system loader is available from API 24.
 sed -i 's/ANDROID_API=21/ANDROID_API=29/' "$JNI"/buildsystem/{compile-libvlc,build-libvlc,build-libvlcjni}.sh
 perl -i -pe 's/\[ "\$REL" != 29 \](?: && \[ "\$REL" != 30 \])*/[ "\$REL" != 29 ] && [ "\$REL" != 30 ]/' "$JNI"/buildsystem/{compile-libvlc,build-libvlc,build-libvlcjni}.sh

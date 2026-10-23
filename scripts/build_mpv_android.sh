@@ -10,7 +10,7 @@ set -euo pipefail
 #
 # Environment overrides:
 #   MPV_ANDROID_REF     git ref/commit of mpv-android (default from gradle/external-versions.properties)
-#   FFMPEG_REF          FFmpeg tag to build against (default from gradle/external-versions.properties)
+#   FFMPEG_REF          FFmpeg ref override to build against (default from gradle/external-versions.properties)
 #   MPV_BUILD_ROOT      work directory (default: .native/mpv-android)
 #   ANDROID_API         NDK API level used for JNI shim (default: 29)
 #   SKIP_MPV_DOWNLOAD=1 skip upstream SDK/source download after initial clone
@@ -148,27 +148,25 @@ if [[ "$CLEAN" == "1" ]]; then
   rm -rf "$BUILDSCRIPTS/prefix/arm64" "$BUILDSCRIPTS/prefix/armv7l"     "$BUILDSCRIPTS/prefix/x86" "$BUILDSCRIPTS/prefix/x86_64"
 fi
 
-# Upstream download-deps.sh just does a plain `git clone` of FFmpeg (whatever
-# master happens to be at clone time) unless IN_CI=1, which instead pins an
-# old CI-only branch. Pin explicitly to our own, regularly-updated tag instead
-# (see ./build.sh libs-check / libs-update) so builds are reproducible and not
-# stuck on either a stale CI branch or whatever revision happened to exist on
-# first clone.
+# Use the recorded release/9.0 head; libs-update advances it deliberately.
 FFMPEG_DIR="$BUILDSCRIPTS/deps/ffmpeg"
 FFMPEG_REF="${FFMPEG_REF:-$(external_version FFMPEG_REF)}"
-if [[ -d "$FFMPEG_DIR/.git" ]]; then
-  git -C "$FFMPEG_DIR" fetch --tags --prune origin
-  git -C "$FFMPEG_DIR" checkout --detach "$FFMPEG_REF"
-  # The pinned tag must still point at the pinned commit (overrides of FFMPEG_REF skip this).
-  FFMPEG_COMMIT="$(external_version FFMPEG_COMMIT)"
-  if [[ "$FFMPEG_REF" == "$(external_version FFMPEG_REF)" && -n "$FFMPEG_COMMIT" ]]; then
-    actual_commit="$(git -C "$FFMPEG_DIR" rev-parse HEAD)"
-    if [[ "$actual_commit" != "$FFMPEG_COMMIT" ]]; then
-      echo "FFmpeg $FFMPEG_REF resolves to $actual_commit, expected $FFMPEG_COMMIT" >&2
-      exit 4
-    fi
-  fi
+FFMPEG_COMMIT="$(external_version FFMPEG_COMMIT)"
+[[ -d "$FFMPEG_DIR/.git" ]] || { echo "Missing FFmpeg checkout" >&2; exit 1; }
+git -C "$FFMPEG_DIR" fetch origin "$FFMPEG_REF"
+ffmpeg_target="$FFMPEG_COMMIT"
+if [[ "$FFMPEG_REF" != "$(external_version FFMPEG_REF)" ]]; then
+  ffmpeg_target="$(git -C "$FFMPEG_DIR" rev-parse FETCH_HEAD)"
 fi
+# Remove only our known patch before moving revisions. Unknown local edits are
+# left in place so checkout fails safely if they conflict.
+for patch in "$ROOT_DIR"/native/ambientmpv/patches/ffmpeg-*.patch; do
+  if git -C "$FFMPEG_DIR" apply --reverse --check "$patch" 2>/dev/null; then
+    git -C "$FFMPEG_DIR" apply --reverse "$patch"
+  fi
+done
+git -C "$FFMPEG_DIR" checkout --detach "$ffmpeg_target"
+FFMPEG_COMMIT="$(git -C "$FFMPEG_DIR" rev-parse HEAD)"
 
 bash "$ROOT_DIR/scripts/enable_mpv_audio_encoder.sh" "$BUILDSCRIPTS"
 bash "$ROOT_DIR/scripts/prepare_mpv_ffmpeg.sh" "$BUILDSCRIPTS"
@@ -299,7 +297,7 @@ install_arch "arm64" "arm64-v8a" "aarch64-linux-android"
 install_arch "armv7l" "armeabi-v7a" "armv7a-linux-androideabi"
 install_arch "x86" "x86" "i686-linux-android"
 install_arch "x86_64" "x86_64" "x86_64-linux-android"
-printf 'mpv_android_ref=%s\n' "$MPV_ANDROID_REF" > "$ROOT_DIR/app/src/main/jniLibs/.mpv-version"
+printf 'mpv_android_ref=%s\nffmpeg_ref=%s\nffmpeg_commit=%s\n' "$MPV_ANDROID_REF" "$FFMPEG_REF" "$FFMPEG_COMMIT" > "$ROOT_DIR/app/src/main/jniLibs/.mpv-version"
 
 # Rendering and decoding support must survive the next normal native rebuild.
 if [[ "${MPV_ENABLE_VULKAN:-1}" == 1 ]]; then
