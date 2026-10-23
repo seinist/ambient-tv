@@ -83,7 +83,7 @@ fun Media3VideoSurface(
     val hdrHeadroom = videoSurfaceHdrHeadroom()
     AndroidView(
         factory = { context ->
-            PlayerView(context).apply {
+            FormatPlayerView(context).apply {
                 useController = false
                 isFocusable = false
                 isFocusableInTouchMode = false
@@ -100,7 +100,9 @@ fun Media3VideoSurface(
                 Media3PlaybackHandle.forPlayer(player)?.attachVideoView(it)
                 it.applyUiHdrHeadroom(hdrHeadroom)
             }
-            view.resizeMode = resizeMode
+            val effective = VideoPresentation(resizeMode, aspectRatio, zoom).normalized()
+            view.forcedAspectRatio = effective.aspectRatio
+            view.resizeMode = effective.resizeMode
             val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
             val sourceSize = player.videoSize
             val sourceAspectRatio = if (sourceSize.width > 0 && sourceSize.height > 0) {
@@ -108,14 +110,14 @@ fun Media3VideoSurface(
             } else {
                 0f
             }
-            contentFrame?.setAspectRatio(aspectRatio ?: sourceAspectRatio.takeIf { it > 0f } ?: sourceAspectRatioHint ?: 0f)
+            contentFrame?.setAspectRatio(effective.aspectRatio ?: sourceAspectRatio.takeIf { it > 0f } ?: sourceAspectRatioHint ?: 0f)
             view.videoSurfaceView?.apply {
                 isFocusable = false
                 isFocusableInTouchMode = false
                 pivotX = width / 2f
                 pivotY = height / 2f
-                scaleX = zoom.coerceIn(0.5f, 2f)
-                scaleY = zoom.coerceIn(0.5f, 2f)
+                scaleX = effective.zoom
+                scaleY = effective.zoom
             }
         },
         onRelease = {
@@ -139,3 +141,12 @@ fun Media3VideoTexture(
     modifier: Modifier = Modifier,
     sourceAspectRatioHint: Float? = null,
 ) = Media3VideoSurface(player, resizeMode, aspectRatio, zoom, modifier, sourceAspectRatioHint)
+
+/** PlayerView receives decoder format events independently of Compose updates. */
+internal class FormatPlayerView(context: android.content.Context) : PlayerView(context) {
+    var forcedAspectRatio: Float? = null
+
+    override fun onContentAspectRatioChanged(contentFrame: AspectRatioFrameLayout?, aspectRatio: Float) {
+        super.onContentAspectRatioChanged(contentFrame, forcedAspectRatio ?: aspectRatio)
+    }
+}

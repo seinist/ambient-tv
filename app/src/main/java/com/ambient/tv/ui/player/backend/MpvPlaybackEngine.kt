@@ -454,6 +454,8 @@ internal class MpvPlaybackEngine(
         setOption("force-window", "no")
         setOption("idle", "yes")
         setOption("keep-open", "yes")
+        // VideoSurfaceLayout owns fit/crop/stretch. Do not letterbox again inside that surface.
+        setOption("keepaspect", "no")
         setOption("audio-display", "no")
         setOption("input-default-bindings", "no")
         setOption("input-vo-keyboard", "no")

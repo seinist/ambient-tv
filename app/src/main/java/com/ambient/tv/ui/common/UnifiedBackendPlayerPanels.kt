@@ -274,7 +274,7 @@ fun UnifiedBackendPlayerPanel(
                 hasPresentationControls = onScalingChanged != null || onAspectChanged != null || onZoomChanged != null,
                 hasPlaybackControls = !isLive && onSpeedChanged != null,
                 presentationControls = {
-                    if (onScalingChanged != null) {
+                    if (onScalingChanged != null && aspectKey == "auto") {
                         PlayerDropUpSelector(
                             label = stringResource(R.string.player_scaling_mode),
                             value = when (scalingKey) {
@@ -302,10 +302,22 @@ fun UnifiedBackendPlayerPanel(
                                 "21:9" to "21:9",
                             ),
                             selectedKey = aspectKey,
-                            onSelected = onAspectChanged,
+                            onSelected = { key ->
+                                if (key != "auto") {
+                                    onScalingChanged?.invoke("fit")
+                                    onZoomChanged?.invoke(1f)
+                                }
+                                onAspectChanged(key)
+                            },
                         )
                     }
-                    if (onZoomChanged != null) {
+                    if (aspectKey != "auto") {
+                        Text(
+                            stringResource(R.string.player_forced_aspect_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (onZoomChanged != null && aspectKey == "auto") {
                         val zoomKey = when {
                             kotlin.math.abs(zoomFactor - 1.5f) < .01f -> "1.5"
                             kotlin.math.abs(zoomFactor - 1.25f) < .01f -> "1.25"
@@ -442,7 +454,7 @@ private fun skipModeLabel(mode: String, intro: Boolean): String = skipModeOption
 
 @Composable
 private fun videoSummary(scalingKey: String, aspectKey: String, zoom: Float, speed: Float, isLive: Boolean): String {
-    val scaling = when (scalingKey) {
+    val scaling = when (if (aspectKey == "auto") scalingKey else "fit") {
         "zoom" -> stringResource(R.string.player_fill_screen)
         "stretch" -> stringResource(R.string.player_stretch)
         else -> stringResource(R.string.player_fit_screen)
@@ -452,7 +464,7 @@ private fun videoSummary(scalingKey: String, aspectKey: String, zoom: Float, spe
         append(scaling)
         append(" · ")
         append(aspect)
-        if (kotlin.math.abs(zoom - 1f) >= .01f) append(" · ${(zoom * 100).toInt()}%")
+        if (aspectKey == "auto" && kotlin.math.abs(zoom - 1f) >= .01f) append(" · ${(zoom * 100).toInt()}%")
         if (!isLive && kotlin.math.abs(speed - 1f) >= .01f) append(" · ${speed}×")
     }
 }

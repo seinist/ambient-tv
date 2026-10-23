@@ -18,6 +18,14 @@ data class VideoPresentation(
     val zoom: Float = 1f,
 )
 
+/** Explicit formats always show the complete, distorted picture inside the viewport. */
+internal fun VideoPresentation.normalized(): VideoPresentation {
+    val ratio = aspectRatio?.takeIf { it.isFinite() && it > 0f }
+    return if (ratio != null) copy(
+        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT, aspectRatio = ratio, zoom = 1f,
+    ) else copy(aspectRatio = null, zoom = zoom.takeIf { it.isFinite() }?.coerceIn(0.5f, 2f) ?: 1f)
+}
+
 /** Common presentation target implemented by every playback backend. */
 interface VideoPresentationTarget {
     fun applyVideoPresentation(presentation: VideoPresentation)

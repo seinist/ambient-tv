@@ -1167,29 +1167,35 @@ private fun TvhVideoSettingsPanel(
                 fontSize = 11.sp,
             )
         }
-        item { Text(stringResource(R.string.player_scaling_mode), color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-        item {
-            TvhChoiceRow(stringResource(R.string.player_fit_screen), stringResource(R.string.player_fit_screen_hint), resizeMode == PlayerResizeMode.FIT, Modifier) { onResizeModeChange(PlayerResizeMode.FIT) }
+        if (aspectPreset == PlayerAspectPreset.AUTO) {
+            item { Text(stringResource(R.string.player_scaling_mode), color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+            item {
+                TvhChoiceRow(stringResource(R.string.player_fit_screen), stringResource(R.string.player_fit_screen_hint), resizeMode == PlayerResizeMode.FIT, Modifier) { onResizeModeChange(PlayerResizeMode.FIT) }
+            }
+            item { TvhChoiceRow(stringResource(R.string.player_fill_screen), stringResource(R.string.player_fill_screen_hint), resizeMode == PlayerResizeMode.ZOOM) { onResizeModeChange(PlayerResizeMode.ZOOM) } }
+            item { TvhChoiceRow(stringResource(R.string.player_stretch), stringResource(R.string.player_stretch_hint), resizeMode == PlayerResizeMode.STRETCH) { onResizeModeChange(PlayerResizeMode.STRETCH) } }
         }
-        item { TvhChoiceRow(stringResource(R.string.player_fill_screen), stringResource(R.string.player_fill_screen_hint), resizeMode == PlayerResizeMode.ZOOM) { onResizeModeChange(PlayerResizeMode.ZOOM) } }
-        item { TvhChoiceRow(stringResource(R.string.player_stretch), stringResource(R.string.player_stretch_hint), resizeMode == PlayerResizeMode.STRETCH) { onResizeModeChange(PlayerResizeMode.STRETCH) } }
         item {
             PlayerDropUpSelector(
                 label = stringResource(R.string.player_aspect_ratio),
                 value = when (aspectPreset) { PlayerAspectPreset.AUTO -> stringResource(R.string.player_aspect_auto); PlayerAspectPreset.RATIO_16_9 -> "16:9"; PlayerAspectPreset.RATIO_4_3 -> "4:3"; PlayerAspectPreset.RATIO_21_9 -> "21:9" },
                 options = listOf("auto" to stringResource(R.string.player_aspect_auto), "16:9" to "16:9", "4:3" to "4:3", "21:9" to "21:9"),
                 selectedKey = when (aspectPreset) { PlayerAspectPreset.AUTO -> "auto"; PlayerAspectPreset.RATIO_16_9 -> "16:9"; PlayerAspectPreset.RATIO_4_3 -> "4:3"; PlayerAspectPreset.RATIO_21_9 -> "21:9" },
-                onSelected = { key -> onAspectPresetChange(when (key) { "16:9" -> PlayerAspectPreset.RATIO_16_9; "4:3" -> PlayerAspectPreset.RATIO_4_3; "21:9" -> PlayerAspectPreset.RATIO_21_9; else -> PlayerAspectPreset.AUTO }) },
+                onSelected = { key ->
+                    if (key != "auto") { onResizeModeChange(PlayerResizeMode.FIT); onVideoZoomChange(1f) }
+                    onAspectPresetChange(when (key) { "16:9" -> PlayerAspectPreset.RATIO_16_9; "4:3" -> PlayerAspectPreset.RATIO_4_3; "21:9" -> PlayerAspectPreset.RATIO_21_9; else -> PlayerAspectPreset.AUTO }) },
             )
         }
-        item {
-            PlayerDropUpSelector(
-                label = stringResource(R.string.player_zoom_level),
-                value = "${(videoZoom * 100).toInt()}%",
-                options = listOf("1.0" to "100%", "1.1" to "110%", "1.25" to "125%", "1.5" to "150%"),
-                selectedKey = when { kotlin.math.abs(videoZoom - 1.5f) < .01f -> "1.5"; kotlin.math.abs(videoZoom - 1.25f) < .01f -> "1.25"; kotlin.math.abs(videoZoom - 1.1f) < .01f -> "1.1"; else -> "1.0" },
-                onSelected = { onVideoZoomChange(it.toFloatOrNull() ?: 1f) },
-            )
+        if (aspectPreset == PlayerAspectPreset.AUTO) {
+            item {
+                PlayerDropUpSelector(
+                    label = stringResource(R.string.player_zoom_level),
+                    value = "${(videoZoom * 100).toInt()}%",
+                    options = listOf("1.0" to "100%", "1.1" to "110%", "1.25" to "125%", "1.5" to "150%"),
+                    selectedKey = when { kotlin.math.abs(videoZoom - 1.5f) < .01f -> "1.5"; kotlin.math.abs(videoZoom - 1.25f) < .01f -> "1.25"; kotlin.math.abs(videoZoom - 1.1f) < .01f -> "1.1"; else -> "1.0" },
+                    onSelected = { onVideoZoomChange(it.toFloatOrNull() ?: 1f) },
+                )
+            }
         }
         if (allowSpeed) {
             item {

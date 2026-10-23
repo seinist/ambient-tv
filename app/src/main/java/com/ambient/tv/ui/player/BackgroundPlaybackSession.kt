@@ -470,8 +470,9 @@ object BackgroundPlaybackSession {
     }
     fun setVideoPresentation(value: VideoPresentation) {
         checkThread()
-        mutableVideoPresentation.value = value
-        (handle as? VideoPresentationTarget)?.applyVideoPresentation(value)
+        val effective = value.normalized()
+        mutableVideoPresentation.value = effective
+        (handle as? VideoPresentationTarget)?.applyVideoPresentation(effective)
     }
     fun updateMetadata(metadata: PlaybackMetadata) {
         if (snapshot.value.metadata?.route == metadata.route) {

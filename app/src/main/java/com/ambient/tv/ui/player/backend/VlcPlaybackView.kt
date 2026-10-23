@@ -393,7 +393,12 @@ class VlcPlaybackController(
 
     private fun reportWindowSize(width: Int, height: Int) {
         if (released || width <= 0 || height <= 0) return
-        runCatching { player.vlcVout.setWindowSize(width, height) }
+        runCatching {
+            // The host already fits the surface. Fill it instead of preserving source DAR again.
+            player.setAspectRatio("$width:$height")
+            player.setScale(0f)
+            player.vlcVout.setWindowSize(width, height)
+        }
             .onFailure { Timber.w(it, "AV-AUDIT VLC: setWindowSize(%d, %d) failed", width, height) }
     }
     var imageOptions by mutableStateOf(initialImageOptions.normalized())

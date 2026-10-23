@@ -18,8 +18,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ambient.tv.ui.display.UI_HDR_HEADROOM_CAP
 import android.widget.FrameLayout
-import androidx.media3.ui.AspectRatioFrameLayout
-import kotlin.math.roundToInt
 
 /**
  * Shared native video plane for every renderer.
@@ -158,32 +156,10 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
             return
         }
 
-        val viewportRatio = width.toFloat() / height
-        val contentRatio = presentation.aspectRatio
-            ?: sourceAspectRatio?.takeIf { it.isFinite() && it > 0f }
-            ?: viewportRatio
-        val zoom = presentation.zoom.coerceIn(0.5f, 2f)
-
-        var childWidth = width.toFloat()
-        var childHeight = height.toFloat()
-        when (presentation.resizeMode) {
-            AspectRatioFrameLayout.RESIZE_MODE_FIT -> if (contentRatio > viewportRatio) {
-                childHeight = width / contentRatio
-            } else {
-                childWidth = height * contentRatio
-            }
-            AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> if (contentRatio > viewportRatio) {
-                childWidth = height * contentRatio
-            } else {
-                childHeight = width / contentRatio
-            }
-            else -> Unit // FILL deliberately stretches to the viewport.
-        }
-        childWidth *= zoom
-        childHeight *= zoom
+        val (childWidth, childHeight) = videoPresentationSize(width, height, presentation, sourceAspectRatio)
         videoSurface.measure(
-            MeasureSpec.makeMeasureSpec(childWidth.roundToInt().coerceAtLeast(1), MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(childHeight.roundToInt().coerceAtLeast(1), MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
         )
     }
 
