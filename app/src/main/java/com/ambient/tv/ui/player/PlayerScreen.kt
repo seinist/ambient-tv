@@ -1582,10 +1582,10 @@ private fun PlaybackMediaFlags(state: PlayerUiState.Ready, player: ExoPlayer) {
             hasVideo = format != null,
         )
         formatNerdFps(format?.frameRate?.toDouble())?.let { PlayerMediaFlag(Icons.Filled.Movie, it) }
-        state.videoCodec?.takeIf { it.isNotBlank() }?.let { PlayerMediaFlag(Icons.Filled.Movie, friendlyCodec(it)) }
+        state.videoCodec?.takeIf { it.isNotBlank() }?.let { PlayerMediaFlag(Icons.Filled.Movie, playerCodecLabel(it)) }
         state.audioCodec?.takeIf { it.isNotBlank() }?.let { codec ->
             val channels = player.audioFormat?.channelCount?.takeIf { it > 0 }?.let(::formatChannelCount)
-            PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, listOfNotNull(friendlyCodec(codec), channels).joinToString(" "))
+            PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, listOfNotNull(playerCodecLabel(codec), channels).joinToString(" "))
         }
         audioOutputBadge(Media3AudioProcessing.session(player), state.serverAudioConversionCodec)
             ?.let { PlayerMediaFlag(Icons.AutoMirrored.Filled.VolumeUp, it) }

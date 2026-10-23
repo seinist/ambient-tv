@@ -71,7 +71,7 @@ internal fun PlayerVideoBadges(
 internal fun PlayerStreamBadges(values: List<String>) {
     val parts = playerStreamBadgeParts(values)
     PlayerVideoBadges(dimensions = parts.dimensions, hdrLabel = parts.hdr)
-    parts.extras.forEach { MetaBadge(it.uppercase()) }
+    parts.extras.forEach { MetaBadge(compactStreamBadge(it).uppercase()) }
 }
 
 internal const val PLAYER_STREAM_EXTRA_BADGES = 4
