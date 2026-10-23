@@ -78,9 +78,21 @@ fun SpotifyDetailScreen(
         return
     }
     val primaryFocus = remember { FocusRequester() }
-    var restoreFocusKey by androidx.compose.runtime.saveable.rememberSaveable(viewModel.type, viewModel.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(state.loading, state.offline, state.error, restoreFocusKey) {
-        if (state.loading || (state.offline && state.error == null) || restoreFocusKey != null) return@LaunchedEffect
+    // Focus changes are frequent. Keep the last key in a non-snapshot holder so moving through a
+    // long track list does not recompose the complete screen and schedule another focus request.
+    val focusMemory = androidx.compose.runtime.saveable.rememberSaveable(
+        viewModel.type,
+        viewModel.id,
+        saver = SpotifyFocusMemorySaver,
+    ) { SpotifyFocusMemory() }
+    var restoreFocusPending by remember(viewModel.type, viewModel.id) { mutableStateOf(focusMemory.key != null) }
+    val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending }
+    fun rememberFocused(key: String?) {
+        focusMemory.key = key
+        if (restoreFocusPending) restoreFocusPending = false
+    }
+    LaunchedEffect(state.loading, state.offline, state.error, restoreFocusPending) {
+        if (state.loading || (state.offline && state.error == null) || restoreFocusPending) return@LaunchedEffect
         withFrameNanos { }
         runCatching { primaryFocus.requestFocus() }
     }
@@ -108,7 +120,7 @@ fun SpotifyDetailScreen(
                     onClick = playContext,
                     enabled = state.error == null,
                     fillWidth = true,
-                    modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) restoreFocusKey = null },
+                    modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) rememberFocused(null) },
                 )
             }
         }
@@ -137,7 +149,7 @@ fun SpotifyDetailScreen(
                         TvActionButton(
                             stringResource(R.string.home_retry),
                             viewModel::load,
-                            modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) restoreFocusKey = null },
+                            modifier = Modifier.focusRequester(primaryFocus).onFocusChanged { if (it.isFocused) rememberFocused(null) },
                         )
                     }
                 } }
@@ -148,14 +160,14 @@ fun SpotifyDetailScreen(
                     val requester = remember(track.id) { FocusRequester() }
                     RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
                     PlaybackBadge(playingTrack)
-                        if (state.offline) Text("${index + 1}. ${track.name}") else TvActionButton(text = "${index + 1}. ${track.name}  •  ${track.artists.joinToString(", ") { it.name }}", onClick = { if (playingTrack != null) openCurrent(playingTrack) else { viewModel.playTrack(track, onNowPlaying) } }, modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) restoreFocusKey = focusKey }, fillWidth = true)
+                        if (state.offline) Text("${index + 1}. ${track.name}") else TvActionButton(text = "${index + 1}. ${track.name}  •  ${track.artists.joinToString(", ") { it.name }}", onClick = { if (playingTrack != null) openCurrent(playingTrack) else { viewModel.playTrack(track, onNowPlaying) } }, modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) rememberFocused(focusKey) }, fillWidth = true)
                 }
                 if (state.albums.isNotEmpty()) item("albums-heading") { Text(stringResource(R.string.nav_spotify_albums), style = MaterialTheme.typography.titleMedium) }
                 items(state.albums, key = { "album:${it.id}" }) { album ->
                     val focusKey = "album:${album.id}"
                     val requester = remember(album.id) { FocusRequester() }
                     RestoreSpotifyFocus(restoreFocusKey == focusKey, requester)
-                    TvActionButton(album.name, { onOpenAlbum(album.id) }, Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) restoreFocusKey = focusKey }, fillWidth = true)
+                    TvActionButton(album.name, { onOpenAlbum(album.id) }, Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { if (it.isFocused) rememberFocused(focusKey) }, fillWidth = true)
                 }
             }
         }
@@ -163,11 +175,11 @@ fun SpotifyDetailScreen(
     PageUtilityBar(
         onBack = onBack,
         onSettings = {
-            restoreFocusKey = null
+            rememberFocused(null)
             onOpenSettings()
         },
         onDown = if (!state.loading && (!state.offline || state.error != null)) ({
-            restoreFocusKey = null
+            rememberFocused(null)
             runCatching { primaryFocus.requestFocus() }
         }) else null,
         requestInitialFocus = state.loading || (state.offline && state.error == null),
@@ -176,6 +188,13 @@ fun SpotifyDetailScreen(
     )
     }
 }
+
+private class SpotifyFocusMemory(var key: String? = null)
+
+private val SpotifyFocusMemorySaver = androidx.compose.runtime.saveable.Saver<SpotifyFocusMemory, String>(
+    save = { it.key.orEmpty() },
+    restore = { SpotifyFocusMemory(it.takeIf(String::isNotEmpty)) },
+)
 
 @Composable
 private fun RestoreSpotifyFocus(requested: Boolean, requester: FocusRequester) {

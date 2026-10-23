@@ -289,7 +289,19 @@ private fun DetailContent(
     onRemoveFromContinue: () -> Unit,
 ) {
     var showMore by remember(item.ratingKey) { mutableStateOf(false) }
-    var restoreFocusKey by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf<String?>(null) }
+    // Remember the last focused child without invalidating this whole, expensive detail tree on
+    // every D-pad step. The saved holder is recreated when this back-stack entry is composed
+    // again; only that first composition needs to request the remembered focus.
+    val focusMemory = androidx.compose.runtime.saveable.rememberSaveable(
+        item.ratingKey,
+        saver = DetailFocusMemorySaver,
+    ) { DetailFocusMemory() }
+    var restoreFocusPending by remember(item.ratingKey) { mutableStateOf(focusMemory.key != null) }
+    val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending }
+    fun rememberFocused(key: String?) {
+        focusMemory.key = key
+        if (restoreFocusPending) restoreFocusPending = false
+    }
     var restoreTrailer by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf(false) }
     val trailerAvailable = rememberTrailerAvailable(item, playbackAvailable && onTrailer != null)
     val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
@@ -377,7 +389,7 @@ private fun DetailContent(
             // Detail pages always open at their real beginning. Requesting focus can make the
             // LazyColumn reveal the action geometrically, so restore offset zero once after the
             // focus transaction as well.
-            if (restoreFocusKey == null) {
+            if (!restoreFocusPending) {
                 listState.scrollToItem(0)
                 runCatching { initialActionFocus.requestFocus() }
                 withFrameNanos { }
@@ -516,7 +528,7 @@ private fun DetailContent(
                         moreOpened = true
                         showMore = true
                     },
-                    onHeroFocused = { restoreFocusKey = null },
+                    onHeroFocused = { rememberFocused(null) },
                     initialActionFocus = initialActionFocus,
                     moreActionFocus = moreActionFocus,
                 )
@@ -530,12 +542,12 @@ private fun DetailContent(
                             CollectionItemsSection(
                                 children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild,
                                 restoreFocusKey,
-                            ) { restoreFocusKey = it }
+                            ) { rememberFocused(it) }
                         } else {
                             ChildrenSection(
                                 item, children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild,
                                 restoreFocusKey,
-                            ) { restoreFocusKey = it }
+                            ) { rememberFocused(it) }
                         }
                     }
                 }
@@ -544,7 +556,7 @@ private fun DetailContent(
             if (similar.isNotEmpty()) {
                 item(key = "similar") {
                     Section("similar") {
-                        SimilarSection(similar, onOpenChild, restoreFocusKey) { restoreFocusKey = it }
+                        SimilarSection(similar, onOpenChild, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
@@ -552,7 +564,7 @@ private fun DetailContent(
             if (item.collections.isNotEmpty()) {
                 item(key = "collections") {
                     Section("collections") {
-                        CollectionsSection(item, onBrowseCollection, restoreFocusKey) { restoreFocusKey = it }
+                        CollectionsSection(item, onBrowseCollection, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
@@ -560,7 +572,7 @@ private fun DetailContent(
             if (item.cast.isNotEmpty()) {
                 item(key = "cast") {
                     Section("cast") {
-                        CastSection(item, onBrowseActor, restoreFocusKey) { restoreFocusKey = it }
+                        CastSection(item, onBrowseActor, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
@@ -576,14 +588,14 @@ private fun DetailContent(
         PageUtilityBar(
             onBack = onBack,
             onSettings = {
-                restoreFocusKey = null
+                rememberFocused(null)
                 onOpenSettings()
             },
             onDown = if (heroHasFocusTarget) ({
-                restoreFocusKey = null
+                rememberFocused(null)
                 focusContentFromUtility()
             }) else null,
-            requestInitialFocus = !heroHasFocusTarget && restoreFocusKey == null,
+            requestInitialFocus = !heroHasFocusTarget && !restoreFocusPending,
             leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -621,6 +633,13 @@ private class DetailBringIntoViewSpec(
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
         distance(offset, size, containerSize)
 }
+
+private class DetailFocusMemory(var key: String? = null)
+
+private val DetailFocusMemorySaver = androidx.compose.runtime.saveable.Saver<DetailFocusMemory, String>(
+    save = { it.key.orEmpty() },
+    restore = { DetailFocusMemory(it.takeIf(String::isNotEmpty)) },
+)
 
 @Composable
 private fun DetailHero(

@@ -904,6 +904,11 @@ private fun AmbientTvApp(
             is YouTubeSelectionRoute.Ask -> pendingYouTubeVideoId = route.videoId
         }
     }
+    // Parsing and validating the IPTV JSON is not composition work. Cache it until the stored
+    // value actually changes; this function is consulted from several navigation branches.
+    val configuredIptvSourceId = remember(tokenStore.iptvSourcesJson) {
+        com.ambient.tv.data.iptv.IptvStore(tokenStore).sources().firstOrNull { it.enabled }?.let { "iptv:${it.id}" }
+    }
     fun configuredStartDestination(): String? = configuredContentRoute(
         plex = appPreferences.isConfigured,
         jellyfin = appPreferences.isJellyfinConfigured,
@@ -913,7 +918,7 @@ private fun AmbientTvApp(
         spotify = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore),
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
-        iptvSourceId = com.ambient.tv.data.iptv.IptvStore(tokenStore).sources().firstOrNull { it.enabled }?.let { "iptv:${it.id}" },
+        iptvSourceId = configuredIptvSourceId,
     )
     val rootRoute = if (appPreferences.needsInitialSetup) Destinations.INITIAL_SETUP
         else configuredStartDestination() ?: Destinations.INITIAL_SETUP
