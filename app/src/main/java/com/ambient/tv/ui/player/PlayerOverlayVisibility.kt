@@ -52,6 +52,12 @@ fun PlayerOverlayVisibility(
     content: @Composable BoxScope.() -> Unit,
 ) {
     val visibility = remember { MutableTransitionState(false) }
+    val controlFocus = LocalPlayerControlFocus.current
+    androidx.compose.runtime.LaunchedEffect(visible, controlFocus) {
+        // Reset only on dismissal. Renderer/channel replacements while visible retain
+        // their control, and panel navigation still owns focus return to its opener.
+        if (!visible) controlFocus?.resetForNextOpen()
+    }
     visibility.targetState = visible
     AnimatedVisibility(
         visibleState = visibility,

@@ -496,7 +496,8 @@ fun PlayerIconButton(
             .size(if (primary) 58.dp else 48.dp, if (handheld) 48.dp else 40.dp)
             .onFocusChanged { focused = it.isFocused }
             .menuFocusMotion(focused)
-            .appControlSurface(focused, selected || primary, shape = shape)
+            // Size identifies the main action; only actual focus draws the focus treatment.
+            .appControlSurface(focused, selected, shape = shape)
             .activateOnTvKey(onClick = click)
             .clickable(role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,

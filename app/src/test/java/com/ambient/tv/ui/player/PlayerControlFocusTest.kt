@@ -5,6 +5,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlayerControlFocusTest {
+    @Test fun closingOsdResetsBothTargetsWithoutRemovingMountedControls() {
+        val focus = PlayerControlFocus()
+        val play = FocusRequester()
+        val settings = FocusRequester()
+        val timeline = FocusRequester()
+        val settingsOwner = Any()
+        val timelineOwner = Any()
+        focus.register("settings", settings, settingsOwner)
+        focus.register("seek-bar", timeline, timelineOwner)
+        focus.focused("settings", settingsOwner, true)
+        focus.focused("seek-bar", timelineOwner, true)
+
+        // Buttons may remain composed during the exit fade or a quick reopening.
+        focus.resetForNextOpen()
+        assertFalse(focus.hasFocus)
+        assertNull(focus.lastKey)
+        assertSame(play, focus.target(play))
+        assertSame(play, focus.buttonTarget(play))
+        assertSame(timeline, focus.seekTarget())
+
+        // Normal navigation resumes with the existing registrations after reopening.
+        focus.focused("settings", settingsOwner, true)
+        assertTrue(focus.hasFocus)
+        assertSame(settings, focus.target(play))
+        assertSame(settings, focus.buttonTarget(play))
+    }
+
     @Test fun timelineReturnsToLastButtonAndFallsBackAfterItsRemoval() {
         val focus = PlayerControlFocus()
         val fallback = FocusRequester()

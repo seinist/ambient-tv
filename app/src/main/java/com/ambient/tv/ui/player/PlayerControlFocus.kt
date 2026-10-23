@@ -22,6 +22,13 @@ internal class PlayerControlFocus {
     fun buttonTarget(fallback: FocusRequester): FocusRequester = controls[lastButtonKey]?.requester ?: fallback
     fun seekTarget(): FocusRequester? = controls["seek-bar"]?.requester
 
+    /** A closed OSD starts at Play/Pause next time, even during a reversed fade-out. */
+    fun resetForNextOpen() {
+        lastKey = null
+        lastButtonKey = null
+        focusedOwner = null
+    }
+
     fun register(key: String, requester: FocusRequester, owner: Any) {
         controls[key] = Control(requester, owner)
     }
