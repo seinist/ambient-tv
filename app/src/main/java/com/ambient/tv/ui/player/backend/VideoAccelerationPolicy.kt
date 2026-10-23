@@ -98,6 +98,8 @@ fun planMpvAcceleration(
     nativeHdrPreferred: Boolean = false,
     /** [mpvHdrGpuDecision] chose gpu-next/Vulkan passthrough for HDR10 on an HDR10 display. */
     hdrPassthrough: Boolean = false,
+    /** HDR that cannot be presented natively needs a shader-capable output, even with neutral filters. */
+    toneMappingRequired: Boolean = false,
 ): MpvAccelerationPlan {
     if (hdrPassthrough && capabilities.mpvVulkanOutput) return MpvAccelerationPlan("vulkan", when {
         decoder == "software" -> "software"
@@ -116,6 +118,10 @@ fun planMpvAcceleration(
         "auto" -> if (gpuProcessing) { if (capabilities.mpvVulkanOutput) "vulkan" else "gpu" } else "direct"
         else -> "direct"
     }
+    if (toneMappingRequired && selectedOutput == "direct") {
+        selectedOutput = if (capabilities.mpvVulkanOutput) "vulkan" else "gpu"
+        reason = "hdr_to_sdr"
+    }
     // Auto and explicit MediaCodec always prefer hardware. Software is only used when chosen.
     var selectedDecoder = when (decoder) {
         "software" -> "software"
@@ -132,3 +138,8 @@ fun planMpvAcceleration(
 fun useVlcVulkan(output: String, capabilities: VideoAccelerationCapabilities, gpuProcessing: Boolean = false,
     nativeHdrPreferred: Boolean = false): Boolean =
     !nativeHdrPreferred && capabilities.vlcVulkanOutput && (output == "vulkan" || output == "auto" && gpuProcessing)
+
+/** Direct/opaque Android presentation bypasses VLC's GPU colorspace conversion. */
+internal fun vlcHdrToSdrOutputOptions(vulkan: Boolean, toneMappingRequired: Boolean): List<String> =
+    if (toneMappingRequired && !vulkan) listOf("--vout=gles2,none", "--no-mediacodec-dr")
+    else emptyList()

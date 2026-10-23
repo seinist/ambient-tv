@@ -86,12 +86,13 @@ class VlcPlaybackController(
     // HDR on an SDR display still needs the decoder/vout's tone mapping. CPU picture
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
+    private val toneMappingRequired = sourceHdrStandard != null && !nativeHdrPreferred
     override val usesRendererScaling: Boolean get() = true
     val audioSession = com.ambient.tv.ui.player.AudioSession(videoImagePreferences(context), "vlc", initialAudioPassthrough, audioOnly = audioOnly)
     val bitstreamPermitted: Boolean get() = audioSession.bitstreamPermitted
     private val nightProcessing = VlcNightProcessing(context)
     private var vulkanOutput = !audioOnly && useVlcVulkan(videoOutputMode, VideoAccelerationRuntime.current(context),
-        gpuProcessing = initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
+        gpuProcessing = toneMappingRequired || initialImageOptions.softwareProcessing && !reducedVideoEffects(context),
         nativeHdrPreferred = nativeHdrPreferred)
     /** Live picture path. Software processing can still run swscale on this surface. */
     var usesAndroidSurfaceOutput by mutableStateOf(!vulkanOutput)
@@ -104,7 +105,11 @@ class VlcPlaybackController(
     private val vulkanRequested = !audioOnly && videoOutputMode == "vulkan"
     // Before the startup probe finishes the plan is the provisional safe path, not a verdict.
     init { if (accelerationFallback != null && !nativeHdrPreferred && VideoAccelerationRuntime.capabilities.value.checked) VideoAccelerationRuntime.notifyUnavailable() }
-    val videoOutputDescription: String get() = if (vulkanOutput) "libplacebo / Vulkan" else "Android Surface / OpenGL ES"
+    val videoOutputDescription: String get() = when {
+        vulkanOutput -> "libplacebo / Vulkan"
+        toneMappingRequired -> "OpenGL ES / HDR → SDR"
+        else -> "Android Surface / OpenGL ES"
+    }
     private fun effectiveImage(): VlcImageOptions = vlcOptionsForNativeHdr(
         effectiveVlcImageOptions(imageOptions, reducedVideoEffects(context), vlcSvpAllowed(context)), nativeHdrPreferred, sourceHdrStandard)
         .let { if (it.svpMode != "off" && !vlcSvpApplies(measuredSourceFps, svpOutputFps(svpDisplayFps(context), it.svp), it.svp, measuredSourceSize?.first, measuredSourceSize?.second)) it.copy(svpMode = "off") else it }
@@ -152,6 +157,7 @@ class VlcPlaybackController(
             // VLC 4 owns vout at player level, not at input/media level.
             // "none" ends implicit module search so a failed Vulkan initialization
             // reaches our observable default-path retry instead of silently using GL.
+            addAll(vlcHdrToSdrOutputOptions(vulkanOutput, toneMappingRequired))
             if (vulkanOutput) addAll(listOf(
                 "--vout=libplacebo,none", "--pl-gpu=pl_vulkan,none",
                 "--vk-platform=vk_android,none",
@@ -912,7 +918,7 @@ class VlcPlaybackController(
         // Respect VLC/device codec blacklists and retain software fallback.
         // Sparsam forces hardware/direct (no hqdn3d/gradfun software path) without mutating prefs.
         media.setHWDecoderEnabled(!effectiveImage.softwareProcessing, false)
-        if (vulkanOutput) {
+        if (vulkanOutput || toneMappingRequired) {
             // VLC's opaque MediaCodec Surface pictures cannot be imported by this Vulkan vout.
             // Keep MediaCodec decoding with CPU-accessible output; software effects may opt out.
             media.addOption(":no-mediacodec-dr")

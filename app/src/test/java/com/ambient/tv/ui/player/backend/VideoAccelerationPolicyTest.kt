@@ -22,6 +22,39 @@ class VideoAccelerationPolicyTest {
         assertEquals("direct", p.output)
         assertEquals("mediacodec", p.hwdec)
     }
+    @Test fun hdrToSdrNeverUsesOpaqueDirectOutputEvenWithNeutralFilters() {
+        for (caps in listOf(full, full.copy(mpvOutputBuilt = false), VideoAccelerationCapabilities())) {
+            for (output in listOf("auto", "direct", "gpu", "vulkan")) {
+                val plan = planMpvAcceleration(output, "auto", caps, toneMappingRequired = true)
+                assertTrue("$output / $caps", plan.gpu)
+                assertNotEquals("mediacodec_embed", plan.vo)
+                assertNotEquals("mediacodec", plan.hwdec)
+            }
+        }
+    }
+
+    @Test fun hdrToSdrKeepsSoftwareChoiceAndGpuFallback() {
+        val plan = planMpvAcceleration("direct", "software", full, toneMappingRequired = true)
+        assertTrue(plan.gpu)
+        assertEquals("no", plan.hwdec)
+        assertTrue(planMpvAcceleration("vulkan", "auto", full,
+            forceDefault = true, toneMappingRequired = true).gpu)
+    }
+
+    @Test fun nativeHdrSurfaceStillWinsOverToneMappingRequest() {
+        assertEquals("direct", planMpvAcceleration("auto", "auto", full,
+            nativeHdrPreferred = true, toneMappingRequired = true).output)
+    }
+
+    @Test fun vlcToneMappingForcesGlAfterVulkanIsUnavailableOrFails() {
+        assertEquals(listOf("--vout=gles2,none", "--no-mediacodec-dr"),
+            vlcHdrToSdrOutputOptions(vulkan = false, toneMappingRequired = true))
+        // Vulkan already selects libplacebo and copy-back; do not override that vout.
+        assertTrue(vlcHdrToSdrOutputOptions(vulkan = true, toneMappingRequired = true).isEmpty())
+        // Native HDR and SDR keep their existing Android Surface path.
+        assertTrue(vlcHdrToSdrOutputOptions(vulkan = false, toneMappingRequired = false).isEmpty())
+    }
+
     @Test fun autoCanUseBothVulkanPaths() {
         val p = planMpvAcceleration("auto", "auto", full, gpuProcessing = true)
         assertEquals("gpu-next", p.vo)

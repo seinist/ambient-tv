@@ -103,11 +103,14 @@ internal class MpvPlaybackEngine(
     /** True after the first non-empty audio-codec-name has been planned. */
     private var observedAudioCodecApplied = false
     val bitstreamPermitted: Boolean get() = audioSession.bitstreamPermitted
+    private val displayHdrStandards = com.ambient.tv.ui.player.HdrSupport.displayStandards(context)
+    private fun needsHdrToSdr(source: HdrStandard?): Boolean = source != null &&
+        !com.ambient.tv.ui.player.nativeHdrSurfacePreferred(source, displayHdrStandards)
     private var acceleration = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
         // Select the processing path from the chosen width/title image settings.
         gpuProcessing = mpvNeedsGpuProcessing(effectiveMpvImageOptions(initialImageOptions,
             reducedVideoEffects(context), svpAllowed(context))), nativeHdrPreferred = nativeHdrPreferred,
-        hdrPassthrough = hdrGpuPassthrough)
+        hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = needsHdrToSdr(declaredHdr))
     private var accelerationRetried = false
     /** Runtime verdict for the passthrough route; the UI reopens on the direct surface when set. */
     var hdrGpuFailure by mutableStateOf<MpvHdrGpuReason?>(null)
@@ -449,6 +452,12 @@ internal class MpvPlaybackEngine(
             // FFmpeg checks actual single-layer P5/P8 configuration; GPU texture
             // processing keeps its existing path. Production DV routing stays gated.
             setOption("vd-lavc-o", "dolbyvision=1")
+        }
+        if (gpuQualityMode && needsHdrToSdr(declaredHdr)) {
+            // Describe the actual SDR output; never send PQ/BT.2020 code values to it.
+            setOption("target-prim", "bt.709")
+            setOption("target-trc", "bt.1886")
+            setOption("target-peak", "100")
         }
         setOption("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
         setOption("force-window", "no")
@@ -1058,6 +1067,10 @@ internal class MpvPlaybackEngine(
         property("contrast", if (sdr) o.contrast.toString() else "0")
         property("saturation", if (sdr) o.saturation.toString() else "0")
         property("gamma", if (sdr) o.gamma.toString() else "0")
+        val toneMapToSdr = needsHdrToSdr(sourceHdrStandard ?: declaredHdr)
+        property("target-prim", if (toneMapToSdr) "bt.709" else "auto")
+        property("target-trc", if (toneMapToSdr) "bt.1886" else "auto")
+        property("target-peak", if (toneMapToSdr) "100" else "auto")
         property("tone-mapping", o.toneMapping, "auto")
         property("dither-depth", o.ditherDepth, "auto")
         property("interpolation", "no")
@@ -1513,6 +1526,9 @@ internal class MpvPlaybackEngine(
         sourceHdrStandard = runtimeSourceHdrStandard(sourceGamma)
         if (dolbyVisionDetected && hdrPassthroughActive) failHdrPassthrough(MpvHdrGpuReason.DOLBY_VISION)
         checkHdrPassthrough(sourceGamma)
+        // Network/live inputs may omit HDR until decoding starts. Reopen once on GL
+        // rather than leaving the direct codec surface to present HDR as SDR.
+        if (!gpuQualityMode && needsHdrToSdr(sourceHdrStandard) && fallbackAcceleration("hdr_to_sdr")) return
         if (!gpuQualityMode) return
         if (probeShieldBroadcast()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
@@ -2174,7 +2190,7 @@ internal class MpvPlaybackEngine(
             failHdrPassthrough(MpvHdrGpuReason.VULKAN_FALLBACK)
             return true
         }
-        val directDecoderFallback = acceleration.output == "direct" && reason == "mediacodec_unavailable"
+        val directDecoderFallback = acceleration.output == "direct" && reason in setOf("mediacodec_unavailable", "hdr_to_sdr")
         if ((!acceleration.vulkan && !directDecoderFallback) || accelerationRetried || released) return false
         sdrToHdr.reset()
         if (sdrToHdr.rollbackFailed) {
