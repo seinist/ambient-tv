@@ -40,3 +40,15 @@ internal fun audioTrackLabel(title: String?, language: String?, channels: Int?, 
     }
     return parts.joinToString(" · ").ifBlank { fallback }
 }
+
+/** Compact output conversion, without duplicating codec or processing descriptions. */
+internal fun audioDownmixLabel(sourceChannels: Int?, plan: AudioOutputPlan): String? {
+    if (plan.encoded || sourceChannels == null || sourceChannels <= 2) return null
+    val target = when (plan.channels) {
+        "stereo", "left", "right" -> "Stereo"
+        "mono" -> "Mono"
+        "5.1" -> if (sourceChannels > 6) "5.1" else return null
+        else -> return null
+    }
+    return "${audioChannelLabel(sourceChannels)} → $target"
+}

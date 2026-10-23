@@ -70,6 +70,51 @@ class AudioProcessingTest {
         assertArrayEquals(floatArrayOf(0f, 0f), output, 0f)
     }
 
+    @Test fun namedLayoutHandlesSideSurroundAndReorderedCenter() {
+        val matrix = StereoDownmixMatrix(listOf(PcmSpeaker.SR, PcmSpeaker.FC, PcmSpeaker.FL, PcmSpeaker.LFE, PcmSpeaker.FR, PcmSpeaker.SL))
+        val out = FloatArray(2)
+        matrix.mix(floatArrayOf(0f, 1f, 0f, 0f, 0f, 0f), "stereo", out)
+        assertEquals(0.2928932f, out[0], 0.00001f)
+        assertEquals(out[0], out[1], 0f)
+        matrix.mix(floatArrayOf(1f, 0f, 0f, 0f, 0f, 0f), "stereo", out)
+        assertEquals(0f, out[0], 0f)
+        assertEquals(0.2928932f, out[1], 0.00001f)
+    }
+
+    @Test fun downmixHeadroomCoversAllCorrelatedChannelsAndCenterBoost() {
+        for (count in 3..8) for (boost in listOf(0, 6)) {
+            val matrix = StereoDownmixMatrix(pcmSpeakerLayout(count), boost)
+            val out = FloatArray(2)
+            matrix.mix(FloatArray(count) { 1f }, "stereo", out)
+            assertTrue(out.all { it <= 1.000001f })
+        }
+    }
+
+    @Test fun keepVolumePreservesQuietCenterAndLimitsCombinedPeaksWithoutChangingBalance() {
+        val matrix = StereoDownmixMatrix(pcmSpeakerLayout(6))
+        val limiter = StereoPeakLimiter(48000)
+        val out = FloatArray(2)
+        matrix.mix(floatArrayOf(0f, 0f, 0.1f, 0f, 0f, 0f), "stereo", out, true)
+        limiter.process(out)
+        assertEquals(0.07071068f, out[0], 0.000001f)
+        matrix.mix(floatArrayOf(1f, 0.5f, 0f, 0f, 1f, 0.5f), "stereo", out, true)
+        limiter.process(out)
+        assertEquals(0.95f, out[0], 0.000001f)
+        assertEquals(out[0] * 0.5f, out[1], 0.000001f)
+        out[0] = 0.1f; out[1] = 0.05f
+        limiter.process(out)
+        assertTrue(out[0] < 0.1f) // Release continues across frames/buffers.
+        assertEquals(out[0] * 0.5f, out[1], 0.000001f)
+        repeat(48000) { out[0] = 0.1f; out[1] = 0.05f; limiter.process(out) }
+        assertEquals(0.1f, out[0], 0.000001f)
+    }
+
+    @Test fun keepVolumeDoesNotBoostAnExistingStereoSource() {
+        val out = FloatArray(2)
+        stereoDownmix(floatArrayOf(0.5f, -0.25f), "stereo", out, maintainVolume = true)
+        assertArrayEquals(floatArrayOf(0.5f, -0.25f), out, 0f)
+    }
+
     @Test fun dualMonoAndQuadMappingAreCorrect() {
         val output = FloatArray(2)
         stereoDownmix(floatArrayOf(0.7f, -0.2f), "right", output)
@@ -96,15 +141,21 @@ class AudioProcessingTest {
 
     @Test fun nativeGraphIncludesDownmixBeforeChannelSelectionAndLimiterAfterDsp() {
         val graph = mpvAudioGraph(AudioOptions(channels = "right", night = true, normalize = true))
-        assertTrue(graph.startsWith("aformat=channel_layouts=stereo,pan="))
+        assertTrue(graph.startsWith("aresample=ochl=stereo:"))
+        assertTrue(graph.indexOf("aresample") < graph.indexOf("pan="))
         assertTrue(graph.indexOf("acompressor") < graph.indexOf("alimiter"))
         assertTrue(mpvAudioGraph(AudioOptions()).isEmpty())
         assertFalse(mpvAudioGraph(AudioOptions(eqEnabled = true, eqDb = List(10) { 6 }), 8000).contains("f=16000"))
-        val upmix = mpvAudioGraph(AudioOptions(upmix = true))
+        val upmix = mpvAudioGraph(AudioOptions(upmix = true), sourceChannels = 2)
+        assertFalse(mpvAudioGraph(AudioOptions(upmix = true), sourceChannels = 6).contains("pan="))
+        assertFalse(mpvAudioGraph(AudioOptions(upmix = true), sourceChannels = 8).contains("pan="))
         assertTrue(upmix.startsWith("pan=5.1|"))
         assertFalse(upmix.contains("aformat="))
         assertTrue(mpvAudioGraph(AudioOptions(channels = "5.1")).isEmpty())
-        assertTrue(mpvAudioGraph(AudioOptions(channels = "stereo", maintainDownmixVolume = true)).contains("volume=3dB"))
+        val kept = mpvAudioGraph(AudioOptions(channels = "stereo", maintainDownmixVolume = true))
+        assertTrue(kept.contains("rematrix_maxval=1000"))
+        assertTrue(kept.contains("alimiter="))
+        assertFalse(kept.contains("volume=3dB"))
     }
 
     @Test fun trackLanguageOutranksRoleAndRoleOutranksChannels() {

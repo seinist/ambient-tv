@@ -84,17 +84,18 @@ object Media3AudioProcessing {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink {
                 // Deprecated without replacement; false keeps speed changes in the Sonic processor,
                 // which bitstream passthrough and the profile DSP rely on.
+                val processor = ProfileAudioProcessor(session)
                 @Suppress("DEPRECATION")
                 val sink = DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(false)
                     .setEnableAudioTrackPlaybackParams(false)
-                    .setAudioProcessors(arrayOf(ProfileAudioProcessor(session), TeeAudioProcessor(analyzer)))
+                    .setAudioProcessors(arrayOf(processor, TeeAudioProcessor(analyzer)))
                     .build()
-                return object : ForwardingAudioSink(sink) {
+                return object : ProfileAudioSink(sink, processor) {
                     override fun supportsFormat(format: Format): Boolean = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
                     override fun getFormatSupport(format: Format): Int {
                         if (format.sampleMimeType != MimeTypes.AUDIO_RAW) {
-                            if (session.audioOnly) return AudioSink.SINK_FORMAT_UNSUPPORTED
+                            if (session.audioOnly || session.forceStereoPcm) return AudioSink.SINK_FORMAT_UNSUPPORTED
                             val key = codecKey(format.sampleMimeType)
                             // Format support is queried on ExoPlayer's playback thread. Do not
                             // overwrite the monitored route here: that would hide the transition
@@ -122,10 +123,12 @@ object Media3AudioProcessing {
                 // Separate sink: the ordinary sink deliberately rejects unsupported original
                 // bitstreams. This renderer supplies locally decoded PCM, encoded AC3 and the
                 // DTS core of DTS-HD. Without libambientaudio only the DTS core path is active.
+                val localProcessor = ProfileAudioProcessor(session)
                 val localSink = DefaultAudioSink.Builder(context)
-                    .setAudioProcessors(arrayOf(ProfileAudioProcessor(session), TeeAudioProcessor(analyzer)))
+                    .setEnableFloatOutput(false)
+                    .setAudioProcessors(arrayOf(localProcessor, TeeAudioProcessor(analyzer)))
                     .build()
-                out.add(com.ambient.tv.ui.player.audio.LocalAudioRenderer(eventHandler, eventListener, localSink, session))
+                out.add(com.ambient.tv.ui.player.audio.LocalAudioRenderer(eventHandler, eventListener, ProfileAudioSink(localSink, localProcessor), session))
                 super.buildAudioRenderers(context, extensionRendererMode, mediaCodecSelector,
                     enableDecoderFallback, audioSink, eventHandler, eventListener, out)
             }
@@ -164,5 +167,17 @@ object Media3AudioProcessing {
         MimeTypes.AUDIO_DTS_HD -> "dts-hd"
         MimeTypes.AUDIO_TRUEHD -> "truehd"
         else -> null
+    }
+}
+
+/** Preserve the decoder channel mask across Media3's count-only audio-processor API. */
+internal open class ProfileAudioSink(sink: AudioSink, private val processor: ProfileAudioProcessor) : ForwardingAudioSink(sink) {
+    override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
+        try {
+            processor.setInputLayout(audioSinkConfig.format, audioSinkConfig.outputChannelMapping?.toArray())
+        } catch (e: IllegalArgumentException) {
+            throw AudioSink.ConfigurationException(e, audioSinkConfig.format)
+        }
+        super.configure(audioSinkConfig)
     }
 }

@@ -11,11 +11,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ProfileAudioProcessorTest {
-    private fun process(samples: ShortArray, channels: Int, options: AudioOptions): Pair<Int, ShortArray> {
+    private fun process(samples: ShortArray, channels: Int, options: AudioOptions, routeChannels: Int = 8, channelMask: Int = -1): Pair<Int, ShortArray> {
         val session = AudioSession(AppPreferences(memoryPreferences()), "media3", false)
-        session.route = AudioRouteCapabilities(pcmChannels = 8)
+        session.route = AudioRouteCapabilities(pcmChannels = routeChannels)
         session.update(options)
         val processor = ProfileAudioProcessor(session)
+        processor.setInputLayout(androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+            .setChannelCount(channels).setChannelMask(channelMask).build(), null)
         val output = processor.configure(AudioProcessor.AudioFormat(48000, channels, C.ENCODING_PCM_16BIT))
         processor.flush()
         val input = ByteBuffer.allocateDirect(samples.size * 2).order(ByteOrder.nativeOrder())
@@ -25,6 +27,40 @@ class ProfileAudioProcessorTest {
         assertFalse(input.hasRemaining())
         val buffer = processor.output.order(ByteOrder.nativeOrder())
         return output.channelCount to ShortArray(buffer.remaining() / 2) { buffer.short }
+    }
+
+    @Test fun threePointOneMaskKeepsCenterAndDoesNotMixLfeAsSurround() {
+        val options = AudioOptions(output = "pcm", channels = "stereo")
+        val (_, center) = process(shortArrayOf(0, 0, 10000, 0), 4, options, channelMask = 0x3c)
+        assertTrue(center[0] > 0)
+        assertEquals(center[0], center[1])
+        val (_, lfe) = process(shortArrayOf(0, 0, 0, 10000), 4, options, channelMask = 0x3c)
+        assertArrayEquals(shortArrayOf(0, 0), lfe)
+        val (_, mono) = process(shortArrayOf(10000), 1, options, channelMask = 0x4)
+        assertArrayEquals(shortArrayOf(10000, 10000), mono)
+    }
+
+    @Test fun automaticStereoRouteKeepsEveryFullRangeChannel() {
+        for (count in listOf(6, 8)) for (channel in 0 until count) {
+            val input = ShortArray(count * 2)
+            input[channel] = 10000
+            input[count + channel] = -10000
+            val (outputChannels, output) = process(input, count, AudioOptions(output = "pcm"), 2)
+            assertEquals(2, outputChannels)
+            assertEquals(4, output.size)
+            if (channel == 3) assertTrue(output.all { it == 0.toShort() })
+            else assertTrue(output.take(2).any { it > 0 })
+            if (channel == 2) assertEquals(output[0], output[1])
+            assertEquals(-output[0].toInt(), output[2].toInt())
+            assertEquals(-output[1].toInt(), output[3].toInt())
+        }
+    }
+
+    @Test fun keptDownmixLimitsAfterSummingAllChannels() {
+        val (channels, output) = process(ShortArray(6 * 4) { 32767 }, 6,
+            AudioOptions(output = "pcm", channels = "stereo", maintainDownmixVolume = true))
+        assertEquals(2, channels)
+        assertTrue(output.all { it in 1..31130 })
     }
 
     @Test fun sevenPointOneDownmixKeepsBothSurroundPairsAndFrameBoundaries() {

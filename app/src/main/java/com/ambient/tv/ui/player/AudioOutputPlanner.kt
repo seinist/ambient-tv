@@ -50,7 +50,8 @@ fun clipChannelMode(requested: String, pcmChannels: Int): String {
             else -> "stereo"
         }
         "5.1" -> if (limit >= 6) "5.1" else "stereo"
-        "mono", "left", "right", "stereo", "auto" -> requested
+        "auto" -> if (limit < 6) "stereo" else "auto"
+        "mono", "left", "right", "stereo" -> requested
         else -> "auto"
     }
 }

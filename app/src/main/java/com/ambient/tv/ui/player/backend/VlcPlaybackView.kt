@@ -425,7 +425,10 @@ class VlcPlaybackController(
     private var startupOpenedAt = 0L
     private var startupPlayingReported = false
 
+    private var appliedAudioDevice: String? = null
+
     private fun configurePlayer() {
+        appliedAudioDevice = null
         // Android's AudioTrack backend has an explicit encoded-output gate. --spdif alone
         // does not control this Java-side route/encoding detection, especially when OFF.
         val audioOutputSet = player.setAudioOutput("audiotrack")
@@ -433,7 +436,7 @@ class VlcPlaybackController(
         // The source codec is not necessarily known during controller construction. Keep digital
         // output off until updateSourceCodec()/track discovery has a concrete codec and plan.
         val digital = audioSession.outputPlan().mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH
-        val digitalOutputSet = player.setAudioDigitalOutputEnabled(digital)
+        val digitalOutputSet = applyAudioOutputDevice()
         Timber.i("AV-AUDIT VLC AudioTrack=%s digital-request=%s accepted=%s", audioOutputSet, digital, digitalOutputSet)
         player.vlcVout.addCallback(surfaceCallback)
         player.setEventListener { event ->
@@ -600,8 +603,7 @@ class VlcPlaybackController(
         if (audioSession.outputPlan().encoded) audioVisualizationEnabled = false
         openingOrRestarting = true
         player.stop()
-        val digital = audioSession.outputPlan().mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH
-        if (!player.setAudioDigitalOutputEnabled(digital)) audioSession.warning = "digital output"
+        if (!applyAudioOutputDevice()) audioSession.warning = "audio output"
         prepared = false
         prepare(position, playing)
     }
@@ -619,6 +621,21 @@ class VlcPlaybackController(
         if (!released) runCatching { player.setSpuDelay(subtitleDelayMs * 1000L) }
     }
 
+    private fun applyAudioOutputDevice(): Boolean {
+        val plan = audioSession.outputPlan()
+        val device = if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH) "encoded" else if (
+            plan.channels in setOf("stereo", "mono", "left", "right") || audioSession.route.pcmChannels < 6
+        ) "stereo" else "pcm"
+        if (appliedAudioDevice == device) return true
+        // Explicit stereo makes VLC negotiate its channel mixer, including center/surrounds.
+        // Reset forced routing before enabling the Java API's encoding detection again.
+        val accepted = if (device == "encoded") {
+            player.setAudioOutputDevice(null) && player.setAudioDigitalOutputEnabled(true)
+        } else player.setAudioOutputDevice(device)
+        if (accepted) appliedAudioDevice = device
+        return accepted
+    }
+
     private fun applyAudioLiveOptions() {
         if (released) return
         // Re-applied with the audio options, which run again after every media restart.
@@ -627,6 +644,7 @@ class VlcPlaybackController(
         val raw = audioSession.options
         val o = if (plan.applyDsp && !plan.encoded) raw.pcmOptions(audioSession.sourcePassthrough, encodedOutput = false) else raw.pcmOptions(audioSession.sourcePassthrough, encodedOutput = true)
         val errors = mutableListOf<String>()
+        if (!applyAudioOutputDevice()) errors.add("audio output")
         if (!nightProcessing.apply(o.night)) errors.add("Android DynamicsProcessing")
         if (!player.setAudioDelay(raw.delayMs * 1000L)) errors.add("audio delay")
         val eq = if (o.eqEnabled || o.dialogue > 0) MediaPlayer.Equalizer.create().apply {

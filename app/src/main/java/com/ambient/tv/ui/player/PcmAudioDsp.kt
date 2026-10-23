@@ -3,6 +3,7 @@ package com.ambient.tv.ui.player
 import com.ambient.tv.data.local.AudioCatalog
 import com.ambient.tv.data.local.AudioOptions
 import kotlin.math.*
+import com.ambient.tv.ui.player.PcmSpeaker.*
 
 /** Stateful PCM DSP. One instance per sink; never shared between playback threads. */
 internal class PcmAudioDsp(private val sampleRate: Int, private val channelCount: Int) {
@@ -82,39 +83,91 @@ internal class PcmAudioDsp(private val sampleRate: Int, private val channelCount
     }
 }
 
-/** Android PCM channel order: FL, FR, FC, LFE, surrounds. LFE is omitted in stereo. */
+/** Named speaker positions; adapters supply canonical Android/FFmpeg PCM order. */
+internal enum class PcmSpeaker { FL, FR, FC, LFE, BL, BR, BC, SL, SR }
+
+internal fun pcmSpeakerLayout(channels: Int, channelMask: Int = 0): List<PcmSpeaker> {
+    if (channelMask > 0) {
+        // Android CHANNEL_OUT_* bits, in interleaved sample order. Side and back
+        // surrounds are distinct; 3.1 must never be mistaken for four-channel quad.
+        val speakers = listOf(0x4 to FL, 0x8 to FR, 0x10 to FC, 0x20 to LFE,
+            0x40 to BL, 0x80 to BR, 0x100 to FL, 0x200 to FR,
+            0x400 to BC, 0x800 to SL, 0x1000 to SR)
+        require(channelMask and 0x1ffc == channelMask && Integer.bitCount(channelMask) == channels) {
+            "Unsupported PCM channel mask: $channelMask"
+        }
+        return speakers.filter { (bit, _) -> channelMask and bit != 0 }.map { it.second }
+    }
+    return when (channels) {
+        1 -> listOf(FC)
+        2 -> listOf(FL, FR)
+        3 -> listOf(FL, FR, FC)
+        4 -> listOf(FL, FR, BL, BR)
+        5 -> listOf(FL, FR, FC, BL, BR)
+        6 -> listOf(FL, FR, FC, LFE, BL, BR)
+        7 -> listOf(FL, FR, FC, LFE, BC, SL, SR)
+        8 -> listOf(FL, FR, FC, LFE, BL, BR, SL, SR)
+        else -> error("Unsupported PCM channel count: $channels")
+    }
+}
+
+/** Constructed once per format, never per frame. LFE is deliberately not folded into stereo. */
+internal class StereoDownmixMatrix(layout: List<PcmSpeaker>, centerBoostDb: Int = 0) {
+    private val left = FloatArray(layout.size)
+    private val right = FloatArray(layout.size)
+    private val headroom: Float
+
+    init {
+        val center = 0.70710677f * 10.0.pow(centerBoostDb.coerceIn(0, 6) / 20.0).toFloat()
+        layout.forEachIndexed { index, speaker ->
+            when (speaker) {
+                PcmSpeaker.FL -> left[index] = 1f
+                PcmSpeaker.FR -> right[index] = 1f
+                PcmSpeaker.FC -> { left[index] = if (layout.size == 1) 1f else center; right[index] = left[index] }
+                PcmSpeaker.BL, PcmSpeaker.SL -> left[index] = 0.70710677f
+                PcmSpeaker.BR, PcmSpeaker.SR -> right[index] = 0.70710677f
+                PcmSpeaker.BC -> { left[index] = 0.5f; right[index] = 0.5f }
+                PcmSpeaker.LFE -> Unit
+            }
+        }
+        if (layout.size == 1 && layout[0] != LFE) { left[0] = 1f; right[0] = 1f }
+        headroom = maxOf(1f, left.sum(), right.sum())
+    }
+
+    fun mix(frame: FloatArray, mode: String, output: FloatArray, maintainVolume: Boolean = false) {
+        require(frame.size == left.size)
+        var l = 0f
+        var r = 0f
+        for (c in frame.indices) { l += frame[c] * left[c]; r += frame[c] * right[c] }
+        if (!maintainVolume) { l /= headroom; r /= headroom }
+        when (mode) {
+            "left" -> r = l
+            "right" -> l = r
+            "mono" -> { l = (l + r) * 0.5f; r = l }
+        }
+        output[0] = l
+        output[1] = r
+    }
+}
+
+/** Instant attack and a smooth release; both channels share gain to preserve stereo balance. */
+internal class StereoPeakLimiter(sampleRate: Int) {
+    private val release = 1.0 - exp(-1.0 / (sampleRate * 0.05))
+    private var gain = 1.0
+
+    fun process(frame: FloatArray) {
+        val peak = max(abs(frame[0]), abs(frame[1])).toDouble()
+        val target = if (peak > 0.95) 0.95 / peak else 1.0
+        gain = if (target < gain) target else gain + release * (target - gain)
+        frame[0] = (frame[0] * gain).toFloat()
+        frame[1] = (frame[1] * gain).toFloat()
+    }
+}
+
 internal fun stereoDownmix(
     frame: FloatArray,
     mode: String,
     output: FloatArray,
     centerBoostDb: Int = 0,
     maintainVolume: Boolean = false,
-) {
-    if (frame.size == 1) { output[0] = frame[0]; output[1] = frame[0]; return }
-    var l = frame[0]
-    var r = frame[1]
-    if (frame.size >= 3 && frame.size != 4) {
-        val boost = if (centerBoostDb > 0) Math.pow(10.0, centerBoostDb / 20.0).toFloat() else 1f
-        l += frame[2] * 0.7071f * boost
-        r += frame[2] * 0.7071f * boost
-    }
-    // Three channels: L/R/C. Four channels: quad L/R/BL/BR, not L/R/C/LFE.
-    if (frame.size == 4) { l = frame[0] + frame[2] * 0.7071f; r = frame[1] + frame[3] * 0.7071f }
-    if (frame.size == 5) { l += frame[3] * 0.7071f; r += frame[4] * 0.7071f }
-    if (frame.size == 7) {
-        l += frame[4] * 0.5f + frame[5] * 0.7071f
-        r += frame[4] * 0.5f + frame[6] * 0.7071f
-    }
-    if (frame.size == 6 || frame.size >= 8) for (c in 4 until frame.size) {
-        if (c % 2 == 0) l += frame[c] * 0.7071f else r += frame[c] * 0.7071f
-    }
-    val headroom = when (frame.size) { 3, 4 -> 1.7071f; 5, 6 -> 2.4142f; 7 -> 2.9142f; 8 -> 3.1213f; else -> 1f }
-    val kept = if (maintainVolume) 0.7f else 1f
-    l = l / headroom / kept; r = r / headroom / kept
-    when (mode) {
-        "left" -> r = l
-        "right" -> l = r
-        "mono" -> { l = (l + r) * 0.5f; r = l }
-    }
-    output[0] = l; output[1] = r
-}
+) = StereoDownmixMatrix(pcmSpeakerLayout(frame.size), centerBoostDb).mix(frame, mode, output, maintainVolume)

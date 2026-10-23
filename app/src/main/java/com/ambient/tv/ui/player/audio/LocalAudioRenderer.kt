@@ -35,7 +35,7 @@ internal class LocalAudioRenderer(
     private fun encode(format: Format): Boolean = localAc3Eligible(
         session.options.localFallback, session.options.output, session.options.channels,
         format.channelCount, "ac3" in session.route.passthrough && "ac3" in session.options.allowedCodecs,
-    ) && !session.localEncoderFailed && !session.audioOnly
+    ) && !session.localEncoderFailed && !session.audioOnly && !session.forceStereoPcm
 
     private fun output(format: Format): Format = output(encode(format), if (encode(format)) 6 else pcmChannels(format))
 
@@ -47,6 +47,11 @@ internal class LocalAudioRenderer(
     /** Planned PCM channel count; the native decoder accepts 2, 6 or 8. */
     private fun pcmChannels(format: Format): Int {
         val plan = session.pcmOptionsForAudioThread()
+        // Keep center/surround samples until ProfileAudioProcessor applies the selected
+        // downmix and limiter. The native bridge remaps named FFmpeg positions to this
+        // canonical layout; decoding straight to S16 stereo would lose peak headroom.
+        if (plan.channels in setOf("stereo", "mono", "left", "right"))
+            return localDownmixInputChannels(format.channelCount)
         return localPcmChannelCandidates(format.channelCount, session.route.pcmChannels, plan.channels)
             .firstOrNull { it == 2 || sinkSupportsFormat(output(false, it)) } ?: 2
     }
@@ -67,8 +72,7 @@ internal class LocalAudioRenderer(
         if (format.drmInitData != null) return C.FORMAT_UNSUPPORTED_DRM
         // Leave confirmed original bitstream to MediaCodecAudioRenderer.
         val key = com.ambient.tv.ui.player.Media3AudioProcessing.codecKey(format.sampleMimeType)
-        if (session.options.permitsBitstream(session.sourcePassthrough) && key in session.route.passthrough &&
-            key in session.options.allowedCodecs && key !in com.ambient.tv.ui.player.AudioCodecRejects.snapshot())
+        if (session.outputPlanFor(key, format.channelCount.takeIf { it > 0 }).mode == AudioOutputMode.PASSTHROUGH)
             return C.FORMAT_UNSUPPORTED_TYPE
         return if (sinkSupportsFormat(output(format))) C.FORMAT_HANDLED else C.FORMAT_UNSUPPORTED_SUBTYPE
     }
@@ -108,7 +112,8 @@ internal class LocalAudioRenderer(
             else -> error("Unknown local audio decoder")
         }
         publishConversion(com.ambient.tv.ui.player.audioConversionFormats(
-            input.sampleMimeType, input.channelCount, output.sampleMimeType, output.channelCount))
+            input.sampleMimeType, input.channelCount, output.sampleMimeType,
+            if (output.sampleMimeType == MimeTypes.AUDIO_RAW && session.pcmOptionsForAudioThread().channels in setOf("stereo", "mono", "left", "right")) 2 else output.channelCount))
         return output
     }
 }
@@ -151,4 +156,11 @@ internal fun dtsCoreConversionText(input: Format, header: DtsCoreHeader?): Strin
     val base = com.ambient.tv.ui.player.audioConversionFormats(input.sampleMimeType, input.channelCount, MimeTypes.AUDIO_DTS, null)
     val layout = header?.channelLabel ?: com.ambient.tv.ui.player.audioChannelLabel(dtsCoreOutputFormat(input).channelCount)
     return "$base $layout"
+}
+
+/** Canonical native PCM feeding the stereo mixer, independent of the physical sink limit. */
+internal fun localDownmixInputChannels(sourceChannels: Int): Int = when {
+    sourceChannels >= 7 -> 8
+    sourceChannels > 2 -> 6
+    else -> 2
 }

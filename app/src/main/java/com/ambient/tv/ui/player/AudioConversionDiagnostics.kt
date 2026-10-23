@@ -12,6 +12,7 @@ internal fun audioConversionFormats(sourceCodec: String?, sourceChannels: Int?, 
 
 internal fun audioConversionDiagnostic(context: Context, state: PlayerUiState.Ready, session: AudioSession?,
     runtimeCodec: String? = null, runtimeChannels: Int? = null): String? {
+    session?.let { audioDownmixLabel(it.sourceChannels, it.outputPlan()) }?.let { return it }
     session?.activeLocalConversion?.let { return "${context.getString(R.string.audio_conversion_local)} · $it" }
     val target = state.serverAudioConversionCodec ?: return null
     val source = state.audioTracks.firstOrNull { it.id == state.serverAudioStreamId }
@@ -33,7 +34,9 @@ internal fun audioOutputBadgeLabel(
     passthroughLabel: String,
     dtsCoreLabel: String,
     serverLabel: String,
+    downmix: String? = null,
 ): String? = when {
+    downmix != null -> downmix
     localConversion != null -> localConversion
     serverTarget != null -> "$serverLabel → ${audioCodecLabel(serverTarget)}"
     mode == AudioOutputMode.PASSTHROUGH -> passthroughLabel
@@ -47,6 +50,7 @@ internal fun audioOutputBadgeLabel(
 internal fun audioOutputBadge(session: AudioSession?, serverTarget: String? = null): String? {
     if (session == null && serverTarget == null) return null
     return audioOutputBadgeLabel(
+        downmix = session?.let { audioDownmixLabel(it.sourceChannels, it.outputPlan()) },
         localConversion = session?.activeLocalConversion,
         serverTarget = serverTarget,
         mode = session?.outputPlan()?.mode,

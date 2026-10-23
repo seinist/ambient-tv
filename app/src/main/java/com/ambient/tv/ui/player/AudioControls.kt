@@ -107,14 +107,14 @@ internal fun AudioProfileEditor(
     ) else null
     val available = buildList {
         add("output" to stringResource(R.string.audio_output))
+        add("sound" to stringResource(R.string.audio_sound))
         if (!flatLive || !dspSuspended) {
-            add("sound" to stringResource(R.string.audio_sound))
             add("eq" to stringResource(R.string.audio_equalizer))
         }
         add("tracks" to stringResource(R.string.audio_track_preferences))
     }
     val activeGroup = panelSection ?: group
-    val sectionUnavailable = flatLive && activeGroup in listOf("sound", "eq") && dspSuspended
+    val sectionUnavailable = flatLive && activeGroup == "eq" && dspSuspended
     if (flatLive && panelSection == null && onOpenSection != null) {
         available.forEach { (key, title) ->
             com.ambient.tv.ui.common.PlayerPanelEntry(
@@ -143,7 +143,7 @@ internal fun AudioProfileEditor(
                 add("pcm" to "PCM")
                 if (codecs.isNotEmpty() && liveVisibility?.bitstream != false) add("bitstream" to stringResource(R.string.audio_prefer_bitstream))
             }
-            ImageChoice(R.string.audio_output, o.output, outputs) { change(o.copy(output = it)) }
+            ImageChoice(R.string.audio_output, o.output, outputs) { change(o.copy(output = it, channels = if (it == "bitstream") "auto" else o.channels)) }
             ImageHint(stringResource(R.string.audio_output_hint))
             PlayerDropUpSelector(stringResource(R.string.audio_delay), "${o.delayMs} ms",
                 listOf("-100" to "−100 ms", "-25" to "−25 ms", "0" to stringResource(R.string.audio_reset_delay), "+25" to "+25 ms", "+100" to "+100 ms"),
@@ -193,14 +193,15 @@ internal fun AudioProfileEditor(
             )).let { it.encoded && !it.applyDsp }
             if (suspended) ImageHint(stringResource(R.string.audio_requires_pcm))
             if (section == "sound") {
-                if (liveVisibility?.channels ?: (backend != "vlc")) {
-                    val modes = visibleChannelModes(route)
+                audioDownmixLabel(sourceChannels, actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough, sourceChannels = sourceChannels))?.let { ImageHint(it) }
+                if (liveVisibility?.channels ?: true) {
+                    val modes = if (backend == "vlc") listOf("auto", "stereo") else visibleChannelModes(route)
                     ImageChoice(R.string.audio_channels, o.channels, modes.map { it to channelLabel(it) }) { change(o.copy(channels = it)) }
-                    if (upmixRowVisible(route.pcmChannels, o.channels)) {
+                    if (!suspended && backend != "vlc" && upmixRowVisible(route.pcmChannels, o.channels)) {
                         ImageChoice(R.string.audio_upmix, if (o.upmix) "on" else "off", imageOnOff()) { change(o.copy(upmix = it == "on")) }
                         ImageHint(stringResource(R.string.audio_upmix_hint))
                     }
-                    ImageChoice(R.string.audio_maintain_volume, if (o.maintainDownmixVolume) "on" else "off", imageOnOff()) {
+                    if (!suspended && backend != "vlc") ImageChoice(R.string.audio_maintain_volume, if (o.maintainDownmixVolume) "on" else "off", imageOnOff()) {
                         change(o.copy(maintainDownmixVolume = it == "on"))
                     }
                 }

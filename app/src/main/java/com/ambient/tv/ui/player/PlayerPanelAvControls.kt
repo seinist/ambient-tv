@@ -236,9 +236,9 @@ internal fun PlayerPanelAudioGroup(session: AudioSession?) {
             val current = session.options
             if (key != "on" && current.output != "pcm") previousOutput = current.output
             val next = bitstreamToggleOutput(key == "on", current.output, previousOutput) { output ->
-                current.copy(output = output).permitsBitstream(session.sourcePassthrough)
+                current.copy(output = output, channels = "auto").permitsBitstream(session.sourcePassthrough)
             }
-            session.update(current.copy(output = next))
+            session.update(current.copy(output = next, channels = if (key == "on") "auto" else current.channels))
         }
     }
 }

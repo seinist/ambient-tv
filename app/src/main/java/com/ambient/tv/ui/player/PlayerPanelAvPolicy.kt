@@ -151,7 +151,7 @@ internal fun playerPanelAudioVisibility(
     night = supportsNight && !dspSuspended,
     bitstream = routeOffersBitstream,
     delay = true,
-    channels = engine != "vlc" && !dspSuspended,
+    channels = true, // Selecting Stereo must also be possible while passthrough is active.
     equalizer = !dspSuspended,
 )
 

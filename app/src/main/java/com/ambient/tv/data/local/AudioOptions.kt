@@ -43,12 +43,13 @@ data class AudioOptions(
     )
 
     /**
+     * Explicit stereo/mono selections require PCM, including when bitstream was preferred.
      * source: inherit the per-source passthrough switch.
      * auto: prefer PCM whenever the selected profile requests PCM-only processing; otherwise
      *       use confirmed encoded output.
      * bitstream: prefer encoded output even if saved DSP controls must be suspended.
      */
-    fun permitsBitstream(sourceDefault: Boolean): Boolean = when (output) {
+    fun permitsBitstream(sourceDefault: Boolean): Boolean = channels !in setOf("stereo", "mono", "left", "right") && when (output) {
         "pcm" -> false
         "bitstream" -> true
         "auto" -> !requestsPcmProcessing()

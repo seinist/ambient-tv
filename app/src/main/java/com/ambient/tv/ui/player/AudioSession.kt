@@ -251,7 +251,9 @@ class AudioSession(
         add("${settings.effectiveProfile(route.profile)} · ${plan.mode.name.lowercase().replace('_', ' ')}")
         add("A/V ${options.delayMs} ms")
         if (plan.encoded && !plan.applyDsp) add("PCM DSP suspended") else {
-            if (plan.channels != "auto" && backend != "vlc") add(plan.channels)
+            val downmix = audioDownmixLabel(sourceChannels, plan)
+            if (downmix != null) add(downmix)
+            else if (plan.channels != "auto" && backend != "vlc") add(plan.channels)
             if (options.eqEnabled) add("EQ")
             if (options.dialogue > 0) add("speech EQ +${options.dialogue} dB")
             if (options.night && supportsNight) add("compressor + limiter")

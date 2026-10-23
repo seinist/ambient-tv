@@ -5,6 +5,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class LocalPcmChannelsTest {
+    @Test fun stereoMixerReceivesCenterAndSurroundBeforeNativeS16Quantization() {
+        assertEquals(8, localDownmixInputChannels(8))
+        assertEquals(8, localDownmixInputChannels(7))
+        for (channels in 3..6) assertEquals(6, localDownmixInputChannels(channels))
+        assertEquals(2, localDownmixInputChannels(2))
+        assertEquals("stereo", localDecodePcmChannelMode("auto", 2))
+    }
+
     @Test fun sevenOneKeepsEightChannelsOnAnEightChannelRoute() {
         assertEquals(listOf(8, 6, 2), localPcmChannelCandidates(8, 8, "auto"))
         assertEquals(listOf(8, 6, 2), localPcmChannelCandidates(8, 8, "7.1"))

@@ -530,13 +530,13 @@ internal class MpvPlaybackEngine(
         if (plan.encoded) setPropertyDouble("speed", 1.0)
         option("audio-spdif", plan.spdifCodecs.joinToString(","))
         option("audio-delay", (raw.delayMs / 1000.0).toString())
-        option("audio-channels", mpvAudioChannels(plan.channels, plan.encoded, dsp.upmix, plan.applyDsp))
+        option("audio-channels", mpvAudioChannels(plan.channels, plan.encoded, dsp.upmix && audioSession.sourceChannels == 2, plan.applyDsp))
         option("replaygain", if (!plan.applyDsp || dsp.replayGain == "off") "no" else dsp.replayGain)
         option("replaygain-clip", "no")
         if (fileReady) {
             val rate = getPropertyDouble("audio-params/samplerate", 48000.0).toInt().coerceAtLeast(8000)
             val graphOptions = if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.LOCAL_AC3) dsp.copy(channels = "5.1", upmix = false) else dsp
-            val graph = if (plan.applyDsp) mpvAudioGraph(graphOptions, rate) else ""
+            val graph = if (plan.applyDsp) mpvAudioGraph(graphOptions, rate, audioSession.sourceChannels) else ""
             syncAudioFilters(graph, plan.mode == com.ambient.tv.ui.player.AudioOutputMode.LOCAL_AC3, rejected)
             if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.LOCAL_AC3 && !appliedAc3Filter) {
                 // Failed native filters must change the actual plan, including diagnostics.

@@ -2,6 +2,7 @@
 package com.ambient.tv.ui.player
 
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import java.nio.ByteBuffer
@@ -12,6 +13,18 @@ internal class ProfileAudioProcessor(private val session: AudioSession) : BaseAu
     private var frame = FloatArray(0)
     private var channelMode = "auto"
     private val stereo = FloatArray(2)
+    private var downmix: StereoDownmixMatrix? = null
+    private var downmixLimiter: StereoPeakLimiter? = null
+
+    private var inputLayout: List<PcmSpeaker>? = null
+
+    /** AudioProcessor.AudioFormat drops the mask; retain it from the sink configuration. */
+    fun setInputLayout(format: Format, mapping: IntArray?) {
+        inputLayout = if (format.sampleMimeType == androidx.media3.common.MimeTypes.AUDIO_RAW) {
+            val layout = pcmSpeakerLayout(format.channelCount, format.channelMask)
+            mapping?.map { layout[it] } ?: layout
+        } else null
+    }
 
     override fun onConfigure(input: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (input.encoding != C.ENCODING_PCM_16BIT) throw AudioProcessor.UnhandledAudioFormatException(input)
@@ -37,10 +50,12 @@ internal class ProfileAudioProcessor(private val session: AudioSession) : BaseAu
         if (format.sampleRate > 0 && format.channelCount > 0) {
             dsp = PcmAudioDsp(format.sampleRate, format.channelCount)
             frame = FloatArray(format.channelCount)
+            downmix = StereoDownmixMatrix(inputLayout?.takeIf { it.size == format.channelCount } ?: pcmSpeakerLayout(format.channelCount))
+            downmixLimiter = StereoPeakLimiter(format.sampleRate)
         }
     }
 
-    override fun onReset() { dsp = null; frame = FloatArray(0) }
+    override fun onReset() { dsp = null; frame = FloatArray(0); downmix = null; downmixLimiter = null; inputLayout = null }
 
     override fun queueInput(input: ByteBuffer) {
         // An empty input makes replaceOutputBuffer() hand back the shared EMPTY_BUFFER that is
@@ -70,7 +85,8 @@ internal class ProfileAudioProcessor(private val session: AudioSession) : BaseAu
                 output.putShort(toPcm(left)); output.putShort(toPcm(right))
             } else if (outputAudioFormat.channelCount == 6) {
                 // Dialogue already ran as the 2 kHz peaking filter. Do not boost center again.
-                stereoDownmix(frame, "stereo", stereo, 0, options.maintainDownmixVolume)
+                downmix?.mix(frame, "stereo", stereo, options.maintainDownmixVolume)
+                if (options.maintainDownmixVolume && channels > 2) downmixLimiter?.process(stereo)
                 val left = stereo[0]
                 val right = stereo[1]
                 val center = (left + right) * 0.5f
@@ -78,7 +94,8 @@ internal class ProfileAudioProcessor(private val session: AudioSession) : BaseAu
                 output.putShort(toPcm(center)); output.putShort(0)
                 output.putShort(toPcm(left * 0.7f)); output.putShort(toPcm(right * 0.7f))
             } else {
-                stereoDownmix(frame, if (channelMode == "5.1" || channelMode == "7.1") "stereo" else channelMode, stereo, 0, options.maintainDownmixVolume)
+                downmix?.mix(frame, if (channelMode == "5.1" || channelMode == "7.1") "stereo" else channelMode, stereo, options.maintainDownmixVolume)
+                if (options.maintainDownmixVolume && channels > 2) downmixLimiter?.process(stereo)
                 output.putShort(toPcm(stereo[0])); output.putShort(toPcm(stereo[1]))
             }
         }

@@ -10,6 +10,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AudioOutputPlannerTest {
+    @Test fun stereoSelectionOverridesPassthroughAndAutomaticPcmFollowsRoute() {
+        val route = AudioRouteCapabilities(setOf("ac3"), 2, true)
+        for (output in listOf("source", "bitstream", "auto", "pcm")) {
+            val plan = planAudioOutput(AudioOptions(output = output, channels = "stereo"), "ac3", route, "mpv", true, sourceChannels = 6)
+            assertEquals(AudioOutputMode.PCM, plan.mode)
+            assertEquals("stereo", plan.channels)
+        }
+        assertEquals("stereo", planAudioOutput(AudioOptions(output = "pcm"), "ac3", route, "media3", false).channels)
+        assertEquals(AudioOutputMode.PASSTHROUGH, planAudioOutput(AudioOptions(output = "bitstream"), "ac3", route, "mpv", true).mode)
+    }
+
+    @Test fun downmixLabelsStayCompactAndExcludePassthrough() {
+        val stereo = AudioOutputPlan(AudioOutputMode.PCM, channels = "stereo")
+        assertEquals("5.1 → Stereo", audioDownmixLabel(6, stereo))
+        assertEquals("7.1 → Stereo", audioDownmixLabel(8, stereo))
+        assertEquals(null, audioDownmixLabel(2, stereo))
+        assertEquals(null, audioDownmixLabel(null, stereo))
+        assertEquals(null, audioDownmixLabel(6, stereo.copy(encoded = true)))
+    }
+
     @Test fun defaultRecoveryUsesAc3ForArcButPcmForMultichannelHdmi() {
         val options = AudioOptions()
         val arc = AudioRouteCapabilities(setOf("ac3"), 2, true)

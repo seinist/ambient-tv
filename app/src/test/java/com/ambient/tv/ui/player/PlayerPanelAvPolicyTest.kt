@@ -109,14 +109,14 @@ class PlayerPanelAvPolicyTest {
     @Test
     fun vlcHidesChannelMixAndPassthroughSuspendsEq() {
         val vlc = playerPanelAudioVisibility(supportsNight = true, routeOffersBitstream = true, engine = "vlc")
-        assertFalse(vlc.channels)
+        assertTrue(vlc.channels)
         assertTrue(vlc.equalizer)
         assertTrue(vlc.delay)
         val suspended = playerPanelAudioVisibility(
             supportsNight = true, routeOffersBitstream = true, engine = "mpv", dspSuspended = true,
         )
         assertFalse(suspended.night)
-        assertFalse(suspended.channels)
+        assertTrue(suspended.channels)
         assertFalse(suspended.equalizer)
         assertTrue(suspended.delay)
         assertTrue(suspended.bitstream)

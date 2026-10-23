@@ -1078,7 +1078,7 @@
     <string name="audio_delay_hint">Positiv: Ton später. Negativ: Ton früher. Bereich: −2000 bis +2000 ms.</string>
     <string name="audio_codec">Bitstream-Format</string>
     <string name="audio_codec_allowed">Passthrough erlauben</string>
-    <string name="audio_vlc_output_hint">VLC schaltet Passthrough für alle Formate gemeinsam; Codec- und Kanaloptionen gibt es hier nicht.</string>
+    <string name="audio_vlc_output_hint">VLC schaltet Passthrough für alle Formate gemeinsam. Stereo mischt Surround auf zwei Kanäle.</string>
     <string name="audio_requires_pcm">Effekte pausieren bei Passthrough und DTS-Kern und wirken bei PCM und lokalem AC3.</string>
     <string name="audio_channels">Kanal-Ausgabe</string>
     <string name="audio_left">Links auf beiden Lautsprechern</string>

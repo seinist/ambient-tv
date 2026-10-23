@@ -37,7 +37,7 @@ class AudioOptionsTest {
     }
 
     @Test fun passthroughSuspendsAllDspWithoutDiscardingSettings() {
-        val original = AudioOptions(output = "bitstream", night = true, dialogue = 4, normalize = true, eqEnabled = true, replayGain = "track", channels = "mono", delayMs = 125)
+        val original = AudioOptions(output = "bitstream", night = true, dialogue = 4, normalize = true, eqEnabled = true, replayGain = "track", channels = "auto", delayMs = 125)
         val applied = original.pcmOptions(false)
         assertFalse(applied.night || applied.normalize || applied.eqEnabled)
         assertEquals(0, applied.dialogue)

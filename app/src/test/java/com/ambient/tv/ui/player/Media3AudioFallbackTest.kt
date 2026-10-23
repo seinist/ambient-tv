@@ -144,6 +144,11 @@ class Media3AudioFallbackTest {
     private fun badge(local: String? = null, server: String? = null, mode: AudioOutputMode? = null, codec: String? = null) =
         audioOutputBadgeLabel(local, server, mode, codec, "Passthrough", "DTS-Kern", "Server")
 
+    @Test fun downmixChipUsesOnlySourceAndDestinationLayout() {
+        assertEquals("5.1 → Stereo", audioOutputBadgeLabel("AC3 5.1 → PCM 2.0", null,
+            AudioOutputMode.PCM, "ac3", "Passthrough", "DTS-Kern", "Server", downmix = "5.1 → Stereo"))
+    }
+
     @Test fun audioChipNamesTheActualConversionFirst() {
         assertEquals("DTS-HD 7.1 → DTS 5.1", badge(local = "DTS-HD 7.1 → DTS 5.1", mode = AudioOutputMode.DTS_CORE, codec = "dts-hd"))
         assertEquals("E-AC3 5.1 → PCM 5.1", badge(local = "E-AC3 5.1 → PCM 5.1", mode = AudioOutputMode.PCM, codec = "eac3"))
