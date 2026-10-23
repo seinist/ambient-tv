@@ -15,6 +15,24 @@ class AudioOnlyOutputTest {
         sourceChannels = 6
     }
 
+    @Test fun rendererSwitchPreservesSafetyFallbackBeforeApplyingProfile() {
+        val previous = session("mpv", false)
+        previous.update(AudioOptions(output = "bitstream"))
+        previous.forceStereoPcm = true
+        previous.localEncoderFailed = true
+        val next = session("vlc", false)
+        var applied = false
+        next.apply = { _, _ ->
+            applied = true
+            assertTrue(next.forceStereoPcm)
+            assertTrue(next.localEncoderFailed)
+            assertEquals(AudioOutputMode.PCM, next.outputPlan().mode)
+            assertEquals("stereo", next.outputPlan().channels)
+        }
+        next.restoreFromSession(previous)
+        assertTrue(applied)
+    }
+
     @Test fun audioOnlyOverridesEncodedProfilesWithoutOverwritingThem() {
         for (backend in listOf("mpv", "vlc", "media3")) {
             val session = session(backend, true)

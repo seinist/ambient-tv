@@ -78,12 +78,14 @@ class MpvPlaybackController(
     }
     private val queries = ConcurrentHashMap<String, Query>()
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
+    private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val mailbox = MpvCommandQueue(
         schedule = { task ->
             // Construction can happen inside remember(). Let that composition commit before
             // the owner reads the AudioSession's Compose state for the first time.
-            if (Looper.myLooper() === Looper.getMainLooper()) main.post { worker.post { task() } }
-            else worker.post { task() }
+            previousAudioRelease.whenComplete { _, _ ->
+                main.post { worker.post { task() } }
+            }
         },
         failed = { error ->
             Timber.e(error, "MPV owner operation failed")
@@ -107,6 +109,7 @@ class MpvPlaybackController(
         audioSession.routeChanged = { _, _ -> main.post { command("audio") { applyAudioOptions() } } }
         audioSession.startRouteMonitoring(context)
         mailbox.submit("initialize") {
+            previousAudioRelease.join()
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
@@ -391,13 +394,18 @@ class MpvPlaybackController(
         surfaceIdentity = null
         main.removeCallbacks(tick)
         audioSession.release()
+        val audioRelease = nativeAudioReleases.beginRelease()
         mailbox.close {
             // Never interrupt or destroy a handle concurrently with an in-flight native call.
             try {
                 engine?.release()
+                audioRelease.complete(Unit)
                 engine = null
                 ownedSurface?.release()
                 ownedSurface = null
+            } catch (error: Throwable) {
+                audioRelease.completeExceptionally(error)
+                throw error
             } finally {
                 surfaceGate.closed()
                 thread.quitSafely()

@@ -55,6 +55,8 @@ class AudioSession(
 
     /** Keep manual edits and automatic-profile provenance across output/decoder restarts. */
     internal fun restoreFromSession(previous: AudioSession) {
+        forceStereoPcm = previous.forceStereoPcm
+        localEncoderFailed = previous.localEncoderFailed
         audioOnly = audioOnly || previous.audioOnly
         restoreProfile(previous.settings, automatic = true)
         restoreTitleDelay(previous.titleDelayMs)

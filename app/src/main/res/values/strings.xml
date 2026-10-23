@@ -1794,4 +1794,7 @@
     <string name="settings_next_up_credits_delay">Advance during credits</string>
     <string name="settings_next_up_credits_delay_hint">Optional countdown with a credits marker and autoplay enabled. Back cancels; Pause freezes it. Known later scenes are preserved; incomplete markers may miss scenes.</string>
     <string name="next_up_keep_watching">Keep watching (Back)</string>
+    <string name="audio_output_release_pending">Waiting for the previous audio output to close.</string>
+    <string name="audio_output_release_failed">The previous audio output could not be closed.</string>
+    <string name="audio_output_config_failed">The audio output could not be configured.</string>
 </resources>

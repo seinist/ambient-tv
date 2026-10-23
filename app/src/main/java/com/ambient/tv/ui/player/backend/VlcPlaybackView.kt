@@ -287,6 +287,8 @@ class VlcPlaybackController(
     }
 
     private var prepared = false
+    private val previousAudioRelease = nativeAudioReleases.snapshot()
+    private var awaitingAudioRelease = false
     private var released = false
     private var desiredPlayWhenReady = true
     private var streamOpenRetried = false
@@ -623,15 +625,12 @@ class VlcPlaybackController(
 
     private fun applyAudioOutputDevice(): Boolean {
         val plan = audioSession.outputPlan()
-        val device = if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH) "encoded" else if (
+        val device = if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH) vlcEncodedDevice(plan.spdifCodecs) else if (
             plan.channels in setOf("stereo", "mono", "left", "right") || audioSession.route.pcmChannels < 6
         ) "stereo" else "pcm"
         if (appliedAudioDevice == device) return true
-        // Explicit stereo makes VLC negotiate its channel mixer, including center/surrounds.
-        // Reset forced routing before enabling the Java API's encoding detection again.
-        val accepted = if (device == "encoded") {
-            player.setAudioOutputDevice(null) && player.setAudioDigitalOutputEnabled(true)
-        } else player.setAudioOutputDevice(device)
+        // Explicit devices bypass LibVLC Java's cached digital-output toggle.
+        val accepted = player.setAudioOutputDevice(device)
         if (accepted) appliedAudioDevice = device
         return accepted
     }
@@ -647,13 +646,17 @@ class VlcPlaybackController(
         if (!applyAudioOutputDevice()) errors.add("audio output")
         if (!nightProcessing.apply(o.night)) errors.add("Android DynamicsProcessing")
         if (!player.setAudioDelay(raw.delayMs * 1000L)) errors.add("audio delay")
-        val eq = if (o.eqEnabled || o.dialogue > 0) MediaPlayer.Equalizer.create().apply {
+        val reserve = if (!plan.encoded && appliedAudioDevice == "stereo")
+            vlcDownmixHeadroomDb(audioSession.sourceChannels) else 0f
+        val eq = if (o.eqEnabled || o.dialogue > 0 || reserve > 0f) MediaPlayer.Equalizer.create().apply {
             val gains = List(10) { i ->
                 (if (o.eqEnabled) o.eqDb[i] else 0) + (if (i == 4 || i == 5) o.dialogue else 0)
             }
             // Reserve headroom for boosts even when the optional Android limiter is off.
-            setPreAmp(((if (o.eqEnabled) o.preampDb else 0) - (gains.maxOrNull() ?: 0).coerceAtLeast(0)).coerceAtLeast(-20).toFloat())
-            repeat(minOf(10, MediaPlayer.Equalizer.getBandCount())) { setAmp(it, gains[it].toFloat()) }
+            val preamp = (if (o.eqEnabled) o.preampDb else 0) - (gains.maxOrNull() ?: 0).coerceAtLeast(0) - reserve
+            val excess = (-20f - preamp).coerceAtLeast(0f)
+            setPreAmp(preamp.coerceAtLeast(-20f))
+            repeat(minOf(10, MediaPlayer.Equalizer.getBandCount())) { setAmp(it, (gains[it] - excess).coerceAtLeast(-20f)) }
         } else null
         if (!player.setEqualizer(eq)) errors.add("equalizer")
         audioSession.warning = errors.takeIf { it.isNotEmpty() }?.joinToString()
@@ -793,6 +796,35 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released) return
+        if (!previousAudioRelease.isDone) {
+            pendingRestorePositionMs = resumePositionMs
+            desiredPlayWhenReady = resumePlaying
+            if (!awaitingAudioRelease) {
+                awaitingAudioRelease = true
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    if (!released && !previousAudioRelease.isDone)
+                        errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_pending)
+                }, 5_000L)
+                previousAudioRelease.whenComplete { _, _ ->
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        awaitingAudioRelease = false
+                        if (!released) {
+                            if (errorMessage == context.getString(com.ambient.tv.R.string.audio_output_release_pending)) errorMessage = null
+                            prepare()
+                        }
+                    }
+                }
+            }
+            return
+        }
+        if (previousAudioRelease.isCompletedExceptionally) {
+            errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
+            return
+        }
+        if (!applyAudioOutputDevice()) {
+            errorMessage = context.getString(com.ambient.tv.R.string.audio_output_config_failed)
+            return
+        }
         // Compose can acquire the next controller one frame before its SurfaceView exists.
         // VLC 4 may select the new media's video track despite setVideoTrackEnabled(false).
         // Opening here would let EGL create a window against an unready surface and leave
@@ -912,6 +944,7 @@ class VlcPlaybackController(
         media.release()
         prepared = true
         if (dvResumeWorkaround && (pendingRestorePositionMs ?: 0) > 0) beginDvPrime()
+        applyAudioLiveOptions()
         player.play()
         // Pause on the Playing event, after demux and the pending seek are ready.
         // Pausing immediately can interrupt VLC 4's initial stream probe.
@@ -1131,7 +1164,7 @@ class VlcPlaybackController(
             resumeVideoSeekMs = null
             seekTo(position)
         }
-        if (ended) prepare(0, true) else if (errorMessage != null) prepare(confirmedPlaybackTimeMs(), true) else player.play()
+        if (!prepared) prepare(resumePlaying = true) else if (ended) prepare(0, true) else if (errorMessage != null) prepare(confirmedPlaybackTimeMs(), true) else player.play()
     }
 
     override fun pause() {
@@ -1627,12 +1660,15 @@ class VlcPlaybackController(
         // VLC 4's Java stop waits for native Stopped. A blocked network/decoder
         // must not freeze Back or a renderer handoff on the application thread.
         // Surface detachment and listener removal have already happened above.
+        val audioRelease = nativeAudioReleases.beginRelease()
         kotlin.concurrent.thread(name = "vlc-stop", isDaemon = true) {
             val started = android.os.SystemClock.elapsedRealtime()
             runCatching { retiringPlayer.stop() }
                 .onFailure { Timber.w(it, "VLC native stop failed") }
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 runCatching { retiringPlayer.release() }
+                    .onSuccess { audioRelease.complete(Unit) }
+                    .onFailure { audioRelease.completeExceptionally(it) }
                 libVlcRelease.releaseWhenIdle(retiringLibVlc)
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "native release done")
                 Timber.i("VLC native release completed in %d ms", android.os.SystemClock.elapsedRealtime() - started)

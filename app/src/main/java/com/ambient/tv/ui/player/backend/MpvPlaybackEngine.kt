@@ -2382,10 +2382,10 @@ internal class MpvPlaybackEngine(
         imageScope.cancel()
         detachVideoOutput()
         released = true
-        if (stopEventPump()) runCatching { MpvNativeBridge.nativeDestroy(handle) }
+        if (stopEventPump()) MpvNativeBridge.nativeDestroy(handle)
         // A leaked mpv context costs memory until the process ends; a closed descriptor still in
         // use by the waiter can corrupt an unrelated stream.
-        else Timber.w("MPV event waiter did not stop; leaving the native context alive")
+        else error("MPV event waiter did not stop; audio output is still owned")
     }
 }
 
