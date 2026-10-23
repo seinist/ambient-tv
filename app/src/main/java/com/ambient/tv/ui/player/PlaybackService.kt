@@ -205,6 +205,10 @@ class PlaybackService : Service() {
         val metadata = state.metadata ?: return
         if (metadata.isTrailer) return
         val position = state.requestedTimelinePositionMs ?: (state.status.positionMs + metadata.timelineOffsetMs)
+        val duration = metadata.durationMs.takeIf { it > 0 }
+            ?: state.status.durationMs.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs) ?: 0L
+        val completed = metadata.hasVideo && !metadata.isLive && playbackIsComplete(
+            position, duration, state.status.ended && state.status.error == null, metadata.playbackSegments)
         try {
             metadata.liveTvSession?.let {
                 it.report(position, state.playing, stopped)
@@ -215,7 +219,6 @@ class PlaybackService : Service() {
                     val reported = repository.reportProgress(metadata.mediaId, position,
                         if (stopped) "stopped" else if (state.playing) "playing" else "paused")
                     if (stopped && reported.isFailure) notifyNotSaved(metadata)
-                    val duration = metadata.durationMs.takeIf { it > 0 } ?: state.status.durationMs
                     // Launcher "Continue watching": updated when playback stops, not on every report.
                     // Videos only: a stopped song or audiobook is not something to "watch" next.
                     if (stopped && metadata.source != "dlna" && metadata.hasVideo) launcher.onPlaybackStopped(
@@ -230,16 +233,17 @@ class PlaybackService : Service() {
                             durationMs = duration,
                             positionMs = position,
                         ),
-                        finished = state.status.ended && state.status.error == null,
+                        finished = completed,
                     )
-                    if (duration > 0 && position.toDouble() / duration >= .9 && state.generation !in markedWatched) {
+                    if ((completed || (!metadata.hasVideo && duration > 0 && position.toDouble() / duration >= .9)) &&
+                        state.generation !in markedWatched) {
                         if (repository.markWatched(metadata.mediaId).isSuccess) markedWatched.add(state.generation)
                         // Retried with every report; announced once per playback.
                         else if (watchedFailureNotified.add(state.generation)) notifyNotSaved(metadata, watched = true)
                     }
                 }
                 "files" -> files.updateProgress(metadata.mediaId, position, state.status.durationMs.takeIf { it > 0 } ?: metadata.durationMs,
-                    ended = state.status.ended && state.status.error == null,
+                    ended = if (metadata.hasVideo) completed else state.status.ended && state.status.error == null,
                     streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
                 "youtube" -> youtube.updateHistory(metadata.mediaId, position)
             }

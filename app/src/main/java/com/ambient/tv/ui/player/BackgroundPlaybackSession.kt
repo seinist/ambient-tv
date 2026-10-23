@@ -38,6 +38,7 @@ data class NextUpConfig(
     val stillWatchingEvery: Int = 3,
     /** Off: advance silently at the end; the card only appears for the still-watching check. */
     val showOverlay: Boolean = true,
+    val creditsDelaySeconds: Int = 0,
 )
 
 data class PlaybackMetadata(
@@ -83,6 +84,7 @@ data class PlaybackMetadata(
     val liveRendererOrigin: com.ambient.tv.ui.tvheadend.LiveRendererOrigin? = null,
     /** Title data for an online subtitle search; null where it makes no sense (live TV, music). */
     val subtitleSearch: SubtitleSearchInfo? = null,
+    val playbackSegments: List<com.ambient.tv.domain.model.PlaybackSegment> = emptyList(),
 )
 
 data class SubtitleSearchInfo(

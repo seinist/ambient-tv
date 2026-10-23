@@ -54,9 +54,18 @@ internal fun SegmentSkipOverlay(
         currentSeek?.invoke(target.endMs)
             ?: BackgroundPlaybackSession.seekTo((target.endMs - metadata.timelineOffsetMs).coerceAtLeast(0))
     }
-    LaunchedEffect(mediaKey, valid, position, snapshot.status.playing, segments, metadata.introSkipMode, metadata.creditsSkipMode, canAutoAdvance) {
+    LaunchedEffect(mediaKey, valid, position, snapshot.status.playing, segments, metadata.introSkipMode, metadata.creditsSkipMode, canAutoAdvance, creditsHandledByNextUp) {
         if (valid) {
-            val automatic = segments.filter { (if (it.type == "intro") metadata.introSkipMode else metadata.creditsSkipMode) == "auto" && (it.endMs >= 0 || canAutoAdvance) }
+            val duration = metadata.durationMs.takeIf { it > 0 }
+                ?: snapshot.status.durationMs.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs) ?: 0L
+            val finalCredits = finalCreditsAt(position, duration, segments)
+            val automatic = segments.filter {
+                val nextUpOwnsEnd = creditsHandledByNextUp && it == finalCredits &&
+                    metadata.nextUpConfig.creditsDelaySeconds > 0 &&
+                    metadata.nextUpConfig.autoplay && metadata.nextUpConfig.showOverlay
+                val mode = if (it.type == "intro") metadata.introSkipMode else metadata.creditsSkipMode
+                !nextUpOwnsEnd && mode == "auto" && (it.endMs >= 0 || canAutoAdvance)
+            }
             policy.automaticTarget(automatic, position, snapshot.status.playing)?.let { skip(it, automatic = true) }
         }
     }

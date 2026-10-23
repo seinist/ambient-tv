@@ -1109,6 +1109,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_NEXT_UP_LEAD_SECONDS, 30).takeIf { it in NEXT_UP_LEAD_SECONDS } ?: 30
         set(value) = prefs.edit { putInt(KEY_NEXT_UP_LEAD_SECONDS, value.takeIf { it in NEXT_UP_LEAD_SECONDS } ?: 30) }
 
+    /** Zero keeps normal end-of-video autoplay. */
+    var nextUpCreditsDelaySeconds: Int
+        get() = prefs.getInt("next_up_credits_delay_seconds", 0).takeIf { it in listOf(0, 5, 10, 15, 30) } ?: 0
+        set(value) = prefs.edit { putInt("next_up_credits_delay_seconds", value.takeIf { it in listOf(0, 5, 10, 15, 30) } ?: 0) }
+
     var nextUpAutoplayEpisodes: Boolean
         get() = prefs.getBoolean(KEY_NEXT_UP_AUTOPLAY_EPISODES, false)
         set(value) = prefs.edit { putBoolean(KEY_NEXT_UP_AUTOPLAY_EPISODES, value) }

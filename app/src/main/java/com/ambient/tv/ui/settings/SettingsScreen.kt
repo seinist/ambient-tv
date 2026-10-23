@@ -1069,6 +1069,15 @@ fun SettingsScreen(
                                             checked = uiState.nextUpOverlayEnabled,
                                             onCheckedChange = viewModel::onNextUpOverlayEnabledChanged,
                                         )
+                                        Text(stringResource(R.string.settings_next_up_credits_delay), style = MaterialTheme.typography.titleSmall)
+                                        Text(stringResource(R.string.settings_next_up_credits_delay_hint), style = MaterialTheme.typography.bodySmall)
+                                        SettingsSelect(options = listOf(0, 5, 10, 15, 30).map { seconds ->
+                                            SettingsSelectOption(
+                                                text = if (seconds == 0) stringResource(R.string.credits_skip_off) else stringResource(R.string.settings_next_up_seconds, seconds),
+                                                selected = uiState.nextUpCreditsDelaySeconds == seconds,
+                                                onClick = { viewModel.onNextUpCreditsDelaySecondsChanged(seconds) },
+                                            )
+                                        })
                                         Text(stringResource(R.string.settings_next_up_lead_time), style = MaterialTheme.typography.titleSmall)
                                         SettingsSelect(options = buildList {
                                             listOf(10, 20, 30, 60).forEach { seconds ->

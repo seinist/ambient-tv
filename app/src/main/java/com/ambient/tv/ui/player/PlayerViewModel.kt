@@ -260,6 +260,7 @@ class PlayerViewModel @Inject constructor(
             nextUpConfig = NextUpConfig(
                 enabled = appPreferences.nextUpEnabled,
                 leadSeconds = appPreferences.nextUpLeadSeconds,
+                creditsDelaySeconds = appPreferences.nextUpCreditsDelaySeconds,
                 autoplay = if (state.mediaType.equals("episode", ignoreCase = true)) appPreferences.nextUpAutoplayEpisodes
                 else appPreferences.nextUpAutoplayCollections,
                 stillWatchingEvery = appPreferences.nextUpStillWatchingEpisodes,

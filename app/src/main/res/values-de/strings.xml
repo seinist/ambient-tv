@@ -1789,4 +1789,7 @@
     <string name="sdr_reference_white_custom_value">Eigene SDR-Helligkeit</string>
     <string name="sdr_reference_white_hint">Wie hell SDR-Weiß im umgewandelten HDR-Signal erscheint. Auto nutzt 203 nits (BT.2408). Höhere Werte wirken heller; begrenzt auf die Spitzenhelligkeit oben. Wirkt sofort.</string>
     <string name="player_nerd_sparsam">Wiedergabe-Leistung</string>
+    <string name="settings_next_up_credits_delay">Automatisch weiter im Abspann</string>
+    <string name="settings_next_up_credits_delay_hint">Optionaler Countdown bei vorhandenem Abspann-Marker und aktivierter automatischer Wiedergabe. Zurück bricht ab, Pause hält an. Bekannte Szenen danach bleiben erhalten; unvollständige Marker können Szenen übersehen.</string>
+    <string name="next_up_keep_watching">Weiter ansehen (Zurück)</string>
 </resources>

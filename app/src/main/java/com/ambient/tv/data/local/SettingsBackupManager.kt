@@ -189,6 +189,7 @@ data class SettingsBackup(
     val creditsSkipMode: String = "button",
     val nextUpEnabled: Boolean = true,
     val nextUpLeadSeconds: Int = 30,
+    val nextUpCreditsDelaySeconds: Int = 0,
     val nextUpAutoplayEpisodes: Boolean = false,
     val nextUpAutoplayCollections: Boolean = false,
     val nextUpOverlayEnabled: Boolean = true,
@@ -463,6 +464,7 @@ class SettingsBackupManager @Inject constructor(
             creditsSkipMode = preferences.creditsSkipMode,
             nextUpEnabled = preferences.nextUpEnabled,
             nextUpLeadSeconds = preferences.nextUpLeadSeconds,
+            nextUpCreditsDelaySeconds = preferences.nextUpCreditsDelaySeconds,
             nextUpAutoplayEpisodes = preferences.nextUpAutoplayEpisodes,
             nextUpAutoplayCollections = preferences.nextUpAutoplayCollections,
             nextUpOverlayEnabled = preferences.nextUpOverlayEnabled,
@@ -810,6 +812,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.creditsSkipMode = backup.creditsSkipMode
         preferences.nextUpEnabled = backup.nextUpEnabled
         preferences.nextUpLeadSeconds = backup.nextUpLeadSeconds
+        preferences.nextUpCreditsDelaySeconds = backup.nextUpCreditsDelaySeconds
         preferences.nextUpAutoplayEpisodes = backup.nextUpAutoplayEpisodes
         preferences.nextUpAutoplayCollections = backup.nextUpAutoplayCollections
         preferences.nextUpOverlayEnabled = backup.nextUpOverlayEnabled

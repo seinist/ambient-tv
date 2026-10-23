@@ -77,6 +77,7 @@ fun PlaybackSessionContent(
         hasCredits = segments.any { it.type == "credits" && (it.endMs >= 0 || metadata.nextUp != null) },
     )
     val activeMetadata = metadata.copy(
+        playbackSegments = segments,
         introSkipMode = introSkipMode,
         creditsSkipMode = creditsSkipMode,
         nextUpConfig = metadata.nextUpConfig.copy(autoplay = autoplay),
@@ -112,7 +113,21 @@ fun PlaybackSessionContent(
     val positionMs = snapshot.status.positionMs + metadata.timelineOffsetMs
     val timing = nextUpTiming(positionMs, durationMs, navigation.timeline.segments,
         activeMetadata.creditsSkipMode != "off", config.leadSeconds)
-    val secondsRemaining = ceil(timing.remainingMs / 1_000.0).toInt()
+    val creditsCountdown = remember(metadata.route) { CreditsCountdown() }
+    val finalCredits = finalCreditsAt(positionMs, durationMs, segments)
+    val earlyCreditsEnabled = acquired && snapshot.metadata?.route == metadata.route &&
+        !snapshot.replacingSource && !LocalPlayerChangingItem.current &&
+        !com.ambient.tv.companion.CompanionQueuePlayback.pending && config.enabled && config.showOverlay && config.autoplay &&
+        activeMetadata.creditsSkipMode != "off" && !metadata.isLive &&
+        BackgroundPlaybackSession.sleepTimer.kind != SleepTimerKind.END_OF_ITEM &&
+        candidateKey != dismissedKey && !navigation.skipOverlayBlocked && !navigation.chaptersOpen
+    val creditsRemainingMs = remember(positionMs, snapshot.status.playing, finalCredits, earlyCreditsEnabled, config.creditsDelaySeconds) {
+        creditsCountdown.update(
+            finalCredits.takeIf { earlyCreditsEnabled }, positionMs, snapshot.status.playing,
+            config.creditsDelaySeconds,
+        )
+    }
+    val secondsRemaining = ceil((creditsRemainingMs ?: timing.remainingMs) / 1_000.0).toInt()
     // Metadata duration is only a countdown hint. A seek/restart can temporarily leave the
     // old clock at that value; only the current engine may declare an actual EOF.
     val atEnd = snapshot.status.ended
@@ -148,9 +163,10 @@ fun PlaybackSessionContent(
         onPlayNext(next)
     }
 
-    LaunchedEffect(acquired, atEnd, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+    val creditsDue = earlyCreditsEnabled && finalCredits != null && creditsRemainingMs == 0L && snapshot.status.playing
+    LaunchedEffect(acquired, atEnd, creditsDue, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
         val current = BackgroundPlaybackSession.snapshot.value
-        if (!acquired || !atEnd || !ownsSnapshot || changingItem || metadata.successorsLoading ||
+        if (!acquired || (!atEnd && !creditsDue) || !ownsSnapshot || changingItem || metadata.successorsLoading ||
             current.replacingSource || current.generation != snapshot.generation || current.metadata?.route != metadata.route ||
             com.ambient.tv.companion.CompanionQueuePlayback.pending || (handledKey != null && handledKey == candidateKey)) return@LaunchedEffect
         when {
@@ -201,7 +217,8 @@ fun PlaybackSessionContent(
                 NextUpOverlay(
                     candidate = candidate,
                     secondsRemaining = secondsRemaining,
-                    leadSeconds = timing.progressWindowSeconds,
+                    creditsCountdown = creditsRemainingMs != null,
+                    leadSeconds = if (creditsRemainingMs != null) config.creditsDelaySeconds else timing.progressWindowSeconds,
                     autoplay = config.autoplay,
                     stillWatching = stillWatching,
                     onPlayNow = { playNext(automatic = false) },

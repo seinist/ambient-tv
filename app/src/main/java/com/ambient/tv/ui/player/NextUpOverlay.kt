@@ -59,6 +59,7 @@ internal fun NextUpOverlay(
     modifier: Modifier = Modifier,
     onSkipCredits: (() -> Unit)? = null,
     onAutoplayChanged: ((Boolean) -> Unit)? = null,
+    creditsCountdown: Boolean = false,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val playFocus = remember(candidate.source, candidate.mediaId) { FocusRequester() }
@@ -156,7 +157,7 @@ internal fun NextUpOverlay(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TvActionButton(stringResource(R.string.next_up_close), onDismiss, Modifier.weight(1f), fillWidth = true)
+                    TvActionButton(stringResource(if (creditsCountdown) R.string.next_up_keep_watching else R.string.next_up_close), onDismiss, Modifier.weight(1f), fillWidth = true)
                     TvActionButton(
                         stringResource(if (stillWatching) R.string.next_up_continue else R.string.next_up_play_now),
                         onPlayNow,
@@ -173,7 +174,7 @@ internal fun NextUpOverlay(
             ) {
                 onSkipCredits?.let { TvActionButton(stringResource(R.string.player_skip_credits), it) }
                 Spacer(Modifier.weight(1f))
-                TvActionButton(stringResource(R.string.next_up_close), onDismiss)
+                TvActionButton(stringResource(if (creditsCountdown) R.string.next_up_keep_watching else R.string.next_up_close), onDismiss)
                 TvActionButton(
                     stringResource(if (stillWatching) R.string.next_up_continue else R.string.next_up_play_now),
                     onPlayNow,

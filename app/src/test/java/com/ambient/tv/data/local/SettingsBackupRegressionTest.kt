@@ -98,6 +98,7 @@ class SettingsBackupRegressionTest {
         source.youtubeMediaSelectionBehaviorKey = MediaSelectionPreferences.DETAILS
         source.introSkipMode = "auto"
         source.creditsSkipMode = "off"
+        source.nextUpCreditsDelaySeconds = 15
         source.nextUpEnabled = false
         source.nextUpAutoplayEpisodes = true
         source.nextUpAutoplayCollections = true
@@ -142,6 +143,7 @@ class SettingsBackupRegressionTest {
         assertTrue(target.allowThreeTwoPulldown)
         assertEquals("auto", target.introSkipMode)
         assertEquals("off", target.creditsSkipMode)
+        assertEquals(15, target.nextUpCreditsDelaySeconds)
         assertFalse(target.playerTechBadgesVisible)
         assertEquals("low", target.performanceModeKey)
         assertEquals("maximum", target.uiPerformanceModeKey)

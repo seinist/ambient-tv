@@ -1790,4 +1790,7 @@
     <string name="sdr_reference_white_custom_value">Custom SDR brightness</string>
     <string name="sdr_reference_white_hint">How bright SDR white appears in the converted HDR signal. Auto uses 203 nits (BT.2408). Higher values look brighter; the value is capped at the peak brightness above. Applies immediately.</string>
     <string name="player_nerd_sparsam">Playback performance</string>
+    <string name="settings_next_up_credits_delay">Advance during credits</string>
+    <string name="settings_next_up_credits_delay_hint">Optional countdown with a credits marker and autoplay enabled. Back cancels; Pause freezes it. Known later scenes are preserved; incomplete markers may miss scenes.</string>
+    <string name="next_up_keep_watching">Keep watching (Back)</string>
 </resources>

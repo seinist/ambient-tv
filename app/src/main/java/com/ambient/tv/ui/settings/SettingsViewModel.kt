@@ -485,6 +485,7 @@ class SettingsViewModel @Inject constructor(
         introSkipMode = appPreferences.introSkipMode,
         nextUpEnabled = appPreferences.nextUpEnabled,
         nextUpLeadSeconds = appPreferences.nextUpLeadSeconds,
+        nextUpCreditsDelaySeconds = appPreferences.nextUpCreditsDelaySeconds,
         nextUpAutoplayEpisodes = appPreferences.nextUpAutoplayEpisodes,
         nextUpAutoplayCollections = appPreferences.nextUpAutoplayCollections,
         nextUpOverlayEnabled = appPreferences.nextUpOverlayEnabled,
@@ -2124,6 +2125,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onIntroSkipModeChanged(value: String) = _uiState.update { it.copy(introSkipMode = value) }
 
+    fun onNextUpCreditsDelaySecondsChanged(value: Int) = _uiState.update {
+        it.copy(nextUpCreditsDelaySeconds = value.takeIf { it in listOf(0, 5, 10, 15, 30) } ?: 0)
+    }
+
     fun onNextUpEnabledChanged(value: Boolean) = _uiState.update { it.copy(nextUpEnabled = value) }
     fun onNextUpLeadSecondsChanged(value: Int) = _uiState.update {
         it.copy(nextUpLeadSeconds = value.takeIf(AppPreferences.NEXT_UP_LEAD_SECONDS::contains) ?: 30)
@@ -2541,6 +2546,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.introSkipMode = state.introSkipMode
         appPreferences.nextUpEnabled = state.nextUpEnabled
         appPreferences.nextUpLeadSeconds = state.nextUpLeadSeconds
+        appPreferences.nextUpCreditsDelaySeconds = state.nextUpCreditsDelaySeconds
         appPreferences.nextUpAutoplayEpisodes = state.nextUpAutoplayEpisodes
         appPreferences.nextUpAutoplayCollections = state.nextUpAutoplayCollections
         appPreferences.nextUpOverlayEnabled = state.nextUpOverlayEnabled
