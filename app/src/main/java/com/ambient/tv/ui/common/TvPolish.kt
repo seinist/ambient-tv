@@ -1472,6 +1472,7 @@ fun Modifier.tvModalFocus(
                             return@launch
                         }
                     }
+                    if (allowUpExit && direction == FocusDirection.Up && focusActions()) return@launch
                     if (!wrapVerticalFocus || held) return@launch
                     if (allowUpExit && direction == FocusDirection.Up && footerFocus == null && actionFocus == null &&
                         focusManager.moveFocus(FocusDirection.Up)) {

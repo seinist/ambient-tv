@@ -146,10 +146,6 @@ class PlexRepository @Inject constructor(
     private suspend fun resolveCanonicalDuplicates(item: MediaItem): MediaItem {
         val cached = cache.mergedFor(item.ratingKey)
         if (cache.isCanonicalResolved(item.canonicalContentKey) && cached != null) return register(item)
-        if (cached != null && cached.canonicalContentKey == item.canonicalContentKey && cached.allRatingKeys.size > 1) {
-            cache.markCanonicalResolved(item.canonicalContentKey)
-            return register(item)
-        }
         val candidates = mutableListOf(item)
         if (cached != null && cached.canonicalContentKey == item.canonicalContentKey) candidates += cached
 

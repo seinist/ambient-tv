@@ -68,6 +68,13 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -245,12 +252,13 @@ private fun DetailLoadingSkeleton(
             onBack = onBack,
             onSettings = onOpenSettings,
             requestInitialFocus = true,
+            leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun DetailContent(
     playbackAvailable: Boolean,
@@ -452,8 +460,14 @@ private fun DetailContent(
         CompositionLocalProvider(LocalBringIntoViewSpec provides detailBringIntoViewSpec) {
         LazyColumn(
             wrapVerticalFocus = false,
+            allowUpExit = true,
+            focusActionsOnRight = false,
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().focusProperties {
+                onExit = {
+                    if (requestedFocusDirection == FocusDirection.Left || requestedFocusDirection == FocusDirection.Right) cancelFocusChange()
+                }
+            }.focusGroup(),
             contentPadding = PaddingValues(top = 72.dp, bottom = 36.dp),
             // Keep episode/similar/collection/cast groups on the same vertical rhythm as
             // grouped rows on YouTube Home.
@@ -520,6 +534,7 @@ private fun DetailContent(
             onBack = onBack,
             onSettings = onOpenSettings,
             onDown = focusContentFromUtility,
+            leftNavigatesBack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
 
@@ -864,12 +879,23 @@ private fun MediaVersionPicker(
                     modifier = Modifier.width(116.dp),
                     fillWidth = true,
                 )
-                StreamPropertyRow(
-                    version = version,
-                    maxItems = 4,
-                    // Narrow (portrait phone) widths: the badges scroll instead of being clipped.
-                    modifier = Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
-                )
+                Column(Modifier.weight(1f)) {
+                    StreamPropertyRow(
+                        version = version,
+                        maxItems = 4,
+                        // Narrow widths: badges scroll instead of being clipped.
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    )
+                    version.fileName?.takeIf { it.isNotBlank() }?.let { name ->
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
         }
@@ -946,14 +972,40 @@ private fun ChildrenSection(item: MediaItem, children: List<MediaItem>, onOpenCh
                 children.indexOfFirst { it.ratingKey == item.ratingKey }.coerceAtLeast(0)
             } else 0
             val episodeListState = rememberLazyListState(initialFirstVisibleItemIndex = currentEpisodeIndex)
+            val scope = rememberCoroutineScope()
+            val requesters = remember(children.map { it.ratingKey }) { children.map { FocusRequester() } }
+            var focusedIndex by remember(children.map { it.ratingKey }) { mutableIntStateOf(currentEpisodeIndex) }
+            var wrapping by remember { mutableStateOf(false) }
             LazyRow(
                 state = episodeListState,
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier.containRowFocusExit(),
+                modifier = Modifier.containRowFocusExit().onPreviewKeyEvent { event ->
+                    if (wrapping && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) return@onPreviewKeyEvent true
+                    val target = when {
+                        event.key == Key.DirectionLeft && focusedIndex == 0 -> children.lastIndex
+                        event.key == Key.DirectionRight && focusedIndex == children.lastIndex -> 0
+                        else -> return@onPreviewKeyEvent false
+                    }
+                    if (event.type == KeyEventType.KeyDown && !wrapping && target >= 0) {
+                        wrapping = true
+                        scope.launch {
+                            try {
+                                episodeListState.scrollToItem(target)
+                                repeat(3) {
+                                    withFrameNanos { }
+                                    if (runCatching { requesters[target].requestFocus() }.getOrDefault(false)) return@launch
+                                }
+                            } finally { wrapping = false }
+                        }
+                    }
+                    true
+                },
             ) {
-                items(children, key = { it.ratingKey }) { child ->
+                items(children.size, key = { children[it].ratingKey }) { index ->
+                    val child = children[index]
                     MediaTile(
+                        modifier = Modifier.focusRequester(requesters[index]).onFocusChanged { if (it.isFocused) focusedIndex = index },
                         item = child,
                         style = MediaTileStyle.EPISODE,
                         showDescription = false,

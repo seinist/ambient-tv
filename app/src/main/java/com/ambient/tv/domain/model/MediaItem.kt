@@ -135,6 +135,7 @@ data class MediaVersion(
     val sourceRatingKey: String? = null,
     val sourceMediaIndex: Int = 0,
     val sourceId: String? = null,
+    val fileName: String? = null,
 ) {
     val selectedAudioTrack: MediaTrack?
         get() = tracks.firstOrNull { it.type == MediaTrackType.AUDIO && it.selected }

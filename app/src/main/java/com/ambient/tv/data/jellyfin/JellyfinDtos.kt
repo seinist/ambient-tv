@@ -104,6 +104,7 @@ data class JellyfinUserData(
 
 @Serializable
 data class JellyfinMediaSource(
+    @SerialName("Path") val path: String? = null,
     @SerialName("Id") val id: String = "",
     @SerialName("Name") val name: String? = null,
     @SerialName("Container") val container: String? = null,

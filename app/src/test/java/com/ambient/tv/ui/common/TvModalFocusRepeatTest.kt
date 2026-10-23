@@ -53,6 +53,28 @@ class TvModalFocusRepeatTest {
         rule.waitForIdle()
     }
 
+    @Test fun nonWrappingDetailListCanReachUtilityActionsWithUp() {
+        val content = FocusRequester()
+        val utility = FocusRequester()
+        rule.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(LocalScrollListActionFocus provides utility) {
+                Column {
+                    TvActionButton("Back", {}, Modifier.testTag("utility").focusRequester(utility))
+                    Column(Modifier.tvModalFocus(initialFocus = false, allowUpExit = true, wrapVerticalFocus = false)) {
+                        TvActionButton("Play", {}, Modifier.testTag("play").focusRequester(content))
+                    }
+                }
+            }
+            LaunchedEffect(Unit) { content.requestFocus() }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { content.requestFocus() }
+        press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
+        rule.onNodeWithTag("play").assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_UP)
+        rule.onNodeWithTag("utility").assertIsFocused()
+    }
+
     @Test fun freshDownOnTheLastAreaWrapsToTheFirst() {
         setUp(wrapOnRepeat = false, start = 4)
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)

@@ -126,6 +126,7 @@ private fun JellyfinMediaSource.toDomain(itemId: String, mediaIndex: Int, urls: 
     val videoStream = mediaStreams.firstOrNull { it.type.equals("Video", true) }
     return MediaVersion(
     streamUrl = urls.directStreamUrl(itemId, this),
+    fileName = path?.substringAfterLast('/')?.substringAfterLast('\\'),
     resolution = height?.let { "${it}p" },
     videoCodec = videoCodec ?: videoStream?.codec,
     audioCodec = audioCodec ?: mediaStreams.firstOrNull { it.type.equals("Audio", true) }?.codec,

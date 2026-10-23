@@ -144,6 +144,7 @@ fun PageUtilityBar(
     onSettings: () -> Unit,
     onDown: (() -> Unit)? = null,
     requestInitialFocus: Boolean = false,
+    leftNavigatesBack: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalUiTokens.current
@@ -182,7 +183,8 @@ fun PageUtilityBar(
         // Same icon chips as every page header (Settings, Files, …), so Back looks alike everywhere.
         TvChip(
             stringResource(R.string.back),
-            modifier = Modifier.focusRequester(backFocus).downAction(onDown).leftKeyAction(onBack),
+            modifier = Modifier.focusRequester(backFocus).downAction(onDown)
+                .then(if (leftNavigatesBack) Modifier.leftKeyAction(onBack) else Modifier),
             icon = Icons.AutoMirrored.Filled.ArrowBack,
             iconOnly = true,
             onClick = onBack,

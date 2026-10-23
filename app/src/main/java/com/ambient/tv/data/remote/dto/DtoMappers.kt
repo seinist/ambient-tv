@@ -86,6 +86,7 @@ fun MediaDto.toDomain(urlBuilder: PlexUrlBuilder, sourceRatingKey: String, sourc
     tracks = parts.firstOrNull()?.streams.orEmpty().map { it.toDomain(urlBuilder) },
     sourceRatingKey = sourceRatingKey,
     sourceMediaIndex = sourceMediaIndex,
+    fileName = parts.firstOrNull()?.file?.substringAfterLast('/')?.substringAfterLast('\\'),
 )
 
 fun StreamDto.toDomain(urlBuilder: PlexUrlBuilder) = MediaTrack(

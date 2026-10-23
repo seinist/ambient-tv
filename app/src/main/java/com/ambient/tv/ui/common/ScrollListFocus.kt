@@ -87,6 +87,7 @@ fun TvLazyColumn(
     userScrollEnabled: Boolean = true,
     allowUpExit: Boolean = false,
     wrapVerticalFocus: Boolean = true,
+    focusActionsOnRight: Boolean = true,
     content: LazyListScope.() -> Unit,
 ) {
     BrowseScrollBudget(state)
@@ -104,7 +105,7 @@ fun TvLazyColumn(
                 scrollToEnd = {
                     if (state.layoutInfo.totalItemsCount > 0) state.glideToItem(animate, if (reverseLayout) 0 else state.layoutInfo.totalItemsCount - 1)
                 },
-                focusActionsOnRight = true,
+                focusActionsOnRight = focusActionsOnRight,
                 reverseTraversal = reverseLayout,
                 scrollPastEmptyEdge = { state.scrollPastUnfocusableEdge(it != reverseLayout) },
             )),

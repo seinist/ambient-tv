@@ -19,6 +19,19 @@ class ContentDeduplicatorTest {
         assertEquals(2_000L, merged.viewOffsetMs)
     }
 
+    @Test fun additionalVersionsSurviveMergingAnAlreadyKnownPair() {
+        val copies = (1..5).map { index ->
+            item("$index", "imdb://tt123", 0L, 10_000L, "1080p").let { movie ->
+                movie.copy(mediaVersions = movie.mediaVersions.map { it.copy(fileName = "Movie-$index.mkv") })
+            }
+        }
+        val pair = ContentDeduplicator.mergeGroup(copies.take(2))
+        val merged = ContentDeduplicator.mergeGroup(listOf(pair) + copies)
+        assertEquals(5, merged.mediaVersions.size)
+        assertEquals((1..5).map { "Movie-$it.mkv" }.toSet(), merged.mediaVersions.map { it.fileName }.toSet())
+        assertEquals((1..5).map { "$it" }.toSet(), merged.allRatingKeys.toSet())
+    }
+
     @Test fun sameTitleWithDifferentStableGuidDoesNotMerge() {
         val first = item("1", "imdb://tt111", 0L, 10_000L, "1080p")
         val second = item("2", "imdb://tt222", 0L, 10_000L, "1080p")

@@ -63,12 +63,18 @@ class DetailViewModel @Inject constructor(
                 item = it,
                 childrenLoading = it.type in BROWSABLE_TYPES || it.type == "episode",
                 autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
+                offline = sourceOffline(),
             )
         } ?: DetailUiState.Loading,
     )
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
     private var themeMusicJob: Job? = null
+
+    private fun sourceOffline() = availability.mediaState(ratingKey) in setOf(
+        com.ambient.tv.data.browse.SourceHealth.OFFLINE,
+        com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED,
+    )
 
     fun retryOffline() {
         val state = _uiState.value
@@ -114,7 +120,7 @@ class DetailViewModel @Inject constructor(
                     item = item, children = mediaRepository.cachedChildren(if (item.type == "episode") item.parentRatingKey ?: ratingKey else ratingKey).orEmpty(),
                     similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
                     autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
-                    offline = availability.mediaState(ratingKey) == com.ambient.tv.data.browse.SourceHealth.OFFLINE,
+                    offline = sourceOffline(),
                 )
             }
             if (_uiState.value !is DetailUiState.Loaded) _uiState.value = DetailUiState.Loading
@@ -138,7 +144,8 @@ class DetailViewModel @Inject constructor(
                         actionInProgress = previous?.actionInProgress ?: false,
                         actionMessage = previous?.actionMessage,
                         autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
-                        themeMusic = previous?.themeMusic,
+                        themeMusic = previous?.themeMusic.takeUnless { sourceOffline() },
+                        offline = sourceOffline(),
                     )
                     refreshThemeMusic()
                     loadSecondaryContent(item)
@@ -168,7 +175,9 @@ class DetailViewModel @Inject constructor(
             }
             if (childKey != null) {
                 updateLoaded { it.copy(childrenLoading = true, childrenLoadFailed = false) }
-                val result = mediaRepository.getChildren(childKey)
+                val initialChildren = mediaRepository.getChildren(childKey)
+                val onlySeason = initialChildren.getOrNull()?.singleOrNull()?.takeIf { item.type == "show" && it.type == "season" }
+                val result = if (onlySeason != null) mediaRepository.getChildren(onlySeason.ratingKey) else initialChildren
                 val children = result.getOrElse {
                     // Otherwise a show simply looks like it has no seasons.
                     com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
@@ -189,6 +198,14 @@ class DetailViewModel @Inject constructor(
                         childrenLoadFailed = result.isFailure,
                         nextEpisode = derivedNext ?: current.nextEpisode,
                     )
+                }
+            }
+        }
+
+        if (item.type == "movie" && !sourceOffline()) {
+            launch {
+                mediaRepository.getMetadata(ratingKey).onSuccess { enriched ->
+                    if (enriched != null) updateLoaded { it.copy(item = enriched, offline = sourceOffline()) }
                 }
             }
         }
