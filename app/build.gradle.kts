@@ -614,6 +614,14 @@ fun deployReleaseApkToAdb() {
     val (installCode, installOutput) = runAdb("-s", target, "install", "-r", apk.absolutePath)
     if (installCode == 0 && installOutput.contains("Success", true)) {
         logger.lifecycle("ADB deploy: installed ${apk.name} successfully.")
+        // adb install ignores the APK's baseline profile until the device's idle dexopt (days on a
+        // TV box), so menus stutter meanwhile. Write the profile and compile with it right away.
+        val pkg = "com.ambient.tv"
+        runAdb("-s", target, "shell", "am", "broadcast", "-a", "androidx.profileinstaller.action.INSTALL_PROFILE",
+            "-n", "$pkg/androidx.profileinstaller.ProfileInstallReceiver")
+        val (compileCode, compileOutput) = runAdb("-s", target, "shell", "cmd", "package", "compile", "-f", "-m", "speed-profile", pkg)
+        if (compileCode == 0 && compileOutput.contains("Success", true)) logger.lifecycle("ADB deploy: compiled with the baseline profile.")
+        else logger.lifecycle("ADB deploy warning: profile compilation failed (${compileOutput.ifBlank { "no output" }}); the app works, it may stutter until the device compiles it.")
     } else {
         // Deployment is deliberately non-fatal so a missing/offline TV never breaks the build.
         logger.lifecycle("ADB deploy warning: install failed but build remains successful. ${installOutput.ifBlank { "adb install failed" }}")
