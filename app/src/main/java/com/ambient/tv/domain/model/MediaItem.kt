@@ -44,6 +44,8 @@ data class MediaItem(
     val themeMusicUrl: String? = null,
     /** Transparent title treatment (ClearLogo / Logo) when the provider supplied one. */
     val logoUrl: String? = null,
+    /** Wide backdrop of the show/season/album this item belongs to (episodes and seasons often have none of their own). */
+    val parentBackdropUrl: String? = null,
 ) {
     val allRatingKeys: List<String>
         get() = (linkedRatingKeys + ratingKey).distinct()
@@ -102,6 +104,13 @@ data class MediaItem(
 
     val streamUrl: String? get() = mediaVersions.firstOrNull()?.streamUrl
     val videoResolution: String? get() = mediaVersions.firstOrNull()?.resolution
+
+    /**
+     * Wide background for full-screen pages: the item's own backdrop, else its show's/season's,
+     * else a landscape still (episodes, clips); a portrait poster only when nothing wide exists.
+     */
+    val landscapeBackdropUrl: String?
+        get() = artUrl ?: parentBackdropUrl ?: thumbUrl?.takeIf { type in setOf("episode", "clip") } ?: thumbUrl
 
     /** Vertical cover for poster tiles: series art for episodes/seasons, otherwise the item thumb. */
     val posterArtUrl: String?

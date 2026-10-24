@@ -32,6 +32,7 @@ fun MetadataDto.toDomain(urlBuilder: PlexUrlBuilder) = MediaItem(
     index = index,
     thumbUrl = urlBuilder.mediaThumbUrl(thumb, type),
     artUrl = urlBuilder.backdropUrl(art),
+    parentBackdropUrl = (grandparentArt ?: parentArt)?.let { urlBuilder.backdropUrl(it) },
     year = year,
     summary = summary,
     tagline = tagline,

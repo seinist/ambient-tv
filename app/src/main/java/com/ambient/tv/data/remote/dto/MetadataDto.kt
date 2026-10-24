@@ -30,6 +30,8 @@ data class MetadataDto(
     val parentThumb: String? = null,
     val grandparentThumb: String? = null,
     val art: String? = null,
+    val parentArt: String? = null,
+    val grandparentArt: String? = null,
     val clearLogo: String? = null,
     val theme: String? = null,
     val parentTheme: String? = null,

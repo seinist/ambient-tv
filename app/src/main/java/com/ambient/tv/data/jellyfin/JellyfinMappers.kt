@@ -50,6 +50,11 @@ fun JellyfinItem.toDomain(urls: JellyfinUrlBuilder): MediaItem {
         artUrl = backdropTag?.let { urls.imageUrl(id, "Backdrop", 0, it) },
         parentThumbUrl = (seasonId ?: parentId)?.let { urls.imageUrl(it, "Primary") },
         grandparentThumbUrl = seriesId?.let { urls.imageUrl(it, "Primary", tag = seriesPrimaryImageTag) },
+        // Episodes and seasons carry the series backdrop separately; else a wide "Thumb" image.
+        parentBackdropUrl = parentBackdropItemId?.takeIf { parentBackdropImageTags.isNotEmpty() }
+            ?.let { urls.imageUrl(it, "Backdrop", 0, parentBackdropImageTags.first()) }
+            ?: imageTags["Thumb"]?.let { urls.imageUrl(id, "Thumb", tag = it) }
+            ?: parentThumbItemId?.takeIf { parentThumbImageTag != null }?.let { urls.imageUrl(it, "Thumb", tag = parentThumbImageTag) },
         year = productionYear,
         summary = overview,
         tagline = taglines.firstOrNull(),

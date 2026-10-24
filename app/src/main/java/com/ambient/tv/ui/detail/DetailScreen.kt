@@ -350,7 +350,8 @@ private fun DetailContent(
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        val backdrop = item.artUrl ?: item.thumbUrl
+        // Always the wide backdrop when one exists (own, then the show's), a poster only as last resort.
+        val backdrop = item.landscapeBackdropUrl
         val artworkAccent = rememberArtworkAccent(backdrop)
         val heroAccent = if (LocalAccentModeKey.current == "artwork") artworkAccent else MaterialTheme.colorScheme.primary
         if (!visibleBackgroundVideo) ArtworkImage(
