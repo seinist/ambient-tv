@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="sync_title">Daten übertragen</string>
-    <string name="sync_to_tv_hint">An ein verknüpftes Gerät senden. Ambient TV muss auf beiden Geräten geöffnet sein.</string>
-    <string name="sync_to_phone_hint">An ein verknüpftes Handy oder einen anderen TV senden. Ambient TV muss auf beiden Geräten geöffnet sein. Über VPN zuerst vom Handy aus verbinden.</string>
-    <string name="sync_no_devices">Noch keine Geräte verknüpft. Verknüpfe zuerst die beiden Geräte.</string>
+    <string name="sync_to_tv_hint">An ein gekoppeltes Gerät senden. Ambient TV muss auf beiden Geräten geöffnet sein.</string>
+    <string name="sync_to_phone_hint">An ein gekoppeltes Handy oder einen anderen TV senden. Ambient TV muss auf beiden Geräten geöffnet sein. Über VPN zuerst vom Handy aus verbinden.</string>
+    <string name="sync_no_devices">Noch keine Geräte gekoppelt. Kopple zuerst die beiden Geräte.</string>
     <string name="sync_accounts">Nur Accounts &amp; Quellen</string>
     <string name="sync_all">Einstellungen + Accounts &amp; Quellen</string>
     <string name="sync_sounds">Nur Menütöne</string>

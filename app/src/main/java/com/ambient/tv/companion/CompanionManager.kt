@@ -71,6 +71,14 @@ data class CompanionState(
     val pairCode: String = "",
     /** TV side: a phone's code was accepted; waiting for it to confirm the comparison code. */
     val pairingWith: String = "",
+    /** TV side: elapsedRealtime when the shown invitation expires (0 = none). */
+    val pairExpiresAt: Long = 0L,
+    /** Phone side: the guided pairing page is open. */
+    val pairingFlow: Boolean = false,
+    /** Phone side: name of the TV the guided pairing just paired with (its success step). */
+    val pairingResult: String = "",
+    /** Phone side: device the transfer page was opened for; fixes its target. */
+    val transferTarget: String? = null,
     val prompt: CompanionPrompt? = null,
     val remote: CompanionFrame? = null,
     val panel: Boolean = false,
@@ -409,14 +417,32 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
     }
 
     fun pairForTransfer() {
-        showPanel()
+        if (television) { showPanel(); transferAfterPairing = true; openPairing(); return }
+        startPairingFlow()
         transferAfterPairing = true
-        if (television) openPairing()
     }
 
     fun showPairing() {
         showPanel()
         if (television) openPairing()
+    }
+
+    /** Phone: the guided pairing page (prepare, scan or type the code, compare, done). TV: its QR. */
+    fun startPairingFlow() {
+        if (television) { showPairing(); return }
+        if (mutable.value.remotePanel) hideRemote()
+        mutable.update { it.copy(pairingFlow = true, pairingResult = "", panel = false, settingsPanel = false, nowPlayingPanel = false) }
+        discover()
+    }
+    /** Phone: leave whichever companion page covers the content (another tab was chosen). */
+    fun closeHandheldPages() {
+        if (mutable.value.pairingFlow) closePairingFlow()
+        if (mutable.value.remotePanel) hideRemote()
+        if (mutable.value.panel) hidePanel()
+    }
+    fun closePairingFlow() {
+        transferAfterPairing = false
+        mutable.update { it.copy(pairingFlow = false, pairingResult = "") }
     }
     @Volatile internal var diagnosticFailure: String = ""
         private set
@@ -614,7 +640,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     fun showPanel() {
         if (mutable.value.remotePanel) hideRemote()
-        mutable.update { it.copy(panel = true, nowPlayingPanel = false, settingsPanel = false) }
+        mutable.update { it.copy(panel = true, nowPlayingPanel = false, settingsPanel = false, pairingFlow = false, pairingResult = "") }
         discover()
     }
     fun showRemote() {
@@ -836,12 +862,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             "repeat" -> { require(music && command.position in 0..2); spotify?.setRepeatMode(command.position.toInt()) }
         }
     }
-    fun showSettingsTransfer() {
+    fun showSettingsTransfer() = showSettingsTransferTo(null)
+    /** Opens the transfer page for [peer]; null lets the page pick the connected or only TV. */
+    fun showSettingsTransferTo(peer: CompanionPeer?) {
         if (television) { showPanel(); return }
         if (mutable.value.remotePanel) hideRemote()
-        mutable.update { it.copy(settingsPanel = true, panel = false, nowPlayingPanel = false) }
+        mutable.update { it.copy(settingsPanel = true, transferTarget = peer?.fingerprint, panel = false, nowPlayingPanel = false, pairingFlow = false, pairingResult = "") }
     }
-    fun hideSettingsTransfer() { mutable.update { it.copy(settingsPanel = false) } }
+    fun hideSettingsTransfer() { mutable.update { it.copy(settingsPanel = false, transferTarget = null) } }
 
     /** Legacy callers cannot request a TV-to-phone transfer, regardless of content. */
     @Suppress("UNUSED_PARAMETER")
@@ -1211,6 +1239,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             mutable.update { it.copy(
                 invitation = CompanionInvitation(listener.inetAddress.hostAddress!!, listener.localPort, identity.pin, pairToken).link(),
                 pairCode = formatPairCode(pairCode),
+                pairExpiresAt = pairDeadline,
             ) }
             pairExpiry = scope.launch { delay(120_000); closePairing() }
         }
@@ -1220,7 +1249,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         pairToken = ""; pairCode = ""; pairAttempts = 0; pairDeadline = 0
         pairExpiry?.cancel(); pairExpiry = null
         confirmation?.complete(false); confirmation = null
-        mutable.update { it.copy(invitation = null, pairCode = "", pairingWith = "", prompt = null) }
+        mutable.update { it.copy(invitation = null, pairCode = "", pairingWith = "", pairExpiresAt = 0L, prompt = null) }
     }
     fun confirm(accepted: Boolean) { confirmation?.complete(accepted) }
 
@@ -1331,7 +1360,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 val name = safeDeviceName(auth.name)
                 // The QR is spent: show who is pairing instead of an invitation that no longer works.
                 pairingStarted = true
-                mutable.update { it.copy(invitation = null, pairCode = "", pairingWith = name) }
+                mutable.update { it.copy(invitation = null, pairCode = "", pairExpiresAt = 0L, pairingWith = name) }
                 socket.soTimeout = 115_000
                 output.writeFrame(CompanionFrame(type = "confirm", nonce = nonce))
                 val local = scope.async { approval(name, comparisonCode(nonce, identity.pin, pin)) }
@@ -1616,7 +1645,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     savePeer(trusted); connectionTransport?.store?.learnMac(trusted.fingerprint, response.networkMac); connected = true
                     mutable.update { it.copy(target = trusted, online = true, busy = false, lastSeen = it.lastSeen + (trusted.fingerprint to SystemClock.elapsedRealtime())) }
                 }
-                if (pairing) pairedNotice(trusted) else connectionNotice(trusted)
+                if (pairing) {
+                    pairedNotice(trusted)
+                    dropStaleNamesakes(trusted)
+                    if (mutable.value.pairingFlow) mutable.update { it.copy(pairingResult = trusted.name) }
+                } else connectionNotice(trusted)
                 withContext(Dispatchers.Main) {
                     if (transferAfterPairing) { transferAfterPairing = false; showSettingsTransfer() }
                     else if (remoteAfterConnect == trusted.fingerprint) { remoteAfterConnect = null; showRemote() }
@@ -1766,7 +1799,19 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         }
         return true
     }
-    fun revoke(peer: CompanionPeer) {
+    /**
+     * Phone: re-pairing a TV whose app data was reset gives it a new identity under the same name
+     * and address. The old entry can never connect again; drop it unless it is demonstrably alive.
+     * Name and address must both match, so two TVs of the same model are never confused.
+     */
+    private fun dropStaleNamesakes(fresh: CompanionPeer) {
+        if (television || fresh.host.isBlank()) return
+        mutable.value.paired.filter { it.name == fresh.name && it.host == fresh.host && it.fingerprint != fresh.fingerprint }
+            .filter { reachability(it) !in setOf(PeerReachability.CONNECTED, PeerReachability.REACHABLE) }
+            .forEach { revoke(it, silent = true) }
+    }
+
+    fun revoke(peer: CompanionPeer, silent: Boolean = false) {
         val saved = synchronized(this) {
             val peers = mutable.value.paired.filterNot { it.fingerprint == peer.fingerprint }
             // A revocation must never look done when it was not stored (e.g. storage full): keep
@@ -1784,7 +1829,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         stopSessionWatch(peer.fingerprint)
         sockets.filterValues { it == peer.fingerprint }.keys.forEach { runCatching { it.close() } }
         if (mutable.value.target?.fingerprint == peer.fingerprint) disconnect()
-        notice(R.string.companion_revoked, peer.name)
+        if (!silent) notice(R.string.companion_revoked, peer.name)
     }
 
     fun handleIntent(intent: Intent?) {
@@ -1792,7 +1837,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "ambienttv" && intent.data?.host == "now-playing") {
             showNowPlaying()
         } else if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "ambienttv" && intent.data?.host == "pair") {
-            showPanel(); pair(intent.data.toString())
+            startPairingFlow(); pair(intent.data.toString())
         } else if (intent.action == Intent.ACTION_VIEW && intent.data?.scheme == "ambienttv" && intent.data?.host == "devices") {
             showPanel()
         } else if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain") {

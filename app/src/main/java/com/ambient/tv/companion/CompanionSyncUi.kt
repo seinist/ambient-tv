@@ -46,7 +46,8 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     var source by remember { mutableStateOf(navSnapshot) }
     var mode by rememberSaveable { mutableStateOf(if (navSnapshot != null) "nav_sounds" else "preferences") }
     var selected by rememberSaveable { mutableStateOf<List<String>?>(null) }
-    var pickedId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Opened from a TV's card or detail page: that TV is the target.
+    var pickedId by rememberSaveable { mutableStateOf(state.transferTarget) }
     var credentials by rememberSaveable { mutableStateOf(false) }
     var sent by rememberSaveable { mutableStateOf(false) }
     var loading by remember { mutableStateOf(navSnapshot == null) }

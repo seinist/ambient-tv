@@ -58,45 +58,51 @@ import java.io.Closeable
  */
 @Composable
 internal fun CompanionQrScannerDialog(manager: CompanionManager, onClose: () -> Unit) {
-    val context = LocalContext.current
-    var granted by remember { mutableStateOf(hasCameraPermission(context)) }
-    var failure by remember { mutableStateOf(false) }
-    var denied by remember { mutableStateOf(false) }
-    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
-        granted = allowed
-        denied = !allowed
-    }
-    LaunchedEffect(Unit) { if (!granted) request.launch(Manifest.permission.CAMERA) }
-
     AppDialog(
         onDismiss = onClose,
         title = stringResource(R.string.companion_scan_qr),
         footer = { TvActionButton(stringResource(R.string.companion_close), onClick = onClose) },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            when {
-                failure -> Text(stringResource(R.string.companion_scan_camera_failed))
-                !granted -> Text(stringResource(R.string.companion_scan_camera_denied))
-                else -> {
-                    Text(stringResource(R.string.companion_scan_qr_hint))
-                    CameraPreview(
-                        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-                        onDecoded = { text ->
-                            manager.pair(text)
-                            onClose()
-                        },
-                        onFailure = { failure = true },
-                    )
-                }
+        CompanionQrScanner(onDecoded = { text -> manager.pair(text); onClose() })
+    }
+}
+
+/**
+ * Camera permission, preview and decoding, embeddable in a dialog or a page. [onDecoded] fires
+ * once; the camera is released as soon as this leaves the composition.
+ */
+@Composable
+internal fun CompanionQrScanner(onDecoded: (String) -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(hasCameraPermission(context)) }
+    var failure by remember { mutableStateOf(false) }
+    var denied by remember { mutableStateOf(false) }
+    var decoded by remember { mutableStateOf(false) }
+    val request = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
+        granted = allowed
+        denied = !allowed
+    }
+    LaunchedEffect(Unit) { if (!granted) request.launch(Manifest.permission.CAMERA) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            failure -> Text(stringResource(R.string.companion_scan_camera_failed))
+            !granted -> Text(stringResource(R.string.companion_scan_camera_denied))
+            else -> {
+                Text(stringResource(R.string.companion_scan_qr_hint))
+                if (!decoded) CameraPreview(
+                    modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+                    onDecoded = { text -> if (!decoded) { decoded = true; onDecoded(text) } },
+                    onFailure = { failure = true },
+                )
             }
-            if (!granted && !failure) {
-                TextButton({ request.launch(Manifest.permission.CAMERA) }) {
-                    Text(stringResource(R.string.companion_scan_camera_grant))
-                }
-                // After "Don't ask again" the request returns at once; the app settings still allow it.
-                if (denied) TextButton({ openAppSettings(context) }) {
-                    Text(stringResource(R.string.companion_scan_open_settings))
-                }
+        }
+        if (!granted && !failure) {
+            TextButton({ request.launch(Manifest.permission.CAMERA) }) {
+                Text(stringResource(R.string.companion_scan_camera_grant))
+            }
+            // After "Don't ask again" the request returns at once; the app settings still allow it.
+            if (denied) TextButton({ openAppSettings(context) }) {
+                Text(stringResource(R.string.companion_scan_open_settings))
             }
         }
     }

@@ -172,7 +172,8 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
             log("PASS revoked device cannot issue further commands")
             if (canTestUi) {
                 withContext(Dispatchers.Main) { phone.showPanel() }
-                clickLabel(com.ambient.tv.R.string.companion_manage_devices)
+                // The TV's card opens its detail page, which ends with "Unpair".
+                clickText(sharedPeer.name)
                 delay(400)
                 screenshot("companion-offline-management")
                 clickLabel(com.ambient.tv.R.string.companion_unpair)
@@ -513,8 +514,9 @@ class CompanionSecurityAudit(private val instrumentation: Instrumentation, priva
         }
     }
 
-    private suspend fun clickLabel(res: Int) {
-        val label = base.getString(res)
+    private suspend fun clickLabel(res: Int) = clickText(base.getString(res))
+
+    private suspend fun clickText(label: String) {
         fun find(root: android.view.accessibility.AccessibilityNodeInfo): android.view.accessibility.AccessibilityNodeInfo? {
             if (root.text?.toString() == label) return root
             for (index in 0 until root.childCount) root.getChild(index)?.let { find(it)?.let { found -> return found } }

@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.ambient.tv.companion.handheldPageOpen
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import com.ambient.tv.R
@@ -69,11 +70,14 @@ fun HandheldNavigationHost(
     // Rotation switches between the Row and Column branches below. Moving the content instead of
     // recreating it keeps the NavHost (and a running trailer, which stops on dispose) alive.
     val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
-    val remoteOpen by remember(companion) { companion.manager.state.map { it.remotePanel }.distinctUntilChanged() }
-        .collectAsState(companion.manager.state.value.remotePanel)
-    // Any other navigation target leaves the remote page; its own tab keeps it open.
-    val navigate: (String) -> Unit = { route -> if (remoteOpen) companion.manager.hideRemote(); onNavigate(route) }
-    val openSources: () -> Unit = { if (remoteOpen) companion.manager.hideRemote(); showSources = true }
+    // Phone companion pages (pairing, remote, "Handy & TV") cover the content area, in this priority.
+    val companionPage by remember(companion) {
+        companion.manager.state.map { when { it.pairingFlow -> 1; it.remotePanel -> 2; it.handheldPageOpen() -> 3; else -> 0 } }.distinctUntilChanged()
+    }.collectAsState(0)
+    val remoteOpen = companionPage == 2
+    // Any other navigation target leaves a companion page; the remote tab itself keeps it open.
+    val navigate: (String) -> Unit = { route -> if (companionPage != 0) companion.manager.closeHandheldPages(); onNavigate(route) }
+    val openSources: () -> Unit = { if (companionPage != 0) companion.manager.closeHandheldPages(); showSources = true }
     val currentContent by rememberUpdatedState(content)
     val movableContent = remember { movableContentOf { currentContent() } }
     val panelBounds = remember { com.ambient.tv.ui.common.HandheldPanelBounds() }
@@ -89,11 +93,15 @@ fun HandheldNavigationHost(
                 com.ambient.tv.ui.common.LocalHandheldPanelBounds provides panelBounds,
             ) { movableContent() }
             // Drawn over the page instead of replacing it, so the NavHost and a running trailer survive.
-            if (remoteOpen) com.ambient.tv.companion.CompanionRemoteScreen(companion.manager)
+            when (companionPage) {
+                1 -> com.ambient.tv.companion.CompanionPairingScreen(companion.manager)
+                2 -> com.ambient.tv.companion.CompanionRemoteScreen(companion.manager)
+                3 -> com.ambient.tv.companion.CompanionDevicesScreen(companion.manager)
+            }
         }
         // The remote page carries its own playback controls and target name.
-        if (showNavigation && !remoteOpen) com.ambient.tv.companion.CompanionOutputBar()
-        if ((showNavigation || !playerVisible) && !remoteOpen) com.ambient.tv.companion.CompanionRemotePlaybackBar()
+        if (showNavigation && companionPage == 0) com.ambient.tv.companion.CompanionOutputBar()
+        if ((showNavigation || !playerVisible) && !remoteOpen && companionPage != 1) com.ambient.tv.companion.CompanionRemotePlaybackBar()
         if (!playerVisible) HandheldMiniPlayer(onOpenPlayback)
     }
     // safeDrawing would pad the portrait status bar / cutout onto the short edge in
@@ -161,17 +169,17 @@ private fun HandheldNavigationBar(
     val companionState by companion.manager.state.collectAsState()
     val remote = stringResource(R.string.companion_remote_control)
     NavigationBar(windowInsets = WindowInsets(0, 0, 0, 0), tonalElevation = 0.dp) {
-        if (showHome) NavigationBarItem(!companionState.remotePanel && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
+        if (showHome) NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home) })
-        NavigationBarItem(!companionState.remotePanel && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
+        NavigationBarItem(!companionState.handheldPageOpen() && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources) })
         if (showSearch) {
-            NavigationBarItem(!companionState.remotePanel && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
+            NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
                 { Icon(Icons.Default.Search, search) }, label = { Text(search) })
         }
-        NavigationBarItem(companionState.remotePanel || companionState.panel, companion.manager::showRemoteOrDevices,
+        NavigationBarItem(companionState.handheldPageOpen(), companion.manager::showRemoteOrDevices,
             { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
-        NavigationBarItem(!companionState.remotePanel && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
+        NavigationBarItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
             { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
     }
 }
@@ -199,17 +207,17 @@ private fun HandheldNavigationRail(
             .only(WindowInsetsSides.Horizontal),
     ) {
         Spacer(Modifier.weight(1f))
-        if (showHome) NavigationRailItem(!companionState.remotePanel && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
+        if (showHome) NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.HOME, { onNavigate(Destinations.HOME) },
             { Icon(Icons.Default.Home, home) }, label = { Text(home, maxLines = 1) })
-        NavigationRailItem(!companionState.remotePanel && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
+        NavigationRailItem(!companionState.handheldPageOpen() && currentRoute !in setOf(Destinations.HOME, Destinations.SEARCH, Destinations.SETTINGS), onOpenSources,
             { Icon(Icons.Default.Apps, sources) }, label = { Text(sources, maxLines = 1) })
         if (showSearch) {
-            NavigationRailItem(!companionState.remotePanel && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
+            NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SEARCH, { onNavigate(Destinations.SEARCH) },
                 { Icon(Icons.Default.Search, search) }, label = { Text(search, maxLines = 1) })
         }
-        NavigationRailItem(companionState.remotePanel || companionState.panel, companion.manager::showRemoteOrDevices,
+        NavigationRailItem(companionState.handheldPageOpen(), companion.manager::showRemoteOrDevices,
             { Icon(Icons.Default.SettingsRemote, remote) }, label = { Text(remote, maxLines = 1) })
-        NavigationRailItem(!companionState.remotePanel && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
+        NavigationRailItem(!companionState.handheldPageOpen() && currentRoute == Destinations.SETTINGS, { onNavigate(Destinations.SETTINGS) },
             { Icon(Icons.Default.Settings, settings) }, label = { Text(settings, maxLines = 1) })
         Spacer(Modifier.weight(1f))
     }

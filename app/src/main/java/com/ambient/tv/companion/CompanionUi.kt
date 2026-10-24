@@ -106,7 +106,8 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
         CompanionImportDialog(viewModel)
         return
     }
-    state.prompt?.let { prompt ->
+    // The guided pairing page shows the comparison code itself.
+    state.prompt?.takeUnless { handheld && state.pairingFlow }?.let { prompt ->
         val screenPixels = androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics.heightPixels
         val compact = with(androidx.compose.ui.platform.LocalDensity.current) { screenPixels.toDp() } < 500.dp
         com.ambient.tv.ui.common.AppDialog(onDismiss = { manager.confirm(false) },
@@ -182,13 +183,19 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
     }
     if (!handheld && state.invitation != null) {
         val link = state.invitation!!
+        val now by produceState(android.os.SystemClock.elapsedRealtime(), state.pairExpiresAt) {
+            while (true) { value = android.os.SystemClock.elapsedRealtime(); kotlinx.coroutines.delay(1_000) }
+        }
+        val left = ((state.pairExpiresAt - now).coerceAtLeast(0) / 1_000).toInt()
         com.ambient.tv.ui.common.QrCodeDialog(
             title = stringResource(R.string.companion_pair),
-            hint = stringResource(R.string.companion_qr_hint),
+            hint = stringResource(R.string.companion_qr_hint) + "\n" +
+                stringResource(R.string.companion_qr_expires, "%d:%02d".format(left / 60, left % 60)),
             payload = link,
             code = state.pairCode.takeIf { it.isNotBlank() },
             onDismiss = manager::hidePanel,
             footer = {
+                com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.companion_qr_renew), onClick = manager::openPairing)
                 com.ambient.tv.ui.common.TvActionButton(
                     stringResource(R.string.companion_close),
                     onClick = manager::hidePanel,
@@ -197,15 +204,44 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
         )
         return
     }
+    // On the phone "Handy & TV" is a page of the navigation host; only choosing a TV for shared media stays a dialog.
+    if (handheld && state.sharedMedia == null) return
     com.ambient.tv.ui.common.AppDialog(onDismiss = manager::hidePanel,
-        title = stringResource(R.string.companion_devices), maxWidth = 620.dp, maxHeightFraction = .94f,
+        title = stringResource(if (handheld) R.string.companion_choose_tv else R.string.companion_devices), maxWidth = 620.dp, maxHeightFraction = .94f,
         footer = { TvActionButton(stringResource(R.string.companion_close), manager::hidePanel) }) {
-        if (handheld) CompanionDeviceHub(manager, state)
+        if (handheld) CompanionShareTargetChooser(manager, state)
         else Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)
             TvActionButton(stringResource(R.string.companion_pair_phone), manager::openPairing, selected = true, fillWidth = true)
             state.paired.forEach { peer -> CompanionPeerRow(manager, peer) { mod -> Text(peer.name, modifier = mod) } }
         }
+    }
+}
+
+/** Shared media: pick the paired TV it is sent to. */
+@Composable
+private fun CompanionShareTargetChooser(manager: CompanionManager, state: CompanionState) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)
+        if (state.paired.isEmpty()) {
+            Text(stringResource(R.string.companion_empty_title))
+            TvActionButton(stringResource(R.string.companion_pair_tv), manager::startPairingFlow, selected = true, fillWidth = true)
+        }
+        state.paired.forEach { peer ->
+            val reach = rememberReachability(manager, peer)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                TvActionButton(stringResource(R.string.companion_send_to, peer.name), {
+                    manager.sendSharedMediaTo(state.devices.firstOrNull { it.fingerprint == peer.fingerprint } ?: peer)
+                }, icon = Icons.Default.Cast, fillWidth = true, enabled = !state.busy && state.sendingTo == null && reach.allowsActions())
+                CompanionReachabilityLabel(reach)
+            }
+        }
+        if (state.busy) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(stringResource(state.connectionStage ?: R.string.companion_connecting))
+        }
+        state.sendingTo?.let { Text(stringResource(R.string.companion_sending, it)) }
+        if (state.paired.isNotEmpty()) TvActionButton(stringResource(R.string.companion_search), manager::discover, loading = state.searching, fillWidth = true)
     }
 }
 
