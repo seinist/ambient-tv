@@ -17,7 +17,6 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.server.EmbyConnectionManager
 import com.ambient.tv.server.JellyfinConnectionManager
 import com.ambient.tv.server.ServerConnectionManager
-import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.vpn.WireGuardRouteController
 import com.ambient.tv.vpn.WireGuardRouteState
@@ -53,7 +52,7 @@ class ResumeConnectivityMonitor @Inject constructor(
     private val plexConnection: ServerConnectionManager,
     private val jellyfinConnection: JellyfinConnectionManager,
     private val embyConnection: EmbyConnectionManager,
-    private val tvheadendRepository: TvheadendRepository,
+    private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
     private val wakeOnLan: WakeOnLan,
     private val wireGuardRoute: WireGuardRouteController,
     private val wakeMachines: com.ambient.tv.wol.WakeMachines,
@@ -175,36 +174,8 @@ class ResumeConnectivityMonitor @Inject constructor(
         )
         _status.value = progress.value
 
-        val tvhMachine = wakeMachines.keyFor("tvheadend", preferences.tvheadendHost, preferences.tvheadendMacAddress)
-        var tvhWaking = false
         fun update(system: MediaSystem, phase: ResumeConnectivityStatus.ServerPhase, detail: String? = null) {
-            // TVHeadend's wake joins its machine's shared notice; plain checks keep their own card.
-            if (system == MediaSystem.TVHEADEND && phase == ResumeConnectivityStatus.ServerPhase.WAKING) {
-                if (!tvhWaking) {
-                    tvhWaking = true
-                    AppNotifications.dismiss("resume:tvheadend")
-                    com.ambient.tv.notifications.WakeNotices.begin(tvhMachine, "tvheadend", preferences.tvheadendHost,
-                        budgetMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS)
-                }
-            } else if (system == MediaSystem.TVHEADEND && tvhWaking) {
-                if (phase != ResumeConnectivityStatus.ServerPhase.CHECKING) {
-                    tvhWaking = false
-                    com.ambient.tv.notifications.WakeNotices.finish(tvhMachine, "tvheadend",
-                        success = phase == ResumeConnectivityStatus.ServerPhase.ONLINE)
-                }
-            } else if (system == MediaSystem.TVHEADEND) {
-                val working = phase == ResumeConnectivityStatus.ServerPhase.CHECKING || phase == ResumeConnectivityStatus.ServerPhase.WAKING
-                val online = phase == ResumeConnectivityStatus.ServerPhase.ONLINE
-                AppNotifications.post(AppNotice("resume:tvheadend", when {
-                    phase == ResumeConnectivityStatus.ServerPhase.WAKING -> R.string.notice_waking
-                    working -> R.string.notice_connecting
-                    online -> R.string.notice_connected
-                    else -> R.string.notice_unreachable
-                }, listOf("tvheadend"), preferences.tvheadendHost,
-                    if (working) NoticePhase.WORKING else if (online) NoticePhase.SUCCESS else NoticePhase.ERROR,
-                    if (phase == ResumeConnectivityStatus.ServerPhase.WAKING) NoticeKind.WAKE else NoticeKind.CONNECTION,
-                    quietSuccess = true, interruptPlayback = phase == ResumeConnectivityStatus.ServerPhase.WAKING))
-            }
+            // Notices come from each system's connection state (ConnectionNotifications), TVHeadend included.
             progress.value = progress.value.copy(
                 servers = progress.value.servers.map {
                     if (it.system == system) it.copy(phase = phase, detail = detail) else it
@@ -252,7 +223,7 @@ class ResumeConnectivityMonitor @Inject constructor(
             MediaSystem.EMBY -> embyConnection.recheckOnResume(
                 onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
             )
-            MediaSystem.TVHEADEND -> tvheadendRepository.recheckOnResume(
+            MediaSystem.TVHEADEND -> tvheadendConnection.recheckOnResume(
                 onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) },
             )
             MediaSystem.FILES -> recheckFiles(onWaking = { update(system, ResumeConnectivityStatus.ServerPhase.WAKING, null) })

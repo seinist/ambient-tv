@@ -119,15 +119,3 @@ fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: Ho
 internal fun hostAwareConnectionState(service: ServerConnectionState, host: HostHealth): ServerConnectionState =
     if (host == HostHealth.OFFLINE && service is ServerConnectionState.Online) ServerConnectionState.Offline
     else service
-
-/**
- * TVHeadend has no connection-state flow: its host check decides. Serving the offline cache counts
- * as unreachable only while the host has not been checked yet.
- */
-fun tvheadendProbeOf(configured: Boolean, host: HostHealth, servingCache: Boolean): ServerProbe = when {
-    !configured -> ServerProbe.INACTIVE
-    host == HostHealth.ONLINE -> ServerProbe.REACHABLE
-    host == HostHealth.OFFLINE -> ServerProbe.UNREACHABLE
-    servingCache -> ServerProbe.UNREACHABLE
-    else -> ServerProbe.INACTIVE
-}

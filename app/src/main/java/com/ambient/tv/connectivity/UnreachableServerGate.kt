@@ -56,7 +56,7 @@ class UnreachableServerGate @Inject constructor(
     private val emby: EmbyConnectionManager,
     private val resumeConnectivity: ResumeConnectivityMonitor,
     private val refreshBus: PlexRefreshBus,
-    private val tvheadend: com.ambient.tv.tvheadend.data.TvheadendRepository,
+    private val tvheadend: com.ambient.tv.server.TvheadendConnectionManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     // Keep Continue acknowledged for this app session, including checks and later outages.
@@ -69,7 +69,7 @@ class UnreachableServerGate @Inject constructor(
         jellyfin.state,
         emby.state,
         acknowledged,
-        combine(revision, hosts.states, resumeConnectivity.status, tvheadend.servingCachedData, retrying) { _, _, resumeStatus, _, _ -> resumeStatus },
+        combine(revision, hosts.states, resumeConnectivity.status, tvheadend.state, retrying) { _, _, resumeStatus, _, _ -> resumeStatus },
     ) { plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus ->
         snapshot(plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus)
     }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
@@ -86,6 +86,8 @@ class UnreachableServerGate @Inject constructor(
                         launch { if (jellyfin.checkInBackground(force = true)) refreshBus.requestRefresh() }
                     if (hosts.health("emby") == HostHealth.ONLINE && emby.state.value !is ServerConnectionState.Online)
                         launch { if (emby.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                    if (hosts.health("tvheadend") == HostHealth.ONLINE && tvheadend.state.value !is ServerConnectionState.Online)
+                        launch { if (tvheadend.checkInBackground(force = true)) refreshBus.requestRefresh() }
                 }
             }
         }
@@ -97,6 +99,7 @@ class UnreachableServerGate @Inject constructor(
                     if (MediaSystem.PLEX.key in hidden) launch { if (plex.checkInBackground()) refreshBus.requestRefresh() }
                     if (MediaSystem.JELLYFIN.key in hidden) launch { if (jellyfin.checkInBackground()) refreshBus.requestRefresh() }
                     if (MediaSystem.EMBY.key in hidden) launch { if (emby.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.TVHEADEND.key in hidden) launch { if (tvheadend.checkInBackground()) refreshBus.requestRefresh() }
                 }
             }
         }
@@ -123,6 +126,7 @@ class UnreachableServerGate @Inject constructor(
             if (MediaSystem.PLEX.key in current.unreachable) plex.pauseAutomaticReconnect()
             if (MediaSystem.JELLYFIN.key in current.unreachable) jellyfin.pauseAutomaticReconnect()
             if (MediaSystem.EMBY.key in current.unreachable) emby.pauseAutomaticReconnect()
+            if (MediaSystem.TVHEADEND.key in current.unreachable) tvheadend.pauseAutomaticReconnect()
             acknowledged.value = next
         }
     }
@@ -143,13 +147,13 @@ class UnreachableServerGate @Inject constructor(
                         "plex" -> plex.reconnect()
                         "jellyfin" -> jellyfin.reconnect()
                         "emby" -> emby.reconnect()
-                        "tvheadend" -> tvheadend.recheckOnResume()
+                        "tvheadend" -> tvheadend.reconnect()
                     }
                     systems.filter { it != first }.forEach { system -> when (system) {
                         "plex" -> plex.checkInBackground(force = true)
                         "jellyfin" -> jellyfin.checkInBackground(force = true)
                         "emby" -> emby.checkInBackground(force = true)
-                        "tvheadend" -> tvheadend.recheckOnResume()
+                        "tvheadend" -> tvheadend.checkInBackground(force = true)
                     } }
                 } }
             }
@@ -190,9 +194,8 @@ class UnreachableServerGate @Inject constructor(
             MediaSystem.PLEX.key to hostProbe("plex", preferences.isConfigured, plexState),
             MediaSystem.JELLYFIN.key to hostProbe("jellyfin", preferences.isJellyfinConfigured, jellyfinState),
             MediaSystem.EMBY.key to hostProbe("emby", preferences.isEmbyConfigured, embyState),
-            MediaSystem.TVHEADEND.key to tvheadendProbeOf(
-                preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected,
-                hosts.health("tvheadend"), tvheadend.servingCachedData.value),
+            MediaSystem.TVHEADEND.key to hostProbe("tvheadend",
+                preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected, tvheadend.state.value),
         )
         val decision = decideUnreachableServers(
             UnreachableServerInput(probes, independentSystems()),
@@ -223,10 +226,7 @@ class UnreachableServerGate @Inject constructor(
                 it.kind == "local" || hosts.health("files:${it.id}") != HostHealth.OFFLINE
             }) add(MediaSystem.FILES.key)
         if (dlnaStore.servers().any { hosts.health("dlna:${it.id}") != HostHealth.OFFLINE }) add(MediaSystem.DLNA.key)
-        // Counts while not known to be down; once its probe says unreachable it is no fallback.
-        if (preferences.isTvheadendConfigured && hosts.health("tvheadend") != HostHealth.OFFLINE &&
-            !tvheadend.servingCachedData.value) add(MediaSystem.TVHEADEND.key)
-        // Another media server counts only when its own probe is REACHABLE (see decideUnreachableServers).
+        // Another media server (TVHeadend included) counts only when its own probe is REACHABLE (see decideUnreachableServers).
     }
 
     private fun displayName(system: String): String = when (system) {

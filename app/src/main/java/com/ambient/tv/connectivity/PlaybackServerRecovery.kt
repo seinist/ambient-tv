@@ -7,7 +7,6 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.server.EmbyConnectionManager
 import com.ambient.tv.server.JellyfinConnectionManager
 import com.ambient.tv.server.ServerConnectionManager
-import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.ui.common.MediaSystem
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +21,7 @@ class PlaybackServerRecovery @Inject constructor(
     private val plexConnection: ServerConnectionManager,
     private val jellyfinConnection: JellyfinConnectionManager,
     private val embyConnection: EmbyConnectionManager,
-    private val tvheadendRepository: TvheadendRepository,
+    private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
     private val wakeOnLan: WakeOnLan,
     private val dlnaRepository: DlnaRepository,
 ) {
@@ -32,7 +31,7 @@ class PlaybackServerRecovery @Inject constructor(
             MediaSystem.PLEX -> plexConnection.recheckOnResume()
             MediaSystem.JELLYFIN -> jellyfinConnection.recheckOnResume()
             MediaSystem.EMBY -> embyConnection.recheckOnResume()
-            MediaSystem.TVHEADEND -> tvheadendRepository.recheckOnResume()
+            MediaSystem.TVHEADEND -> tvheadendConnection.recheckOnResume()
             MediaSystem.FILES -> wakeFilesSource(ratingKey)
             MediaSystem.DLNA -> dlnaRepository.getMetadata(ratingKey).getOrNull() != null
             else -> false

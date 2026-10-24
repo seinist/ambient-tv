@@ -478,7 +478,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item { TvSettingRow(stringResource(R.string.settings_tvh_https), stringResource(R.string.settings_tvh_https_hint), uiState.tvheadendUseHttps, viewModel::onTvheadendHttpsChanged) }
                 item {
                     TvActionButton(
-                        text = if (uiState.isTestingTvheadend) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_test_connection),
+                        text = if (uiState.isTestingTvheadend) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testTvheadendConnection,
                         loading = uiState.isTestingTvheadend,
                         modifier = Modifier.fillMaxWidth(),

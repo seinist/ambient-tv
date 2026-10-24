@@ -131,6 +131,7 @@ class HomeViewModel @Inject constructor(
     private val jellyfinConnectionManager: JellyfinConnectionManager,
     private val embyConnectionManager: EmbyConnectionManager,
     private val tvheadendRepository: TvheadendRepository,
+    private val tvheadendConnectionManager: com.ambient.tv.server.TvheadendConnectionManager,
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
@@ -378,6 +379,8 @@ class HomeViewModel @Inject constructor(
         // Keep existing rows until asynchronous cache hydration completes.
         // A retry from an error screen shows the startup progress, not the old error, while it runs.
         if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.LoadingLibrary
+        // TVHeadend connects (and wakes) like the media servers; its rows load independently of this result.
+        if (appPreferences.isTvheadendConfigured) viewModelScope.launch { tvheadendConnectionManager.ensureConnected() }
         launchLoad {
             if (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && appPreferences.isEmbyConfigured) {
                 if (embyConnectionManager.ensureConnected()) loadEmbyLibrary()

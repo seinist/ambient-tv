@@ -103,6 +103,7 @@ class SettingsViewModel @Inject constructor(
     private val lanDiscovery: PlexLanDiscovery,
     private val connectionManager: ServerConnectionManager,
     private val jellyfinConnectionManager: JellyfinConnectionManager,
+    private val tvheadendConnectionManager: com.ambient.tv.server.TvheadendConnectionManager,
     private val jellyfinLanDiscovery: JellyfinLanDiscovery,
     private val embyConnectionManager: EmbyConnectionManager,
     private val embyLanDiscovery: EmbyLanDiscovery,
@@ -2262,7 +2263,13 @@ class SettingsViewModel @Inject constructor(
             try {
                 val result = suspendResult {
                     tvheadendRepository.invalidateAll()
-                    tvheadendRepository.testConnection(explicit = true).getOrThrow()
+                    // Same as Plex: reconnect through the connection manager (wake, notices, resumes
+                    // automatic reconnects after "Continue"), then the explicit test names any cause.
+                    val connected = tvheadendConnectionManager.reconnect()
+                    val info = tvheadendRepository.testConnection(explicit = true).getOrThrow()
+                    check(connected) { context.getString(R.string.server_connection_failed) }
+                    refreshBus.requestRefresh()
+                    info
                 }
                 
                 val error = result.exceptionOrNull()

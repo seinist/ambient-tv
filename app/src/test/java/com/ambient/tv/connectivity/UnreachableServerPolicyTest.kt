@@ -161,13 +161,9 @@ class UnreachableServerPolicyTest {
 
     @Test
     fun `offline TVHeadend is hidden after continue like a media server`() {
-        assertEquals(ServerProbe.UNREACHABLE, tvheadendProbeOf(true, HostHealth.OFFLINE, servingCache = false))
-        assertEquals(ServerProbe.UNREACHABLE, tvheadendProbeOf(true, HostHealth.UNKNOWN, servingCache = true))
-        assertEquals(ServerProbe.REACHABLE, tvheadendProbeOf(true, HostHealth.ONLINE, servingCache = true))
-        assertEquals(ServerProbe.INACTIVE, tvheadendProbeOf(true, HostHealth.UNKNOWN, servingCache = false))
-        assertEquals(ServerProbe.INACTIVE, tvheadendProbeOf(false, HostHealth.OFFLINE, servingCache = true))
+        val tvheadend = hostAwareProbe(true, ServerConnectionState.Offline, HostHealth.OFFLINE)
         val decision = decideUnreachableServers(UnreachableServerInput(
-            probes = mapOf("plex" to ServerProbe.REACHABLE, "tvheadend" to tvheadendProbeOf(true, HostHealth.OFFLINE, false)),
+            probes = mapOf("plex" to ServerProbe.REACHABLE, "tvheadend" to tvheadend),
         ))
         assertTrue(decision.canDismiss)
         assertEquals(setOf("tvheadend"), hiddenUnreachableSystems(decision.unreachable, acknowledgedAfterConfirm(emptySet(), decision)))
