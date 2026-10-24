@@ -20,6 +20,12 @@ import com.ambient.tv.ui.theme.AmbientTvTheme
 /** Device review of production components, without accounts, network or changes to preferences. */
 @dagger.hilt.android.AndroidEntryPoint
 class UiCatalogActivity : ComponentActivity() {
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // Match MainActivity: decorative work yields to real remote input in device audits too.
+        com.ambient.tv.data.browse.BrowseWorkBudget.interact()
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

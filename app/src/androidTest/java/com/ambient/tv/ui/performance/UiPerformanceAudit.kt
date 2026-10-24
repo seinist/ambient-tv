@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
@@ -29,6 +31,7 @@ import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.ContentRowData
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MediaTileStyle
+import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.animateTvScrollToItem
 import com.ambient.tv.ui.common.centerItemInViewport
 import com.ambient.tv.ui.common.rememberRowCenteringState
@@ -63,7 +66,8 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         error("Timeout: $description; focus=${focus.get()}")
     }
 
-    fun run(browsePerformance: Boolean = false, browseMode: String = "combined") {
+    fun run(browsePerformance: Boolean = false, browseMode: String = "combined",
+        uiProfile: String = "balanced", uiScenario: String = "all", uiTrace: Boolean = false) {
         check(instrumentation.targetContext.packageName.endsWith(".uiperfaudit")) { "Use isolated .uiperfaudit" }
         val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, UiCatalogActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as UiCatalogActivity
@@ -87,25 +91,35 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         try {
             main { activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 activity.window.addOnFrameMetricsAvailableListener(listener, Handler(callbackThread.looper)) }
+            if (uiTrace) android.os.Debug.startMethodTracingSampling(
+                java.io.File(instrumentation.targetContext.filesDir, "ui-sampling.trace").absolutePath,
+                16 * 1024 * 1024, 10_000,
+            )
             if (browsePerformance) {
                 if (browseMode == "ambient-visual") { auditAmbientBounds(activity); auditAmbientPause(activity) }
                 else auditBrowse(activity, browseMode)
                 return
             }
-            auditSingleDraw(activity)
-            auditExplicitRowScroll(activity)
-            auditArtworkConstraints(activity)
+            val profile = PerformanceProfile.resolve(PerformanceMode.fromKey(uiProfile), lowEndDevice = false)
+            log("UI_PROFILE $uiProfile focusedItemShadow=${profile.allowFocusedItemShadow} scenario=$uiScenario")
+            if (uiScenario == "all") {
+                auditSingleDraw(activity)
+                auditIsolatedPlaceholderPulse(activity)
+                auditExplicitRowScroll(activity)
+                auditArtworkConstraints(activity)
+            }
             val url = "android.resource://${instrumentation.targetContext.packageName}/${R.drawable.ic_ambient_tv}"
             val rows = (0 until 20).map { row -> ContentRowData("Row $row", (0 until 64).map { column -> item("$row:$column", url) },
                 style = MediaTileStyle.POSTER, id = "row-$row", showDescription = false) }
             for (style in listOf(HomeHeroStyle.DEPTH, HomeHeroStyle.STATIC)) {
+                if (uiScenario != "all" && uiScenario != "home" && uiScenario != "home-$style") continue
                 focus.set(null)
                 val state = mutableStateOf(HomeUiState.Loaded(rows, focusedRatingKey = "0:0", focusedRowId = "row-0",
                     rowKeys = rows.map { it.id }, initialFocusTarget = HomeInitialFocusTarget.CONTENT))
                 val hero = MutableStateFlow<HomeHeroContent?>(HomeHeroContent("0:0", "Title 0:0", artworkUrl = url))
                 main { activity.setContent {
                     androidx.compose.runtime.key(state) {
-                        CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides PerformanceProfile.Full) {
+                        CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides profile) {
                             AmbientTvTheme {
                                 LibraryContent(state.value, hero, style, 60, HomeHeroStyle.SOFT, HomeFocusSnapshot("0:0", "row-0"),
                                     onItemClick = {}, onItemFocused = { row, media ->
@@ -132,13 +146,14 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                 SectionViewMode.CINEMATIC to "library-cinematic",
             )
             for ((viewMode, tag) in libraryScenarios) {
+                if (uiScenario != "all" && uiScenario != tag) continue
                 focus.set(null)
                 val state = mutableStateOf(SectionUiState.Loaded("Library", SectionPage.LIBRARY, rows.flatMap { it.items },
                     emptyList(), emptyList(), SectionSort.TITLE, SectionSortOrder.ASCENDING, SectionFilter.ALL,
                     SectionQualityFilter.ALL, viewMode = viewMode, focusedRatingKey = "0:0"))
                 main { activity.setContent {
                     androidx.compose.runtime.key(state) {
-                        CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides PerformanceProfile.Full) {
+                        CompositionLocalProvider(LocalHandheldUi provides false, LocalPerformanceProfile provides profile) {
                             AmbientTvTheme {
                                 SectionContent(state.value, MediaSystem.PLEX, onItemClick = {}, onCollectionClick = { _, _ -> },
                                     onOpenOverview = {}, onBack = null, onPage = {}, onItemFocused = { media ->
@@ -165,6 +180,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
             Thread.sleep(200)
             log("PASS production Home and library traverse new rows without losing media focus")
         } finally {
+            if (uiTrace) android.os.Debug.stopMethodTracing()
             // Keep earlier measurements when a later scenario fails its focus assertion.
             phase.set("idle")
             Thread.sleep(200)
@@ -374,6 +390,43 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         await("mask frame") { passes.get() > 0 }
         main { check(passes.get() == childDraws.get()) { "Mask drew its child tree multiple times" } }
         log("PASS Home mask records its child draw tree once per draw pass")
+    }
+
+    private fun auditIsolatedPlaceholderPulse(activity: UiCatalogActivity) {
+        val parentDraws = AtomicInteger()
+        main { activity.setContent {
+            CompositionLocalProvider(LocalPerformanceProfile provides PerformanceProfile.Full) {
+                AmbientTvTheme {
+                    Box(Modifier.fillMaxSize().drawWithContent {
+                        drawRect(Color.Black)
+                        drawContent()
+                    }.fadeRowsBehindHomeHero(true).drawWithContent {
+                        parentDraws.incrementAndGet()
+                        drawContent()
+                    }) {
+                        Box(Modifier.align(Alignment.Center).size(96.dp).mediaFocusMotion(false)) {
+                            com.ambient.tv.ui.common.PulsingArtworkPlaceholder()
+                        }
+                    }
+                }
+            }
+        } }
+        await("placeholder draw") { parentDraws.get() > 0 }
+        Thread.sleep(400)
+        val initialDraws = parentDraws.get()
+        val brightness = (0 until 8).map {
+            Thread.sleep(250)
+            val screenshot = checkNotNull(instrumentation.uiAutomation.takeScreenshot())
+            val pixel = screenshot.getPixel(screenshot.width / 2, screenshot.height / 2)
+            screenshot.recycle()
+            android.graphics.Color.red(pixel) + android.graphics.Color.green(pixel) + android.graphics.Color.blue(pixel)
+        }
+        check(brightness.max() - brightness.min() >= 3) { "Placeholder pulse is frozen behind cached layers: $brightness" }
+        check(parentDraws.get() == initialDraws) {
+            "Placeholder pulse re-recorded its parent list: $initialDraws -> ${parentDraws.get()}"
+        }
+        log("PASS placeholder visibly pulses through Home mask and focus layer without redrawing the parent list")
+        main { activity.setContent { Box(Modifier.fillMaxSize()) } }
     }
 
     private fun auditArtworkConstraints(activity: UiCatalogActivity) {

@@ -174,9 +174,6 @@ fun MediaTile(
                     // artwork, labels, metadata and playback badges on every spring frame.
                     scaleX = focusScale
                     scaleY = focusScale
-                    // This layer caches its children. The placeholder pulse is draw-only, so
-                    // without this read a loading cover stays a flat gray rectangle.
-                    observeSkeletonPulse()
                 }
                 .then(
                     // Only the focused tile gets a shadow layer; unfocused tiles in a dense grid
@@ -474,11 +471,6 @@ private fun EpisodeLabels(
     }
 }
 
-/** Subscribes the calling draw or graphics layer to [SharedSkeletonPulse]. */
-internal fun observeSkeletonPulse() {
-    SharedSkeletonPulse.alpha.floatValue
-}
-
 /** [showDescription] mirrors [MediaTile]'s flag: off, only the title line sits under the artwork. */
 @Composable
 fun SkeletonTile(
@@ -570,7 +562,12 @@ private fun SkeletonTileContent(
         modifier = modifier
             .wrapContentWidth(Alignment.Start)
             .padding(horizontal = 8.dp, vertical = 8.dp)
-            .width(tileWidth),
+            .width(tileWidth)
+            .graphicsLayer {
+                // Animate only this placeholder, not every loaded card or its parent row.
+                this.alpha = alpha()
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha
+            },
         verticalArrangement = Arrangement.spacedBy(7.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -578,19 +575,19 @@ private fun SkeletonTileContent(
             Modifier
                 .width(tileWidth)
                 .aspectRatio(tileAspect)
-                .clip(tileShape).drawBehind { drawRect(fill, alpha = alpha()) },
+                .clip(tileShape).drawBehind { drawRect(fill) },
         )
         Box(
             Modifier
                 .fillMaxWidth(0.82f)
                 .height(13.dp)
-                .clip(textShape).drawBehind { drawRect(fill, alpha = alpha() * 0.88f) },
+                .clip(textShape).drawBehind { drawRect(fill, alpha = 0.88f) },
         )
         if (showDescription) Box(
             Modifier
                 .fillMaxWidth(0.52f)
                 .height(10.dp)
-                .clip(textShape).drawBehind { drawRect(fill, alpha = alpha() * 0.72f) },
+                .clip(textShape).drawBehind { drawRect(fill, alpha = 0.72f) },
         )
     }
 }

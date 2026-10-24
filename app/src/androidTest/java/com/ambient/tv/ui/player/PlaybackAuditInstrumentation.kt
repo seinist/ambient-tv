@@ -496,7 +496,11 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     return@thread
                 }
                 if (arguments.getString("uiPerformance") == "true") {
-                    com.ambient.tv.ui.performance.UiPerformanceAudit(this, ::log).run(arguments.getString("browsePerformance") == "true", arguments.getString("browseMode") ?: "combined")
+                    com.ambient.tv.ui.performance.UiPerformanceAudit(this, ::log).run(
+                        arguments.getString("browsePerformance") == "true", arguments.getString("browseMode") ?: "combined",
+                        arguments.getString("uiProfile") ?: "balanced", arguments.getString("uiScenario") ?: "all",
+                        arguments.getString("uiTrace") == "true",
+                    )
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "UI PERFORMANCE AUDIT PASSED\n$results") })
                     return@thread
                 }

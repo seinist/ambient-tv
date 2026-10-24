@@ -197,8 +197,6 @@ fun Modifier.mediaFocusMotion(
         .graphicsLayer {
             scaleX = animatedScale.value
             scaleY = animatedScale.value
-            // Cover and landscape walls cache this layer. The read lets the placeholder pulse.
-            observeSkeletonPulse()
         }
 }
 
@@ -583,7 +581,7 @@ fun CrossfadeBackdropImage(
 }
 
 @Composable
-private fun PulsingArtworkPlaceholder() {
+internal fun PulsingArtworkPlaceholder() {
     val animate = !LocalPerformanceProfile.current.reducedEffects
     if (animate) {
         DisposableEffect(Unit) {
@@ -593,11 +591,14 @@ private fun PulsingArtworkPlaceholder() {
     }
     val fill = MaterialTheme.colorScheme.surfaceVariant
     Box(
-        Modifier.fillMaxSize().drawBehind {
-            // Read at draw time. A flat fill is what made single cover and landscape
-            // loads look like a dead gray tile instead of the library skeleton pulse.
-            drawRect(fill, alpha = if (animate) SharedSkeletonPulse.alpha.floatValue else 1f)
-        },
+        Modifier.fillMaxSize()
+            .graphicsLayer {
+                // Updating this RenderNode keeps the pulse visible through cached parent
+                // layers without re-recording the whole Home list on every animation frame.
+                alpha = if (animate) SharedSkeletonPulse.alpha.floatValue else 1f
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            }
+            .drawBehind { drawRect(fill) },
     )
 }
 
