@@ -110,7 +110,11 @@ data class MediaItem(
      * else a landscape still (episodes, clips); a portrait poster only when nothing wide exists.
      */
     val landscapeBackdropUrl: String?
-        get() = artUrl ?: parentBackdropUrl ?: thumbUrl?.takeIf { type in setOf("episode", "clip") } ?: thumbUrl
+        get() = wideBackdropUrl ?: thumbUrl
+
+    /** A wide image for the background, or null when only a poster exists. */
+    val wideBackdropUrl: String?
+        get() = artUrl ?: parentBackdropUrl ?: thumbUrl?.takeIf { type in setOf("episode", "clip") }
 
     /** Vertical cover for poster tiles: series art for episodes/seasons, otherwise the item thumb. */
     val posterArtUrl: String?

@@ -22,6 +22,9 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 sealed interface DetailUiState {
@@ -54,6 +57,7 @@ class DetailViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     val themeMusicPlayer: ThemeMusicPlayer,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
+    private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private val cachedItem get() = mediaRepository.cachedMediaItem(ratingKey)
@@ -71,6 +75,10 @@ class DetailViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var themeMusicJob: Job? = null
 
+    private val _tmdbBackdrop = MutableStateFlow<String?>(null)
+    /** TMDb's wide backdrop for a movie or show whose media server has only a poster (needs a TMDb key). */
+    val tmdbBackdrop: StateFlow<String?> = _tmdbBackdrop.asStateFlow()
+
     private fun sourceOffline() = availability.mediaState(ratingKey) in setOf(
         com.ambient.tv.data.browse.SourceHealth.OFFLINE,
         com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED,
@@ -84,6 +92,16 @@ class DetailViewModel @Inject constructor(
 
     init {
         load()
+        viewModelScope.launch {
+            _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
+                .map { item -> item.takeIf { it.wideBackdropUrl == null && it.type in setOf("movie", "show") } }
+                .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey }
+                .collect { item ->
+                    if (item == null || !tmdb.configured) return@collect
+                    val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
+                    tmdb.backdropFor(item, language).getOrNull()?.let { _tmdbBackdrop.value = it }
+                }
+        }
         viewModelScope.launch {
             availability.changes.collect {
                 // A failed first load has nothing on screen to patch: try again once the source is back.
