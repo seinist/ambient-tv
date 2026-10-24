@@ -1207,6 +1207,11 @@ private fun AmbientTvApp(
     val launcherRoute by com.ambient.tv.launcher.LauncherIntents.requests.collectAsState()
     LaunchedEffect(launcherRoute) {
         val route = launcherRoute ?: return@LaunchedEffect
+        // Launcher rows and programme reminders open players directly: an unreachable system stops here too.
+        if (!playbackAvailability.route(route)) {
+            com.ambient.tv.launcher.LauncherIntents.consumed(route)
+            return@LaunchedEffect
+        }
         // A new player route (launcher, DLNA sender switching media) replaces an open player
         // instead of stacking players on the back stack.
         val replacePlayer = route.startsWith("player/") && navController.currentDestination?.route == Destinations.PLAYER

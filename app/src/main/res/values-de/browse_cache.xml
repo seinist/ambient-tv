@@ -3,4 +3,6 @@
     <string name="browse_offline">Quelle nicht erreichbar · gespeicherte Inhalte</string>
     <string name="browse_playback_unavailable">Diese Quelle ist nicht erreichbar. Wiedergabe kann nicht gestartet werden.</string>
     <string name="browse_item_removed">Dieser Inhalt ist nicht mehr verfügbar.</string>
+    <string name="browse_playback_offline">%1$s ist nicht erreichbar. Wiedergabe kann nicht gestartet werden.</string>
+    <string name="browse_playback_waking">%1$s ist nicht erreichbar und wird geweckt. Starte die Wiedergabe erneut, sobald er bereit ist.</string>
 </resources>
