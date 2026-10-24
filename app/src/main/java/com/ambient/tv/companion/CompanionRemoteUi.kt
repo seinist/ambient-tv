@@ -1,12 +1,15 @@
 package com.ambient.tv.companion
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -42,11 +45,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
-import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
 
+/**
+ * Phone remote for the connected TV as a page of its own: it fills the content area above the
+ * bottom navigation instead of floating as a dialog. Back closes it; the page underneath stays alive.
+ */
 @Composable
-internal fun CompanionRemoteDialog(manager: CompanionManager) {
+internal fun CompanionRemoteScreen(manager: CompanionManager, modifier: Modifier = Modifier) {
     val state by manager.state.collectAsState()
     val granted = state.online && state.remote?.inputGranted == true
     var tab by rememberSaveable(state.target?.fingerprint) { mutableIntStateOf(0) }
@@ -64,14 +70,21 @@ internal fun CompanionRemoteDialog(manager: CompanionManager) {
     val key: (String) -> Unit = { send(CompanionInput("key", key = it)) }
     val labels = listOf(R.string.remote_tab_dpad, R.string.remote_tab_mouse, R.string.remote_tab_keyboard)
     val icons = listOf(Icons.Default.ControlCamera, Icons.Default.Mouse, Icons.Default.Keyboard)
-    AppDialog(
-        onDismiss = manager::hideRemote,
-        title = stringResource(R.string.companion_remote_target, state.target?.name.orEmpty()),
-        maxWidth = 560.dp,
-        maxHeightFraction = 0.94f,
-        captureInitialFocus = false,
-        header = {
-            Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
+    BackHandler(onBack = manager::hideRemote)
+    Surface(
+        // Swallows touches so the page underneath (kept alive, not recomposed away) never reacts.
+        modifier.fillMaxSize().pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false) } },
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(manager::hideRemote) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.companion_close)) }
+                Text(stringResource(R.string.companion_remote_target, state.target?.name.orEmpty()),
+                    style = MaterialTheme.typography.titleLarge, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                IconButton(manager::showPanel) { Icon(Icons.Default.Cast, stringResource(R.string.companion_devices)) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(if (granted) Icons.Default.CheckCircle else Icons.Default.Info, null,
                     Modifier.size(18.dp), tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -81,7 +94,7 @@ internal fun CompanionRemoteDialog(manager: CompanionManager) {
                     else -> R.string.remote_waiting
                 }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
             }
-            PrimaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)) {
+            PrimaryTabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
                 labels.forEachIndexed { index, label ->
                     Tab(selected = tab == index, onClick = {
                         focus.clearFocus(); keyboard?.hide(); tab = index
@@ -89,36 +102,34 @@ internal fun CompanionRemoteDialog(manager: CompanionManager) {
                         icon = { Icon(icons[index], null, Modifier.size(22.dp)) })
                 }
             }
-        },
-        footer = {
-            OutlinedButton({ key("back") }, enabled = granted, modifier = Modifier.heightIn(min = 48.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.back))
-            }
-            TvActionButton(stringResource(R.string.companion_devices), manager::showPanel)
-        },
-    ) {
-        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (!granted) {
-                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(stringResource(if (state.online) R.string.companion_control_unavailable else R.string.remote_reconnect_hint,
-                            state.remote?.controller.orEmpty()), style = MaterialTheme.typography.bodyMedium)
-                        if (!state.online) TvActionButton(stringResource(R.string.sync_retry_connection), manager::showRemoteOrDevices, fillWidth = true)
-                        if (state.online) OutlinedButton({ manager.send(CompanionFrame(type = "input_claim")) }) {
-                            Text(stringResource(R.string.companion_take_control))
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!granted) {
+                    Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(if (state.online) R.string.companion_control_unavailable else R.string.remote_reconnect_hint,
+                                state.remote?.controller.orEmpty()), style = MaterialTheme.typography.bodyMedium)
+                            if (!state.online) TvActionButton(stringResource(R.string.sync_retry_connection), manager::showRemoteOrDevices, fillWidth = true)
+                            if (state.online) OutlinedButton({ manager.send(CompanionFrame(type = "input_claim")) }) {
+                                Text(stringResource(R.string.companion_take_control))
+                            }
                         }
                     }
                 }
+                when (tab) {
+                    0 -> RemoteDirectionPad(granted, key)
+                    1 -> RemoteMousePad(granted, sensitivity, { sensitivity = it }, send)
+                    2 -> RemoteKeyboard(granted, draft, { draft = it }, send, key)
+                }
+                RemotePlayerControls(manager, state)
             }
-            when (tab) {
-                0 -> RemoteDirectionPad(granted, key)
-                1 -> RemoteMousePad(granted, sensitivity, { sensitivity = it }, send)
-                2 -> RemoteKeyboard(granted, draft, { draft = it }, send, key)
+            // The TV's own back key; leaving this page is the arrow at the top or the system back.
+            OutlinedButton({ key("back") }, enabled = granted,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(min = 48.dp)) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.remote_tv_back))
             }
-            RemotePlayerControls(manager, state)
         }
     }
 }

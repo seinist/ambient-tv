@@ -165,7 +165,8 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
             }
         return
     }
-    if (handheld && state.remotePanel) { CompanionRemoteDialog(manager); return }
+    // The phone remote is a page in the handheld navigation host (CompanionRemoteScreen), not a dialog.
+    if (handheld && state.remotePanel) return
     if (state.settingsPanel) { connectionEditor.SaveableStateProvider("transfer") { CompanionSyncDialog(viewModel, onDismiss = manager::hideSettingsTransfer) }; return }
     if (!state.panel) return
     if (!handheld && state.pairingWith.isNotBlank()) {
