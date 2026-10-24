@@ -175,3 +175,13 @@ data class ChapterDto(
 
 @Serializable
 data class PlaybackMarkerDto(val type: String = "", val startTimeOffset: Long = -1, val endTimeOffset: Long = -1)
+
+/** /library/metadata/{id}/arts: available backgrounds; entries have no title/type like metadata. */
+@Serializable
+data class PlexArtsResponse(@SerialName("MediaContainer") val container: PlexArtsContainer = PlexArtsContainer())
+
+@Serializable
+data class PlexArtsContainer(@SerialName("Metadata") val arts: List<PlexArtDto> = emptyList())
+
+@Serializable
+data class PlexArtDto(val key: String? = null, val thumb: String? = null, val selected: Boolean = false)

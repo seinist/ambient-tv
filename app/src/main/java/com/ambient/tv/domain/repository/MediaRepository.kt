@@ -61,6 +61,11 @@ interface MediaRepository {
     suspend fun getSimilar(ratingKey: String): Result<List<MediaItem>>
     /** Trailers the server stores with the title (playable like any item). Empty where unsupported. */
     suspend fun getServerTrailers(ratingKey: String): Result<List<MediaItem>> = Result.success(emptyList())
+    /**
+     * A wide background the server knows for an item that has none selected: Plex's list of
+     * available backgrounds, Jellyfin/Emby's own image providers. Null when there is none.
+     */
+    suspend fun getAlternativeBackdrop(ratingKey: String): Result<String?> = Result.success(null)
     /** Last [getSimilar] result regardless of age. */
     fun cachedSimilar(ratingKey: String): List<MediaItem>? = null
     /** The item's theme song, or null when the provider or the item has none. */

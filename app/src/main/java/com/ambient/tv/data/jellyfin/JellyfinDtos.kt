@@ -217,3 +217,9 @@ data class JellyfinSegment(
     @SerialName("StartTicks") val startTicks: Long = -1,
     @SerialName("EndTicks") val endTicks: Long = -1,
 )
+
+@Serializable
+data class JellyfinRemoteImages(@SerialName("Images") val images: List<JellyfinRemoteImage> = emptyList())
+
+@Serializable
+data class JellyfinRemoteImage(@SerialName("Url") val url: String? = null)

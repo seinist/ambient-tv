@@ -75,9 +75,12 @@ class DetailViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var themeMusicJob: Job? = null
 
-    private val _tmdbBackdrop = MutableStateFlow<String?>(null)
-    /** TMDb's wide backdrop for a movie or show whose media server has only a poster (needs a TMDb key). */
-    val tmdbBackdrop: StateFlow<String?> = _tmdbBackdrop.asStateFlow()
+    private val _fallbackBackdrop = MutableStateFlow<String?>(null)
+    /**
+     * A wide background for an item that has none selected: first what the media server itself
+     * offers (Plex's available backgrounds, Jellyfin/Emby image providers), then TMDb's (needs a key).
+     */
+    val fallbackBackdrop: StateFlow<String?> = _fallbackBackdrop.asStateFlow()
 
     private fun sourceOffline() = availability.mediaState(ratingKey) in setOf(
         com.ambient.tv.data.browse.SourceHealth.OFFLINE,
@@ -94,12 +97,15 @@ class DetailViewModel @Inject constructor(
         load()
         viewModelScope.launch {
             _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
-                .map { item -> item.takeIf { it.wideBackdropUrl == null && it.type in setOf("movie", "show") } }
+                .map { item -> item.takeIf { it.wideBackdropUrl == null } }
                 .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey }
                 .collect { item ->
-                    if (item == null || !tmdb.configured) return@collect
+                    if (item == null) return@collect
+                    val fromServer = mediaRepository.getAlternativeBackdrop(item.ratingKey).getOrNull()
+                    if (fromServer != null) { _fallbackBackdrop.value = fromServer; return@collect }
+                    if (!tmdb.configured || item.type !in setOf("movie", "show")) return@collect
                     val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
-                    tmdb.backdropFor(item, language).getOrNull()?.let { _tmdbBackdrop.value = it }
+                    tmdb.backdropFor(item, language).getOrNull()?.let { _fallbackBackdrop.value = it }
                 }
         }
         viewModelScope.launch {

@@ -209,3 +209,9 @@ data class EmbyTrickplay(
     @SerialName("Interval") val intervalMs: Long = 0,
     @SerialName("ThumbnailCount") val count: Long = 0,
 )
+
+@Serializable
+data class EmbyRemoteImages(@SerialName("Images") val images: List<EmbyRemoteImage> = emptyList())
+
+@Serializable
+data class EmbyRemoteImage(@SerialName("Url") val url: String? = null)

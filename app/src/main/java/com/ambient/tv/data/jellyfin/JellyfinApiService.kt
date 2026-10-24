@@ -73,6 +73,8 @@ interface JellyfinApiService {
     /** Trailers stored with the item (Jellyfin 10.9+ path, then the older user-scoped one). */
     @GET("Items/{id}/LocalTrailers") suspend fun getLocalTrailers(@Path("id") id: String, @Query("userId") userId: String): List<JellyfinItem>
     @GET("Users/{userId}/Items/{id}/LocalTrailers") suspend fun getLocalTrailersLegacy(@Path("id") id: String, @Path("userId") userId: String): List<JellyfinItem>
+    /** Backdrops the server's own image providers offer for the item (needs no key in the app). */
+    @GET("Items/{id}/RemoteImages") suspend fun getRemoteImages(@Path("id") id: String, @Query("type") type: String = "Backdrop", @Query("limit") limit: Int = 1): JellyfinRemoteImages
     @GET("Items/{id}/ThemeSongs") suspend fun getThemeSongs(@Path("id") id: String, @Query("userId") userId: String, @Query("inheritFromParent") inheritFromParent: Boolean = true): JellyfinItemsResponse
     @POST("Items/{id}/PlaybackInfo") suspend fun getPlaybackInfo(@Path("id") id: String, @Body body: JellyfinPlaybackInfoRequest): JellyfinPlaybackInfoResponse
     @POST("Sessions/Playing") suspend fun reportPlaybackStart(@Body body: JellyfinPlaybackProgress)

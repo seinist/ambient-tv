@@ -341,6 +341,11 @@ class JellyfinRepository @Inject constructor(
         }
     }
 
+    override suspend fun getAlternativeBackdrop(ratingKey: String): Result<String?> = cache.withGeneration {
+        // Image providers may be limited to administrators: a refusal simply means "none".
+        suspendResult { api.getRemoteImages(raw(ratingKey)).images.firstNotNullOfOrNull { it.url?.takeIf(String::isNotBlank) } }
+    }
+
     override suspend fun getThemeMusic(ratingKey: String): Result<ThemeMusic?> = cache.withGeneration {
         suspendResult {
             api.getThemeSongs(raw(ratingKey), userId()).items.firstOrNull()?.let { ThemeMusic(JellyfinBackend.id(it.id), urls.themeSongUrl(it.id)) }
