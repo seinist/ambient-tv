@@ -20,4 +20,5 @@
   <string name="remote_rewind">Back 10 seconds</string>
   <string name="remote_forward">Forward 10 seconds</string>
   <string name="remote_player_options">More player options</string>
+  <string name="remote_tv_back">Back on TV</string>
 </resources>

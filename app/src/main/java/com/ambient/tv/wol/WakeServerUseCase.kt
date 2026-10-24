@@ -8,7 +8,8 @@ import javax.inject.Inject
 
 sealed interface WakeState {
     data object SendingPacket : WakeState
-    data class WaitingForServer(val elapsedSeconds: Int) : WakeState
+    /** [packetsSent] of at most [packets] bursts are out; the next follows after [windowSeconds]. */
+    data class WaitingForServer(val elapsedSeconds: Int, val packetsSent: Int = 0, val packets: Int = 0, val windowSeconds: Int = 0) : WakeState
     data object Reachable : WakeState
     data object TimedOut : WakeState
     data class Failed(val message: String) : WakeState
@@ -35,6 +36,7 @@ class WakeServerUseCase @Inject constructor(
             return@flow
         }
 
+        var sent = 0
         val woke = wakeWithRetries(
             retries = retries,
             windowMs = timeoutMs,
@@ -48,7 +50,8 @@ class WakeServerUseCase @Inject constructor(
                 ).getOrThrow()
             },
             reachable = { reachabilityChecker.isReachable() || hosts.verifySystem("plex") },
-            onWaiting = { elapsed -> emit(WakeState.WaitingForServer(elapsed)) },
+            onWaiting = { elapsed -> emit(WakeState.WaitingForServer(elapsed, sent, wakeCycles(retries), (timeoutMs / 1000).toInt())) },
+            onSent = { attempt, _ -> sent = attempt + 1 },
         )
         emit(if (woke) WakeState.Reachable else WakeState.TimedOut)
     }.catch { error ->

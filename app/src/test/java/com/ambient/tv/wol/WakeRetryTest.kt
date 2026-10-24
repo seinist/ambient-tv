@@ -93,4 +93,11 @@ class WakeRetryTest {
         assertEquals(5, normalizedWolRetryCount(5))
         assertEquals(0, normalizedWolRetryCount(0))
     }
+
+    @Test
+    fun `wake budget is one window per send`() {
+        assertEquals(60_000L, wakeBudgetMs(0, 60_000L))
+        assertEquals(180_000L, wakeBudgetMs(2, 60_000L))
+        assertEquals(6 * 60_000L, wakeBudgetMs(99, 60_000L))
+    }
 }

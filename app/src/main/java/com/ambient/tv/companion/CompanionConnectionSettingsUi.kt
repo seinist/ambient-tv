@@ -40,13 +40,16 @@ internal fun CompanionConnectionSettingsDialog(manager: CompanionManager) {
 internal fun CompanionConnectionSettingsContent(
     manager: CompanionManager,
     onWorkingChanged: (Boolean) -> Unit = {},
+    /** Shown on one TV's detail page: no device picker, only that TV's connection. */
+    fixedPeer: CompanionPeer? = null,
 ) {
     val state by manager.state.collectAsState()
     val context = LocalContext.current
     val handheld = LocalHandheldUi.current
     val scope = rememberCoroutineScope()
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    var selected by rememberSaveable { mutableStateOf(state.target?.fingerprint ?: state.paired.singleOrNull()?.fingerprint) }
+    var picked by rememberSaveable { mutableStateOf(state.target?.fingerprint ?: state.paired.singleOrNull()?.fingerprint) }
+    val selected = fixedPeer?.fingerprint ?: picked
     var working by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<String?>(null) }
     SideEffect { onWorkingChanged(working) }
@@ -60,7 +63,7 @@ internal fun CompanionConnectionSettingsContent(
     val vpnPermission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     val peer = state.paired.firstOrNull { it.fingerprint == selected }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)
+        if (fixedPeer == null) LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)
         if (!handheld) {
             TvSettingRow(title = stringResource(R.string.companion_receiver_background),
                 body = stringResource(R.string.companion_receiver_hint), checked = state.backgroundReceiver,
@@ -75,14 +78,16 @@ internal fun CompanionConnectionSettingsContent(
             if (state.backgroundReceiver && !manager.backgroundLaunchAllowed()) Text(stringResource(R.string.companion_launch_permission))
         }
         if (handheld) {
-            Text(stringResource(R.string.settings_companion_select_device))
-            if (state.paired.isEmpty()) Text(stringResource(R.string.sync_no_devices))
-            DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
-            state.paired.forEach { item ->
-                // Settings stay editable for unreachable devices: they are how one becomes reachable.
-                CompanionPeerRow(manager, item, onUnpaired = { if (selected == item.fingerprint) selected = null }) { mod ->
-                    TvActionButton(item.name, { selected = item.fingerprint }, selected = selected == item.fingerprint,
-                        enabled = !working, modifier = mod)
+            if (fixedPeer == null) {
+                Text(stringResource(R.string.settings_companion_select_device))
+                if (state.paired.isEmpty()) Text(stringResource(R.string.sync_no_devices))
+                DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
+                state.paired.forEach { item ->
+                    // Settings stay editable for unreachable devices: they are how one becomes reachable.
+                    CompanionPeerRow(manager, item, onUnpaired = { if (picked == item.fingerprint) picked = null }) { mod ->
+                        TvActionButton(item.name, { picked = item.fingerprint }, selected = selected == item.fingerprint,
+                            enabled = !working, modifier = mod)
+                    }
                 }
             }
             if (peer != null) key(peer.fingerprint) {

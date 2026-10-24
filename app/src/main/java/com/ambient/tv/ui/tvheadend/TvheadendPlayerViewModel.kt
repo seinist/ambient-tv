@@ -280,6 +280,16 @@ class TvheadendPlayerViewModel @Inject constructor(
                 return@launch
             }
             _uiState.value = TvheadendPlayerState.Loading
+            // Offline TVHeadend: the cached channel list would start a stream that can never play.
+            // Check (and wake, when set up) first, and say plainly why it cannot start.
+            if (sourceSystem == "tvheadend" && repository.servingCachedData &&
+                !suspendResult { playbackServerRecovery.tryWakeAndRecheck("tvh:resume") }.getOrDefault(false)) {
+                _uiState.value = TvheadendPlayerState.Error(
+                    message = tvheadendUnreachableMessage(),
+                    kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
+                )
+                return@launch
+            }
             fallbackAttempted = false
             localFallbackBackends.clear()
             videoFailureConfirmed = false
@@ -523,13 +533,18 @@ class TvheadendPlayerViewModel @Inject constructor(
 
     private var serverUnreachableRetryAttempted = false
 
+    /** Why TVHeadend cannot play: without Wake-on-LAN nothing was (or could be) woken. */
+    private fun tvheadendUnreachableMessage(): String = context.getString(
+        if (preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank()) com.ambient.tv.R.string.tvh_unreachable_wake_failed
+        else com.ambient.tv.R.string.tvh_unreachable_no_wake)
+
     fun reportServerUnreachable(reason: String = "") {
         val current = _uiState.value as? TvheadendPlayerState.Ready
         runCatching { BackgroundPlaybackSession.pause() }
         if (serverUnreachableRetryAttempted) {
             runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
             _uiState.value = TvheadendPlayerState.Error(
-                message = reason.ifBlank { context.getString(com.ambient.tv.R.string.player_server_unreachable) },
+                message = reason.ifBlank { if (sourceSystem == "tvheadend") tvheadendUnreachableMessage() else context.getString(com.ambient.tv.R.string.player_server_unreachable) },
                 kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
                 channelName = current?.channel?.name,
             )
@@ -546,7 +561,7 @@ class TvheadendPlayerViewModel @Inject constructor(
             } else {
                 runCatching { BackgroundPlaybackSession.stop(keepSleepTimer = true) }
                 _uiState.value = TvheadendPlayerState.Error(
-                    message = reason.ifBlank { context.getString(com.ambient.tv.R.string.player_server_unreachable) },
+                    message = reason.ifBlank { if (sourceSystem == "tvheadend") tvheadendUnreachableMessage() else context.getString(com.ambient.tv.R.string.player_server_unreachable) },
                     kind = TvheadendPlaybackErrorKind.SERVER_UNAVAILABLE,
                     channelName = current?.channel?.name,
                 )

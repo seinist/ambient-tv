@@ -60,13 +60,14 @@ class ManualWakeCoordinator(
             }
             val ok = if (host == null || port == null) {
                 // Nothing to probe: a sent burst is the result.
-                burst(retry = false); true
+                burst(retry = false); notices.sent(machine, 0, 1, 0L); true
             } else wakeWithRetries(
                 retries = retries(),
                 windowMs = windowMs,
                 pollMs = pollMs,
                 send = { attempt -> burst(retry = attempt > 0) },
                 reachable = { reachable(host, port) },
+                onSent = { attempt, attempts -> notices.sent(machine, attempt, attempts, windowMs) },
             )
             notices.finish(machine, request.system, success = ok, member = request.member)
             return if (ok) Outcome.AWAKE else Outcome.FAILED

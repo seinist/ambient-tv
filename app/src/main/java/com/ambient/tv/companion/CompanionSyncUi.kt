@@ -19,10 +19,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-internal fun initialSyncTarget(state: CompanionState): String? =
+/**
+ * The device a transfer goes to until the user picks one. Re-evaluated on every state change, so
+ * a TV that connects or turns up after the dialog opened is chosen without a tap; a stale second
+ * pairing that nothing can reach no longer leaves the target empty.
+ */
+internal fun initialSyncTarget(state: CompanionState, selectable: (CompanionPeer) -> Boolean = { true }): String? =
     state.target?.fingerprint?.takeIf { state.online && state.paired.any { peer -> peer.fingerprint == it } }
         ?: state.paired.singleOrNull { it.fingerprint in state.syncPeers }?.fingerprint
         ?: state.paired.singleOrNull()?.fingerprint
+        ?: state.paired.singleOrNull(selectable)?.fingerprint
 
 internal fun syncCapability(mode: String) = when (mode) {
     "preferences" -> "settings_only"
@@ -40,7 +46,8 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     var source by remember { mutableStateOf(navSnapshot) }
     var mode by rememberSaveable { mutableStateOf(if (navSnapshot != null) "nav_sounds" else "preferences") }
     var selected by rememberSaveable { mutableStateOf<List<String>?>(null) }
-    var targetId by rememberSaveable { mutableStateOf(initialSyncTarget(state)) }
+    // Opened from a TV's card or detail page: that TV is the target.
+    var pickedId by rememberSaveable { mutableStateOf(state.transferTarget) }
     var credentials by rememberSaveable { mutableStateOf(false) }
     var sent by rememberSaveable { mutableStateOf(false) }
     var loading by remember { mutableStateOf(navSnapshot == null) }
@@ -70,6 +77,12 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
             failed = result.isFailure; loading = false
         }
     }
+    val now by produceState(android.os.SystemClock.elapsedRealtime()) {
+        while (true) { kotlinx.coroutines.delay(5_000); value = android.os.SystemClock.elapsedRealtime() }
+    }
+    val reach = state.paired.associate { it.fingerprint to manager.reachability(it, state, now) }
+    fun selectable(peer: CompanionPeer) = reach[peer.fingerprint]?.let { if (handheld) it.allowsActions() else it == PeerReachability.CONNECTED } == true
+    val targetId = pickedId?.takeIf { id -> state.paired.any { it.fingerprint == id } } ?: initialSyncTarget(state, ::selectable)
     val choices = remember(source) { source?.let(::syncAccountChoices).orEmpty() }
     val accountIds = selected?.toSet() ?: defaultSyncAccounts(choices)
     val target = state.paired.firstOrNull { it.fingerprint == targetId }
@@ -80,14 +93,11 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     val includeAccounts = mode in setOf("accounts", "settings")
     val sendCredentials = credentials && includeAccounts
     if (handheld) DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
-    val now by produceState(android.os.SystemClock.elapsedRealtime()) {
-        while (true) { kotlinx.coroutines.delay(5_000); value = android.os.SystemClock.elapsedRealtime() }
-    }
-    val reach = state.paired.associate { it.fingerprint to manager.reachability(it, state, now) }
-    fun selectable(peer: CompanionPeer) = reach[peer.fingerprint]?.let { if (handheld) it.allowsActions() else it == PeerReachability.CONNECTED } == true
     val connecting = target != null && !connected && state.busy && state.target?.fingerprint == targetId
     val locked = sent || state.backupBusy
     val dirty = manager.settingsDirty && mode != "nav_sounds"
+    // A running transfer keeps its device even if another TV connects meanwhile.
+    LaunchedEffect(locked) { if (locked && pickedId == null) pickedId = targetId }
     LaunchedEffect(targetId, connected, reach[targetId], locked, attemptedTarget) {
         if (handheld && target != null && !connected && !locked && selectable(target) && attemptedTarget != targetId) {
             attemptedTarget = targetId
@@ -103,10 +113,16 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
             else -> R.string.sync_waiting
         }
         state.backupBusy -> R.string.companion_backup_failed_busy
-        target == null -> if (state.paired.isEmpty()) R.string.sync_no_devices else R.string.sync_reason_pick
+        target == null -> when {
+            state.paired.isEmpty() -> R.string.sync_no_devices
+            handheld && state.paired.none(::selectable) -> R.string.sync_no_connectable
+            else -> R.string.sync_reason_pick
+        }
         connecting -> R.string.sync_reason_connecting
         !connected -> if (handheld) R.string.sync_no_connectable else R.string.sync_tv_no_phone
         !directionAllowed -> R.string.sync_phone_to_tv_only
+        // Capabilities arrive with the TV's first status answer; until then this is still connecting.
+        reverse == null && state.remote == null -> R.string.sync_reason_connecting
         !supported -> R.string.nav_sync_update
         dirty -> R.string.sync_save_first
         loading -> R.string.sync_loading
@@ -145,7 +161,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                 if (state.paired.size > 1) TvActionButton(stringResource(R.string.companion_change_tv), { changeTarget = !changeTarget }, enabled = !locked)
             }
             if (target == null || changeTarget) state.paired.forEach { peer ->
-                TvActionButton(peer.name, { targetId = peer.fingerprint; attemptedTarget = null; changeTarget = false },
+                TvActionButton(peer.name, { pickedId = peer.fingerprint; attemptedTarget = null; changeTarget = false },
                     selected = targetId == peer.fingerprint, enabled = !locked && selectable(peer), fillWidth = true)
             }
             com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = manager::onLocalNetworkPermissionGranted)

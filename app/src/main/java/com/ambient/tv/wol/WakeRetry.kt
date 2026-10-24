@@ -20,6 +20,12 @@ internal fun normalizedWolRetryCount(value: Int): Int = value.takeIf { it in WOL
  * callers pass `retry = attempt > 0` to [WolManager.sendWakeBurst] so a retry is never swallowed
  * by the burst coalescing of the first cycle.
  */
+/** How many magic-packet bursts [wakeWithRetries] sends at most. */
+internal fun wakeCycles(retries: Int): Int = retries.coerceIn(0, WOL_RETRY_COUNTS.max()) + 1
+
+/** The longest [wakeWithRetries] can wait with these settings: one window per send. */
+internal fun wakeBudgetMs(retries: Int, windowMs: Long): Long = wakeCycles(retries) * windowMs
+
 internal suspend fun wakeWithRetries(
     retries: Int,
     windowMs: Long,
@@ -28,11 +34,14 @@ internal suspend fun wakeWithRetries(
     reachable: suspend () -> Boolean,
     onWaiting: suspend (elapsedSeconds: Int) -> Unit = {},
     nowMs: () -> Long = System::currentTimeMillis,
+    /** After each burst: its index and how many there can be, so the UI can say which one it was. */
+    onSent: suspend (attempt: Int, attempts: Int) -> Unit = { _, _ -> },
 ): Boolean {
     val started = nowMs()
-    val cycles = retries.coerceIn(0, WOL_RETRY_COUNTS.max()) + 1
+    val cycles = wakeCycles(retries)
     for (attempt in 0 until cycles) {
         send(attempt)
+        onSent(attempt, cycles)
         val windowStart = nowMs()
         while (nowMs() - windowStart < windowMs) {
             onWaiting(((nowMs() - started) / 1000).toInt())

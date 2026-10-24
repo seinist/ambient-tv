@@ -34,7 +34,15 @@ sealed interface ServerConnectionState {
     data object Checking : ServerConnectionState
     data object Offline : ServerConnectionState
     data object SendingWakePacket : ServerConnectionState
-    data class Waking(val elapsedSeconds: Int) : ServerConnectionState
+    /** [totalSeconds]: the wake's budget including retries (0 = unknown), for a progress display. */
+    data class Waking(
+        val elapsedSeconds: Int,
+        val totalSeconds: Int = 0,
+        /** Magic-packet bursts sent so far / at most, and the wait after each (0 = not reported). */
+        val packetsSent: Int = 0,
+        val packets: Int = 0,
+        val windowSeconds: Int = 0,
+    ) : ServerConnectionState
     data object Connecting : ServerConnectionState
     data class Online(val identity: PlexServerIdentity) : ServerConnectionState
     data object WakeTimedOut : ServerConnectionState
@@ -172,7 +180,9 @@ class ServerConnectionManager @Inject constructor(
                             onWaking?.invoke()
                         }
                         is WakeState.WaitingForServer -> {
-                            _state.value = ServerConnectionState.Waking(wakeState.elapsedSeconds)
+                            _state.value = ServerConnectionState.Waking(wakeState.elapsedSeconds,
+                                (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt(),
+                                wakeState.packetsSent, wakeState.packets, wakeState.windowSeconds)
                             onWaking?.invoke()
                         }
                         WakeState.Reachable -> reachable = true

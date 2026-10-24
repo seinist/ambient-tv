@@ -29,7 +29,7 @@ class LauncherOpener @Inject constructor(
     private val plex: ServerConnectionManager,
     private val jellyfin: JellyfinConnectionManager,
     private val emby: EmbyConnectionManager,
-    private val tvheadend: com.ambient.tv.tvheadend.data.TvheadendRepository,
+    private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
@@ -56,7 +56,7 @@ class LauncherOpener @Inject constructor(
                         "plex" -> plex.ensureConnected()
                         "jellyfin" -> jellyfin.ensureConnected()
                         "emby" -> emby.ensureConnected()
-                        else -> tvheadend.ensureReachable()
+                        else -> tvheadendConnection.ensureConnected()
                     }
                 }
             }.onFailure { Timber.w(it, "Launcher open: connect failed") }.getOrDefault(false)

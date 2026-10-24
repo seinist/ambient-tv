@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_pairing_title">Pair a TV</string>
+    <string name="companion_pairing_step">Step %1$d of 3</string>
+    <string name="companion_pairing_prepare_title">Start pairing on the TV</string>
+    <string name="companion_pairing_prepare_body">Open Ambient TV on the TV: Settings › Devices &amp; network › Pair phone › “Pair phone”. The TV then shows a QR code and a code. Both devices must be on the same Wi-Fi.</string>
+    <string name="companion_pairing_found">Found: %1$s</string>
+    <string name="companion_pairing_next_scan">Next: scan the QR code</string>
+    <string name="companion_pairing_scan_title">Scan the QR code on the TV</string>
+    <string name="companion_pairing_cant_scan">Can’t scan? Enter the code</string>
+    <string name="companion_pairing_no_tv_found">No TV found yet. Is “Pair phone” open on the TV and are both devices on the same Wi-Fi?</string>
+    <string name="companion_pairing_more">More options</string>
+    <string name="companion_pairing_compare_title">Compare the codes</string>
+    <string name="companion_pairing_wait_tv">Waiting for confirmation on the TV …</string>
+    <string name="companion_pairing_done_title">Paired with %1$s</string>
+    <string name="companion_pairing_done_body">You can now control the TV, send media to it and transfer settings.</string>
+    <string name="companion_pairing_done">Done</string>
+    <string name="companion_pairing_failed">Pairing failed. Create a new code on the TV and try again.</string>
+    <string name="companion_overview_connected">Connected to %1$s</string>
+    <string name="companion_overview_disconnected">Not connected</string>
+    <string name="companion_overview_paired_count">Paired TVs: %1$d</string>
+    <string name="companion_empty_title">No TV paired yet</string>
+    <string name="companion_empty_body">Pair this phone with your TV once. Then you can control it, send media to it and transfer settings.</string>
+    <string name="companion_pair_tv">Pair a TV</string>
+    <string name="companion_connect">Connect</string>
+    <string name="companion_details">Details</string>
+    <string name="companion_detail_connection">Connection</string>
+    <string name="companion_detail_connection_hint">VPN, port and Wake-on-LAN for this TV. Only needed when it is not found automatically or should be woken up.</string>
+    <string name="companion_tv_status_on">Receiving · Paired phones: %1$d</string>
+    <string name="companion_tv_status_off">Receiving is off – phones cannot connect. “Pair phone” turns it on.</string>
+    <string name="companion_tv_controlled">%1$s is controlling this TV</string>
+    <string name="companion_tv_paired_phones">Paired phones</string>
+    <string name="companion_tv_no_phones">No phone paired yet.</string>
+    <string name="companion_advanced">Advanced</string>
+    <string name="companion_qr_expires">Valid for %1$s</string>
+    <string name="companion_qr_renew">Create new code</string>
+</resources>

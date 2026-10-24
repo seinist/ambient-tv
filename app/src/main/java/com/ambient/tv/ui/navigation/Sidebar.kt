@@ -214,7 +214,8 @@ internal fun SidebarContent(
     val youtubeEnabled = sidebarState.youtubeEnabled
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
-    val tvheadendEnabled = sidebarState.tvheadendEnabled
+    // Hidden like the media servers once the user continued past its "unreachable" dialog.
+    val tvheadendEnabled = sidebarState.tvheadendEnabled && MediaSystem.TVHEADEND.key !in sidebarState.suppressedSystems
     val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
     val spotifyNativeAvailable = sidebarState.spotifyNativeAvailable

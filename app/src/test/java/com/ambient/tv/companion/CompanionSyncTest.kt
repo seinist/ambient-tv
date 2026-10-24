@@ -202,6 +202,9 @@ class CompanionSyncTest {
         assertNull(initialSyncTarget(CompanionState(paired = paired, target = second)))
         assertEquals(first.fingerprint, initialSyncTarget(CompanionState(paired = listOf(first))))
         assertEquals(second.fingerprint, initialSyncTarget(CompanionState(paired = paired, syncPeers = mapOf(second.fingerprint to listOf("settings_sync")))) )
+        // A stale second pairing that nothing can reach must not leave the target empty.
+        assertEquals(first.fingerprint, initialSyncTarget(CompanionState(paired = paired)) { it.fingerprint == first.fingerprint })
+        assertNull(initialSyncTarget(CompanionState(paired = paired)) { false })
     }
 
     @Test fun returnChannelIsBoundedSettingsOnlyAndLegacyCompatible() {

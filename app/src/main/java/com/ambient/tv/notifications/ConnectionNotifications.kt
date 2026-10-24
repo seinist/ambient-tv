@@ -27,6 +27,7 @@ class ConnectionNotifications @Inject constructor(
     private val plex: ServerConnectionManager,
     private val jellyfin: JellyfinConnectionManager,
     private val emby: EmbyConnectionManager,
+    private val tvheadend: com.ambient.tv.server.TvheadendConnectionManager,
     private val vpn: WireGuardRouteController,
     private val resume: ResumeConnectivityMonitor,
     private val spotify: SpotifyRepository,
@@ -44,11 +45,12 @@ class ConnectionNotifications @Inject constructor(
             val unhealthy = mutableSetOf<String>()
             // system -> machine key of a wake this observer announced through [WakeNotices].
             val wakingMachines = mutableMapOf<String, String>()
-            combine(plex.state, jellyfin.state, emby.state, vpn.status) { p, j, e, route ->
+            combine(plex.state, jellyfin.state, emby.state, tvheadend.state, vpn.status) { p, j, e, t, route ->
                 route to listOf(
                     Target("plex", preferences.host, preferences.activeServerProfile()?.name, p, preferences.macAddress),
                     Target("jellyfin", preferences.jellyfinHost, preferences.activeJellyfinServerProfile()?.name, j, preferences.jellyfinMacAddress),
                     Target("emby", preferences.embyHost, preferences.activeEmbyServerProfile()?.name, e, preferences.embyMacAddress),
+                    Target("tvheadend", preferences.tvheadendHost, null, t, preferences.tvheadendMacAddress),
                 )
             }.collect { (route, targets) ->
                 // Wakes are announced per machine, shared with TVHeadend, NAS and DLNA on it.
@@ -68,6 +70,14 @@ class ConnectionNotifications @Inject constructor(
                             else -> WakeNotices.cancel(machine, target.system)
                         }
                     }
+                    // The connection manager knows the wake's full budget: the card shows its progress.
+                    val waking = target.state as? ServerConnectionState.Waking
+                    val wakingMachine = wakingMachines[target.system]
+                    if (waking != null && wakingMachine != null && waking.totalSeconds > 0)
+                        WakeNotices.setBudget(wakingMachine, waking.totalSeconds * 1000L)
+                    // Each burst shows up on the card ("packet 2 of 3 · next in 40 s").
+                    if (waking != null && wakingMachine != null && waking.packetsSent > 0 && waking.packets > 0)
+                        WakeNotices.sent(wakingMachine, waking.packetsSent - 1, waking.packets, waking.windowSeconds * 1000L)
                 }
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
                     .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }
@@ -80,6 +90,7 @@ class ConnectionNotifications @Inject constructor(
                                 "plex" -> preferences.wireGuardPlexEnabled
                                 "jellyfin" -> preferences.wireGuardJellyfinEnabled
                                 "emby" -> preferences.wireGuardEmbyEnabled
+                                "tvheadend" -> preferences.wireGuardTvheadendEnabled
                                 else -> false
                             }
                         }
@@ -130,7 +141,7 @@ class ConnectionNotifications @Inject constructor(
             var previous: WireGuardRouteState = vpn.status.value
             vpn.status.collect { state ->
                 if (state != previous) {
-                    val coveredByConnection = listOf(plex.state.value, jellyfin.state.value, emby.state.value).any {
+                    val coveredByConnection = listOf(plex.state.value, jellyfin.state.value, emby.state.value, tvheadend.state.value).any {
                         it == ServerConnectionState.Checking || it == ServerConnectionState.Connecting ||
                             it == ServerConnectionState.SendingWakePacket || it is ServerConnectionState.Waking
                     }

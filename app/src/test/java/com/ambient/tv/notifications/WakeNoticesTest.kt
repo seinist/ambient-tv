@@ -26,6 +26,47 @@ class WakeNoticesTest {
     }
 
     @Test
+    fun wakeBudgetBecomesProgressAndTheLongestBudgetWins() {
+        var now = 1_000L
+        val timed = WakeNoticeTracker({ posted += it }, { dismissed += it }, nowMs = { now })
+        timed.begin("mac:aa", "plex", null)
+        assertEquals(0L, posted.last().progressTotalMs)
+        timed.setBudget("mac:aa", 120_000L)
+        assertEquals(1_000L, posted.last().progressStartedAt)
+        assertEquals(120_000L, posted.last().progressTotalMs)
+        now = 11_000L
+        timed.begin("mac:aa", "tvheadend", null, budgetMs = 180_000L)
+        assertEquals(190_000L, posted.last().progressTotalMs)
+        timed.setBudget("mac:aa", 60_000L)
+        assertEquals(190_000L, posted.last().progressTotalMs)
+        timed.finish("mac:aa", "plex", success = true)
+        timed.finish("mac:aa", "tvheadend", success = true)
+        assertEquals(NoticePhase.SUCCESS, posted.last().phase)
+        assertEquals(0L, posted.last().progressTotalMs)
+    }
+
+    @Test
+    fun eachWakePacketIsShownWithTheNextOneAndTheResult() {
+        var now = 0L
+        val timed = WakeNoticeTracker({ posted += it }, { dismissed += it }, nowMs = { now })
+        timed.begin("mac:aa", "plex", null)
+        timed.sent("mac:aa", 0, 3, 60_000L)
+        assertEquals(1, posted.last().packetsSent)
+        assertEquals(3, posted.last().packets)
+        assertEquals(60_000L, posted.last().nextPacketAt)
+        val count = posted.size
+        timed.sent("mac:aa", 0, 3, 60_000L)
+        assertEquals(count, posted.size)
+        now = 60_000L
+        timed.sent("mac:aa", 2, 3, 60_000L)
+        assertEquals(3, posted.last().packetsSent)
+        assertEquals(0L, posted.last().nextPacketAt)
+        timed.finish("mac:aa", "plex", success = false)
+        assertEquals(NoticePhase.ERROR, posted.last().phase)
+        assertEquals(3, posted.last().packetsSent)
+    }
+
+    @Test
     fun anyFailureReportsTheFailedSystems() {
         tracker.begin("mac:aa", "plex", null)
         tracker.begin("mac:aa", "tvheadend", null)

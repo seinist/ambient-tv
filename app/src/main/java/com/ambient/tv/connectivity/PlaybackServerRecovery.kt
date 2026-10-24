@@ -7,7 +7,6 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.server.EmbyConnectionManager
 import com.ambient.tv.server.JellyfinConnectionManager
 import com.ambient.tv.server.ServerConnectionManager
-import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.ui.common.MediaSystem
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +21,7 @@ class PlaybackServerRecovery @Inject constructor(
     private val plexConnection: ServerConnectionManager,
     private val jellyfinConnection: JellyfinConnectionManager,
     private val embyConnection: EmbyConnectionManager,
-    private val tvheadendRepository: TvheadendRepository,
+    private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
     private val wakeOnLan: WakeOnLan,
     private val dlnaRepository: DlnaRepository,
 ) {
@@ -32,11 +31,23 @@ class PlaybackServerRecovery @Inject constructor(
             MediaSystem.PLEX -> plexConnection.recheckOnResume()
             MediaSystem.JELLYFIN -> jellyfinConnection.recheckOnResume()
             MediaSystem.EMBY -> embyConnection.recheckOnResume()
-            MediaSystem.TVHEADEND -> tvheadendRepository.recheckOnResume()
+            MediaSystem.TVHEADEND -> tvheadendConnection.recheckOnResume()
             MediaSystem.FILES -> wakeFilesSource(ratingKey)
             MediaSystem.DLNA -> dlnaRepository.getMetadata(ratingKey).getOrNull() != null
             else -> false
         }
+    }
+
+    /** Whether [tryWakeAndRecheck] can send a wake packet for [ratingKey], or only look again. */
+    fun wakeConfigured(ratingKey: String): Boolean = when (PlaybackServerUnreachable.mediaSystemForRatingKey(ratingKey)) {
+        MediaSystem.PLEX -> preferences.autoWakeEnabled && !preferences.macAddress.isNullOrBlank()
+        MediaSystem.JELLYFIN -> preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank()
+        MediaSystem.EMBY -> preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank()
+        MediaSystem.TVHEADEND -> preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank()
+        MediaSystem.FILES -> runCatching { FileKeys.parse(ratingKey).first }.getOrNull()
+            ?.let { id -> preferences.fileSources.firstOrNull { it.id == id } }
+            ?.let { it.wolAuto && it.wolMac.isNotBlank() } == true
+        else -> false
     }
 
     private suspend fun wakeFilesSource(ratingKey: String): Boolean {

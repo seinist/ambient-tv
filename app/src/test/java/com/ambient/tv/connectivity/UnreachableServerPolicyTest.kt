@@ -159,5 +159,15 @@ class UnreachableServerPolicyTest {
         ).prompt)
     }
 
+    @Test
+    fun `offline TVHeadend is hidden after continue like a media server`() {
+        val tvheadend = hostAwareProbe(true, ServerConnectionState.Offline, HostHealth.OFFLINE)
+        val decision = decideUnreachableServers(UnreachableServerInput(
+            probes = mapOf("plex" to ServerProbe.REACHABLE, "tvheadend" to tvheadend),
+        ))
+        assertTrue(decision.canDismiss)
+        assertEquals(setOf("tvheadend"), hiddenUnreachableSystems(decision.unreachable, acknowledgedAfterConfirm(emptySet(), decision)))
+    }
+
     private fun UnreachableServerDecision.promptBlocked(): Boolean = !canDismiss && unreachable.isNotEmpty() && !pending
 }

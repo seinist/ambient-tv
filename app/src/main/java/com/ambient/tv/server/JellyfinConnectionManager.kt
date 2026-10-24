@@ -156,6 +156,7 @@ class JellyfinConnectionManager @Inject constructor(
             if (!preferences.jellyfinAutoWakeEnabled || mac.isNullOrBlank()) { _state.value = ServerConnectionState.Offline; return false }
             _state.value = ServerConnectionState.SendingWakePacket
             onWaking?.invoke()
+            var sentPackets = 0
             reachable = wakeWithRetries(
                 retries = wakeRetries,
                 windowMs = wakeTimeoutMs,
@@ -170,9 +171,12 @@ class JellyfinConnectionManager @Inject constructor(
                 },
                 reachable = { isReachable() || hosts.verifySystem("jellyfin") },
                 onWaiting = { elapsed ->
-                    _state.value = ServerConnectionState.Waking(elapsed)
+                    _state.value = ServerConnectionState.Waking(elapsed,
+                        (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt(),
+                        sentPackets, com.ambient.tv.wol.wakeCycles(wakeRetries), (wakeTimeoutMs / 1000).toInt())
                     onWaking?.invoke()
                 },
+                onSent = { attempt, _ -> sentPackets = attempt + 1 },
             )
             if (!reachable) { _state.value = ServerConnectionState.WakeTimedOut; return false }
         }

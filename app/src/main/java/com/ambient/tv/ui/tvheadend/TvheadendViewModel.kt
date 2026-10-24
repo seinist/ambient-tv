@@ -62,6 +62,7 @@ class TvheadendViewModel @Inject constructor(
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
     private val tvheadend: TvheadendRepository,
+    private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
 ) : ViewModel() {
     val reminders = reminderStore.reminders.also { reminderStore.refresh() }
 
@@ -109,7 +110,8 @@ class TvheadendViewModel @Inject constructor(
         if (!canWake() || _uiState.value.waking) return
         _uiState.update { it.copy(waking = true) }
         viewModelScope.launch {
-            val awake = suspendResult { tvheadend.ensureReachable() }.getOrDefault(false)
+            // Same path as Plex's reconnect: wake with its packets and notices, then connect.
+            val awake = suspendResult { tvheadendConnection.reconnect() }.getOrDefault(false)
             _uiState.update { it.copy(waking = false) }
             if (awake) load(force = false)
         }

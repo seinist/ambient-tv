@@ -54,13 +54,13 @@
     <string name="companion_searching">Suche nach TVs im WLAN …</string>
     <string name="companion_search_empty">Kein TV gefunden. Ambient TV auf dem TV öffnen, dort Einstellungen → Handy &amp; TV → Verbindungen auf diesem TV erlauben einschalten und beide Geräte ins gleiche WLAN bringen.</string>
     <string name="companion_needs_local_network">Zugriff auf das Heimnetz erlauben, damit das Handy den TV finden und erreichen kann.</string>
-    <string name="companion_section_paired">Verknüpfte TVs</string>
+    <string name="companion_section_paired">Gekoppelte TVs</string>
     <string name="companion_section_found">Neue TVs im WLAN</string>
-    <string name="companion_no_paired_tv">Noch kein TV verknüpft.</string>
+    <string name="companion_no_paired_tv">Noch kein TV gekoppelt.</string>
     <string name="companion_paired_reachable">%1$s · Im WLAN</string>
     <string name="companion_paired_missing">%1$s · Nicht gefunden</string>
     <string name="companion_found_hint">Am TV „Handy &amp; TV“ → „Handy koppeln“ öffnen. Hier den TV auswählen und seinen Code eingeben.</string>
-    <string name="companion_pair_qr_or_link">Per QR-Code oder Link verknüpfen</string>
+    <string name="companion_pair_qr_or_link">Per QR-Code oder Link koppeln</string>
     <string name="companion_reach_connected">Verbunden</string>
     <string name="companion_reach_reachable">Erreichbar</string>
     <string name="companion_reach_wakeable">Schläft – wird beim Verbinden geweckt</string>
@@ -106,4 +106,6 @@
     <string name="companion_backup_failed_receiver_busy">Übertragung abgelehnt: Auf %1$s ist noch eine Bestätigung offen.</string>
     <string name="companion_backup_failed_apply">Import auf %1$s fehlgeschlagen; die bisherigen Einstellungen wurden beibehalten.</string>
     <string name="companion_backup_failed_prepare">Die Daten für %1$s konnten nicht vorbereitet werden.</string>
+    <string name="companion_paired_success">Gekoppelt mit %1$s</string>
+    <string name="companion_pairing_waiting">Warte auf Bestätigung auf %1$s …</string>
 </resources>

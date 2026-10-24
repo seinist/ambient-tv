@@ -23,7 +23,6 @@ import com.ambient.tv.tvheadend.domain.TvhServerInfo
 import com.ambient.tv.tvheadend.domain.TvhSearchResults
 import com.ambient.tv.tvheadend.domain.TvhStreamProfile
 import com.ambient.tv.wol.WolManager
-import com.ambient.tv.connectivity.ResumeConnectivityPolicy
 import com.ambient.tv.vpn.WireGuardRouteController
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -144,6 +143,21 @@ class TvheadendRepository @Inject constructor(
      * [explicit] is the settings test button: a 401 there marks the login rejected at once.
      * Automatic checks (Home, pending logins) only confirm or leave the state to the 401 policy.
      */
+    /**
+     * Set by [com.ambient.tv.server.TvheadendConnectionManager] while the user dismissed an outage
+     * ("Continue"): API calls then no longer wake the server on their own, exactly like Plex.
+     */
+    @Volatile var automaticWakePaused = false
+
+    /** Plain port check for the connection manager: no wake, no cache. */
+    suspend fun portReachable(): Boolean = isTvheadendReachable()
+
+    /** One direct serverinfo request, bypassing caches and the offline fallback. */
+    suspend fun probeServerInfo(): Result<TvhServerInfo> = suspendResult {
+        val obj = getJson("api/serverinfo").jsonObject
+        TvhServerInfo(name = obj.string("name") ?: "TVHeadend", version = obj.string("sw_version"), apiVersion = obj.int("api_version"))
+    }
+
     suspend fun testConnection(explicit: Boolean = false): Result<TvhServerInfo> =
         suspendResult { serverInfo(force = true) }.onFailure { error ->
             if (explicit && error is TvheadendHttpException && error.code == 401 &&
@@ -649,42 +663,6 @@ class TvheadendRepository @Inject constructor(
     }
 
     /**
-     * Short resume probe: ping TVH, and if offline with WoL configured send one rate-limited
-     * magic packet then wait briefly before a second ping.
-     */
-    suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean {
-        if (!preferences.isTvheadendConfigured) return false
-        wireGuardRoute.ensureForTvheadend().getOrElse { return false }
-        if (isTvheadendReachable()) {
-            lastReachableAtMs = System.currentTimeMillis()
-            return true
-        }
-        val mac = preferences.tvheadendMacAddress?.takeIf { it.isNotBlank() }
-        if (!preferences.tvheadendAutoWakeEnabled || mac == null) return false
-        return wakeMutex.withLock {
-            if (isTvheadendReachable()) {
-                lastReachableAtMs = System.currentTimeMillis()
-                return@withLock true
-            }
-            onWaking?.invoke()
-            wolManager.sendWakeBurst(
-                mac,
-                wireGuardHost = configuredTvheadendEndpoint().host.takeIf { preferences.wireGuardTvheadendEnabled },
-            )
-            val deadline = System.currentTimeMillis() + ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
-                onWaking?.invoke()
-                if (isTvheadendReachable()) {
-                    lastReachableAtMs = System.currentTimeMillis()
-                    return@withLock true
-                }
-                delay(ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS)
-            }
-            false
-        }
-    }
-
-    /**
      * Full connect for an entry point that skips Home (a launcher channel): VPN route, then
      * Wake-on-LAN with the long wait and its notices, then a reachability check.
      */
@@ -699,7 +677,7 @@ class TvheadendRepository @Inject constructor(
      * other system on the same MAC or host. Concurrent API calls share one wake cycle. */
     private suspend fun ensureAwakeIfNeeded() {
         val mac = preferences.tvheadendMacAddress?.takeIf { it.isNotBlank() } ?: return
-        if (!preferences.tvheadendAutoWakeEnabled) return
+        if (!preferences.tvheadendAutoWakeEnabled || automaticWakePaused) return
         val now = System.currentTimeMillis()
         if (now - lastReachableAtMs < 10_000L) return
         wakeMutex.withLock {
@@ -710,7 +688,8 @@ class TvheadendRepository @Inject constructor(
                 return@withLock
             }
             val machine = wakeMachines.keyFor("tvheadend", configuredTvheadendEndpoint().host, mac)
-            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host)
+            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host,
+                budgetMs = com.ambient.tv.wol.wakeBudgetMs(preferences.wolRetryCount, 60_000L))
             try {
             val woke = com.ambient.tv.wol.wakeWithRetries(
                 retries = preferences.wolRetryCount,
@@ -724,6 +703,7 @@ class TvheadendRepository @Inject constructor(
                     )
                 },
                 reachable = { isTvheadendReachable() },
+                onSent = { attempt, attempts -> com.ambient.tv.notifications.WakeNotices.sent(machine, attempt, attempts, 60_000L) },
             )
             if (woke) {
                 lastReachableAtMs = System.currentTimeMillis()

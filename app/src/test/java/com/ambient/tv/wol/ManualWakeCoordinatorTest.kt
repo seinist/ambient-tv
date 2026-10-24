@@ -47,13 +47,16 @@ class ManualWakeCoordinatorTest {
         val first = async { c.wake(ManualWakeRequest("plex", subject = "Plex", host = "192.168.1.10", mac = "AA:BB:CC:DD:EE:FF", probePort = 32400)) }
         yield()
         val burstsAfterFirst = sent.size
+        // The first wake's card is up (and updated with its sent packet); the second press adds nothing.
+        val workingAfterFirst = posted.count { it.phase == NoticePhase.WORKING }
         val second = c.wake(ManualWakeRequest("emby", subject = "Emby", host = "192.168.1.10", mac = "11:22:33:44:55:66", probePort = 8096))
         assertEquals(ManualWakeCoordinator.Outcome.ALREADY_WAKING, second)
         assertEquals(burstsAfterFirst, sent.size)
+        assertEquals(workingAfterFirst, posted.count { it.phase == NoticePhase.WORKING })
         gate.complete(true)
         assertEquals(ManualWakeCoordinator.Outcome.AWAKE, first.await())
         assertEquals(1, posted.map { it.key }.distinct().size)
-        assertEquals(1, posted.count { it.phase == NoticePhase.WORKING })
+        assertEquals(1, posted.filter { it.phase == NoticePhase.WORKING }.maxOf { it.packetsSent })
     }
 
     @Test

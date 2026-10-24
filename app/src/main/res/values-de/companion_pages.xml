@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="companion_pairing_title">TV koppeln</string>
+    <string name="companion_pairing_step">Schritt %1$d von 3</string>
+    <string name="companion_pairing_prepare_title">Kopplung am TV starten</string>
+    <string name="companion_pairing_prepare_body">Öffne Ambient TV auf dem TV: Einstellungen › Geräte &amp; Netzwerk › Handy koppeln › „Handy koppeln“. Der TV zeigt dann einen QR-Code und einen Code. Beide Geräte müssen im selben WLAN sein.</string>
+    <string name="companion_pairing_found">Gefunden: %1$s</string>
+    <string name="companion_pairing_next_scan">Weiter: QR-Code scannen</string>
+    <string name="companion_pairing_scan_title">QR-Code am TV scannen</string>
+    <string name="companion_pairing_cant_scan">Scannen nicht möglich? Code eingeben</string>
+    <string name="companion_pairing_no_tv_found">Noch kein TV gefunden. Ist „Handy koppeln“ am TV geöffnet und sind beide Geräte im selben WLAN?</string>
+    <string name="companion_pairing_more">Weitere Möglichkeiten</string>
+    <string name="companion_pairing_compare_title">Codes vergleichen</string>
+    <string name="companion_pairing_wait_tv">Warte auf Bestätigung am TV …</string>
+    <string name="companion_pairing_done_title">Gekoppelt mit %1$s</string>
+    <string name="companion_pairing_done_body">Du kannst den TV jetzt fernsteuern, Medien an ihn senden und Einstellungen übertragen.</string>
+    <string name="companion_pairing_done">Fertig</string>
+    <string name="companion_pairing_failed">Kopplung fehlgeschlagen. Am TV einen neuen Code erzeugen und erneut versuchen.</string>
+    <string name="companion_overview_connected">Verbunden mit %1$s</string>
+    <string name="companion_overview_disconnected">Nicht verbunden</string>
+    <string name="companion_overview_paired_count">Gekoppelte TVs: %1$d</string>
+    <string name="companion_empty_title">Noch kein TV gekoppelt</string>
+    <string name="companion_empty_body">Kopple dieses Handy einmal mit deinem TV. Danach kannst du ihn fernsteuern, Medien an ihn senden und Einstellungen übertragen.</string>
+    <string name="companion_pair_tv">TV koppeln</string>
+    <string name="companion_connect">Verbinden</string>
+    <string name="companion_details">Details</string>
+    <string name="companion_detail_connection">Verbindung</string>
+    <string name="companion_detail_connection_hint">VPN, Port und Wake-on-LAN für diesen TV. Nur nötig, wenn er nicht automatisch gefunden wird oder geweckt werden soll.</string>
+    <string name="companion_tv_status_on">Empfang aktiv · Gekoppelte Handys: %1$d</string>
+    <string name="companion_tv_status_off">Empfang aus – Handys können sich nicht verbinden. „Handy koppeln“ schaltet ihn ein.</string>
+    <string name="companion_tv_controlled">%1$s steuert diesen TV</string>
+    <string name="companion_tv_paired_phones">Gekoppelte Handys</string>
+    <string name="companion_tv_no_phones">Noch kein Handy gekoppelt.</string>
+    <string name="companion_advanced">Erweitert</string>
+    <string name="companion_qr_expires">Gültig noch %1$s</string>
+    <string name="companion_qr_renew">Neuen Code erzeugen</string>
+</resources>
