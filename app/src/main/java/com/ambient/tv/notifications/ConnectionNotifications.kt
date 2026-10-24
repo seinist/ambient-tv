@@ -73,6 +73,9 @@ class ConnectionNotifications @Inject constructor(
                     val wakingMachine = wakingMachines[target.system]
                     if (waking != null && wakingMachine != null && waking.totalSeconds > 0)
                         WakeNotices.setBudget(wakingMachine, waking.totalSeconds * 1000L)
+                    // Each burst shows up on the card ("packet 2 of 3 · next in 40 s").
+                    if (waking != null && wakingMachine != null && waking.packetsSent > 0 && waking.packets > 0)
+                        WakeNotices.sent(wakingMachine, waking.packetsSent - 1, waking.packets, waking.windowSeconds * 1000L)
                 }
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
                     .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }

@@ -63,4 +63,10 @@
     <string name="notice_recording_failed">Aufnahme fehlgeschlagen</string>
     <string name="notice_switched_to_media3">Wiedergabe läuft mit Media3 weiter</string>
     <string name="notice_wake_remaining">Noch höchstens etwa %1$d s</string>
+    <string name="notice_wake_packet_single">Weckpaket gesendet · warte auf Antwort</string>
+    <string name="notice_wake_packet_next">Weckpaket %1$d von %2$d gesendet · nächstes in %3$d s</string>
+    <string name="notice_wake_packet_last">Weckpaket %1$d von %2$d gesendet · letzter Versuch</string>
+    <string name="notice_wake_packet_sending">Sende Weckpaket %1$d von %2$d …</string>
+    <string name="notice_wake_packets_failed">%1$d von %2$d Weckpaketen gesendet – keine Antwort</string>
+    <string name="notice_wake_packets_success">Antwort nach Weckpaket %1$d</string>
 </resources>

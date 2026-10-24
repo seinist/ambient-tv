@@ -34,6 +34,11 @@ data class AppNotice(
     val progressStartedAt: Long = 0L,
     /** The operation's time budget; 0 = open-ended (spinner only). */
     val progressTotalMs: Long = 0L,
+    /** Wake: magic-packet bursts sent so far and at most (0 = not reported). */
+    val packetsSent: Int = 0,
+    val packets: Int = 0,
+    /** Wake: wall-clock time of the next burst if no answer comes first (0 = none follows). */
+    val nextPacketAt: Long = 0L,
 )
 
 data class NoticeEntry(
@@ -59,8 +64,10 @@ internal fun mergeWorkingSystems(old: AppNotice?, new: AppNotice): AppNotice =
     if (old != null && old.phase == NoticePhase.WORKING && new.phase == NoticePhase.WORKING && old.kind == new.kind)
         new.copy(systems = (old.systems + new.systems).distinct()).let { merged ->
             // A producer without a time budget must not drop the progress another one announced.
-            if (merged.progressTotalMs > 0 || old.progressTotalMs <= 0) merged
-            else merged.copy(progressStartedAt = old.progressStartedAt, progressTotalMs = old.progressTotalMs)
+            val timed = if (merged.progressTotalMs > 0 || old.progressTotalMs <= 0) merged
+                else merged.copy(progressStartedAt = old.progressStartedAt, progressTotalMs = old.progressTotalMs)
+            if (timed.packets > 0 || old.packets <= 0) timed
+            else timed.copy(packetsSent = old.packetsSent, packets = old.packets, nextPacketAt = old.nextPacketAt)
         } else new
 
 /** Process-local, bounded queue. No Activity, server credentials or exception text is retained. */

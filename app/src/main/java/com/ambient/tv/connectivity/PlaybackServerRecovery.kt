@@ -39,6 +39,18 @@ class PlaybackServerRecovery @Inject constructor(
         }
     }
 
+    /** Whether [tryWakeAndRecheck] can send a wake packet for [ratingKey], or only look again. */
+    fun wakeConfigured(ratingKey: String): Boolean = when (PlaybackServerUnreachable.mediaSystemForRatingKey(ratingKey)) {
+        MediaSystem.PLEX -> preferences.autoWakeEnabled && !preferences.macAddress.isNullOrBlank()
+        MediaSystem.JELLYFIN -> preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank()
+        MediaSystem.EMBY -> preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank()
+        MediaSystem.TVHEADEND -> preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank()
+        MediaSystem.FILES -> runCatching { FileKeys.parse(ratingKey).first }.getOrNull()
+            ?.let { id -> preferences.fileSources.firstOrNull { it.id == id } }
+            ?.let { it.wolAuto && it.wolMac.isNotBlank() } == true
+        else -> false
+    }
+
     private suspend fun wakeFilesSource(ratingKey: String): Boolean {
         if (!FileKeys.owns(ratingKey)) return false
         val sourceId = runCatching { FileKeys.parse(ratingKey).first }.getOrNull() ?: return false

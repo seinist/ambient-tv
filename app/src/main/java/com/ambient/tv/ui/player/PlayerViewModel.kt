@@ -1124,7 +1124,10 @@ class PlayerViewModel @Inject constructor(
             return
         }
         serverUnreachableRetryAttempted = true
-        _uiState.value = PlayerUiState.Error(context.getString(R.string.player_server_unreachable_retrying))
+        // Say what actually happens: a wake only when Wake-on-LAN is set up, otherwise one more check.
+        _uiState.value = PlayerUiState.Error(context.getString(
+            if (playbackServerRecovery.wakeConfigured(ratingKey)) R.string.player_server_unreachable_retrying
+            else R.string.player_server_unreachable_rechecking))
         viewModelScope.launch {
             // suspendResult rethrows cancellation: leaving the player mid-recheck must not stop
             // whatever plays by then through the global session below.

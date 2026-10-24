@@ -671,6 +671,8 @@ class TvheadendRepository @Inject constructor(
                 mac,
                 wireGuardHost = configuredTvheadendEndpoint().host.takeIf { preferences.wireGuardTvheadendEnabled },
             )
+            // The brief resume wake sends exactly one burst; the machine's card says so.
+            com.ambient.tv.notifications.WakeNotices.sent(wakeMachines.keyFor("tvheadend", configuredTvheadendEndpoint().host, mac), 0, 1, 0L)
             val deadline = System.currentTimeMillis() + ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
                 onWaking?.invoke()
@@ -725,6 +727,7 @@ class TvheadendRepository @Inject constructor(
                     )
                 },
                 reachable = { isTvheadendReachable() },
+                onSent = { attempt, attempts -> com.ambient.tv.notifications.WakeNotices.sent(machine, attempt, attempts, 60_000L) },
             )
             if (woke) {
                 lastReachableAtMs = System.currentTimeMillis()

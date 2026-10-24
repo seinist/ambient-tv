@@ -84,7 +84,8 @@ class WakeOnLan {
     suspend fun wakeAndWait(source: FileSource, manual: Boolean = false): Boolean {
         val machine = machineKey(source)
         val member = "files:${source.id}"
-        val budget = com.ambient.tv.wol.wakeBudgetMs(retryCount(), source.wolWaitSeconds.coerceIn(10, 180) * 1000L)
+        val window = source.wolWaitSeconds.coerceIn(10, 180) * 1000L
+        val budget = com.ambient.tv.wol.wakeBudgetMs(retryCount(), window)
         if (manual) {
             if (!notices.tryBegin(machine, "files", source.name, member, budget)) return false
         } else notices.begin(machine, "files", source.name, member, budget)
@@ -103,6 +104,7 @@ class WakeOnLan {
                 )
             },
             reachable = { online(source) },
+            onSent = { attempt, attempts -> notices.sent(machine, attempt, attempts, window) },
         )
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
         rememberOnline(source)

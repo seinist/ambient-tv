@@ -20,6 +20,9 @@ class WakeNoticeTracker(
         val startedAt: Long = 0L,
         /** Latest moment any member's wake may still succeed; 0 while no budget is known. */
         var deadline: Long = 0L,
+        var packetsSent: Int = 0,
+        var packets: Int = 0,
+        var nextPacketAt: Long = 0L,
     )
 
     private val groups = mutableMapOf<String, Group>()
@@ -50,6 +53,21 @@ class WakeNoticeTracker(
         if (isWaking(machine)) return false
         begin(machine, system, subject, member, budgetMs)
         return true
+    }
+
+    /**
+     * A magic-packet burst went out: [attempt] (0-based) of [attempts]; the next follows after
+     * [windowMs] unless the machine answers first. Repeated reports of the same burst are ignored.
+     */
+    @Synchronized
+    fun sent(machine: String, attempt: Int, attempts: Int, windowMs: Long) {
+        val group = groups[machine] ?: return
+        if (attempts <= 0 || group.members.values.none { it.state == State.WORKING }) return
+        if (group.packetsSent == attempt + 1 && group.packets == attempts) return
+        group.packetsSent = attempt + 1
+        group.packets = attempts
+        group.nextPacketAt = if (attempt + 1 < attempts && windowMs > 0) nowMs() + windowMs else 0L
+        publish(machine, group)
     }
 
     /** A running wake learned its total budget ([totalMs] from the wake's start). */
@@ -93,11 +111,14 @@ class WakeNoticeTracker(
             members.any { it.state == State.WORKING } ->
                 AppNotice(noticeKey(machine), R.string.notice_waking, all, subject, NoticePhase.WORKING, NoticeKind.WAKE,
                     progressStartedAt = if (group.deadline > 0) group.startedAt else 0L,
-                    progressTotalMs = if (group.deadline > 0) (group.deadline - group.startedAt).coerceAtLeast(0L) else 0L)
+                    progressTotalMs = if (group.deadline > 0) (group.deadline - group.startedAt).coerceAtLeast(0L) else 0L,
+                    packetsSent = group.packetsSent, packets = group.packets, nextPacketAt = group.nextPacketAt)
             members.any { it.state == State.FAILED } ->
                 AppNotice(noticeKey(machine), R.string.notice_wake_failed,
-                    members.filter { it.state == State.FAILED }.map { it.system }.distinct(), subject, NoticePhase.ERROR, NoticeKind.WAKE)
-            else -> AppNotice(noticeKey(machine), R.string.notice_awake, all, subject, NoticePhase.SUCCESS, NoticeKind.WAKE)
+                    members.filter { it.state == State.FAILED }.map { it.system }.distinct(), subject, NoticePhase.ERROR, NoticeKind.WAKE,
+                    packetsSent = group.packetsSent, packets = group.packets)
+            else -> AppNotice(noticeKey(machine), R.string.notice_awake, all, subject, NoticePhase.SUCCESS, NoticeKind.WAKE,
+                packetsSent = group.packetsSent, packets = group.packets)
         }
         // A finished machine starts a fresh card on its next wake.
         if (notice.phase != NoticePhase.WORKING) groups.remove(machine)

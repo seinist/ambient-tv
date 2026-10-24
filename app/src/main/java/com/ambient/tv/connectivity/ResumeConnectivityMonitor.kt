@@ -287,6 +287,7 @@ class ResumeConnectivityMonitor @Inject constructor(
                         wireGuardHost = source.host.takeIf { source.wireGuard },
                     )
                 }
+                com.ambient.tv.notifications.WakeNotices.sent(machine, 0, 1, 0L)
                 // Brief wait only — full cold-start wake remains on demand in Files.
                 val deadline = System.currentTimeMillis() + ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS
                 var woke = false
