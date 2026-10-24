@@ -786,6 +786,8 @@ External libraries: see [`EXTERNAL_LIBRARIES.md`](../EXTERNAL_LIBRARIES.md).
 
 Unit tests live under `app/src/test/`. Full device acceptance (TV remote, real NAS/AVR/login paths) is separate from source/CI checks.
 
+**Baseline profile:** `scripts/capture_baseline_profile.sh SERIAL` records on an Android 13+ device which app code runs while navigating and adds it to `app/src/main/baseline-prof.txt`. It uses the `profileCapture` build type (release code without obfuscation, not debuggable, installed beside the app). With `audit` instead of manual use, the UI performance audit drives the Home and library layouts. The profile is compiled at install time, in-app updates included.
+
 ---
 
 ### 14.5 Releases and versioning

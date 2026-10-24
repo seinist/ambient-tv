@@ -223,6 +223,9 @@ android {
         }
     }
 
+    // Device audits run against debug; the baseline profile capture runs them against profileCapture.
+    testBuildType = providers.gradleProperty("testBuildType").orNull ?: "debug"
+
     buildTypes {
         getByName("debug") {
             // Optional side-by-side device audit without replacing a differently signed release.
@@ -232,6 +235,18 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // Baseline profile capture (scripts/capture_baseline_profile.sh): release code, but not
+        // obfuscated so recorded rules name the real classes (R8 maps them for release), and not
+        // debuggable so ART profiles it like the release app. Installs beside the real app.
+        create("profileCapture") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            isDebuggable = false
+            applicationIdSuffix = ".profilecapture"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 

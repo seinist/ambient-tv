@@ -784,6 +784,8 @@ Externe Bibliotheken: siehe [`EXTERNAL_LIBRARIES.md`](../EXTERNAL_LIBRARIES.md).
 
 Unit-Tests liegen unter `app/src/test/`. Vollständige Geräteabnahme (TV-Fernbedienung, echte NAS-/AVR-/Login-Pfade) ist von Quell-/CI-Checks getrennt zu sehen.
 
+**Baseline-Profil:** `scripts/capture_baseline_profile.sh SERIAL` zeichnet auf einem Gerät ab Android 13 auf, welcher App-Code beim Navigieren läuft, und ergänzt `app/src/main/baseline-prof.txt`. Es nutzt den Build-Typ `profileCapture` (Release-Code ohne Verschleierung, nicht debuggable, installiert neben der App). Mit `audit` statt manueller Bedienung fährt der UI-Performance-Audit die Startseiten- und Bibliotheks-Layouts ab. Das Profil wird beim Installieren vorkompiliert, auch bei In-App-Updates.
+
 ---
 
 ### 14.5 Releases und Versionierung

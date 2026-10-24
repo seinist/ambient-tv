@@ -1,10 +1,11 @@
 package com.ambient.tv.update
 
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.core.content.FileProvider
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.notifications.AppNotice
@@ -231,10 +232,15 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
     internal fun cancelDownload() { work?.cancel(); downloadCall?.cancel() }
     internal fun reportInstallError() { mutable.update { it.copy(error = R.string.update_install_failed) } }
 
-    /** Revalidate persisted bytes before granting the system installer access. */
-    internal suspend fun installIntent(): Intent? {
-        val offer = mutable.value.offer ?: return null
-        if (!mutable.value.ready || mutable.value.preparingInstall) return null
+    /**
+     * Revalidate persisted bytes, then hand them to the system installer in one session together
+     * with the APK's baseline profile ("base.dm"), so ART compiles the UI at install time instead
+     * of running it interpreted after every update. The system then asks the user to confirm
+     * (see [UpdateInstallReceiver]). Returns false when the install could not be started.
+     */
+    internal suspend fun install(withProfile: Boolean = true): Boolean {
+        val offer = mutable.value.offer ?: return false
+        if (!mutable.value.ready || mutable.value.preparingInstall) return false
         mutable.update { it.copy(preparingInstall = true, error = null) }
         return try {
             withContext(Dispatchers.IO) {
@@ -252,16 +258,52 @@ class AppUpdater @Inject constructor(@ApplicationContext private val context: Co
                 if (file.length() != offer.apk.size || digest.digest().hex() != offer.apk.sha256)
                     throw UpdateFailure(R.string.update_invalid_apk)
                 validateApk(file, offer)
-                Intent(Intent.ACTION_VIEW).setDataAndType(
-                    FileProvider.getUriForFile(context, "${context.packageName}.updates", file),
-                    "application/vnd.android.package-archive",
-                ).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                commitSession(file, withProfile)
             }
+            true
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (failure: Exception) {
             mutable.update { it.copy(ready = false, error = errorResource(failure)) }
-            null
+            false
         } finally { mutable.update { it.copy(preparingInstall = false) } }
+    }
+
+    /** ART rejected the profile on this device: the same verified APK goes in once more without it. */
+    internal fun retryWithoutProfile() {
+        scope.launch { if (!install(withProfile = false)) reportInstallError() }
+    }
+
+    private fun commitSession(file: File, withProfile: Boolean) {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+            setAppPackageName(context.packageName)
+            setSize(file.length())
+        }
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+            try {
+                session.openWrite("base.apk", 0, file.length()).use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                    session.fsync(out)
+                }
+                val metadata = java.io.ByteArrayOutputStream()
+                val profiled = withProfile && writeDexMetadata(file, metadata)
+                if (profiled) session.openWrite("base.dm", 0, metadata.size().toLong()).use { out ->
+                    out.write(metadata.toByteArray())
+                    session.fsync(out)
+                }
+                val result = Intent(context, UpdateInstallReceiver::class.java)
+                    .setPackage(context.packageName)
+                    .putExtra(UpdateInstallReceiver.EXTRA_PROFILED, profiled)
+                // Mutable: the installer adds the status and its confirmation intent.
+                val pending = PendingIntent.getBroadcast(context, id, result,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+                session.commit(pending.intentSender)
+            } catch (failure: Exception) {
+                runCatching { session.abandon() }
+                throw failure
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
