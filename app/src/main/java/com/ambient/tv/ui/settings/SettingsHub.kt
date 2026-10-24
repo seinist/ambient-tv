@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -322,7 +323,8 @@ internal fun SettingsHub(
         return false
     }
 
-    BackHandler {
+    // Back key and the header's Back button: one step up (page → list, search → list, list → exit).
+    fun goBack() {
         if (!parking) {
             if (page == null) back()
             else {
@@ -340,6 +342,9 @@ internal fun SettingsHub(
             }
         }
     }
+    BackHandler { goBack() }
+    // A sub-page (or the search) shows a visible Back; the Settings start page leaves with the Back key.
+    val showBack = page != null || search
 
     LaunchedEffect(navigationKey, areaMenu) {
         if (handheld) return@LaunchedEffect
@@ -411,7 +416,9 @@ internal fun SettingsHub(
     ) {
         if (handheld) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Settings, null, Modifier.padding(12.dp))
+                if (showBack) androidx.compose.material3.IconButton(onClick = ::goBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
+                } else Icon(Icons.Filled.Settings, null, Modifier.padding(12.dp))
                 Text(page?.let { settingsCategoryTitle(it) } ?: stringResource(R.string.settings_title), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 2)
                 androidx.compose.material3.IconButton(onClick = { linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false }) { Icon(Icons.Default.Search, stringResource(R.string.settings_search)) }
             }
@@ -428,6 +435,10 @@ internal fun SettingsHub(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (showBack) TvChip(stringResource(R.string.back),
+                    // Left from the leftmost header chip stays put.
+                    modifier = Modifier.onPreviewKeyEvent { event -> event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown },
+                    icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { goBack() }
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
@@ -436,7 +447,7 @@ internal fun SettingsHub(
                 TvChip(stringResource(R.string.action_search), modifier = Modifier.focusRequester(searchButtonFocus).onFocusChanged { if (it.isFocused) lastRegionFocus = searchButtonFocus }
                     .onPreviewKeyEvent { event ->
                         // Left from the leftmost header chip stays put; only Back leaves Settings.
-                        event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
+                        !showBack && event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                     },
                     icon = Icons.Filled.Search, iconOnly = true) { openSearch() }
                 if (area == SettingsArea.SYSTEMS && page != SettingsCategory.NOTIFICATIONS) {

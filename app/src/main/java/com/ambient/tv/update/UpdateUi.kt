@@ -75,14 +75,9 @@ private fun UpdateDialog(updater: AppUpdater, dismiss: () -> Unit) {
     val state by updater.state.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val installer = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        // Dismissal is not evidence of successful installation. Keep the verified APK for retry.
-    }
+    // The system's confirmation comes through UpdateInstallReceiver; a declined install keeps the verified APK.
     fun install() {
-        scope.launch {
-            val intent = updater.installIntent() ?: return@launch
-            runCatching { installer.launch(intent) }.onFailure { updater.reportInstallError() }
-        }
+        scope.launch { updater.install() }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         if (context.packageManager.canRequestPackageInstalls()) install() else updater.reportInstallError()

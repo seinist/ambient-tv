@@ -171,6 +171,7 @@ fun DetailScreen(
             }
             is DetailUiState.Loaded -> androidx.compose.runtime.key(state.item.ratingKey) {
                 DetailContent(
+                    fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
                     onTrailer = onTrailer,
                     item = state.item,
                     playbackAvailable = !state.offline && !state.removed,
@@ -269,6 +270,8 @@ private fun DetailLoadingSkeleton(
 @OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun DetailContent(
+    /** Wide backdrop the server offers but has not selected, else TMDb's, when the item has only a poster. */
+    fallbackBackdrop: String? = null,
     playbackAvailable: Boolean,
     availabilityMessage: Int?,
     onTrailer: ((MediaItem) -> Unit)?,
@@ -350,11 +353,14 @@ private fun DetailContent(
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        val backdrop = item.artUrl ?: item.thumbUrl
+        // Always a wide backdrop when one exists (own, the show's, other server backgrounds, TMDb's); a poster only as last resort.
+        val backdrop = item.wideBackdropUrl ?: fallbackBackdrop ?: item.thumbUrl
         val artworkAccent = rememberArtworkAccent(backdrop)
         val heroAccent = if (LocalAccentModeKey.current == "artwork") artworkAccent else MaterialTheme.colorScheme.primary
         if (!visibleBackgroundVideo) ArtworkImage(
             model = backdrop,
+            // A backdrop that fails to load falls through to the next wide source, then the poster.
+            fallbackModels = listOfNotNull(fallbackBackdrop, item.thumbUrl).filter { it != backdrop },
             title = item.title,
             contentScale = ContentScale.Crop,
             focusCrop = true,

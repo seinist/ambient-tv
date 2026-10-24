@@ -62,6 +62,10 @@ data class JellyfinItem(
     @SerialName("ImageTags") val imageTags: Map<String, String> = emptyMap(),
     @SerialName("BackdropImageTags") val backdropImageTags: List<String> = emptyList(),
     @SerialName("SeriesPrimaryImageTag") val seriesPrimaryImageTag: String? = null,
+    @SerialName("ParentBackdropItemId") val parentBackdropItemId: String? = null,
+    @SerialName("ParentBackdropImageTags") val parentBackdropImageTags: List<String> = emptyList(),
+    @SerialName("ParentThumbItemId") val parentThumbItemId: String? = null,
+    @SerialName("ParentThumbImageTag") val parentThumbImageTag: String? = null,
     @SerialName("ParentLogoItemId") val parentLogoItemId: String? = null,
     @SerialName("ParentLogoImageTag") val parentLogoImageTag: String? = null,
     @SerialName("DateCreated") val dateCreated: String? = null,
@@ -213,3 +217,9 @@ data class JellyfinSegment(
     @SerialName("StartTicks") val startTicks: Long = -1,
     @SerialName("EndTicks") val endTicks: Long = -1,
 )
+
+@Serializable
+data class JellyfinRemoteImages(@SerialName("Images") val images: List<JellyfinRemoteImage> = emptyList())
+
+@Serializable
+data class JellyfinRemoteImage(@SerialName("Url") val url: String? = null)

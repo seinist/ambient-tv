@@ -49,6 +49,10 @@ interface PlexApiService {
     @GET("library/metadata/{id}/extras")
     suspend fun getExtras(@Path("id") ratingKey: String): MetadataResponse
 
+    /** Every background Plex offers for the item (local files and its agents), selected first or flagged. */
+    @GET("library/metadata/{id}/arts")
+    suspend fun getArts(@Path("id") ratingKey: String): com.ambient.tv.data.remote.dto.PlexArtsResponse
+
     @GET("library/metadata/{id}/similar")
     suspend fun getSimilar(
         @Path("id") ratingKey: String,

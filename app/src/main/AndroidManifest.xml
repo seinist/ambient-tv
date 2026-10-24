@@ -179,6 +179,10 @@
             android:authorities="${applicationId}.launcherart"
             android:exported="true"
             android:grantUriPermissions="false" />
+        <!-- Result of the in-app update's install session (status, confirmation, retry without profile). -->
+        <receiver
+            android:name=".update.UpdateInstallReceiver"
+            android:exported="false" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.updates"

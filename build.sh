@@ -1069,6 +1069,19 @@ deploy_apk_nonfatal() {
     set -e
     if (( rc == 0 )) && [[ "$output" == *Success* ]]; then
         log "ADB install successful."
+        # adb install ignores the APK's baseline profile until the device's idle dexopt (days on a
+        # TV box), so menus stutter meanwhile. Write the profile and compile with it right away.
+        local pkg="com.ambient.tv"
+        $adb -s "$target" shell am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE \
+            -n "$pkg/androidx.profileinstaller.ProfileInstallReceiver" >/dev/null 2>&1 || true
+        set +e
+        output="$($adb -s "$target" shell cmd package compile -f -m speed-profile "$pkg" 2>&1)"; rc=$?
+        set -e
+        if (( rc == 0 )) && [[ "$output" == *Success* ]]; then
+            log "Compiled with the baseline profile."
+        else
+            warn "Profile compilation failed (${output:-no output}); the app works, it may stutter until the device compiles it."
+        fi
     else
         warn "ADB install failed, but build remains successful: ${output:-adb install failed}"
     fi

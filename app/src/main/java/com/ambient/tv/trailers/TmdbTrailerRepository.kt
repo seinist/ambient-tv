@@ -221,17 +221,33 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
     }
 
     suspend fun forItem(item: MediaItem, language: String): Result<List<TrailerVideo>> = suspendResult {
-        val type = when (item.type) { "movie" -> "movie"; "show" -> "tv"; else -> return@suspendResult emptyList() }
-        val ids = item.guids + listOfNotNull(item.guid)
-        val direct = ids.firstOrNull { it.startsWith("tmdb://") }?.substringAfter("tmdb://")?.substringBefore('?')?.toIntOrNull()
-        val imdb = ids.firstOrNull { it.startsWith("imdb://") }?.substringAfter("imdb://")?.substringBefore('?')
-        val found = if (direct == null && imdb != null && Regex("tt[0-9]+").matches(imdb)) {
-            titles(request("find/$imdb", mapOf("external_source" to "imdb_id")), if (type == "movie") "movie_results" else "tv_results").singleOrNull()
-        } else null
-        val matched = if (direct == null && found == null) matchTrailerTitle(titles(request("search/$type",
-            mapOf("query" to item.title, "language" to language, "include_adult" to "false"))), item.title, item.year) else found
-        val id = direct ?: matched?.id ?: return@suspendResult emptyList()
+        val type = tmdbType(item) ?: return@suspendResult emptyList()
+        val (id, matched) = tmdbMatch(item, type, language) ?: return@suspendResult emptyList()
         val original = matched?.originalLanguage ?: request("$type/$id")["original_language"]?.jsonPrimitive?.contentOrNull.orEmpty()
         videos(type, id, language, original)
+    }
+
+    /** TMDb's wide backdrop for a movie or show, for pages whose media server has none. */
+    suspend fun backdropFor(item: MediaItem, language: String): Result<String?> = suspendResult {
+        val type = tmdbType(item) ?: return@suspendResult null
+        val (id, matched) = tmdbMatch(item, type, language) ?: return@suspendResult null
+        val path = matched?.backdrop ?: request("$type/$id", ttlNanos = TimeUnit.HOURS.toNanos(24))["backdrop_path"]?.jsonPrimitive?.contentOrNull
+        path?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w1280$it" }
+    }
+
+    private fun tmdbType(item: MediaItem): String? = when (item.type) { "movie" -> "movie"; "show" -> "tv"; else -> null }
+
+    /** The TMDb id: from the item's tmdb:// guid, its imdb:// guid, or a title/year search. */
+    private suspend fun tmdbMatch(item: MediaItem, type: String, language: String): Pair<Int, TrailerTitle?>? {
+        val ids = item.guids + listOfNotNull(item.guid)
+        val direct = ids.firstOrNull { it.startsWith("tmdb://") }?.substringAfter("tmdb://")?.substringBefore('?')?.toIntOrNull()
+        if (direct != null) return direct to null
+        val imdb = ids.firstOrNull { it.startsWith("imdb://") }?.substringAfter("imdb://")?.substringBefore('?')
+        val found = if (imdb != null && Regex("tt[0-9]+").matches(imdb)) {
+            titles(request("find/$imdb", mapOf("external_source" to "imdb_id")), if (type == "movie") "movie_results" else "tv_results").singleOrNull()
+        } else null
+        val matched = found ?: matchTrailerTitle(titles(request("search/$type",
+            mapOf("query" to item.title, "language" to language, "include_adult" to "false"))), item.title, item.year)
+        return matched?.let { it.id to it }
     }
 }

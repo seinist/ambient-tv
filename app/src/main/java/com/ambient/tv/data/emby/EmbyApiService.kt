@@ -69,6 +69,8 @@ interface EmbyApiService {
     @GET("Items/{id}/Similar") suspend fun getSimilar(@Path("id") id: String, @Query("userId") userId: String, @Query("limit") limit: Int = 20, @Query("fields") fields: String = ITEM_FIELDS): EmbyItemsResponse
     /** Trailers stored with the item. */
     @GET("Users/{userId}/Items/{id}/LocalTrailers") suspend fun getLocalTrailers(@Path("id") id: String, @Path("userId") userId: String): List<EmbyItem>
+    /** Backdrops the server's own image providers offer for the item (needs no key in the app). */
+    @GET("Items/{id}/RemoteImages") suspend fun getRemoteImages(@Path("id") id: String, @Query("type") type: String = "Backdrop", @Query("limit") limit: Int = 1): EmbyRemoteImages
     @GET("Items/{id}/ThemeSongs") suspend fun getThemeSongs(@Path("id") id: String, @Query("userId") userId: String, @Query("inheritFromParent") inheritFromParent: Boolean = true): EmbyItemsResponse
     @POST("Items/{id}/PlaybackInfo") suspend fun getPlaybackInfo(@Path("id") id: String, @Body body: EmbyPlaybackInfoRequest): EmbyPlaybackInfoResponse
     @POST("Sessions/Playing") suspend fun reportPlaybackStart(@Body body: EmbyPlaybackProgress)

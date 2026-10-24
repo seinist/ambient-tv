@@ -11,6 +11,10 @@ releases participate; GitHub prereleases and drafts do not. Public access requir
 A missing manifest, incompatible device, network error and rate limit have distinct messages.
 Discovery survives process restarts. Downloads continue while navigating within the process;
 a killed process may require downloading again. Completed APKs are checked again before install.
+Installation uses a `PackageInstaller` session that also carries the APK's baseline profile as
+`base.dm`, so ART compiles the interface at install time instead of after the device's next idle
+dexopt (until then navigation can stutter). The system still asks for confirmation. If a device
+rejects the profile, the same verified APK is installed once more without it.
 
 ## Building release metadata
 

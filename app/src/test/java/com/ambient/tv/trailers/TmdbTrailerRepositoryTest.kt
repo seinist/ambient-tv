@@ -202,6 +202,20 @@ class TmdbTrailerRepositoryTest {
         assertTrue(repository.feed(TrailerFeed.MOVIES, "en-US", "US").isSuccess)
     }
 
+    @Test fun backdropComesFromTheTmdbIdAndNeverForEpisodes() = runBlocking {
+        repository.connect("a".repeat(32)).getOrThrow()
+        responder = { request -> if (request.url.encodedPath.endsWith("/movie/603")) """{"id":603,"backdrop_path":"/bg.jpg"}""" else "{}" }
+        fun item(type: String) = com.ambient.tv.domain.model.MediaItem(ratingKey = "1", title = "The Matrix", type = type,
+            index = null, thumbUrl = "poster", artUrl = null, year = 1999, summary = null,
+            tagline = null, durationMs = null, viewOffsetMs = null, parentTitle = null,
+            parentRatingKey = null, grandparentTitle = null, grandparentRatingKey = null,
+            contentRating = null, rating = null, studio = null, guids = listOf("tmdb://603"))
+        assertEquals("https://image.tmdb.org/t/p/w1280/bg.jpg", repository.backdropFor(item("movie"), "de-DE").getOrThrow())
+        requests.clear()
+        assertNull(repository.backdropFor(item("episode"), "de-DE").getOrThrow())
+        assertTrue(requests.isEmpty())
+    }
+
     @Test fun ambiguousRemakesAndMissingYearsNeverGuess() {
         val original = TrailerTitle(1, title = "The Film", releaseDate = "1990-01-01")
         val remake = TrailerTitle(2, title = "The Film", releaseDate = "2020-01-01")

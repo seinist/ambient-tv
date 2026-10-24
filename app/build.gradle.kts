@@ -223,6 +223,9 @@ android {
         }
     }
 
+    // Device audits run against debug; the baseline profile capture runs them against profileCapture.
+    testBuildType = providers.gradleProperty("testBuildType").orNull ?: "debug"
+
     buildTypes {
         getByName("debug") {
             // Optional side-by-side device audit without replacing a differently signed release.
@@ -232,6 +235,18 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        // Baseline profile capture (scripts/capture_baseline_profile.sh): release code, but not
+        // obfuscated so recorded rules name the real classes (R8 maps them for release), and not
+        // debuggable so ART profiles it like the release app. Installs beside the real app.
+        create("profileCapture") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            isDebuggable = false
+            applicationIdSuffix = ".profilecapture"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -599,6 +614,14 @@ fun deployReleaseApkToAdb() {
     val (installCode, installOutput) = runAdb("-s", target, "install", "-r", apk.absolutePath)
     if (installCode == 0 && installOutput.contains("Success", true)) {
         logger.lifecycle("ADB deploy: installed ${apk.name} successfully.")
+        // adb install ignores the APK's baseline profile until the device's idle dexopt (days on a
+        // TV box), so menus stutter meanwhile. Write the profile and compile with it right away.
+        val pkg = "com.ambient.tv"
+        runAdb("-s", target, "shell", "am", "broadcast", "-a", "androidx.profileinstaller.action.INSTALL_PROFILE",
+            "-n", "$pkg/androidx.profileinstaller.ProfileInstallReceiver")
+        val (compileCode, compileOutput) = runAdb("-s", target, "shell", "cmd", "package", "compile", "-f", "-m", "speed-profile", pkg)
+        if (compileCode == 0 && compileOutput.contains("Success", true)) logger.lifecycle("ADB deploy: compiled with the baseline profile.")
+        else logger.lifecycle("ADB deploy warning: profile compilation failed (${compileOutput.ifBlank { "no output" }}); the app works, it may stutter until the device compiles it.")
     } else {
         // Deployment is deliberately non-fatal so a missing/offline TV never breaks the build.
         logger.lifecycle("ADB deploy warning: install failed but build remains successful. ${installOutput.ifBlank { "adb install failed" }}")

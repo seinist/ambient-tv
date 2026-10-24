@@ -357,6 +357,14 @@ class PlexRepository @Inject constructor(
         }
     }
 
+    override suspend fun getAlternativeBackdrop(ratingKey: String): Result<String?> = cache.withGeneration {
+        suspendResult {
+            val arts = api.getArts(ratingKey).container.arts
+            val art = arts.firstOrNull { it.selected } ?: arts.firstOrNull()
+            urlBuilder.backdropUrl(art?.key ?: art?.thumb)
+        }
+    }
+
     override suspend fun getNextEpisode(ratingKey: String): Result<MediaItem?> = cache.withGeneration {
         suspendResult {
             val current = cache.mediaItem(ratingKey)
