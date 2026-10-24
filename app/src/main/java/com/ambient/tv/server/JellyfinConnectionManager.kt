@@ -170,7 +170,8 @@ class JellyfinConnectionManager @Inject constructor(
                 },
                 reachable = { isReachable() || hosts.verifySystem("jellyfin") },
                 onWaiting = { elapsed ->
-                    _state.value = ServerConnectionState.Waking(elapsed)
+                    _state.value = ServerConnectionState.Waking(elapsed,
+                        (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt())
                     onWaking?.invoke()
                 },
             )

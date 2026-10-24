@@ -183,7 +183,8 @@ class ResumeConnectivityMonitor @Inject constructor(
                 if (!tvhWaking) {
                     tvhWaking = true
                     AppNotifications.dismiss("resume:tvheadend")
-                    com.ambient.tv.notifications.WakeNotices.begin(tvhMachine, "tvheadend", preferences.tvheadendHost)
+                    com.ambient.tv.notifications.WakeNotices.begin(tvhMachine, "tvheadend", preferences.tvheadendHost,
+                        budgetMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS)
                 }
             } else if (system == MediaSystem.TVHEADEND && tvhWaking) {
                 if (phase != ResumeConnectivityStatus.ServerPhase.CHECKING) {
@@ -275,7 +276,8 @@ class ResumeConnectivityMonitor @Inject constructor(
             if (source.wolAuto && source.wolMac.isNotBlank()) {
                 val machine = wakeOnLan.machineKey(source)
                 val member = "files:${source.id}"
-                com.ambient.tv.notifications.WakeNotices.begin(machine, "files", source.name, member)
+                com.ambient.tv.notifications.WakeNotices.begin(machine, "files", source.name, member,
+                    budgetMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS)
                 onWaking?.invoke()
                 runCatching {
                     wakeOnLan.send(

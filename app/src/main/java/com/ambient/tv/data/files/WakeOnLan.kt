@@ -84,9 +84,10 @@ class WakeOnLan {
     suspend fun wakeAndWait(source: FileSource, manual: Boolean = false): Boolean {
         val machine = machineKey(source)
         val member = "files:${source.id}"
+        val budget = com.ambient.tv.wol.wakeBudgetMs(retryCount(), source.wolWaitSeconds.coerceIn(10, 180) * 1000L)
         if (manual) {
-            if (!notices.tryBegin(machine, "files", source.name, member)) return false
-        } else notices.begin(machine, "files", source.name, member)
+            if (!notices.tryBegin(machine, "files", source.name, member, budget)) return false
+        } else notices.begin(machine, "files", source.name, member, budget)
         try {
         val ready = wakeWithRetries(
             retries = retryCount(),

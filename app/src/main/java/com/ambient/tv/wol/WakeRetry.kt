@@ -20,6 +20,9 @@ internal fun normalizedWolRetryCount(value: Int): Int = value.takeIf { it in WOL
  * callers pass `retry = attempt > 0` to [WolManager.sendWakeBurst] so a retry is never swallowed
  * by the burst coalescing of the first cycle.
  */
+/** The longest [wakeWithRetries] can wait with these settings: one window per send. */
+internal fun wakeBudgetMs(retries: Int, windowMs: Long): Long = (retries.coerceIn(0, WOL_RETRY_COUNTS.max()) + 1) * windowMs
+
 internal suspend fun wakeWithRetries(
     retries: Int,
     windowMs: Long,

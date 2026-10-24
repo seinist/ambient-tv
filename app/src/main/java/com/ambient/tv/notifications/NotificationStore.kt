@@ -30,6 +30,10 @@ data class AppNotice(
     /** Automatic checks should not announce a fast, unchanged healthy connection. */
     val quietSuccess: Boolean = false,
     val interruptPlayback: Boolean = true,
+    /** Wall-clock start of a timed operation (a wake); with [progressTotalMs] the card shows how far it is. */
+    val progressStartedAt: Long = 0L,
+    /** The operation's time budget; 0 = open-ended (spinner only). */
+    val progressTotalMs: Long = 0L,
 )
 
 data class NoticeEntry(
@@ -53,7 +57,11 @@ data class NotificationSnapshot(
  */
 internal fun mergeWorkingSystems(old: AppNotice?, new: AppNotice): AppNotice =
     if (old != null && old.phase == NoticePhase.WORKING && new.phase == NoticePhase.WORKING && old.kind == new.kind)
-        new.copy(systems = (old.systems + new.systems).distinct()) else new
+        new.copy(systems = (old.systems + new.systems).distinct()).let { merged ->
+            // A producer without a time budget must not drop the progress another one announced.
+            if (merged.progressTotalMs > 0 || old.progressTotalMs <= 0) merged
+            else merged.copy(progressStartedAt = old.progressStartedAt, progressTotalMs = old.progressTotalMs)
+        } else new
 
 /** Process-local, bounded queue. No Activity, server credentials or exception text is retained. */
 class NotificationStore(

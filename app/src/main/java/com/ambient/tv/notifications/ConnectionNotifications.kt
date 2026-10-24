@@ -68,6 +68,11 @@ class ConnectionNotifications @Inject constructor(
                             else -> WakeNotices.cancel(machine, target.system)
                         }
                     }
+                    // The connection manager knows the wake's full budget: the card shows its progress.
+                    val waking = target.state as? ServerConnectionState.Waking
+                    val wakingMachine = wakingMachines[target.system]
+                    if (waking != null && wakingMachine != null && waking.totalSeconds > 0)
+                        WakeNotices.setBudget(wakingMachine, waking.totalSeconds * 1000L)
                 }
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
                     .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }

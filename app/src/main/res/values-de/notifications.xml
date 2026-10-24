@@ -62,4 +62,5 @@
     <string name="notice_recording_finished">Aufnahme abgeschlossen</string>
     <string name="notice_recording_failed">Aufnahme fehlgeschlagen</string>
     <string name="notice_switched_to_media3">Wiedergabe läuft mit Media3 weiter</string>
+    <string name="notice_wake_remaining">Noch höchstens etwa %1$d s</string>
 </resources>

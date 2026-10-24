@@ -710,7 +710,8 @@ class TvheadendRepository @Inject constructor(
                 return@withLock
             }
             val machine = wakeMachines.keyFor("tvheadend", configuredTvheadendEndpoint().host, mac)
-            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host)
+            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host,
+                budgetMs = com.ambient.tv.wol.wakeBudgetMs(preferences.wolRetryCount, 60_000L))
             try {
             val woke = com.ambient.tv.wol.wakeWithRetries(
                 retries = preferences.wolRetryCount,

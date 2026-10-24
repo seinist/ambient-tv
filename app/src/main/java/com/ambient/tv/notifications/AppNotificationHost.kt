@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -257,6 +258,7 @@ private fun NotificationCard(notice: AppNotice, reduced: Boolean, grouped: Boole
                 Text(message, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
                     minLines = 1, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            if (notice.phase == NoticePhase.WORKING && notice.progressTotalMs > 0) TimedProgress(notice, statusColor)
         }
         Crossfade(notice.phase, animationSpec = tween(if (reduced) 0 else 160), label = "noticeStatus") { phase ->
             Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
@@ -270,6 +272,21 @@ private fun NotificationCard(notice: AppNotice, reduced: Boolean, grouped: Boole
             }
         }
     }
+}
+
+/** Timed work (a wake): how far into its time budget, and roughly how long it may still take. */
+@Composable
+private fun TimedProgress(notice: AppNotice, color: androidx.compose.ui.graphics.Color) {
+    val now by produceState(System.currentTimeMillis(), notice.progressStartedAt, notice.progressTotalMs) {
+        while (true) { value = System.currentTimeMillis(); delay(500) }
+    }
+    val elapsed = (now - notice.progressStartedAt).coerceAtLeast(0L)
+    val fraction = (elapsed.toFloat() / notice.progressTotalMs).coerceIn(0f, 1f)
+    val secondsLeft = ((notice.progressTotalMs - elapsed).coerceAtLeast(0L) + 999) / 1000
+    LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().height(4.dp),
+        color = color, trackColor = color.copy(alpha = .2f), drawStopIndicator = {})
+    if (secondsLeft > 0) Text(stringResource(R.string.notice_wake_remaining, secondsLeft.toInt()),
+        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 private fun kindIcon(kind: NoticeKind) = when (kind) {

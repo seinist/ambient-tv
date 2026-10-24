@@ -62,4 +62,5 @@
     <string name="notice_recording_finished">Recording finished</string>
     <string name="notice_recording_failed">Recording failed</string>
     <string name="notice_switched_to_media3">Playback continued in Media3</string>
+    <string name="notice_wake_remaining">At most about %1$d s left</string>
 </resources>

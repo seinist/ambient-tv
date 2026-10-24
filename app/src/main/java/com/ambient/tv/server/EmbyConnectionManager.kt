@@ -170,7 +170,8 @@ class EmbyConnectionManager @Inject constructor(
                 },
                 reachable = { isReachable() || hosts.verifySystem("emby") },
                 onWaiting = { elapsed ->
-                    _state.value = ServerConnectionState.Waking(elapsed)
+                    _state.value = ServerConnectionState.Waking(elapsed,
+                        (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt())
                     onWaking?.invoke()
                 },
             )

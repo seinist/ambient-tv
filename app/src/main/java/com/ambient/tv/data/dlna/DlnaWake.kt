@@ -48,7 +48,8 @@ class DlnaWake @Inject constructor(
     private suspend fun wakeAndWait(server: DlnaServer, target: Pair<String, Int>, key: String) {
         val machine = machines.keyFor("dlna", target.first, server.wolMac)
         val member = "dlna:${server.id}"
-        com.ambient.tv.notifications.WakeNotices.begin(machine, "dlna", server.name, member)
+        com.ambient.tv.notifications.WakeNotices.begin(machine, "dlna", server.name, member,
+            budgetMs = com.ambient.tv.wol.wakeBudgetMs(preferences.wolRetryCount, WAIT_MS))
         try {
             val ready = wakeWithRetries(
                 retries = preferences.wolRetryCount,
