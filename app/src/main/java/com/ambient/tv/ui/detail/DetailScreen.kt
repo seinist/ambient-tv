@@ -359,6 +359,8 @@ private fun DetailContent(
         val heroAccent = if (LocalAccentModeKey.current == "artwork") artworkAccent else MaterialTheme.colorScheme.primary
         if (!visibleBackgroundVideo) ArtworkImage(
             model = backdrop,
+            // A backdrop that fails to load falls through to the next wide source, then the poster.
+            fallbackModels = listOfNotNull(fallbackBackdrop, item.thumbUrl).filter { it != backdrop },
             title = item.title,
             contentScale = ContentScale.Crop,
             focusCrop = true,
