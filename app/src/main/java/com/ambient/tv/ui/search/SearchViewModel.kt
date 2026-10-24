@@ -124,7 +124,8 @@ class SearchViewModel @Inject constructor(
             if (preferences.isConfigured && "plex" !in hidden) add(SearchSource.PLEX)
             if (preferences.isJellyfinConfigured && "jellyfin" !in hidden) add(SearchSource.JELLYFIN)
             if (preferences.isEmbyConfigured && "emby" !in hidden) add(SearchSource.EMBY)
-            if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV }) add(SearchSource.LIVE_TV)
+            if (liveTvRegistry.configured().any { liveTvSearchSource(it.source.system) == SearchSource.LIVE_TV &&
+                    !(it.source.system == "tvheadend" && "tvheadend" in hidden) }) add(SearchSource.LIVE_TV)
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (preferences.youtubeEnabled && smartTubeEngine.available && youtubeSignedIn) add(SearchSource.YOUTUBE)
             if (preferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized) add(SearchSource.SPOTIFY)

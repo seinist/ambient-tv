@@ -26,4 +26,10 @@
     <string name="settings_wake_profiles">Aktive Serverprofile</string>
     <string name="settings_wake_empty">Noch keine Server eingerichtet.</string>
     <string name="settings_wake_nas_details">%1$s: Wake-on-LAN-Details</string>
+    <string name="unreachable_retry_success">Wieder erreichbar.</string>
+    <string name="unreachable_retry_failed">%1$s weiterhin nicht erreichbar.</string>
+    <string name="unreachable_retrying">Wird geprüft …</string>
+    <string name="unreachable_no_wake_hint">Wake-on-LAN ist nicht eingerichtet: „Erneut versuchen“ prüft nur noch einmal. Schalte den Server selbst ein oder richte Wake-on-LAN in den Einstellungen ein.</string>
+    <string name="tvh_unreachable_no_wake">TVHeadend antwortet nicht. Wake-on-LAN ist nicht eingerichtet – schalte den Server ein und versuche es dann erneut.</string>
+    <string name="tvh_unreachable_wake_failed">TVHeadend antwortet nicht, auch nach dem Aufwecken. Prüfe, ob der Server eingeschaltet und im Netzwerk ist.</string>
 </resources>

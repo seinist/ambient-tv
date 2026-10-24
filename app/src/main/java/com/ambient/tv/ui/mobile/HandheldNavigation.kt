@@ -55,7 +55,7 @@ fun HandheldNavigationHost(
         plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
         jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
         embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
-        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && "tvheadend" !in hidden && !sidebarState.tvheadendLoginRejected,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
     )
@@ -63,7 +63,7 @@ fun HandheldNavigationHost(
         plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
         jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
         embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
-        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected || hasIptv,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && "tvheadend" !in hidden && !sidebarState.tvheadendLoginRejected || hasIptv,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
     )
@@ -250,7 +250,7 @@ private fun HandheldSources(
     val files = sidebarState.filesEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
-    val tv = sidebarState.tvheadendEnabled
+    val tv = sidebarState.tvheadendEnabled && "tvheadend" !in sidebarState.suppressedSystems
     val sections = sidebarState.sections
     val jellyfinSections = sidebarState.jellyfinSections
     val embySections = sidebarState.embySections

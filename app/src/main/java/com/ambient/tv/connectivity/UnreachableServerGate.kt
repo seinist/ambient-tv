@@ -31,6 +31,10 @@ data class UnreachableServerGateState(
     val canDismiss: Boolean = false,
     val acknowledged: Set<String> = emptySet(),
     val names: List<String> = emptyList(),
+    /** "Retry" is running: the dialog shows progress instead of looking dead. */
+    val retrying: Boolean = false,
+    /** No unreachable system can be woken (no Wake-on-LAN): retrying only checks again. */
+    val wakeUnavailable: Boolean = false,
 ) {
     val hidden: Set<String> get() = hiddenUnreachableSystems(unreachable, acknowledged)
     /** Unacknowledged failures whose check has finished. */
@@ -52,18 +56,20 @@ class UnreachableServerGate @Inject constructor(
     private val emby: EmbyConnectionManager,
     private val resumeConnectivity: ResumeConnectivityMonitor,
     private val refreshBus: PlexRefreshBus,
+    private val tvheadend: com.ambient.tv.tvheadend.data.TvheadendRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     // Keep Continue acknowledged for this app session, including checks and later outages.
     private val acknowledged = MutableStateFlow<Set<String>>(emptySet())
     private val revision = MutableStateFlow(0)
+    private val retrying = MutableStateFlow(false)
 
     val state: StateFlow<UnreachableServerGateState> = combine(
         plex.state,
         jellyfin.state,
         emby.state,
         acknowledged,
-        combine(revision, hosts.states, resumeConnectivity.status) { _, _, resumeStatus -> resumeStatus },
+        combine(revision, hosts.states, resumeConnectivity.status, tvheadend.servingCachedData, retrying) { _, _, resumeStatus, _, _ -> resumeStatus },
     ) { plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus ->
         snapshot(plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus)
     }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
@@ -125,32 +131,52 @@ class UnreachableServerGate @Inject constructor(
 
     fun retry(refreshBus: PlexRefreshBus) {
         if (retryJob?.isActive == true) return
+        retrying.value = true
         retryJob = scope.launch {
+          try {
             val failed = current().unreachable
             // One active recovery per machine. Siblings only refresh their own service identity.
             coroutineScope {
                 failed.groupBy { hosts.machine(it) ?: it }.values.forEach { systems -> launch {
-                    val first = systems.firstOrNull { system -> when (system) {
-                        "plex" -> preferences.autoWakeEnabled && !preferences.macAddress.isNullOrBlank()
-                        "jellyfin" -> preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank()
-                        "emby" -> preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank()
-                        else -> false
-                    } } ?: systems.first()
+                    val first = systems.firstOrNull(::wakeConfigured) ?: systems.first()
                     when (first) {
                         "plex" -> plex.reconnect()
                         "jellyfin" -> jellyfin.reconnect()
                         "emby" -> emby.reconnect()
+                        "tvheadend" -> tvheadend.recheckOnResume()
                     }
                     systems.filter { it != first }.forEach { system -> when (system) {
                         "plex" -> plex.checkInBackground(force = true)
                         "jellyfin" -> jellyfin.checkInBackground(force = true)
                         "emby" -> emby.checkInBackground(force = true)
+                        "tvheadend" -> tvheadend.recheckOnResume()
                     } }
                 } }
             }
             refreshBus.requestRefresh()
             refresh()
+            // Say how it ended: without this, a failed retry just shows the same dialog again.
+            val still = current().unreachable
+            com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
+                key = "unreachable:retry:${System.currentTimeMillis()}",
+                message = if (still.isEmpty()) com.ambient.tv.R.string.unreachable_retry_success else com.ambient.tv.R.string.unreachable_retry_failed,
+                args = listOf(still.map(::displayName).joinToString(", ")),
+                kind = com.ambient.tv.notifications.NoticeKind.CONNECTION,
+                phase = if (still.isEmpty()) com.ambient.tv.notifications.NoticePhase.SUCCESS else com.ambient.tv.notifications.NoticePhase.ERROR,
+            ))
+          } finally {
+            retrying.value = false
+          }
         }
+    }
+
+    /** A wake packet can be sent for [system]: Wake-on-LAN is on and has a MAC address. */
+    private fun wakeConfigured(system: String): Boolean = when (system) {
+        "plex" -> preferences.autoWakeEnabled && !preferences.macAddress.isNullOrBlank()
+        "jellyfin" -> preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank()
+        "emby" -> preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank()
+        "tvheadend" -> preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank()
+        else -> false
     }
 
     private fun snapshot(
@@ -164,6 +190,9 @@ class UnreachableServerGate @Inject constructor(
             MediaSystem.PLEX.key to hostProbe("plex", preferences.isConfigured, plexState),
             MediaSystem.JELLYFIN.key to hostProbe("jellyfin", preferences.isJellyfinConfigured, jellyfinState),
             MediaSystem.EMBY.key to hostProbe("emby", preferences.isEmbyConfigured, embyState),
+            MediaSystem.TVHEADEND.key to tvheadendProbeOf(
+                preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected,
+                hosts.health("tvheadend"), tvheadend.servingCachedData.value),
         )
         val decision = decideUnreachableServers(
             UnreachableServerInput(probes, independentSystems()),
@@ -177,6 +206,8 @@ class UnreachableServerGate @Inject constructor(
             canDismiss = decision.canDismiss,
             acknowledged = acknowledgedIds,
             names = names,
+            retrying = retrying.value,
+            wakeUnavailable = decision.unreachable.isNotEmpty() && decision.unreachable.none(::wakeConfigured),
         )
     }
 
@@ -192,7 +223,9 @@ class UnreachableServerGate @Inject constructor(
                 it.kind == "local" || hosts.health("files:${it.id}") != HostHealth.OFFLINE
             }) add(MediaSystem.FILES.key)
         if (dlnaStore.servers().any { hosts.health("dlna:${it.id}") != HostHealth.OFFLINE }) add(MediaSystem.DLNA.key)
-        if (preferences.isTvheadendConfigured && hosts.health("tvheadend") != HostHealth.OFFLINE) add(MediaSystem.TVHEADEND.key)
+        // Counts while not known to be down; once its probe says unreachable it is no fallback.
+        if (preferences.isTvheadendConfigured && hosts.health("tvheadend") != HostHealth.OFFLINE &&
+            !tvheadend.servingCachedData.value) add(MediaSystem.TVHEADEND.key)
         // Another media server counts only when its own probe is REACHABLE (see decideUnreachableServers).
     }
 
@@ -206,6 +239,7 @@ class UnreachableServerGate @Inject constructor(
         MediaSystem.EMBY.key -> preferences.activeEmbyServerProfile()?.name?.takeIf { it.isNotBlank() }
             ?: preferences.embyHost.takeIf { it.isNotBlank() }
             ?: "Emby"
+        MediaSystem.TVHEADEND.key -> preferences.systemNames[MediaSystem.TVHEADEND.key]?.takeIf { it.isNotBlank() } ?: "TVHeadend"
         else -> system
     }
 }

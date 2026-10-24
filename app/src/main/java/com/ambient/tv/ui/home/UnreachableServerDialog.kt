@@ -37,10 +37,13 @@ fun UnreachableServerDialog(
         onDismissRequest = confirm,
         title = stringResource(R.string.home_server_unreachable_title),
         hint = stringResource(R.string.home_server_unreachable_body, serverName) +
+            // Without Wake-on-LAN, "Retry" can only look again: say so instead of promising a wake.
+            (if (state.wakeUnavailable) "\n" + stringResource(R.string.unreachable_no_wake_hint) else "") +
             "\n" + stringResource(R.string.home_server_unreachable_continue_hint),
         footer = {
             TvActionButton(text = stringResource(R.string.home_server_unreachable_continue), onClick = confirm)
-            TvActionButton(text = stringResource(R.string.home_retry), onClick = onRetry)
+            TvActionButton(text = stringResource(if (state.retrying) R.string.unreachable_retrying else R.string.home_retry),
+                onClick = onRetry, loading = state.retrying)
             if (systems.size == 1) {
                 TvActionButton(
                     text = stringResource(R.string.home_check_settings),
