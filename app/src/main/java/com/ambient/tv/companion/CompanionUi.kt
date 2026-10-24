@@ -168,6 +168,17 @@ private fun CompanionDialogsContent(viewModel: CompanionViewModel) {
     if (handheld && state.remotePanel) { CompanionRemoteDialog(manager); return }
     if (state.settingsPanel) { connectionEditor.SaveableStateProvider("transfer") { CompanionSyncDialog(viewModel, onDismiss = manager::hideSettingsTransfer) }; return }
     if (!state.panel) return
+    if (!handheld && state.pairingWith.isNotBlank()) {
+        com.ambient.tv.ui.common.AppDialog(onDismiss = manager::hidePanel,
+            title = stringResource(R.string.companion_confirm_title), maxWidth = 520.dp,
+            footer = { TvActionButton(stringResource(R.string.companion_close), manager::hidePanel) }) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.companion_pairing_waiting, state.pairingWith), style = MaterialTheme.typography.bodyLarge)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+        }
+        return
+    }
     if (!handheld && state.invitation != null) {
         val link = state.invitation!!
         com.ambient.tv.ui.common.QrCodeDialog(

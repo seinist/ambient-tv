@@ -106,4 +106,6 @@
     <string name="companion_backup_failed_receiver_busy">Übertragung abgelehnt: Auf %1$s ist noch eine Bestätigung offen.</string>
     <string name="companion_backup_failed_apply">Import auf %1$s fehlgeschlagen; die bisherigen Einstellungen wurden beibehalten.</string>
     <string name="companion_backup_failed_prepare">Die Daten für %1$s konnten nicht vorbereitet werden.</string>
+    <string name="companion_paired_success">Gekoppelt mit %1$s</string>
+    <string name="companion_pairing_waiting">Warte auf Bestätigung auf %1$s …</string>
 </resources>

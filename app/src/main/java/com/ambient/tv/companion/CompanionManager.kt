@@ -69,6 +69,8 @@ data class CompanionState(
     val invitation: String? = null,
     /** Short code shown next to the pairing QR, for typing on the phone. */
     val pairCode: String = "",
+    /** TV side: a phone's code was accepted; waiting for it to confirm the comparison code. */
+    val pairingWith: String = "",
     val prompt: CompanionPrompt? = null,
     val remote: CompanionFrame? = null,
     val panel: Boolean = false,
@@ -318,6 +320,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         if (previous != null && now - previous < 60_000) return
         AppNotifications.post(AppNotice(key = "companion:connected:${peer.fingerprint}:$now",
             message = R.string.companion_connected, args = listOf(peer.name),
+            kind = NoticeKind.CONNECTION, phase = NoticePhase.SUCCESS, interruptPlayback = true))
+    }
+    /** A new pairing replaces the generic "connected" notice for this peer. */
+    private fun pairedNotice(peer: CompanionPeer) {
+        val now = SystemClock.elapsedRealtime()
+        connectionNotices[peer.fingerprint] = now
+        AppNotifications.post(AppNotice(key = "companion:paired:${peer.fingerprint}:$now",
+            message = R.string.companion_paired_success, args = listOf(peer.name),
             kind = NoticeKind.CONNECTION, phase = NoticePhase.SUCCESS, interruptPlayback = true))
     }
     private val nsd = context.getSystemService(NsdManager::class.java)
@@ -1210,7 +1220,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         pairToken = ""; pairCode = ""; pairAttempts = 0; pairDeadline = 0
         pairExpiry?.cancel(); pairExpiry = null
         confirmation?.complete(false); confirmation = null
-        mutable.update { it.copy(invitation = null, pairCode = "", prompt = null) }
+        mutable.update { it.copy(invitation = null, pairCode = "", pairingWith = "", prompt = null) }
     }
     fun confirm(accepted: Boolean) { confirmation?.complete(accepted) }
 
@@ -1260,6 +1270,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         var transfer: CompanionTransfer? = null
         var transferDeadline = 0L
         var returnSession: ReturnSession? = null
+        var pairingStarted = false
+        var newlyPaired = false
         // TLS and authentication must finish in time: soTimeout is per read, so a client that
         // trickles bytes would otherwise hold its unauthenticated slot indefinitely.
         val authDeadline = scope.launch { delay(AUTH_DEADLINE_MS); runCatching { socket.close() } }
@@ -1317,6 +1329,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 // A valid invitation: the user's confirmation below may take much longer.
                 authenticated()
                 val name = safeDeviceName(auth.name)
+                // The QR is spent: show who is pairing instead of an invitation that no longer works.
+                pairingStarted = true
+                mutable.update { it.copy(invitation = null, pairCode = "", pairingWith = name) }
                 socket.soTimeout = 115_000
                 output.writeFrame(CompanionFrame(type = "confirm", nonce = nonce))
                 val local = scope.async { approval(name, comparisonCode(nonce, identity.pin, pin)) }
@@ -1330,6 +1345,9 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     savePeer(trusted)
                     closePairing()
                 }
+                newlyPaired = true
+                // Done: the pairing panel closes on its own and a success notice confirms it.
+                scope.launch(Dispatchers.Main) { if (mutable.value.panel) hidePanel() }
             }
             authenticated()
             if (trusted.role != auth.role) { trusted = trusted.copy(role = auth.role); savePeer(trusted) }
@@ -1339,7 +1357,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             sockets[socket] = sessionPin
             if (!observer) {
                 mutable.update { it.copy(connected = (it.connected + peer.name).distinct()) }
-                connectionNotice(peer)
+                if (newlyPaired) pairedNotice(peer) else connectionNotice(peer)
             }
             output.writeFrame(CompanionFrame(type = "ready", nonce = nonce, name = deviceName, networkMac = if (television) receiverMac(link) else ""))
             socket.soTimeout = 15_000
@@ -1459,6 +1477,11 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
             if (peer != null && failure !is EOFException && failure !is SocketException) debugFailure("receiver", failure)
             // A reachability probe closes cleanly after the challenge: not a rejected pairing.
             if (peer == null && foreground && failure !is EOFException) rejectNotice()
+            // A cancelled or timed-out confirmation spent the QR: offer a fresh one while the panel is open.
+            if (pairingStarted && !newlyPaired) withContext(NonCancellable + Dispatchers.Main) {
+                mutable.update { it.copy(pairingWith = "") }
+                if (television && foreground && mutable.value.panel && mutable.value.invitation == null) openPairing()
+            }
         } finally {
             authDeadline.cancel()
             releaseRemoteControl(session)
@@ -1577,7 +1600,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     signature = Base64.getEncoder().encodeToString(identity.sign(authTranscript(nonce, serverPin, pin, deviceRole, challenge.role)))))
                 var response = input.readFrame()
                 val name = safeDeviceName(challenge.name)
-                if (response.type == "confirm") {
+                val pairing = response.type == "confirm"
+                if (pairing) {
                     require(invitation.isNotEmpty() && response.nonce == nonce)
                     require(approval(name, comparisonCode(nonce, serverPin, pin)))
                     output.writeFrame(CompanionFrame(type = "confirmed", nonce = nonce))
@@ -1592,7 +1616,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     savePeer(trusted); connectionTransport?.store?.learnMac(trusted.fingerprint, response.networkMac); connected = true
                     mutable.update { it.copy(target = trusted, online = true, busy = false, lastSeen = it.lastSeen + (trusted.fingerprint to SystemClock.elapsedRealtime())) }
                 }
-                connectionNotice(trusted)
+                if (pairing) pairedNotice(trusted) else connectionNotice(trusted)
                 withContext(Dispatchers.Main) {
                     if (transferAfterPairing) { transferAfterPairing = false; showSettingsTransfer() }
                     else if (remoteAfterConnect == trusted.fingerprint) { remoteAfterConnect = null; showRemote() }
