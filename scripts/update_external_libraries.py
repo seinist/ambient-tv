@@ -6,7 +6,6 @@ import os
 import json
 import re
 import sys
-import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -136,16 +135,10 @@ def mpv_latest() -> dict[str, str]:
 
 
 def ffmpeg_latest() -> dict[str, str]:
-    # Stay on the requested maintenance branch, even when newer releases appear.
-    ref = "release/9.0"
-    output = subprocess.check_output(
-        ["git", "ls-remote", "--exit-code", "https://git.ffmpeg.org/ffmpeg.git",
-         f"refs/heads/{ref}"], text=True, timeout=60,
-    )
-    sha, remote_ref = output.strip().split()
-    if remote_ref != f"refs/heads/{ref}" or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RuntimeError("Invalid FFmpeg release/9.0 branch head")
-    return {"FFMPEG_REF": ref, "FFMPEG_COMMIT": sha}
+    # Keep this known-good release fixed. Advancing release/9.0 changed playback
+    # timing on 32-bit Android TV, so ordinary library updates must not undo the pin.
+    ref = "n9.0.2"
+    return {"FFMPEG_REF": ref, "FFMPEG_COMMIT": resolve_tag_commit("FFmpeg/FFmpeg", ref)}
 
 
 def projectm_latest() -> dict[str, str]:

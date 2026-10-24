@@ -40,7 +40,7 @@ for patch in "$JNI"/libvlc/patches/*.patch; do
         git -C "$JNI/vlc" apply --reverse --check "$patch"
     fi
 done
-# ffmpeg-9.0.2.patch supplies compatibility fixes for the release/9.0 snapshot
+# ffmpeg-9.0.2.patch supplies compatibility fixes for the pinned n9.0.2 release
 # and puts the v308, v408 and v410 decoders back into that contrib FFmpeg.
 # A tree that already carries an older copy of one of these patches matches
 # neither direction. Restore the paths that copy owns, then apply the current file.
@@ -74,8 +74,8 @@ apply_vlc_patch() {
 for patch in "$ROOT"/native/vlc-aar/patches/*.patch; do
     apply_vlc_patch "$patch"
 done
-# Use the same reviewed branch snapshot as MPV. The patch selects VLC's native
-# Git archive + githash verification path instead of a release tarball.
+# Use the same reviewed n9.0.2 commit as MPV. The patch selects VLC's native
+# Git archive + githash verification path so the source is commit-verified.
 ffmpeg_commit="$(sed -n 's/^FFMPEG_COMMIT=//p' "$ROOT/gradle/external-versions.properties")"
 [[ "$ffmpeg_commit" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid FFmpeg commit' >&2; exit 1; }
 sed -i "s/^FFMPEG_HASH=.*/FFMPEG_HASH=$ffmpeg_commit/" "$JNI/vlc/contrib/src/ffmpeg/rules.mak"

@@ -148,7 +148,7 @@ if [[ "$CLEAN" == "1" ]]; then
   rm -rf "$BUILDSCRIPTS/prefix/arm64" "$BUILDSCRIPTS/prefix/armv7l"     "$BUILDSCRIPTS/prefix/x86" "$BUILDSCRIPTS/prefix/x86_64"
 fi
 
-# Use the recorded release/9.0 head; libs-update advances it deliberately.
+# Use the recorded, regression-safe release tag and verify its immutable commit.
 FFMPEG_DIR="$BUILDSCRIPTS/deps/ffmpeg"
 FFMPEG_REF="${FFMPEG_REF:-$(external_version FFMPEG_REF)}"
 FFMPEG_COMMIT="$(external_version FFMPEG_COMMIT)"
