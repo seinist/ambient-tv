@@ -167,6 +167,19 @@ for ((i = ${#ffmpeg_patches[@]} - 1; i >= 0; i--)); do
     git -C "$FFMPEG_DIR" apply --reverse "${ffmpeg_patches[i]}"
   fi
 done
+# An older version of a changed patch cannot be reversed by the new file. If the series does not
+# apply cleanly now, restore only the files the series touches (self-healing, like prepare_mpv_ffmpeg.sh).
+if ! git -C "$FFMPEG_DIR" apply --check "${ffmpeg_patches[@]}" 2>/dev/null; then
+  mapfile -t ffmpeg_patch_files < <(sed -n 's#^+++ b/##p' "${ffmpeg_patches[@]}" | sort -u)
+  echo "FFmpeg: an older patch series is applied; restoring ${ffmpeg_patch_files[*]}" >&2
+  for f in "${ffmpeg_patch_files[@]}"; do
+    if git -C "$FFMPEG_DIR" cat-file -e "HEAD:$f" 2>/dev/null; then
+      git -C "$FFMPEG_DIR" checkout HEAD -- "$f"
+    else
+      rm -f "$FFMPEG_DIR/$f"
+    fi
+  done
+fi
 git -C "$FFMPEG_DIR" checkout --detach "$ffmpeg_target"
 FFMPEG_COMMIT="$(git -C "$FFMPEG_DIR" rev-parse HEAD)"
 

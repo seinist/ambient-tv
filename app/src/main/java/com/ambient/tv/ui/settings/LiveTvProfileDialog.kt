@@ -30,7 +30,8 @@ internal fun LiveTvProfileDialog(
     val drafts = remember { mutableMapOf<String, MutableState<ResolutionVideoProfile>>() }
     // The value each resolution opened with: only real edits create or change a Live TV profile.
     val opened = remember { mutableMapOf<String, ResolutionVideoProfile>() }
-    var draft by remember(resolution) { drafts.getOrPut(resolution) { mutableStateOf(saved ?: profiles[resolution] ?: ResolutionVideoProfile(
+    // A template from the general width profile keeps its options but not its player: "auto" inherits the Tvheadend default.
+    var draft by remember(resolution) { drafts.getOrPut(resolution) { mutableStateOf(saved ?: profiles[resolution]?.let(::liveProfileTemplate) ?: ResolutionVideoProfile(
         // "auto" inherits the Tvheadend default; only an explicit choice overrides it.
         rendererKey = "auto",
         // No picture filters here (set in the player): a new live profile keeps inheriting them.

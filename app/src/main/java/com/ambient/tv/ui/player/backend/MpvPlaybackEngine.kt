@@ -119,6 +119,7 @@ internal class MpvPlaybackEngine(
     /** One copy-back reopen per engine after zero-copy failed at runtime. */
     private var zeroCopyRetried = false
     private var zeroCopyFrameCheckSinceNs = 0L
+    private val zeroCopyFrameWatch = ZeroCopyFrameWatch()
     private var accelerationRetried = false
     /** Runtime verdict for the passthrough route; the UI reopens on the direct surface when set. */
     var hdrGpuFailure by mutableStateOf<MpvHdrGpuReason?>(null)
@@ -483,7 +484,7 @@ internal class MpvPlaybackEngine(
         if (gpuQualityMode && needsHdrToSdr(declaredHdr)) {
             // Describe the actual SDR output; never send PQ/BT.2020 code values to it.
             setOption("target-prim", "bt.709")
-            setOption("target-trc", sdrCurveTransfer())
+            setOption("target-trc", sdrCurveTransfer().also { appliedSdrCurve = it })
             setOption("target-peak", "100")
         }
         setOption("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
@@ -1122,8 +1123,10 @@ internal class MpvPlaybackEngine(
             else -> "auto"
         })
         // "SDR-Kurve": the SDR target curve is explicit so the surface tag can follow it.
+        val sdrCurve = if (toneMapToSdr || (sdr && !hdrPassthroughActive)) sdrCurveTransfer() else null
+        appliedSdrCurve = sdrCurve
         property("target-trc", when {
-            toneMapToSdr || (sdr && !hdrPassthroughActive) -> sdrCurveTransfer()
+            sdrCurve != null -> sdrCurve
             // The EGL surface was created PQ; keep rendering PQ into it.
             hdrPassthroughOpenGl -> "pq"
             else -> "auto"
@@ -1615,6 +1618,7 @@ internal class MpvPlaybackEngine(
             return
         }
         if (!gpuQualityMode) return
+        refreshSdrCurve()
         if (probeShieldBroadcast()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
         // field-rate live input switches to the single-rate deinterlacer (50 fps, not 100).
@@ -1860,11 +1864,37 @@ internal class MpvPlaybackEngine(
         }.getOrDefault(false)
     }
 
-    /** Configured SDR curve for target-trc ([mpvSdrCurveTransfer]). */
-    private fun sdrCurveTransfer(): String =
-        mpvSdrCurveTransfer(videoImagePreferences(context).mpvSdrCurveKey,
-            com.ambient.tv.ui.display.displayHdrRatioMeansHdr(
-                com.ambient.tv.ui.display.displayHdrSdrRatio(com.ambient.tv.ui.display.defaultDisplay(context))) == true)
+    /**
+     * Configured SDR curve for target-trc ([mpvSdrCurveTransfer]). Auto reads the display's HDR state from
+     * the HDR/SDR ratio (API 34+) with the R1 evidence; below API 34 there is no ratio, so Auto stays BT.1886.
+     */
+    private fun sdrCurveTransfer(): String {
+        val display = com.ambient.tv.ui.display.defaultDisplay(context)
+        return mpvSdrCurveTransfer(videoImagePreferences(context).mpvSdrCurveKey,
+            mpvSdrAutoDisplayInHdr(com.ambient.tv.ui.display.displayHdrSdrRatio(display),
+                com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(display)))
+    }
+
+    /** SDR curve last sent as target-trc; null while target-trc is not an SDR curve (PQ, auto, conversion). */
+    private var appliedSdrCurve: String? = null
+    private var sdrCurveCheckedAtMs = 0L
+
+    /**
+     * Auto follows the display: after a display or HDR/SDR mode change (re-read every 2 s while playing)
+     * the SDR curve is updated in place; the surface tag follows via [syncSdrSurface].
+     */
+    private fun refreshSdrCurve() {
+        val applied = appliedSdrCurve ?: return
+        val now = SystemClock.elapsedRealtime()
+        if (now - sdrCurveCheckedAtMs < 2_000L) return
+        sdrCurveCheckedAtMs = now
+        if (sdrToHdr.engaged) return
+        val desired = sdrCurveTransfer()
+        if (mpvSdrCurveNeedsUpdate(applied, desired, getPropertyString("target-trc")) && trySetProperty("target-trc", desired)) {
+            appliedSdrCurve = desired
+            Timber.i("%s MPV SDR curve re-evaluated: %s -> %s", HDR_AUDIT_TAG, applied, desired)
+        }
+    }
 
     /** Surface tag requested for SDR GPU output, null while untagged (stats). */
     @Volatile var sdrSurfaceDataSpace: Int? = null
@@ -2217,6 +2247,7 @@ internal class MpvPlaybackEngine(
                 }
                 MPV_EVENT_FILE_LOADED -> {
                     zeroCopyFrameCheckSinceNs = 0L
+                    zeroCopyFrameWatch.reset()
                     // A new file: read its Dolby Vision profile again (latchDolbyVisionProfile).
                     dolbyVisionProfile = null
                     dvSurfaceRestart = false
@@ -2315,7 +2346,8 @@ internal class MpvPlaybackEngine(
     /**
      * Zero-copy watchdog on vo=gpu: mpv ending on mediacodec-copy means the AImageReader interop
      * is unavailable (remember it, nothing to reopen); an engaged zero-copy decoder whose VO has
-     * no output parameters 3 s into playback is treated as a black plane and reopened on copy-back.
+     * no output parameters after 3 s of real playback (not buffering, clock advancing) is treated as a
+     * black plane, reopened on copy-back and remembered; see [ZeroCopyFrameWatch].
      */
     private fun checkZeroCopy(): Boolean {
         // Copy-back chosen at runtime for a filter/shader is not a zero-copy failure.
@@ -2329,13 +2361,17 @@ internal class MpvPlaybackEngine(
         }
         if (current?.trim() != "mediacodec" || !desiredPlayWhenReady || videoTracks().isEmpty()) {
             zeroCopyFrameCheckSinceNs = 0L
+            zeroCopyFrameWatch.reset()
             return false
         }
         val now = System.nanoTime()
         if (zeroCopyFrameCheckSinceNs == 0L) zeroCopyFrameCheckSinceNs = now
         if (getPropertyString("video-out-params/w").isNullOrBlank()) {
-            if (now - zeroCopyFrameCheckSinceNs >= 3_000_000_000L && !zeroCopyRetried) {
-                failZeroCopy("no_video_frames")
+            val buffering = getPropertyString("paused-for-cache") == "yes"
+            val position = (getPropertyDouble("time-pos", -1.0) * 1000.0).toLong()
+            val verdict = zeroCopyFrameWatch.poll(now, buffering, position)
+            if (verdict is ZeroCopyNoFrames.Fail && !zeroCopyRetried) {
+                failZeroCopy(if (verdict.remember) "no_video_frames" else "no_video_frames_unconfirmed", remember = verdict.remember)
                 return true
             }
         } else {
@@ -2355,6 +2391,7 @@ internal class MpvPlaybackEngine(
         if (remember) videoImagePreferences(context).mpvZeroCopyFailed = true
         zeroCopyRetried = true
         zeroCopyFrameCheckSinceNs = 0L
+        zeroCopyFrameWatch.reset()
         acceleration = acceleration.copy(zeroCopy = false)
         accelerationFallback = "MediaCodec zero-copy → copy-back: $reason"
         val position = positionMs().takeIf { it > 0L } ?: lastPlaybackPositionMs

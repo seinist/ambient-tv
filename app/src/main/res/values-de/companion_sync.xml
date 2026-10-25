@@ -12,5 +12,6 @@
     <string name="sync_select_none">Alle abwählen</string>
     <string name="sync_save_first">Speichere zuerst deine offenen Einstellungen. Übertragen wird der gespeicherte Stand.</string>
     <string name="sync_waiting">Warte auf Bestätigung am Zielgerät.</string>
+    <string name="sync_profiles_omitted">Titel- und Serien-Bildprofile waren für die Übertragung zu groß und bleiben auf diesem Gerät; das Zielgerät behält seine eigenen.</string>
     <string name="sync_another">Weitere Übertragung</string>
 </resources>

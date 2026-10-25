@@ -224,6 +224,8 @@ internal fun GpuOutputPreferenceSettings(mpv: Boolean, state: SettingsUiState, m
                     onClick = { model.onMpvSdrCurveChanged(key) })
             })
             ImageHint(stringResource(R.string.renderer_sdr_curve_hint))
+            // Below Android 14 there is no HDR/SDR ratio: Auto cannot see the TV's HDR mode and stays BT.1886.
+            if (android.os.Build.VERSION.SDK_INT < 34) ImageHint(stringResource(R.string.renderer_sdr_curve_auto_legacy))
             ZeroCopyLockRow(model)
         }
     }

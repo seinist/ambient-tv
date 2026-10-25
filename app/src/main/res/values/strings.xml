@@ -1818,6 +1818,7 @@
     <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
     <string name="renderer_sdr_curve_bt1886">BT.1886</string>
     <string name="renderer_sdr_curve_hint">MPV GPU output: curve and matching surface tag for SDR. Auto uses Gamma 2.2 only while the TV really runs in HDR mode (SDR is then composed into HDR, no washed-out midtones), otherwise BT.1886 like Direct. Gamma 2.2 and BT.1886 stay selectable for an A/B comparison.</string>
+    <string name="renderer_sdr_curve_auto_legacy">Auto detects the TV\'s HDR mode only from Android 14; on older versions choose Gamma 2.2 manually if the picture looks washed out.</string>
     <string name="player_nerd_render_resolution">Render resolution</string>
     <string name="player_nerd_sdr_curve">SDR curve / surface</string>
     <string name="settings_gpu_output_link">Video output and GPU: Picture profiles</string>

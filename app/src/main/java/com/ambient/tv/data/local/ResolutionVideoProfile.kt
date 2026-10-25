@@ -73,6 +73,16 @@ object VideoResolutionClass {
         )).mapNotNull { (key, profile) -> normalizeProfileKey(key)?.let { it to profile } }.toMap()
 }
 
+/**
+ * Live TV profiles ("live:<width>"): "auto" means *inherit the Tvheadend default*, exactly like an unset
+ * player; only media3/vlc/mpv pin a player. (Regular width profiles keep "auto" as an explicit choice.)
+ */
+internal fun ResolutionVideoProfile.liveRendererOrDefault(default: String): String =
+    rendererKey.takeIf { it in setOf("media3", "vlc", "mpv") } ?: default
+
+/** New live profile from a general width profile: options carry over, the player stays "auto" (inherit). */
+internal fun liveProfileTemplate(general: ResolutionVideoProfile): ResolutionVideoProfile = general.copy(rendererKey = "auto")
+
 /** Resolve whole profiles: a Live TV override wins without merging in the regular filter chain. */
 internal fun resolutionProfileFor(
     profiles: Map<String, ResolutionVideoProfile>, widthKey: String?, live: Boolean,

@@ -355,9 +355,10 @@
     <string name="player_output_hdr_gpu_output_direct">HDR via GPU: output “Direct” is selected, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_dolby_vision">Dolby Vision always goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_not_hdr10">This video is not HDR10 and plays normally.</string>
-    <string name="player_output_hdr_gpu_vulkan">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_swapchain">GPU path not available, HDR goes straight to the TV.</string>
-    <string name="player_output_hdr_gpu_display">GPU path not available, HDR goes straight to the TV.</string>
+    <string name="player_output_hdr_gpu_display_switched">HDR via GPU is active.</string>
+    <string name="player_output_hdr_gpu_display_waiting">The TV has not switched to HDR yet.</string>
+    <string name="player_output_hdr_gpu_display_not_switched">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_reduced">HDR via GPU: off in Low performance mode, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_not_confirmed">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">GPU path not available, HDR goes straight to the TV.</string>

@@ -13,12 +13,8 @@ enum class MpvHdrGpuReason {
     DOLBY_VISION,
     /** HLG (and HDR10+ on an HDR10+ display) keep their native path. */
     NOT_HDR10,
-    /** Probe not finished or the device fails the MPV Vulkan gate (Vulkan 1.2, hostQueryReset). */
-    VULKAN_UNAVAILABLE,
     /** The probe reported a Vulkan surface without the HDR10 (ST2084) colour space. */
     SWAPCHAIN_NO_HDR10,
-    /** The display reports no HDR10; the regular tone-mapping path applies. */
-    DISPLAY_NO_HDR10,
     /** Sparsam: no shader would run, so the GPU path brings nothing. */
     REDUCED_EFFECTS,
     /** No HDR-safe shader or deband is selected: the GPU path would only add copy-back cost. */
@@ -93,7 +89,6 @@ internal fun mpvHdrGpuDecision(
         // HDR10+ on a display without HDR10+ reaches the panel as HDR10 anyway.
         source == HdrStandard.HLG || (source == HdrStandard.HDR10_PLUS && HdrStandard.HDR10_PLUS in display) ->
             MpvHdrGpuDecision.direct(MpvHdrGpuReason.NOT_HDR10)
-        HdrStandard.HDR10 !in display -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.DISPLAY_NO_HDR10)
         vulkanReason != null && !openGl -> MpvHdrGpuDecision.direct(vulkanReason)
         // A runtime failure also routes this playback to "Direkt"; keep naming the cause.
         failure != null -> MpvHdrGpuDecision.direct(failure)
@@ -486,5 +481,5 @@ internal fun mpvHdrDisplayKey(displayId: Int?, displayName: String?, standards: 
 internal fun mpvHdrGpuDeviceReason(capabilities: VideoAccelerationCapabilities, display: Set<HdrStandard>): MpvHdrGpuReason? {
     if (!capabilities.checked) return null
     return mpvHdrGpuDecision(true, "auto", HdrStandard.HDR10, display, capabilities, reducedEffects = false).reason
-        ?.takeIf { it in setOf(MpvHdrGpuReason.VULKAN_UNAVAILABLE, MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, MpvHdrGpuReason.DISPLAY_NO_HDR10) }
+        ?.takeIf { it == MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 }
 }

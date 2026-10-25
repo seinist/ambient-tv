@@ -81,6 +81,9 @@ data class TitleVideoSettings(
     companion object {
         const val MAX_TITLES = 200
 
+        /** Season/series/collection layers kept (newest by savedAt), so the store and backups stay bounded. */
+        const val MAX_SCOPES = 500
+
         /** Stores [value] under [key] (or removes it when empty) and keeps the newest [limit] titles. */
         fun put(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings, limit: Int = MAX_TITLES): Map<String, TitleVideoSettings> {
             val next = all.toMutableMap()
@@ -89,9 +92,9 @@ data class TitleVideoSettings(
             return next.entries.sortedByDescending { it.value.savedAt }.take(limit).associate { it.key to it.value }
         }
 
-        /** Season, series and collection settings: same shape, no size limit. */
-        fun putScoped(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings): Map<String, TitleVideoSettings> =
-            put(all, key, value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null), Int.MAX_VALUE)
+        /** Season, series and collection settings: same shape, the newest [limit] ([MAX_SCOPES]) scopes. */
+        fun putScoped(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings, limit: Int = MAX_SCOPES): Map<String, TitleVideoSettings> =
+            put(all, key, value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null), limit)
 
         val SCOPED_PREFIXES = listOf("season:", "series:", "collection:")
         fun isScopedKey(key: String): Boolean = SCOPED_PREFIXES.any { key.startsWith(it) && key.length > it.length }

@@ -78,3 +78,138 @@ internal fun videoSettingOrigins(
         delay = origin({ it.audioDelayMs != null || it.subtitleDelayMs != null }, { false }),
     )
 }
+
+/**
+ * One rememberable field of [TitleVideoSettings]. [normalize] maps a value to its comparable form
+ * (audio settings drop transient hints). [titleOnly] fields (A/V and subtitle delay) are always kept
+ * on the title, whatever scope "remember for" points to.
+ */
+internal class VideoScopeField(
+    val name: String,
+    val get: (TitleVideoSettings) -> Any?,
+    val set: (TitleVideoSettings, Any?) -> TitleVideoSettings,
+    val titleOnly: Boolean = false,
+    val normalize: (Any?) -> Any? = { it },
+)
+
+internal object VideoScopeFields {
+    val MPV = VideoScopeField("mpv", { it.mpv }, { s, v -> s.copy(mpv = v as com.ambient.tv.data.local.MpvImageOptions?) })
+    val MPV_DEINTERLACE_MODE = VideoScopeField("mpvDeinterlaceMode", { it.mpvDeinterlaceMode }, { s, v -> s.copy(mpvDeinterlaceMode = v as String?) })
+    val MPV_DEINTERLACE_FILTER = VideoScopeField("mpvDeinterlaceFilter", { it.mpvDeinterlaceFilter }, { s, v -> s.copy(mpvDeinterlaceFilter = v as String?) })
+    val VLC = VideoScopeField("vlc", { it.vlc }, { s, v -> s.copy(vlc = v as com.ambient.tv.data.local.VlcImageOptions?) })
+    val VLC_DEINTERLACE_MODE = VideoScopeField("vlcDeinterlaceMode", { it.vlcDeinterlaceMode }, { s, v -> s.copy(vlcDeinterlaceMode = v as String?) })
+    val VLC_DEINTERLACE_FILTER = VideoScopeField("vlcDeinterlaceFilter", { it.vlcDeinterlaceFilter }, { s, v -> s.copy(vlcDeinterlaceFilter = v as String?) })
+    val MEDIA3 = VideoScopeField("media3", { it.media3 }, { s, v -> s.copy(media3 = v as com.ambient.tv.data.local.Media3ImageOptions?) })
+    val MPV_OUTPUT = VideoScopeField("mpvOutput", { it.mpvOutput }, { s, v -> s.copy(mpvOutput = v as String?) })
+    val MPV_DECODER = VideoScopeField("mpvDecoder", { it.mpvDecoder }, { s, v -> s.copy(mpvDecoder = v as String?) })
+    val VLC_OUTPUT = VideoScopeField("vlcOutput", { it.vlcOutput }, { s, v -> s.copy(vlcOutput = v as String?) })
+    val AUDIO = VideoScopeField("audio", { it.audio }, { s, v -> s.copy(audio = v as com.ambient.tv.data.local.AudioSettings?) },
+        normalize = { (it as com.ambient.tv.data.local.AudioSettings?)?.normalized()?.copy(performanceHint = false) })
+    val AUDIO_DELAY = VideoScopeField("audioDelayMs", { it.audioDelayMs }, { s, v -> s.copy(audioDelayMs = v as Int?) }, titleOnly = true)
+    val SUBTITLE_DELAY = VideoScopeField("subtitleDelayMs", { it.subtitleDelayMs }, { s, v -> s.copy(subtitleDelayMs = v as Int?) }, titleOnly = true)
+}
+
+/** What the player shows for one field now, and what it would show without any title/scope value. */
+internal data class ObservedVideoField(val field: VideoScopeField, val value: Any?, val default: Any?)
+
+/**
+ * Stores [observed] into [layers] (narrow to broad, index 0 = title) for "remember for" [target].
+ *
+ * - Title target: every observed value that differs from what the title inherits is kept on the title
+ *   ([fullSnapshot]: old explicit snapshots keep every value).
+ * - Broader target: only fields whose observed value differs from what is effective right now (i.e. changed
+ *   in this session) move to the scope; the scope drops a value equal to what it inherits, and narrower
+ *   scopes stop masking exactly those fields. Title overrides that were not touched never spread.
+ * - [VideoScopeField.titleOnly] fields always use the title rule on index 0.
+ *
+ * Returns the new layer values (same size and order); unchanged layers are returned as given.
+ */
+internal fun captureIntoScopes(
+    layers: List<TitleVideoSettings?>, target: Int, observed: List<ObservedVideoField>, fullSnapshot: Boolean = false,
+): List<TitleVideoSettings?> {
+    if (layers.isEmpty()) return layers
+    val index = target.coerceIn(0, layers.lastIndex)
+    val result = layers.toMutableList()
+    fun firstValue(field: VideoScopeField, from: Int, default: Any?): Any? =
+        (from..layers.lastIndex).firstNotNullOfOrNull { i -> layers[i]?.let(field.get) } ?: default
+    for ((field, value, default) in observed) {
+        val at = if (field.titleOnly) 0 else index
+        val inherited = field.normalize(firstValue(field, at + 1, default))
+        if (at == 0) {
+            val stored = value.takeIf { (fullSnapshot && !field.titleOnly) || field.normalize(it) != inherited }
+            result[0] = field.set(result[0] ?: TitleVideoSettings(), stored)
+            continue
+        }
+        val effectiveNow = field.normalize(firstValue(field, 0, default))
+        if (field.normalize(value) == effectiveNow) continue // Not changed in this session: nothing spreads.
+        result[at] = field.set(result[at] ?: TitleVideoSettings(), value.takeIf { field.normalize(it) != inherited })
+        for (i in 0 until at) result[i] = result[i]?.let { field.set(it, null) }
+    }
+    // Untouched layers keep their identity; a layer left without values becomes null (removed when written).
+    return result.mapIndexed { i, value ->
+        val before = layers[i]
+        when {
+            value == null || value.isEmpty -> null
+            before != null && value.copy(savedAt = 0L) == before.copy(savedAt = 0L) -> before
+            else -> value
+        }
+    }
+}
+
+/**
+ * Player choice for "remember for" [target]: the scope stores [renderer] (null = follow the default) and
+ * every narrower scope drops its own player, so the broader choice (or its reset) takes effect here.
+ */
+internal fun rememberRendererInScopes(layers: List<TitleVideoSettings?>, target: Int, renderer: String?): List<TitleVideoSettings?> {
+    if (layers.isEmpty()) return layers
+    val index = target.coerceIn(0, layers.lastIndex)
+    val key = renderer?.takeIf { it in setOf("auto", "media3", "vlc", "mpv") }
+    return layers.mapIndexed { i, value ->
+        when {
+            i == index -> (value ?: TitleVideoSettings()).copy(rendererKey = key).let { next ->
+                if (value == null && next.isEmpty) null else if (value != null && next.copy(savedAt = 0L) == value.copy(savedAt = 0L)) value else next
+            }
+            i < index && value?.rendererKey != null -> value.copy(rendererKey = null)
+            else -> value
+        }
+    }
+}
+
+/** "Remember for" choice made in the player: scope kind plus the exact layer key. */
+internal data class VideoScopeChoice(val scope: VideoSettingsScope, val key: String)
+
+/**
+ * Index of the layer a [choice] points to: the exact layer when present; a season choice follows the
+ * episode into its own season; a series or collection choice applies to every episode that has that layer.
+ * Anything else falls back to the title.
+ */
+internal fun rememberScopeIndex(layers: List<VideoScopeLayer>, choice: VideoScopeChoice?): Int {
+    choice ?: return 0
+    layers.indexOfFirst { it.key == choice.key }.takeIf { it >= 0 }?.let { return it }
+    if (choice.scope == VideoSettingsScope.SEASON) layers.indexOfFirst { it.scope == VideoSettingsScope.SEASON }.takeIf { it >= 0 }?.let { return it }
+    return 0
+}
+
+/** Choices are carried per series (episodes) or per title (everything else). */
+internal fun rememberScopeAnchor(layers: List<VideoScopeLayer>): String? =
+    layers.firstOrNull { it.scope == VideoSettingsScope.SERIES }?.key ?: layers.firstOrNull()?.key
+
+/**
+ * "Remember for" choices of the running playback session, thread-safe and bounded. A series/season choice
+ * carries over to further episodes of the same series; other titles start with the title itself.
+ */
+internal class VideoScopeChoices(private val limit: Int = 64) {
+    private val choices = object : LinkedHashMap<String, VideoScopeChoice>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VideoScopeChoice>?) = size > limit
+    }
+
+    @Synchronized fun index(layers: List<VideoScopeLayer>): Int =
+        rememberScopeIndex(layers, rememberScopeAnchor(layers)?.let { choices[it] })
+
+    @Synchronized fun choose(layers: List<VideoScopeLayer>, layer: VideoScopeLayer) {
+        val anchor = rememberScopeAnchor(layers) ?: return
+        if (layer.scope == VideoSettingsScope.TITLE) choices.remove(anchor) else choices[anchor] = VideoScopeChoice(layer.scope, layer.key)
+    }
+
+    @Synchronized fun clear() = choices.clear()
+}

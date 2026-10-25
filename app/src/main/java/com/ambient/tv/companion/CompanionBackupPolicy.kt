@@ -34,6 +34,10 @@ internal object CompanionBackupPolicy {
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
     private val sinceSchema66 = setOf("allowHighRefreshDoubling", "gpuRenderResolutionKey", "mpvSdrCurveKey", "svpExplicitChoice", "youtubeVideoPreset")
     private val sinceSchema69 = setOf("titleVideoSettings", "scopedVideoSettings")
+    private val profileKeys = setOf("titleVideoSettings", "scopedVideoSettings")
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    private val compact = Json { encodeDefaults = false; explicitNulls = false; ignoreUnknownKeys = true }
+    private fun profilesOmittedIn(source: SettingsBackup) = source.titleVideoSettings.isEmpty() && source.scopedVideoSettings.isEmpty()
     private val sinceSchema62 = setOf("sleepAutoStartKey", "sleepWarningMinutes")
     private val hardware = setOf(
         "autoSelectDisplayVersion", "displayRefreshAdjustmentKey", "displayModeWhitelist", "preferredDisplayModeKey",
@@ -85,19 +89,19 @@ internal object CompanionBackupPolicy {
         return fields.joinToString("\u0000") { key -> p.text(key).let { if (key == "host") normalizedHost(it) else it } }
     }
 
-    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): String {
+    fun prepareWithInfo(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): Prepared {
         require(mode in setOf("accounts", "settings", "preferences", "nav_sounds"))
         if (mode == "nav_sounds") {
             require(!credentials)
             com.ambient.tv.ui.sound.NavSoundBank.import(source.navSoundBank.ifBlank { com.ambient.tv.ui.sound.NavSoundBank().encode() })
             require(source.navSoundsVolume.isFinite() && source.navSoundsVolume in 0f..1f)
-            return JsonObject(obj(source).filterKeys { it in navSounds || it in setOf("schemaVersion", "exportedAtEpochMs") })
-                .toString().also { require(it.toByteArray().size <= MAX_BYTES) }
+            return Prepared(JsonObject(obj(source).filterKeys { it in navSounds || it in setOf("schemaVersion", "exportedAtEpochMs") })
+                .toString().also { require(it.toByteArray().size <= MAX_BYTES) }, false)
         }
         // Preferences never contain account fields, even with credentials requested by an old caller.
-        if (mode == "preferences") return JsonObject(obj(source).filterKeys {
+        if (mode == "preferences") return fit(source, obj(source).filterKeys {
             it in portable || it in hardware || it in setOf("schemaVersion", "exportedAtEpochMs")
-        }).toString().also { require(it.toByteArray().size <= MAX_BYTES) }
+        }.toMutableMap())
         val allowed = accounts + if (mode == "settings") portable + hardware else emptySet()
         val s = obj(source).filterKeys { it in allowed }.toMutableMap()
         if (!credentials) {
@@ -119,7 +123,26 @@ internal object CompanionBackupPolicy {
         s["fileSources"] = JsonArray(s.getValue("fileSources").jsonArray.filter { it.jsonObject.text("kind") != "local" }.map {
             JsonObject(it.jsonObject - "wireGuard")
         })
-        return JsonObject(s).toString().also { require(it.toByteArray().size <= MAX_BYTES) }
+        return fit(source, s)
+    }
+
+    /** Companion payload plus whether title/scope profiles had to stay on this TV to fit [MAX_BYTES]. */
+    data class Prepared(val json: String, val profilesOmitted: Boolean)
+
+    fun prepare(source: SettingsBackup, credentials: Boolean, mode: String = "settings"): String = prepareWithInfo(source, credentials, mode).json
+
+    /**
+     * Title and season/series/collection profiles travel compactly (no nulls, no default values). If the
+     * payload still exceeds [MAX_BYTES], they are left out instead of failing the transfer; the receiver
+     * keeps its own (see [merge]) and the sender shows a hint.
+     */
+    private fun fit(source: SettingsBackup, fields: MutableMap<String, JsonElement>): Prepared {
+        if ("titleVideoSettings" in fields) fields["titleVideoSettings"] = compact.encodeToJsonElement(source.titleVideoSettings)
+        if ("scopedVideoSettings" in fields) fields["scopedVideoSettings"] = compact.encodeToJsonElement(source.scopedVideoSettings)
+        val full = JsonObject(fields).toString()
+        if (full.toByteArray().size <= MAX_BYTES) return Prepared(full, false)
+        require(profileKeys.any { it in fields }) { "Companion payload too large" }
+        return Prepared(JsonObject(fields - profileKeys).toString().also { require(it.toByteArray().size <= MAX_BYTES) }, true)
     }
 
     fun merge(source: SettingsBackup, target: SettingsBackup, mode: String, overwrite: Boolean, deviceSettings: Boolean): String {
@@ -133,7 +156,9 @@ internal object CompanionBackupPolicy {
         }
         if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
-            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.forEach { key -> incoming[key]?.let { result[key] = it } }
+            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }
+                // Profiles left out by the sender (too large) arrive empty: the TV keeps its own.
+                .filter { it !in profileKeys || !profilesOmittedIn(source) }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }
         if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()

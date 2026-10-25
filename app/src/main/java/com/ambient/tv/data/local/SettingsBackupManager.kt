@@ -920,3 +920,4 @@ internal fun restorableTitleVideoSettings(all: Map<String, TitleVideoSettings>):
 internal fun restorableScopedVideoSettings(all: Map<String, TitleVideoSettings>): Map<String, TitleVideoSettings> =
     all.filter { (key, value) -> TitleVideoSettings.isScopedKey(key) && !value.isEmpty }
         .mapValues { (_, value) -> value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null) }
+        .entries.sortedByDescending { it.value.savedAt }.take(TitleVideoSettings.MAX_SCOPES).associate { it.key to it.value }

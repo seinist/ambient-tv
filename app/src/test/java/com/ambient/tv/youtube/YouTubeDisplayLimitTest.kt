@@ -84,4 +84,29 @@ class YouTubeDisplayLimitTest {
         assert(1080 <= box && 1920 <= box)
         assert(2560 > box)
     }
+
+    @Test fun `without rate switching a fixed mode keeps only its own refresh rate`() {
+        // Fixed 4K24 with adjustment off: 4K at 30 fps, 60 Hz modes of the same size do not count.
+        assertEquals(YouTubeDisplayLimit(2160, 30), youtubeDisplayLimit(tv, fhd60, uhd24.key, canSwitchRate = false))
+        // Fixed 4K60 with adjustment off: 60 fps.
+        assertEquals(YouTubeDisplayLimit(2160, 60), youtubeDisplayLimit(tv, fhd24, uhd60.key, canSwitchRate = false))
+        // Fixed 1080p24 with adjustment on: the 60 Hz 1080p mode is reachable.
+        assertEquals(YouTubeDisplayLimit(1080, 60), youtubeDisplayLimit(tv, uhd60, fhd24.key, canSwitchRate = true))
+        // Automatic policies switch anyway; the flag does not lower them.
+        assertEquals(YouTubeDisplayLimit(2160, 60), youtubeDisplayLimit(tv, fhd24, AppPreferences.DISPLAY_MODE_AUTO_CONTENT, canSwitchRate = false))
+    }
+
+    @Test fun `media3 square streams above the quality step are excluded`() {
+        val sizes = listOf(1080 to 1080, 1440 to 1440, 2016 to 2016, 1080 to 1920, 1920 to 800)
+        // 1080p: 1440² and 2016² are 1440p+ although they fit the 2016 box.
+        assertEquals(listOf(0, 3, 4), youtubeMedia3AllowedVideoTracks(sizes, 1080))
+        // Everything fits: no override.
+        assertNull(youtubeMedia3AllowedVideoTracks(listOf(1080 to 1080, 1920 to 1080), 1080))
+        // Nothing fits: the box stays the only limit (never an empty selection).
+        assertNull(youtubeMedia3AllowedVideoTracks(listOf(1440 to 1440), 720))
+        assertNull(youtubeMedia3AllowedVideoTracks(sizes, 0))
+        assertEquals(1440, youtubeQualityHeight(1440, 1440))
+        assertEquals(1440, youtubeQualityHeight(2560, 1072))
+        assertEquals(1080, youtubeQualityHeight(1080, 1920))
+    }
 }

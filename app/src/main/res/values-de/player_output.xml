@@ -9,9 +9,7 @@
     <string name="player_output_hdr_gpu_output_direct">HDR über GPU: Ausgabe „Direkt“ ist gewählt, HDR läuft direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_dolby_vision">Dolby Vision läuft immer direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_not_hdr10">Dieses Video ist kein HDR10 und wird normal abgespielt.</string>
-    <string name="player_output_hdr_gpu_vulkan">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_swapchain">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>
-    <string name="player_output_hdr_gpu_display">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_reduced">HDR über GPU: im Modus Sparsam aus, HDR läuft direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_not_confirmed">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">GPU-Weg nicht möglich, HDR läuft direkt zum Fernseher.</string>

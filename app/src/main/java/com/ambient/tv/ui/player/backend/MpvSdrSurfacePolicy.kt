@@ -32,6 +32,17 @@ internal fun mpvSdrCurveTransfer(key: String, displayInHdrMode: Boolean): String
 }
 
 /**
+ * Display state for the Auto SDR curve: only a display that reports HDR (ratio above 1, API 34+) counts.
+ * Below API 34 or without the signal the ratio is null, so Auto keeps BT.1886 (manual Gamma 2.2 if washed out).
+ */
+internal fun mpvSdrAutoDisplayInHdr(ratio: Float?, reliable: Boolean): Boolean =
+    com.ambient.tv.ui.display.displayHdrModeFromRatio(ratio, reliable) == true
+
+/** Re-evaluated curve applies only when it changed and target-trc still holds the curve this app set. */
+internal fun mpvSdrCurveNeedsUpdate(applied: String, desired: String, current: String?): Boolean =
+    desired != applied && (current == null || current == applied)
+
+/**
  * Tag only positively identified BT.709 SDR video (or HDR that mpv tone-mapped to SDR,
  * [toneMappedToSdr]) and only with the curve mpv actually published as its target.
  */
