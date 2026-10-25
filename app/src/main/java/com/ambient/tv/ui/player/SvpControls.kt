@@ -141,6 +141,7 @@ internal fun SvpMainPage(
     }
     if (unavailable == SvpInactiveReason.PERFORMANCE_MODE) ImageHint(stringResource(R.string.image_svp_locked))
     val o = options.normalized()
+    val context = androidx.compose.ui.platform.LocalContext.current
     val base = stringResource(svpModeLabelRes(if (mode == "off") "balanced" else mode))
     ImageChoice(R.string.svp_mode, svpPresetKey(mode, o), listOf(
         "off" to stringResource(R.string.player_off),
@@ -150,6 +151,8 @@ internal fun SvpMainPage(
         "custom" to if (o.isCustom) stringResource(R.string.svp_mode_custom_of, base) else stringResource(R.string.svp_mode_custom),
     )) { choice ->
         val (nextMode, nextOptions) = svpApplyPresetChoice(choice, mode, o)
+        // Under playback mode Auto only this explicit pick lets SVP run ([svpModeAllowsInterpolation]).
+        videoImagePreferences(context).svpExplicitChoice = nextMode != "off"
         change(nextMode, nextOptions)
         if (choice == "custom") onOpenAdvanced()
     }

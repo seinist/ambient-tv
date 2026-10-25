@@ -7,10 +7,25 @@ import android.view.Display
 import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.videoImagePreferences
 
-/** Global SVP switch, Maximum performance mode and the native filter must all agree. */
-internal fun svpAllowed(context: Context): Boolean =
-    videoImagePreferences(context).svpAvailable &&
-        performanceProfile(context).allowSvpInterpolation && SvpNative.isEnabledAndAvailable()
+/** Global SVP switch, performance mode, an explicit choice under Auto and the native filter must all agree. */
+internal fun svpAllowed(context: Context): Boolean {
+    val preferences = videoImagePreferences(context)
+    val profile = performanceProfile(context)
+    return preferences.svpAvailable &&
+        svpModeAllowsInterpolation(profile.playbackMode, profile.allowSvpInterpolation, preferences.svpExplicitChoice) &&
+        SvpNative.isEnabledAndAvailable()
+}
+
+/**
+ * Maximum runs a configured SVP mode. Auto (not low-end) runs it only after the user picked an
+ * SVP mode in an SVP menu: a stored legacy value (old "auto" → light) used to start
+ * interpolation by itself, forced copy-back and kept display-mode matching on the desktop rate.
+ */
+internal fun svpModeAllowsInterpolation(
+    playbackMode: com.ambient.tv.ui.performance.PerformanceMode,
+    profileAllows: Boolean,
+    explicitChoice: Boolean,
+): Boolean = profileAllows && (playbackMode == com.ambient.tv.ui.performance.PerformanceMode.MAXIMUM || explicitChoice)
 
 internal fun svpDisplayFps(context: Context): Double? =
     context.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)

@@ -317,3 +317,34 @@ internal fun mpvHdrSurfaceConfirmed(dataSpace: Int): Boolean =
     (dataSpace and (63 shl 16)) == (6 shl 16) &&
         (dataSpace and (31 shl 22)) == (7 shl 22) &&
         (dataSpace and (7 shl 27)) in setOf(1 shl 27, 2 shl 27)
+
+/**
+ * SDR→HDR sends PQ on the strength of the app's own surface tag ([sdrToHdrRequest] may even
+ * probe at 300 nits on TVs without brightness data). Like HDR über GPU
+ * ([MpvHdrPassthroughMonitor]), PQ only stays on while the panel really switched: a display
+ * that reliably reports SDR (`Display.getHdrSdrRatio`, see
+ * [com.ambient.tv.ui.display.displayHdrModeFromRatio]) for [timeoutMs] of steady playback makes
+ * the conversion fall back to SDR, instead of a TV decoding PQ code values as SDR (washed out).
+ * Null (Android cannot tell) never fails.
+ */
+internal class SdrToHdrDisplayWatch(private val timeoutMs: Long = 6_000L) {
+    var switched: Boolean? = null
+        private set
+    private var since = -1L
+
+    fun reset() { switched = null; since = -1L }
+
+    /** True when the conversion must stop: the display stayed in SDR. */
+    fun update(displayHdr: Boolean?, playing: Boolean, nowMs: Long): Boolean {
+        when (displayHdr) {
+            true -> { switched = true; since = -1L; return false }
+            null -> { since = -1L; return false }
+            false -> Unit
+        }
+        if (switched == true) return false
+        switched = false
+        if (!playing) { since = -1L; return false }
+        if (since < 0L || nowMs < since) since = nowMs
+        return nowMs - since >= timeoutMs
+    }
+}

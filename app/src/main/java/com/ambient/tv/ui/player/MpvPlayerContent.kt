@@ -424,7 +424,8 @@ internal fun MpvPlayerContent(
                         state.videoBitDepth?.takeIf { it > 0 }?.let { "$it-bit" },
                     ).joinToString(" · ").takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_video) to it) }
                     formatHdrMetadata(state.videoDynamicRange, state.videoProfile)?.let { add(stringResource(R.string.player_nerd_hdr) to it) }
-                    snapshot.decoder?.let { add(stringResource(R.string.player_nerd_hardware_decode) to it) }
+                    snapshot.decoder?.let { add(stringResource(R.string.player_nerd_hardware_decode) to
+                        if (controller.supportsGpuFilters) com.ambient.tv.ui.player.backend.mpvDecoderPathLabel(it) else it) }
                     snapshot.pixelFormat?.let { add(stringResource(R.string.player_nerd_pixel_format) to it) }
                     snapshot.outputPixelFormat?.takeIf { it != snapshot.pixelFormat }?.let { add(stringResource(R.string.player_nerd_output_pixel_format) to it) }
                     formatNerdBitrate(snapshot.videoBitrateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_video_bitrate) to it) }
@@ -446,6 +447,11 @@ internal fun MpvPlayerContent(
                         formatMpvScalerStat(snapshot.activeDownscaler, stored.downscaler, replaced(stored.downscaler, defaults.downscaler))?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
                         formatMpvDebandStat(stored.deband, replaced(stored.deband, defaults.deband), stringResource(R.string.player_nerd_enabled))?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
                         if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
+                        val (renderW, renderH) = gpuRenderSize(context, controller.gpuRenderAtPanel)
+                        add(stringResource(R.string.player_nerd_render_resolution) to
+                            gpuRenderResolutionLabel(true, controller.gpuRenderAtPanel, renderW, renderH))
+                        add(stringResource(R.string.player_nerd_sdr_curve) to
+                            com.ambient.tv.ui.player.backend.mpvSdrSurfaceLabel(controller.sdrSurfaceDataSpace))
                     }
                     if (controller.deinterlaceModeKey != "off") {
                         add(stringResource(R.string.player_nerd_deinterlace_configured) to listOf(controller.deinterlaceModeKey, controller.deinterlaceFilterKey).filter { it.isNotBlank() && it != "auto" }.joinToString(" · ").ifBlank { controller.deinterlaceModeKey })

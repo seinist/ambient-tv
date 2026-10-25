@@ -5,6 +5,7 @@ import com.ambient.tv.ui.player.DisplayRefreshRateMatcher
 import com.ambient.tv.ui.player.SupportedDisplayMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -77,18 +78,22 @@ class LiveFieldRateDeinterlaceTest {
         assertEquals(25.0, mpvDeinterlacedFps(25.0, false, "bwdif2x", singleRate = false)!!, 0.001)
     }
 
-    @Test fun displayAgreesForBothFieldReportingsAndDoublesWhenTheTvOffersIt() {
+    @Test fun displayAgreesForBothFieldReportingsAndDoublesTo100OnlyOnRequest() {
         val modes = listOf(
             SupportedDisplayMode("1920x1080@50", 1, 1920, 1080, 50f),
             SupportedDisplayMode("1920x1080@60", 2, 1920, 1080, 60f),
             SupportedDisplayMode("1920x1080@100", 3, 1920, 1080, 100f),
             SupportedDisplayMode("1920x1080@25", 4, 1920, 1080, 25f),
         )
-        val withoutHundred = modes.filter { it.refreshRate != 100f }
+        val withoutFifty = modes.filter { it.refreshRate != 50f }
         for (reported in listOf(25.0, 50.0)) {
             val fps = rate(reported, "auto").toFloat()
-            assertEquals(reported.toString(), 100f, DisplayRefreshRateMatcher.selectCadenceMode(modes, fps, double = true, threeTwo = true)!!.refreshRate)
-            assertEquals(reported.toString(), 50f, DisplayRefreshRateMatcher.selectCadenceMode(withoutHundred, fps, double = true, threeTwo = true)!!.refreshRate)
+            // Native field rate first, even with 100 Hz on offer and opted in.
+            assertEquals(reported.toString(), 50f, DisplayRefreshRateMatcher.selectCadenceMode(modes, fps, double = true, threeTwo = true, highDouble = true)!!.refreshRate)
+            assertEquals(reported.toString(), 50f, DisplayRefreshRateMatcher.selectCadenceMode(modes, fps, double = true, threeTwo = true, highDouble = false)!!.refreshRate)
+            // 100 Hz only without a native 50 Hz mode and only on request.
+            assertEquals(reported.toString(), 100f, DisplayRefreshRateMatcher.selectCadenceMode(withoutFifty, fps, double = true, threeTwo = true, highDouble = true)!!.refreshRate)
+            assertNotEquals(reported.toString(), 100f, DisplayRefreshRateMatcher.selectCadenceMode(withoutFifty, fps, double = true, threeTwo = true, highDouble = false)?.refreshRate)
         }
     }
 }

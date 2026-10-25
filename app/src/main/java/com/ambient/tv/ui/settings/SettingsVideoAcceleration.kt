@@ -39,6 +39,7 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
+        if (backend in setOf("mpv", "vlc")) GpuOutputPreferenceSettings(mpv = backend == "mpv")
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
                 com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
             Text(
@@ -187,3 +188,55 @@ private fun TestResultLine(label: Int, result: String, failed: Boolean = false) 
     Text("${stringResource(label)}: $result", style = MaterialTheme.typography.bodyMedium,
         color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
 }
+
+/** 100/120 Hz doubling is a separate opt-in ([DisplayRefreshRateMatcher.highRateDoubling]). */
+@Composable
+internal fun HighRefreshDoublingRow() {
+    val context = LocalContext.current
+    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var enabled by remember { mutableStateOf(prefs.allowHighRefreshDoubling) }
+    com.ambient.tv.ui.common.TvSettingRow(
+        title = stringResource(R.string.settings_display_allow_high_double),
+        body = stringResource(R.string.settings_display_allow_high_double_hint),
+        checked = enabled,
+        onCheckedChange = { enabled = it; prefs.allowHighRefreshDoubling = it },
+    )
+}
+
+/** Device-wide GPU output choices: render resolution (mpv, VLC) and SDR curve (mpv). */
+@Composable
+internal fun GpuOutputPreferenceSettings(mpv: Boolean) {
+    val context = LocalContext.current
+    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var resolution by remember { mutableStateOf(prefs.gpuRenderResolutionKey) }
+    var curve by remember { mutableStateOf(prefs.mpvSdrCurveKey) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(stringResource(R.string.renderer_render_resolution),
+            style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+        SettingsSelect(options = listOf(
+            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_AUTO to R.string.renderer_render_resolution_auto,
+            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_PANEL to R.string.renderer_render_resolution_panel,
+            com.ambient.tv.data.local.AppPreferences.GPU_RENDER_UI to R.string.renderer_render_resolution_ui,
+        ).map { (key, label) ->
+            SettingsSelectOption(text = stringResource(label), selected = key == resolution,
+                onClick = { resolution = key; prefs.gpuRenderResolutionKey = key })
+        })
+        ImageHint(stringResource(R.string.renderer_render_resolution_hint))
+        if (mpv) {
+            Text(stringResource(R.string.renderer_sdr_curve),
+                style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+            SettingsSelect(options = sdrCurveChoices().map { (key, label) ->
+                SettingsSelectOption(text = label, selected = key == curve,
+                    onClick = { curve = key; prefs.mpvSdrCurveKey = key })
+            })
+            ImageHint(stringResource(R.string.renderer_sdr_curve_hint))
+        }
+    }
+}
+
+@Composable
+internal fun sdrCurveChoices(): List<Pair<String, String>> = listOf(
+    com.ambient.tv.data.local.AppPreferences.MPV_SDR_CURVE_AUTO to stringResource(R.string.renderer_sdr_curve_auto),
+    com.ambient.tv.data.local.AppPreferences.MPV_SDR_CURVE_GAMMA22 to stringResource(R.string.renderer_sdr_curve_gamma22),
+    com.ambient.tv.data.local.AppPreferences.MPV_SDR_CURVE_BT1886 to stringResource(R.string.renderer_sdr_curve_bt1886),
+)
