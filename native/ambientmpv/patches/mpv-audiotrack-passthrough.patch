@@ -1,0 +1,76 @@
+Ambient TV: IEC61937 keeps the spdif packer rate (192 kHz for E-AC-3/DTS-HD, 8 x 192 kHz HBR for
+TrueHD/DTS-HD MA, like Kodi) instead of the native PCM rate, and smooths the passthrough delay.
+
+diff --git a/audio/out/ao_audiotrack.c b/audio/out/ao_audiotrack.c
+index 3b8cf11..96a9c5a 100644
+--- a/audio/out/ao_audiotrack.c
++++ b/audio/out/ao_audiotrack.c
+@@ -21,6 +21,7 @@
+  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
++#include <math.h>
+ #include <time.h>
+ 
+ #include "ao.h"
+@@ -69,6 +70,8 @@ struct priv {
+     uint32_t playhead_pos;
+     uint32_t playhead_offset;
+     bool reset_pending;
++    // Smoothed IEC61937 delay (Kodi's AESinkAUDIOTRACK averages its passthrough delay too).
++    double iec_delay_avg;
+ 
+     void *chunk;
+     int chunksize;
+@@ -503,6 +506,15 @@ static double AudioTrack_getLatency(struct ao *ao)
+     if (!p->timestamp_set &&
+         p->format != AudioFormat.ENCODING_IEC61937)
+         delay += (double)MP_JNI_CALL_INT(p->audiotrack, AudioTrack.getLatency)/1000.0;
++    if (p->format == AudioFormat.ENCODING_IEC61937 && delay <= 2.0) {
++        // The IEC playback head advances per burst, so the raw delay is a sawtooth.
++        // Average it; a jump (flush, underrun, new track) restarts the average.
++        if (p->iec_delay_avg <= 0 || fabs(delay - p->iec_delay_avg) > 0.1)
++            p->iec_delay_avg = delay;
++        else
++            p->iec_delay_avg += (delay - p->iec_delay_avg) * 0.125;
++        delay = p->iec_delay_avg;
++    }
+     if (delay > 2.0) {
+         //MP_WARN(ao, "getLatency: written=%u playhead=%u diff=%u delay=%f\n", p->written_frames, playhead, diff, delay);
+         p->timestamp_fetched = 0;
+@@ -710,7 +722,11 @@ static int init(struct ao *ao)
+         );
+         if (MP_JNI_EXCEPTION_LOG(ao) == 0) {
+             MP_VERBOSE(ao, "AudioTrack.nativeOutputSampleRate = %d\n", samplerate);
+-            ao->samplerate = MPMIN(samplerate, ao->samplerate);
++            // An IEC61937 stream must keep the rate the spdif packer chose (E-AC-3 and
++            // DTS-HD 192 kHz, TrueHD/DTS-HD MA 192 kHz x 8 HBR, like Kodi's AESinkAUDIOTRACK);
++            // the mixer's native PCM rate does not apply to a bitstream.
++            if (p->format != AudioFormat.ENCODING_IEC61937)
++                ao->samplerate = MPMIN(samplerate, ao->samplerate);
+         }
+     }
+     p->samplerate = ao->samplerate;
+@@ -740,7 +756,13 @@ static int init(struct ao *ao)
+     };
+     static_assert(MP_ARRAY_SIZE(layout_map) == MP_ARRAY_SIZE(layouts), "");
+     if (p->format == AudioFormat.ENCODING_IEC61937) {
+-        p->channel_config = AudioFormat.CHANNEL_OUT_STEREO;
++        // HBR (TrueHD, DTS-HD MA) is carried as 8 x 192 kHz; everything else as stereo.
++        if (ao->channels.num == 8) {
++            p->channel_config = AudioFormat.CHANNEL_OUT_7POINT1_SURROUND;
++        } else {
++            p->channel_config = AudioFormat.CHANNEL_OUT_STEREO;
++        }
++        MP_VERBOSE(ao, "IEC61937 passthrough: %d Hz, %d channels\n", ao->samplerate, ao->channels.num);
+     } else {
+         struct mp_chmap_sel sel = {0};
+         for (int i = 0; i < MP_ARRAY_SIZE(layouts); i++) {
+@@ -843,6 +865,7 @@ static void stop(struct ao *ao)
+ 
+     p->playhead_offset = 0;
+     p->reset_pending = true;
++    p->iec_delay_avg = 0;
+     p->written_frames = 0;
+     p->timestamp_fetched = 0;
+     p->timestamp_set = false;

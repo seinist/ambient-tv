@@ -1,0 +1,164 @@
+Ambient TV: Dolby Vision routing like Kodi. dolbyvision=1 (DV display) sends profile 5 and
+profiles 7/8 to the DV decoder when one advertises the profile; dolbyvision=2 (no DV display)
+decodes profiles 7/8/10 compatible base layers as HEVC/AV1 HDR10. Applies after ffmpeg-dolby-vision-decoder.patch.
+
+diff --git a/libavcodec/mediacodecdec.c b/libavcodec/mediacodecdec.c
+index 53b9500..c94ece2 100644
+--- a/libavcodec/mediacodecdec.c
++++ b/libavcodec/mediacodecdec.c
+@@ -307,12 +307,101 @@ static int common_set_extradata(AVCodecContext *avctx, FFAMediaFormat *format)
+ }
+ #endif
+ 
++#if CONFIG_HEVC_MEDIACODEC_DECODER || CONFIG_AV1_MEDIACODEC_DECODER
++/*
++ * Dolby Vision routing modelled on Kodi's CDVDVideoCodecAndroidMediaCodec::Open.
++ * dolbyvision=1: the display renders Dolby Vision, so every profile a vendor DV
++ * decoder advertises (P5, P7 with its enhancement layer, P8, AV1 P10) uses it.
++ * dolbyvision=2: the display does not; profiles with an HDR10/HLG/SDR base layer
++ * then stay on the plain HEVC/AV1 decoder (correct base-layer HDR instead of a
++ * DV signal the sink cannot show), only P5 and AV1 P10 without an HDR base keep
++ * the DV decoder because their base layer is not displayable on its own.
++ * The profile is checked against the decoders' profileLevels; without a match
++ * the base layer is decoded instead of failing the hardware decoder.
++ */
++static const char *mediacodec_dolby_vision_mime(AVCodecContext *avctx,
++                                                MediaCodecH264DecContext *s,
++                                                FFAMediaFormat *format)
++{
++    const AVPacketSideData *sd;
++    const AVDOVIDecoderConfigurationRecord *dv;
++    int no_base_fallback, profile;
++    char *name;
++
++    if (!s->dolbyvision)
++        return NULL;
++    sd = av_packet_side_data_get(avctx->coded_side_data, avctx->nb_coded_side_data,
++                                 AV_PKT_DATA_DOVI_CONF);
++    if (!sd || sd->size < sizeof(AVDOVIDecoderConfigurationRecord))
++        return NULL;
++    dv = (const void *)sd->data;
++    if (!dv->rpu_present_flag || !dv->bl_present_flag)
++        return NULL;
++    if ((avctx->codec_id == AV_CODEC_ID_AV1) != (dv->dv_profile == 10))
++        return NULL;
++    switch (dv->dv_profile) {
++    case 5:
++        no_base_fallback = 1;
++        break;
++    case 7:
++    case 8:
++        no_base_fallback = 0;
++        break;
++    case 10:
++        no_base_fallback = dv->dv_bl_signal_compatibility_id == 0 ||
++                           dv->dv_bl_signal_compatibility_id == 2 ||
++                           dv->dv_bl_signal_compatibility_id == 3;
++        break;
++    default:
++        return NULL;
++    }
++    /* Only profile 7 carries its enhancement layer in the same stream on purpose. */
++    if (dv->el_present_flag && dv->dv_profile != 7)
++        return NULL;
++    if (s->dolbyvision != 1 && !no_base_fallback) {
++        av_log(avctx, AV_LOG_INFO, "Dolby Vision profile %d on a display without Dolby Vision: "
++               "decoding the compatible base layer\n", dv->dv_profile);
++        return NULL;
++    }
++    profile = 1 << dv->dv_profile;
++    if (av_jni_get_java_vm(avctx)) {
++        name = ff_AMediaCodecList_getCodecNameByType("video/dolby-vision", profile, 0, avctx);
++        if (!name) {
++            av_log(avctx, AV_LOG_INFO, "No Dolby Vision decoder supports profile %d: "
++                   "decoding the base layer\n", dv->dv_profile);
++            return NULL;
++        }
++        av_free(name);
++    } else if (dv->dv_profile != 5 && dv->dv_profile != 8) {
++        /* Without a JVM the profile levels cannot be checked: keep the proven P5/P8 only. */
++        return NULL;
++    }
++    ff_AMediaFormat_setInt32(format, "profile", profile);
++    /* Supply the source cadence to the vendor DV decoder. Without
++     * it Android may configure its default (30 fps) operating rate. */
++    {
++        const double fps = av_q2d(avctx->framerate);
++        if (fps > 0 && fps <= 240) {
++            ff_AMediaFormat_setFloat(format, "frame-rate", fps);
++            if (s->operating_rate <= 0)
++                ff_AMediaFormat_setInt32(format, "operating-rate", (int)(fps + 0.999));
++        }
++        av_log(avctx, AV_LOG_INFO, "Dolby Vision source frame rate %.3f\n", fps);
++    }
++    av_log(avctx, AV_LOG_INFO, "Dolby Vision decoder requested: profile=%d level=%d compat=%d display=%s\n",
++           dv->dv_profile, dv->dv_level, dv->dv_bl_signal_compatibility_id,
++           s->dolbyvision == 1 ? "dv" : "no-dv");
++    return "video/dolby-vision";
++}
++#endif
++
+ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+ {
+     int ret;
+     int sdk_int;
+ 
+     const char *codec_mime = NULL;
++    const char *dv_mime = NULL;
+ 
+     FFAMediaFormat *format = NULL;
+     MediaCodecH264DecContext *s = avctx->priv_data;
+@@ -335,6 +424,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+         ret = common_set_extradata(avctx, format);
+         if (ret < 0)
+             goto done;
++        dv_mime = mediacodec_dolby_vision_mime(avctx, s, format);
++        if (dv_mime)
++            codec_mime = dv_mime;
+         break;
+ #endif
+ #if CONFIG_H264_MEDIACODEC_DECODER
+@@ -353,29 +445,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+         ret = hevc_set_extradata(avctx, format);
+         if (ret < 0)
+             goto done;
+-        if (s->dolbyvision) {
+-            const AVPacketSideData *sd = av_packet_side_data_get(
+-                avctx->coded_side_data, avctx->nb_coded_side_data, AV_PKT_DATA_DOVI_CONF);
+-            if (sd && sd->size >= sizeof(AVDOVIDecoderConfigurationRecord)) {
+-                const AVDOVIDecoderConfigurationRecord *dv = (const void *)sd->data;
+-                if (dv->rpu_present_flag && dv->bl_present_flag && !dv->el_present_flag &&
+-                    (dv->dv_profile == 5 || dv->dv_profile == 8)) {
+-                    codec_mime = "video/dolby-vision";
+-                    ff_AMediaFormat_setInt32(format, "profile", 1 << dv->dv_profile);
+-                    /* Supply the source cadence to the vendor DV decoder. Without
+-                     * it Android may configure its default (30 fps) operating rate. */
+-                    const double fps = av_q2d(avctx->framerate);
+-                    if (fps > 0 && fps <= 240) {
+-                        ff_AMediaFormat_setFloat(format, "frame-rate", fps);
+-                        if (s->operating_rate <= 0)
+-                            ff_AMediaFormat_setInt32(format, "operating-rate", (int)(fps + 0.999));
+-                    }
+-                    av_log(avctx, AV_LOG_INFO, "Dolby Vision source frame rate %.3f\n", fps);
+-                    av_log(avctx, AV_LOG_INFO, "Dolby Vision decoder requested: profile=%d level=%d\n",
+-                           dv->dv_profile, dv->dv_level);
+-                }
+-            }
+-        }
++        dv_mime = mediacodec_dolby_vision_mime(avctx, s, format);
++        if (dv_mime)
++            codec_mime = dv_mime;
+         break;
+ #endif
+ #if CONFIG_MPEG2_MEDIACODEC_DECODER
+@@ -619,8 +691,8 @@ static const AVCodecHWConfigInternal *const mediacodec_hw_configs[] = {
+ #define OFFSET(x) offsetof(MediaCodecH264DecContext, x)
+ #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
+ static const AVOption ff_mediacodec_vdec_options[] = {
+-    { "dolbyvision", "Use single-layer Dolby Vision decoder for a direct display surface",
+-                   OFFSET(dolbyvision), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VD },
++    { "dolbyvision", "Dolby Vision decoder for a direct display surface: 1 display renders DV, 2 it does not (base layer unless none is displayable)",
++                   OFFSET(dolbyvision), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 2, VD },
+     { "delay_flush", "Delay flush until hw output buffers are returned to the decoder",
+                      OFFSET(delay_flush), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VD },
+     { "ndk_codec", "Use MediaCodec from NDK",

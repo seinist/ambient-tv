@@ -1,0 +1,42 @@
+Ambient TV: hw_min_height option (Kodi: SD MPEG-2/MPEG-4 Part 2 is decoded in software). Below the
+height the MediaCodec decoder refuses to open, so the caller falls back to libavcodec.
+
+diff --git a/libavcodec/mediacodecdec.c b/libavcodec/mediacodecdec.c
+index 459d489..e2769f2 100644
+--- a/libavcodec/mediacodecdec.c
++++ b/libavcodec/mediacodecdec.c
+@@ -61,6 +61,7 @@ typedef struct MediaCodecH264DecContext {
+     int use_ndk_codec;
+     int dolbyvision;
+     int color_info;
++    int hw_min_height;
+     // Ref. MediaFormat KEY_OPERATING_RATE
+     int operating_rate;
+ } MediaCodecH264DecContext;
+@@ -488,6 +489,17 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+         goto done;
+     }
+ 
++    /* Kodi keeps SD MPEG-2/MPEG-4 Part 2 off MediaCodec: vendor decoders handle their
++     * interlacing and error concealment worse than libavcodec. Failing here lets the
++     * caller fall back to software decoding. An unknown height stays in hardware. */
++    if ((avctx->codec_id == AV_CODEC_ID_MPEG2VIDEO || avctx->codec_id == AV_CODEC_ID_MPEG4) &&
++        s->hw_min_height > 0 && avctx->height > 0 && avctx->height < s->hw_min_height) {
++        av_log(avctx, AV_LOG_INFO, "%s %dx%d is below %dp: leaving it to the software decoder\n",
++               avcodec_get_name(avctx->codec_id), avctx->width, avctx->height, s->hw_min_height);
++        ret = AVERROR(ENOSYS);
++        goto done;
++    }
++
+     switch (avctx->codec_id) {
+ #if CONFIG_AV1_MEDIACODEC_DECODER
+     case AV_CODEC_ID_AV1:
+@@ -769,6 +781,8 @@ static const AVOption ff_mediacodec_vdec_options[] = {
+                    OFFSET(dolbyvision), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 2, VD },
+     { "color_info", "Pass colour range/standard/transfer and HDR static metadata to the decoder",
+                    OFFSET(color_info), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, VD },
++    { "hw_min_height", "Leave MPEG-2/MPEG-4 Part 2 below this coded height to a software decoder, zero for none",
++                   OFFSET(hw_min_height), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 8192, VD },
+     { "delay_flush", "Delay flush until hw output buffers are returned to the decoder",
+                      OFFSET(delay_flush), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VD },
+     { "ndk_codec", "Use MediaCodec from NDK",
