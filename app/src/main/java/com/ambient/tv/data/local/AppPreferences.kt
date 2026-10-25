@@ -651,6 +651,37 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, true)
         set(value) = prefs.edit { putBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, value) }
 
+    /** 50→100 / 60→120 Hz doubling; off by default because it doubles 4K GPU/composition work. */
+    var allowHighRefreshDoubling: Boolean
+        get() = prefs.getBoolean(KEY_ALLOW_HIGH_REFRESH_DOUBLING, false)
+        set(value) = prefs.edit { putBoolean(KEY_ALLOW_HIGH_REFRESH_DOUBLING, value) }
+
+    /**
+     * MPV/VLC GPU render buffer: auto | panel | ui. Panel renders at the physical HDMI mode (4K),
+     * UI at the window's logical size; the display scales the rest. See [gpuRenderAtPanelResolution].
+     */
+    var gpuRenderResolutionKey: String
+        get() = prefs.getString(KEY_GPU_RENDER_RESOLUTION, GPU_RENDER_AUTO).takeIf { it in GPU_RENDER_RESOLUTIONS } ?: GPU_RENDER_AUTO
+        set(value) = prefs.edit { putString(KEY_GPU_RENDER_RESOLUTION, value.takeIf { it in GPU_RENDER_RESOLUTIONS } ?: GPU_RENDER_AUTO) }
+
+    /** MPV GPU SDR output curve: auto | gamma2.2 | bt.1886 (target-trc and the matching surface tag). */
+    var mpvSdrCurveKey: String
+        get() = prefs.getString(KEY_MPV_SDR_CURVE, MPV_SDR_CURVE_AUTO).takeIf { it in MPV_SDR_CURVES } ?: MPV_SDR_CURVE_AUTO
+        set(value) = prefs.edit { putString(KEY_MPV_SDR_CURVE, value.takeIf { it in MPV_SDR_CURVES } ?: MPV_SDR_CURVE_AUTO) }
+
+    /**
+     * The user picked an SVP mode in an SVP menu. Under playback mode Auto SVP runs only then;
+     * a legacy stored value (e.g. old "auto" → light) must not start interpolation by itself.
+     */
+    var svpExplicitChoice: Boolean
+        get() = prefs.getBoolean(KEY_SVP_EXPLICIT_CHOICE, false)
+        set(value) = prefs.edit { putBoolean(KEY_SVP_EXPLICIT_CHOICE, value) }
+
+    /** MPV zero-copy (hwdec=mediacodec on vo=gpu) failed on this device; use mediacodec-copy. */
+    var mpvZeroCopyFailed: Boolean
+        get() = prefs.getBoolean(KEY_MPV_ZERO_COPY_FAILED, false)
+        set(value) = prefs.edit { putBoolean(KEY_MPV_ZERO_COPY_FAILED, value) }
+
     /** Kodi-style pause after an app-requested display mode change; 0 is off, 0.5 s steps up to 20 s. */
     var displaySwitchPauseMs: Int
         get() = normalizeDisplaySwitchPauseMs(prefs.getInt(KEY_DISPLAY_SWITCH_PAUSE_MS, 0))
@@ -1946,6 +1977,19 @@ class AppPreferences @Inject constructor(
         const val DISPLAY_MODE_AUTO_DISPLAY = "auto_display"
         const val KEY_ALLOW_DOUBLE_REFRESH_RATE = "allow_double_refresh_rate"
         const val KEY_ALLOW_THREE_TWO_PULLDOWN = "allow_three_two_pulldown"
+        const val KEY_ALLOW_HIGH_REFRESH_DOUBLING = "allow_high_refresh_doubling"
+        const val KEY_GPU_RENDER_RESOLUTION = "gpu_render_resolution"
+        const val KEY_MPV_SDR_CURVE = "mpv_sdr_curve"
+        const val KEY_SVP_EXPLICIT_CHOICE = "svp_explicit_choice"
+        const val KEY_MPV_ZERO_COPY_FAILED = "mpv_zero_copy_failed"
+        const val GPU_RENDER_AUTO = "auto"
+        const val GPU_RENDER_PANEL = "panel"
+        const val GPU_RENDER_UI = "ui"
+        val GPU_RENDER_RESOLUTIONS = listOf(GPU_RENDER_AUTO, GPU_RENDER_PANEL, GPU_RENDER_UI)
+        const val MPV_SDR_CURVE_AUTO = "auto"
+        const val MPV_SDR_CURVE_GAMMA22 = "gamma2.2"
+        const val MPV_SDR_CURVE_BT1886 = "bt.1886"
+        val MPV_SDR_CURVES = listOf(MPV_SDR_CURVE_AUTO, MPV_SDR_CURVE_GAMMA22, MPV_SDR_CURVE_BT1886)
         const val KEY_DISPLAY_SWITCH_PAUSE_MS = "display_switch_pause_ms"
         const val DISPLAY_SWITCH_PAUSE_STEP_MS = 500
         const val DISPLAY_SWITCH_PAUSE_MAX_MS = 20_000

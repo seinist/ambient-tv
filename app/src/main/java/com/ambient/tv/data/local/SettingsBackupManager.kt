@@ -17,7 +17,7 @@ import com.ambient.tv.ui.theme.normalizedAccentKey
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class SettingsBackup(
-    val schemaVersion: Int = 65,
+    val schemaVersion: Int = 66,
     val trailersEnabled: Boolean = true,
     val trailerLanguage: String = "auto",
     val tmdbApiKey: String? = null,
@@ -202,6 +202,11 @@ data class SettingsBackup(
     val mpvHdrGpuEnabled: Boolean = false,
     /** SDR→HDR reference white in nits (0 = mpv/renderer default 203). Since schema 65. */
     val sdrToHdrReferenceWhiteNits: Int = 0,
+    /** 100/120 Hz doubling opt-in, GPU render resolution, MPV SDR curve, explicit SVP choice. Since schema 66. */
+    val allowHighRefreshDoubling: Boolean = false,
+    val gpuRenderResolutionKey: String = AppPreferences.GPU_RENDER_AUTO,
+    val mpvSdrCurveKey: String = AppPreferences.MPV_SDR_CURVE_AUTO,
+    val svpExplicitChoice: Boolean = false,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
@@ -476,6 +481,10 @@ class SettingsBackupManager @Inject constructor(
             sleepDailyStopMinute = preferences.sleepDailyStopMinute,
             mpvHdrGpuEnabled = preferences.mpvHdrGpuEnabled,
             sdrToHdrReferenceWhiteNits = preferences.sdrToHdrReferenceWhiteNits,
+            allowHighRefreshDoubling = preferences.allowHighRefreshDoubling,
+            gpuRenderResolutionKey = preferences.gpuRenderResolutionKey,
+            mpvSdrCurveKey = preferences.mpvSdrCurveKey,
+            svpExplicitChoice = preferences.svpExplicitChoice,
             wolRetryCount = preferences.wolRetryCount,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
@@ -830,6 +839,12 @@ class SettingsBackupManager @Inject constructor(
         preferences.mpvHdrGpuEnabled = backup.schemaVersion >= 64 && backup.mpvHdrGpuEnabled
         // SDR→HDR reference white since schema 65; older backups keep the default (auto).
         preferences.sdrToHdrReferenceWhiteNits = if (backup.schemaVersion >= 65) backup.sdrToHdrReferenceWhiteNits else 0
+        // Since schema 66; older backups keep the defaults (no 100/120 Hz, Auto, Auto, no explicit SVP).
+        val schema66 = backup.schemaVersion >= 66
+        preferences.allowHighRefreshDoubling = schema66 && backup.allowHighRefreshDoubling
+        preferences.gpuRenderResolutionKey = if (schema66) backup.gpuRenderResolutionKey else AppPreferences.GPU_RENDER_AUTO
+        preferences.mpvSdrCurveKey = if (schema66) backup.mpvSdrCurveKey else AppPreferences.MPV_SDR_CURVE_AUTO
+        preferences.svpExplicitChoice = schema66 && backup.svpExplicitChoice
         preferences.wolRetryCount = backup.wolRetryCount
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
@@ -869,7 +884,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 65
+        const val CURRENT_SCHEMA_VERSION = 66
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

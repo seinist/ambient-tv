@@ -68,6 +68,11 @@ data class PerformanceProfile(
      */
     val gateExpensiveVideoVisuals: Boolean get() = reducedPlayback
     /**
+     * SDR→HDR video conversion (an FP16/PQ swapchain plus per-frame tone curve) is gated like the
+     * expensive visuals and, on a low-end device, in every playback mode except Maximum.
+     */
+    val gateSdrToHdr: Boolean get() = gateExpensiveVideoVisuals || (lowEndDevice && playbackMode != PerformanceMode.MAXIMUM)
+    /**
      * Motion interpolation follows playback mode only, never the interface mode: Maximum, or
      * Auto on a device that is not low-end. Balanced and Low (and Auto resolving to Sparsam) stay off.
      */

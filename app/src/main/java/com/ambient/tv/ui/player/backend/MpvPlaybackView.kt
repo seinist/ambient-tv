@@ -293,7 +293,7 @@ fun MpvVideoSurface(
         },
         onRelease = { it.release() },
         update = { view ->
-            view.renderAtDisplayResolution = controller.supportsGpuFilters
+            view.renderAtDisplayResolution = controller.gpuRenderAtPanel
             view.presentation = presentation
             view.sourceAspectRatio = sourceAspectRatio
             view.videoSurface.applyUiHdrHeadroom(hdrHeadroom)
@@ -307,7 +307,7 @@ private class MpvSurfaceHost(
     private val controller: MpvPlaybackController,
 ) : VideoSurfaceLayout(context), SurfaceHolder.Callback {
     init {
-        renderAtDisplayResolution = controller.supportsGpuFilters
+        renderAtDisplayResolution = controller.gpuRenderAtPanel
         videoSurface.holder.addCallback(this)
     }
 

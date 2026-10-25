@@ -48,6 +48,8 @@ data class SupportedDisplayMode(
 /** Android window-mode requests implementing Kodi-style resolution/rate matching. */
 object DisplayRefreshRateMatcher {
     private const val MAX_CADENCE_DIFF_HZ = 0.6f
+    /** Highest 2× rate without the explicit high-rate opt-in (30→60 yes, 50→100 / 60→120 no). */
+    private const val MAX_DEFAULT_DOUBLE_HZ = 61f
 
     fun supportedModes(context: Context): List<SupportedDisplayMode> = runCatching {
         val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return emptyList()
@@ -246,13 +248,25 @@ object DisplayRefreshRateMatcher {
         return selectCadenceMode(exactContentModes, contentFrameRate, allowDoubleRate, allowThreeTwoPulldown) ?: fallbackMode
     }
 
-    internal fun selectCadenceMode(modes: List<SupportedDisplayMode>, fps: Float, double: Boolean, threeTwo: Boolean): SupportedDisplayMode? {
+    /**
+     * 2× rates of 100/120 Hz (50/60 fps sources) only when the user asked for them
+     * ([AppPreferences.allowHighRefreshDoubling]). They double GPU presentation and composition
+     * work at 4K and dropped frames on TVs that run 24/50/60 fine. Set per playback.
+     */
+    @Volatile
+    var highRateDoubling: Boolean = false
+
+    internal fun selectCadenceMode(
+        modes: List<SupportedDisplayMode>, fps: Float, double: Boolean, threeTwo: Boolean,
+        highDouble: Boolean = highRateDoubling,
+    ): SupportedDisplayMode? {
         if (!fps.isFinite() || fps <= 0f) return null
-        // Enabled double (24→48, 25→50, 30→60, 50→100, 60→120) and 3:2 (24→60) outrank the video rate.
-        // A native mode would otherwise hide them. Only 2× is tried, so 25 fps stays at 50 Hz when
-        // both 50 and 100 Hz exist.
-        val multiples = (if (double) listOf(2f) else emptyList()) +
-            (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList()) + listOf(1f)
+        // The video's native rate comes first (24→24, 25→25, 50→50): no judder, least GPU work.
+        // Enabled double (24→48, 25→50, 30→60) and 3:2 (24→60) only apply when no native mode
+        // exists. 2× above 60 Hz (50→100, 60→120) needs the explicit opt-in [highDouble].
+        val doubleAllowed = double && (highDouble || fps * 2f <= MAX_DEFAULT_DOUBLE_HZ)
+        val multiples = listOf(1f) + (if (doubleAllowed) listOf(2f) else emptyList()) +
+            (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList())
         for (multiple in multiples) {
             modes.filter { abs(it.refreshRate - fps * multiple) <= MAX_CADENCE_DIFF_HZ }
                 .minWithOrNull(compareBy<SupportedDisplayMode>({ abs(it.refreshRate - fps * multiple) }, { it.modeId }))
@@ -380,6 +394,7 @@ fun rememberDisplayModeRequest(
     val hdrSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val requiredHdrType = if (hdrSnapshot.active) playbackHdrType() else null
     val interpolation = BackgroundPlaybackSession.activeHandle()?.usesFrameInterpolation == true
+    activity?.let { DisplayRefreshRateMatcher.highRateDoubling = videoImagePreferences(it).allowHighRefreshDoubling }
     val rendererScaling = BackgroundPlaybackSession.activeHandle()?.usesRendererScaling == true
     // Panel locks are keyed by PlaybackMetadata.route so they stay aligned with the OSD selector.
     val sessionFixedModeKey = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)

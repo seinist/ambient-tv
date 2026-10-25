@@ -529,7 +529,7 @@
     <string name="settings_display_modes_allowed_hint">Limits automatic switching to selected output modes. Empty allows all supported modes.</string>
     <string name="settings_display_modes_all">All supported modes</string>
     <string name="settings_display_mode_system">System default</string>
-    <string name="settings_display_allow_double">Allow double refresh rates (24→48, 30→60, 50→100, 60→120 Hz)</string>
+    <string name="settings_display_allow_double">Double refresh rate when the native one is missing (24→48, 25→50, 30→60 Hz)</string>
     <string name="settings_display_allow_3_2">Allow 3:2 pulldown (24→60 Hz)</string>
     <string name="settings_display_switch_pause">Pause on display switch</string>
     <string name="settings_display_switch_pause_hint">Waits for the picture</string>
@@ -1802,4 +1802,18 @@
     <string name="audio_output_release_pending">Waiting for the previous audio output to close.</string>
     <string name="audio_output_release_failed">The previous audio output could not be closed.</string>
     <string name="audio_output_config_failed">The audio output could not be configured.</string>
+    <string name="settings_display_allow_high_double">Allow 100/120 Hz (50→100, 60→120 Hz)</string>
+    <string name="settings_display_allow_high_double_hint">Only without a native 50/60 Hz mode. Doubles GPU and composition work at 4K.</string>
+    <string name="renderer_render_resolution">Render resolution</string>
+    <string name="renderer_render_resolution_auto">Auto</string>
+    <string name="renderer_render_resolution_panel">Panel</string>
+    <string name="renderer_render_resolution_ui">UI</string>
+    <string name="renderer_render_resolution_hint">Panel renders the GPU picture at the TV\'s physical mode (e.g. 4K), UI at the interface size; the TV scales the rest. Auto uses Panel only for chosen image filters on a capable device. Applies from the next start.</string>
+    <string name="renderer_sdr_curve">SDR curve</string>
+    <string name="renderer_sdr_curve_auto">Auto</string>
+    <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
+    <string name="renderer_sdr_curve_bt1886">BT.1886</string>
+    <string name="renderer_sdr_curve_hint">MPV GPU output: curve and matching surface tag for SDR. Auto uses Gamma 2.2 on HDR-capable TVs (no washed-out midtones when the TV composes SDR into HDR), otherwise BT.1886 like Direct.</string>
+    <string name="player_nerd_render_resolution">Render resolution</string>
+    <string name="player_nerd_sdr_curve">SDR curve / surface</string>
 </resources>

@@ -226,7 +226,8 @@ internal fun rememberUiHdrState(
                             delay(500)
                             continue
                         }
-                        val conversionEnabled = sdrToHdrEnabled && modeKey == "auto"
+                        val conversionEnabled = sdrToHdrEnabled && modeKey == "auto" &&
+                            !com.ambient.tv.ui.player.performanceProfile(activity).gateSdrToHdr
                         val conversionDisplay = if (conversionEnabled && hasVideo && !state.suspended)
                             uiHdrEligibility(activity.window, display, mode, HdrStandard.HDR10) else null
                         val request = if (conversionDisplay != null && display != null) sdrToHdrRequest(
