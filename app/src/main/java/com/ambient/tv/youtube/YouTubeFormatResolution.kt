@@ -2,8 +2,12 @@ package com.ambient.tv.youtube
 
 import kotlinx.coroutines.CancellationException
 
-internal fun youtubeHasPlayableDashTracks(formats: List<YouTubeAdaptiveFormat>): Boolean {
-    val usable = formats.filter { !it.url.isNullOrBlank() && !it.isOtf }
+/**
+ * [allowOtf]: SmartTube's generated MPD addresses OTF streams by segment (Media3 plays them like
+ * SmartTube does); the bare stream URL VLC/MPV would open only carries the first segment.
+ */
+internal fun youtubeHasPlayableDashTracks(formats: List<YouTubeAdaptiveFormat>, allowOtf: Boolean = false): Boolean {
+    val usable = formats.filter { !it.url.isNullOrBlank() && (allowOtf || !it.isOtf) }
     return usable.any { it.mimeType?.startsWith("video/") == true } &&
         usable.any { it.mimeType?.startsWith("audio/") == true }
 }
@@ -15,6 +19,7 @@ internal fun youtubePlayableFormatScore(
     hasHls: Boolean,
     formats: List<YouTubeAdaptiveFormat>,
     preferLiveHls: Boolean = true,
+    allowOtf: Boolean = false,
     hasProgressive: () -> Boolean,
 ): Int {
     if (unplayable) return 0
@@ -22,7 +27,7 @@ internal fun youtubePlayableFormatScore(
     // live fallback instead of calling an HLS-only response playable for that renderer.
     if (live && !preferLiveHls) return if (hasProgressive()) 4 else 0
     if (live && hasHls) return 4
-    if (youtubeHasPlayableDashTracks(formats)) return 4
+    if (youtubeHasPlayableDashTracks(formats, allowOtf)) return 4
     if (hasProgressive()) return 2
     return if (hasHls) 1 else 0
 }

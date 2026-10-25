@@ -33,6 +33,8 @@ class YouTubeFormatResolutionTest {
             listOf(video.copy(url = " "), audio)) { false })
         assertEquals(0, youtubePlayableFormatScore(false, false, false,
             listOf(video.copy(isOtf = true), audio)) { false })
+        assertEquals(4, youtubePlayableFormatScore(false, false, false,
+            listOf(video.copy(isOtf = true), audio), allowOtf = true) { false })
         assertEquals(2, youtubePlayableFormatScore(false, false, false, listOf(audio)) { true })
         assertEquals(1, youtubePlayableFormatScore(false, false, true, emptyList()) { false })
         assertEquals(0, youtubePlayableFormatScore(true, true, true, listOf(video, audio)) { true })

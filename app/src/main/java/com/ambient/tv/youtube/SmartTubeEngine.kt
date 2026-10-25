@@ -361,8 +361,8 @@ class SmartTubeEngine @Inject constructor(
         val hls = info.callString("getHlsManifestUrl")?.takeIf(String::isNotBlank)
         val formats = if (isLive) emptyList() else adaptiveFormats(info)
         val generatedDash = lazy {
-            // Do not prefer an audio-only/OTF VOD manifest over a playable muxed fallback.
-            if (isLive || youtubeHasPlayableDashTracks(formats)) generatedDashManifest(info, videoId) else null
+            // Do not prefer an audio-only VOD manifest (or, outside Media3, an OTF one) over a playable muxed fallback.
+            if (isLive || youtubeHasPlayableDashTracks(formats, allowOtf = media3Backend())) generatedDashManifest(info, videoId) else null
         }
         val direct = muxedProgressiveUrl(info)
         val vodPolicy = youtubeVodStreamPolicy(isEmulator = isProbablyEmulator())
@@ -492,8 +492,13 @@ class SmartTubeEngine @Inject constructor(
         hasHls = !info.callString("getHlsManifestUrl").isNullOrBlank(),
         formats = if (info.callBool("containsDashFormats") == true) adaptiveFormats(info) else emptyList(),
         preferLiveHls = appPreferences.playbackBackendKey != "vlc",
+        // Media3 plays OTF through the MPD: no client switch (and its delay) just for OTF-only responses.
+        allowOtf = media3Backend(),
         hasProgressive = { muxedProgressiveUrl(info) != null },
     )
+
+    private fun media3Backend() = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(appPreferences.playbackBackendKey) ==
+        com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
 
     private fun loadFormatInfo(media: Any, videoId: String, allowInnertube: Boolean = true): Any {
         val primary = media.invokeDetailed("getFormatInfo", videoId)

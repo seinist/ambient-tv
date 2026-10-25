@@ -1701,13 +1701,18 @@ private fun ytTrackChoices(context: android.content.Context, tracks: Tracks, typ
     tracks.groups.forEachIndexed { gi, group ->
         if (group.type != type) return@forEachIndexed
         repeat(group.length) { ti ->
-            if (!group.isTrackSupported(ti)) return@repeat
             val f = group.getTrackFormat(ti)
+            // Like SmartTube, list SDR video streams a decoder reports as too large or too fast too
+            // (many TV chips under-report 4K/60 fps); they are marked and only played on request.
+            val handled = group.isTrackSupported(ti)
+            val exceeds = type == C.TRACK_TYPE_VIDEO && group.getTrackSupport(ti) == C.FORMAT_EXCEEDS_CAPABILITIES &&
+                com.ambient.tv.youtube.youtubeHdrKind(f.codecs) == null
+            if (!handled && !exceeds) return@repeat
             val label = when (type) {
                 C.TRACK_TYPE_VIDEO -> {
                     val family = com.ambient.tv.youtube.youtubeVideoFamily(f.codecs ?: f.sampleMimeType)
                     if (f.height > 0 && family != null) com.ambient.tv.youtube.YouTubeVideoOption("", f.height, f.frameRate.toInt(), family,
-                        com.ambient.tv.youtube.youtubeHdrKind(f.codecs)).label
+                        com.ambient.tv.youtube.youtubeHdrKind(f.codecs), hardware = handled).label
                     else listOfNotNull(if (f.height > 0) "${f.height}p" else null, f.codecs ?: f.sampleMimeType?.substringAfter('/'), if (f.frameRate > 0) "${f.frameRate.toInt()}fps" else null).joinToString(" · ").ifBlank { context.getString(R.string.vlc_video_track_fallback, ti + 1) }
                 }
                 C.TRACK_TYPE_AUDIO -> listOfNotNull(f.language, f.label, f.codecs ?: f.sampleMimeType?.substringAfter('/'), if (f.channelCount > 0) "${f.channelCount}ch" else null).joinToString(" · ").let { youtubeTrackLabel(it, displayLocale) }.ifBlank { context.getString(R.string.vlc_audio_track_fallback, ti + 1) }
