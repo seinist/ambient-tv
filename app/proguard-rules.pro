@@ -49,6 +49,9 @@
 # Additional SmartTube reflection targets. These are looked up by fully-qualified class and method
 # name from SmartTubeEngine; R8 cannot safely infer the reachability from those strings/proxies.
 -keep class com.liskovsoft.sharedutils.locale.LocaleUpdater { *; }
+# SmartTube account export splits the stored account list with Helpers.splitArray; without this R8
+# drops the method and every settings snapshot fails, so the phone could never send settings.
+-keep class com.liskovsoft.sharedutils.helpers.Helpers { *; }
 -keep class com.liskovsoft.googlecommon.common.locale.LocaleManager { *; }
 -keep class io.reactivex.** { *; }
 

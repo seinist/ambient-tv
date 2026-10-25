@@ -97,6 +97,7 @@
     <string name="sync_reason_connecting">Waiting for the connection…</string>
     <string name="sync_reason_connect_failed">Connection failed – choose the device again to retry</string>
     <string name="sync_reason_no_accounts">Select at least one account</string>
+    <string name="sync_reason_no_accounts_found">No accounts or network sources are set up on this phone. To send settings, choose “Settings only”.</string>
     <string name="companion_backup_failed_not_connected">Transfer failed: %1$s is not connected. Choose the device again.</string>
     <string name="companion_backup_failed_busy">Transfer not started: another transfer or confirmation is still open.</string>
     <string name="companion_backup_failed_unsaved">Transfer not started: save the open settings first.</string>

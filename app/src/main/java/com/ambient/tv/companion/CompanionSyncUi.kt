@@ -60,6 +60,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
         scope.launch {
             loading = true
             val result = withContext(Dispatchers.IO) { runCatching { vm.settings.snapshot() } }
+            result.exceptionOrNull()?.let { android.util.Log.w("CompanionSync", "Settings snapshot failed", it) }
             source = result.getOrNull(); failed = result.isFailure; loading = false; fromFile = false
         }
     }
@@ -84,7 +85,9 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     fun selectable(peer: CompanionPeer) = reach[peer.fingerprint]?.let { if (handheld) it.allowsActions() else it == PeerReachability.CONNECTED } == true
     val targetId = pickedId?.takeIf { id -> state.paired.any { it.fingerprint == id } } ?: initialSyncTarget(state, ::selectable)
     val choices = remember(source) { source?.let(::syncAccountChoices).orEmpty() }
-    val accountIds = selected?.toSet() ?: defaultSyncAccounts(choices)
+    // A selection from an earlier snapshot whose IDs no longer exist falls back to the default.
+    val accountIds = selected?.toSet()?.intersect(choices.map { it.key }.toSet())?.takeIf { selected!!.isEmpty() || it.isNotEmpty() }
+        ?: defaultSyncAccounts(choices)
     val target = state.paired.firstOrNull { it.fingerprint == targetId }
     val reverse = state.syncPeers[targetId]
     val connected = target != null && (reverse != null || state.target?.fingerprint == targetId && state.online)
@@ -127,6 +130,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
         dirty -> R.string.sync_save_first
         loading -> R.string.sync_loading
         failed -> R.string.companion_backup_failed
+        mode == "accounts" && choices.isEmpty() -> R.string.sync_reason_no_accounts_found
         mode == "accounts" && accountIds.isEmpty() -> R.string.sync_reason_no_accounts
         else -> null
     }

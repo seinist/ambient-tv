@@ -97,6 +97,7 @@
     <string name="sync_reason_connecting">Warte auf Verbindung …</string>
     <string name="sync_reason_connect_failed">Verbindung fehlgeschlagen – Gerät erneut wählen</string>
     <string name="sync_reason_no_accounts">Mindestens ein Konto wählen</string>
+    <string name="sync_reason_no_accounts_found">Auf diesem Handy sind keine Accounts oder Netzwerkquellen eingerichtet. Für Einstellungen „Nur Einstellungen“ wählen.</string>
     <string name="companion_backup_failed_not_connected">Übertragung fehlgeschlagen: %1$s ist nicht verbunden. Gerät erneut wählen.</string>
     <string name="companion_backup_failed_busy">Übertragung nicht gestartet: Eine andere Übertragung oder Bestätigung ist noch offen.</string>
     <string name="companion_backup_failed_unsaved">Übertragung nicht gestartet: Zuerst die offenen Einstellungen speichern.</string>
