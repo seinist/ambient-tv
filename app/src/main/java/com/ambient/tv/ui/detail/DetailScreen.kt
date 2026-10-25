@@ -182,6 +182,7 @@ fun DetailScreen(
                     onRetryChildren = viewModel::load,
                     nextEpisode = state.nextEpisode,
                     similar = state.similar,
+                    similarLoading = state.similarLoading,
                     actionInProgress = state.actionInProgress,
                     autoSelectDisplayVersion = state.autoSelectDisplayVersion,
                     onPlay = onPlay,
@@ -282,6 +283,7 @@ private fun DetailContent(
     onRetryChildren: () -> Unit,
     nextEpisode: MediaItem?,
     similar: List<MediaItem>,
+    similarLoading: Boolean,
     actionInProgress: Boolean,
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
@@ -403,7 +405,7 @@ private fun DetailContent(
         val sectionKeys = buildList {
             add("hero")
             if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) add("children")
-            if (similar.isNotEmpty()) add("similar")
+            if (similar.isNotEmpty() || similarLoading) add("similar")
             if (item.collections.isNotEmpty()) add("collections")
             if (item.cast.isNotEmpty()) add("cast")
         }
@@ -598,10 +600,10 @@ private fun DetailContent(
                 }
             }
 
-            if (similar.isNotEmpty()) {
+            if (similar.isNotEmpty() || similarLoading) {
                 item(key = "similar") {
                     Section("similar") {
-                        SimilarSection(similar, onOpenChild, restoreFocusKey) { rememberFocused(it) }
+                        SimilarSection(similar, similarLoading, onOpenChild, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
@@ -1092,7 +1094,9 @@ private fun CollectionItemsSection(
                 }
             }
         }
-        if (loading || failed || children.isEmpty()) {
+        if (children.isEmpty() && loading) {
+            DetailSkeletonTiles(MediaTileStyle.POSTER)
+        } else if (failed || children.isEmpty()) {
             Column(
                 modifier = Modifier.padding(horizontal = screenGutter()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1203,7 +1207,9 @@ private fun ChildrenSection(
                 }
             }
         }
-        if (children.isEmpty()) {
+        if (children.isEmpty() && loading) {
+            DetailSkeletonTiles(if (seasons) MediaTileStyle.POSTER else MediaTileStyle.EPISODE)
+        } else if (children.isEmpty()) {
             Column(
                 modifier = Modifier.padding(horizontal = screenGutter()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1232,9 +1238,22 @@ private fun ChildrenSection(
 }
 
 
+/** Tile-sized placeholders, so a row keeps its final height while its content loads. */
+@Composable
+private fun DetailSkeletonTiles(style: MediaTileStyle) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = screenGutter()),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        userScrollEnabled = false,
+    ) {
+        items(8) { com.ambient.tv.ui.common.SkeletonTile(style = style, showDescription = style != MediaTileStyle.EPISODE) }
+    }
+}
+
 @Composable
 private fun SimilarSection(
     items: List<MediaItem>,
+    loading: Boolean,
     onOpenChild: (MediaItem) -> Unit,
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
@@ -1245,6 +1264,10 @@ private fun SimilarSection(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
         )
+        if (items.isEmpty() && loading) {
+            DetailSkeletonTiles(MediaTileStyle.POSTER)
+            return@Column
+        }
         LazyRow(
             state = rememberDetailRowState(items.map { "similar:${it.ratingKey}" }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),

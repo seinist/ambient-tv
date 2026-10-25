@@ -36,6 +36,7 @@ sealed interface DetailUiState {
         val childrenLoadFailed: Boolean = false,
         val nextEpisode: MediaItem? = null,
         val similar: List<MediaItem> = emptyList(),
+        val similarLoading: Boolean = false,
         val actionInProgress: Boolean = false,
         val actionMessage: String? = null,
         val autoSelectDisplayVersion: Boolean = true,
@@ -143,6 +144,7 @@ class DetailViewModel @Inject constructor(
                 _uiState.value = DetailUiState.Loaded(
                     item = item, children = mediaRepository.cachedChildren(if (item.type == "episode") item.parentRatingKey ?: ratingKey else ratingKey).orEmpty(),
                     similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
+                    childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
                     autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
                     offline = sourceOffline(),
                 )
@@ -165,6 +167,9 @@ class DetailViewModel @Inject constructor(
                         childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
                         nextEpisode = previous?.nextEpisode,
                         similar = previous?.similar.orEmpty(),
+                        // Reserve the recommendations row while it loads so the cast below it
+                        // doesn't jump down when the row pops in.
+                        similarLoading = item.type in RELATED_TYPES && previous?.similar.isNullOrEmpty(),
                         actionInProgress = previous?.actionInProgress ?: false,
                         actionMessage = previous?.actionMessage,
                         autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
@@ -245,8 +250,9 @@ class DetailViewModel @Inject constructor(
 
         if (item.type in RELATED_TYPES) {
             launch {
-                mediaRepository.getSimilar(ratingKey).onSuccess { similar ->
-                    updateLoaded { it.copy(similar = similar.take(20)) }
+                val result = mediaRepository.getSimilar(ratingKey)
+                updateLoaded { current ->
+                    current.copy(similar = result.getOrNull()?.take(20) ?: current.similar, similarLoading = false)
                 }
             }
         }
