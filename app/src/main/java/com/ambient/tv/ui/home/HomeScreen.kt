@@ -822,8 +822,13 @@ internal fun HomeHero(
                         com.ambient.tv.ui.common.MediaSystem.fromKey(heroItem.providerLabel)?.let {
                             com.ambient.tv.ui.common.SystemBadge(it, showName = false)
                         }
+                        // Episodes lead with the series name; the episode title moves to the context line.
+                        val heroSeriesTitle = heroItem.mediaItem
+                            ?.takeIf { it.type == "episode" }
+                            ?.grandparentTitle
+                            ?.takeIf { it.isNotBlank() }
                         Text(
-                            text = heroItem.title,
+                            text = heroSeriesTitle ?: heroItem.title,
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.headlineMedium.copy(shadow = metadataShadow),
                             maxLines = 1,
@@ -834,7 +839,10 @@ internal fun HomeHero(
                     val contextLabel = buildList {
                         addAll(heroItem.metadata)
                         if (mediaItem?.type == "episode") {
-                            mediaItem.grandparentTitle?.takeIf { it.isNotBlank() }?.let(::add)
+                            // Without a series name the title row already shows the episode title.
+                            if (!mediaItem.grandparentTitle.isNullOrBlank()) {
+                                heroItem.title.takeIf { it.isNotBlank() }?.let(::add)
+                            }
                             mediaItem.parentIndex?.let { add("S$it") }
                             mediaItem.index?.let { add(stringResource(R.string.media_episode_short_label, it)) }
                         } else if (mediaItem?.type == "season") {
