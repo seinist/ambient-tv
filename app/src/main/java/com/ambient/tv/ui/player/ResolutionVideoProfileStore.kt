@@ -10,6 +10,7 @@ import com.ambient.tv.data.local.VlcImageOptions
 import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.data.local.ResolutionVideoProfile
 import com.ambient.tv.data.local.VideoResolutionClass
+import com.ambient.tv.data.local.liveRendererOrDefault
 import com.ambient.tv.data.local.resolutionProfileFor
 import com.ambient.tv.ui.player.backend.MpvPlaybackController
 import com.ambient.tv.ui.player.backend.VlcPlaybackController
@@ -47,9 +48,13 @@ internal object ResolutionVideoProfileStore {
             mpvDecoder = prefs.mpvVideoDecoderKey, vlcOutput = prefs.vlcVideoOutputModeKey)
     }
 
-    fun rendererFor(context: Context, width: Int?, default: String, isLive: Boolean = false): String =
-        resolutionProfileFor(videoImagePreferences(context).resolutionVideoProfiles, VideoResolutionClass.key(width), isLive)
-            ?.rendererOrDefault(default) ?: default
+    fun rendererFor(context: Context, width: Int?, default: String, isLive: Boolean = false): String {
+        val profiles = videoImagePreferences(context).resolutionVideoProfiles
+        val key = VideoResolutionClass.key(width) ?: return default
+        // A live profile's "auto" inherits the Tvheadend default ([liveRendererOrDefault]).
+        if (isLive) profiles["live:$key"]?.let { return it.liveRendererOrDefault(default) }
+        return profiles[key]?.rendererOrDefault(default) ?: default
+    }
 
     fun forget(context: Context, key: String) {
         val prefs = videoImagePreferences(context)
@@ -116,7 +121,7 @@ internal fun MpvImageOptions.withGlobalSvp(preferences: AppPreferences): MpvImag
 internal fun VlcImageOptions.withGlobalSvp(preferences: AppPreferences): VlcImageOptions =
     if (preferences.svpAvailable) this else copy(svpMode = "off")
 
-/** Reset only the global scope; width and individual-video profiles stay intact. */
+/** Reset only the global scope; width, individual-video profiles and the Tvheadend defaults stay intact. */
 internal fun resetGlobalPlaybackProfile(preferences: AppPreferences) {
     preferences.resolutionVideoProfiles = preferences.resolutionVideoProfiles - ResolutionVideoProfileStore.GLOBAL_KEY
     preferences.playbackBackendKey = "auto"
@@ -131,7 +136,6 @@ internal fun resetGlobalPlaybackProfile(preferences: AppPreferences) {
     preferences.mpvScalingFilterKey = MpvImageOptions().scaler
     preferences.mpvDebandEnabled = MpvImageOptions().deband != "off"
     preferences.vlcScalingFilterKey = VlcImageOptions().scaler
-    preferences.tvheadendDeinterlaceModeKey = "off"
-    preferences.tvheadendDeinterlaceFilterKey = "auto"
-    preferences.tvheadendMpvDeinterlaceFilterKey = "auto"
+    // Tvheadend defaults (player and deinterlacing, Settings › Tvheadend) are not part of the global profile:
+    // the global save does not write them, so the reset leaves them alone too.
 }

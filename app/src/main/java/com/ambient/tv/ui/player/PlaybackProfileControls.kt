@@ -93,6 +93,8 @@ internal fun PlaybackProfileControls(
     val metadata = LocalPlaybackMetadata.current
     val handle = BackgroundPlaybackSession.activeHandle()
     var revision by remember { mutableIntStateOf(0) }
+    // Store changes made while the panel is open (polling capture, other panels) refresh the layers.
+    val storeRevision by TitleVideoSettingsStore.revision.collectAsState()
     ImageHint(stringResource(R.string.playback_profile_includes))
     if (handle == null || playbackProfileRenderer(handle) == null) {
         ImageHint(stringResource(R.string.playback_profile_unavailable))
@@ -115,7 +117,9 @@ internal fun PlaybackProfileControls(
     }
     fun apply(titleProfile: TitleVideoSettings?, resolutionProfile: ResolutionVideoProfile?) {
         val preferences = videoImagePreferences(context)
-        val renderer = titleProfile?.rendererKey ?: resolutionProfile?.rendererKey
+        // Live profiles: "auto" inherits the Tvheadend default like an unset player (liveRendererOrDefault).
+        val renderer = titleProfile?.rendererKey
+            ?: resolutionProfile?.rendererKey?.takeUnless { metadata?.isLive == true && it == "auto" }
             ?: if (metadata?.isLive == true) preferences.tvheadendPlaybackBackendKey else preferences.playbackBackendKey
         // A renderer change restarts through the existing backend selection mechanism.
         if (com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(renderer).key != playbackProfileRenderer(handle)) {
@@ -153,16 +157,16 @@ internal fun PlaybackProfileControls(
     }
     if (titleKey != null) ImageHint(stringResource(if (metadata?.isLive == true) R.string.channel_profile_auto else R.string.playback_profile_auto_title))
     else ImageHint(stringResource(R.string.playback_profile_title_unavailable))
-    val scopes = remember(titleKey, revision) { TitleVideoSettingsStore.layerValues(context, metadata) }
+    val scopes = remember(titleKey, revision, storeRevision) { TitleVideoSettingsStore.layerValues(context, metadata) }
     if (titleKey != null && metadata?.isLive != true) {
-        val target = remember(titleKey, revision) { TitleVideoSettingsStore.rememberLayer(context, metadata) }
+        val target = remember(titleKey, revision, storeRevision) { TitleVideoSettingsStore.rememberLayer(context, metadata) }
         val episode = metadata?.videoScope?.episode == true
         val movie = metadata?.videoScope != null && !episode
         val labels = scopes.map { (layer, _) -> layer.key to videoScopeLabel(layer, episode, movie) }
         if (scopes.size > 1) {
             ImageChoice(R.string.playback_scope_remember_for, target?.key ?: titleKey, labels) { key ->
                 scopes.firstOrNull { it.first.key == key }?.let {
-                    TitleVideoSettingsStore.setRememberLayer(metadata, it.first)
+                    TitleVideoSettingsStore.setRememberLayer(context, metadata, it.first)
                     revision++
                 }
             }
@@ -208,7 +212,8 @@ internal fun PlaybackProfileControls(
     if (titleKey != null) TvActionButton(text = stringResource(if (metadata?.isLive == true) R.string.channel_profile_reset else R.string.playback_profile_reset_title), onClick = {
         perform {
             TitleVideoSettingsStore.forget(context, metadata)
-            apply(null, ResolutionVideoProfileStore.load(context, metadata))
+            // Season/series/collection profiles still apply: the title must not re-save the width profile over them.
+            apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
         }
     }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
 

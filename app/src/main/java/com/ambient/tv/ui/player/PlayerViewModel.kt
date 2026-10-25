@@ -179,7 +179,11 @@ class PlayerViewModel @Inject constructor(
     private var parentMediaIds: List<String> = emptyList()
     private var videoScope: PlaybackVideoScope? = null
 
-    /** Server, season, series and collections of [item]; episodes take the collections of their series. */
+    /**
+     * Server, season, series and collections of [item]; episodes take the collections of their series.
+     * Playback waits at most [VIDEO_SCOPE_COLLECTIONS_WAIT_MS] for collections; a slower lookup finishes in the
+     * background (cached for the next play), and a timeout or failure is never cached as "no collections".
+     */
     private suspend fun loadVideoScope(item: MediaItem): PlaybackVideoScope? {
         val source = titleSource()
         if (source !in setOf("plex", "jellyfin", "emby")) return null
@@ -188,32 +192,21 @@ class PlayerViewModel @Inject constructor(
             "jellyfin" -> appPreferences.activeJellyfinServerId
             else -> appPreferences.activeEmbyServerId
         }
-        val episode = item.type.equals("episode", ignoreCase = true)
+        val owner = videoScopeOwner(item)
         val movie = item.type.equals("movie", ignoreCase = true)
-        if (!episode && !movie) return null
-        // Jellyfin/Emby fetch memberships separately (one request per collection, then cached by the repository).
-        suspend fun withCollections(media: MediaItem): List<com.ambient.tv.domain.model.MediaTag> =
+        // Jellyfin/Emby fetch memberships separately (once per server, then cached by the repository).
+        suspend fun withCollections(media: MediaItem): List<com.ambient.tv.domain.model.MediaTag>? =
             media.collections.ifEmpty {
                 if (source == "plex") emptyList()
-                else mediaRepository.enrichCollections(listOf(media)).getOrNull()?.firstOrNull()?.collections.orEmpty()
+                else mediaRepository.enrichCollections(listOf(media)).getOrNull()?.firstOrNull()?.collections ?: return null
             }
-        val owner = if (movie) item.ratingKey else item.grandparentRatingKey?.takeIf { it.isNotBlank() }
         val collections = owner?.let { id ->
-            val cacheKey = "$source:$serverId:$id"
-            // A slow or failed lookup must not hold up playback; it is not retried for this title.
-            SeriesCollectionsCache.get(cacheKey) ?: (kotlinx.coroutines.withTimeoutOrNull(2_000) {
+            if (movie && item.collections.isNotEmpty()) return@let item.collections
+            SeriesCollectionsCache.get("$source:${serverId.orEmpty().length}:${serverId.orEmpty()}:$id", VIDEO_SCOPE_COLLECTIONS_WAIT_MS) {
                 if (movie) withCollections(item) else mediaRepository.getMetadata(id).getOrNull()?.let { withCollections(it) }
-            } ?: emptyList()).also { SeriesCollectionsCache.put(cacheKey, it) }
+            }
         }.orEmpty()
-        return PlaybackVideoScope(
-            serverId = serverId,
-            seasonId = item.parentRatingKey.takeIf { episode },
-            seasonLabel = item.parentTitle.takeIf { episode },
-            seriesId = item.grandparentRatingKey.takeIf { episode },
-            seriesLabel = item.grandparentTitle.takeIf { episode },
-            collections = collections.filter { !it.id.isNullOrBlank() },
-            episode = episode,
-        )
+        return playbackVideoScope(item, serverId, collections)
     }
     suspend fun loadTimeline(sourceKey: String, sourceIndex: Int) =
         mediaRepository.getPlaybackTimeline(sourceKey, sourceIndex).getOrDefault(com.ambient.tv.domain.model.PlaybackTimeline())
@@ -1219,11 +1212,4 @@ class PlayerViewModel @Inject constructor(
         super.onCleared()
     }
 
-}
-
-/** Collections of a movie or series (episodes use their series), looked up once per process. */
-internal object SeriesCollectionsCache {
-    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<com.ambient.tv.domain.model.MediaTag>>()
-    fun get(key: String): List<com.ambient.tv.domain.model.MediaTag>? = cache[key]
-    fun put(key: String, value: List<com.ambient.tv.domain.model.MediaTag>) { if (cache.size < 500) cache[key] = value }
 }

@@ -173,14 +173,21 @@ object AudioPassthroughPolicy {
         AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_8BIT,
         AudioFormat.ENCODING_PCM_24BIT_PACKED, AudioFormat.ENCODING_PCM_32BIT,
     )
+    /** Format and channel masks of one sink profile, read once on API 31+ ([audioProfilesOf]). */
+    private class SinkProfile(val format: Int, val channelMasks: List<Int>, val channelIndexMasks: List<Int>)
+
+    @androidx.annotation.RequiresApi(31)
+    private fun audioProfilesOf(device: AudioDeviceInfo): List<SinkProfile> =
+        device.audioProfiles.map { SinkProfile(it.format, it.channelMasks.toList(), it.channelIndexMasks.toList()) }
+
     private fun candidateDevices(manager: AudioManager, attrs: AudioAttributes): List<AudioRouteDevice> {
         val known = android.os.Build.VERSION.SDK_INT >= 33
         val devices = if (known) manager.getAudioDevicesForAttributes(attrs) else manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
         return selectAudioRouteDevices(devices.map { device ->
             // Sinks often list multichannel PCM only as float/24-bit profiles, or leave
             // audioProfiles empty while channelCounts/channelMasks still carry 6 or 8.
-            val profiles = if (android.os.Build.VERSION.SDK_INT >= 31) device.audioProfiles else null
-            val profiled = profiledPcmChannels(profiles.orEmpty().map { it.format to (it.channelMasks.toList() + it.channelIndexMasks.toList()) })
+            val profiles = if (android.os.Build.VERSION.SDK_INT >= 31) audioProfilesOf(device) else null
+            val profiled = profiledPcmChannels(profiles.orEmpty().map { it.format to (it.channelMasks + it.channelIndexMasks) })
             val legacy = (device.channelCounts.toList() + device.channelMasks.map(Integer::bitCount) +
                 device.channelIndexMasks.map(Integer::bitCount)).maxOrNull()
             val pcmProfiles = profiles.orEmpty().filter { it.format in PCM_ENCODINGS }.joinToString(",") { profile ->

@@ -117,6 +117,25 @@ fun youtubeDisplayLimit(
  */
 fun youtubeMedia3MaxVideoSize(maxQualityHeight: Int): Int = (maxQualityHeight * 16 / 9) * 105 / 100
 
+/**
+ * The square box alone lets square (and near-square) streams of a higher step through: 1440×1440
+ * is a 1440p stream but fits the 2016 box of 1080p. Of the [sizes] (width to height) of the selected
+ * video group, the indices whose quality step ([youtubeQualityHeight]) is within [maxQualityHeight]
+ * (+5 %). Null when nothing needs excluding, or when nothing would remain (the box stays the limit).
+ */
+fun youtubeMedia3AllowedVideoTracks(sizes: List<Pair<Int, Int>>, maxQualityHeight: Int): List<Int>? {
+    if (maxQualityHeight <= 0) return null
+    val limit = maxQualityHeight * 105 / 100
+    val allowed = sizes.indices.filter { youtubeQualityHeight(sizes[it].first, sizes[it].second) <= limit }
+    return allowed.takeIf { it.isNotEmpty() && it.size < sizes.size }
+}
+
+/** [YouTubeAdaptiveFormat.qualityHeight] for a bare size. */
+fun youtubeQualityHeight(width: Int, height: Int): Int {
+    if (width <= 0 || height <= 0) return height
+    return maxOf(minOf(width, height), (maxOf(width, height) * 9 + 8) / 16)
+}
+
 /** A selectable audio language: the original or a dubbed/described track; [kind] is YouTube's `acont`. */
 data class YouTubeAudioOption(val key: String, val language: String?, val original: Boolean, val kind: String? = null)
 
@@ -176,12 +195,7 @@ fun youtubeHdrKind(mime: String?): String? {
  * side, or the long side's 16:9 equivalent for wider pictures. A vertical 1080×1920 Short is
  * "1080p", a 2560×1072 cinemascope film "1440p".
  */
-internal fun YouTubeAdaptiveFormat.qualityHeight(): Int {
-    if (width <= 0 || height <= 0) return height
-    val short = minOf(width, height)
-    val long = maxOf(width, height)
-    return maxOf(short, (long * 9 + 8) / 16)
-}
+internal fun YouTubeAdaptiveFormat.qualityHeight(): Int = youtubeQualityHeight(width, height)
 
 private fun YouTubeAdaptiveFormat.isVideo() = mimeType?.startsWith("video/", ignoreCase = true) == true
 private fun YouTubeAdaptiveFormat.isAudio() = mimeType?.startsWith("audio/", ignoreCase = true) == true

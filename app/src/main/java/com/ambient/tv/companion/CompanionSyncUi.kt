@@ -52,6 +52,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
     var sent by rememberSaveable { mutableStateOf(false) }
     var loading by remember { mutableStateOf(navSnapshot == null) }
     var failed by remember { mutableStateOf(false) }
+    var profilesOmitted by remember { mutableStateOf(false) }
     var fromFile by remember { mutableStateOf(false) }
     var advanced by rememberSaveable { mutableStateOf(false) }
     var changeTarget by rememberSaveable { mutableStateOf(false) }
@@ -139,6 +140,7 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
         maxWidth = 680.dp, maxHeightFraction = .94f, onDismiss = onDismiss, footer = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 reason?.let { Text(stringResource(it)) }
+                if (sent && profilesOmitted) Text(stringResource(R.string.sync_profiles_omitted))
                 if (dirty && manager.saveSettingsBeforeTransfer != null) {
                     TvActionButton(stringResource(R.string.sync_save_reload), {
                         failed = manager.saveSettingsBeforeTransfer?.invoke { reload() } != true
@@ -150,9 +152,12 @@ internal fun CompanionSyncDialog(vm: CompanionViewModel, navSnapshot: SettingsBa
                         val snapshot = source ?: return@TvActionButton
                         val result = runCatching {
                             val chosen = if (includeAccounts) selectSyncAccounts(snapshot, accountIds) else snapshot
-                            CompanionBackupPolicy.prepare(chosen, sendCredentials, mode)
+                            CompanionBackupPolicy.prepareWithInfo(chosen, sendCredentials, mode)
                         }
-                        result.onSuccess { sent = manager.sendSettings(it, mode, sendCredentials, target); failed = !sent }
+                        result.onSuccess {
+                            profilesOmitted = it.profilesOmitted
+                            sent = manager.sendSettings(it.json, mode, sendCredentials, target); failed = !sent
+                        }
                             .onFailure { failed = true }
                     }, enabled = canSend, selected = canSend, modifier = Modifier.weight(1f))
                 }
