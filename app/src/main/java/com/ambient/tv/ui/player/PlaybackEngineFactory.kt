@@ -160,8 +160,9 @@ object PlaybackEngineFactory {
                     .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
                         videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray()).build()
                 // Apply the first selection before prepare() can start loading DASH tracks.
+                // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
                 if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setMaxVideoSize(Int.MAX_VALUE, maxVideoHeight).build()
+                    .youtubeMaxVideoSize(com.ambient.tv.youtube.youtubeMedia3MaxVideoSize(maxVideoHeight)).build()
                 // Upper bound with SmartTube's 10 fps tolerance (a 30 fps target still allows 25/30).
                 if (maxVideoFrameRate > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setMaxVideoFrameRate(maxVideoFrameRate + 9).build()
@@ -224,3 +225,5 @@ internal fun media3TargetBufferBytes(heapMb: Int): Int {
     if (heapMb <= 0) return default
     return (heapMb.toLong() * 1024 * 1024 / 4).coerceIn(32L * 1024 * 1024, default.toLong()).toInt()
 }
+
+private fun androidx.media3.common.TrackSelectionParameters.Builder.youtubeMaxVideoSize(box: Int) = setMaxVideoSize(box, box)

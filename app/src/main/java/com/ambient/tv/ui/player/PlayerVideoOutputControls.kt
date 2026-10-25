@@ -130,6 +130,7 @@ internal fun mpvHdrPassthroughStatusRes(marked: Boolean, displaySwitched: Boolea
     !marked -> R.string.player_output_hdr_gpu_checking
     displaySwitched == true -> R.string.player_output_hdr_gpu_display_switched
     displaySwitched == false -> R.string.player_output_hdr_gpu_display_waiting
+    // Android does not report the TV's mode here: the TV's own HDR indicator tells.
     else -> R.string.player_output_hdr_gpu_active
 }
 

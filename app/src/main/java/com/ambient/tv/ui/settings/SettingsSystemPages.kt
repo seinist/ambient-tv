@@ -741,7 +741,10 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         }
                         SubmenuSettingsRow(MediaSystem.YOUTUBE, uiState, viewModel::onSidebarSettingsShortcutChanged)
                         Text(stringResource(R.string.settings_youtube_video_preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val devicePreset = remember { com.ambient.tv.youtube.youtubeDefaultVideoPreset(com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck()) }
+                        val youtubeContext = androidx.compose.ui.platform.LocalContext.current
+                        val devicePreset = remember {
+                            com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(youtubeContext, com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO, 0)
+                        }
                         SettingsSelect(options = buildList {
                             add(SettingsSelectOption(
                                 text = stringResource(R.string.settings_youtube_video_preset_auto, devicePreset.label),
@@ -760,12 +763,13 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         SettingsSelect(options = buildList {
                             listOf(0, 720, 1080, 1440, 2160).forEach { height ->
                                 add(SettingsSelectOption(
-                                    text = if (height == 0) stringResource(R.string.player_automatic) else "${height}p",
+                                    text = if (height == 0) stringResource(R.string.settings_youtube_max_resolution_display) else "${height}p",
                                     selected = uiState.youtubeMaxVideoHeight == height,
                                     onClick = { viewModel.onYoutubeMaxVideoHeightChanged(height) },
                                 ))
                             }
                         })
+                        Text(stringResource(R.string.settings_youtube_max_resolution_display_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(stringResource(R.string.settings_youtube_quality_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

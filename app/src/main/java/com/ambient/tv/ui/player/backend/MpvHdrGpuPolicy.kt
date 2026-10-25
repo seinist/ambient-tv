@@ -79,13 +79,13 @@ internal fun mpvHdrGpuDecision(
     effectsActive: Boolean = true,
     tvDevice: Boolean = true,
 ): MpvHdrGpuDecision {
-    if (!enabled || !tvDevice || source == null) return MpvHdrGpuDecision.NOT_APPLICABLE
+    if (!enabled || source == null || !mpvHdrGpuOptionAvailable(tvDevice, capabilities, display)) return MpvHdrGpuDecision.NOT_APPLICABLE
     val vulkanReason = when {
-        !capabilities.mpvVulkanOutput -> MpvHdrGpuReason.VULKAN_UNAVAILABLE
         capabilities.device.hdr10SurfaceSupported == false -> MpvHdrGpuReason.SWAPCHAIN_NO_HDR10
         else -> null
     }
-    // No Vulkan HDR10: an EGL BT2020_PQ window surface with a 10-bit config carries PQ instead,
+    // Vulkan without an HDR10 swapchain: an EGL BT2020_PQ window surface with a 10-bit config
+    // carries PQ instead (internal fallback only; devices without Vulkan never get the option),
     // only with the patched libmpv that sets it and a readable surface dataspace to confirm it.
     val openGl = vulkanReason != null && capabilities.mpvEglHdrRoute
     return when {
@@ -104,6 +104,13 @@ internal fun mpvHdrGpuDecision(
         else -> MpvHdrGpuDecision.GPU
     }
 }
+
+/**
+ * "HDR über GPU" exists (setting shown and effective) only on a TV whose probe finished with the
+ * MPV Vulkan output and whose display reports HDR10. Pure OpenGL devices do not get it.
+ */
+internal fun mpvHdrGpuOptionAvailable(tvDevice: Boolean, capabilities: VideoAccelerationCapabilities, display: Set<HdrStandard>): Boolean =
+    tvDevice && capabilities.checked && capabilities.mpvVulkanOutput && HdrStandard.HDR10 in display
 
 /**
  * "Direkt" counts as a choice for this playback only when made in the player ([sessionOutput]) or
