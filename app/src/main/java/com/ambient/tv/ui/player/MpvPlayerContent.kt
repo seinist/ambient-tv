@@ -435,10 +435,15 @@ internal fun MpvPlayerContent(
                     formatNerdSeconds(snapshot.cacheDurationSeconds)?.let { add(stringResource(R.string.player_nerd_buffer_health) to it) }
                     formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let { add(stringResource(R.string.player_nerd_cache_speed) to it) }
                     if (controller.supportsGpuFilters) {
-                        formatMpvUpscalerForStats(controller.imageOptions.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling, sparsam = snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
-                        formatMpvScalerStat(snapshot.activeChromaScaler, controller.imageOptions.chromaScaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
-                        formatMpvScalerStat(snapshot.activeDownscaler, controller.imageOptions.downscaler, snapshot.sparsam)?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
-                        formatMpvDebandStat(controller.imageOptions.deband, snapshot.sparsam, stringResource(R.string.player_nerd_enabled))?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
+                        // Sparsam replaces only fields still at their default; chosen values run as chosen.
+                        val stored = controller.imageOptions.normalized()
+                        val defaults = com.ambient.tv.data.local.MpvImageOptions()
+                        fun replaced(value: String, default: String) =
+                            com.ambient.tv.ui.player.backend.mpvSparsamReplacesDefault(value, default, snapshot.sparsam)
+                        formatMpvUpscalerForStats(stored.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling, sparsam = replaced(stored.scaler, defaults.scaler))?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
+                        formatMpvScalerStat(snapshot.activeChromaScaler, stored.chromaScaler, replaced(stored.chromaScaler, defaults.chromaScaler))?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
+                        formatMpvScalerStat(snapshot.activeDownscaler, stored.downscaler, replaced(stored.downscaler, defaults.downscaler))?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }
+                        formatMpvDebandStat(stored.deband, replaced(stored.deband, defaults.deband), stringResource(R.string.player_nerd_enabled))?.let { add(stringResource(R.string.player_nerd_deband_configured) to it) }
                         if (snapshot.sparsam) add(stringResource(R.string.player_nerd_sparsam) to stringResource(R.string.settings_performance_low))
                     }
                     if (controller.deinterlaceModeKey != "off") {

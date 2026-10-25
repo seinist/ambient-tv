@@ -41,8 +41,10 @@ internal data class PlayerPanelVideoVisibility(
  * so their rows are hidden instead of offering settings without effect. Deinterlace stays
  * (only 2x variants are downgraded); MPV/VLC picture controls stay; Media3's effect chain is off.
  */
-internal fun PlayerPanelVideoVisibility.sparsam(reduced: Boolean, media3: Boolean = false): PlayerPanelVideoVisibility =
-    if (!reduced) this else copy(
+internal fun PlayerPanelVideoVisibility.sparsam(reduced: Boolean, media3: Boolean = false, mpv: Boolean = false): PlayerPanelVideoVisibility =
+    // MPV applies chosen filters under Sparsam too (only untouched defaults run cheap, see
+    // effectiveMpvImageOptions); only motion interpolation stays off there.
+    if (!reduced) this else if (mpv) copy(svp = false) else copy(
         shaderUpscalers = false, denoise = false, shaders = false, svp = false, deband = false, hdrShaders = false, hdrPassthrough = false,
         media3Processing = media3Processing && !media3,
         picture = picture && !media3, pictureGamma = pictureGamma && !media3,

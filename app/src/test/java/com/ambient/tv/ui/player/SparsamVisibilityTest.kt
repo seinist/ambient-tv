@@ -6,12 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SparsamVisibilityTest {
-    @Test fun `sparsam hides MPV filter rows but keeps deinterlace, scaler and picture`() {
-        val full = playerPanelVideoVisibility("mpv", gpuFilters = true, shadersApply = true, media3ScalerApplies = false)
-        val low = full.sparsam(true)
-        assertFalse(low.deband || low.denoise || low.shaders || low.shaderUpscalers || low.svp)
-        assertTrue(low.deinterlace && low.upscaler && low.picture)
-        assertEquals(full, full.sparsam(false))
+    @Test fun `sparsam keeps MPV filter rows choosable and only hides motion interpolation`() {
+        val full = playerPanelVideoVisibility("mpv", gpuFilters = true, shadersApply = true, media3ScalerApplies = false,
+            globalSvp = true)
+        val low = full.sparsam(true, mpv = true)
+        assertEquals(full.copy(svp = false), low)
+        assertTrue(low.deband && low.denoise && low.shaders && low.shaderUpscalers && low.upscaler)
+        assertEquals(full, full.sparsam(false, mpv = true))
     }
 
     @Test fun `sparsam hides VLC CPU filters and the Media3 effect chain`() {

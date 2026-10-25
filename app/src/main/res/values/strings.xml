@@ -1059,6 +1059,7 @@
     <string name="image_media3_hint">Scaling and picture adjustment for SDR video. Enabling restarts video decoding.</string>
     <string name="image_media3_device_bypass">Media3 image effects are bypassed on this Shield to prevent black video and freezes. Saved settings are retained.</string>
     <string name="image_filters_sparsam_hint">Filters and motion interpolation are off in Low performance mode.</string>
+    <string name="image_mpv_sparsam_defaults_hint">Low mode: untouched defaults run cheap (bilinear scaling, no deband, no sigmoid). Whatever you choose is applied; motion interpolation stays off.</string>
     <string name="image_media3_waiting">Effects are waiting for an unprotected SDR video track.</string>
     <string name="image_media3_active">SDR effects enabled</string>
     <string name="image_vlc_fallback">Software filters could not be enabled. Playback continues without them.</string>
@@ -1777,12 +1778,12 @@
     <string name="settings_sleep_minutes_plus">+ 5 min</string>
     <string name="settings_sleep_presets">Quick picks</string>
     <string name="settings_performance_auto_low_end">Auto (Low – device detected as low-end)</string>
-    <string name="image_sparsam_auto_low_end">Low performance is active (Auto: this device was detected as low-end). Your saved picture settings are kept but not applied: bilinear scaling, no shaders, no deband, no motion interpolation.</string>
-    <string name="image_sparsam_override">Low performance mode is active. Your saved picture settings are kept but not applied: bilinear scaling, no shaders, no deband, no motion interpolation.</string>
+    <string name="image_sparsam_auto_low_end">Low performance is active (Auto: this device was detected as low-end). Untouched defaults run cheap (bilinear scaling, no deband); whatever you choose is applied. Motion interpolation stays off.</string>
+    <string name="image_sparsam_override">Low performance mode is active. Untouched defaults run cheap (bilinear scaling, no deband); whatever you choose is applied. Motion interpolation stays off.</string>
     <string name="image_svp_needs_maximum">Motion interpolation (SVP) needs Maximum playback performance, or Auto on a device that is not low-end.</string>
     <string name="image_sparsam_switch_balanced">Set playback performance to Balanced</string>
     <string name="image_sparsam_switch_maximum">Set playback performance to Maximum</string>
-    <string name="image_sparsam_locked_row">%1$s: off in Low mode (saved: %2$s)</string>
+    <string name="image_sparsam_locked_row">%1$s: the default %2$s is not applied in Low mode. Pick another value to use it.</string>
     <string name="image_upscaler_not_needed_native">Upscaler: not needed – the video is shown 1:1 at this output resolution.</string>
     <string name="image_upscaler_not_needed_downscale">Upscaler: not needed – the video is larger than the output and is downscaled.</string>
     <string name="player_output_sparsam_gpu">Low performance mode is active: this GPU output still renders bilinear, without shaders, deband or SVP. Set playback performance to Balanced or Maximum to use them.</string>

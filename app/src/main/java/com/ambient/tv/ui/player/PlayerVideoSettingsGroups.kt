@@ -114,7 +114,8 @@ internal fun PlayerVideoSettingsGroups(
             media3SdrAllowed = media3Processing?.gpuEffectsSupported == true && media3Processing.sdrEffectsAllowed,
             scale = media3Processing?.scaleRelation ?: scale)
         else -> null
-    }?.sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, media3 = handle is Media3PlaybackHandle)
+    }?.sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, media3 = handle is Media3PlaybackHandle,
+        mpv = handle is MpvPlaybackController)
     // The SVP row stays visible with its reason (player, performance mode, HDR ...) while the global switch is on.
     val svpEntryVisible = handle != null && videoImagePreferences(context).svpAvailable
     val hdrFacts = com.ambient.tv.ui.settings.rememberHdrControlFacts(videoImagePreferences(context).uiHdrModeKey)
@@ -271,7 +272,7 @@ private fun MpvVideoGroups(
         hdrOutput = controller.uiHdrStandard() != null,
         hdrGpuPassthrough = controller.hdrPassthroughRunning,
         globalSvp = videoImagePreferences(LocalContext.current).svpAvailable,
-    ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
+    ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, mpv = true)
     val reduced = LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
@@ -284,17 +285,12 @@ private fun MpvVideoGroups(
         if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions
     }
     if (section == "scaling" && controller.supportsGpuFilters) {
-        if (reduced) {
-            // Sparsam renders bilinear without shaders, antiring or sigmoid: offering these
-            // choices changed nothing (stats kept showing bilinear). Show them locked instead.
-            SparsamOverrideNotice()
-            MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
-                MpvSparsamField.DOWNSCALER, MpvSparsamField.ANTIRING, MpvSparsamField.SIGMOID))
-        } else {
-            MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
-                hdr = visibility.hdrShaders)
-            upscalerNotNeededHint(scale)?.let { ImageHint(stringResource(it)) }
-        }
+        // Sparsam: untouched defaults run cheap (bilinear, no sigmoid); a chosen value applies.
+        if (reduced) MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
+            MpvSparsamField.DOWNSCALER, MpvSparsamField.SIGMOID))
+        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
+            hdr = visibility.hdrShaders)
+        upscalerNotNeededHint(scale)?.let { ImageHint(stringResource(it)) }
     }
     val showFilters = visibility.deinterlace || visibility.deband || visibility.shaders
     if (section == "filters" && showFilters) {
@@ -315,11 +311,7 @@ private fun MpvVideoGroups(
                 },
             )
         }
-        if (reduced) {
-            SparsamOverrideNotice()
-            MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND, MpvSparsamField.SHARPEN, MpvSparsamField.DENOISE,
-                MpvSparsamField.DEBLOCK, MpvSparsamField.FILM_GRAIN, MpvSparsamField.SUPER_RES))
-        }
+        if (reduced) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
         if (visibility.deband) {
             ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) { change(options.copy(deband = it)) }
         }

@@ -172,11 +172,11 @@ internal fun MpvImageOptionsEditor(
     val sparsam = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     val passthrough = hdrTransfer && hdrOutput
     if (hdrTransfer) ImageHint(stringResource(if (passthrough) R.string.image_mpv_hdr_passthrough else R.string.image_mpv_hdr_limited))
-    if (sparsam) ImageHint(stringResource(R.string.image_filters_sparsam_hint))
-    // Sparsam: filters and motion interpolation do not run, so their groups are hidden.
+    if (sparsam) ImageHint(stringResource(R.string.image_mpv_sparsam_defaults_hint))
+    // Sparsam: chosen filters apply, untouched defaults run cheap; only motion interpolation is off.
     val groups = listOfNotNull(
         "scaling" to stringResource(R.string.image_scaling),
-        ("filters" to stringResource(R.string.image_filters)).takeUnless { sparsam },
+        "filters" to stringResource(R.string.image_filters),
         "color" to stringResource(R.string.image_color),
         ("motion" to stringResource(R.string.image_motion)).takeUnless { sparsam },
         "output" to stringResource(R.string.image_output),

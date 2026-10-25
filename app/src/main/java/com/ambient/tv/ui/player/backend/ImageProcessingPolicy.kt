@@ -535,27 +535,28 @@ internal fun mpvImageOptionsLogLine(
 }
 
 /**
- * Sparsam / Low (and Auto→low) effective overrides.
- * Saved user prefs stay intact; callers apply these only at the player/render boundary.
- * Brightness/contrast/saturation/gamma and tone-mapping stay available as intentional settings.
+ * Sparsam / Low (and Auto→low) effective MPV options.
+ * Only fields still at their [MpvImageOptions] default are replaced by the cheap variant
+ * (bilinear scaling, no deband, no sigmoid): untouched settings must not cost GPU time on a weak
+ * device, where 1080p→4K Lanczos plus deband drops frames on vo=gpu/gpu-next. A value the user
+ * chose (another scaler, shaders, filters) differs from the default and is applied as chosen.
+ * SVP stays off; brightness/contrast/saturation/gamma and tone-mapping are intentional settings.
  */
 internal fun effectiveMpvImageOptions(options: MpvImageOptions, reducedEffects: Boolean, allowSvp: Boolean = false): MpvImageOptions {
     val o = options.normalized().let { if (allowSvp && !reducedEffects) it else it.copy(svpMode = "off") }
     if (!reducedEffects) return o
+    val d = MpvImageOptions()
     return o.copy(
-        scaler = "bilinear",
-        chromaScaler = "bilinear",
-        downscaler = "bilinear",
-        deband = "off",
-        sharpening = "off",
-        denoise = "off",
-        deblock = "off",
-        filmGrain = "off",
-        superResolution = false,
-        antiring = 0,
-        sigmoid = false,
+        scaler = if (o.scaler == d.scaler) "bilinear" else o.scaler,
+        chromaScaler = if (o.chromaScaler == d.chromaScaler) "bilinear" else o.chromaScaler,
+        downscaler = if (o.downscaler == d.downscaler) "bilinear" else o.downscaler,
+        deband = if (o.deband == d.deband) "off" else o.deband,
+        sigmoid = if (o.sigmoid == d.sigmoid) false else o.sigmoid,
     )
 }
+
+/** Sparsam replaces this saved MPV field because it is still at its default. */
+internal fun mpvSparsamReplacesDefault(stored: String, default: String, reduced: Boolean): Boolean = reduced && stored == default
 
 internal fun effectiveVlcImageOptions(options: VlcImageOptions, reducedEffects: Boolean, allowSvp: Boolean = false): VlcImageOptions {
     val o = options.normalized().let { if (allowSvp && !reducedEffects) it else it.copy(svpMode = "off") }

@@ -25,18 +25,18 @@ class SparsamConsistencyTest {
         assertEquals(emptyList<Any>(), mpvSparsamOverrides(tuned, reduced = false))
     }
 
-    @Test fun `Sparsam lists exactly the replaced saved fields with their saved value`() {
-        val fields = mpvSparsamOverrides(tuned, reduced = true).toMap()
-        assertEquals("ewa_lanczos", fields[MpvSparsamField.UPSCALER])
-        assertEquals("spline36", fields[MpvSparsamField.CHROMA])
-        assertEquals("spline36", fields[MpvSparsamField.DOWNSCALER])
-        assertEquals("strong", fields[MpvSparsamField.DEBAND])
-        assertEquals("light", fields[MpvSparsamField.SHARPEN])
-        assertEquals("50 %", fields[MpvSparsamField.ANTIRING])
+    @Test fun `Sparsam lists only untouched defaults, chosen values are applied`() {
+        // tuned keeps the default sigmoid, so only that field runs cheap.
+        assertEquals(listOf(MpvSparsamField.SIGMOID to "on"), mpvSparsamOverrides(tuned, reduced = true))
+        val fields = mpvSparsamOverrides(MpvImageOptions(), reduced = true).toMap()
+        assertEquals("lanczos", fields[MpvSparsamField.UPSCALER])
+        assertEquals("lanczos", fields[MpvSparsamField.CHROMA])
+        assertEquals("mitchell", fields[MpvSparsamField.DOWNSCALER])
+        assertEquals("medium", fields[MpvSparsamField.DEBAND])
         assertEquals("on", fields[MpvSparsamField.SIGMOID])
-        assertEquals("on", fields[MpvSparsamField.SUPER_RES])
-        assertFalse(MpvSparsamField.DENOISE in fields || MpvSparsamField.DEBLOCK in fields || MpvSparsamField.FILM_GRAIN in fields)
-        // A field already at the Sparsam value is not a lock.
+        assertEquals(setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA, MpvSparsamField.DOWNSCALER,
+            MpvSparsamField.DEBAND, MpvSparsamField.SIGMOID), fields.keys)
+        // A field already at the Sparsam value is not listed.
         val plain = MpvImageOptions(scaler = "bilinear", chromaScaler = "bilinear", downscaler = "bilinear", deband = "off", sigmoid = false)
         assertEquals(emptyList<Any>(), mpvSparsamOverrides(plain, reduced = true))
     }
@@ -68,7 +68,8 @@ class SparsamConsistencyTest {
     }
 
     @Test fun `effective scalers match what mpv receives`() {
-        assertEquals(Triple("bilinear", "bilinear", "bilinear"), mpvEffectiveScalers(effectiveMpvImageOptions(tuned, true)))
+        assertEquals(Triple("bilinear", "bilinear", "bilinear"), mpvEffectiveScalers(effectiveMpvImageOptions(MpvImageOptions(), true)))
+        assertEquals(Triple("ewa_lanczos", "spline36", "spline36"), mpvEffectiveScalers(effectiveMpvImageOptions(tuned, true)))
         assertEquals(Triple("ewa_lanczos", "spline36", "spline36"), mpvEffectiveScalers(effectiveMpvImageOptions(tuned, false)))
         val shaderScaler = VideoImageCatalog.mpvScalers.keys.first { it !in VideoImageCatalog.mpvBuiltins }
         val chromaShader = VideoImageCatalog.chromaShaders.keys.first()
@@ -78,7 +79,7 @@ class SparsamConsistencyTest {
 
     @Test fun `diagnostic log line carries profile, effective scalers, shaders and svp`() {
         val line = mpvImageOptionsLogLine("auto", lowEnd = true, reduced = true, stored = tuned,
-            effective = effectiveMpvImageOptions(tuned, true), shaderKeys = emptyList(), svpAllowed = false,
+            effective = effectiveMpvImageOptions(MpvImageOptions(), true), shaderKeys = emptyList(), svpAllowed = false,
             fittedScale = 2.0, sdr = true, hdr = false, vo = "gpu-next")
         assertTrue(line.startsWith("MPV image profile=auto lowEnd=true reduced=true vo=gpu-next "))
         assertTrue("scale=bilinear cscale=bilinear dscale=bilinear storedScaler=ewa_lanczos" in line)

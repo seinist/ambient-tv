@@ -289,34 +289,42 @@ class ImageProcessingPolicyTest {
         assertTrue(vlcRenderOverloaded(15, 23.976, 6.0))
     }
 
-    @Test fun sparsamForcesCheapMpvEffectiveOptionsWithoutTouchingIntentionalAdjust() {
-        val saved = MpvImageOptions(
-            scaler = "artcnn16", chromaScaler = "krig", downscaler = "ssim_down",
-            deband = "strong", sharpening = "cas", denoise = "medium", deblock = "light",
-            superResolution = true, antiring = 80, sigmoid = true,
-            brightness = 5, contrast = -3, saturation = 2, gamma = 1, toneMapping = "hable",
-        )
-        val effective = effectiveMpvImageOptions(saved, reducedEffects = true)
+    @Test fun sparsamRunsUntouchedMpvDefaultsCheap() {
+        val effective = effectiveMpvImageOptions(MpvImageOptions(brightness = 5, toneMapping = "hable"), reducedEffects = true)
         assertEquals("bilinear", effective.scaler)
         assertEquals("bilinear", effective.chromaScaler)
         assertEquals("bilinear", effective.downscaler)
         assertEquals("off", effective.deband)
-        assertEquals("off", effective.sharpening)
-        assertEquals("off", effective.denoise)
-        assertEquals("off", effective.deblock)
-        assertFalse(effective.superResolution)
-        assertEquals(0, effective.antiring)
         assertFalse(effective.sigmoid)
         assertEquals(5, effective.brightness)
-        assertEquals(-3, effective.contrast)
-        assertEquals(2, effective.saturation)
-        assertEquals(1, effective.gamma)
         assertEquals("hable", effective.toneMapping)
+        assertFalse(mpvNeedsGpuProcessing(effective.copy(brightness = 0, toneMapping = "auto")))
         assertTrue(mpvImageShaderKeys(effective, sdr = true).isEmpty())
         assertTrue(mpvCpuImageFilters(effective, sdr = true).isEmpty())
-        // Leaving Low restores the saved selection.
-        assertEquals(listOf("krig", "artcnn16", "ssim_super", "ssim_down", "cas"),
-            mpvImageShaderKeys(effectiveMpvImageOptions(saved, reducedEffects = false), sdr = true))
+        // Without Sparsam the defaults apply unchanged.
+        assertEquals("lanczos", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = false).scaler)
+    }
+
+    @Test fun sparsamAppliesChosenMpvFilters() {
+        val saved = MpvImageOptions(
+            scaler = "artcnn16", chromaScaler = "krig", downscaler = "ssim_down",
+            deband = "strong", sharpening = "cas", denoise = "medium", deblock = "light",
+            superResolution = true, antiring = 80, sigmoid = false,
+            brightness = 5, contrast = -3, saturation = 2, gamma = 1, toneMapping = "hable", svpMode = "quality",
+        )
+        val effective = effectiveMpvImageOptions(saved, reducedEffects = true, allowSvp = true)
+        assertEquals(saved.copy(svpMode = "off").normalized(), effective)
+        assertEquals(mpvImageShaderKeys(effectiveMpvImageOptions(saved, reducedEffects = false), sdr = true),
+            mpvImageShaderKeys(effective, sdr = true))
+        assertEquals(mpvCpuImageFilters(saved, sdr = true), mpvCpuImageFilters(effective, sdr = true))
+        // Mixed: a chosen scaler applies while the untouched chroma scaler and deband run cheap.
+        val mixed = effectiveMpvImageOptions(MpvImageOptions(scaler = "spline36"), reducedEffects = true)
+        assertEquals("spline36", mixed.scaler)
+        assertEquals("bilinear", mixed.chromaScaler)
+        assertEquals("off", mixed.deband)
+        assertTrue(mpvSparsamReplacesDefault("lanczos", MpvImageOptions().scaler, reduced = true))
+        assertFalse(mpvSparsamReplacesDefault("spline36", MpvImageOptions().scaler, reduced = true))
+        assertFalse(mpvSparsamReplacesDefault("lanczos", MpvImageOptions().scaler, reduced = false))
     }
 
     @Test fun sparsamForcesVlcHardwareDirectWithoutSoftwareFilters() {
@@ -503,8 +511,9 @@ class ImageProcessingPolicyTest {
         assertEquals("cas", defaults.stored.sharpening)
         assertTrue(defaults.persisted)
         assertNull(mpvUpscalerAfterHeavyFailure(MpvImageOptions(scaler = "lanczos"), stored))
-        assertEquals("bilinear", effectiveMpvImageOptions(live, reducedEffects = true).scaler)
-        assertFalse(mpvHeavyScalerLoaded(effectiveMpvImageOptions(live, reducedEffects = true).scaler, listOf("artcnn32")))
+        // A chosen shader upscaler applies under Sparsam too; overload falls back as above.
+        assertEquals("artcnn32", effectiveMpvImageOptions(live, reducedEffects = true).scaler)
+        assertEquals("bilinear", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = true).scaler)
     }
 
     @Test fun hdrTransferHidesOnlyConfirmedHdrNotUnknownOrSdr() {

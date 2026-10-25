@@ -20,7 +20,9 @@ class FilmGrainTest {
 
     @Test fun unknownValuesNormalizeOffAndReducedEffectsDisableGrain() {
         assertEquals("off", MpvImageOptions(filmGrain = "strong").normalized().filmGrain)
-        assertEquals("off", effectiveMpvImageOptions(MpvImageOptions(filmGrain = "medium"), reducedEffects = true).filmGrain)
+        // A chosen grain level applies under Sparsam too; only untouched defaults run cheap.
+        assertEquals("medium", effectiveMpvImageOptions(MpvImageOptions(filmGrain = "medium"), reducedEffects = true).filmGrain)
+        assertEquals("off", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = true).filmGrain)
         assertEquals("medium", effectiveMpvImageOptions(MpvImageOptions(filmGrain = "medium"), reducedEffects = false).filmGrain)
     }
 
