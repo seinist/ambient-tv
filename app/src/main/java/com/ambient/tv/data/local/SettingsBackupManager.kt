@@ -182,6 +182,10 @@ data class SettingsBackup(
     val vlcImageOptions: VlcImageOptions? = null,
     val media3ImageOptions: Media3ImageOptions? = null,
     val resolutionVideoProfiles: Map<String, ResolutionVideoProfile> = emptyMap(),
+    /** Per-title picture/audio choices since schema 69. */
+    val titleVideoSettings: Map<String, TitleVideoSettings> = emptyMap(),
+    /** Season/series/collection choices since schema 69. */
+    val scopedVideoSettings: Map<String, TitleVideoSettings> = emptyMap(),
     val mpvScalingFilterKey: String = "lanczos",
     val mpvDebandEnabled: Boolean = true,
     val vlcScalingFilterKey: String = "bilinear",
@@ -466,6 +470,8 @@ class SettingsBackupManager @Inject constructor(
             vlcImageOptions = preferences.vlcImageOptions,
             media3ImageOptions = preferences.media3ImageOptions,
             resolutionVideoProfiles = preferences.resolutionVideoProfiles,
+            titleVideoSettings = preferences.titleVideoSettings,
+            scopedVideoSettings = preferences.scopedVideoSettings,
             mpvScalingFilterKey = preferences.mpvScalingFilterKey,
             mpvDebandEnabled = preferences.mpvDebandEnabled,
             vlcScalingFilterKey = preferences.vlcScalingFilterKey,
@@ -825,6 +831,11 @@ class SettingsBackupManager @Inject constructor(
         preferences.vlcImageOptions = backup.vlcImageOptions ?: VlcImageOptions(scaler = backup.vlcScalingFilterKey)
         preferences.media3ImageOptions = backup.media3ImageOptions ?: Media3ImageOptions()
         preferences.resolutionVideoProfiles = VideoResolutionClass.migrateProfiles(backup.resolutionVideoProfiles)
+        // Title and scoped profiles since schema 69; older backups keep this device's choices.
+        if (backup.schemaVersion >= 69) {
+            preferences.titleVideoSettings = restorableTitleVideoSettings(backup.titleVideoSettings)
+            preferences.scopedVideoSettings = restorableScopedVideoSettings(backup.scopedVideoSettings)
+        }
         preferences.youtubeAutoplayNextEnabled = backup.youtubeAutoplayNextEnabled
         preferences.youtubeMediaSelectionBehaviorKey = backup.youtubeMediaSelectionBehaviorKey
         preferences.introSkipMode = backup.introSkipMode
@@ -895,7 +906,18 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 68
+        const val CURRENT_SCHEMA_VERSION = 69
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
+
+/** Drops malformed keys and keeps the newest [TitleVideoSettings.MAX_TITLES] titles. */
+internal fun restorableTitleVideoSettings(all: Map<String, TitleVideoSettings>): Map<String, TitleVideoSettings> =
+    all.filter { (key, value) -> key.isNotBlank() && ':' in key && !TitleVideoSettings.isScopedKey(key) && !value.isEmpty }
+        .entries.sortedByDescending { it.value.savedAt }.take(TitleVideoSettings.MAX_TITLES).associate { it.key to it.value }
+
+/** Only season/series/collection keys; title-only fields are never restored into a scope. */
+internal fun restorableScopedVideoSettings(all: Map<String, TitleVideoSettings>): Map<String, TitleVideoSettings> =
+    all.filter { (key, value) -> TitleVideoSettings.isScopedKey(key) && !value.isEmpty }
+        .mapValues { (_, value) -> value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null) }
+        .entries.sortedByDescending { it.value.savedAt }.take(TitleVideoSettings.MAX_SCOPES).associate { it.key to it.value }

@@ -154,44 +154,104 @@ object AudioPassthroughPolicy {
         return AudioRouteCapabilities(passthrough = passthrough, pcmChannels = routedPcmChannels(devices),
             profile = routedAudioProfile(devices))
             .also { recentRoute = started to it }
+            .also { logRoute(it, devices) }
+    }
+
+    @Volatile private var lastRouteLog: String? = null
+
+    /** One diagnostic line per distinct route; repeated probes of the same route stay silent. */
+    private fun logRoute(route: AudioRouteCapabilities, devices: List<AudioRouteDevice>) {
+        val line = audioRouteLogLine(route, devices)
+        if (line == lastRouteLog) return
+        lastRouteLog = line
+        com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO, AUDIO_ROUTE_LOG_TAG, line,
+            deduplicate = false)
     }
 
     private const val ROUTE_CACHE_MS = 2_000L
-    private val PCM_ENCODINGS = setOf(
+    internal val PCM_ENCODINGS = setOf(
         AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_8BIT,
         AudioFormat.ENCODING_PCM_24BIT_PACKED, AudioFormat.ENCODING_PCM_32BIT,
     )
+    /** Format and channel masks of one sink profile, read once on API 31+ ([audioProfilesOf]). */
+    private class SinkProfile(val format: Int, val channelMasks: List<Int>, val channelIndexMasks: List<Int>)
+
+    @androidx.annotation.RequiresApi(31)
+    private fun audioProfilesOf(device: AudioDeviceInfo): List<SinkProfile> =
+        device.audioProfiles.map { SinkProfile(it.format, it.channelMasks.toList(), it.channelIndexMasks.toList()) }
+
     private fun candidateDevices(manager: AudioManager, attrs: AudioAttributes): List<AudioRouteDevice> {
         val known = android.os.Build.VERSION.SDK_INT >= 33
         val devices = if (known) manager.getAudioDevicesForAttributes(attrs) else manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
         return selectAudioRouteDevices(devices.map { device ->
             // Sinks often list multichannel PCM only as float/24-bit profiles, or leave
             // audioProfiles empty while channelCounts/channelMasks still carry 6 or 8.
-            val profiles = if (android.os.Build.VERSION.SDK_INT >= 31) device.audioProfiles else null
-            val profiled = profiles?.filter { it.format in PCM_ENCODINGS }
-                ?.flatMap { it.channelMasks.toList() + it.channelIndexMasks.toList() }?.maxOfOrNull(Integer::bitCount)
+            val profiles = if (android.os.Build.VERSION.SDK_INT >= 31) audioProfilesOf(device) else null
+            val profiled = profiledPcmChannels(profiles.orEmpty().map { it.format to (it.channelMasks + it.channelIndexMasks) })
             val legacy = (device.channelCounts.toList() + device.channelMasks.map(Integer::bitCount) +
                 device.channelIndexMasks.map(Integer::bitCount)).maxOrNull()
+            val pcmProfiles = profiles.orEmpty().filter { it.format in PCM_ENCODINGS }.joinToString(",") { profile ->
+                audioEncodingName(profile.format) + "[" +
+                    (profile.channelMasks.map(::maskText) + profile.channelIndexMasks.map { "idx:" + maskText(it) }).joinToString("/") + "]"
+            }
+            val detail = listOf(
+                "profiles=" + (profiles?.let { if (it.isEmpty()) "empty" else "${it.size}" } ?: "n/a"),
+                "pcmProfiles=" + pcmProfiles.ifEmpty { "none" },
+                "legacyCounts=" + device.channelCounts.joinToString("/").ifEmpty { "-" },
+                "legacyMasks=" + device.channelMasks.joinToString("/", transform = ::maskText).ifEmpty { "-" },
+                "legacyIndexMasks=" + device.channelIndexMasks.joinToString("/", transform = ::maskText).ifEmpty { "-" },
+            ).joinToString(" ")
             AudioRouteDevice(device.type, device.encodings.toSet(),
-                routePcmChannels(profilesReported = !profiles.isNullOrEmpty(), profiled = profiled, legacy = legacy),
-                device.productName?.toString())
+                routePcmChannels(profiled = profiled, legacy = legacy),
+                device.productName?.toString(), detail)
         }, known)
+    }
+
+    private fun maskText(mask: Int): String = "0x" + Integer.toHexString(mask) + "(" + Integer.bitCount(mask) + ")"
+
+    private fun audioEncodingName(format: Int): String = when (format) {
+        AudioFormat.ENCODING_PCM_16BIT -> "PCM_16"
+        AudioFormat.ENCODING_PCM_FLOAT -> "PCM_FLOAT"
+        AudioFormat.ENCODING_PCM_8BIT -> "PCM_8"
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM_24"
+        AudioFormat.ENCODING_PCM_32BIT -> "PCM_32"
+        else -> "enc$format"
     }
 
 }
 
 /**
- * PCM channels of one output. API 31+ audioProfiles are authoritative when the device reports
- * any: the legacy channelCounts/channelMasks union over every encoding (a 7.1 mask may belong to
- * a compressed format only) and would announce multichannel PCM the sink cannot take. The legacy
- * fields count only before API 31 or when the device leaves audioProfiles empty.
+ * PCM channels of one output. API 31+ PCM audioProfiles that carry channel masks are
+ * authoritative: the legacy channelCounts/channelMasks union covers every encoding (a 7.1 mask
+ * may belong to a compressed format only). Without such a PCM profile (API < 31, empty
+ * audioProfiles, only compressed profiles, or PCM profiles without masks) the legacy fields are
+ * the only evidence and count; with neither the route is stereo.
  */
-internal fun routePcmChannels(profilesReported: Boolean, profiled: Int?, legacy: Int?): Int =
-    (if (profilesReported) profiled else legacy)?.takeIf { it > 0 } ?: 2
+internal fun routePcmChannels(profiled: Int?, legacy: Int?): Int =
+    profiled?.takeIf { it > 0 } ?: legacy?.takeIf { it > 0 } ?: 2
+
+/** Widest channel mask among PCM profiles (format to channel/index masks); null without any. */
+internal fun profiledPcmChannels(profiles: List<Pair<Int, List<Int>>>): Int? =
+    profiles.filter { it.first in AudioPassthroughPolicy.PCM_ENCODINGS }.flatMap { it.second }
+        .maxOfOrNull(Integer::bitCount)?.takeIf { it > 0 }
+
+internal const val AUDIO_ROUTE_LOG_TAG = "audio-route"
+
+/** Diagnostic text for one probe: the chosen route followed by every kept device. */
+internal fun audioRouteLogLine(route: AudioRouteCapabilities, devices: List<AudioRouteDevice>): String =
+    "Audio route pcmChannels=${route.pcmChannels} profile=${route.profile} " +
+        "passthrough=${route.passthrough.sorted().joinToString(",").ifEmpty { "none" }} devices=${devices.size}" +
+        devices.joinToString("") { device ->
+            " | type=${device.type} name=${device.name ?: "?"} pcmChannels=${device.pcmChannels} ${device.detail}".trimEnd()
+        }
 
 /** On API 29–32 connected digital sinks are only hints. A personal output must not inherit
  * HDMI capabilities, and ambiguous/mirrored outputs use their common capabilities. */
-internal data class AudioRouteDevice(val type: Int, val encodings: Set<Int>, val pcmChannels: Int, val name: String? = null)
+internal data class AudioRouteDevice(
+    val type: Int, val encodings: Set<Int>, val pcmChannels: Int, val name: String? = null,
+    /** Diagnostics only: the profile and legacy fields behind [pcmChannels]. */
+    val detail: String = "",
+)
 
 internal fun digitalAudioDevice(type: Int): Boolean = type in setOf(
     AudioDeviceInfo.TYPE_HDMI, AudioDeviceInfo.TYPE_HDMI_ARC, AudioDeviceInfo.TYPE_HDMI_EARC,

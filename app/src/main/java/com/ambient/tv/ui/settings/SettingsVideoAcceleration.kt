@@ -39,7 +39,7 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
-        if (backend in setOf("mpv", "vlc")) GpuOutputPreferenceSettings(mpv = backend == "mpv")
+        if (backend in setOf("mpv", "vlc")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
                 com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
             Text(
@@ -121,7 +121,8 @@ internal fun RendererVideoSettings(
             // TV feature only ([mpvHdrGpuTvDevice]); phones keep the direct surface for HDR.
             val context = LocalContext.current
             val tvDevice = remember(context) { mpvHdrGpuTvDevice(context) }
-            if (changeHdrGpu != null && tvDevice) {
+            val hdrDisplay = remember(context) { com.ambient.tv.ui.player.HdrSupport.displayStandards(context) }
+            if (changeHdrGpu != null && com.ambient.tv.ui.player.backend.mpvHdrGpuOptionAvailable(tvDevice, caps, hdrDisplay)) {
                 com.ambient.tv.ui.common.TvSettingRow(
                     title = stringResource(R.string.settings_mpv_hdr_gpu),
                     body = stringResource(R.string.settings_mpv_hdr_gpu_hint),
@@ -129,7 +130,7 @@ internal fun RendererVideoSettings(
                     onCheckedChange = changeHdrGpu,
                 )
                 // Device-level reason; per-title reasons (Dolby Vision, output, failures) show in the player.
-                if (hdrGpu) mpvHdrGpuDeviceReason(caps, com.ambient.tv.ui.player.HdrSupport.displayStandards(context))
+                if (hdrGpu) mpvHdrGpuDeviceReason(caps, hdrDisplay)
                     ?.let { ImageHint(stringResource(com.ambient.tv.ui.player.mpvHdrGpuReasonRes(it))) }
                 // The factory output "Direkt" does not block HDR über GPU; say so where both meet.
                 if (hdrGpu && output == "direct") ImageHint(stringResource(R.string.settings_mpv_hdr_gpu_direct_hint))
@@ -191,25 +192,18 @@ private fun TestResultLine(label: Int, result: String, failed: Boolean = false) 
 
 /** 100/120 Hz doubling is a separate opt-in ([DisplayRefreshRateMatcher.highRateDoubling]). */
 @Composable
-internal fun HighRefreshDoublingRow() {
-    val context = LocalContext.current
-    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
-    var enabled by remember { mutableStateOf(prefs.allowHighRefreshDoubling) }
+internal fun HighRefreshDoublingRow(state: SettingsUiState, model: SettingsViewModel) {
     com.ambient.tv.ui.common.TvSettingRow(
         title = stringResource(R.string.settings_display_allow_high_double),
         body = stringResource(R.string.settings_display_allow_high_double_hint),
-        checked = enabled,
-        onCheckedChange = { enabled = it; prefs.allowHighRefreshDoubling = it },
+        checked = state.allowHighRefreshDoubling,
+        onCheckedChange = model::onAllowHighRefreshDoublingChanged,
     )
 }
 
-/** Device-wide GPU output choices: render resolution (mpv, VLC) and SDR curve (mpv). */
+/** Device-wide GPU output choices: render resolution (mpv, VLC) and SDR curve (mpv), saved with Settings. */
 @Composable
-internal fun GpuOutputPreferenceSettings(mpv: Boolean) {
-    val context = LocalContext.current
-    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
-    var resolution by remember { mutableStateOf(prefs.gpuRenderResolutionKey) }
-    var curve by remember { mutableStateOf(prefs.mpvSdrCurveKey) }
+internal fun GpuOutputPreferenceSettings(mpv: Boolean, state: SettingsUiState, model: SettingsViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(stringResource(R.string.renderer_render_resolution),
             style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
@@ -218,36 +212,36 @@ internal fun GpuOutputPreferenceSettings(mpv: Boolean) {
             com.ambient.tv.data.local.AppPreferences.GPU_RENDER_PANEL to R.string.renderer_render_resolution_panel,
             com.ambient.tv.data.local.AppPreferences.GPU_RENDER_UI to R.string.renderer_render_resolution_ui,
         ).map { (key, label) ->
-            SettingsSelectOption(text = stringResource(label), selected = key == resolution,
-                onClick = { resolution = key; prefs.gpuRenderResolutionKey = key })
+            SettingsSelectOption(text = stringResource(label), selected = key == state.gpuRenderResolutionKey,
+                onClick = { model.onGpuRenderResolutionChanged(key) })
         })
         ImageHint(stringResource(R.string.renderer_render_resolution_hint))
         if (mpv) {
             Text(stringResource(R.string.renderer_sdr_curve),
                 style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
             SettingsSelect(options = sdrCurveChoices().map { (key, label) ->
-                SettingsSelectOption(text = label, selected = key == curve,
-                    onClick = { curve = key; prefs.mpvSdrCurveKey = key })
+                SettingsSelectOption(text = label, selected = key == state.mpvSdrCurveKey,
+                    onClick = { model.onMpvSdrCurveChanged(key) })
             })
             ImageHint(stringResource(R.string.renderer_sdr_curve_hint))
-            ZeroCopyLockRow()
+            // Below Android 14 there is no HDR/SDR ratio: Auto cannot see the TV's HDR mode and stays BT.1886.
+            if (android.os.Build.VERSION.SDK_INT < 34) ImageHint(stringResource(R.string.renderer_sdr_curve_auto_legacy))
+            ZeroCopyLockRow(model)
         }
     }
 }
 
 /** A recorded zero-copy failure (this app version only) can be cleared to try zero-copy again. */
 @Composable
-private fun ZeroCopyLockRow() {
-    val context = LocalContext.current
-    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
-    var locked by remember { mutableStateOf(prefs.mpvZeroCopyFailed) }
+private fun ZeroCopyLockRow(model: SettingsViewModel) {
+    var locked by remember { mutableStateOf(model.mpvZeroCopyLocked()) }
     var reset by remember { mutableStateOf(false) }
     if (!locked && !reset) return
     ImageHint(stringResource(if (locked) R.string.settings_mpv_zero_copy_locked else R.string.settings_mpv_zero_copy_reset_done))
     // Stays visible after the reset so D-pad focus does not jump away.
     TvActionButton(stringResource(R.string.settings_mpv_zero_copy_reset), onClick = {
         if (locked) {
-            prefs.mpvZeroCopyFailed = false
+            model.resetMpvZeroCopyLock()
             locked = false
             reset = true
         }

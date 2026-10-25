@@ -30,9 +30,12 @@ internal fun LiveTvProfileDialog(
     val drafts = remember { mutableMapOf<String, MutableState<ResolutionVideoProfile>>() }
     // The value each resolution opened with: only real edits create or change a Live TV profile.
     val opened = remember { mutableMapOf<String, ResolutionVideoProfile>() }
-    var draft by remember(resolution) { drafts.getOrPut(resolution) { mutableStateOf(saved ?: profiles[resolution] ?: ResolutionVideoProfile(
-        rendererKey = if (global != null) initial.playbackBackend else initial.liveBackend,
-        mpv = initial.mpv, vlc = initial.vlc, media3 = initial.media3, audio = initial.audio,
+    // A template from the general width profile keeps its options but not its player: "auto" inherits the Tvheadend default.
+    var draft by remember(resolution) { drafts.getOrPut(resolution) { mutableStateOf(saved ?: profiles[resolution]?.let(::liveProfileTemplate) ?: ResolutionVideoProfile(
+        // "auto" inherits the Tvheadend default; only an explicit choice overrides it.
+        rendererKey = "auto",
+        // No picture filters here (set in the player): a new live profile keeps inheriting them.
+        audio = initial.audio,
         mpvOutput = initial.mpvOutput, mpvDecoder = initial.mpvDecoder, vlcOutput = initial.vlcOutput,
         mpvDeinterlaceMode = global?.mpvDeinterlaceMode ?: initial.liveDeinterlaceMode,
         mpvDeinterlaceFilter = global?.mpvDeinterlaceFilter ?: initial.liveMpvDeinterlaceFilter,
@@ -68,8 +71,8 @@ internal fun LiveTvProfileDialog(
         ImageChoice(R.string.live_profiles_section, section, listOf(
             "video" to stringResource(R.string.player_video), "audio" to stringResource(R.string.player_audio),
         )) { section = it }
-        ImageChoice(R.string.settings_playback_backend, draft.rendererKey,
-            listOf("auto" to stringResource(R.string.player_backend_auto)) + renderers) {
+        ImageChoice(R.string.live_profiles_player, draft.rendererKey,
+            listOf("auto" to stringResource(R.string.live_profiles_player_inherit)) + renderers) {
             draft = draft.copy(rendererKey = it)
             if (it != "auto") editorBackend = it
         }
@@ -83,6 +86,7 @@ internal fun LiveTvProfileDialog(
                         (audio.effectiveProfile(route.profile) to it))) },
                     trackPreference = { draft = draft.copy(audio = audio.copy(tracks = it)) },
                     route = route, flatLive = true)
+                ImageHint(stringResource(R.string.live_profiles_audio_inherits))
             } else {
                 RendererVideoSettings(editorBackend,
                     if (editorBackend == "mpv") draft.mpvOutput ?: initial.mpvOutput else draft.vlcOutput ?: initial.vlcOutput,
@@ -90,11 +94,7 @@ internal fun LiveTvProfileDialog(
                     changeOutput = { draft = if (editorBackend == "mpv") draft.copy(mpvOutput = it) else draft.copy(vlcOutput = it) },
                     changeDecoder = { draft = draft.copy(mpvDecoder = it) },
                     checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } })
-                when (editorBackend) {
-                    "mpv" -> MpvImageOptionsEditor(draft.mpv ?: initial.mpv, { draft = draft.copy(mpv = it) })
-                    "vlc" -> VlcImageOptionsEditor(draft.vlc ?: initial.vlc, { draft = draft.copy(vlc = it) })
-                    else -> Media3ImageOptionsEditor(draft.media3 ?: initial.media3) { draft = draft.copy(media3 = it) }
-                }
+                // Picture filters are set in the player; saved live:* filter values stay untouched.
                 if (editorBackend != "media3") {
                     val mpv = editorBackend == "mpv"
                     val mode = (if (mpv) draft.mpvDeinterlaceMode else draft.vlcDeinterlaceMode) ?: initial.liveDeinterlaceMode
@@ -107,6 +107,7 @@ internal fun LiveTvProfileDialog(
                         DeinterlaceCatalog.methods(editorBackend).map { it.key to it.label }) {
                         draft = if (mpv) draft.copy(mpvDeinterlaceFilter = it) else draft.copy(vlcDeinterlaceFilter = it)
                     }
+                    ImageHint(stringResource(R.string.live_profiles_deinterlace_overrides))
                 }
             }
         }

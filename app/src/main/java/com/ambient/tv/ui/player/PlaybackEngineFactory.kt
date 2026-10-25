@@ -160,8 +160,15 @@ object PlaybackEngineFactory {
                     .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
                         videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray()).build()
                 // Apply the first selection before prepare() can start loading DASH tracks.
+                // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
                 if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setMaxVideoSize(Int.MAX_VALUE, maxVideoHeight).build()
+                    .youtubeMaxVideoSize(com.ambient.tv.youtube.youtubeMedia3MaxVideoSize(maxVideoHeight)).build()
+                // The box keeps square streams of a higher step: restrict the selected group by step too.
+                if (maxVideoHeight > 0) addListener(object : androidx.media3.common.Player.Listener {
+                    override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                        youtubeConstrainSquareVideo(this@apply, tracks, maxVideoHeight)
+                    }
+                })
                 // Upper bound with SmartTube's 10 fps tolerance (a 30 fps target still allows 25/30).
                 if (maxVideoFrameRate > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setMaxVideoFrameRate(maxVideoFrameRate + 9).build()
@@ -223,4 +230,22 @@ internal fun media3TargetBufferBytes(heapMb: Int): Int {
     val default = androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE
     if (heapMb <= 0) return default
     return (heapMb.toLong() * 1024 * 1024 / 4).coerceIn(32L * 1024 * 1024, default.toLong()).toInt()
+}
+
+private fun androidx.media3.common.TrackSelectionParameters.Builder.youtubeMaxVideoSize(box: Int) = setMaxVideoSize(box, box)
+
+/**
+ * Limits adaptive selection in the playing video group to tracks of the quality step
+ * ([com.ambient.tv.youtube.youtubeMedia3AllowedVideoTracks]). An existing video override (an explicit
+ * pick in the panel, or this cap) is left alone; "Auto" clears it and the cap applies again.
+ */
+private fun youtubeConstrainSquareVideo(player: androidx.media3.common.Player, tracks: androidx.media3.common.Tracks, maxQualityHeight: Int) {
+    val parameters = player.trackSelectionParameters
+    if (parameters.overrides.values.any { it.type == C.TRACK_TYPE_VIDEO }) return
+    val group = tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_VIDEO && it.isSelected } ?: return
+    val sizes = (0 until group.length).map { group.getTrackFormat(it).let { f -> f.width to f.height } }
+    val allowed = com.ambient.tv.youtube.youtubeMedia3AllowedVideoTracks(sizes, maxQualityHeight)
+        ?.filter(group::isTrackSupported)?.takeIf { it.isNotEmpty() } ?: return
+    player.trackSelectionParameters = parameters.buildUpon()
+        .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, allowed)).build()
 }

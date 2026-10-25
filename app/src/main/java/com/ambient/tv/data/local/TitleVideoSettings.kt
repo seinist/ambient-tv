@@ -42,8 +42,47 @@ data class TitleVideoSettings(
     fun rendererOrDefault(default: String): String =
         rendererKey?.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: default
 
+    /**
+     * Field by field: this (narrower) scope wins, [broader] fills the gaps. Overload signatures and
+     * old snapshots stay title-only; they never come from a season, series or collection.
+     */
+    fun inheritFrom(broader: TitleVideoSettings?): TitleVideoSettings = if (broader == null) this else copy(
+        rendererKey = rendererKey ?: broader.rendererKey,
+        mpv = mpv ?: broader.mpv, vlc = vlc ?: broader.vlc, media3 = media3 ?: broader.media3,
+        mpvDeinterlaceMode = mpvDeinterlaceMode ?: broader.mpvDeinterlaceMode,
+        mpvDeinterlaceFilter = mpvDeinterlaceFilter ?: broader.mpvDeinterlaceFilter,
+        vlcDeinterlaceMode = vlcDeinterlaceMode ?: broader.vlcDeinterlaceMode,
+        vlcDeinterlaceFilter = vlcDeinterlaceFilter ?: broader.vlcDeinterlaceFilter,
+        mpvOutput = mpvOutput ?: broader.mpvOutput, mpvDecoder = mpvDecoder ?: broader.mpvDecoder,
+        vlcOutput = vlcOutput ?: broader.vlcOutput,
+        audioDelayMs = audioDelayMs ?: broader.audioDelayMs,
+        subtitleDelayMs = subtitleDelayMs ?: broader.subtitleDelayMs,
+        audio = audio ?: broader.audio,
+        savedAt = maxOf(savedAt, broader.savedAt),
+    )
+
+    /** Drops every field [broader] now carries, so the broader scope takes effect for this item. */
+    fun withoutFieldsOf(broader: TitleVideoSettings): TitleVideoSettings = copy(
+        rendererKey = rendererKey.takeIf { broader.rendererKey == null },
+        mpv = mpv.takeIf { broader.mpv == null }, vlc = vlc.takeIf { broader.vlc == null },
+        media3 = media3.takeIf { broader.media3 == null },
+        mpvDeinterlaceMode = mpvDeinterlaceMode.takeIf { broader.mpvDeinterlaceMode == null },
+        mpvDeinterlaceFilter = mpvDeinterlaceFilter.takeIf { broader.mpvDeinterlaceFilter == null },
+        vlcDeinterlaceMode = vlcDeinterlaceMode.takeIf { broader.vlcDeinterlaceMode == null },
+        vlcDeinterlaceFilter = vlcDeinterlaceFilter.takeIf { broader.vlcDeinterlaceFilter == null },
+        mpvOutput = mpvOutput.takeIf { broader.mpvOutput == null },
+        mpvDecoder = mpvDecoder.takeIf { broader.mpvDecoder == null },
+        vlcOutput = vlcOutput.takeIf { broader.vlcOutput == null },
+        audioDelayMs = audioDelayMs.takeIf { broader.audioDelayMs == null },
+        subtitleDelayMs = subtitleDelayMs.takeIf { broader.subtitleDelayMs == null },
+        audio = audio.takeIf { broader.audio == null },
+    )
+
     companion object {
         const val MAX_TITLES = 200
+
+        /** Season/series/collection layers kept (newest by savedAt), so the store and backups stay bounded. */
+        const val MAX_SCOPES = 500
 
         /** Stores [value] under [key] (or removes it when empty) and keeps the newest [limit] titles. */
         fun put(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings, limit: Int = MAX_TITLES): Map<String, TitleVideoSettings> {
@@ -52,5 +91,12 @@ data class TitleVideoSettings(
             if (next.size <= limit) return next
             return next.entries.sortedByDescending { it.value.savedAt }.take(limit).associate { it.key to it.value }
         }
+
+        /** Season, series and collection settings: same shape, the newest [limit] ([MAX_SCOPES]) scopes. */
+        fun putScoped(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings, limit: Int = MAX_SCOPES): Map<String, TitleVideoSettings> =
+            put(all, key, value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null), limit)
+
+        val SCOPED_PREFIXES = listOf("season:", "series:", "collection:")
+        fun isScopedKey(key: String): Boolean = SCOPED_PREFIXES.any { key.startsWith(it) && key.length > it.length }
     }
 }

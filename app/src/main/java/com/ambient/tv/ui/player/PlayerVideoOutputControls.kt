@@ -130,6 +130,7 @@ internal fun mpvHdrPassthroughStatusRes(marked: Boolean, displaySwitched: Boolea
     !marked -> R.string.player_output_hdr_gpu_checking
     displaySwitched == true -> R.string.player_output_hdr_gpu_display_switched
     displaySwitched == false -> R.string.player_output_hdr_gpu_display_waiting
+    // Android does not report the TV's mode here: the TV's own HDR indicator tells.
     else -> R.string.player_output_hdr_gpu_active
 }
 
@@ -141,9 +142,7 @@ internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrG
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OUTPUT_DIRECT -> R.string.player_output_hdr_gpu_output_direct
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DOLBY_VISION -> R.string.player_output_hdr_gpu_dolby_vision
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_HDR10 -> R.string.player_output_hdr_gpu_not_hdr10
-    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.VULKAN_UNAVAILABLE -> R.string.player_output_hdr_gpu_vulkan
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 -> R.string.player_output_hdr_gpu_swapchain
-    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DISPLAY_NO_HDR10 -> R.string.player_output_hdr_gpu_display
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.REDUCED_EFFECTS -> R.string.player_output_hdr_gpu_reduced
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NO_EFFECTS -> R.string.player_output_hdr_gpu_no_effects
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_CONFIRMED -> R.string.player_output_hdr_gpu_not_confirmed

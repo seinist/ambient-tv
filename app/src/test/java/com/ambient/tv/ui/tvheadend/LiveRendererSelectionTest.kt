@@ -23,12 +23,15 @@ class LiveRendererSelectionTest {
         assertEquals(LiveRendererSelection("media3", LiveRendererOrigin.DEFAULT), choose(width = null))
     }
 
-    @Test fun liveAutoStaysOnMedia3WhenWidthArrivesAndPresetsRequestMpv() {
+    @Test fun liveAutoStaysOnMedia3WhenWidthArrivesAndGeneralPresetsRequestMpv() {
         val before = choose(width = null, default = "auto")
-        val after = choose(default = "auto")
+        val general = mapOf("width:1920" to ResolutionVideoProfile("mpv"))
+        val after = selectLiveRenderer("auto", null, general, "width:1920", true)
         assertEquals(LiveRendererSelection("auto", LiveRendererOrigin.DEFAULT), before)
         assertEquals(before, after)
         assertEquals(PlaybackBackend.MEDIA3, PlaybackBackendResolver.resolve(after.key))
+        // A live profile's explicit player overrides the Tvheadend default "auto".
+        assertEquals(LiveRendererSelection("mpv", LiveRendererOrigin.LIVE_PRESET), choose(default = "auto"))
         assertEquals("mpv", choose(TitleVideoSettings(rendererKey = "mpv"), default = "auto").key)
         assertEquals("mpv", choose(manual = "mpv", default = "auto").key)
         assertEquals(LiveRendererOrigin.RECOVERY, choose(recovery = "mpv", default = "auto").origin)
@@ -36,6 +39,12 @@ class LiveRendererSelectionTest {
         assertEquals("vlc", choose(live = false, default = "auto").key)
         assertEquals("auto", selectLiveRenderer("auto", null,
             mapOf("width:1920" to ResolutionVideoProfile("mpv")), "width:1920", true).key)
+    }
+
+    @Test fun liveProfileAutoInheritsTheTvheadendDefault() {
+        val inherit = mapOf("live:width:1920" to ResolutionVideoProfile("auto"), "width:1920" to ResolutionVideoProfile("mpv"))
+        assertEquals(LiveRendererSelection("vlc", LiveRendererOrigin.LIVE_PRESET), selectLiveRenderer("vlc", null, inherit, "width:1920", true))
+        assertEquals(LiveRendererSelection("auto", LiveRendererOrigin.DEFAULT), selectLiveRenderer("auto", null, inherit, "width:1920", true))
     }
 
     @Test fun explicitAutoSurvivesAnMpvPreset() {

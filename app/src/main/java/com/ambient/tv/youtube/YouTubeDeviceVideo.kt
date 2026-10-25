@@ -34,19 +34,34 @@ object YouTubeDeviceVideo {
         minOf(metrics.widthPixels, metrics.heightPixels)
     }
 
-    /** "Automatic" for VLC/MPV: the display's resolution ([youtubeAutoMaxHeight]). */
-    fun autoMaxHeight(context: Context): Int = youtubeAutoMaxHeight(displayShortSide(context))
-
-    /** The user's cap, or the display-based automatic one. */
-    fun maxHeight(context: Context, preference: Int): Int = preference.takeIf { it > 0 } ?: autoMaxHeight(context)
+    /**
+     * The display's limit ([youtubeDisplayLimit]) under the display-mode settings: with automatic
+     * mode switching the largest permitted panel mode, a fixed mode that mode, otherwise the current one.
+     */
+    fun displayLimit(context: Context): YouTubeDisplayLimit {
+        val prefs = com.ambient.tv.ui.player.videoImagePreferences(context)
+        val modes = com.ambient.tv.ui.player.DisplayRefreshRateMatcher.supportedModes(context)
+        val current = runCatching {
+            val display = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager).getDisplay(Display.DEFAULT_DISPLAY)
+            val key = com.ambient.tv.ui.player.DisplayRefreshRateMatcher.modeKey(display.mode)
+            modes.firstOrNull { it.key == key } ?: com.ambient.tv.ui.player.SupportedDisplayMode(key, display.mode.modeId,
+                display.mode.physicalWidth, display.mode.physicalHeight, display.mode.refreshRate)
+        }.getOrNull()
+        return youtubeDisplayLimit(modes, current, prefs.preferredDisplayModeKey, prefs.displayModeWhitelist,
+            canSwitchRate = prefs.displayRefreshAdjustmentKey != com.ambient.tv.data.local.AppPreferences.DISPLAY_REFRESH_OFF)
+            ?: YouTubeDisplayLimit(youtubeAutoMaxHeight(displayShortSide(context)), 60)
+    }
 
     /**
-     * Target for automatic stream selection ([youtubeVideoTarget]): a chosen preset is only
-     * limited by the user's cap; "automatic" (SmartTube's device default) also by the display.
+     * Target for automatic stream selection ([youtubeVideoTarget]): the preset (or SmartTube's
+     * device default) limited by the user's cap (0 = "Display") and always by the display.
      */
-    fun videoTarget(context: Context, presetKey: String?, maxHeightPreference: Int): YouTubeVideoPreset {
-        val cap = if (youtubeVideoPreset(presetKey) != null) maxHeightPreference else maxHeight(context, maxHeightPreference)
-        return youtubeVideoTarget(presetKey, cap, decodeCheck())
+    fun videoTarget(context: Context, presetKey: String?, maxHeightPreference: Int): YouTubeVideoPreset =
+        videoTarget(presetKey, maxHeightPreference, displayLimit(context), decodeCheck())
+
+    internal fun videoTarget(presetKey: String?, maxHeightPreference: Int, limit: YouTubeDisplayLimit, decode: YouTubeDecodeCheck): YouTubeVideoPreset {
+        val cap = maxHeightPreference.takeIf { it > 0 }?.let { minOf(it, limit.height) } ?: limit.height
+        return youtubeVideoTarget(presetKey, cap, decode, limit.maxFps)
     }
 
     /**

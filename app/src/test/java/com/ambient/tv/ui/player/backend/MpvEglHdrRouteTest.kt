@@ -20,6 +20,9 @@ class MpvEglHdrRouteTest {
     private val noVulkan = VideoAccelerationCapabilities(checked = true)
     /** Device EGL PQ, patched libmpv and a readable surface dataspace. */
     private val glRoute = noVulkan.copy(eglHdr10Pq = true, mpvEglHdrSurface = true, surfaceDataSpaceReadable = true)
+    /** Vulkan output without an HDR10 swapchain plus the EGL PQ route: the internal fallback. */
+    private val vulkanGl = vulkanHdr.copy(device = vulkanHdr.device.copy(surfaceColorSpaces = listOf(0)), eglHdr10Pq = true,
+        mpvEglHdrSurface = true, surfaceDataSpaceReadable = true)
     private val display = setOf(HdrStandard.HDR10, HdrStandard.HLG)
     private fun decide(caps: VideoAccelerationCapabilities, source: HdrStandard = HdrStandard.HDR10,
         failure: MpvHdrGpuReason? = null, reduced: Boolean = false) =
@@ -35,23 +38,24 @@ class MpvEglHdrRouteTest {
         assertFalse(eglHdr10PqFromExtensions(""))
     }
 
-    @Test fun withoutVulkanTheEglPqSurfaceCarriesThePassthrough() {
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(noVulkan).reason)
-        val gl = decide(glRoute)
+    @Test fun withoutVulkanTheOptionDoesNotExist() {
+        // Pure OpenGL devices (no MPV Vulkan output) no longer get "HDR über GPU", EGL PQ or not.
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(noVulkan))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(glRoute))
+    }
+
+    @Test fun vulkanWithoutHdr10SwapchainFallsBackToTheEglPqSurface() {
+        val gl = decide(vulkanGl)
         assertEquals(MpvHdrGpuDecision.GPU_OPENGL, gl)
         assertEquals("gpu", mpvHdrGpuOutputMode(gl, "direct", null))
-        // A Vulkan swapchain without HDR10 also takes the EGL route.
-        val noHdrSwapchain = vulkanHdr.copy(device = vulkanHdr.device.copy(surfaceColorSpaces = listOf(0)), eglHdr10Pq = true,
-            mpvEglHdrSurface = true, surfaceDataSpaceReadable = true)
-        assertTrue(decide(noHdrSwapchain).openGl)
-        // An unfinished probe never claims EGL support.
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(glRoute.copy(checked = false)).reason)
+        // An unfinished probe never claims anything.
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(vulkanGl.copy(checked = false)))
     }
 
     @Test fun vulkanHdr10StaysPreferredAndOtherGatesStillApply() {
         assertEquals(MpvHdrGpuDecision.GPU, decide(vulkanHdr.copy(eglHdr10Pq = true)))
         assertEquals("vulkan", mpvHdrGpuOutputMode(decide(vulkanHdr), "direct", null))
-        val gl = glRoute
+        val gl = vulkanGl
         assertEquals(MpvHdrGpuReason.DOLBY_VISION, decide(gl, HdrStandard.DOLBY_VISION).reason)
         assertEquals(MpvHdrGpuReason.REDUCED_EFFECTS, decide(gl, reduced = true).reason)
         val failed = decide(gl, failure = MpvHdrGpuReason.OPENGL_FALLBACK)
@@ -86,10 +90,10 @@ class MpvEglHdrRouteTest {
 
     @Test fun eglRouteNeedsThePatchedLibmpvAndAReadableDataspace() {
         // EGL alone (older libmpv without the surface patch) keeps HDR on the direct surface.
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(glRoute.copy(mpvEglHdrSurface = false)).reason)
-        assertFalse(decide(glRoute.copy(mpvEglHdrSurface = false)).gpu)
+        assertEquals(MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, decide(vulkanGl.copy(mpvEglHdrSurface = false)).reason)
+        assertFalse(decide(vulkanGl.copy(mpvEglHdrSurface = false)).gpu)
         // Without a readable dataspace PQ could never be confirmed: no EGL route either.
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(glRoute.copy(surfaceDataSpaceReadable = false)).reason)
+        assertEquals(MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, decide(vulkanGl.copy(surfaceDataSpaceReadable = false)).reason)
         assertTrue(glRoute.mpvEglHdrRoute)
         assertFalse(glRoute.copy(eglHdr10Pq = false).mpvEglHdrRoute)
     }

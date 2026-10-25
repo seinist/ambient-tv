@@ -47,7 +47,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -582,20 +581,16 @@ fun CrossfadeBackdropImage(
 
 @Composable
 internal fun PulsingArtworkPlaceholder() {
+    // Sparsam stays a flat fill and never touches the pulse clock.
     val animate = !LocalPerformanceProfile.current.reducedEffects
-    if (animate) {
-        DisposableEffect(Unit) {
-            SharedSkeletonPulse.acquire()
-            onDispose { SharedSkeletonPulse.release() }
-        }
-    }
+    val pulse = if (animate) rememberSharedPulse(SharedArtworkPulse) else null
     val fill = MaterialTheme.colorScheme.surfaceVariant
     Box(
         Modifier.fillMaxSize()
             .graphicsLayer {
                 // Updating this RenderNode keeps the pulse visible through cached parent
                 // layers without re-recording the whole Home list on every animation frame.
-                alpha = if (animate) SharedSkeletonPulse.alpha.floatValue else 1f
+                alpha = pulse?.value ?: 1f
                 compositingStrategy = CompositingStrategy.ModulateAlpha
             }
             .drawBehind { drawRect(fill) },

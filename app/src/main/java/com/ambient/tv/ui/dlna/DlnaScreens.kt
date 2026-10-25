@@ -11,12 +11,6 @@ import com.ambient.tv.ui.common.*
 import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
@@ -49,6 +43,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -277,7 +272,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 }
                 val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f)
                 val columns = GridCells.Fixed(columnCount)
-                val pulse = if (state.loading || state.loadingMore) dlnaLoadingAlpha() else 0.52f
+                val pulse = if (state.loading && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
                 LazyVerticalGrid(
                     columns = columns,
                     state = contentGrid,
@@ -289,7 +284,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                         if (state.viewMode == DlnaViewMode.LIST) {
                             items(state.listRows.coerceIn(4, 10)) { DlnaLoadingRow(pulse, rowScale) }
                         } else {
-                            items(columnCount * 3) { SkeletonTile(Modifier.alpha(pulse / 0.52f), style = style, showDescription = false, shimmer = false) }
+                            items(columnCount * 3) { SkeletonTile(style = style, showDescription = false) }
                         }
                     } else {
                         if (nodes.isEmpty() && state.error == null) {
@@ -318,7 +313,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             } else {
                                 // Full rows, including an incomplete last content row.
                                 items(columnCount * 3 - nodes.size % columnCount, span = { GridItemSpan(1) }) {
-                                    SkeletonTile(Modifier.alpha(pulse / 0.52f), style = style, showDescription = false, shimmer = false)
+                                    SkeletonTile(style = style, showDescription = false)
                                 }
                             }
                         }
@@ -565,43 +560,30 @@ private fun DlnaNodeRow(
 }
 
 @Composable
-private fun dlnaLoadingAlpha(): Float {
-    val transition = rememberInfiniteTransition(label = "DLNA loading")
-    val alpha by transition.animateFloat(
-        initialValue = 0.28f,
-        targetValue = 0.52f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "DLNA placeholder pulse",
-    )
-    return alpha
-}
-
-@Composable
 private fun DlnaLoadingRows(count: Int = 7, rowScale: Float = 1f) {
-    val alpha = dlnaLoadingAlpha()
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        repeat(count) { DlnaLoadingRow(alpha, rowScale) }
+        repeat(count) { DlnaLoadingRow(pulse, rowScale) }
     }
 }
 
 @Composable
-private fun DlnaLoadingRow(alpha: Float, rowScale: Float = 1f) {
+private fun DlnaLoadingRow(pulse: androidx.compose.runtime.State<Float>?, rowScale: Float = 1f) {
+    // The shared pulse is the row's layer alpha; the parts keep their relative strengths.
     Row(
         Modifier
             .fillMaxWidth()
             .padding(2.dp)
             .heightIn(min = 44.dp * rowScale)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha), RoundedCornerShape(LocalUiTokens.current.controlRadius))
+            .skeletonPulseAlpha(pulse)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(LocalUiTokens.current.controlRadius))
             .padding(horizontal = 16.dp * rowScale, vertical = 10.dp * rowScale),
         horizontalArrangement = Arrangement.spacedBy(12.dp * rowScale),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(20.dp * rowScale).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.76f), RoundedCornerShape(4.dp)))
-        Box(Modifier.height(12.dp).weight(1f).fillMaxWidth(0.58f).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.60f), RoundedCornerShape(6.dp)))
-        Box(Modifier.width(58.dp * rowScale).height(10.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha * 0.44f), RoundedCornerShape(5.dp)))
+        Box(Modifier.size(20.dp * rowScale).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.76f), RoundedCornerShape(4.dp)))
+        Box(Modifier.height(12.dp).weight(1f).fillMaxWidth(0.58f).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f), RoundedCornerShape(6.dp)))
+        Box(Modifier.width(58.dp * rowScale).height(10.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.44f), RoundedCornerShape(5.dp)))
     }
 }
 

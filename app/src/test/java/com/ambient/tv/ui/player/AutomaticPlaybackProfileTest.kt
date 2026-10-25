@@ -66,8 +66,18 @@ class AutomaticPlaybackProfileTest {
         prefs.mpvImageOptions = MpvImageOptions(sharpening = "cas")
         prefs.audioSettings = prefs.audioSettings.update(AudioOptions(night = true))
         prefs.playbackBackendKey = "vlc"
+        prefs.tvheadendPlaybackBackendKey = "mpv"
         prefs.mpvVideoOutputModeKey = "gpu"
+        prefs.tvheadendDeinterlaceModeKey = "on"
+        prefs.tvheadendDeinterlaceFilterKey = "yadif"
+        prefs.tvheadendMpvDeinterlaceFilterKey = "bwdif"
+        val tvhMpvFilter = prefs.tvheadendMpvDeinterlaceFilterKey
         resetGlobalPlaybackProfile(prefs)
+        // Tvheadend keeps its own defaults: player and deinterlacing alike (not written by the global save either).
+        assertEquals("mpv", prefs.tvheadendPlaybackBackendKey)
+        assertEquals("on", prefs.tvheadendDeinterlaceModeKey)
+        assertEquals("yadif", prefs.tvheadendDeinterlaceFilterKey)
+        assertEquals(tvhMpvFilter, prefs.tvheadendMpvDeinterlaceFilterKey)
         assertEquals(mapOf("width:2560" to profile, "live:width:720" to profile), prefs.resolutionVideoProfiles)
         assertEquals(mapOf("youtube:test" to title), prefs.titleVideoSettings)
         assertEquals(MpvImageOptions(), prefs.mpvImageOptions)

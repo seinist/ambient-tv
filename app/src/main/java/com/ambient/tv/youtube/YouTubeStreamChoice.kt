@@ -72,9 +72,68 @@ fun youtubeDefaultVideoPreset(decode: YouTubeDecodeCheck): YouTubeVideoPreset = 
  * The target for automatic selection: a chosen preset as is, "automatic" SmartTube's device
  * default; both limited by [maxHeight] (the user's cap or the display, 0 = none).
  */
-fun youtubeVideoTarget(presetKey: String?, maxHeight: Int, decode: YouTubeDecodeCheck): YouTubeVideoPreset {
+fun youtubeVideoTarget(presetKey: String?, maxHeight: Int, decode: YouTubeDecodeCheck, maxFps: Int = 0): YouTubeVideoPreset {
     val preset = youtubeVideoPreset(presetKey) ?: youtubeDefaultVideoPreset(decode)
-    return if (maxHeight > 0 && maxHeight < preset.height) preset.copy(height = maxHeight) else preset
+    val capped = if (maxHeight > 0 && maxHeight < preset.height) preset.copy(height = maxHeight) else preset
+    return if (maxFps > 0 && maxFps < capped.fps) capped.copy(fps = maxFps) else capped
+}
+
+/**
+ * What the display can show for YouTube: the quality step of its resolution ([youtubeAutoMaxHeight],
+ * short side) and the highest frame rate (60 only with a mode of at least 50 Hz at that size).
+ */
+data class YouTubeDisplayLimit(val height: Int, val maxFps: Int)
+
+/**
+ * The display limit under the display-mode policy: the automatic policies switch up to the largest
+ * permitted mode ([whitelist], else all), a fixed mode key pins that mode, "system" keeps [current].
+ * [canSwitchRate] false (adjustment off) leaves only the reference mode's own refresh rate.
+ * Null when no mode is known.
+ */
+fun youtubeDisplayLimit(
+    modes: List<com.ambient.tv.ui.player.SupportedDisplayMode>,
+    current: com.ambient.tv.ui.player.SupportedDisplayMode?,
+    preferredModeKey: String,
+    whitelist: Set<String> = emptySet(),
+    canSwitchRate: Boolean = true,
+): YouTubeDisplayLimit? {
+    val allowed = modes.filter { whitelist.isEmpty() || it.key in whitelist }.ifEmpty { modes }
+    val automatic = preferredModeKey == com.ambient.tv.data.local.AppPreferences.DISPLAY_MODE_AUTO_CONTENT ||
+        preferredModeKey == com.ambient.tv.data.local.AppPreferences.DISPLAY_MODE_AUTO_DISPLAY
+    val reference = when {
+        automatic -> allowed.maxWithOrNull(compareBy<com.ambient.tv.ui.player.SupportedDisplayMode>({ it.width.toLong() * it.height }, { it.refreshRate }))
+        else -> modes.firstOrNull { it.key == preferredModeKey }
+    } ?: current ?: return null
+    val rates = if (canSwitchRate || automatic) {
+        (allowed.filter { it.width == reference.width && it.height == reference.height } + reference)
+    } else listOf(reference)
+    val highFps = rates.any { it.refreshRate >= 49.5f }
+    return YouTubeDisplayLimit(youtubeAutoMaxHeight(minOf(reference.width, reference.height)), if (highFps) 60 else 30)
+}
+
+/**
+ * Media3 has no short-side limit: a square box of the [maxQualityHeight]'s 16:9 width (+5 %)
+ * keeps landscape, cinemascope and portrait streams of that quality step and drops larger ones.
+ */
+fun youtubeMedia3MaxVideoSize(maxQualityHeight: Int): Int = (maxQualityHeight * 16 / 9) * 105 / 100
+
+/**
+ * The square box alone lets square (and near-square) streams of a higher step through: 1440×1440
+ * is a 1440p stream but fits the 2016 box of 1080p. Of the [sizes] (width to height) of the selected
+ * video group, the indices whose quality step ([youtubeQualityHeight]) is within [maxQualityHeight]
+ * (+5 %). Null when nothing needs excluding, or when nothing would remain (the box stays the limit).
+ */
+fun youtubeMedia3AllowedVideoTracks(sizes: List<Pair<Int, Int>>, maxQualityHeight: Int): List<Int>? {
+    if (maxQualityHeight <= 0) return null
+    val limit = maxQualityHeight * 105 / 100
+    val allowed = sizes.indices.filter { youtubeQualityHeight(sizes[it].first, sizes[it].second) <= limit }
+    return allowed.takeIf { it.isNotEmpty() && it.size < sizes.size }
+}
+
+/** [YouTubeAdaptiveFormat.qualityHeight] for a bare size. */
+fun youtubeQualityHeight(width: Int, height: Int): Int {
+    if (width <= 0 || height <= 0) return height
+    return maxOf(minOf(width, height), (maxOf(width, height) * 9 + 8) / 16)
 }
 
 /** A selectable audio language: the original or a dubbed/described track; [kind] is YouTube's `acont`. */
@@ -136,12 +195,7 @@ fun youtubeHdrKind(mime: String?): String? {
  * side, or the long side's 16:9 equivalent for wider pictures. A vertical 1080×1920 Short is
  * "1080p", a 2560×1072 cinemascope film "1440p".
  */
-internal fun YouTubeAdaptiveFormat.qualityHeight(): Int {
-    if (width <= 0 || height <= 0) return height
-    val short = minOf(width, height)
-    val long = maxOf(width, height)
-    return maxOf(short, (long * 9 + 8) / 16)
-}
+internal fun YouTubeAdaptiveFormat.qualityHeight(): Int = youtubeQualityHeight(width, height)
 
 private fun YouTubeAdaptiveFormat.isVideo() = mimeType?.startsWith("video/", ignoreCase = true) == true
 private fun YouTubeAdaptiveFormat.isAudio() = mimeType?.startsWith("audio/", ignoreCase = true) == true
@@ -171,8 +225,8 @@ private fun videoKey(format: YouTubeAdaptiveFormat) =
     "v:${format.qualityHeight()}:${format.fps}:${youtubeVideoFamily(format.mimeType)}:${youtubeHdrKind(format.mimeType) ?: "sdr"}"
 
 /** The qualities offered in the player panel, best first. */
-fun youtubeVideoOptions(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck): List<YouTubeVideoOption> =
-    youtubeListedVideos(formats, decode)
+fun youtubeVideoOptions(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck, limit: YouTubeDisplayLimit? = null): List<YouTubeVideoOption> =
+    youtubeListedVideos(formats, decode).filter { it.fits(limit) }
         .map { YouTubeVideoOption(videoKey(it), it.qualityHeight(), it.fps, youtubeVideoFamily(it.mimeType)!!, youtubeHdrKind(it.mimeType), it.decodable(decode)) }
         .groupBy { it.key }.map { (_, same) -> same.firstOrNull { it.hardware } ?: same.first() }
         .sortedWith(
@@ -189,6 +243,10 @@ private fun fpsLess(a: Int, b: Int) = kotlin.math.abs(a - b) >= 10 && a < b
 /** Within the target: not larger (5 %) and not faster (10 fps) than it. */
 private fun YouTubeAdaptiveFormat.within(target: YouTubeVideoPreset) =
     !sizeLess(target.height, qualityHeight()) && !fpsLess(target.fps, effectiveFps(fps))
+
+/** Within the display's [limit] (null = no limit). */
+private fun YouTubeAdaptiveFormat.fits(limit: YouTubeDisplayLimit?) =
+    limit == null || (!sizeLess(limit.height, qualityHeight()) && !fpsLess(limit.maxFps, effectiveFps(fps)))
 
 /** HDR 3 points, frame rate 2, resolution 1; a tie within one codec goes to the higher bitrate. */
 private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): Int {
@@ -208,9 +266,13 @@ private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): In
  * of them by HDR, frame rate and resolution; equal ones by codec (VP9, H.264, AV1). Nothing
  * within the target: the smallest playable stream.
  */
-fun youtubePickVideo(formats: List<YouTubeAdaptiveFormat>, key: String, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck): YouTubeAdaptiveFormat? {
+fun youtubePickVideo(
+    formats: List<YouTubeAdaptiveFormat>, key: String, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck,
+    limit: YouTubeDisplayLimit? = null,
+): YouTubeAdaptiveFormat? {
+    // An explicit choice above the display's limit (a remembered 4K pick on a 1080p display) falls back to automatic.
     if (key != YOUTUBE_STREAM_AUTO) {
-        youtubeListedVideos(formats, decode).filter { videoKey(it) == key }
+        youtubeListedVideos(formats, decode).filter { videoKey(it) == key && it.fits(limit) }
             .maxWithOrNull(compareBy<YouTubeAdaptiveFormat> { it.decodable(decode) }.thenBy { it.bitrate })?.let { return it }
     }
     val playable = youtubePlayableVideos(formats, decode)

@@ -1246,7 +1246,8 @@ private fun DetailSkeletonTiles(style: MediaTileStyle) {
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         userScrollEnabled = false,
     ) {
-        items(8) { com.ambient.tv.ui.common.SkeletonTile(style = style, showDescription = style != MediaTileStyle.EPISODE) }
+        // Static: a detail row loads briefly and must not keep the frame clock busy.
+        items(8) { com.ambient.tv.ui.common.SkeletonTile(style = style, showDescription = style != MediaTileStyle.EPISODE, shimmer = false) }
     }
 }
 

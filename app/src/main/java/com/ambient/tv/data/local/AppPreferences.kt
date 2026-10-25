@@ -1013,6 +1013,13 @@ class AppPreferences @Inject constructor(
         } ?: emptyMap()
         set(value) { titlePrefs.edit { putString("title_video_settings_v1", json.encodeToString(value)) } }
 
+    /** Season/series/collection picture and audio choices ("season:<source>:<server>:<id>" etc.), newest [TitleVideoSettings.MAX_SCOPES]. */
+    var scopedVideoSettings: Map<String, TitleVideoSettings>
+        get() = titlePrefs.getString("scoped_video_settings_v1", null)?.let { raw ->
+            runCatching { decodeCached("scoped_video_settings_v1", raw) { json.decodeFromString<Map<String, TitleVideoSettings>>(it) } }.getOrNull()
+        } ?: emptyMap()
+        set(value) { titlePrefs.edit { putString("scoped_video_settings_v1", json.encodeToString(value)) } }
+
     /** Width presets use a new storage key; preserve v1 so collapsed height variants can be recovered. */
     var resolutionVideoProfiles: Map<String, ResolutionVideoProfile>
         get() {

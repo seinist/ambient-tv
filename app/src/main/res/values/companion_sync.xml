@@ -12,5 +12,6 @@
     <string name="sync_select_none">Deselect all</string>
     <string name="sync_save_first">Save your pending settings first. The saved configuration is transferred.</string>
     <string name="sync_waiting">Waiting for confirmation on the receiving device.</string>
+    <string name="sync_profiles_omitted">Title and series picture profiles were too large for the transfer and stayed on this device; the receiving device keeps its own.</string>
     <string name="sync_another">Another transfer</string>
 </resources>
