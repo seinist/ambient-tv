@@ -435,11 +435,12 @@ internal fun MpvPlayerContent(
                     formatNerdSeconds(snapshot.cacheDurationSeconds)?.let { add(stringResource(R.string.player_nerd_buffer_health) to it) }
                     formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let { add(stringResource(R.string.player_nerd_cache_speed) to it) }
                     if (controller.supportsGpuFilters) {
-                        // Sparsam replaces only fields still at their default; chosen values run as chosen.
+                        // Untouched defaults run cheap (Sparsam or a low-end device); chosen values run as chosen.
+                        val cheapDefaults = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.mpvCheapDefaults
                         val stored = controller.imageOptions.normalized()
                         val defaults = com.ambient.tv.data.local.MpvImageOptions()
                         fun replaced(value: String, default: String) =
-                            com.ambient.tv.ui.player.backend.mpvSparsamReplacesDefault(value, default, snapshot.sparsam)
+                            com.ambient.tv.ui.player.backend.mpvSparsamReplacesDefault(value, default, cheapDefaults)
                         formatMpvUpscalerForStats(stored.scaler, snapshot.activeScaler, snapshot.activeShaderPreset, snapshot.activeUpscaling, sparsam = replaced(stored.scaler, defaults.scaler))?.let { add(stringResource(R.string.player_nerd_upscaler) to it) }
                         formatMpvScalerStat(snapshot.activeChromaScaler, stored.chromaScaler, replaced(stored.chromaScaler, defaults.chromaScaler))?.let { add(stringResource(R.string.player_nerd_chroma_scaler) to it) }
                         formatMpvScalerStat(snapshot.activeDownscaler, stored.downscaler, replaced(stored.downscaler, defaults.downscaler))?.let { add(stringResource(R.string.player_nerd_downscaler) to it) }

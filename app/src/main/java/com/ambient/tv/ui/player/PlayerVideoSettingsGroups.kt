@@ -273,7 +273,6 @@ private fun MpvVideoGroups(
         hdrGpuPassthrough = controller.hdrPassthroughRunning,
         globalSvp = videoImagePreferences(LocalContext.current).svpAvailable,
     ).sparsam(LocalPerformanceProfile.current.gateExpensiveVideoVisuals, mpv = true)
-    val reduced = LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
     val options = controller.imageOptions
@@ -285,8 +284,8 @@ private fun MpvVideoGroups(
         if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions
     }
     if (section == "scaling" && controller.supportsGpuFilters) {
-        // Sparsam: untouched defaults run cheap (bilinear, no sigmoid); a chosen value applies.
-        if (reduced) MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
+        // Sparsam or a low-end device: untouched defaults run cheap (bilinear, no sigmoid); a chosen value applies.
+        if (LocalPerformanceProfile.current.mpvCheapDefaults) MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
             MpvSparsamField.DOWNSCALER, MpvSparsamField.SIGMOID))
         MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
             hdr = visibility.hdrShaders)
@@ -311,7 +310,7 @@ private fun MpvVideoGroups(
                 },
             )
         }
-        if (reduced) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
+        if (LocalPerformanceProfile.current.mpvCheapDefaults) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
         if (visibility.deband) {
             ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) { change(options.copy(deband = it)) }
         }

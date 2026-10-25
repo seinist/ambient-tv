@@ -18,8 +18,8 @@ import com.ambient.tv.ui.player.backend.effectiveMpvImageOptions
 internal enum class MpvSparsamField { UPSCALER, CHROMA, DOWNSCALER, DEBAND, SHARPEN, DENOISE, DEBLOCK, FILM_GRAIN, SUPER_RES, ANTIRING, SIGMOID }
 
 /**
- * Saved MPV fields whose effective value differs under Sparsam (see [effectiveMpvImageOptions]).
- * The menu shows exactly these as locked instead of offering choices that cannot apply.
+ * Saved MPV fields still at their default that run cheap (Sparsam, or a low-end device; see
+ * [effectiveMpvImageOptions]). The menu names them; choosing another value applies it.
  */
 internal fun mpvSparsamOverrides(stored: MpvImageOptions, reduced: Boolean): List<Pair<MpvSparsamField, String>> {
     if (!reduced) return emptyList()
@@ -91,7 +91,7 @@ internal fun SparsamOverrideNotice(forSvp: Boolean = false, showText: Boolean = 
 /** Locked rows: label, effective value and the retained saved value. */
 @Composable
 internal fun MpvSparsamLockedRows(stored: MpvImageOptions, fields: Set<MpvSparsamField>) {
-    val overrides = mpvSparsamOverrides(stored, LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
+    val overrides = mpvSparsamOverrides(stored, LocalPerformanceProfile.current.mpvCheapDefaults)
         .filter { it.first in fields }
     for ((field, value) in overrides) {
         ImageHint(stringResource(R.string.image_sparsam_locked_row, stringResource(sparsamFieldLabel(field)), storedLabel(value)))

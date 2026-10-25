@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
 import com.ambient.tv.data.local.validateNnedi3ShaderSource
+import com.ambient.tv.ui.player.mpvCheapDefaults
 import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.videoImagePreferences
@@ -109,7 +110,7 @@ internal class MpvPlaybackEngine(
     private var acceleration = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
         // Select the processing path from the chosen width/title image settings.
         gpuProcessing = mpvNeedsGpuProcessing(effectiveMpvImageOptions(initialImageOptions,
-            reducedVideoEffects(context), svpAllowed(context))), nativeHdrPreferred = nativeHdrPreferred,
+            reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context))), nativeHdrPreferred = nativeHdrPreferred,
         hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = needsHdrToSdr(declaredHdr))
     private var accelerationRetried = false
     /** Runtime verdict for the passthrough route; the UI reopens on the direct surface when set. */
@@ -330,7 +331,7 @@ internal class MpvPlaybackEngine(
     /** Only an SVP that runs (or can still run for this file) keeps display-mode matching off. */
     override val usesFrameInterpolation: Boolean
         get() = gpuQualityMode && mpvSvpInterpolationIntended(
-            modeOn = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).svpMode != "off",
+            modeOn = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).svpMode != "off",
             overloaded = svpOverloaded,
             hdr = hdrImageTransfer,
             decided = fileReady && svpFilterDecided,
@@ -856,7 +857,7 @@ internal class MpvPlaybackEngine(
         appliedDeinterlaceKey = effectiveFilter
         deinterlaceFailed = false
         val desiredFilters = desiredImageFilters(
-            effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)),
+            effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)),
             sdrImageProcessing,
         )
         val copyBackNeeded = mpvCopyBackNeeded(
@@ -911,7 +912,7 @@ internal class MpvPlaybackEngine(
         imageApplyStale = false
         imageUpdateJob = imageScope.launch {
             val optionsSnapshot = imageOptions
-            val effective = effectiveMpvImageOptions(optionsSnapshot, reducedVideoEffects(context), svpAllowed(context))
+            val effective = effectiveMpvImageOptions(optionsSnapshot, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context))
             val transfer = currentMpvTransfer()
             val sdr = fileReady && isMpvSdrTransfer(transfer)
             // PQ/HLG on this GPU VO: mpv tone-maps; only HDR-safe hooks may load.
@@ -1089,7 +1090,7 @@ internal class MpvPlaybackEngine(
      * One overload takes one fallback step, then the existing pause dialog.
      */
     private fun armRenderCheck() {
-        val effective = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context))
+        val effective = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context))
         val signature = mpvRenderCheckSignature(
             shaderKeys = loadedShaderKeys,
             cpuFilters = activeCpuImageFilters,
@@ -1197,7 +1198,7 @@ internal class MpvPlaybackEngine(
 
     private fun qualityProbePending(): Boolean =
         !svpQualityCleared && !svpQualityProbeFailed && "plex-svp" in activeCpuImageFilters &&
-            effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).svpMode == "quality"
+            effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).svpMode == "quality"
 
     /**
      * Same path for dropped frames, native cost, and plex-svp bypass_reason:
@@ -1230,7 +1231,7 @@ internal class MpvPlaybackEngine(
     /** Quality steps to the preset that held (saved too); other modes drop SVP for the session. */
     private fun reduceSvpAfterOverload() {
         if ("plex-svp" !in activeCpuImageFilters) return
-        if (effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).svpMode == "quality") {
+        if (effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).svpMode == "quality") {
             rememberSurvivedSvpLevel()
             return
         }
@@ -1274,7 +1275,7 @@ internal class MpvPlaybackEngine(
         if (!gpuQualityMode) return null
         val reduced = reducedVideoEffects(context)
         val preferences = videoImagePreferences(context)
-        val effective = effectiveMpvImageOptions(imageOptions, reduced, svpAllowed(context))
+        val effective = effectiveMpvImageOptions(imageOptions, reduced, svpAllowed(context), mpvCheapDefaults(context))
         return mpvHeavyProcessingBackoff(
             deinterlaceEnabled = deinterlaceRequested && deinterlaceModeKey != "off",
             deinterlaceMode = deinterlaceModeKey,
@@ -1550,7 +1551,7 @@ internal class MpvPlaybackEngine(
         val upscaling = if (sdrTransfer) currentMpvUpscaling() else lastImageUpscaling
         val lumaEligible = if (sdrTransfer) {
             mpvLumaUpscalerWouldRun(
-                effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context)).scaler,
+                effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context)).scaler,
                 currentMpvFittedScale(),
             )
         } else lastLumaShaderEligible
@@ -1883,7 +1884,7 @@ internal class MpvPlaybackEngine(
         val mode = imageOptions.svpMode
         if (mode == "off") return null
         val inChain = "plex-svp" in activeCpuImageFilters
-        val effective = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context))
+        val effective = effectiveMpvImageOptions(imageOptions, reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context))
         val unavailable = when {
             !gpuQualityMode -> SvpInactiveReason.ENGINE
             !performanceProfile(context).allowSvpInterpolation -> SvpInactiveReason.PERFORMANCE_MODE

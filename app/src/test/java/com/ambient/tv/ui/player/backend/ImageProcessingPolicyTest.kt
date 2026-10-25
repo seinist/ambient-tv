@@ -305,6 +305,22 @@ class ImageProcessingPolicyTest {
         assertEquals("lanczos", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = false).scaler)
     }
 
+    @Test fun lowEndDeviceRunsUntouchedDefaultsCheapInEveryModeButKeepsSvp() {
+        // Balanced/Maximum on a low-end device: no Sparsam, but untouched defaults still run cheap.
+        val defaults = effectiveMpvImageOptions(MpvImageOptions(svpMode = "light"), reducedEffects = false,
+            allowSvp = true, cheapDefaults = true)
+        assertEquals(Triple("bilinear", "bilinear", "bilinear"), mpvEffectiveScalers(defaults))
+        assertEquals("off", defaults.deband)
+        assertFalse(defaults.sigmoid)
+        assertEquals("light", defaults.svpMode)
+        val chosen = MpvImageOptions(scaler = "fsr", deband = "strong", sharpening = "cas")
+        val effectiveChosen = effectiveMpvImageOptions(chosen, reducedEffects = false, cheapDefaults = true)
+        assertEquals(Triple("fsr", "strong", "cas"), Triple(effectiveChosen.scaler, effectiveChosen.deband, effectiveChosen.sharpening))
+        assertEquals("bilinear", effectiveChosen.chromaScaler)
+        // Full devices keep the saved defaults.
+        assertEquals("lanczos", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = false, cheapDefaults = false).scaler)
+    }
+
     @Test fun sparsamAppliesChosenMpvFilters() {
         val saved = MpvImageOptions(
             scaler = "artcnn16", chromaScaler = "krig", downscaler = "ssim_down",

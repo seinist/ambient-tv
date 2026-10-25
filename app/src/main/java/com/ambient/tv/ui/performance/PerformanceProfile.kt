@@ -73,6 +73,8 @@ data class PerformanceProfile(
      */
     val allowSvpInterpolation: Boolean get() = playbackMode == PerformanceMode.MAXIMUM ||
         (playbackMode == PerformanceMode.AUTO && !reducedPlayback)
+    /** MPV runs untouched image defaults cheap (bilinear, no deband): Sparsam, or any mode on a low-end device. */
+    val mpvCheapDefaults: Boolean get() = gateExpensiveVideoVisuals || lowEndDevice
     /** Playback is Auto and this device was classified low-end, so Sparsam gates are active. */
     val playbackAutoReduced: Boolean get() = playbackMode == PerformanceMode.AUTO && reducedPlayback
     /** Screensaver shaders run at Economy (or static ambient fallback) when the interface is reduced. */

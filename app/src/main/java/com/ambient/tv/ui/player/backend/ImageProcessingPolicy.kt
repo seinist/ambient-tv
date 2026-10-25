@@ -535,16 +535,22 @@ internal fun mpvImageOptionsLogLine(
 }
 
 /**
- * Sparsam / Low (and Auto→low) effective MPV options.
- * Only fields still at their [MpvImageOptions] default are replaced by the cheap variant
- * (bilinear scaling, no deband, no sigmoid): untouched settings must not cost GPU time on a weak
- * device, where 1080p→4K Lanczos plus deband drops frames on vo=gpu/gpu-next. A value the user
- * chose (another scaler, shaders, filters) differs from the default and is applied as chosen.
- * SVP stays off; brightness/contrast/saturation/gamma and tone-mapping are intentional settings.
+ * Effective MPV options at the player/render boundary; saved prefs stay intact.
+ * [cheapDefaults] (Sparsam, or any mode on a low-end device): only fields still at their
+ * [MpvImageOptions] default are replaced by the cheap variant (bilinear scaling, no deband, no
+ * sigmoid). Untouched settings must not cost GPU time on a weak device, where 1080p→4K Lanczos plus
+ * deband drops frames on vo=gpu/gpu-next. A value the user chose differs from the default and
+ * applies as chosen. [reducedEffects] (Sparsam) additionally keeps SVP off. Brightness, contrast,
+ * saturation, gamma and tone-mapping are intentional settings and always apply.
  */
-internal fun effectiveMpvImageOptions(options: MpvImageOptions, reducedEffects: Boolean, allowSvp: Boolean = false): MpvImageOptions {
+internal fun effectiveMpvImageOptions(
+    options: MpvImageOptions,
+    reducedEffects: Boolean,
+    allowSvp: Boolean = false,
+    cheapDefaults: Boolean = reducedEffects,
+): MpvImageOptions {
     val o = options.normalized().let { if (allowSvp && !reducedEffects) it else it.copy(svpMode = "off") }
-    if (!reducedEffects) return o
+    if (!reducedEffects && !cheapDefaults) return o
     val d = MpvImageOptions()
     return o.copy(
         scaler = if (o.scaler == d.scaler) "bilinear" else o.scaler,
@@ -555,7 +561,7 @@ internal fun effectiveMpvImageOptions(options: MpvImageOptions, reducedEffects: 
     )
 }
 
-/** Sparsam replaces this saved MPV field because it is still at its default. */
+/** [cheapDefaults][effectiveMpvImageOptions] replaces this saved MPV field because it is still at its default. */
 internal fun mpvSparsamReplacesDefault(stored: String, default: String, reduced: Boolean): Boolean = reduced && stored == default
 
 internal fun effectiveVlcImageOptions(options: VlcImageOptions, reducedEffects: Boolean, allowSvp: Boolean = false): VlcImageOptions {

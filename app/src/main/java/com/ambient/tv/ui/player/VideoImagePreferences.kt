@@ -27,3 +27,6 @@ internal fun performanceProfile(context: Context): PerformanceProfile =
 
 internal fun reducedVideoEffects(context: Context): Boolean =
     performanceProfile(context).gateExpensiveVideoVisuals
+
+/** MPV runs untouched image defaults cheap: under Sparsam, and in every mode on a low-end device. */
+internal fun mpvCheapDefaults(context: Context): Boolean = performanceProfile(context).mpvCheapDefaults

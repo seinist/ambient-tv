@@ -78,6 +78,13 @@ class PerformanceProfileTest {
     }
 
     @Test
+    fun mpvCheapDefaultsFollowSparsamOrLowEndDevice() {
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true, playbackMode = PerformanceMode.BALANCED).mpvCheapDefaults)
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false, playbackMode = PerformanceMode.LOW).mpvCheapDefaults)
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false, playbackMode = PerformanceMode.BALANCED).mpvCheapDefaults)
+    }
+
+    @Test
     fun lowEndIsLowRamOrUnderTwoGibOnly() {
         val gib = 1024L * 1024L * 1024L
         assertTrue(isLowEndDevice(lowRamDevice = true, totalMemBytes = 8 * gib))

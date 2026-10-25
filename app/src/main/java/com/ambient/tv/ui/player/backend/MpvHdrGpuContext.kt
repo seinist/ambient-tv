@@ -77,6 +77,6 @@ internal fun mpvHdrGpuEffectsActiveFor(
     options: MpvImageOptions,
     passthroughRunning: Boolean,
 ): Boolean = passthroughRunning || mpvHdrGpuEffectsActive(
-    effectiveMpvImageOptions(options, com.ambient.tv.ui.player.reducedVideoEffects(context), svpAllowed(context)),
+    effectiveMpvImageOptions(options, com.ambient.tv.ui.player.reducedVideoEffects(context), svpAllowed(context), com.ambient.tv.ui.player.mpvCheapDefaults(context)),
     fittedScale = mpvHdrGpuFittedScale(context, metadata),
 )
