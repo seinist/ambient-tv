@@ -5,10 +5,14 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -147,4 +151,22 @@ internal fun rememberSharedPulse(pulse: SharedPulse): State<Float> {
         onDispose { pulse.release() }
     }
     return pulse.alpha
+}
+
+/** Whole skeleton rows and pages: the shared continuous pulse, or null (static) under Sparsam. */
+@Composable
+internal fun rememberSkeletonPulseOrNull(): State<Float>? =
+    if (LocalPerformanceProfile.current.reducedEffects) null else rememberSharedPulse(SharedSkeletonPulse)
+
+/** Layer alpha for a placeholder: the pulse value, or the static rest alpha without a pulse. */
+internal fun skeletonLayerAlpha(pulse: Float?): Float = (pulse ?: SkeletonPulseCurve.REST_ALPHA).coerceIn(0f, 1f)
+
+/**
+ * Applies [pulse] as layer alpha. The value is read only inside the graphicsLayer block, so a
+ * pulse frame updates RenderNode properties without recomposition or re-recording; ModulateAlpha
+ * multiplies each draw like a per-color alpha, without an offscreen buffer.
+ */
+internal fun Modifier.skeletonPulseAlpha(pulse: State<Float>?): Modifier = graphicsLayer {
+    alpha = skeletonLayerAlpha(pulse?.value)
+    compositingStrategy = CompositingStrategy.ModulateAlpha
 }

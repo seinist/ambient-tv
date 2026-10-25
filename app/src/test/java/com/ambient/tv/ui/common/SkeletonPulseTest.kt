@@ -152,4 +152,26 @@ class SkeletonPulseTest {
         assertTrue(d.clock.frames > 1_000)
         job.cancel()
     }
+
+    @Test
+    fun staticPlaceholderUsesRestAlpha() {
+        assertEquals(rest, skeletonLayerAlpha(null), 0f)
+        assertEquals(0.3f, skeletonLayerAlpha(0.3f), 0f)
+        assertEquals(1f, skeletonLayerAlpha(1.4f), 0f)
+    }
+
+    /** Loading placeholders share one lifecycle-bound pulse; no screen starts its own infinite clock. */
+    @Test
+    fun noLoadingPlaceholderStartsItsOwnInfiniteTransition() {
+        val root = listOf(java.io.File("src/main/java"), java.io.File("app/src/main/java")).first { it.isDirectory }
+        // Non-loading infinite animations would be listed here with a reason. There are none today.
+        val allowed = emptySet<String>()
+        val offenders = root.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { file -> file.readText().contains("rememberInfiniteTransition(") }
+            .map { it.relativeTo(root).path }
+            .filterNot { it in allowed }
+            .toList()
+        assertTrue("Use SharedSkeletonPulse/SharedArtworkPulse (ui/common/SkeletonPulse.kt): $offenders", offenders.isEmpty())
+    }
 }
