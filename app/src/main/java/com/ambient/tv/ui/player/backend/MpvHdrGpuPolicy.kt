@@ -23,8 +23,13 @@ enum class MpvHdrGpuReason {
     REDUCED_EFFECTS,
     /** No HDR-safe shader or deband is selected: the GPU path would only add copy-back cost. */
     NO_EFFECTS,
-    /** mpv/Android did not confirm a PQ BT.2020 target in time. */
+    /** mpv/Android did not mark the output as PQ BT.2020 in time. */
     NOT_CONFIRMED,
+    /**
+     * The surface was marked PQ/BT.2020, but the display kept reporting an HDR/SDR ratio of 1
+     * (API 34+ `Display.getHdrSdrRatio`): the panel/HDMI output stayed in SDR.
+     */
+    DISPLAY_NOT_SWITCHED,
     /** The Vulkan output failed for this title (surface or VO init); kept for the media only. */
     VULKAN_FALLBACK,
     /** Sustained dropped frames on the GPU path with nothing left to reduce. */
@@ -161,7 +166,19 @@ internal data class MpvHdrPassthroughFacts(
     val targetMaxLuma: Double? = null,
     /** Source MaxCLL (`video-params/max-cll`) passed on as HDR10 metadata, null when unknown. */
     val targetMaxCll: Double? = null,
+    /** `Display.getHdrSdrRatio()` when `isHdrSdrRatioAvailable` (API 34+); null = Android cannot tell. */
+    val displayHdrSdrRatio: Float? = null,
+    /** This display showed a ratio above 1 before, so 1.0 really means SDR ([com.ambient.tv.ui.display.DisplayHdrRatioEvidence]). */
+    val displayRatioReliable: Boolean = false,
 )
+
+
+/** Log label for [MpvHdrPassthroughMonitor.displaySwitched]; "unknown" when Android cannot tell. */
+internal fun mpvHdrDisplayStateLabel(switched: Boolean?): String = when (switched) {
+    true -> "hdr"
+    false -> "sdr"
+    null -> "unknown"
+}
 
 /**
  * Static HDR10 metadata that reaches the swapchain. Null means unknown (mpv did not publish
@@ -180,9 +197,18 @@ internal fun mpvHdrMetadataPlausible(maxLuma: Double?, maxCll: Double?): Boolean
  * Android a BT.2020/ST2084 producer surface within [timeoutMs] of steady playback. A failure is
  * final for this player; the UI then reopens the title on the direct surface.
  */
-internal class MpvHdrPassthroughMonitor(private val timeoutMs: Long = 3_000L) {
+internal class MpvHdrPassthroughMonitor(
+    private val timeoutMs: Long = 3_000L,
+    /** Steady playback after the HDR mark during which the display must leave SDR. */
+    private val displayTimeoutMs: Long = 4_000L,
+) {
+    /** The output is marked HDR (mpv PQ target + PQ surface dataspace). Says nothing about the TV. */
     var confirmed = false
         private set
+    /** true once the display reported HDR, null while Android cannot tell (see [com.ambient.tv.ui.display.displayHdrModeFromRatio]). */
+    var displaySwitched: Boolean? = null
+        private set
+    private var displaySince = -1L
     var failure: MpvHdrGpuReason? = null
         private set
     /** Metadata verdict at confirmation ([mpvHdrMetadataPlausible]); logged, not a failure. */
@@ -207,7 +233,7 @@ internal class MpvHdrPassthroughMonitor(private val timeoutMs: Long = 3_000L) {
             if (!confirmed) metadataPlausible = mpvHdrMetadataPlausible(facts.targetMaxLuma, facts.targetMaxCll)
             confirmed = true
             since = -1L
-            return null
+            return checkDisplay(facts, nowMs)
         }
         // Also after a confirmation: PQ lost for a whole window of steady playback means the
         // swapchain fell back to SDR. Short gaps (reload, renegotiation) are tolerated.
@@ -217,6 +243,23 @@ internal class MpvHdrPassthroughMonitor(private val timeoutMs: Long = 3_000L) {
         }
         if (since < 0L || nowMs < since) since = nowMs
         return if (nowMs - since >= timeoutMs) fail(MpvHdrGpuReason.NOT_CONFIRMED) else null
+    }
+
+    /** Once switched, the display check is done; an SDR ratio over a steady window fails the route. */
+    private fun checkDisplay(facts: MpvHdrPassthroughFacts, nowMs: Long): MpvHdrGpuReason? {
+        if (displaySwitched == true) return null
+        when (com.ambient.tv.ui.display.displayHdrModeFromRatio(facts.displayHdrSdrRatio, facts.displayRatioReliable)) {
+            true -> { displaySwitched = true; displaySince = -1L; return null }
+            null -> { displaySince = -1L; return null }
+            false -> Unit
+        }
+        displaySwitched = false
+        if (!facts.playing) {
+            displaySince = -1L
+            return null
+        }
+        if (displaySince < 0L || nowMs < displaySince) displaySince = nowMs
+        return if (nowMs - displaySince >= displayTimeoutMs) fail(MpvHdrGpuReason.DISPLAY_NOT_SWITCHED) else null
     }
 
     fun fail(reason: MpvHdrGpuReason): MpvHdrGpuReason {
@@ -264,6 +307,7 @@ object MpvHdrGpuSession {
     private val mediaFailures = bounded<MpvHdrGpuReason>()
     private val displayFailures = bounded<MpvHdrGpuReason>()
     private val notConfirmed = bounded<Int>()
+    private val notSwitched = bounded<Int>()
     /** Compose reads this to recompose when a verdict that changes the route was recorded. */
     private val version = androidx.compose.runtime.mutableIntStateOf(0)
 
@@ -322,6 +366,13 @@ object MpvHdrGpuSession {
                     notConfirmed[display] = count
                     if (count >= 2) displayFailures[display] = reason
                 }
+                // Same tiers: first per media + resolution, twice in a row on a display for all
+                // titles there. Only a display that really switched ([recordDisplaySwitched]) resets.
+                MpvHdrGpuReason.DISPLAY_NOT_SWITCHED -> {
+                    val count = (notSwitched[display] ?: 0) + 1
+                    notSwitched[display] = count
+                    if (count >= 2) displayFailures[display] = reason
+                }
                 else -> Unit
             }
             val key = mediaFailureKey(media, resolution, display)
@@ -333,15 +384,18 @@ object MpvHdrGpuSession {
     /** The passthrough was confirmed on [display]: an earlier NOT_CONFIRMED there was transient. */
     fun recordConfirmed(display: String) { synchronized(lock) { notConfirmed.remove(display) } }
 
+    /** The display reported HDR during a passthrough: an earlier DISPLAY_NOT_SWITCHED was transient. */
+    fun recordDisplaySwitched(display: String) { synchronized(lock) { notSwitched.remove(display) } }
+
     fun clear() {
         synchronized(lock) {
-            detected.clear(); liveReopens.clear(); mediaFailures.clear(); displayFailures.clear(); notConfirmed.clear()
+            detected.clear(); liveReopens.clear(); mediaFailures.clear(); displayFailures.clear(); notConfirmed.clear(); notSwitched.clear()
         }
         bump()
     }
 
     internal fun sizes(): List<Int> = synchronized(lock) {
-        listOf(detected.size, liveReopens.size, mediaFailures.size, displayFailures.size, notConfirmed.size)
+        listOf(detected.size, liveReopens.size, mediaFailures.size, displayFailures.size, notConfirmed.size, notSwitched.size)
     }
 }
 

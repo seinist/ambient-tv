@@ -152,7 +152,7 @@ class MpvHdrGpuAuditTest {
         }
         assertTrue(MpvHdrGpuSession.sizes().all { it <= MpvHdrGpuSession.MAX_ENTRIES })
         MpvHdrGpuSession.clear()
-        assertEquals(listOf(0, 0, 0, 0, 0), MpvHdrGpuSession.sizes())
+        assertEquals(listOf(0, 0, 0, 0, 0, 0), MpvHdrGpuSession.sizes())
     }
 
     @Test fun displayKeyChangesWithTheDisplayOrItsCapabilities() {

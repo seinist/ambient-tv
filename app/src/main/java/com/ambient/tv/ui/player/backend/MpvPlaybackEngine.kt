@@ -124,6 +124,9 @@ internal class MpvPlaybackEngine(
     /** [MpvHdrPassthroughMonitor] confirmed PQ/BT.2020 on the display for this player. */
     var hdrPassthroughConfirmed by mutableStateOf(false)
         private set
+    /** See [MpvHdrPassthroughMonitor.displaySwitched]. */
+    var hdrDisplaySwitched by mutableStateOf<Boolean?>(null)
+        private set
 
     /** One software reopen per engine; this does not change the user's stored decoder choice. */
     private var shieldSoftwareDecode = false
@@ -1416,6 +1419,10 @@ internal class MpvPlaybackEngine(
         // The surface dataspace is a JNI query; twice a second is enough for a 3 s window.
         if (now - hdrPassthroughCheckedAt < 500L && hdr10SwapchainSupported != false) return
         hdrPassthroughCheckedAt = now
+        val display = com.ambient.tv.ui.display.defaultDisplay(context)
+        val displayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
+        val displayRatio = com.ambient.tv.ui.display.displayHdrSdrRatio(display)
+        com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(displayId, displayRatio)
         val facts = MpvHdrPassthroughFacts(
             fileReady = fileReady,
             playing = isPlaying() && getPropertyString("seeking") != "yes" &&
@@ -1428,20 +1435,31 @@ internal class MpvPlaybackEngine(
             swapchainHdr10 = hdr10SwapchainSupported,
             targetMaxLuma = getPropertyDouble("video-target-params/max-luma", 0.0).takeIf { it > 0.0 },
             targetMaxCll = getPropertyDouble("video-params/max-cll", 0.0).takeIf { it > 0.0 },
+            displayHdrSdrRatio = displayRatio,
+            displayRatioReliable = com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(displayId),
         )
         val wasConfirmed = hdrPassthroughMonitor.confirmed
+        val wasSwitched = hdrPassthroughMonitor.displaySwitched
         val diagnostic = "target=${facts.targetGamma}/${facts.targetPrimaries}/${facts.targetPixelFormat} " +
             "dataspace=0x${facts.dataSpace.toString(16)} swapchainHdr10=${facts.swapchainHdr10} " +
-            "maxLuma=${facts.targetMaxLuma} sourceMaxCll=${facts.targetMaxCll}"
+            "maxLuma=${facts.targetMaxLuma} sourceMaxCll=${facts.targetMaxCll} " +
+            "displayHdrSdrRatio=${facts.displayHdrSdrRatio ?: "unavailable"}"
         if (diagnostic != lastHdrSurfaceDiagnostic) {
-            Timber.i("%s MPV HDR surface %s; physical display mode unknown", HDR_AUDIT_TAG, diagnostic)
+            Timber.i("%s MPV HDR surface %s", HDR_AUDIT_TAG, diagnostic)
             lastHdrSurfaceDiagnostic = diagnostic
         }
         hdrPassthroughMonitor.update(facts, now)?.let(::failHdrPassthrough)
         if (!wasConfirmed && hdrPassthroughMonitor.confirmed) {
             hdrPassthroughConfirmed = true
-            Timber.i("%s MPV HDR surface confirmed (gpu-next, PQ/BT.2020); physical display mode unknown; max-luma=%s max-cll=%s plausible=%s",
-                HDR_AUDIT_TAG, facts.targetMaxLuma, facts.targetMaxCll, hdrPassthroughMonitor.metadataPlausible)
+            // Marked, not proven: this is the app's own swapchain/dataspace, not the TV's mode.
+            Timber.i("%s MPV HDR surface marked (gpu-next, PQ/BT.2020); display=%s max-luma=%s max-cll=%s plausible=%s",
+                HDR_AUDIT_TAG, mpvHdrDisplayStateLabel(hdrPassthroughMonitor.displaySwitched),
+                facts.targetMaxLuma, facts.targetMaxCll, hdrPassthroughMonitor.metadataPlausible)
+        }
+        if (wasSwitched != hdrPassthroughMonitor.displaySwitched) {
+            hdrDisplaySwitched = hdrPassthroughMonitor.displaySwitched
+            Timber.i("%s MPV HDR display %s ratio=%s", HDR_AUDIT_TAG,
+                mpvHdrDisplayStateLabel(hdrDisplaySwitched), facts.displayHdrSdrRatio ?: "unavailable")
         }
     }
 
