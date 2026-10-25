@@ -20,4 +20,21 @@
     <string name="playback_profile_reset_title">Änderungen dieses Videos zurücksetzen</string>
     <string name="playback_profile_reset_scope_hint">Zurücksetzen betrifft nur die gewählte Ebene. Live-TV nutzt ohne eigenes Breitenpreset das allgemeine Preset derselben Breite, danach globale Vorgaben. Automatisch gemerkte Videoänderungen haben Vorrang.</string>
     <string name="playback_profile_auto_title">Änderungen werden automatisch für dieses Video gespeichert.</string>
+    <string name="playback_scope_remember_for">Änderungen merken für</string>
+    <string name="playback_scope_episode">Nur diese Folge</string>
+    <string name="playback_scope_movie">Nur diesen Film</string>
+    <string name="playback_scope_title">Nur dieses Video</string>
+    <string name="playback_scope_season">Alle Folgen dieser Staffel</string>
+    <string name="playback_scope_series">Alle Folgen dieser Serie</string>
+    <string name="playback_scope_collection">Sammlung „%1$s“</string>
+    <string name="playback_scope_reset">Zurücksetzen: %1$s</string>
+    <string name="playback_scope_origins">Herkunft – Player: %1$s · Bild: %2$s · Deinterlacing: %3$s · Ausgabe: %4$s · Audio: %5$s · Verzögerung: %6$s</string>
+    <string name="playback_origin_episode">Folge</string>
+    <string name="playback_origin_movie">Film</string>
+    <string name="playback_origin_title">Video</string>
+    <string name="playback_origin_season">Staffel</string>
+    <string name="playback_origin_series">Serie</string>
+    <string name="playback_origin_collection">Sammlung</string>
+    <string name="playback_origin_resolution">Auflösung</string>
+    <string name="playback_origin_default">Standard</string>
 </resources>

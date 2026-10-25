@@ -85,6 +85,20 @@ data class PlaybackMetadata(
     /** Title data for an online subtitle search; null where it makes no sense (live TV, music). */
     val subtitleSearch: SubtitleSearchInfo? = null,
     val playbackSegments: List<com.ambient.tv.domain.model.PlaybackSegment> = emptyList(),
+    /** Server, season, series and collections for scoped playback settings; null outside libraries. */
+    val videoScope: PlaybackVideoScope? = null,
+)
+
+/** Library context of a title: where "remember changes for" can store besides the title itself. */
+data class PlaybackVideoScope(
+    val serverId: String? = null,
+    val seasonId: String? = null,
+    val seasonLabel: String? = null,
+    val seriesId: String? = null,
+    val seriesLabel: String? = null,
+    /** Collections of the movie, or of the series for an episode. */
+    val collections: List<com.ambient.tv.domain.model.MediaTag> = emptyList(),
+    val episode: Boolean = false,
 )
 
 data class SubtitleSearchInfo(
