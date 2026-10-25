@@ -214,11 +214,13 @@ class YouTubePlaybackPreparationTest {
             YouTubeAdaptiveFormat("audio/mp4; codecs=\"mp4a.40.2\"", "https://a/orig", bitrate = 128_000, xtags = "lang=en;acont=original"),
             YouTubeAdaptiveFormat("audio/webm; codecs=\"opus\"", "https://a/opus", bitrate = 160_000),
         )
-        assertEquals("https://v/1080avc" to "https://a/orig", youtubeAdaptivePair(formats, 0))
-        assertEquals("https://v/2160vp9" to "https://a/orig", youtubeAdaptivePair(formats, 2160))
-        assertNull(youtubeAdaptivePair(formats.filter { it.mimeType!!.startsWith("video") }, 0))
+        // The target's codec wins at the same quality, as in SmartTube.
+        assertEquals("https://v/1080avc" to "https://a/orig", youtubeAdaptivePair(formats, YouTubeVideoPreset(1080, 30, "avc")))
+        assertEquals("https://v/1080vp9" to "https://a/orig", youtubeAdaptivePair(formats, YouTubeVideoPreset(1080, 60, "vp9")))
+        assertEquals("https://v/2160vp9" to "https://a/orig", youtubeAdaptivePair(formats, YouTubeVideoPreset(2160, 60, "vp9")))
+        assertNull(youtubeAdaptivePair(formats.filter { it.mimeType!!.startsWith("video") }, YouTubeVideoPreset(1080, 60, "vp9")))
         assertEquals("https://v/1080av1" to "https://a/opus",
-            youtubeAdaptivePair(listOf(formats[3], formats[7]), 1080))
+            youtubeAdaptivePair(listOf(formats[3], formats[7]), YouTubeVideoPreset(1080, 60, "vp9")))
     }
 
     @Test fun mpvEdlEscapesUrlsByLength() {

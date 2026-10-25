@@ -740,6 +740,22 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             )
                         }
                         SubmenuSettingsRow(MediaSystem.YOUTUBE, uiState, viewModel::onSidebarSettingsShortcutChanged)
+                        Text(stringResource(R.string.settings_youtube_video_preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val devicePreset = remember { com.ambient.tv.youtube.youtubeDefaultVideoPreset(com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck()) }
+                        SettingsSelect(options = buildList {
+                            add(SettingsSelectOption(
+                                text = stringResource(R.string.settings_youtube_video_preset_auto, devicePreset.label),
+                                selected = uiState.youtubeVideoPreset == com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO,
+                                onClick = { viewModel.onYoutubeVideoPresetChanged(com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO) },
+                            ))
+                            com.ambient.tv.youtube.YOUTUBE_VIDEO_PRESETS.forEach { preset ->
+                                add(SettingsSelectOption(
+                                    text = preset.label,
+                                    selected = uiState.youtubeVideoPreset == preset.key,
+                                    onClick = { viewModel.onYoutubeVideoPresetChanged(preset.key) },
+                                ))
+                            }
+                        })
                         Text(stringResource(R.string.settings_youtube_max_resolution), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         SettingsSelect(options = buildList {
                             listOf(0, 720, 1080, 1440, 2160).forEach { height ->

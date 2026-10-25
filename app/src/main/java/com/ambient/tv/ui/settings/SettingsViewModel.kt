@@ -499,6 +499,7 @@ class SettingsViewModel @Inject constructor(
         youtubeAutoplayNextEnabled = appPreferences.youtubeAutoplayNextEnabled,
         youtubeFeedKeys = appPreferences.youtubeFeedKeys,
         youtubeMaxVideoHeight = appPreferences.youtubeMaxVideoHeight,
+        youtubeVideoPreset = appPreferences.youtubeVideoPreset,
         plexHiddenSectionKeys = appPreferences.plexHiddenSectionKeys,
         sidebarSettingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,
         systemHomeHiddenRows = appPreferences.systemHomeHiddenRows,
@@ -2158,6 +2159,9 @@ class SettingsViewModel @Inject constructor(
             state.copy(youtubeFeedKeys = next.ifEmpty { listOf("home") })
         }
     }
+    fun onYoutubeVideoPresetChanged(key: String) = _uiState.update {
+        it.copy(youtubeVideoPreset = key.takeIf { k -> com.ambient.tv.youtube.youtubeVideoPreset(k) != null } ?: com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO)
+    }
     fun onYoutubeMaxVideoHeightChanged(value: Int) = _uiState.update { it.copy(youtubeMaxVideoHeight = value.takeIf { v -> v in setOf(0, 720, 1080, 1440, 2160) } ?: 0) }
 
     fun onScreensaverEnabledChanged(value: Boolean) = _uiState.update { it.copy(screensaverEnabled = value) }
@@ -2566,6 +2570,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.youtubeAutoplayNextEnabled = state.youtubeAutoplayNextEnabled
         appPreferences.youtubeFeedKeys = state.youtubeFeedKeys
         appPreferences.youtubeMaxVideoHeight = state.youtubeMaxVideoHeight
+        appPreferences.youtubeVideoPreset = state.youtubeVideoPreset
         appPreferences.screensaverEnabled = state.screensaverEnabled
         appPreferences.screensaverTimeoutMinutes = state.screensaverTimeoutMinutes
         appPreferences.screensaverModeKey = state.screensaverModeKey

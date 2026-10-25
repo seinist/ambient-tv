@@ -56,6 +56,8 @@ data class YouTubePlayback(
     val adaptiveAudioUri: String? = null,
     /** All adaptive formats, for the quality and language choices in the player panel. */
     val adaptiveFormats: List<YouTubeAdaptiveFormat> = emptyList(),
+    /** Generated MPD still being built for VLC/MPV sessions; Media3 waits for it before opening. */
+    val deferredDash: kotlinx.coroutines.Deferred<String?>? = null,
     val isLive: Boolean = false,
     val durationMs: Long = 0,
     val resumeMs: Long = 0,

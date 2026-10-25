@@ -89,6 +89,9 @@ object PlaybackEngineFactory {
         metadata: PlaybackMetadata? = null,
         mimeType: String? = null,
         maxVideoHeight: Int = 0,
+        /** SmartTube-style target codec and frame rate for adaptive sources (YouTube MPD). */
+        preferredVideoMimeType: String? = null,
+        maxVideoFrameRate: Int = 0,
         streamUrlRenewer: ((String) -> String?)? = null,
         sourceHdrStandard: HdrStandard? = metadata?.handheldHdrStandard,
         preferOriginalAudio: Boolean = metadata?.source == "youtube",
@@ -99,7 +102,7 @@ object PlaybackEngineFactory {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
                 listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
                 Media3PlaybackHandle(create(context.applicationContext, streamUrl, startPositionMs,
-                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed))
+                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed))
             }.player
         }
         val started = System.nanoTime()
@@ -159,6 +162,11 @@ object PlaybackEngineFactory {
                 // Apply the first selection before prepare() can start loading DASH tracks.
                 if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setMaxVideoSize(Int.MAX_VALUE, maxVideoHeight).build()
+                // Upper bound with SmartTube's 10 fps tolerance (a 30 fps target still allows 25/30).
+                if (maxVideoFrameRate > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setMaxVideoFrameRate(maxVideoFrameRate + 9).build()
+                if (preferredVideoMimeType != null) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setPreferredVideoMimeType(preferredVideoMimeType).build()
                 addListener(object : androidx.media3.common.Player.Listener {
                     private var reportedReady = false
                     private var reportedFrame = false

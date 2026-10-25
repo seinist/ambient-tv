@@ -41,6 +41,15 @@ object YouTubeDeviceVideo {
     fun maxHeight(context: Context, preference: Int): Int = preference.takeIf { it > 0 } ?: autoMaxHeight(context)
 
     /**
+     * Target for automatic stream selection ([youtubeVideoTarget]): a chosen preset is only
+     * limited by the user's cap; "automatic" (SmartTube's device default) also by the display.
+     */
+    fun videoTarget(context: Context, presetKey: String?, maxHeightPreference: Int): YouTubeVideoPreset {
+        val cap = if (youtubeVideoPreset(presetKey) != null) maxHeightPreference else maxHeight(context, maxHeightPreference)
+        return youtubeVideoTarget(presetKey, cap, decodeCheck())
+    }
+
+    /**
      * Hardware decoders only: software VP9/AV1 at these sizes stutters on TV boxes and phones.
      * H.264 may fall back to any decoder when the device reports no hardware one (emulators).
      *

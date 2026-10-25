@@ -762,7 +762,9 @@
     <string name="settings_youtube_group_subtitle">Konto, Inhalte und Wiedergabe</string>
     <string name="settings_youtube_sign_out_failed">SmartTube-Abmeldung fehlgeschlagen.</string>
     <string name="settings_youtube_feeds">Angezeigte Bereiche</string>
-    <string name="settings_youtube_max_resolution">Maximale Videoauflösung (Media3)</string>
+    <string name="settings_youtube_video_preset">Videoformat (Zielauflösung, Bildrate und Codec)</string>
+    <string name="settings_youtube_video_preset_auto">Automatisch (%1$s)</string>
+    <string name="settings_youtube_max_resolution">Maximale Videoauflösung</string>
     <string name="settings_youtube_quality_hint">Qualität und Codec wählst du im SmartTube-Player aus den verfügbaren Spuren.</string>
     <string name="settings_spotify_enable">Spotify aktivieren</string>
     <string name="settings_spotify_enable_hint">Spotify als eigenständiges System und Connect-Empfänger anzeigen.</string>

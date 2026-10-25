@@ -189,6 +189,7 @@ data class SettingsUiState(
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
     val youtubeSupportedFeedKeys: Set<String> = AppPreferences.YOUTUBE_FEED_KEYS,
     val youtubeMaxVideoHeight: Int = 0,
+    val youtubeVideoPreset: String = "auto",
     val plexLibrarySections: List<LibrarySection> = emptyList(),
     val plexHiddenSectionKeys: Set<String> = emptySet(),
     /** Systems whose sidebar submenu leaves out the shortcut to their Settings page. */
@@ -389,6 +390,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     youtubeAutoplayNextEnabled,
     youtubeFeedKeys,
     youtubeMaxVideoHeight,
+    youtubeVideoPreset,
     plexHiddenSectionKeys,
     sidebarSettingsShortcutHidden,
     screensaverEnabled,
@@ -552,6 +554,7 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     youtubeAutoplayNextEnabled = if (draft.youtubeAutoplayNextEnabled != baseline.youtubeAutoplayNextEnabled) draft.youtubeAutoplayNextEnabled else stored.youtubeAutoplayNextEnabled,
     youtubeFeedKeys = if (draft.youtubeFeedKeys != baseline.youtubeFeedKeys) draft.youtubeFeedKeys else stored.youtubeFeedKeys,
     youtubeMaxVideoHeight = if (draft.youtubeMaxVideoHeight != baseline.youtubeMaxVideoHeight) draft.youtubeMaxVideoHeight else stored.youtubeMaxVideoHeight,
+    youtubeVideoPreset = if (draft.youtubeVideoPreset != baseline.youtubeVideoPreset) draft.youtubeVideoPreset else stored.youtubeVideoPreset,
     plexHiddenSectionKeys = if (draft.plexHiddenSectionKeys != baseline.plexHiddenSectionKeys) draft.plexHiddenSectionKeys else stored.plexHiddenSectionKeys,
     sidebarSettingsShortcutHidden = if (draft.sidebarSettingsShortcutHidden != baseline.sidebarSettingsShortcutHidden) draft.sidebarSettingsShortcutHidden else stored.sidebarSettingsShortcutHidden,
     screensaverEnabled = if (draft.screensaverEnabled != baseline.screensaverEnabled) draft.screensaverEnabled else stored.screensaverEnabled,

@@ -28,10 +28,53 @@ val youtubeDecodeAnything: YouTubeDecodeCheck = { _, _, _, _, hdr -> hdr == null
 
 const val YOUTUBE_STREAM_AUTO = "auto"
 
-/** A selectable video quality: one resolution/frame rate/codec combination. */
-data class YouTubeVideoOption(val key: String, val height: Int, val fps: Int, val family: String, val hdr: String? = null) {
-    val label: String get() = "${height}p${if (fps > 30) fps.toString() else ""} · ${youtubeFamilyLabel(family)}" +
-        when (hdr) { "hdr10" -> " · HDR10"; "hlg" -> " · HLG"; else -> "" }
+/**
+ * A selectable video quality: one resolution/frame rate/codec combination. [hardware] false: no
+ * hardware decoder reports this size and frame rate; VLC/MPV may still decode it in software.
+ */
+data class YouTubeVideoOption(val key: String, val height: Int, val fps: Int, val family: String, val hdr: String? = null, val hardware: Boolean = true) {
+    val label: String get() = "${height}p${if (fps > 0 && fps != 30) fps.toString() else ""} · ${youtubeFamilyLabel(family)}" +
+        when (hdr) { "hdr10" -> " · HDR10"; "hlg" -> " · HLG"; else -> "" } + if (hardware) "" else " · SW"
+}
+
+/**
+ * SmartTube's video format presets: the target resolution, frame rate and codec. Automatic
+ * selection takes the best stream within the target and prefers its codec.
+ */
+data class YouTubeVideoPreset(val height: Int, val fps: Int, val family: String) {
+    val key: String get() = "$height:$fps:$family"
+    val label: String get() = "${height}p$fps · ${youtubeFamilyLabel(family)}"
+}
+
+const val YOUTUBE_PRESET_AUTO = "auto"
+
+val YOUTUBE_VIDEO_PRESETS = listOf(
+    YouTubeVideoPreset(720, 30, "avc"),
+    YouTubeVideoPreset(1080, 30, "avc"),
+    YouTubeVideoPreset(1080, 60, "avc"),
+    YouTubeVideoPreset(1080, 60, "vp9"),
+    YouTubeVideoPreset(1440, 60, "vp9"),
+    YouTubeVideoPreset(2160, 60, "vp9"),
+    YouTubeVideoPreset(2160, 60, "av1"),
+    YouTubeVideoPreset(4320, 60, "av1"),
+)
+
+fun youtubeVideoPreset(key: String?): YouTubeVideoPreset? = YOUTUBE_VIDEO_PRESETS.firstOrNull { it.key == key }
+
+/** SmartTube's per-device default (PlayerData.getDefaultVideoFormat): VP9 where the hardware has it. */
+fun youtubeDefaultVideoPreset(decode: YouTubeDecodeCheck): YouTubeVideoPreset = when {
+    decode("vp9", 3840, 2160, 0, null) -> YouTubeVideoPreset(2160, 60, "vp9")
+    decode("vp9", 1920, 1080, 0, null) -> YouTubeVideoPreset(1080, 60, "vp9")
+    else -> YouTubeVideoPreset(720, 30, "avc")
+}
+
+/**
+ * The target for automatic selection: a chosen preset as is, "automatic" SmartTube's device
+ * default; both limited by [maxHeight] (the user's cap or the display, 0 = none).
+ */
+fun youtubeVideoTarget(presetKey: String?, maxHeight: Int, decode: YouTubeDecodeCheck): YouTubeVideoPreset {
+    val preset = youtubeVideoPreset(presetKey) ?: youtubeDefaultVideoPreset(decode)
+    return if (maxHeight > 0 && maxHeight < preset.height) preset.copy(height = maxHeight) else preset
 }
 
 /** A selectable audio language: the original or a dubbed/described track; [kind] is YouTube's `acont`. */
@@ -89,56 +132,95 @@ fun youtubeHdrKind(mime: String?): String? {
 }
 
 /**
- * The quality step of a video stream: its short side, as YouTube names it. A vertical 1080×1920
- * Short is "1080p" and must not be capped as if it were 1920 lines high.
+ * The quality step of a video stream as YouTube labels it (SmartTube's real height): the short
+ * side, or the long side's 16:9 equivalent for wider pictures. A vertical 1080×1920 Short is
+ * "1080p", a 2560×1072 cinemascope film "1440p".
  */
-internal fun YouTubeAdaptiveFormat.qualityHeight(): Int = if (width > 0 && height > 0) minOf(width, height) else height
+internal fun YouTubeAdaptiveFormat.qualityHeight(): Int {
+    if (width <= 0 || height <= 0) return height
+    val short = minOf(width, height)
+    val long = maxOf(width, height)
+    return maxOf(short, (long * 9 + 8) / 16)
+}
 
 private fun YouTubeAdaptiveFormat.isVideo() = mimeType?.startsWith("video/", ignoreCase = true) == true
 private fun YouTubeAdaptiveFormat.isAudio() = mimeType?.startsWith("audio/", ignoreCase = true) == true
 private fun YouTubeAdaptiveFormat.usable() = !isOtf && url?.startsWith("http", ignoreCase = true) == true
 
-/** Video formats this device can play: known codec, SDR, decodable at their size and frame rate. */
+private fun YouTubeAdaptiveFormat.decodable(decode: YouTubeDecodeCheck): Boolean =
+    decode(youtubeVideoFamily(mimeType) ?: "", width.takeIf { it > 0 } ?: (height * 16 / 9), height, fps, youtubeHdrKind(mimeType))
+
+private fun YouTubeAdaptiveFormat.knownVideo() = isVideo() && usable() && youtubeVideoFamily(mimeType) != null
+
+/** Video formats this device can play: known codec, decodable in hardware at their size and frame rate. */
 internal fun youtubePlayableVideos(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck): List<YouTubeAdaptiveFormat> =
-    formats.filter { format ->
-        val family = youtubeVideoFamily(format.mimeType)
-        format.isVideo() && format.usable() && family != null &&
-            decode(family, format.width.takeIf { it > 0 } ?: (format.height * 16 / 9), format.height, format.fps, youtubeHdrKind(format.mimeType))
+    formats.filter { it.knownVideo() && it.decodable(decode) }
 
-    }
+/**
+ * Formats offered in the player panel: like SmartTube every SDR stream of a known codec, also
+ * those no hardware decoder reports (VLC/MPV fall back to software); HDR only where [decode]
+ * allows it, since an unconverted HDR picture on an SDR output is wrong.
+ */
+private fun youtubeListedVideos(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck): List<YouTubeAdaptiveFormat> =
+    formats.filter { it.knownVideo() && (youtubeHdrKind(it.mimeType) == null || it.decodable(decode)) }
 
-private fun familyRank(family: String?) = when (family) { "avc" -> 0; "vp9" -> 1; "av1" -> 2; else -> 3 }
+/** SmartTube's codec weights (MediaTrack): VP9 before H.264 before AV1. */
+private fun codecWeight(family: String?) = when (family) { "vp9" -> 31; "avc" -> 28; "av1" -> 14; else -> 0 }
 
 private fun videoKey(format: YouTubeAdaptiveFormat) =
     "v:${format.qualityHeight()}:${format.fps}:${youtubeVideoFamily(format.mimeType)}:${youtubeHdrKind(format.mimeType) ?: "sdr"}"
 
 /** The qualities offered in the player panel, best first. */
 fun youtubeVideoOptions(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck): List<YouTubeVideoOption> =
-    youtubePlayableVideos(formats, decode)
-        .map { YouTubeVideoOption(videoKey(it), it.qualityHeight(), it.fps, youtubeVideoFamily(it.mimeType)!!, youtubeHdrKind(it.mimeType)) }
-        .distinctBy { it.key }
+    youtubeListedVideos(formats, decode)
+        .map { YouTubeVideoOption(videoKey(it), it.qualityHeight(), it.fps, youtubeVideoFamily(it.mimeType)!!, youtubeHdrKind(it.mimeType), it.decodable(decode)) }
+        .groupBy { it.key }.map { (_, same) -> same.firstOrNull { it.hardware } ?: same.first() }
         .sortedWith(
             compareByDescending<YouTubeVideoOption> { it.height }.thenByDescending { it.fps }
-                .thenBy { if (it.hdr != null) 0 else 1 }.thenBy { familyRank(it.family) },
+                .thenBy { if (it.hdr != null) 0 else 1 }.thenByDescending { codecWeight(it.family) },
         )
 
+// SmartTube's VideoTrack comparison: 5 % size and 10 fps tolerance, frame rates below 10 count as 30.
+private fun sizeEquals(a: Int, b: Int) = kotlin.math.abs(a - b) < a / 100 * 5
+private fun sizeLess(a: Int, b: Int) = !sizeEquals(a, b) && a < b
+private fun effectiveFps(fps: Int) = if (fps < 10) 30 else fps
+private fun fpsLess(a: Int, b: Int) = kotlin.math.abs(a - b) >= 10 && a < b
+
+/** Within the target: not larger (5 %) and not faster (10 fps) than it. */
+private fun YouTubeAdaptiveFormat.within(target: YouTubeVideoPreset) =
+    !sizeLess(target.height, qualityHeight()) && !fpsLess(target.fps, effectiveFps(fps))
+
+/** HDR 3 points, frame rate 2, resolution 1; a tie within one codec goes to the higher bitrate. */
+private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): Int {
+    var score = 0
+    val hdrA = youtubeHdrKind(a.mimeType) != null
+    val hdrB = youtubeHdrKind(b.mimeType) != null
+    if (hdrA != hdrB) score += if (hdrA) 3 else -3
+    if (fpsLess(effectiveFps(b.fps), effectiveFps(a.fps))) score += 2 else if (fpsLess(effectiveFps(a.fps), effectiveFps(b.fps))) score -= 2
+    if (sizeLess(b.qualityHeight(), a.qualityHeight())) score += 1 else if (sizeLess(a.qualityHeight(), b.qualityHeight())) score -= 1
+    if (score == 0 && youtubeVideoFamily(a.mimeType) == youtubeVideoFamily(b.mimeType)) return a.bitrate.compareTo(b.bitrate)
+    return score
+}
+
 /**
- * The video stream for [key]; [YOUTUBE_STREAM_AUTO] takes the best playable stream up to
- * [maxHeight]: highest resolution, then frame rate, then HDR (only offered when the device shows
- * it), then the codec with the widest hardware support. Nothing at or below the cap: the
- * smallest playable stream.
+ * The video stream for [key]; [YOUTUBE_STREAM_AUTO] works like SmartTube's track selector: among
+ * the hardware-decodable streams within [target], the target's codec if it has any; the best
+ * of them by HDR, frame rate and resolution; equal ones by codec (VP9, H.264, AV1). Nothing
+ * within the target: the smallest playable stream.
  */
-fun youtubePickVideo(formats: List<YouTubeAdaptiveFormat>, key: String, maxHeight: Int, decode: YouTubeDecodeCheck): YouTubeAdaptiveFormat? {
+fun youtubePickVideo(formats: List<YouTubeAdaptiveFormat>, key: String, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck): YouTubeAdaptiveFormat? {
+    if (key != YOUTUBE_STREAM_AUTO) {
+        youtubeListedVideos(formats, decode).filter { videoKey(it) == key }
+            .maxWithOrNull(compareBy<YouTubeAdaptiveFormat> { it.decodable(decode) }.thenBy { it.bitrate })?.let { return it }
+    }
     val playable = youtubePlayableVideos(formats, decode)
-    if (key != YOUTUBE_STREAM_AUTO) playable.filter { videoKey(it) == key }.maxByOrNull { it.bitrate }?.let { return it }
-    val fitting = playable.filter { it.qualityHeight() in 1..maxHeight }.ifEmpty { playable.sortedBy { it.qualityHeight() }.take(1) }
-    return fitting.minWithOrNull(
-        compareByDescending<YouTubeAdaptiveFormat> { it.qualityHeight() }
-            .thenByDescending { it.fps }
-            .thenBy { if (youtubeHdrKind(it.mimeType) != null) 0 else 1 }
-            .thenBy { familyRank(youtubeVideoFamily(it.mimeType)) }
-            .thenByDescending { it.bitrate },
-    )
+    val within = playable.filter { it.within(target) }
+    if (within.isEmpty()) return playable.minWithOrNull(compareBy<YouTubeAdaptiveFormat> { it.qualityHeight() }.thenByDescending { codecWeight(youtubeVideoFamily(it.mimeType)) })
+    val candidates = within.filter { youtubeVideoFamily(it.mimeType) == target.family }.ifEmpty { within }
+    return candidates.reduce { best, next ->
+        val compared = compareVideo(next, best)
+        if (compared > 0 || (compared == 0 && codecWeight(youtubeVideoFamily(next.mimeType)) > codecWeight(youtubeVideoFamily(best.mimeType)))) next else best
+    }
 }
 
 private val XTAG_LANG = Regex("""(?:^|[;&:])lang=([A-Za-z0-9-]+)""")
@@ -213,15 +295,15 @@ fun youtubePickAudio(formats: List<YouTubeAdaptiveFormat>, key: String): YouTube
 }
 
 /**
- * Best video-only and original audio-only URLs for players that open both side by side.
- * [maxHeight] 0 means 1080p; the engine passes the display-based automatic cap instead.
+ * Best video-only and original audio-only URLs for players that open both side by side, for the
+ * SmartTube-style [target] (resolution, frame rate, codec).
  */
 internal fun youtubeAdaptivePair(
     formats: List<YouTubeAdaptiveFormat>,
-    maxHeight: Int,
+    target: YouTubeVideoPreset,
     decode: YouTubeDecodeCheck = youtubeDecodeAnything,
 ): Pair<String, String>? {
-    val video = youtubePickVideo(formats, YOUTUBE_STREAM_AUTO, maxHeight.takeIf { it > 0 } ?: 1080, decode) ?: return null
+    val video = youtubePickVideo(formats, YOUTUBE_STREAM_AUTO, target, decode) ?: return null
     val audio = youtubePickAudio(formats, YOUTUBE_STREAM_AUTO) ?: return null
     return (video.url ?: return null) to (audio.url ?: return null)
 }

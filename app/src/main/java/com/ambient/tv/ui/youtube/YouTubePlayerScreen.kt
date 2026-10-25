@@ -130,6 +130,7 @@ import com.ambient.tv.ui.player.backend.rememberMpvPlaybackSnapshot
 import com.ambient.tv.ui.player.backend.rememberVlcPlaybackController
 import com.ambient.tv.ui.player.backend.rememberVlcPlaybackSnapshot
 import com.ambient.tv.youtube.YouTubePlayback
+import com.ambient.tv.youtube.qualityHeight
 import com.ambient.tv.youtube.youtubeThumbnailUrl
 import com.ambient.tv.youtube.youtubePanelThumbnailUrls
 import com.ambient.tv.youtube.youtubeVlcPlaybackUri
@@ -242,9 +243,9 @@ fun YouTubePlayerScreen(
             val hdrAllowed = PlaybackBackendResolver.resolve(rendererKey) in
                 setOf(PlaybackBackend.MPV, PlaybackBackend.VLC)
             val externalPlayback = remember(enginePlayback, videoChoice, audioChoice, hdrAllowed) {
-                youtubeWithStreamChoice(context, enginePlayback, videoChoice, audioChoice, prefs.youtubeMaxVideoHeight, hdrAllowed)
+                youtubeWithStreamChoice(context, enginePlayback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed)
             }
-            val streamPanel = rememberYouTubeStreamPanel(playback, videoChoice, audioChoice, prefs.youtubeMaxVideoHeight, hdrAllowed,
+            val streamPanel = rememberYouTubeStreamPanel(playback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed,
                 onVideo = { allowLateResume = false; videoChoice = it }, onAudio = { allowLateResume = false; audioChoice = it })
             fun switchRenderer(key: String, positionMs: Long, global: Boolean) {
                 val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
@@ -382,8 +383,21 @@ fun YouTubePlayerScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PlayerBufferingSpinner(visible = true) }
                     }
                 }
-                else -> YouTubeMedia3Playback(
-                    enginePlayback, resumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs.youtubeMaxVideoHeight,
+                else -> {
+                    // VLC/MPV sessions build the MPD in the background; Media3 opens it once ready.
+                    val pendingDash = enginePlayback.deferredDash
+                    val media3Playback by produceState<YouTubePlayback?>(enginePlayback.takeIf { pendingDash == null }, enginePlayback) {
+                        value = pendingDash?.let { deferred ->
+                            val mpd = runCatching { deferred.await() }.getOrNull()
+                            if (mpd != null) enginePlayback.copy(uri = mpd, mimeType = "application/dash+xml", deferredDash = null)
+                            else enginePlayback.copy(deferredDash = null)
+                        } ?: enginePlayback
+                    }
+                    val media3 = media3Playback
+                    if (media3 == null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { PlayerBufferingSpinner(visible = true) }
+                    } else YouTubeMedia3Playback(
+                    media3, resumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight,
                     prefs.mediaAudioPassthroughEnabled,
                     onBack, onCompleted, ::switchRenderer, formatChanged,
                     streams = streamPanel,
@@ -393,6 +407,7 @@ fun YouTubePlayerScreen(
                         switchRenderer(if (MpvBackendAvailability.isAvailable) "mpv" else "vlc", positionMs, false)
                     },
                 )
+                }
             }
             // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
             com.ambient.tv.ui.player.PersistentPlayerOverlays()
@@ -432,6 +447,7 @@ private fun youtubeWithStreamChoice(
     playback: YouTubePlayback,
     videoKey: String,
     audioKey: String,
+    presetKey: String,
     maxHeightPreference: Int,
     hdrAllowed: Boolean,
 ): YouTubePlayback {
@@ -439,8 +455,8 @@ private fun youtubeWithStreamChoice(
     // The engine's pick is SDR; with HDR allowed "automatic" is chosen again here.
     if (playback.isLive || (videoKey == auto && audioKey == auto && !hdrAllowed)) return playback
     val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
-    val maxHeight = com.ambient.tv.youtube.YouTubeDeviceVideo.maxHeight(context, maxHeightPreference)
-    val video = com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, maxHeight, decode)?.url
+    val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxHeightPreference)
+    val video = com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, target, decode)?.url
     val audio = com.ambient.tv.youtube.youtubePickAudio(playback.adaptiveFormats, audioKey)?.url
     return if (video != null && audio != null) playback.copy(adaptiveVideoUri = video, adaptiveAudioUri = audio) else playback
 }
@@ -450,6 +466,7 @@ private fun rememberYouTubeStreamPanel(
     playback: YouTubePlayback,
     videoKey: String,
     audioKey: String,
+    presetKey: String,
     maxHeightPreference: Int,
     hdrAllowed: Boolean,
     onVideo: (String) -> Unit,
@@ -459,18 +476,18 @@ private fun rememberYouTubeStreamPanel(
     val context = LocalContext.current
     val displayLocale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val auto = com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO
-    val choices = remember(playback.adaptiveFormats, maxHeightPreference, hdrAllowed) {
+    val choices = remember(playback.adaptiveFormats, presetKey, maxHeightPreference, hdrAllowed) {
         val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
-        val maxHeight = com.ambient.tv.youtube.YouTubeDeviceVideo.maxHeight(context, maxHeightPreference)
+        val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxHeightPreference)
         Triple(
-            com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, auto, maxHeight, decode),
+            com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, auto, target, decode),
             com.ambient.tv.youtube.youtubeVideoOptions(playback.adaptiveFormats, decode),
             com.ambient.tv.youtube.youtubeAudioOptions(playback.adaptiveFormats),
         )
     }
     val (autoVideo, videoOptions, audioOptions) = choices
     val autoLabel = stringResource(R.string.player_quality_auto, autoVideo?.let {
-        com.ambient.tv.youtube.YouTubeVideoOption("", it.height, it.fps, com.ambient.tv.youtube.youtubeVideoFamily(it.mimeType) ?: "",
+        com.ambient.tv.youtube.YouTubeVideoOption("", it.qualityHeight(), it.fps, com.ambient.tv.youtube.youtubeVideoFamily(it.mimeType) ?: "",
             com.ambient.tv.youtube.youtubeHdrKind(it.mimeType)).label
     } ?: "–")
     val kinds = rememberYouTubeAudioKindNames()
@@ -540,6 +557,7 @@ private fun YouTubeMedia3Playback(
     startPositionMs: Long,
     rendererKey: String,
     bigSeekSeconds: Int,
+    presetKey: String,
     maxVideoHeight: Int,
     audioPassthroughEnabled: Boolean,
     onBack: () -> Unit,
@@ -580,6 +598,9 @@ private fun YouTubeMedia3Playback(
     var seekCommitVersion by remember(playback.videoId) { mutableIntStateOf(0) }
     val metadata = checkNotNull(LocalPlaybackMetadata.current)
     val currentOnCompleted by rememberUpdatedState(onCompleted)
+    val target = remember(presetKey, maxVideoHeight) {
+        com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxVideoHeight)
+    }
     val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled) {
         BackgroundPlaybackSession.acquire(context, metadata, "media3", listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled)) {
             val appContext = context.applicationContext
@@ -587,7 +608,9 @@ private fun YouTubeMedia3Playback(
                 appContext, playback.uri, if (playback.isLive) 0 else startPositionMs,
                 streamHeaders = playback.headers, mimeType = playback.mimeType,
                 audioPassthroughEnabled = audioPassthroughEnabled,
-                maxVideoHeight = maxVideoHeight,
+                maxVideoHeight = target.height,
+                preferredVideoMimeType = youtubeFamilyMimeType(target.family),
+                maxVideoFrameRate = target.fps,
                 preferOriginalAudio = true,
                 streamUrlRenewer = { expired ->
                     val host = android.net.Uri.parse(expired).host.orEmpty()
@@ -1757,3 +1780,11 @@ private fun applyTrackChoice(player: ExoPlayer, options: List<YtTrackChoice>, ke
     player.trackSelectionParameters = builder.build()
 }
 private fun time(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)
+
+/** Media3 sample MIME type of a YouTube codec family. */
+private fun youtubeFamilyMimeType(family: String): String? = when (family) {
+    "avc" -> androidx.media3.common.MimeTypes.VIDEO_H264
+    "vp9" -> androidx.media3.common.MimeTypes.VIDEO_VP9
+    "av1" -> androidx.media3.common.MimeTypes.VIDEO_AV1
+    else -> null
+}

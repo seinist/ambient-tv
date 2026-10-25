@@ -1163,6 +1163,13 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_YOUTUBE_MAX_VIDEO_HEIGHT, 0).takeIf { it in setOf(0, 720, 1080, 1440, 2160) } ?: 0
         set(value) = prefs.edit { putInt(KEY_YOUTUBE_MAX_VIDEO_HEIGHT, value.takeIf { it in setOf(0, 720, 1080, 1440, 2160) } ?: 0) }
 
+    /** SmartTube video format preset key ([com.ambient.tv.youtube.YOUTUBE_VIDEO_PRESETS]); "auto" = per-device default. */
+    var youtubeVideoPreset: String
+        get() = prefs.getString(KEY_YOUTUBE_VIDEO_PRESET, null)?.takeIf { com.ambient.tv.youtube.youtubeVideoPreset(it) != null }
+            ?: com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO
+        set(value) = prefs.edit { putString(KEY_YOUTUBE_VIDEO_PRESET,
+            value.takeIf { com.ambient.tv.youtube.youtubeVideoPreset(it) != null } ?: com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO) }
+
     /** D-pad Up/Down big-jump seek amount in the video player, in seconds. */
     var bigSeekJumpSeconds: Int
         get() = prefs.getInt(KEY_BIG_SEEK_JUMP_SECONDS, 60).coerceIn(10, 300)
@@ -2039,6 +2046,7 @@ class AppPreferences @Inject constructor(
         const val SLEEP_WARNING_DEFAULT = 1
         const val KEY_YOUTUBE_FEEDS = "youtube_feed_keys"
         const val KEY_YOUTUBE_MAX_VIDEO_HEIGHT = "youtube_max_video_height"
+        const val KEY_YOUTUBE_VIDEO_PRESET = "youtube_video_preset"
         val YOUTUBE_FEED_KEYS = setOf("home", "subscriptions", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
         val DEFAULT_YOUTUBE_FEEDS = listOf("home", "subscriptions", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
         const val KEY_SCREENSAVER_ENABLED = "screensaver_enabled"

@@ -132,6 +132,7 @@ data class SettingsBackup(
     val youtubeSponsorBlockEnabled: Boolean = true,
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
     val youtubeMaxVideoHeight: Int = 0,
+    val youtubeVideoPreset: String = "auto",
     val screensaverEnabled: Boolean = true,
     val screensaverTimeoutMinutes: Int = 10,
     val screensaverModeKey: String = "ambient",
@@ -409,6 +410,7 @@ class SettingsBackupManager @Inject constructor(
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeFeedKeys = preferences.youtubeFeedKeys,
             youtubeMaxVideoHeight = preferences.youtubeMaxVideoHeight,
+            youtubeVideoPreset = preferences.youtubeVideoPreset,
             screensaverEnabled = preferences.screensaverEnabled,
             screensaverTimeoutMinutes = preferences.screensaverTimeoutMinutes,
             screensaverModeKey = preferences.screensaverModeKey,
@@ -749,6 +751,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
         preferences.youtubeMaxVideoHeight = backup.youtubeMaxVideoHeight
+        preferences.youtubeVideoPreset = backup.youtubeVideoPreset
         preferences.screensaverEnabled = backup.screensaverEnabled
         preferences.screensaverTimeoutMinutes = backup.screensaverTimeoutMinutes
         preferences.screensaverModeKey = backup.screensaverModeKey

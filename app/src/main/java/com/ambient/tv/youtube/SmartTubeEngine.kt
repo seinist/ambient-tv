@@ -9,6 +9,7 @@ import com.ambient.tv.data.local.SmartTubeAccountBackup
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -38,6 +39,7 @@ class SmartTubeEngine @Inject constructor(
     private val playbackMetadata = YouTubePlaybackMetadataCache()
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
+    private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private val metadataInflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Result<YouTubeMetadata>?>>()
 
     init {
@@ -364,7 +366,22 @@ class SmartTubeEngine @Inject constructor(
         }
         val direct = muxedProgressiveUrl(info)
         val vodPolicy = youtubeVodStreamPolicy(isEmulator = isProbablyEmulator())
-        val uri = selectYouTubePlaybackUri(
+        // VLC/MPV (relayed) play the separate video and audio streams on every device.
+        // "Automatic" follows the display mode; only streams the hardware decoders handle.
+        val adaptivePair = if (isLive) null else youtubeAdaptivePair(
+            formats,
+            YouTubeDeviceVideo.videoTarget(context, appPreferences.youtubeVideoPreset, appPreferences.youtubeMaxVideoHeight),
+            // SDR baseline; the player upgrades to HDR where its output path shows it.
+            YouTubeDeviceVideo.decodeCheck(),
+        )
+        // VLC/MPV never read the MPD; building it (with OTF init-segment fetches) only delays
+        // their start. It is still built in the background for a later switch to Media3.
+        val deferMpd = adaptivePair != null && vodPolicy == YouTubeVodStreamPolicy.DASH_FIRST &&
+            youtubeHasPlayableDashTracks(formats) &&
+            com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(appPreferences.playbackBackendKey) !=
+            com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
+        val deferredDash = if (deferMpd) backgroundScope.async { generatedDashManifest(info, videoId) } else null
+        val uri = if (deferMpd) hls ?: direct ?: adaptivePair?.first else selectYouTubePlaybackUri(
             isLive = isLive,
             vodPolicy = vodPolicy,
             hls = hls,
@@ -378,14 +395,6 @@ class SmartTubeEngine @Inject constructor(
             else -> null
         }
         val headers = playbackHeaders(info, videoId)
-        // VLC/MPV (relayed) play the separate video and audio streams on every device.
-        // "Automatic" follows the display mode; only streams the hardware decoders handle.
-        val adaptivePair = if (isLive) null else youtubeAdaptivePair(
-            formats,
-            YouTubeDeviceVideo.maxHeight(context, appPreferences.youtubeMaxVideoHeight),
-            // SDR baseline; the player upgrades to HDR where its output path shows it.
-            YouTubeDeviceVideo.decodeCheck(),
-        )
         dumpYouTubeStreamDebug(videoId, info, vodPolicy, uri, mimeType, direct, headers, adaptivePair)
         if (uri == null) {
             throw IllegalStateException(context.getString(com.ambient.tv.R.string.youtube_no_compatible_format))
@@ -401,12 +410,13 @@ class SmartTubeEngine @Inject constructor(
             adaptiveVideoUri = adaptivePair?.first,
             adaptiveAudioUri = adaptivePair?.second,
             adaptiveFormats = formats,
+            deferredDash = deferredDash,
             isLive = isLive,
             headers = headers,
             timeline = com.ambient.tv.domain.model.PlaybackTimeline(preview = if (isLive) null else storyboardPreview(info)),
         ).also {
             com.ambient.tv.ui.player.logPlaybackStartup("youtube", "stream_ready", started,
-                "live=$isLive kind=${mimeType ?: "direct"} adaptive_pair=${adaptivePair != null} progressive_fallback=${direct != null}")
+                "live=$isLive kind=${mimeType ?: "direct"} mpd_deferred=$deferMpd adaptive_pair=${adaptivePair != null} progressive_fallback=${direct != null}")
         }
     }
 
@@ -425,8 +435,33 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
+    @Volatile private var formatClientRestored = false
+
+    /**
+     * MediaServiceCore persists the client that last delivered playable formats but starts every
+     * process at the TV client again, which often answers with SABR only: one wasted request
+     * (1–5 s) before the client switch on the first video after each app start.
+     */
+    private fun restoreFormatClientOnce() {
+        if (formatClientRestored) return
+        formatClientRestored = true
+        runCatching {
+            val data = Class.forName("com.liskovsoft.youtubeapi.service.internal.MediaServiceData").getMethod("instance").invoke(null)
+            val ordinal = data.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return
+            val service = Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService").getMethod("instance").invoke(null)
+            val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return
+            val known = service.javaClass.getDeclaredField("VIDEO_INFO_TYPE_LIST").apply { isAccessible = true }.get(null) as? Array<*>
+            if (known?.contains(client) != true) return
+            for (name in listOf("mNextInfoType", "mActualInfoType")) {
+                service.javaClass.getDeclaredField(name).apply { isAccessible = true }.set(service, client)
+            }
+            Timber.i("SmartTube format client restored: %s", client)
+        }.onFailure { Timber.d(it, "SmartTube format client restore") }
+    }
+
     private suspend fun loadPlayableFormatInfo(media: Any, videoId: String): Any = formatClientMutex.withLock {
         val caller = kotlin.coroutines.coroutineContext
+        restoreFormatClientOnce()
         resolveYouTubeFormatInfo(
             load = { allowInnertube -> loadFormatInfo(media, videoId, allowInnertube) },
             switchClient = {
