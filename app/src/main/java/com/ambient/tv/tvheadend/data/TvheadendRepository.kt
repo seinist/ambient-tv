@@ -22,7 +22,6 @@ import com.ambient.tv.tvheadend.domain.TvhPlaybackSource
 import com.ambient.tv.tvheadend.domain.TvhServerInfo
 import com.ambient.tv.tvheadend.domain.TvhSearchResults
 import com.ambient.tv.tvheadend.domain.TvhStreamProfile
-import com.ambient.tv.wol.WolManager
 import com.ambient.tv.vpn.WireGuardRouteController
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -62,11 +61,11 @@ class TvheadendRepository @Inject constructor(
     private val preferences: AppPreferences,
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val tokenStore: TokenStore,
-    private val wolManager: WolManager,
     private val wireGuardRoute: WireGuardRouteController,
-    private val wakeMachines: com.ambient.tv.wol.WakeMachines,
     browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
     private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
+    /** Runs the one TVHeadend wake (state, card, gate); a Provider because it uses this repository. */
+    private val connection: javax.inject.Provider<com.ambient.tv.server.TvheadendConnectionManager>,
 ) {
     /** Last answers per server/account on disk: channels, guide and recordings stay visible offline. */
     private val diskCache = TvheadendDiskCache(BrowseTvheadendCacheStore(browseDisk))
@@ -85,7 +84,6 @@ class TvheadendRepository @Inject constructor(
     /** The stored guide is read, merged and written by parallel per-channel loads. */
     private val epgPersistMutex = Mutex()
     private val cache = mutableMapOf<String, CacheValue<*>>()
-    private val wakeMutex = Mutex()
     private var cacheScope: List<String>? = null
     private var cacheGeneration = 0L
     private val requestMutexes = Array(16) { Mutex() }
@@ -154,7 +152,8 @@ class TvheadendRepository @Inject constructor(
 
     /** One direct serverinfo request, bypassing caches and the offline fallback. */
     suspend fun probeServerInfo(): Result<TvhServerInfo> = suspendResult {
-        val obj = getJson("api/serverinfo").jsonObject
+        // No wake here: the connection manager calls this from inside its own wake.
+        val obj = getJson("api/serverinfo", wake = false).jsonObject
         TvhServerInfo(name = obj.string("name") ?: "TVHeadend", version = obj.string("sw_version"), apiVersion = obj.int("api_version"))
     }
 
@@ -630,9 +629,9 @@ class TvheadendRepository @Inject constructor(
         )
     }
 
-    private suspend fun getJson(path: String, params: Map<String, String> = emptyMap()): JsonElement {
+    private suspend fun getJson(path: String, params: Map<String, String> = emptyMap(), wake: Boolean = true): JsonElement {
         ensureConfiguredAndAllowed()
-        ensureAwakeIfNeeded()
+        if (wake) ensureAwakeIfNeeded()
         return withContext(Dispatchers.IO) {
             val url = buildUrl(path, params)
             val request = Request.Builder().url(url).get().build()
@@ -673,52 +672,25 @@ class TvheadendRepository @Inject constructor(
         return isTvheadendReachable().also { if (it) lastReachableAtMs = System.currentTimeMillis() }
     }
 
-    /** Wake TVHeadend as part of its machine: the burst and the notice are shared with every
-     * other system on the same MAC or host. Concurrent API calls share one wake cycle. */
+    /**
+     * Wake TVHeadend before an API call. The wake itself is the connection manager's: one run per
+     * service with its state, card and gate, shared with every other caller - not a second wake
+     * of its own next to it. It ends only once TVHeadend's API answers, not merely its port.
+     */
     private suspend fun ensureAwakeIfNeeded() {
-        val mac = preferences.tvheadendMacAddress?.takeIf { it.isNotBlank() } ?: return
+        if (preferences.tvheadendMacAddress.isNullOrBlank()) return
         if (!preferences.tvheadendAutoWakeEnabled || automaticWakePaused) return
-        val now = System.currentTimeMillis()
-        if (now - lastReachableAtMs < 10_000L) return
-        wakeMutex.withLock {
-            val checkedAt = System.currentTimeMillis()
-            if (checkedAt - lastReachableAtMs < 10_000L) return@withLock
-            if (isTvheadendReachable()) {
-                lastReachableAtMs = System.currentTimeMillis()
-                return@withLock
-            }
-            val machine = wakeMachines.keyFor("tvheadend", configuredTvheadendEndpoint().host, mac)
-            com.ambient.tv.notifications.WakeNotices.begin(machine, "tvheadend", configuredTvheadendEndpoint().host,
-                budgetMs = com.ambient.tv.wol.wakeBudgetMs(preferences.wolRetryCount, 60_000L))
-            try {
-            val woke = com.ambient.tv.wol.wakeWithRetries(
-                retries = preferences.wolRetryCount,
-                windowMs = 60_000L,
-                pollMs = 2_500L,
-                send = { attempt ->
-                    wolManager.sendWakeBurst(
-                        mac,
-                        wireGuardHost = configuredTvheadendEndpoint().host.takeIf { preferences.wireGuardTvheadendEnabled },
-                        retry = attempt > 0,
-                    )
-                },
-                reachable = { isTvheadendReachable() },
-                onSent = { attempt, attempts -> com.ambient.tv.notifications.WakeNotices.sent(machine, attempt, attempts, 60_000L) },
-            )
-            if (woke) {
-                lastReachableAtMs = System.currentTimeMillis()
-                com.ambient.tv.notifications.WakeNotices.finish(machine, "tvheadend", success = true)
-                return@withLock
-            }
-            throw TvheadendWakeTimeoutException(context.getString(com.ambient.tv.R.string.tvh_wake_timeout))
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                com.ambient.tv.notifications.WakeNotices.cancel(machine, "tvheadend")
-                throw cancelled
-            } catch (error: Exception) {
-                com.ambient.tv.notifications.WakeNotices.finish(machine, "tvheadend", success = false)
-                throw error
-            }
+        if (System.currentTimeMillis() - lastReachableAtMs < 10_000L) return
+        if (isTvheadendReachable()) {
+            lastReachableAtMs = System.currentTimeMillis()
+            return
         }
+        // Not connected yet the port opened (login refused, …): let the call report its own error.
+        if (connection.get().ensureConnected() || isTvheadendReachable()) {
+            lastReachableAtMs = System.currentTimeMillis()
+            return
+        }
+        throw TvheadendWakeTimeoutException(context.getString(com.ambient.tv.R.string.tvh_wake_timeout))
     }
 
     private suspend fun isTvheadendReachable(): Boolean = withContext(Dispatchers.IO) {

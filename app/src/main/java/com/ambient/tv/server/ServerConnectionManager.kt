@@ -8,10 +8,8 @@ import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.network.LocalNetworkPolicy
 import com.ambient.tv.wol.MacAddressResolver
 import com.ambient.tv.wol.ServerReachabilityChecker
-import com.ambient.tv.wol.WakeServerUseCase
-import com.ambient.tv.wol.WakeState
+import com.ambient.tv.wol.WolManager
 import com.ambient.tv.connectivity.ResumeConnectivityMonitor
-import com.ambient.tv.connectivity.ResumeConnectivityPolicy
 import javax.inject.Provider
 import com.ambient.tv.vpn.WireGuardRouteController
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -42,6 +40,8 @@ sealed interface ServerConnectionState {
         val packetsSent: Int = 0,
         val packets: Int = 0,
         val windowSeconds: Int = 0,
+        /** The machine answers again; only this service is still starting (no more packets go out). */
+        val serviceStarting: Boolean = false,
     ) : ServerConnectionState
     data object Connecting : ServerConnectionState
     data class Online(val identity: PlexServerIdentity) : ServerConnectionState
@@ -56,7 +56,7 @@ class ServerConnectionManager @Inject constructor(
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val repository: MediaRepository,
     private val reachabilityChecker: ServerReachabilityChecker,
-    private val wakeServerUseCase: WakeServerUseCase,
+    private val wolManager: WolManager,
     private val macAddressResolver: MacAddressResolver,
     private val wireGuardRoute: WireGuardRouteController,
     private val resumeConnectivity: Provider<ResumeConnectivityMonitor>,
@@ -69,7 +69,9 @@ class ServerConnectionManager @Inject constructor(
         com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("plex"))
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
 
+    /** Short checks only (background probe, server test); a wake never holds it. */
     private val connectionMutex = Mutex()
+    private val connectRun = SharedConnectRun(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     private fun endpointKey() = "${preferences.activeServerId}|${preferences.host}:${preferences.port}"
 
 
@@ -77,22 +79,27 @@ class ServerConnectionManager @Inject constructor(
 
     fun pauseAutomaticReconnect() { reconnectPause.pause(endpointKey()) }
 
+    /** Joins a connect that is already running instead of starting a second one behind it. */
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock {
-            reconnectPause.clear()
-            lastSuccessfulCheckMs = 0L
-            ensureConnectedLocked()
-        }
+        reconnectPause.clear()
+        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        connectRun.joinOrStart { connect() }
     }
 
-    /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
-    suspend fun checkInBackground(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * A passive health request: no wake, VPN setup, or intermediate UI state. While a connect
+     * runs it reports the result itself, so this returns at once instead of queueing behind it.
+     * [retryForMs] keeps retrying a service that is still starting (5xx, refused) that long.
+     */
+    suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
+        if (connectRun.active) return@withContext false
         connectionMutex.withLock {
             if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.hasPlexEndpoint) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
-            val identity = repository.getIdentity().getOrNull() ?: return@withLock false
+            val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
+                ?: return@withLock false
             if (checkedEndpoint != endpointKey()) return@withLock false
             _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
@@ -103,43 +110,36 @@ class ServerConnectionManager @Inject constructor(
     }
 
     suspend fun ensureConnected(): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock { ensureConnectedLocked() }
+        connectRun.joinOrStart { connect() }
     }
 
     /**
-     * Forced short health probe used after app resume. Invalidates the reuse cache, and if the
-     * server is offline with WoL configured sends one rate-limited magic packet then waits briefly.
+     * Forced re-check (resume, playback recovery): invalidates the reuse cache and joins a
+     * running wake, otherwise runs the full wake with its whole budget - a server needing 30 s
+     * to boot outlasts any short wait.
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock {
-            lastSuccessfulCheckMs = 0L
-            ensureConnectedLocked(
-                wakeTimeoutMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS,
-                wakePollMs = ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS,
-                wakeRetries = 0,
-                onWaking = onWaking,
-            )
-        }
+        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        watchWaking(_state, onWaking) { connectRun.joinOrStart { connect() } }
     }
 
-    private suspend fun ensureConnectedLocked(
-        wakeTimeoutMs: Long = 60_000L,
-        wakePollMs: Long = 2_500L,
-        wakeRetries: Int = preferences.wolRetryCount,
-        onWaking: (() -> Unit)? = null,
-    ): Boolean {
+    private suspend fun connect(): Boolean {
+        val before = _state.value
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
-        val result = connectService(wakeTimeoutMs, wakePollMs, wakeRetries, onWaking)
-        if (endpoint == endpointKey() && !result) hosts.failure(check)
-        return result
+        return try {
+            connectService().also { connected -> if (endpoint == endpointKey() && !connected) hosts.failure(check) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
+            if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
+            throw cancelled
+        }
     }
 
     private suspend fun connectService(
         wakeTimeoutMs: Long = 60_000L,
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
-        onWaking: (() -> Unit)? = null,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.hasPlexEndpoint) {
@@ -163,42 +163,37 @@ class ServerConnectionManager @Inject constructor(
         }
 
         _state.value = ServerConnectionState.Checking
-        if (!reachabilityChecker.isReachable() && !hosts.verifySystem("plex")) {
-            val mac = preferences.macAddress
-            if (preferences.autoWakeEnabled && !mac.isNullOrBlank()) {
-                var reachable = false
-                onWaking?.invoke()
-                wakeServerUseCase.wakeAndWait(
-                    macAddress = mac,
-                    pollIntervalMs = wakePollMs,
-                    timeoutMs = wakeTimeoutMs,
-                    retries = wakeRetries,
-                ).collect { wakeState ->
-                    when (wakeState) {
-                        WakeState.SendingPacket -> {
-                            _state.value = ServerConnectionState.SendingWakePacket
-                            onWaking?.invoke()
-                        }
-                        is WakeState.WaitingForServer -> {
-                            _state.value = ServerConnectionState.Waking(wakeState.elapsedSeconds,
-                                (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt(),
-                                wakeState.packetsSent, wakeState.packets, wakeState.windowSeconds)
-                            onWaking?.invoke()
-                        }
-                        WakeState.Reachable -> reachable = true
-                        is WakeState.Failed -> _state.value = ServerConnectionState.Error(wakeState.message)
-                        WakeState.TimedOut -> _state.value = ServerConnectionState.WakeTimedOut
-                    }
-                }
-                if (!reachable) return false
-            } else {
-                _state.value = ServerConnectionState.Offline
-                return false
-            }
+        val mac = preferences.macAddress
+        // Success only once Plex itself answers /identity; another open port of the machine is not enough.
+        val wait = try {
+            waitForService(
+                serviceReady = { reachabilityChecker.isReachable() },
+                machineAwake = { hosts.verifySystem("plex") },
+                hostHealth = { hosts.health("plex") },
+                canWake = preferences.autoWakeEnabled && !mac.isNullOrBlank(),
+                send = { attempt ->
+                    wolManager.sendWakeBurst(
+                        mac.orEmpty(),
+                        wireGuardHost = preferences.host.takeIf { preferences.wireGuardPlexEnabled },
+                        retry = attempt > 0,
+                    ).getOrThrow()
+                },
+                retries = wakeRetries,
+                windowMs = wakeTimeoutMs,
+                pollMs = wakePollMs,
+                setState = { _state.value = it },
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            _state.value = ServerConnectionState.Error(error.message.orEmpty())
+            return false
         }
+        wait.failure?.let { _state.value = it; return false }
 
         _state.value = ServerConnectionState.Connecting
-        val identityResult = repository.getIdentity()
+        // A server that just started may still answer 503 or refuse once: retry within the wake budget.
+        val identityResult = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }
         val identity = identityResult.getOrNull()
         if (identity == null) {
             _state.value = ServerConnectionState.Error(identityResult.exceptionOrNull()

@@ -237,7 +237,11 @@ class ResumeConnectivityMonitor @Inject constructor(
         return ok
     }
 
-    /** Light TCP probe of remote NAS sources; optional brief WoL when auto-wake is configured. */
+    /**
+     * Light TCP probe of remote NAS sources. With auto-wake configured the source joins (or
+     * starts) its machine's wake with the full budget: a NAS that needs 30 s to boot must not
+     * count as unreachable after a few seconds while its wake card keeps waiting.
+     */
     private suspend fun recheckFiles(onWaking: (() -> Unit)? = null): Boolean {
         val sources = preferences.fileSources.filter { it.kind != "local" }
         if (sources.isEmpty()) return true
@@ -245,32 +249,15 @@ class ResumeConnectivityMonitor @Inject constructor(
         for (source in sources) {
             if (wakeOnLan.isReachable(source)) continue
             if (source.wolAuto && source.wolMac.isNotBlank()) {
-                val machine = wakeOnLan.machineKey(source)
-                val member = "files:${source.id}"
-                com.ambient.tv.notifications.WakeNotices.begin(machine, "files", source.name, member,
-                    budgetMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS)
                 onWaking?.invoke()
-                runCatching {
-                    wakeOnLan.send(
-                        mac = source.wolMac,
-                        broadcast = source.wolBroadcast,
-                        port = source.wolPort,
-                        wireGuardHost = source.host.takeIf { source.wireGuard },
-                    )
-                }
-                com.ambient.tv.notifications.WakeNotices.sent(machine, 0, 1, 0L)
-                // Brief wait only — full cold-start wake remains on demand in Files.
-                val deadline = System.currentTimeMillis() + ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS
-                var woke = false
-                while (System.currentTimeMillis() < deadline) {
-                    if (wakeOnLan.isReachable(source)) {
-                        woke = true
-                        break
-                    }
-                    kotlinx.coroutines.delay(ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS)
+                val woke = try {
+                    wakeOnLan.wakeAndWait(source)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    false
                 }
                 if (!woke) allOk = false
-                com.ambient.tv.notifications.WakeNotices.finish(machine, "files", success = woke, member = member)
             } else {
                 allOk = false
                 notifyResult("files:offline:${source.id}", "files", source.name, success = false, failureMessage = R.string.notice_unreachable)

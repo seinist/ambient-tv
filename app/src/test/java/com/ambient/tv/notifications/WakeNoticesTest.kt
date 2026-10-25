@@ -100,4 +100,24 @@ class WakeNoticesTest {
         assertEquals(1, pending.size)
         assertEquals(listOf("plex", "tvheadend"), pending.single().notice.systems)
     }
+
+    @Test
+    fun machineAnsweringEndsTheCardForEveryWaitingMember() {
+        tracker.begin("mac:bb", "plex", "Server")
+        tracker.begin("mac:bb", "files", "NAS", member = "files:1")
+        tracker.machineOnline("mac:bb")
+        assertEquals(NoticePhase.SUCCESS, posted.last().phase)
+        assertEquals(R.string.notice_awake, posted.last().message)
+        assertEquals(false, tracker.isWaking("mac:bb"))
+        // Late finishes of the members change nothing.
+        val count = posted.size
+        tracker.finish("mac:bb", "plex", success = true)
+        assertEquals(count, posted.size)
+    }
+
+    @Test
+    fun machineOnlineWithoutWakeIsIgnored() {
+        tracker.machineOnline("mac:cc")
+        assertEquals(0, posted.size)
+    }
 }

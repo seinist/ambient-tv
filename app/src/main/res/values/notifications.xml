@@ -14,6 +14,7 @@
     <string name="notice_connected">Connected and ready</string>
     <string name="notice_unreachable">Server is not reachable</string>
     <string name="notice_waking">Waking server with Wake-on-LAN…</string>
+    <string name="notice_service_starting">Machine awake, service starting…</string>
     <string name="notice_awake">Server is reachable</string>
     <string name="notice_wake_failed">Server did not respond to the wake request</string>
     <string name="notice_vpn">WireGuard</string>

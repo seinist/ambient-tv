@@ -100,6 +100,20 @@ class WakeNoticeTracker(
         } else publish(machine, group)
     }
 
+    /**
+     * The machine answers again (any of its ports): the wake itself succeeded for every member
+     * still waiting, even when one service on it is still starting. Ends the card instead of
+     * letting it count down to its budget; services report their own start separately.
+     */
+    @Synchronized
+    fun machineOnline(machine: String) {
+        val group = groups[machine] ?: return
+        val waiting = group.members.values.filter { it.state == State.WORKING }
+        if (waiting.isEmpty()) return
+        waiting.forEach { it.state = State.AWAKE }
+        publish(machine, group)
+    }
+
     @Synchronized
     fun isWaking(machine: String): Boolean = groups[machine]?.members?.values?.any { it.state == State.WORKING } == true
 

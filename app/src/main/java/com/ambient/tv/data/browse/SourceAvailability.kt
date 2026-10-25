@@ -25,6 +25,7 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     private val mutable = MutableStateFlow(0L)
     val changes = mutable.asStateFlow()
     private val health = mutableMapOf<String, SourceHealth>()
+    private val order = SourceReportOrder()
 
     init {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
@@ -44,8 +45,8 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         else health.replaceAll { _, value -> if (value == SourceHealth.ONLINE) SourceHealth.UNKNOWN else value }
         mutable.value++
     }
-    fun online(provider: String) { hosts.online(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.ONLINE) }
-    fun unreachable(provider: String) { hosts.failure(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.OFFLINE) }
+    fun online(provider: String) { hosts.online(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.ONLINE, order.begin()) }
+    fun unreachable(provider: String) { hosts.failure(hosts.begin(provider)); report(scopes.forProvider(provider), SourceHealth.OFFLINE, order.begin()) }
     fun mediaState(id: String): SourceHealth {
         if (mediaProvider(id) == "files") {
             val source = runCatching { com.ambient.tv.data.files.FileKeys.parse(id).first }.getOrNull()
@@ -62,13 +63,16 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
     private fun hostState(system: String, service: SourceHealth): SourceHealth =
         if (!hasNetwork()) SourceHealth.OFFLINE else hostAwareSourceHealth(hosts.health(system), service)
 
-    @Synchronized private fun report(scope: String, state: SourceHealth) {
+    /** [started]: when the request behind it began; a failure older than the last success is stale. */
+    @Synchronized private fun report(scope: String, state: SourceHealth, started: Long) {
+        if (!order.accept(scope, started, state)) return
         if (health.put(scope, state) != state) mutable.value++
     }
 
     fun interceptor(provider: String) = Interceptor { chain ->
         val scope = scopes.forProvider(provider)
         val check = hosts.begin(provider)
+        val started = order.begin()
         try {
             chain.proceed(chain.request()).also { response ->
                 if (scope == scopes.forProvider(provider)) {
@@ -78,13 +82,13 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
                         401, 403 -> SourceHealth.AUTH_REQUIRED
                         in 200..499 -> SourceHealth.ONLINE
                         else -> SourceHealth.UNKNOWN
-                    })
+                    }, started)
                 }
             }
         } catch (error: IOException) {
             if (!chain.call().isCanceled() && scope == scopes.forProvider(provider)) {
                 hosts.failure(check)
-                report(scope, SourceHealth.OFFLINE)
+                report(scope, SourceHealth.OFFLINE, started)
             }
             throw error
         }
@@ -103,6 +107,27 @@ fun mediaProvider(id: String): String = when {
     com.ambient.tv.data.dlna.DlnaKeys.owns(id) -> "dlna"
     com.ambient.tv.data.shared.SharedMediaRepository.owns(id) -> "shared"
     else -> "plex"
+}
+
+/**
+ * Orders the health reports of one source like [com.ambient.tv.connectivity.HostHealthStore]:
+ * a success always applies, a failure (offline, server error) only when its request started after
+ * the last applied success. A request that hung through a wake and fails late no longer turns a
+ * server that answered meanwhile back to "offline".
+ */
+internal class SourceReportOrder {
+    private var clock = 0L
+    private val lastSuccess = mutableMapOf<String, Long>()
+
+    @Synchronized fun begin(): Long = ++clock
+
+    @Synchronized fun accept(scope: String, started: Long, state: SourceHealth): Boolean {
+        if (state == SourceHealth.ONLINE || state == SourceHealth.AUTH_REQUIRED) {
+            lastSuccess[scope] = ++clock
+            return true
+        }
+        return started > (lastSuccess[scope] ?: 0L)
+    }
 }
 
 /** Host recovery removes an old offline flag, but never grants service access. */

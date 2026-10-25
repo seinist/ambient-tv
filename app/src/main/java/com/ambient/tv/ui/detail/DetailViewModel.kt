@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 sealed interface DetailUiState {
     data object Loading : DetailUiState
@@ -59,6 +60,9 @@ class DetailViewModel @Inject constructor(
     val themeMusicPlayer: ThemeMusicPlayer,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
+    private val plexConnection: com.ambient.tv.server.ServerConnectionManager,
+    private val jellyfinConnection: com.ambient.tv.server.JellyfinConnectionManager,
+    private val embyConnection: com.ambient.tv.server.EmbyConnectionManager,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private val cachedItem get() = mediaRepository.cachedMediaItem(ratingKey)
@@ -74,6 +78,10 @@ class DetailViewModel @Inject constructor(
     )
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
+    /** Bumped by every load: an answer of an older one (cancelled, overtaken) is dropped. */
+    private var loadGeneration = 0L
+    private var reloadJob: Job? = null
+    private var autoReloads = 0
     private var themeMusicJob: Job? = null
 
     private val _fallbackBackdrop = MutableStateFlow<String?>(null)
@@ -92,6 +100,27 @@ class DetailViewModel @Inject constructor(
         val state = _uiState.value
         val failed = state is DetailUiState.Error || (state as? DetailUiState.Loaded)?.offline == true
         if (availability.hasNetwork() && failed && loadJob?.isActive != true) load()
+    }
+
+    /** The source's connection, when it has a connection manager (Plex, Jellyfin, Emby). */
+    private fun connectionState(): StateFlow<com.ambient.tv.server.ServerConnectionState>? =
+        when (com.ambient.tv.data.browse.mediaProvider(ratingKey)) {
+            "plex" -> plexConnection.state
+            "jellyfin" -> jellyfinConnection.state
+            "emby" -> embyConnection.state
+            else -> null
+        }
+
+    /** Reloads after a temporary failure with backoff (2, 4, 8 s …) instead of hiding Play. */
+    private fun scheduleReload(): Boolean {
+        if (autoReloads >= DETAIL_MAX_AUTO_RELOADS) return false
+        val wait = detailReloadDelayMs(autoReloads++)
+        reloadJob?.cancel()
+        reloadJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(wait)
+            load(automatic = true)
+        }
+        return true
     }
 
     init {
@@ -115,17 +144,28 @@ class DetailViewModel @Inject constructor(
                 if (_uiState.value is DetailUiState.Error) {
                     val health = availability.mediaState(ratingKey)
                     val offline = health == com.ambient.tv.data.browse.SourceHealth.OFFLINE || health == com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED
-                    if (!offline && loadJob?.isActive != true) load()
+                    if (!offline && loadJob?.isActive != true) load(automatic = true)
                     return@collect
                 }
                 val current = _uiState.value as? DetailUiState.Loaded ?: return@collect
                 val health = availability.mediaState(ratingKey)
                 val offline = health == com.ambient.tv.data.browse.SourceHealth.OFFLINE || health == com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED
                 _uiState.value = current.copy(offline = offline, themeMusic = current.themeMusic.takeUnless { offline })
-                if (current.offline && !offline && loadJob?.isActive != true) load()
+                if (current.offline && !offline && loadJob?.isActive != true) load(automatic = true)
             }
         }
-
+        viewModelScope.launch {
+            // A wake finished (or the server came back): always reload, even when the page shows
+            // a cached item without "offline" - its Play state and data are from before the wake.
+            var previous: com.ambient.tv.server.ServerConnectionState? = null
+            connectionState()?.collect { state ->
+                if (connectionCameOnline(previous, state)) {
+                    autoReloads = 0
+                    load()
+                }
+                previous = state
+            }
+        }
     }
 
     /**
@@ -136,8 +176,13 @@ class DetailViewModel @Inject constructor(
      *
      * None of the secondary rows can hold the hero behind a full-page loading state anymore.
      */
-    fun load() {
+    fun load() = load(automatic = false)
+
+    private fun load(automatic: Boolean) {
+        if (!automatic) autoReloads = 0
+        reloadJob?.cancel()
         loadJob?.cancel()
+        val generation = ++loadGeneration
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
             if (_uiState.value !is DetailUiState.Loaded) cachedItem?.let { item ->
@@ -151,8 +196,12 @@ class DetailViewModel @Inject constructor(
             }
             if (_uiState.value !is DetailUiState.Loaded) _uiState.value = DetailUiState.Loading
 
-            mediaRepository.getMetadataFast(ratingKey).fold(
+            val result = mediaRepository.getMetadataFast(ratingKey)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (generation != loadGeneration) return@launch
+            result.fold(
                 onSuccess = { freshItem ->
+                    autoReloads = 0
                     val item = freshItem
                     if (item == null) {
                         val previous = _uiState.value as? DetailUiState.Loaded
@@ -180,15 +229,18 @@ class DetailViewModel @Inject constructor(
                     loadSecondaryContent(item)
                 },
                 onFailure = { error ->
+                    val removed = detailItemRemoved(error)
+                    // A starting server (503, timeout) is retried with backoff; Play stays visible.
+                    val retrying = !removed && detailFailureTransient(error) && !sourceOffline() && scheduleReload()
                     // A cached card is still much more useful than replacing the whole detail
                     // page with an error because a background refresh failed temporarily.
                     if (_uiState.value !is DetailUiState.Loaded) {
-                        _uiState.value = DetailUiState.Error(error.message ?: "")
+                        if (!retrying) _uiState.value = DetailUiState.Error(error.message ?: "")
                     } else {
                         val current = _uiState.value as DetailUiState.Loaded
-                        val removed = (error as? retrofit2.HttpException)?.code() in setOf(404, 410)
-                        _uiState.value = current.copy(removed = removed, offline = !removed,
-                            childrenLoading = false, themeMusic = null)
+                        val offline = detailOfflineAfterFailure(removed, availability.mediaState(ratingKey), retrying)
+                        _uiState.value = current.copy(removed = removed, offline = offline,
+                            childrenLoading = false, themeMusic = current.themeMusic.takeUnless { offline || removed })
                     }
                 },
             )
