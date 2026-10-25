@@ -4,6 +4,7 @@ import com.ambient.tv.data.local.AudioOptions
 import com.ambient.tv.ui.player.backend.MPV_LOCAL_AC3_FILTER
 import com.ambient.tv.ui.player.backend.mpvAudioChannels
 import com.ambient.tv.ui.player.backend.mpvAudioGraph
+import com.ambient.tv.ui.player.backend.mpvAudioOutputText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -238,4 +239,11 @@ class AudioOutputPlannerTest {
         }
     }
 
+
+    @Test fun mpvAudioOutputTextNamesTheOutputLayout() {
+        assertEquals("s16 · 5.1 · 6 ch", mpvAudioOutputText("s16", "5.1", 6))
+        assertEquals("floatp · stereo · 2 ch", mpvAudioOutputText("floatp", "stereo", 2))
+        assertEquals("spdif-eac3 · 2 ch", mpvAudioOutputText("spdif-eac3", "stereo", 2))
+        assertEquals("s16", mpvAudioOutputText("s16", null, 0))
+    }
 }

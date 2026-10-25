@@ -2018,7 +2018,28 @@ internal class MpvPlaybackEngine(
     fun activeShaderPreset(): String? = if (supportsGpuFilters) activeShaderPresetKey else null
     fun configuredVideoOutput(): String? = getPropertyString("current-vo")?.takeIf { it.isNotBlank() }
         ?.let { if (it == "gpu-next" && acceleration.vulkan) "$it / Vulkan" else it }
-    fun audioOutputFormat(): String? = getPropertyString("audio-out-params/format")?.takeIf { it.isNotBlank() }
+    /** Output format plus the layout mpv hands to the AO, e.g. "s16 · 5.1 · 6 ch". */
+    fun audioOutputFormat(): String? = getPropertyString("audio-out-params/format")?.takeIf { it.isNotBlank() }?.let { format ->
+        mpvAudioOutputText(format, getPropertyString("audio-out-params/channels"),
+            getPropertyDouble("audio-out-params/channel-count", 0.0).toInt())
+    }
+
+    private var lastAudioOutputLog: String? = null
+
+    /** Logs the opened audio output once per change (source layout, AO layout, driver, plan). */
+    private fun logAudioOutput() {
+        val format = getPropertyString("audio-out-params/format")?.takeIf { it.isNotBlank() } ?: return
+        val plan = audioSession.outputPlan()
+        val line = "MPV audio output ao=${getPropertyString("current-ao") ?: "?"} " +
+            "in=${getPropertyString("audio-params/channels") ?: "?"}(${getPropertyDouble("audio-params/channel-count", 0.0).toInt()}ch) " +
+            "out=$format ${getPropertyString("audio-out-params/channels") ?: "?"}(${getPropertyDouble("audio-out-params/channel-count", 0.0).toInt()}ch) " +
+            "audio-channels=${getPropertyString("audio-channels") ?: "?"} spdif=${getPropertyString("audio-spdif").orEmpty().ifEmpty { "-" }} " +
+            "plan=${plan.mode}/${plan.channels} routePcmChannels=${audioSession.route.pcmChannels}"
+        if (line == lastAudioOutputLog) return
+        lastAudioOutputLog = line
+        com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO,
+            com.ambient.tv.ui.player.AUDIO_ROUTE_LOG_TAG, line, deduplicate = false)
+    }
     fun audioOutputDriver(): String? = getPropertyString("current-ao")?.takeIf { it.isNotBlank() }
 
     /** Bumped when codecs, geometry or decoder may have changed (load, end, A/V reconfig). */
@@ -2098,6 +2119,7 @@ internal class MpvPlaybackEngine(
             val event = MpvNativeBridge.nativePollEvent(handle)
             if (event == MPV_EVENT_FILE_LOADED || event == MPV_EVENT_END_FILE ||
                 event == MPV_EVENT_VIDEO_RECONFIG || event == MPV_EVENT_AUDIO_RECONFIG) mediaInfoGeneration++
+            if (event == MPV_EVENT_AUDIO_RECONFIG) logAudioOutput()
             if (event != 0) _stateChanges.value++
             if (event == MPV_EVENT_PROPERTY_CHANGE) {
                 recordPropertyChange()
@@ -2516,7 +2538,8 @@ internal class MpvPlaybackEngine(
 
     private fun logHdrDiagnostics(reason: String) {
         val names = listOf(
-            "current-vo", "current-ao", "audio-codec-name", "audio-out-params/format", "audio-spdif",
+            "current-vo", "current-ao", "audio-codec-name", "audio-params/channels", "audio-params/channel-count",
+            "audio-out-params/format", "audio-out-params/channels", "audio-out-params/channel-count", "audio-spdif",
             "video-codec", "video-codec-name", "video-format", "hwdec-current",
             "width", "height", "video-params/pixelformat", "video-params/aspect",
             "video-params/primaries", "video-params/gamma", "video-params/colormatrix",

@@ -47,3 +47,10 @@ internal fun mpvAudioChannels(planChannels: String, encoded: Boolean, upmix: Boo
     }
 
 internal const val MPV_LOCAL_AC3_FILTER = "lavcac3enc=bitrate=640:tospdif=yes"
+
+/** Nerd-stats text for mpv's audio output: format, layout name and channel count. */
+internal fun mpvAudioOutputText(format: String, channels: String?, channelCount: Int): String = listOfNotNull(
+    format,
+    channels?.takeIf { it.isNotBlank() && !format.startsWith("spdif", ignoreCase = true) },
+    channelCount.takeIf { it > 0 }?.let { "$it ch" },
+).joinToString(" · ")
