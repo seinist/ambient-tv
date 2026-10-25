@@ -435,15 +435,15 @@ internal fun SettingsHub(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (showBack) TvChip(stringResource(R.string.back),
-                    // Left from the leftmost header chip stays put.
-                    modifier = Modifier.onPreviewKeyEvent { event -> event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown },
-                    icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { goBack() }
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
                     Text(listOfNotNull(stringResource(area.titleRes), page?.let { settingsCategoryTitle(it) }).joinToString(" › "), style = MaterialTheme.typography.bodySmall)
                 }
+                if (showBack) TvChip(stringResource(R.string.back),
+                    // Left from the leftmost header chip stays put.
+                    modifier = Modifier.onPreviewKeyEvent { event -> event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown },
+                    icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { goBack() }
                 TvChip(stringResource(R.string.action_search), modifier = Modifier.focusRequester(searchButtonFocus).onFocusChanged { if (it.isFocused) lastRegionFocus = searchButtonFocus }
                     .onPreviewKeyEvent { event ->
                         // Left from the leftmost header chip stays put; only Back leaves Settings.

@@ -238,8 +238,8 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PageHeader(actions = {
-                TvChip(stringResource(R.string.library_options), icon = Icons.Filled.Tune, iconOnly = true, onClick = { showOptions = true }, modifier = Modifier.focusRequester(optionsFocus))
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
+                TvChip(stringResource(R.string.library_options), icon = Icons.Filled.Tune, iconOnly = true, onClick = { showOptions = true }, modifier = Modifier.focusRequester(optionsFocus))
                 TvChip(stringResource(R.string.dlna_servers), icon = Icons.Default.Storage, iconOnly = true, onClick = onManage)
                 TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh, loading = state.loading, iconOnly = true, onClick = viewModel::refresh)
             }) {
