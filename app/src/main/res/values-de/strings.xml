@@ -1063,7 +1063,7 @@
     <string name="image_media3_hint">Skalierung und Bildanpassung für SDR-Videos. Das Einschalten startet die Videodekodierung neu.</string>
     <string name="image_media3_device_bypass">Media3-Bildeffekte werden auf dieser Shield ausgesetzt, um schwarzes Video und Hänger zu vermeiden. Gespeicherte Einstellungen bleiben erhalten.</string>
     <string name="image_filters_sparsam_hint">Filter und Zwischenbildberechnung sind im Leistungsmodus Sparsam aus.</string>
-    <string name="image_mpv_sparsam_defaults_hint">Auf diesem Gerät laufen unveränderte Standardwerte günstig (bilineare Skalierung, kein Debanding, kein Sigmoid), damit OpenGL und Vulkan flüssig bleiben. Was du selbst wählst, wird angewendet.</string>
+    <string name="image_mpv_sparsam_defaults_hint">Auf diesem Gerät laufen unveränderte Standardwerte günstig (bilineare Skalierung, kein Debanding, kein Sigmoid), damit OpenGL und Vulkan flüssig bleiben. Was du selbst wählst, wird angewendet, auch Lanczos oder Debanding. Mit Wiedergabe-Leistung „Maximale Leistung“ gilt immer die volle Qualität.</string>
     <string name="image_media3_waiting">Effekte warten auf eine ungeschützte SDR-Videospur.</string>
     <string name="image_media3_active">SDR-Effekte eingeschaltet</string>
     <string name="image_vlc_fallback">Softwarefilter konnten nicht aktiviert werden. Die Wiedergabe wird ohne sie fortgesetzt.</string>
@@ -1814,7 +1814,7 @@
     <string name="renderer_sdr_curve_auto">Auto</string>
     <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
     <string name="renderer_sdr_curve_bt1886">BT.1886</string>
-    <string name="renderer_sdr_curve_hint">MPV-GPU-Ausgabe: Kurve und passende Surface-Kennung für SDR. Auto nutzt Gamma 2.2 auf HDR-fähigen TVs (keine ausgewaschenen Mitten, wenn der TV SDR in HDR einrechnet), sonst BT.1886 wie Direkt.</string>
+    <string name="renderer_sdr_curve_hint">MPV-GPU-Ausgabe: Kurve und passende Surface-Kennung für SDR. Auto nutzt Gamma 2.2 nur, wenn der TV gerade wirklich im HDR-Modus läuft (SDR wird dann in HDR eingerechnet, keine ausgewaschenen Mitten), sonst BT.1886 wie Direkt. Gamma 2.2 und BT.1886 bleiben zum A/B-Vergleich wählbar.</string>
     <string name="player_nerd_render_resolution">Renderauflösung</string>
     <string name="player_nerd_sdr_curve">SDR-Kurve / Surface</string>
 </resources>

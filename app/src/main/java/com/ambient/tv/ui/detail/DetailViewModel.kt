@@ -155,15 +155,17 @@ class DetailViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            // A wake finished (or the server came back): always reload, even when the page shows
-            // a cached item without "offline" - its Play state and data are from before the wake.
-            var previous: com.ambient.tv.server.ServerConnectionState? = null
+            // A wake finished or the server came back from Offline/Error: always reload, even when the
+            // page shows a cached item without "offline" - its Play state and data are from before.
+            // Passive Online → Checking → Online re-checks do not reload ([DetailConnectionTracker]).
+            var tracker = DetailConnectionTracker()
             connectionState()?.collect { state ->
-                if (connectionCameOnline(previous, state)) {
+                val (next, reload) = tracker.next(state)
+                tracker = next
+                if (reload) {
                     autoReloads = 0
                     load()
                 }
-                previous = state
             }
         }
     }

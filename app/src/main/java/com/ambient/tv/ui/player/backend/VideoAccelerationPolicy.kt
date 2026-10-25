@@ -39,7 +39,13 @@ data class VideoAccelerationCapabilities(
     val vlcOutputBuilt: Boolean = false,
     /** EGL offers EGL_EXT_gl_colorspace_bt2020_pq plus a 10-bit RGB window config ([MpvEglHdrProbe]). */
     val eglHdr10Pq: Boolean = false,
+    /** The loaded libmpv contains the EGL HDR surface patch ([MpvNativeFeatures.EGL_HDR_SURFACE]). */
+    val mpvEglHdrSurface: Boolean = false,
+    /** The window surface dataspace can be read back (libambientvulkan), so the EGL route can be confirmed. */
+    val surfaceDataSpaceReadable: Boolean = false,
 ) {
+    /** EGL PQ passthrough is possible: device EGL support, patched libmpv and a verifiable surface. */
+    val mpvEglHdrRoute get() = checked && eglHdr10Pq && mpvEglHdrSurface && surfaceDataSpaceReadable
     val mpvVulkanOutput get() = checked && device.render && device.hostQueryReset && device.version >= ((1L shl 22) or (2L shl 12)) && mpvOutputBuilt
     val mpvVulkanDecode get() = mpvVulkanOutput && mpvDecodeBuilt && device.profiles.isNotEmpty()
     val vlcVulkanOutput get() = checked && device.render && vlcOutputBuilt
@@ -137,8 +143,26 @@ fun planMpvAcceleration(
     zeroCopy: Boolean = false,
 ): MpvAccelerationPlan = planMpvAccelerationPath(output, decoder, capabilities, gpuProcessing, forceDefault,
     nativeHdrPreferred, hdrPassthrough, toneMappingRequired).let { plan ->
-    if (zeroCopy && !hdrPassthrough && plan.output == "gpu" && plan.decoder == "mediacodec" && plan.fallback == null) plan.copy(zeroCopy = true) else plan
+    // Tone mapping needs exact source colour metadata on the frames; the AImageReader OES path
+    // lets the driver convert YUV and does not carry them reliably, so HDR→SDR stays on copy-back.
+    if (zeroCopy && !hdrPassthrough && !toneMappingRequired && plan.output == "gpu" && plan.decoder == "mediacodec" &&
+        plan.fallback == null) plan.copy(zeroCopy = true) else plan
 }
+
+/**
+ * mpv end-file errors that point at the zero-copy video path: VO init failed (-15,
+ * MPV_ERROR_VO_INIT_FAILED), or nothing was played (-16, MPV_ERROR_NOTHING_TO_PLAY) from a file
+ * that opened with a video track (decoder/hwdec init or no frame). Loading failures (-13),
+ * unknown formats (-17), audio (-14) and generic stream errors (-20) are not caused by zero-copy.
+ */
+internal fun mpvZeroCopyFailureError(error: Int, loadedWithVideo: Boolean): Boolean = when (error) {
+    MPV_ERROR_VO_INIT_FAILED -> true
+    MPV_ERROR_NOTHING_TO_PLAY -> loadedWithVideo
+    else -> false
+}
+
+internal const val MPV_ERROR_VO_INIT_FAILED = -15
+internal const val MPV_ERROR_NOTHING_TO_PLAY = -16
 
 private fun planMpvAccelerationPath(
     output: String,

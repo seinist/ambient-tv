@@ -72,7 +72,7 @@ class TvheadendConnectionManager @Inject constructor(
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         resumeAutomaticReconnect()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        connectRun.joinOrStart { connect() }
+        connectRun.joinOrStart(endpointKey()) { connect() }
     }
 
     /**
@@ -87,10 +87,12 @@ class TvheadendConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val connectGeneration = connectRun.generation
             if (!repository.portReachable()) return@withLock false
             val info = retryTransient(System.currentTimeMillis() + retryForMs) { repository.probeServerInfo() }.getOrNull()
                 ?: return@withLock false
-            if (checkedEndpoint != endpointKey()) return@withLock false
+            // A connect that started meanwhile owns the state; never overwrite its result.
+            if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
             _state.value = ServerConnectionState.Online(identity(info.version))
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
@@ -100,7 +102,7 @@ class TvheadendConnectionManager @Inject constructor(
     }
 
     suspend fun ensureConnected(): Boolean = withContext(Dispatchers.IO) {
-        connectRun.joinOrStart { connect() }
+        connectRun.joinOrStart(endpointKey()) { connect() }
     }
 
     /**
@@ -109,7 +111,7 @@ class TvheadendConnectionManager @Inject constructor(
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        watchWaking(_state, onWaking) { connectRun.joinOrStart { connect() } }
+        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpointKey()) { connect() } }
     }
 
     private suspend fun connect(): Boolean {

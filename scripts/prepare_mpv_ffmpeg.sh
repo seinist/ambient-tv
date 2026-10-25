@@ -14,6 +14,14 @@ apply_series() {
             git -C "$dir" apply --reverse "${patches[i]}"
         fi
     done
+    # A changed patch cannot undo the older version of itself that a previous build applied.
+    # Then only the files of this series still differ: restore them from the pinned commit.
+    if ! git -C "$dir" apply --check "${patches[0]}" 2>/dev/null; then
+        local files
+        mapfile -t files < <(sed -n 's#^+++ b/##p' "${patches[@]}" | sort -u)
+        echo "$prefix: an older patch series is applied; restoring ${files[*]} from $(git -C "$dir" rev-parse --short HEAD)" >&2
+        git -C "$dir" checkout HEAD -- "${files[@]}"
+    fi
     for i in "${patches[@]}"; do
         git -C "$dir" apply "$i"
     done

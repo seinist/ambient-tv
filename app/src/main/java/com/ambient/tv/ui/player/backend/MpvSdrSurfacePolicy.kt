@@ -19,13 +19,16 @@ internal val MPV_SDR_SURFACE_DATASPACES = setOf(MPV_BT709_FULL, MPV_BT709_GAMMA2
  * - Gamma 2.2: mpv encodes with pure 2.2, tagged TRANSFER_GAMMA2_2. When SurfaceFlinger composes
  *   SDR into an HDR/PQ output it linearises the 170M tag with the BT.709 camera curve, which
  *   lifts BT.1886 midtones and blacks (washed out); a 2.2/2.2 pair round-trips exactly.
- * - Auto: Gamma 2.2 on a display with HDR output capabilities (SDR is composed/tone-mapped
- *   there), otherwise BT.1886.
+ * - Auto: Gamma 2.2 only while the display really runs an HDR/PQ output (HDR/SDR ratio above
+ *   1, [com.ambient.tv.ui.display.displayHdrRatioMeansHdr]): only then SurfaceFlinger composes
+ *   SDR into HDR. An HDR-capable TV in its SDR mode passes SDR through, so BT.1886 like Direct.
+ *   Unknown ratio (older Android, HWC without the signal) also keeps BT.1886.
+ *   Gamma 2.2 and BT.1886 stay selectable for an A/B comparison.
  */
-internal fun mpvSdrCurveTransfer(key: String, hdrCapableDisplay: Boolean): String = when (key) {
+internal fun mpvSdrCurveTransfer(key: String, displayInHdrMode: Boolean): String = when (key) {
     AppPreferences.MPV_SDR_CURVE_GAMMA22 -> "gamma2.2"
     AppPreferences.MPV_SDR_CURVE_BT1886 -> "bt.1886"
-    else -> if (hdrCapableDisplay) "gamma2.2" else "bt.1886"
+    else -> if (displayInHdrMode) "gamma2.2" else "bt.1886"
 }
 
 /**

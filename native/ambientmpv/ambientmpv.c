@@ -8,6 +8,8 @@
 #include <mpv/client.h>
 #include <libavcodec/jni.h>
 #include <libavcodec/avcodec.h>
+#include <libavutil/opt.h>
+#include <dlfcn.h>
 #include <android/log.h>
 #include <sys/system_properties.h>
 #include <errno.h>
@@ -116,6 +118,39 @@ static void close_wakeup_pipe(ambient_mpv_context *ctx) {
 static jstring new_utf(JNIEnv *env, const char *value) {
     if (!value) return NULL;
     return (*env)->NewStringUTF(env, value);
+}
+
+static const AVOption *mediacodec_option(const char *name) {
+    const char *decoders[] = {"hevc_mediacodec", "h264_mediacodec"};
+    for (size_t i = 0; i < sizeof(decoders) / sizeof(decoders[0]); ++i) {
+        const AVCodec *codec = avcodec_find_decoder_by_name(decoders[i]);
+        if (!codec || !codec->priv_class) continue;
+        const AVOption *option = av_opt_find2((void *)&codec->priv_class, name, NULL, 0, AV_OPT_SEARCH_FAKE_OBJ, NULL);
+        if (option) return option;
+    }
+    return NULL;
+}
+
+/*
+ * Patch markers of the loaded libraries (Kotlin: MpvNativeFeatures). Each one is read from the
+ * libraries themselves, never assumed from the sources: libavcodec options of the mediacodec
+ * decoders and an exported marker symbol of the patched libmpv.
+ */
+JNIEXPORT jstring JNICALL
+Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeFeatures(JNIEnv *env, jobject thiz) {
+    (void)thiz;
+    char features[256] = "";
+    const AVOption *dv = mediacodec_option("dolbyvision");
+    // ffmpeg-dolby-vision-routing.patch widens the 0..1 bool to an int 0..2.
+    if (dv && dv->type == AV_OPT_TYPE_INT && dv->max >= 2) strncat(features, "ffmpeg-dv-routing,", sizeof(features) - strlen(features) - 1);
+    if (mediacodec_option("hw_min_height")) strncat(features, "ffmpeg-sd-software,", sizeof(features) - strlen(features) - 1);
+    if (mediacodec_option("color_info")) strncat(features, "ffmpeg-color-info,", sizeof(features) - strlen(features) - 1);
+    void *mpv = dlopen("libmpv.so", RTLD_NOW | RTLD_NOLOAD);
+    const void *egl = mpv ? dlsym(mpv, "ambient_mpv_egl_hdr_surface") : NULL;
+    if (!egl) egl = dlsym(RTLD_DEFAULT, "ambient_mpv_egl_hdr_surface");
+    if (egl && *(const int *)egl == 1) strncat(features, "mpv-egl-hdr-surface,", sizeof(features) - strlen(features) - 1);
+    if (mpv) dlclose(mpv);
+    return new_utf(env, features);
 }
 
 JNIEXPORT jint JNICALL

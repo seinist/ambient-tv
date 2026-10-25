@@ -2,10 +2,10 @@ Ambient TV: Android EGL BT2020_PQ window surface plus SMPTE-2086 metadata when t
 EGL_EXT_gl_colorspace_bt2020_pq + EGL_EXT_surface_SMPTE2086_metadata exist; otherwise a plain SDR surface.
 
 diff --git a/video/out/opengl/context_android.c b/video/out/opengl/context_android.c
-index 0a12cf8..8e91a3c 100644
+index 0a12cf8..b9371d3 100644
 --- a/video/out/opengl/context_android.c
 +++ b/video/out/opengl/context_android.c
-@@ -19,10 +19,33 @@
+@@ -19,10 +19,38 @@
  #include <EGL/eglext.h>
  
  #include "video/out/android_common.h"
@@ -16,6 +16,11 @@ index 0a12cf8..8e91a3c 100644
  #include "common/common.h"
  #include "context.h"
  
++// Ambient TV runtime marker: this libmpv tags its EGL window surface BT2020_PQ (read by
++// libambientmpv nativeFeatures). libmpv hides symbols by default, so export it explicitly.
++extern const int ambient_mpv_egl_hdr_surface;
++__attribute__((visibility("default"), used)) const int ambient_mpv_egl_hdr_surface = 1;
++
 +#ifndef EGL_GL_COLORSPACE_KHR
 +#define EGL_GL_COLORSPACE_KHR 0x309D
 +#endif
@@ -39,7 +44,7 @@ index 0a12cf8..8e91a3c 100644
  struct priv {
      struct GL gl;
      EGLDisplay egl_display;
-@@ -30,6 +53,67 @@ struct priv {
+@@ -30,6 +58,67 @@ struct priv {
      EGLSurface egl_surface;
  };
  
@@ -107,7 +112,7 @@ index 0a12cf8..8e91a3c 100644
  static void android_swap_buffers(struct ra_ctx *ctx)
  {
      struct priv *p = ctx->priv;
-@@ -74,8 +158,7 @@ static bool android_init(struct ra_ctx *ctx)
+@@ -74,8 +163,7 @@ static bool android_init(struct ra_ctx *ctx)
      eglGetConfigAttrib(p->egl_display, config, EGL_NATIVE_VISUAL_ID, &format);
      ANativeWindow_setBuffersGeometry(native_window, 0, 0, format);
  

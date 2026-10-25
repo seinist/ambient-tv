@@ -208,6 +208,8 @@ data class SettingsBackup(
     val gpuRenderResolutionKey: String = AppPreferences.GPU_RENDER_AUTO,
     val mpvSdrCurveKey: String = AppPreferences.MPV_SDR_CURVE_AUTO,
     val svpExplicitChoice: Boolean = false,
+    /** Since schema 68: MPV scaler/deband picked deliberately, so cheap defaults do not replace it. */
+    val mpvImageExplicitChoice: Boolean = false,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
@@ -487,6 +489,7 @@ class SettingsBackupManager @Inject constructor(
             gpuRenderResolutionKey = preferences.gpuRenderResolutionKey,
             mpvSdrCurveKey = preferences.mpvSdrCurveKey,
             svpExplicitChoice = preferences.svpExplicitChoice,
+            mpvImageExplicitChoice = preferences.mpvImageExplicitChoice,
             wolRetryCount = preferences.wolRetryCount,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
@@ -762,7 +765,9 @@ class SettingsBackupManager @Inject constructor(
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
         preferences.youtubeMaxVideoHeight = backup.youtubeMaxVideoHeight
-        preferences.youtubeVideoPreset = backup.youtubeVideoPreset
+        // YouTube video preset since schema 66; older backups do not carry it, so their
+        // default ("auto") must not replace the preset chosen on this device.
+        if (backup.schemaVersion >= 66) preferences.youtubeVideoPreset = backup.youtubeVideoPreset
         preferences.screensaverEnabled = backup.screensaverEnabled
         preferences.screensaverTimeoutMinutes = backup.screensaverTimeoutMinutes
         preferences.screensaverModeKey = backup.screensaverModeKey
@@ -849,6 +854,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.svpExplicitChoice = schema66 && backup.svpExplicitChoice
         // "An Display synchronisieren" since schema 67; older backups restore "off".
         preferences.syncPlaybackToDisplay = backup.schemaVersion >= 67 && backup.syncPlaybackToDisplay
+        // Deliberate MPV scaler/deband choice since schema 68; older backups restore "not chosen".
+        preferences.mpvImageExplicitChoice = backup.schemaVersion >= 68 && backup.mpvImageExplicitChoice
         preferences.wolRetryCount = backup.wolRetryCount
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
@@ -888,7 +895,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 67
+        const val CURRENT_SCHEMA_VERSION = 68
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

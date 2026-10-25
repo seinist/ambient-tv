@@ -25,4 +25,8 @@
     <string name="player_output_hdr_gpu_no_effects">HDR über GPU: kein HDR-tauglicher Shader und kein Debanding gewählt, HDR bleibt auf der direkten Fläche.</string>
     <string name="settings_mpv_hdr_gpu_direct_hint">Die Standard-Ausgabe „Direkt“ bleibt für SDR bestehen; HDR10 nutzt den GPU-Weg, sobald ein Shader oder Debanding gewählt ist. „Direkt“ im Player oder in einem Titelprofil hält HDR direkt.</string>
     <string name="image_mpv_hdr_shader_hint">HDR: nur HDR-taugliche Shader (Schärfen, RAVU Lite / FSR für Luma, Debanding) wirken; Chroma- und SSim-Shader entfallen.</string>
+    <string name="player_output_hdr_gpu_surface_unverifiable">HDR über GPU: Die Surface-Kennung ist auf diesem Gerät nicht lesbar, PQ lässt sich nicht bestätigen; die direkte Fläche wird genutzt.</string>
+    <string name="settings_mpv_zero_copy_locked">Zero-Copy ist gesperrt: Eine frühere Wiedergabe ist auf diesem Gerät damit fehlgeschlagen, MPV nutzt Copy-back. Die Sperre gilt bis zum nächsten App-Update.</string>
+    <string name="settings_mpv_zero_copy_reset">Zero-Copy-Sperre zurücksetzen</string>
+    <string name="settings_mpv_zero_copy_reset_done">Zero-Copy wird bei der nächsten Wiedergabe wieder versucht.</string>
 </resources>

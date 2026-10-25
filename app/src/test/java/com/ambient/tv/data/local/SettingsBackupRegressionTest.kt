@@ -213,11 +213,34 @@ class SettingsBackupRegressionTest {
         assertEquals(false, target.svpExplicitChoice)
     }
 
+    // P1
+    @Test fun mpvImageExplicitChoiceRoundTripsAndOlderBackupsRestoreNotChosen() {
+        val (source, _, exporter) = store()
+        source.mpvImageExplicitChoice = true
+        val (target, _, importer) = store()
+        importer.importJson(exporter.exportJson())
+        assertTrue(target.mpvImageExplicitChoice)
+        importer.importJson("""{"schemaVersion":67,"exportedAtEpochMs":0,"mpvImageExplicitChoice":true}""")
+        assertFalse(target.mpvImageExplicitChoice)
+    }
+
+    // B1
+    @Test fun youtubeVideoPresetRoundTripsAndOlderBackupsKeepTheDevicePreset() {
+        val (source, _, exporter) = store()
+        source.youtubeVideoPreset = "1080:60:vp9"
+        val (target, _, importer) = store()
+        importer.importJson(exporter.exportJson())
+        assertEquals("1080:60:vp9", target.youtubeVideoPreset)
+        // A schema-65 backup has no preset: its default must not reset the chosen one.
+        importer.importJson("""{"schemaVersion":65,"exportedAtEpochMs":0}""")
+        assertEquals("1080:60:vp9", target.youtubeVideoPreset)
+    }
+
     @Test fun sdrReferenceWhiteRoundTripsAndOlderBackupsUseAuto() {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("67", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("68", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)

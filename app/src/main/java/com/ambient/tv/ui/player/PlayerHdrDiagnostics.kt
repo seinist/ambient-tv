@@ -96,13 +96,15 @@ internal fun ObservePlayerHdrEnvironment(activity: Activity, experiment: PlayerH
                             val handle = BackgroundPlaybackSession.activeHandle()
                             val ratio = if (Build.VERSION.SDK_INT >= 34)
                                 runCatching { display?.takeIf { it.isHdrSdrRatioAvailable }?.hdrSdrRatio }.getOrNull() else null
-                            // Direct HDR or HDR UI proves the ratio signal for the GPU route's display check.
-                            display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(it.displayId, ratio) }
+                            // HDR playback proves the ratio signal for the GPU route's display check;
+                            // SDR playback readings never count ([DisplayHdrRatioEvidence]).
+                            com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(display, ratio,
+                                hdrOutput = handle?.uiHdrStandard() != null)
                             val caps = VideoAccelerationRuntime.capabilities.value
                             val facts = "sdk=${Build.VERSION.SDK_INT} backend=${snapshot.backend} " +
                                 "display=${display?.displayId} mode=${display?.mode?.modeId} hdrTypes=$types " +
                                 "wideColor=${display?.isWideColorGamut} hdrSdrRatio=$ratio " +
-                                "ratioReliable=${display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(it.displayId) }} " +
+                                "ratioReliable=${display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(it) }} " +
                                 "systemConversion=$conversion bypassRequested=${experiment.requested} " +
                                 "vulkanProbe=${caps.checked} vulkanColorSpaces=${caps.device.surfaceColorSpaces} " +
                                 "vulkanFormats=${caps.device.surfaceFormats} hdr10Surface=${caps.device.hdr10SurfaceSupported} " +

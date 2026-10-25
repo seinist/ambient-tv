@@ -120,6 +120,7 @@ internal fun MpvImageControls(controller: MpvPlaybackController) {
         ::change,
         hdrTransfer = controller.hdrImageTransfer,
         hdrOutput = controller.hdrPassthroughRunning,
+        onCheapFieldChosen = { markMpvImageExplicitChoice(preferences) },
     )
     if (!controller.hdrImageTransfer && !controller.sdrImageProcessing) ImageHint(stringResource(R.string.image_sdr_only))
     if ("nis-compute-unsupported" in controller.imageOptionWarnings) {
@@ -167,12 +168,14 @@ internal fun MpvImageOptionsEditor(
     hdrTransfer: Boolean = false,
     /** HDR source shown as PQ (HDR über GPU): no film grain. */
     hdrOutput: Boolean = false,
+    /** A scaler/sigmoid/deband value was picked (also the default one): see [markMpvImageExplicitChoice]. */
+    onCheapFieldChosen: () -> Unit = {},
 ) {
     var group by remember { mutableStateOf("scaling") }
     val sparsam = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals
     val passthrough = hdrTransfer && hdrOutput
     if (hdrTransfer) ImageHint(stringResource(if (passthrough) R.string.image_mpv_hdr_passthrough else R.string.image_mpv_hdr_limited))
-    if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.mpvCheapDefaults) ImageHint(stringResource(R.string.image_mpv_sparsam_defaults_hint))
+    if (mpvCheapDefaultsActive()) ImageHint(stringResource(R.string.image_mpv_sparsam_defaults_hint))
     // Sparsam: chosen filters apply, untouched defaults run cheap; only motion interpolation is off.
     val groups = listOfNotNull(
         "scaling" to stringResource(R.string.image_scaling),
@@ -193,21 +196,21 @@ internal fun MpvImageOptionsEditor(
                         com.ambient.tv.ui.player.backend.MPV_HDR_UPSCALERS).toList(),
                 ))
             }
-            GroupedImageChoice(R.string.player_upscaler, o.scaler, scalerSections) { change(o.copy(scaler = it)) }
+            GroupedImageChoice(R.string.player_upscaler, o.scaler, scalerSections) { onCheapFieldChosen(); change(o.copy(scaler = it)) }
             // HDR: chroma shaders and SSimDownscaler never load, so only the built-in scalers are offered.
             val chroma = mpvEditorChromaScalers(hdrTransfer)
             val downscalers = mpvEditorDownscalers(hdrTransfer)
-            ImageChoice(R.string.image_chroma, o.chromaScaler.takeIf { c -> chroma.any { it.first == c } } ?: "lanczos", chroma) { change(o.copy(chromaScaler = it)) }
-            ImageChoice(R.string.image_downscaler, o.downscaler.takeIf { d -> downscalers.any { it.first == d } } ?: "lanczos", downscalers) { change(o.copy(downscaler = it)) }
+            ImageChoice(R.string.image_chroma, o.chromaScaler.takeIf { c -> chroma.any { it.first == c } } ?: "lanczos", chroma) { onCheapFieldChosen(); change(o.copy(chromaScaler = it)) }
+            ImageChoice(R.string.image_downscaler, o.downscaler.takeIf { d -> downscalers.any { it.first == d } } ?: "lanczos", downscalers) { onCheapFieldChosen(); change(o.copy(downscaler = it)) }
             ImageLevelSlider(
                 R.string.image_antiring, o.antiring,
                 range = 0..100, step = 1, valueLabel = "${o.antiring} %",
             ) { change(o.copy(antiring = it)) }
-            ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) { change(o.copy(sigmoid = it == "on")) }
+            ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) { onCheapFieldChosen(); change(o.copy(sigmoid = it == "on")) }
             ImageHint(stringResource(if (hdrTransfer) R.string.image_mpv_hdr_shader_hint else R.string.image_mpv_shader_hint))
         }
         "filters" -> {
-            ImageChoice(R.string.player_deband, o.deband, imageStrengths(true)) { change(o.copy(deband = it)) }
+            ImageChoice(R.string.player_deband, o.deband, imageStrengths(true)) { onCheapFieldChosen(); change(o.copy(deband = it)) }
             if (o.scaler !in setOf("fsr", "nis")) {
                 GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(
                     PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),

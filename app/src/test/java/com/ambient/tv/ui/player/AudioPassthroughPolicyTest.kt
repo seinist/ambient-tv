@@ -20,4 +20,16 @@ class AudioPassthroughPolicyTest {
     @Test fun disabledSettingNeverMarksBitstreamActive() {
         assertFalse(AudioPassthroughPolicy.isBitstreamActive(false, "ac3"))
     }
+
+    @Test fun reportedAudioProfilesOverrideTheLegacyChannelUnion() {
+        // API 31+ with profiles: a 7.1 legacy mask (e.g. of a compressed format) does not count.
+        org.junit.Assert.assertEquals(2, routePcmChannels(profilesReported = true, profiled = 2, legacy = 8))
+        org.junit.Assert.assertEquals(6, routePcmChannels(profilesReported = true, profiled = 6, legacy = 8))
+        // Profiles without any PCM entry: stereo, not the legacy maximum.
+        org.junit.Assert.assertEquals(2, routePcmChannels(profilesReported = true, profiled = null, legacy = 8))
+        // Before API 31 or with empty audioProfiles the legacy fields are all there is.
+        org.junit.Assert.assertEquals(8, routePcmChannels(profilesReported = false, profiled = null, legacy = 8))
+        org.junit.Assert.assertEquals(2, routePcmChannels(profilesReported = false, profiled = null, legacy = null))
+        org.junit.Assert.assertEquals(2, routePcmChannels(profilesReported = false, profiled = null, legacy = 0))
+    }
 }

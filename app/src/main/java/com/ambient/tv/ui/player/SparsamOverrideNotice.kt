@@ -91,7 +91,7 @@ internal fun SparsamOverrideNotice(forSvp: Boolean = false, showText: Boolean = 
 /** Locked rows: label, effective value and the retained saved value. */
 @Composable
 internal fun MpvSparsamLockedRows(stored: MpvImageOptions, fields: Set<MpvSparsamField>) {
-    val overrides = mpvSparsamOverrides(stored, LocalPerformanceProfile.current.mpvCheapDefaults)
+    val overrides = mpvSparsamOverrides(stored, mpvCheapDefaultsActive())
         .filter { it.first in fields }
     for ((field, value) in overrides) {
         ImageHint(stringResource(R.string.image_sparsam_locked_row, stringResource(sparsamFieldLabel(field)), storedLabel(value)))

@@ -86,6 +86,7 @@ private fun MpvPanelVideoGroup(
             sections = sections,
             selectedKey = selected,
             onSelected = { key ->
+                markMpvImageExplicitChoice(preferences)
                 if (key == controller.imageOptions.scaler) return@GroupedPlayerDropUpSelector
                 controller.updateImageOptions(controller.imageOptions.copy(scaler = key))
                 if (controller.saveImageDefaults) preferences.mpvImageOptions = controller.imageOptions

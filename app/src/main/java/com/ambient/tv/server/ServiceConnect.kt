@@ -4,7 +4,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /** Backoff between identity attempts while a server that just woke finishes starting. */
@@ -69,22 +71,50 @@ internal suspend fun <T> retryTransient(
 }
 
 /**
- * One connect per manager at a time. A caller arriving while one runs joins it instead of
- * waiting behind a lock for a second, identical wake. The run belongs to [scope], not to the
- * caller: leaving a screen (cancelling the caller) no longer aborts a wake half-way and leaves
- * its "waking" state behind.
+ * One connect per manager and endpoint at a time. A caller arriving while a connect to the same
+ * [endpoint key][joinOrStart] runs joins it instead of waiting behind a lock for a second,
+ * identical wake. A caller for a different endpoint (server switched, host edited) cancels the
+ * stale run, waits until it has reset its state and then starts its own: it never adopts the
+ * result of a connect to the old server. The run belongs to [scope], not to the caller: leaving
+ * a screen (cancelling the caller) no longer aborts a wake half-way and leaves its "waking"
+ * state behind.
  */
 internal class SharedConnectRun(private val scope: CoroutineScope) {
     private val lock = Any()
     private var running: Deferred<Boolean>? = null
+    private var runningKey: String? = null
+    private var started = 0L
 
     val active: Boolean get() = synchronized(lock) { running?.isActive == true }
 
-    suspend fun joinOrStart(block: suspend () -> Boolean): Boolean {
+    /** Increments with every started run; a passive check compares it to detect a connect in between. */
+    val generation: Long get() = synchronized(lock) { started }
+
+    /** A connect runs now or was started after [generation] was read. */
+    fun startedSince(generation: Long): Boolean = synchronized(lock) { running?.isActive == true || started != generation }
+
+    suspend fun joinOrStart(key: String, block: suspend () -> Boolean): Boolean {
         val run = synchronized(lock) {
-            running?.takeIf { it.isActive } ?: scope.async { block() }.also { running = it }
+            val current = running?.takeIf { it.isActive }
+            if (current != null && runningKey == key) current
+            else {
+                current?.cancel()
+                started++
+                runningKey = key
+                scope.async {
+                    // The stale run resets its own in-flight state on cancel; let it finish first.
+                    current?.join()
+                    block()
+                }.also { running = it }
+            }
         }
-        return run.await()
+        return try {
+            run.await()
+        } catch (cancelled: CancellationException) {
+            // Our own cancellation propagates; a run superseded by another endpoint is not a success.
+            currentCoroutineContext().ensureActive()
+            false
+        }
     }
 
     /** Stops the running connect (its state is reset by the connect itself). */

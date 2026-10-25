@@ -677,10 +677,29 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_SVP_EXPLICIT_CHOICE, false)
         set(value) = prefs.edit { putBoolean(KEY_SVP_EXPLICIT_CHOICE, value) }
 
-    /** MPV zero-copy (hwdec=mediacodec on vo=gpu) failed on this device; use mediacodec-copy. */
+    /**
+     * The user picked an MPV scaler, chroma/downscaler, sigmoid or deband value in an image menu.
+     * From then on the cheap defaults ([com.ambient.tv.ui.performance.PerformanceProfile.mpvCheapDefaults])
+     * no longer replace these fields, so Lanczos or Deband can be chosen deliberately even though
+     * they equal the defaults. Reset with the global playback profile.
+     */
+    var mpvImageExplicitChoice: Boolean
+        get() = prefs.getBoolean(KEY_MPV_IMAGE_EXPLICIT_CHOICE, false)
+        set(value) = prefs.edit { putBoolean(KEY_MPV_IMAGE_EXPLICIT_CHOICE, value) }
+
+    /**
+     * MPV zero-copy (hwdec=mediacodec on vo=gpu) failed on this device; use mediacodec-copy.
+     * The lock belongs to the app version that recorded it: an update (new native libraries,
+     * new interop code) tries zero-copy again ([mpvZeroCopyLockActive]). Settings can clear it.
+     */
     var mpvZeroCopyFailed: Boolean
-        get() = prefs.getBoolean(KEY_MPV_ZERO_COPY_FAILED, false)
-        set(value) = prefs.edit { putBoolean(KEY_MPV_ZERO_COPY_FAILED, value) }
+        get() = mpvZeroCopyLockActive(prefs.getBoolean(KEY_MPV_ZERO_COPY_FAILED, false),
+            prefs.getInt(KEY_MPV_ZERO_COPY_FAILED_VERSION, -1), com.ambient.tv.BuildConfig.VERSION_CODE)
+        set(value) = prefs.edit {
+            putBoolean(KEY_MPV_ZERO_COPY_FAILED, value)
+            if (value) putInt(KEY_MPV_ZERO_COPY_FAILED_VERSION, com.ambient.tv.BuildConfig.VERSION_CODE)
+            else remove(KEY_MPV_ZERO_COPY_FAILED_VERSION)
+        }
 
     /** Kodi-style pause after an app-requested display mode change; 0 is off, 0.5 s steps up to 20 s. */
     /** Kodi's "Sync playback to display": mpv video-sync=display-resample on GPU outputs. */
@@ -1986,7 +2005,9 @@ class AppPreferences @Inject constructor(
         const val KEY_GPU_RENDER_RESOLUTION = "gpu_render_resolution"
         const val KEY_MPV_SDR_CURVE = "mpv_sdr_curve"
         const val KEY_SVP_EXPLICIT_CHOICE = "svp_explicit_choice"
+        const val KEY_MPV_IMAGE_EXPLICIT_CHOICE = "mpv_image_explicit_choice"
         const val KEY_MPV_ZERO_COPY_FAILED = "mpv_zero_copy_failed"
+        const val KEY_MPV_ZERO_COPY_FAILED_VERSION = "mpv_zero_copy_failed_version"
         const val GPU_RENDER_AUTO = "auto"
         const val GPU_RENDER_PANEL = "panel"
         const val GPU_RENDER_UI = "ui"
@@ -2140,3 +2161,7 @@ internal fun storedTvheadendLoginState(stored: String?, legacyVerified: Boolean?
             false -> TvheadendLoginState.UNKNOWN
             else -> TvheadendLoginState.VERIFIED
         }
+
+/** A recorded zero-copy failure only holds for the app version (versionCode) that recorded it. */
+internal fun mpvZeroCopyLockActive(failed: Boolean, recordedVersionCode: Int, currentVersionCode: Int): Boolean =
+    failed && recordedVersionCode == currentVersionCode

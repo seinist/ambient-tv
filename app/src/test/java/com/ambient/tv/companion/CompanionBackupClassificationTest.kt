@@ -59,6 +59,17 @@ class CompanionBackupClassificationTest {
         assertEquals("auto", merged(source.copy(schemaVersion = 65), device = true).mpvSdrCurveKey)
     }
 
+    // B1
+    @Test fun youtubeVideoPresetFromOlderBackupsDoesNotOverwriteTheReceiver() {
+        val json = CompanionBackupPolicy.json
+        val target = SettingsBackup(exportedAtEpochMs = 1, youtubeVideoPreset = "2160:60:vp9")
+        val source = SettingsBackup(exportedAtEpochMs = 2, youtubeVideoPreset = "auto")
+        fun merged(source: SettingsBackup) = json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = true))
+        assertEquals("2160:60:vp9", merged(source.copy(schemaVersion = 65)).youtubeVideoPreset)
+        assertEquals("auto", merged(source).youtubeVideoPreset)
+    }
+
     @Test fun syncPlaybackToDisplayTravelsOnlyWithDeviceSettingsFromSchema67() {
         val json = CompanionBackupPolicy.json
         val target = SettingsBackup(exportedAtEpochMs = 1, syncPlaybackToDisplay = false)
