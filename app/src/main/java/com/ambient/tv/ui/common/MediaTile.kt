@@ -3,15 +3,10 @@ package com.ambient.tv.ui.common
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import androidx.compose.foundation.background
@@ -475,7 +470,7 @@ fun SkeletonTile(
     modifier: Modifier = Modifier,
     style: MediaTileStyle = MediaTileStyle.POSTER,
     showDescription: Boolean = true,
-    /** False when a parent already pulses the tile (DLNA). Sparsam stays flat either way. */
+    /** False for a static placeholder (detail rows). Sparsam stays flat either way. */
     shimmer: Boolean = true,
 ) {
     if (shimmer && !LocalPerformanceProfile.current.reducedEffects) {

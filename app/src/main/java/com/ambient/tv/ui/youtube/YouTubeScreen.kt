@@ -12,11 +12,6 @@ import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.mobile.deviceHeroHeight
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
@@ -52,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -867,28 +863,15 @@ private fun Card(
 }
 @Composable
 private fun Loading(gridColumns: Int) {
-    if (LocalPerformanceProfile.current.reducedEffects) {
-        YouTubeLoadingRows(gridColumns, alpha = 0.45f)
-    } else {
-        YouTubeLoadingShimmer(gridColumns)
-    }
+    // Shared skeleton clock (RESUMED only, read at draw time); Sparsam stays static.
+    YouTubeLoadingRows(gridColumns, com.ambient.tv.ui.common.rememberSkeletonPulseOrNull())
 }
 
 @Composable
-private fun YouTubeLoadingShimmer(gridColumns: Int) {
-    val transition = rememberInfiniteTransition(label = "youtubeLoading")
-    val alpha by transition.animateFloat(
-        initialValue = 0.28f,
-        targetValue = 0.62f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "youtubeLoadingAlpha",
-    )
-    YouTubeLoadingRows(gridColumns, alpha)
-}
-
-@Composable
-private fun YouTubeLoadingRows(gridColumns: Int, alpha: Float) {
-    val placeholderColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = alpha)
+private fun YouTubeLoadingRows(gridColumns: Int, pulse: androidx.compose.runtime.State<Float>?) {
+    val placeholderColor = MaterialTheme.colorScheme.surfaceVariant
+    fun Modifier.placeholder(radius: androidx.compose.ui.unit.Dp) =
+        skeletonPulseAlpha(pulse).background(placeholderColor, RoundedCornerShape(radius))
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val horizontalPadding = screenGutter()
         val spacing = 16.dp
@@ -904,7 +887,7 @@ private fun YouTubeLoadingRows(gridColumns: Int, alpha: Float) {
         ) {
             items(3) {
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.padding(start = screenGutter()).width(168.dp).height(18.dp).background(placeholderColor, RoundedCornerShape(9.dp)))
+                    Box(Modifier.padding(start = screenGutter()).width(168.dp).height(18.dp).placeholder(9.dp))
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = horizontalPadding),
                         horizontalArrangement = Arrangement.spacedBy(spacing),
@@ -918,12 +901,12 @@ private fun YouTubeLoadingRows(gridColumns: Int, alpha: Float) {
                                     .padding(8.dp),
                                 verticalArrangement = Arrangement.spacedBy(7.dp),
                             ) {
-                                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(placeholderColor, RoundedCornerShape(7.dp)))
+                                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).placeholder(7.dp))
                                 Column(Modifier.height(44.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Box(Modifier.fillMaxWidth(0.9f).height(13.dp).background(placeholderColor, RoundedCornerShape(3.dp)))
-                                    Box(Modifier.fillMaxWidth(0.65f).height(13.dp).background(placeholderColor, RoundedCornerShape(3.dp)))
+                                    Box(Modifier.fillMaxWidth(0.9f).height(13.dp).placeholder(3.dp))
+                                    Box(Modifier.fillMaxWidth(0.65f).height(13.dp).placeholder(3.dp))
                                 }
-                                Box(Modifier.fillMaxWidth(0.5f).height(10.dp).background(placeholderColor, RoundedCornerShape(3.dp)))
+                                Box(Modifier.fillMaxWidth(0.5f).height(10.dp).placeholder(3.dp))
                             }
                         }
                     }
