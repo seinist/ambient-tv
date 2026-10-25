@@ -124,9 +124,14 @@ internal class MpvPlaybackEngine(
     var hdrGpuFailure by mutableStateOf<MpvHdrGpuReason?>(null)
         private set
     private val hdrPassthroughMonitor = MpvHdrPassthroughMonitor()
-    /** PQ reaches the display through gpu-next: OUTPUT hooks see PQ code values. */
-    private val hdrPassthroughActive: Boolean get() = hdrGpuPassthrough && acceleration.vulkan && hdrGpuFailure == null
-    /** The passthrough route runs on Vulkan (read by the UI; [hdrPassthroughActive] is engine-internal). */
+    /**
+     * PQ reaches the display through gpu-next/Vulkan or vo=gpu on an EGL BT2020_PQ surface:
+     * OUTPUT hooks see PQ code values.
+     */
+    private val hdrPassthroughActive: Boolean get() = hdrGpuPassthrough && acceleration.gpu && hdrGpuFailure == null
+    /** EGL PQ route ([MpvHdrGpuDecision.openGl]): vo=gpu renders PQ/BT.2020 explicitly. */
+    private val hdrPassthroughOpenGl: Boolean get() = hdrPassthroughActive && !acceleration.vulkan
+    /** The passthrough route runs (Vulkan or EGL PQ; read by the UI, [hdrPassthroughActive] is engine-internal). */
     val hdrPassthroughVulkan: Boolean get() = hdrPassthroughActive
     /** [MpvHdrPassthroughMonitor] confirmed PQ/BT.2020 on the display for this player. */
     var hdrPassthroughConfirmed by mutableStateOf(false)
@@ -465,6 +470,8 @@ internal class MpvPlaybackEngine(
             setOption("vo", "gpu")
             setOption("gpu-context", "android")
             setOption("hwdec", acceleration.hwdec)
+            // EGL PQ passthrough (no Vulkan HDR10): PQ/BT.2020 into a 10-bit BT2020_PQ window surface.
+            if (hdrGpuPassthrough) MPV_HDR_OPENGL_OPTIONS.forEach { (name, value) -> setOption(name, value) }
         } else {
             setOption("vo", "mediacodec_embed")
             setOption("hwdec", acceleration.hwdec)
@@ -547,6 +554,14 @@ internal class MpvPlaybackEngine(
         applyAudioOptions()
     }
 
+    /** [mpvVideoSync] for the current audio plan and SVP state. */
+    private fun currentVideoSync(): String = mpvVideoSync(
+        syncToDisplay = videoImagePreferences(context).syncPlaybackToDisplay,
+        gpuOutput = gpuQualityMode,
+        encodedAudio = audioSession.outputPlan().encoded,
+        svpActive = "plex-svp" in activeCpuImageFilters,
+    )
+
     fun applyAudioOptions() {
         if (released) return
         audioSession.sourceChannels = getPropertyDouble("audio-params/channel-count", 0.0).toInt().takeIf { it > 0 }
@@ -557,6 +572,8 @@ internal class MpvPlaybackEngine(
         val rejected = mutableListOf<String>()
         fun option(name: String, value: String) { if (!trySetProperty(name, value)) rejected.add(name) }
         if (plan.encoded) setPropertyDouble("speed", 1.0)
+        // Passthrough cannot be resampled: leave display-resample before a bitstream opens.
+        if (gpuQualityMode) currentVideoSync().let { sync -> if (getPropertyString("video-sync") != sync) option("video-sync", sync) }
         option("audio-spdif", plan.spdifCodecs.joinToString(","))
         option("audio-delay", (raw.delayMs / 1000.0).toString())
         option("audio-channels", mpvAudioChannels(plan.channels, plan.encoded, dsp.upmix && audioSession.sourceChannels == 2, plan.applyDsp))
@@ -734,6 +751,17 @@ internal class MpvPlaybackEngine(
         if (ended) { seekTo(0); ended = false }
         setProperty("pause", "no")
     }
+    /**
+     * HDMI audio came back after a display mode switch: re-plan for the (possibly changed) sink
+     * capabilities, then let mpv reopen its AudioTrack (`ao-reload`) like Kodi reopens AudioEngine.
+     */
+    override fun reopenAudioOutput() {
+        if (released || !loaded) return
+        applyAudioOptions()
+        command("ao-reload")
+        Timber.i("%s MPV audio output reopened after HDMI audio plug", HDR_AUDIT_TAG)
+    }
+
     private var outputMuteRestore: String? = null
     override fun setOutputMuted(muted: Boolean) {
         if (released) return
@@ -1088,17 +1116,23 @@ internal class MpvPlaybackEngine(
         property("saturation", if (sdr) o.saturation.toString() else "0")
         property("gamma", if (sdr) o.gamma.toString() else "0")
         val toneMapToSdr = needsHdrToSdr(sourceHdrStandard ?: declaredHdr)
-        property("target-prim", if (toneMapToSdr) "bt.709" else "auto")
+        property("target-prim", when {
+            toneMapToSdr -> "bt.709"
+            hdrPassthroughOpenGl -> "bt.2020"
+            else -> "auto"
+        })
         // "SDR-Kurve": the SDR target curve is explicit so the surface tag can follow it.
         property("target-trc", when {
             toneMapToSdr || (sdr && !hdrPassthroughActive) -> sdrCurveTransfer()
+            // The EGL surface was created PQ; keep rendering PQ into it.
+            hdrPassthroughOpenGl -> "pq"
             else -> "auto"
         })
         property("target-peak", if (toneMapToSdr) "100" else "auto")
         property("tone-mapping", o.toneMapping, "auto")
         property("dither-depth", o.ditherDepth, "auto")
         property("interpolation", "no")
-        property("video-sync", "audio")
+        property("video-sync", currentVideoSync())
         if (shieldSoftwareDecode) warnings += MPV_SHIELD_SOFTWARE_WARNING
         imageOptionWarnings = warnings.distinct()
         armRenderCheck()
@@ -2296,9 +2330,10 @@ internal class MpvPlaybackEngine(
 
     private fun fallbackAcceleration(reason: String, reload: Boolean = true): Boolean {
         // OpenGL cannot signal HDR on Android: leave the passthrough player to the direct reopen.
-        if (mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough, acceleration.vulkan, released)) {
-            Timber.w("MPV HDR passthrough: Vulkan fallback (%s), reopening on the direct surface", reason)
-            failHdrPassthrough(MpvHdrGpuReason.VULKAN_FALLBACK)
+        if (mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough, acceleration.gpu, released)) {
+            Timber.w("MPV HDR passthrough: %s fallback (%s), reopening on the direct surface",
+                if (acceleration.vulkan) "Vulkan" else "EGL PQ", reason)
+            failHdrPassthrough(if (acceleration.vulkan) MpvHdrGpuReason.VULKAN_FALLBACK else MpvHdrGpuReason.OPENGL_FALLBACK)
             return true
         }
         val directDecoderFallback = acceleration.output == "direct" && reason in setOf("mediacodec_unavailable", "hdr_to_sdr")

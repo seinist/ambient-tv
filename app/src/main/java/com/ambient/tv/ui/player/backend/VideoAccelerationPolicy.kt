@@ -37,6 +37,8 @@ data class VideoAccelerationCapabilities(
     val mpvOutputBuilt: Boolean = false,
     val mpvDecodeBuilt: Boolean = false,
     val vlcOutputBuilt: Boolean = false,
+    /** EGL offers EGL_EXT_gl_colorspace_bt2020_pq plus a 10-bit RGB window config ([MpvEglHdrProbe]). */
+    val eglHdr10Pq: Boolean = false,
 ) {
     val mpvVulkanOutput get() = checked && device.render && device.hostQueryReset && device.version >= ((1L shl 22) or (2L shl 12)) && mpvOutputBuilt
     val mpvVulkanDecode get() = mpvVulkanOutput && mpvDecodeBuilt && device.profiles.isNotEmpty()
@@ -135,7 +137,7 @@ fun planMpvAcceleration(
     zeroCopy: Boolean = false,
 ): MpvAccelerationPlan = planMpvAccelerationPath(output, decoder, capabilities, gpuProcessing, forceDefault,
     nativeHdrPreferred, hdrPassthrough, toneMappingRequired).let { plan ->
-    if (zeroCopy && plan.output == "gpu" && plan.decoder == "mediacodec" && plan.fallback == null) plan.copy(zeroCopy = true) else plan
+    if (zeroCopy && !hdrPassthrough && plan.output == "gpu" && plan.decoder == "mediacodec" && plan.fallback == null) plan.copy(zeroCopy = true) else plan
 }
 
 private fun planMpvAccelerationPath(
@@ -148,6 +150,8 @@ private fun planMpvAccelerationPath(
     hdrPassthrough: Boolean,
     toneMappingRequired: Boolean,
 ): MpvAccelerationPlan {
+    // EGL PQ passthrough ([MpvHdrGpuDecision.openGl]): vo=gpu with copy-back frames (P010 stays 10-bit).
+    if (hdrPassthrough && output == "gpu") return MpvAccelerationPlan("gpu", if (decoder == "software") "software" else "mediacodec")
     if (hdrPassthrough && capabilities.mpvVulkanOutput) return MpvAccelerationPlan("vulkan", when {
         decoder == "software" -> "software"
         decoder in setOf("auto", "vulkan") && capabilities.mpvVulkanDecode -> "vulkan"

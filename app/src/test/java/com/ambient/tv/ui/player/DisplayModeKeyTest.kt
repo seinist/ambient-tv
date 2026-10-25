@@ -247,6 +247,21 @@ class DisplayModeKeyTest {
         ))
     }
 
+    @Test fun exactRateWinsWithinAMultiple() {
+        val film = mode("23", 1920, 1080, 23.976f)
+        val hz24 = mode("24", 1920, 1080, 24f)
+        val hz48 = mode("48", 1920, 1080, 48f)
+        assertEquals(film, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz24, hz48, film), 23.976f, true, true))
+        assertEquals(hz24, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz24, hz48), 23.976f, true, true))
+    }
+
+    @Test fun cadenceDeviationIsReportedOnlyForNearMatches() {
+        assertNull(DisplayRefreshRateMatcher.cadenceDeviationHz(23.976f, 23.976f, 1f))
+        assertNull(DisplayRefreshRateMatcher.cadenceDeviationHz(47.952f, 23.976f, 2f))
+        assertEquals(0.024f, DisplayRefreshRateMatcher.cadenceDeviationHz(24f, 23.976f, 1f)!!, 0.001f)
+        assertEquals(0.06f, DisplayRefreshRateMatcher.cadenceDeviationHz(60f, 59.94f, 1f)!!, 0.001f)
+    }
+
     private fun mode(key: String, width: Int, height: Int, refreshRate: Float) =
         SupportedDisplayMode(key, modeId = key.hashCode(), width = width, height = height, refreshRate = refreshRate)
 }

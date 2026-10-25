@@ -50,6 +50,8 @@ object DisplayRefreshRateMatcher {
     private const val MAX_CADENCE_DIFF_HZ = 0.6f
     /** Highest 2× rate without the explicit high-rate opt-in (30→60 yes, 50→100 / 60→120 no). */
     private const val MAX_DEFAULT_DOUBLE_HZ = 61f
+    /** 23.976 vs 23.976023…: rounding of the reported rate, not a real cadence mismatch. */
+    internal const val EXACT_CADENCE_DIFF_HZ = 0.01f
 
     fun supportedModes(context: Context): List<SupportedDisplayMode> = runCatching {
         val manager = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return emptyList()
@@ -267,13 +269,25 @@ object DisplayRefreshRateMatcher {
         val doubleAllowed = double && (highDouble || fps * 2f <= MAX_DEFAULT_DOUBLE_HZ)
         val multiples = listOf(1f) + (if (doubleAllowed) listOf(2f) else emptyList()) +
             (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList())
+        // Within a multiple the exact rate wins (minimum deviation). A near rate (24.000 Hz for
+        // 23.976 fps) repeats or drops a frame periodically: logged, and smoothed by
+        // "An Display synchronisieren" (mpv display-resample) where that is enabled.
         for (multiple in multiples) {
-            modes.filter { abs(it.refreshRate - fps * multiple) <= MAX_CADENCE_DIFF_HZ }
+            val mode = modes.filter { abs(it.refreshRate - fps * multiple) <= MAX_CADENCE_DIFF_HZ }
                 .minWithOrNull(compareBy<SupportedDisplayMode>({ abs(it.refreshRate - fps * multiple) }, { it.modeId }))
-                ?.let { return it }
+                ?: continue
+            cadenceDeviationHz(mode.refreshRate, fps, multiple)?.let { deviation ->
+                Timber.w("DisplayAuto cadence deviation fps=%.3f multiple=%.1f mode=%.3fHz diff=%.3fHz (one frame repeated/dropped every %.0f s)",
+                    fps, multiple, mode.refreshRate, deviation, 1f / deviation)
+            }
+            return mode
         }
         return null
     }
+
+    /** Deviation of [refreshRate] from [fps]×[multiple] when it is not an exact cadence match, else null. */
+    internal fun cadenceDeviationHz(refreshRate: Float, fps: Float, multiple: Float): Float? =
+        abs(refreshRate - fps * multiple).takeIf { it > EXACT_CADENCE_DIFF_HZ }
 
     internal fun selectInterpolationMode(modes: List<SupportedDisplayMode>, width: Int?, height: Int?, base: SupportedDisplayMode?, whitelisted: Boolean): SupportedDisplayMode? {
         base ?: return null
@@ -422,21 +436,38 @@ fun rememberDisplayModeRequest(
             timeshift = com.ambient.tv.livetv.LiveTimeshift.current != null,
         )
         val extraMs = displaySwitchTransitionExtraMs(delayMs)
-        if (hold == DisplaySwitchHold.NONE || handle == null) {
-            DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs)
-            return null
-        }
         val key = playbackKey
         val mediaKey = metadata?.let { it.source to it.mediaId }
+        val stillOwned = {
+            latestPlaybackKey == key && BackgroundPlaybackSession.activeHandle() === handle &&
+                BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId } == mediaKey
+        }
+        val realSwitch = target.key != DisplayRefreshRateMatcher.currentModeKey(activity)
+        if (hold == DisplaySwitchHold.NONE || handle == null) {
+            if (handle == null || activity == null || !realSwitch) {
+                DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs)
+                return null
+            }
+            // No hold, but still reopen the audio sink after HDMI audio renegotiates (not joined:
+            // the mode logic must not wait for audio).
+            holdScope.launch {
+                holdForDisplaySwitch(
+                    handle.asDisplaySwitchPlayer(), DisplaySwitchHold.NONE, delayMs, isLive,
+                    request = { DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs) },
+                    awaitConfirmed = { false },
+                    stillOwned = stillOwned,
+                    hdmiAudio = AndroidHdmiAudioWatch(activity.applicationContext),
+                )
+            }
+            return null
+        }
         return holdScope.launch {
             val outcome = holdForDisplaySwitch(
                 handle.asDisplaySwitchPlayer(), hold, delayMs, isLive,
                 request = { DisplayRefreshRateMatcher.requestDisplayMode(activity, target, extraMs) },
                 awaitConfirmed = { timeout -> awaitDisplayMode(activity, target.key, timeout) },
-                stillOwned = {
-                    latestPlaybackKey == key && BackgroundPlaybackSession.activeHandle() === handle &&
-                        BackgroundPlaybackSession.snapshot.value.metadata?.let { it.source to it.mediaId } == mediaKey
-                },
+                stillOwned = stillOwned,
+                hdmiAudio = activity?.let { AndroidHdmiAudioWatch(it.applicationContext) },
             )
             Timber.i("DisplaySwitchPause hold=%s delay=%dms target=%s outcome=%s", hold, delayMs, target.key, outcome)
         }.also { holdJob[0] = it }

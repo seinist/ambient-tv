@@ -531,6 +531,8 @@
     <string name="settings_display_mode_system">System default</string>
     <string name="settings_display_allow_double">Double refresh rate when the native one is missing (24→48, 25→50, 30→60 Hz)</string>
     <string name="settings_display_allow_3_2">Allow 3:2 pulldown (24→60 Hz)</string>
+    <string name="settings_display_sync_playback">Sync playback to display</string>
+    <string name="settings_display_sync_playback_hint">Resamples audio to the refresh rate (mpv GPU output). Not with passthrough or SVP</string>
     <string name="settings_display_switch_pause">Pause on display switch</string>
     <string name="settings_display_switch_pause_hint">Waits for the picture</string>
     <string name="settings_display_switch_pause_off">Off</string>

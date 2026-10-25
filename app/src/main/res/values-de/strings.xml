@@ -531,6 +531,8 @@
     <string name="settings_display_mode_system">Systemvorgabe</string>
     <string name="settings_display_allow_double">Doppelte Bildrate, wenn die native fehlt (24→48, 25→50, 30→60 Hz)</string>
     <string name="settings_display_allow_3_2">3:2-Pulldown erlauben (24→60 Hz)</string>
+    <string name="settings_display_sync_playback">An Display synchronisieren</string>
+    <string name="settings_display_sync_playback_hint">Passt den Ton an die Bildwiederholrate an (mpv GPU-Ausgabe). Nicht mit Passthrough oder SVP</string>
     <string name="settings_display_switch_pause">Pause bei Moduswechsel</string>
     <string name="settings_display_switch_pause_hint">Wartet, bis das Bild steht</string>
     <string name="settings_display_switch_pause_off">Aus</string>

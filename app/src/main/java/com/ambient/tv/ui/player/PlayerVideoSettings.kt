@@ -53,7 +53,8 @@ internal fun disabledPlayerVideoOutputs(backend: String, caps: VideoAcceleration
     nativeHdrPreferred: Boolean = false, hdrGpu: Boolean = false): Set<String> =
     (if (if (backend == "mpv") caps.mpvVulkanOutput else caps.vlcVulkanOutput) emptySet() else setOf("vulkan")) +
         (if (nativeHdrPreferred) if (backend == "mpv") setOf("gpu", "vulkan") else setOf("vulkan") else emptySet()) +
-        // HDR über GPU: OpenGL cannot signal HDR; every GPU choice plays through Vulkan.
+        // HDR über GPU on Vulkan: plain OpenGL cannot signal HDR; every GPU choice plays through Vulkan.
+        // (The EGL PQ route passes hdrGpu=false: there OpenGL is the HDR output.)
         (if (hdrGpu && backend == "mpv") setOf("gpu") else emptySet())
 
 internal fun disabledPlayerVideoDecoders(output: String, caps: VideoAccelerationCapabilities,

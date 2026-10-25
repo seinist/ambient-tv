@@ -142,6 +142,11 @@ interface PlaybackHandle {
     fun setOutputMuted(muted: Boolean) = Unit
     /** Counts stream reopens the engine did on its own; a position jump across one is no seek. */
     fun reopenGeneration(): Int = 0
+    /**
+     * Reopens the audio sink after HDMI audio renegotiated (ACTION_HDMI_AUDIO_PLUG after a
+     * display mode switch, as Kodi does). Media3 follows the plug on its own; default no-op.
+     */
+    fun reopenAudioOutput() = Unit
     fun chapters(): List<com.ambient.tv.domain.model.VideoChapter> = emptyList()
     /** Restore one logical playback after replacing only its renderer. */
     fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {

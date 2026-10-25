@@ -426,6 +426,7 @@ class SettingsViewModel @Inject constructor(
         allowDoubleRefreshRate = appPreferences.allowDoubleRefreshRate,
         allowThreeTwoPulldown = appPreferences.allowThreeTwoPulldown,
         displaySwitchPauseMs = appPreferences.displaySwitchPauseMs,
+        syncPlaybackToDisplay = appPreferences.syncPlaybackToDisplay,
         mediaSelectionBehaviorKey = appPreferences.mediaSelectionBehaviorKey,
         homeRows = appPreferences.homeRows,
         plexAutoRefreshIntervalSeconds = appPreferences.plexAutoRefreshIntervalSeconds,
@@ -1825,6 +1826,7 @@ class SettingsViewModel @Inject constructor(
     }
     fun onAllowDoubleRefreshRateChanged(value: Boolean) = _uiState.update { it.copy(allowDoubleRefreshRate = value) }
     fun onAllowThreeTwoPulldownChanged(value: Boolean) = _uiState.update { it.copy(allowThreeTwoPulldown = value) }
+    fun onSyncPlaybackToDisplayChanged(value: Boolean) = _uiState.update { it.copy(syncPlaybackToDisplay = value) }
     fun onDisplaySwitchPauseChanged(value: Int) = _uiState.update { it.copy(displaySwitchPauseMs = AppPreferences.normalizeDisplaySwitchPauseMs(value)) }
     fun onMediaSelectionBehaviorChanged(value: String) = _uiState.update { it.copy(mediaSelectionBehaviorKey = MediaSelectionPreferences.normalize(value)) }
     private fun SettingsUiState.withHomeRows(rows: List<HomeRowDefinition>) = copy(
@@ -2482,6 +2484,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.allowDoubleRefreshRate = state.allowDoubleRefreshRate
         appPreferences.allowThreeTwoPulldown = state.allowThreeTwoPulldown
         appPreferences.displaySwitchPauseMs = state.displaySwitchPauseMs
+        appPreferences.syncPlaybackToDisplay = state.syncPlaybackToDisplay
         appPreferences.mediaSelectionBehaviorKey = state.mediaSelectionBehaviorKey
         appPreferences.homeRows = state.homeRows
         appPreferences.systemHomeHiddenRows = state.systemHomeHiddenRows

@@ -683,6 +683,11 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_MPV_ZERO_COPY_FAILED, value) }
 
     /** Kodi-style pause after an app-requested display mode change; 0 is off, 0.5 s steps up to 20 s. */
+    /** Kodi's "Sync playback to display": mpv video-sync=display-resample on GPU outputs. */
+    var syncPlaybackToDisplay: Boolean
+        get() = prefs.getBoolean(KEY_SYNC_PLAYBACK_TO_DISPLAY, false)
+        set(value) = prefs.edit { putBoolean(KEY_SYNC_PLAYBACK_TO_DISPLAY, value) }
+
     var displaySwitchPauseMs: Int
         get() = normalizeDisplaySwitchPauseMs(prefs.getInt(KEY_DISPLAY_SWITCH_PAUSE_MS, 0))
         set(value) = prefs.edit { putInt(KEY_DISPLAY_SWITCH_PAUSE_MS, normalizeDisplaySwitchPauseMs(value)) }
@@ -1991,6 +1996,7 @@ class AppPreferences @Inject constructor(
         const val MPV_SDR_CURVE_BT1886 = "bt.1886"
         val MPV_SDR_CURVES = listOf(MPV_SDR_CURVE_AUTO, MPV_SDR_CURVE_GAMMA22, MPV_SDR_CURVE_BT1886)
         const val KEY_DISPLAY_SWITCH_PAUSE_MS = "display_switch_pause_ms"
+        const val KEY_SYNC_PLAYBACK_TO_DISPLAY = "sync_playback_to_display"
         const val DISPLAY_SWITCH_PAUSE_STEP_MS = 500
         const val DISPLAY_SWITCH_PAUSE_MAX_MS = 20_000
         /** Typical HDMI resync of an AV receiver with passthrough. */
