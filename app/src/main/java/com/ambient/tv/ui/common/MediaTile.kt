@@ -42,7 +42,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -65,7 +64,6 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 private val POSTER_WIDTH = 160.dp
 private val EPISODE_WIDTH = 300.dp
@@ -495,42 +493,8 @@ private fun ShimmeringSkeletonTile(
 ) {
     // One shared pulse for every placeholder on screen instead of one infinite transition per
     // tile (up to 72 while a grid loads). Read at draw time, so tiles do not recompose per frame.
-    DisposableEffect(Unit) {
-        SharedSkeletonPulse.acquire()
-        onDispose { SharedSkeletonPulse.release() }
-    }
-    val pulse = SharedSkeletonPulse.alpha
-    SkeletonTileContent(modifier, style, showDescription) { pulse.floatValue }
-}
-
-/** Same curve as PulsingLibraryLoading (0.28..0.62, 900 ms, reverse), driven once per frame.
- *  Artwork placeholders share this clock so a grid does not start one transition per cover. */
-internal object SharedSkeletonPulse {
-    val alpha = androidx.compose.runtime.mutableFloatStateOf(0.45f)
-    private var users = 0
-    private var job: kotlinx.coroutines.Job? = null
-
-    fun acquire() {
-        if (users++ > 0) return
-        job = kotlinx.coroutines.CoroutineScope(androidx.compose.ui.platform.AndroidUiDispatcher.Main).launch {
-            val start = androidx.compose.runtime.withFrameNanos { it }
-            val easing = androidx.compose.animation.core.FastOutSlowInEasing
-            while (true) {
-                androidx.compose.runtime.withFrameNanos { now ->
-                    val ms = ((now - start) / 1_000_000L) % 1_800L
-                    val t = if (ms < 900L) ms / 900f else (1_800L - ms) / 900f
-                    alpha.floatValue = 0.28f + 0.34f * easing.transform(t)
-                }
-            }
-        }
-    }
-
-    fun release() {
-        if (--users > 0) return
-        users = 0
-        job?.cancel()
-        job = null
-    }
+    val pulse = rememberSharedPulse(SharedSkeletonPulse)
+    SkeletonTileContent(modifier, style, showDescription) { pulse.value }
 }
 
 @Composable
