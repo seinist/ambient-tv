@@ -2,6 +2,7 @@ package com.ambient.tv.ui.performance
 
 import android.app.ActivityManager
 import android.content.Context
+import android.os.Build
 import androidx.compose.runtime.staticCompositionLocalOf
 
 /**
@@ -109,21 +110,23 @@ data class PerformanceProfile(
 val LocalPerformanceProfile = staticCompositionLocalOf { PerformanceProfile.Full }
 
 /**
- * Low-end only for a system low-RAM device or less than 2 GiB of total RAM.
+ * Low-end for a system low-RAM device, less than 2 GiB of total RAM, or a 32-bit-only userspace.
  * memoryClass (dalvik heapgrowthlimit) is not a device-class signal: AOSP assigns 192 MB
  * to 2–4 GiB configurations, so ordinary TVs and the SHIELD were classified low-end and
  * Auto silently ran playback in Sparsam (bilinear, no shaders, no SVP).
+ * RAM alone cannot separate the SHIELD from 32-bit MediaTek TVs (both ~2.8 GiB); those
+ * TVs drop frames with full GPU processing at their 4K output (Philips TA1: 21 of 24 fps).
  */
 fun detectLowEndDevice(context: Context): Boolean {
     val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
     val totalMem = runCatching {
         ActivityManager.MemoryInfo().also(am::getMemoryInfo).totalMem
     }.getOrDefault(0L)
-    return isLowEndDevice(am.isLowRamDevice, totalMem)
+    return isLowEndDevice(am.isLowRamDevice, totalMem, Build.SUPPORTED_64_BIT_ABIS.isNotEmpty())
 }
 
 internal const val LOW_END_TOTAL_RAM_BYTES = 2L * 1024L * 1024L * 1024L
 
 /** [totalMemBytes] <= 0 means unknown and does not classify the device. */
-internal fun isLowEndDevice(lowRamDevice: Boolean, totalMemBytes: Long): Boolean =
-    lowRamDevice || totalMemBytes in 1 until LOW_END_TOTAL_RAM_BYTES
+internal fun isLowEndDevice(lowRamDevice: Boolean, totalMemBytes: Long, supports64Bit: Boolean = true): Boolean =
+    lowRamDevice || !supports64Bit || totalMemBytes in 1 until LOW_END_TOTAL_RAM_BYTES

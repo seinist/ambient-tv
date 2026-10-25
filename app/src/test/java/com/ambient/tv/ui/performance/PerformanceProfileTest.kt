@@ -90,6 +90,16 @@ class PerformanceProfileTest {
     }
 
     @Test
+    fun thirtyTwoBitOnlyUserspaceIsLowEnd() {
+        val gib = 1024L * 1024L * 1024L
+        // Philips TA1 (armeabi-v7a only, 2.7 GiB) vs SHIELD (arm64, 2.9 GiB).
+        assertTrue(isLowEndDevice(lowRamDevice = false, totalMemBytes = 2_852_964L * 1024L, supports64Bit = false))
+        assertFalse(isLowEndDevice(lowRamDevice = false, totalMemBytes = 3_023_620L * 1024L, supports64Bit = true))
+        assertTrue(isLowEndDevice(lowRamDevice = false, totalMemBytes = 0, supports64Bit = false))
+        assertFalse(isLowEndDevice(lowRamDevice = false, totalMemBytes = 3 * gib, supports64Bit = true))
+    }
+
+    @Test
     fun fromKeyFallsBackToAuto() {
         assertEquals(PerformanceMode.AUTO, PerformanceMode.fromKey(null))
         assertEquals(PerformanceMode.AUTO, PerformanceMode.fromKey("nope"))
