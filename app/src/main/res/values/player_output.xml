@@ -16,6 +16,9 @@
     <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR10 output surface not confirmed; using the direct surface.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">Process HDR on the GPU: the Vulkan output failed for this title, using the direct surface.</string>
     <string name="player_output_hdr_gpu_checking">Process HDR on the GPU: checking the HDR10 output surface (Vulkan). Physical display mode unknown.</string>
+    <string name="player_output_hdr_gpu_display_switched">Process HDR on the GPU: HDR10 output surface confirmed (PQ/BT.2020), the display reports HDR mode.</string>
+    <string name="player_output_hdr_gpu_display_waiting">Process HDR on the GPU: HDR10 output surface confirmed, but the display still reports SDR. Waiting for the HDR switch…</string>
+    <string name="player_output_hdr_gpu_display_not_switched">Process HDR on the GPU: the output was marked as HDR10, but the display stayed in SDR; using the direct surface.</string>
     <string name="player_output_hdr_gpu_overload">Process HDR on the GPU: too many dropped frames, using the direct surface.</string>
     <string name="image_mpv_hdr_passthrough">HDR output through the GPU: sharpening, deband and the RAVU Lite / FSR upscalers apply. Film grain is off here; denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
     <string name="player_output_hdr_gpu_no_effects">Process HDR on the GPU: no HDR-safe shader or deband is selected, so HDR stays on the direct surface.</string>

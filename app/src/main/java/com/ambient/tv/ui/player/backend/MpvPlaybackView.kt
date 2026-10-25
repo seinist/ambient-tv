@@ -206,6 +206,9 @@ fun rememberMpvPlaybackController(
     LaunchedEffect(controller?.hdrPassthroughConfirmed, controller) {
         if (controller?.hdrPassthroughConfirmed == true) MpvHdrGpuSession.recordConfirmed(displayKey)
     }
+    LaunchedEffect(controller?.hdrDisplaySwitched, controller) {
+        if (controller?.hdrDisplaySwitched == true) MpvHdrGpuSession.recordDisplaySwitched(displayKey)
+    }
     // Passthrough not confirmed, Vulkan fallback or overload: recorded for this media (or display),
     // the decision then routes to "Direkt" without touching the user's output choice.
     LaunchedEffect(controller?.hdrGpuFailure, controller) {

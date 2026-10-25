@@ -102,11 +102,18 @@ internal fun PlayerVideoOutputControls(backend: String) {
         SparsamOverrideNotice(showText = false)
     }
     if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
-    // "Aktiv" only once mpv and Android confirmed PQ for the running passthrough, not for a decision alone.
-    if (passthroughConfirmed) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))
-    else if (passthroughRunning) ImageHint(stringResource(R.string.player_output_hdr_gpu_checking))
+    // "Als HDR markiert" once mpv and Android tagged the output PQ; the TV's mode only if Android reports it.
+    if (passthroughRunning) ImageHint(stringResource(mpvHdrPassthroughStatusRes(passthroughConfirmed, activeMpv?.hdrDisplaySwitched)))
     hdrGpu.reason?.takeUnless { passthroughRunning }?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
 
+}
+
+/** Passthrough status: being marked, marked (display unknown), display in HDR, or display still SDR. */
+internal fun mpvHdrPassthroughStatusRes(marked: Boolean, displaySwitched: Boolean?): Int = when {
+    !marked -> R.string.player_output_hdr_gpu_checking
+    displaySwitched == true -> R.string.player_output_hdr_gpu_display_switched
+    displaySwitched == false -> R.string.player_output_hdr_gpu_display_waiting
+    else -> R.string.player_output_hdr_gpu_active
 }
 
 internal fun sparsamGpuOutputHeadsUp(mpv: Boolean, output: String, reduced: Boolean): Boolean =
@@ -123,6 +130,7 @@ internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrG
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.REDUCED_EFFECTS -> R.string.player_output_hdr_gpu_reduced
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NO_EFFECTS -> R.string.player_output_hdr_gpu_no_effects
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_CONFIRMED -> R.string.player_output_hdr_gpu_not_confirmed
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DISPLAY_NOT_SWITCHED -> R.string.player_output_hdr_gpu_display_not_switched
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.VULKAN_FALLBACK -> R.string.player_output_hdr_gpu_vulkan_fallback
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OVERLOAD -> R.string.player_output_hdr_gpu_overload
 }

@@ -201,7 +201,7 @@ class MpvHdrGpuReauditTest {
         val panel = File("src/main/java/com/ambient/tv/ui/player/PlayerVideoOutputControls.kt").readText()
         assertTrue(panel.contains("mpvHdrGpuConfiguredImageOptions(preferences, title, resolution)"))
         assertTrue(panel.contains("sameVideoSettingsPlayback(metadata"))
-        assertTrue(panel.contains("if (passthroughConfirmed) ImageHint(stringResource(R.string.player_output_hdr_gpu_active))"))
+        assertTrue(panel.contains("mpvHdrPassthroughStatusRes(passthroughConfirmed, activeMpv?.hdrDisplaySwitched)"))
         val view = File("src/main/java/com/ambient/tv/ui/player/backend/MpvPlaybackView.kt").readText()
         assertTrue(view.contains("mpvHdrGpuConfiguredImageOptions(preferences, title, resolution)"))
         assertTrue(view.contains("MpvHdrGpuSession.recordConfirmed(displayKey)"))

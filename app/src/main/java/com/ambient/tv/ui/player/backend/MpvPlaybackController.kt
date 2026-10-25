@@ -157,7 +157,7 @@ class MpvPlaybackController(
             hdrImageTransfer = player.hdrImageTransfer, sourceHdrStandard = player.sourceHdrStandard,
             hdrGpuFailure = player.hdrGpuFailure, sourceSdrConfirmed = player.sourceSdrConfirmed,
             dolbyVisionDetected = player.dolbyVisionDetected, hdrPassthroughVulkan = player.hdrPassthroughVulkan,
-            hdrPassthroughConfirmed = player.hdrPassthroughConfirmed,
+            hdrPassthroughConfirmed = player.hdrPassthroughConfirmed, hdrDisplaySwitched = player.hdrDisplaySwitched,
             overloadDropPercent = player.overloadDropPercent, renderOverloaded = player.renderOverloaded, canReduceAfterOverload = player.canReduceAfterOverload,
             overloadContinueSignature = player.overloadContinueSignature, renderCheckSignature = player.renderCheckSignature,
             mediaInfoGeneration = player.mediaInfoGeneration, reopenGeneration = player.reopenGeneration,
@@ -220,8 +220,13 @@ class MpvPlaybackController(
      * never the physical panel or HDMI HDR mode.
      */
     val hdrPassthroughRunning get() = hdrGpuPassthrough && hdrGpuFailure == null && state.hdrPassthroughVulkan
-    /** mpv and Android confirmed PQ/BT.2020 on the display for this running passthrough. */
+    /**
+     * The running passthrough is *marked* HDR: mpv targets PQ/BT.2020 and the surface carries a
+     * PQ dataspace. That is the app's own tagging; whether the TV switched is [hdrDisplaySwitched].
+     */
     val hdrPassthroughConfirmed get() = hdrPassthroughRunning && state.hdrPassthroughConfirmed
+    /** Display HDR mode seen via `Display.getHdrSdrRatio` (API 34+); null = Android cannot tell. */
+    val hdrDisplaySwitched get() = state.hdrDisplaySwitched.takeIf { hdrPassthroughConfirmed }
     val overloadDropPercent get() = state.overloadDropPercent
     val renderOverloaded get() = state.renderOverloaded
     val canReduceAfterOverload get() = state.canReduceAfterOverload
@@ -478,6 +483,7 @@ private data class MpvEngineState(
     val dolbyVisionDetected: Boolean = false,
     val hdrPassthroughVulkan: Boolean = false,
     val hdrPassthroughConfirmed: Boolean = false,
+    val hdrDisplaySwitched: Boolean? = null,
     val overloadDropPercent: Double? = null,
     val renderOverloaded: Boolean = false,
     val canReduceAfterOverload: Boolean = false,
