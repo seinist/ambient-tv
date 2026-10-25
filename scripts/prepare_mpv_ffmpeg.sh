@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Apply project decoder patches to the pinned FFmpeg source, idempotently.
+# Apply project decoder patches to the pinned FFmpeg and mpv sources, idempotently.
+# Patches are a series in glob order and later ones may touch the same file as earlier ones,
+# so a previous run is undone newest-first before the whole series is applied again.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="${1:?MPV buildscripts directory required}"
-for patch in "$ROOT"/native/ambientmpv/patches/ffmpeg-*.patch; do
-    if git -C "$BUILD/deps/ffmpeg" apply --check "$patch" 2>/dev/null; then
-        git -C "$BUILD/deps/ffmpeg" apply "$patch"
-    else
-        git -C "$BUILD/deps/ffmpeg" apply --reverse --check "$patch"
-    fi
-done
-for patch in "$ROOT"/native/ambientmpv/patches/mpv-*.patch; do
-    if git -C "$BUILD/deps/mpv" apply --check "$patch" 2>/dev/null; then
-        git -C "$BUILD/deps/mpv" apply "$patch"
-    else
-        git -C "$BUILD/deps/mpv" apply --reverse --check "$patch"
-    fi
-done
+
+apply_series() {
+    local dir="$1" prefix="$2" i
+    local patches=("$ROOT"/native/ambientmpv/patches/"$prefix"-*.patch)
+    for ((i = ${#patches[@]} - 1; i >= 0; i--)); do
+        if git -C "$dir" apply --reverse --check "${patches[i]}" 2>/dev/null; then
+            git -C "$dir" apply --reverse "${patches[i]}"
+        fi
+    done
+    for i in "${patches[@]}"; do
+        git -C "$dir" apply "$i"
+    done
+}
+
+apply_series "$BUILD/deps/ffmpeg" ffmpeg
+apply_series "$BUILD/deps/mpv" mpv

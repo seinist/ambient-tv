@@ -468,11 +468,11 @@ internal class MpvPlaybackEngine(
         } else {
             setOption("vo", "mediacodec_embed")
             setOption("hwdec", acceleration.hwdec)
-            // Only a direct display surface may engage native Dolby Vision.
-            // FFmpeg checks actual single-layer P5/P8 configuration; GPU texture
-            // processing keeps its existing path. Production DV routing stays gated.
-            setOption("vd-lavc-o", "dolbyvision=1")
         }
+        // Only a direct display surface may engage native Dolby Vision, decided per display like
+        // Kodi; GPU outputs leave SD MPEG-2/MPEG-4 to software instead ([mpvLavcDecoderOptions]).
+        setOption("vd-lavc-o", mpvLavcDecoderOptions(
+            directSurface = !acceleration.vulkan && !gpuQualityMode, display = displayHdrStandards))
         if (gpuQualityMode && needsHdrToSdr(declaredHdr)) {
             // Describe the actual SDR output; never send PQ/BT.2020 code values to it.
             setOption("target-prim", "bt.709")

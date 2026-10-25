@@ -1,0 +1,26 @@
+Ambient TV: hand the video matrix to the PGS decoder (needs ffmpeg-pgssubdec-caller-colorspace.patch).
+
+diff --git a/sub/sd_lavc.c b/sub/sd_lavc.c
+index ce9416e..fd06f6b 100644
+--- a/sub/sd_lavc.c
++++ b/sub/sd_lavc.c
+@@ -23,6 +23,7 @@
+ #include <libavutil/common.h>
+ #include <libavutil/intreadwrite.h>
+ #include <libavutil/opt.h>
++#include <libplacebo/utils/libav.h>
+ 
+ #include "mpv_talloc.h"
+ #include "common/msg.h"
+@@ -758,6 +759,11 @@ static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)
+     }
+     case SD_CTRL_SET_VIDEO_PARAMS:
+         priv->video_params = *(struct mp_image_params *)arg;
++        // A PGS palette is authored in the video's matrix (BT.2020 on UHD discs);
++        // FFmpeg's pgssubdec (Kodi patch 008) converts with the caller's colorspace.
++        if (priv->avctx->codec_id == AV_CODEC_ID_HDMV_PGS_SUBTITLE &&
++            priv->video_params.repr.sys != PL_COLOR_SYSTEM_UNKNOWN)
++            priv->avctx->colorspace = pl_system_to_av(priv->video_params.repr.sys);
+         return CONTROL_OK;
+     case SD_CTRL_APPLY_DVDNAV: {
+         const struct stream_nav_state *nav = arg;

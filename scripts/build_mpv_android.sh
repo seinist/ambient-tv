@@ -160,9 +160,11 @@ if [[ "$FFMPEG_REF" != "$(external_version FFMPEG_REF)" ]]; then
 fi
 # Remove only our known patch before moving revisions. Unknown local edits are
 # left in place so checkout fails safely if they conflict.
-for patch in "$ROOT_DIR"/native/ambientmpv/patches/ffmpeg-*.patch; do
-  if git -C "$FFMPEG_DIR" apply --reverse --check "$patch" 2>/dev/null; then
-    git -C "$FFMPEG_DIR" apply --reverse "$patch"
+# Newest first: later patches of the series may change lines of earlier ones.
+ffmpeg_patches=("$ROOT_DIR"/native/ambientmpv/patches/ffmpeg-*.patch)
+for ((i = ${#ffmpeg_patches[@]} - 1; i >= 0; i--)); do
+  if git -C "$FFMPEG_DIR" apply --reverse --check "${ffmpeg_patches[i]}" 2>/dev/null; then
+    git -C "$FFMPEG_DIR" apply --reverse "${ffmpeg_patches[i]}"
   fi
 done
 git -C "$FFMPEG_DIR" checkout --detach "$ffmpeg_target"

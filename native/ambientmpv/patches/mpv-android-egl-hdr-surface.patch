@@ -1,0 +1,119 @@
+Ambient TV: Android EGL BT2020_PQ window surface plus SMPTE-2086 metadata when target-trc=pq and
+EGL_EXT_gl_colorspace_bt2020_pq + EGL_EXT_surface_SMPTE2086_metadata exist; otherwise a plain SDR surface.
+
+diff --git a/video/out/opengl/context_android.c b/video/out/opengl/context_android.c
+index 0a12cf8..8e91a3c 100644
+--- a/video/out/opengl/context_android.c
++++ b/video/out/opengl/context_android.c
+@@ -19,10 +19,33 @@
+ #include <EGL/eglext.h>
+ 
+ #include "video/out/android_common.h"
++#include "video/out/gpu/video.h"
++#include "options/m_config.h"
+ #include "egl_helpers.h"
++#include "utils.h"
+ #include "common/common.h"
+ #include "context.h"
+ 
++#ifndef EGL_GL_COLORSPACE_KHR
++#define EGL_GL_COLORSPACE_KHR 0x309D
++#endif
++#ifndef EGL_GL_COLORSPACE_BT2020_PQ_EXT
++#define EGL_GL_COLORSPACE_BT2020_PQ_EXT 0x3340
++#endif
++#ifndef EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT 0x3341
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_RY_EXT 0x3342
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_GX_EXT 0x3343
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_GY_EXT 0x3344
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_BX_EXT 0x3345
++#define EGL_SMPTE2086_DISPLAY_PRIMARY_BY_EXT 0x3346
++#define EGL_SMPTE2086_WHITE_POINT_X_EXT 0x3347
++#define EGL_SMPTE2086_WHITE_POINT_Y_EXT 0x3348
++#define EGL_SMPTE2086_MAX_LUMINANCE_EXT 0x3349
++#define EGL_SMPTE2086_MIN_LUMINANCE_EXT 0x334A
++#define EGL_METADATA_SCALING_EXT 50000
++#endif
++
+ struct priv {
+     struct GL gl;
+     EGLDisplay egl_display;
+@@ -30,6 +53,67 @@ struct priv {
+     EGLSurface egl_surface;
+ };
+ 
++/*
++ * HDR10 output on the OpenGL path, as Kodi's CWinSystemAndroidGLESContext does it:
++ * when the user forced target-trc=pq, the window surface is created with
++ * EGL_GL_COLORSPACE_BT2020_PQ_EXT, which tags the Android buffers BT2020/ST2084
++ * so the display switches to HDR. SMPTE-2086 static metadata (BT.2020 container
++ * primaries, D65, target-peak or 1000 cd/m2) is attached when the driver offers
++ * it; CTA-861.3 light levels are left out like in Kodi (NVIDIA kept HDR on).
++ * Without the extensions, or when the driver refuses the surface, a plain SDR
++ * surface is created and the log says so; the app then sees no PQ dataspace.
++ */
++static EGLSurface android_create_surface(struct ra_ctx *ctx, EGLDisplay display,
++                                         EGLConfig config, ANativeWindow *window)
++{
++    struct gl_video_opts *opts = mp_get_config_group(NULL, ctx->global, &gl_video_conf);
++    bool want_pq = opts->target_trc == PL_COLOR_TRC_PQ;
++    int peak = opts->target_peak > 0 ? opts->target_peak : 1000;
++    talloc_free(opts);
++
++    const char *exts = eglQueryString(display, EGL_EXTENSIONS);
++    bool has_pq = gl_check_extension(exts, "EGL_KHR_gl_colorspace") &&
++                  gl_check_extension(exts, "EGL_EXT_gl_colorspace_bt2020_pq");
++    bool has_st2086 = gl_check_extension(exts, "EGL_EXT_surface_SMPTE2086_metadata");
++
++    if (want_pq && !has_pq)
++        MP_WARN(ctx, "target-trc=pq, but EGL lacks EGL_EXT_gl_colorspace_bt2020_pq: SDR surface.\n");
++    if (want_pq && has_pq) {
++        const EGLint attribs[] = {
++            EGL_GL_COLORSPACE_KHR, EGL_GL_COLORSPACE_BT2020_PQ_EXT,
++            EGL_NONE,
++        };
++        EGLSurface surface = eglCreateWindowSurface(display, config,
++                                    (EGLNativeWindowType)window, attribs);
++        if (surface != EGL_NO_SURFACE) {
++            if (has_st2086) {
++                const EGLint s = EGL_METADATA_SCALING_EXT;
++                const EGLint meta[][2] = {
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT, 0.708 * s},
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_RY_EXT, 0.292 * s},
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_GX_EXT, 0.170 * s},
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_GY_EXT, 0.797 * s},
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_BX_EXT, 0.131 * s},
++                    {EGL_SMPTE2086_DISPLAY_PRIMARY_BY_EXT, 0.046 * s},
++                    {EGL_SMPTE2086_WHITE_POINT_X_EXT, 0.3127 * s},
++                    {EGL_SMPTE2086_WHITE_POINT_Y_EXT, 0.3290 * s},
++                    {EGL_SMPTE2086_MAX_LUMINANCE_EXT, peak * s},
++                    {EGL_SMPTE2086_MIN_LUMINANCE_EXT, 0.005 * s},
++                };
++                for (int i = 0; i < MP_ARRAY_SIZE(meta); i++) {
++                    if (!eglSurfaceAttrib(display, surface, meta[i][0], meta[i][1]))
++                        MP_VERBOSE(ctx, "SMPTE2086 attribute 0x%x refused.\n", meta[i][0]);
++                }
++            }
++            MP_INFO(ctx, "EGL surface: BT2020_PQ%s, peak %d cd/m2.\n",
++                    has_st2086 ? " + SMPTE2086" : "", peak);
++            return surface;
++        }
++        MP_WARN(ctx, "BT2020_PQ EGL surface refused (0x%x): SDR surface.\n", eglGetError());
++    }
++    return eglCreateWindowSurface(display, config, (EGLNativeWindowType)window, NULL);
++}
++
+ static void android_swap_buffers(struct ra_ctx *ctx)
+ {
+     struct priv *p = ctx->priv;
+@@ -74,8 +158,7 @@ static bool android_init(struct ra_ctx *ctx)
+     eglGetConfigAttrib(p->egl_display, config, EGL_NATIVE_VISUAL_ID, &format);
+     ANativeWindow_setBuffersGeometry(native_window, 0, 0, format);
+ 
+-    p->egl_surface = eglCreateWindowSurface(p->egl_display, config,
+-                                    (EGLNativeWindowType)native_window, NULL);
++    p->egl_surface = android_create_surface(ctx, p->egl_display, config, native_window);
+ 
+     if (p->egl_surface == EGL_NO_SURFACE) {
+         MP_FATAL(ctx, "Could not create EGL surface!\n");
