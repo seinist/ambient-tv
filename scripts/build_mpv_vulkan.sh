@@ -65,7 +65,7 @@ for arch in $ABIS; do
     fi
     "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${triple}29-clang" \
         -shared -fPIC -O2 -I"$prefix/include" "$ROOT/native/ambientmpv/ambientmpv.c" \
-        -L"$prefix/lib" -lmpv -lavcodec -llog -Wl,-z,defs,-z,max-page-size=16384 \
+        -L"$prefix/lib" -lmpv -lavcodec -lavutil -ldl -llog -Wl,-z,defs,-z,max-page-size=16384 \
         -Wl,-soname,libambientmpv.so -o "$dest/libambientmpv.so"
     bash "$ROOT/scripts/prepare_svp_sources.sh" --hash mpv > "$dest/.svp-mpv"
     sha256sum "$ROOT/native/ambientmpv/ambientmpv.c" | cut -d ' ' -f1 > "$dest/.ambientmpv-src"
