@@ -342,12 +342,6 @@ fun SettingsScreen(
                                     mode = uiState.uiHdrModeKey,
                                     onModeChanged = viewModel::onUiHdrModeChanged,
                                     showConversion = false,
-                                    sdrToHdrEnabled = uiState.sdrToHdrEnabled,
-                                    onSdrToHdrChanged = viewModel::onSdrToHdrChanged,
-                                    sdrToHdrPeakNits = uiState.sdrToHdrPeakNits,
-                                    onSdrToHdrPeakNitsChanged = viewModel::onSdrToHdrPeakNitsChanged,
-                                    sdrToHdrReferenceWhiteNits = uiState.sdrToHdrReferenceWhiteNits,
-                                    onSdrToHdrReferenceWhiteNitsChanged = viewModel::onSdrToHdrReferenceWhiteNitsChanged,
                                 )
                             }
                             item {
@@ -795,7 +789,8 @@ fun SettingsScreen(
                                             ))
                                         }
                                     })
-                                    SettingsVideoAcceleration(uiState, viewModel, uiState.playbackBackendKey)
+                                    // Video output and GPU live only under Bildprofile.
+                                    SettingsPageLink(SettingsCategory.IMAGE, "player-gpu-output", R.string.settings_gpu_output_link)
                                 }
                             }
                             item {
@@ -839,7 +834,7 @@ fun SettingsScreen(
                                             checked = uiState.allowDoubleRefreshRate,
                                             onCheckedChange = viewModel::onAllowDoubleRefreshRateChanged,
                                         )
-                                        if (uiState.allowDoubleRefreshRate) HighRefreshDoublingRow()
+                                        if (uiState.allowDoubleRefreshRate) HighRefreshDoublingRow(uiState, viewModel)
                                         TvSettingRow(
                                             title = stringResource(R.string.settings_display_allow_3_2),
                                             checked = uiState.allowThreeTwoPulldown,

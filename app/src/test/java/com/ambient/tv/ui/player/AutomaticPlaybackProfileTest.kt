@@ -66,8 +66,11 @@ class AutomaticPlaybackProfileTest {
         prefs.mpvImageOptions = MpvImageOptions(sharpening = "cas")
         prefs.audioSettings = prefs.audioSettings.update(AudioOptions(night = true))
         prefs.playbackBackendKey = "vlc"
+        prefs.tvheadendPlaybackBackendKey = "mpv"
         prefs.mpvVideoOutputModeKey = "gpu"
         resetGlobalPlaybackProfile(prefs)
+        // Tvheadend keeps its own default player.
+        assertEquals("mpv", prefs.tvheadendPlaybackBackendKey)
         assertEquals(mapOf("width:2560" to profile, "live:width:720" to profile), prefs.resolutionVideoProfiles)
         assertEquals(mapOf("youtube:test" to title), prefs.titleVideoSettings)
         assertEquals(MpvImageOptions(), prefs.mpvImageOptions)

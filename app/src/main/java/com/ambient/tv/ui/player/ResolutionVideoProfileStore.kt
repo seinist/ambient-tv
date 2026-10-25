@@ -85,8 +85,8 @@ internal object ResolutionVideoProfileStore {
         val saved = prefs.resolutionVideoProfiles[key]?.withSnapshot(captured) ?: captured
         prefs.resolutionVideoProfiles = prefs.resolutionVideoProfiles + (key to saved)
         if (global) {
+            // Tvheadend keeps its own default player (Settings › Tvheadend; live profiles may override it).
             prefs.playbackBackendKey = profile.rendererKey
-            prefs.tvheadendPlaybackBackendKey = profile.rendererKey
             profile.mpv?.let { prefs.mpvImageOptions = it }
             profile.vlc?.let { prefs.vlcImageOptions = it }
             profile.media3?.let { prefs.media3ImageOptions = it }
@@ -120,7 +120,6 @@ internal fun VlcImageOptions.withGlobalSvp(preferences: AppPreferences): VlcImag
 internal fun resetGlobalPlaybackProfile(preferences: AppPreferences) {
     preferences.resolutionVideoProfiles = preferences.resolutionVideoProfiles - ResolutionVideoProfileStore.GLOBAL_KEY
     preferences.playbackBackendKey = "auto"
-    preferences.tvheadendPlaybackBackendKey = "auto"
     preferences.mpvImageOptions = MpvImageOptions()
     preferences.mpvImageExplicitChoice = false
     preferences.vlcImageOptions = VlcImageOptions()

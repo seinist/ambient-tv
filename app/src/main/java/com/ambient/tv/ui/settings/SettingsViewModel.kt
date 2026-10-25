@@ -424,6 +424,9 @@ class SettingsViewModel @Inject constructor(
         displayModeWhitelist = appPreferences.displayModeWhitelist,
         preferredDisplayModeKey = appPreferences.preferredDisplayModeKey,
         allowDoubleRefreshRate = appPreferences.allowDoubleRefreshRate,
+        allowHighRefreshDoubling = appPreferences.allowHighRefreshDoubling,
+        gpuRenderResolutionKey = appPreferences.gpuRenderResolutionKey,
+        mpvSdrCurveKey = appPreferences.mpvSdrCurveKey,
         allowThreeTwoPulldown = appPreferences.allowThreeTwoPulldown,
         displaySwitchPauseMs = appPreferences.displaySwitchPauseMs,
         syncPlaybackToDisplay = appPreferences.syncPlaybackToDisplay,
@@ -1825,6 +1828,14 @@ class SettingsViewModel @Inject constructor(
         )
     }
     fun onAllowDoubleRefreshRateChanged(value: Boolean) = _uiState.update { it.copy(allowDoubleRefreshRate = value) }
+    fun onAllowHighRefreshDoublingChanged(value: Boolean) = _uiState.update { it.copy(allowHighRefreshDoubling = value) }
+    fun onGpuRenderResolutionChanged(value: String) = _uiState.update {
+        it.copy(gpuRenderResolutionKey = value.takeIf { key -> key in setOf(AppPreferences.GPU_RENDER_AUTO, AppPreferences.GPU_RENDER_PANEL, AppPreferences.GPU_RENDER_UI) } ?: AppPreferences.GPU_RENDER_AUTO)
+    }
+    fun onMpvSdrCurveChanged(value: String) = _uiState.update { it.copy(mpvSdrCurveKey = value) }
+    /** A runtime lock, not a draft setting: cleared at once so the next playback tries zero-copy. */
+    fun mpvZeroCopyLocked(): Boolean = appPreferences.mpvZeroCopyFailed
+    fun resetMpvZeroCopyLock() { appPreferences.mpvZeroCopyFailed = false }
     fun onAllowThreeTwoPulldownChanged(value: Boolean) = _uiState.update { it.copy(allowThreeTwoPulldown = value) }
     fun onSyncPlaybackToDisplayChanged(value: Boolean) = _uiState.update { it.copy(syncPlaybackToDisplay = value) }
     fun onDisplaySwitchPauseChanged(value: Int) = _uiState.update { it.copy(displaySwitchPauseMs = AppPreferences.normalizeDisplaySwitchPauseMs(value)) }
@@ -2482,6 +2493,9 @@ class SettingsViewModel @Inject constructor(
         appPreferences.displayModeWhitelist = state.displayModeWhitelist
         appPreferences.preferredDisplayModeKey = state.preferredDisplayModeKey
         appPreferences.allowDoubleRefreshRate = state.allowDoubleRefreshRate
+        appPreferences.allowHighRefreshDoubling = state.allowHighRefreshDoubling
+        appPreferences.gpuRenderResolutionKey = state.gpuRenderResolutionKey
+        appPreferences.mpvSdrCurveKey = state.mpvSdrCurveKey
         appPreferences.allowThreeTwoPulldown = state.allowThreeTwoPulldown
         appPreferences.displaySwitchPauseMs = state.displaySwitchPauseMs
         appPreferences.syncPlaybackToDisplay = state.syncPlaybackToDisplay
