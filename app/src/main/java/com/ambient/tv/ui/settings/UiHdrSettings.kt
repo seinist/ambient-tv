@@ -108,7 +108,7 @@ internal fun UiHdrSettings(
 @Composable
 internal fun rememberHdrControlFacts(mode: String, inspectVideoPlayback: Boolean = true): SdrToHdrSwitchFacts {
     val view = LocalView.current
-    val reduced = LocalPerformanceProfile.current.gateExpensiveVideoVisuals
+    val reduced = LocalPerformanceProfile.current.gateSdrToHdr
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     // Music, Spotify and other audio-only playback has no video path to judge.
     val handle = if (inspectVideoPlayback && snapshot.active && snapshot.metadata?.hasVideo == true) BackgroundPlaybackSession.activeHandle() else null

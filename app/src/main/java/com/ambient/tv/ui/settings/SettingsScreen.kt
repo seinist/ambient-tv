@@ -839,6 +839,7 @@ fun SettingsScreen(
                                             checked = uiState.allowDoubleRefreshRate,
                                             onCheckedChange = viewModel::onAllowDoubleRefreshRateChanged,
                                         )
+                                        if (uiState.allowDoubleRefreshRate) HighRefreshDoublingRow()
                                         TvSettingRow(
                                             title = stringResource(R.string.settings_display_allow_3_2),
                                             checked = uiState.allowThreeTwoPulldown,

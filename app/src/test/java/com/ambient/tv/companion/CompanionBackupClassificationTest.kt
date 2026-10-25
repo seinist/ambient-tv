@@ -35,9 +35,26 @@ class CompanionBackupClassificationTest {
         fun merged(source: SettingsBackup, device: Boolean) = json.decodeFromString<SettingsBackup>(
             CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = device)).sdrToHdrReferenceWhiteNits
         assertTrue("sdrToHdrReferenceWhiteNits" in CompanionBackupPolicy.classifiedFields)
-        assertEquals(65, SettingsBackup(exportedAtEpochMs = 0).schemaVersion)
+        assertEquals(66, SettingsBackup(exportedAtEpochMs = 0).schemaVersion)
         assertEquals(300, merged(source, device = true))
         assertEquals(100, merged(source, device = false))
         assertEquals(100, merged(source.copy(schemaVersion = 64), device = true))
+    }
+
+    @Test fun gpuOutputChoicesTravelWithDeviceSettingsFromSchema66() {
+        val json = CompanionBackupPolicy.json
+        val target = SettingsBackup(exportedAtEpochMs = 1)
+        val source = SettingsBackup(exportedAtEpochMs = 2, allowHighRefreshDoubling = true,
+            gpuRenderResolutionKey = "ui", mpvSdrCurveKey = "bt.1886", svpExplicitChoice = true)
+        fun merged(source: SettingsBackup, device: Boolean) = json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = device))
+        listOf("allowHighRefreshDoubling", "gpuRenderResolutionKey", "mpvSdrCurveKey", "svpExplicitChoice")
+            .forEach { assertTrue(it in CompanionBackupPolicy.classifiedFields) }
+        val device = merged(source, device = true)
+        assertEquals("ui", device.gpuRenderResolutionKey)
+        assertEquals("bt.1886", device.mpvSdrCurveKey)
+        assertTrue(device.allowHighRefreshDoubling && device.svpExplicitChoice)
+        assertEquals("auto", merged(source, device = false).gpuRenderResolutionKey)
+        assertEquals("auto", merged(source.copy(schemaVersion = 65), device = true).mpvSdrCurveKey)
     }
 }

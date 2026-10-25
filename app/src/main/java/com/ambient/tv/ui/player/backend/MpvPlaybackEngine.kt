@@ -11,6 +11,7 @@ import com.ambient.tv.ui.player.mpvCheapDefaults
 import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.performanceProfile
 import com.ambient.tv.ui.player.videoImagePreferences
+import com.ambient.tv.ui.player.gpuRenderAtPanelResolution
 import android.content.Context
 import android.os.SystemClock
 import com.ambient.tv.ui.display.SdrToHdrRequest
@@ -68,6 +69,7 @@ private val OBSERVED_PROPERTIES: List<Pair<String, Int>> = listOf(
     "track-list/count" to MpvNativeBridge.FORMAT_DOUBLE,
 )
 private const val HDR_AUDIT_TAG = "HDR-AUDIT"
+private const val ZERO_COPY_CONFIRMED = Long.MIN_VALUE
 
 internal class MpvPlaybackEngine(
     private val context: Context,
@@ -109,9 +111,14 @@ internal class MpvPlaybackEngine(
         !com.ambient.tv.ui.player.nativeHdrSurfacePreferred(source, displayHdrStandards)
     private var acceleration = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
         // Select the processing path from the chosen width/title image settings.
-        gpuProcessing = mpvNeedsGpuProcessing(effectiveMpvImageOptions(initialImageOptions,
-            reducedVideoEffects(context), svpAllowed(context), mpvCheapDefaults(context))), nativeHdrPreferred = nativeHdrPreferred,
-        hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = needsHdrToSdr(declaredHdr))
+        // Auto goes to the GPU only for image work the user chose; untouched defaults stay direct.
+        gpuProcessing = mpvUserImageProcessing(initialImageOptions, reducedVideoEffects(context), svpAllowed(context)),
+        nativeHdrPreferred = nativeHdrPreferred,
+        hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = needsHdrToSdr(declaredHdr),
+        zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed)
+    /** One copy-back reopen per engine after zero-copy failed at runtime. */
+    private var zeroCopyRetried = false
+    private var zeroCopyFrameCheckSinceNs = 0L
     private var accelerationRetried = false
     /** Runtime verdict for the passthrough route; the UI reopens on the direct surface when set. */
     var hdrGpuFailure by mutableStateOf<MpvHdrGpuReason?>(null)
@@ -153,6 +160,14 @@ internal class MpvPlaybackEngine(
     init { if (vulkanRequested && acceleration.fallback != null && !nativeHdrPreferred && VideoAccelerationRuntime.capabilities.value.checked) VideoAccelerationRuntime.notifyUnavailable() }
     private val gpuQualityMode get() = acceleration.gpu
     val supportsGpuFilters: Boolean get() = gpuQualityMode
+    /**
+     * GPU buffer at the physical HDMI mode instead of the logical window size
+     * ([gpuRenderAtPanelResolution]: "Renderauflösung" Auto/Panel/UI).
+     */
+    val gpuRenderAtPanel: Boolean get() = gpuRenderAtPanelResolution(
+        videoImagePreferences(context).gpuRenderResolutionKey, gpuQualityMode, performanceProfile(context).lowEndDevice,
+        loadedShaderKeys.isNotEmpty() || mpvUserImageProcessing(imageOptions, reducedVideoEffects(context), svpAllowed(context)),
+    )
     override val usesRendererScaling: Boolean get() = gpuQualityMode
     private val configuredVo: String get() = acceleration.vo
     /** gpu-next ignores mpv's --sharpen; before the VO is up, the configured one decides. */
@@ -181,6 +196,7 @@ internal class MpvPlaybackEngine(
     }
     private val sdrToHdr = MpvSdrToHdrController(sdrToHdrProperties)
     private var conversionSampleStarted = 0L
+    private val sdrToHdrDisplayWatch = SdrToHdrDisplayWatch()
     private var conversionSampleDrops = 0L
     private var conversionOutputUnsafe = false
     private var attached = false
@@ -460,7 +476,7 @@ internal class MpvPlaybackEngine(
         if (gpuQualityMode && needsHdrToSdr(declaredHdr)) {
             // Describe the actual SDR output; never send PQ/BT.2020 code values to it.
             setOption("target-prim", "bt.709")
-            setOption("target-trc", "bt.1886")
+            setOption("target-trc", sdrCurveTransfer())
             setOption("target-peak", "100")
         }
         setOption("hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1")
@@ -1073,7 +1089,11 @@ internal class MpvPlaybackEngine(
         property("gamma", if (sdr) o.gamma.toString() else "0")
         val toneMapToSdr = needsHdrToSdr(sourceHdrStandard ?: declaredHdr)
         property("target-prim", if (toneMapToSdr) "bt.709" else "auto")
-        property("target-trc", if (toneMapToSdr) "bt.1886" else "auto")
+        // "SDR-Kurve": the SDR target curve is explicit so the surface tag can follow it.
+        property("target-trc", when {
+            toneMapToSdr || (sdr && !hdrPassthroughActive) -> sdrCurveTransfer()
+            else -> "auto"
+        })
         property("target-peak", if (toneMapToSdr) "100" else "auto")
         property("tone-mapping", o.toneMapping, "auto")
         property("dither-depth", o.ditherDepth, "auto")
@@ -1391,7 +1411,11 @@ internal class MpvPlaybackEngine(
         // stays only for deinterlace, a CPU filter, or a shader that still needs it.
         val desired = acceleration.hwdecForProcessing(copyBack || svpCopyBackSession, deinterlaceRequested,
             cpuFrames = cpuFrames || svpCopyBackSession)
-        if (getPropertyString("hwdec") == desired) return true
+        val current = getPropertyString("hwdec")
+        if (current == desired) return true
+        // Zero-copy only from the start of a file: copy→opaque MediaCodec on a running vo=gpu
+        // left a black video plane. Keep copy-back until the next open.
+        if (desired == MPV_ZERO_COPY_HWDEC && current != null && current.isNotBlank()) return true
         onOutputTransition()
         return trySetProperty("hwdec", desired)
     }
@@ -1789,10 +1813,18 @@ internal class MpvPlaybackEngine(
         val surface = attachedSurface?.takeIf { it.isValid } ?: return true
         // A new swapchain may already have switched to PQ/HLG. Never overwrite it.
         return runCatching {
-            !VulkanNativeProbe.available || VulkanNativeProbe.dataSpace(surface) != MPV_BT709_FULL ||
+            !VulkanNativeProbe.available || VulkanNativeProbe.dataSpace(surface) !in MPV_SDR_SURFACE_DATASPACES ||
                 VulkanNativeProbe.restoreDataSpace(surface, original)
         }.getOrDefault(false)
     }
+
+    /** Configured SDR curve for target-trc ([mpvSdrCurveTransfer]). */
+    private fun sdrCurveTransfer(): String =
+        mpvSdrCurveTransfer(videoImagePreferences(context).mpvSdrCurveKey, displayHdrStandards.isNotEmpty())
+
+    /** Surface tag requested for SDR GPU output, null while untagged (stats). */
+    @Volatile var sdrSurfaceDataSpace: Int? = null
+        private set
 
     private fun syncSdrSurface() {
         if (released || !attached || !fileReady || sdrSurfaceFailed) return
@@ -1805,7 +1837,9 @@ internal class MpvPlaybackEngine(
         val desired = mpvSdrSurfaceDataSpace(vo, getPropertyString("video-params/gamma"), filtered,
             getPropertyString("video-params/primaries"), targetTransfer, targetPrimaries,
             sdrToHdr.engaged || listOf("icc-profile", "image-lut", "target-lut")
-                .any { !getPropertyString(it).isNullOrBlank() })
+                .any { !getPropertyString(it).isNullOrBlank() },
+            toneMappedToSdr = gpuQualityMode && !hdrPassthroughActive && needsHdrToSdr(sourceHdrStandard ?: declaredHdr))
+        sdrSurfaceDataSpace = desired
         if (desired == null) {
             if (!restoreSdrSurface()) stopUnsafeConversionOutput()
             return
@@ -1815,7 +1849,7 @@ internal class MpvPlaybackEngine(
             if (current == desired) return
             if (sdrSurfaceOriginal == null) sdrSurfaceOriginal = current
             if (!VulkanNativeProbe.restoreDataSpace(surface, desired)) error("Native window rejected BT.709")
-            Timber.i("HDR-AUDIT MPV SDR surface: full-range BT.709, vo=%s", vo)
+            Timber.i("HDR-AUDIT MPV SDR surface: %s, target-trc=%s vo=%s", mpvSdrSurfaceLabel(desired), targetTransfer, vo)
         } catch (e: Exception) {
             if (!restoreSdrSurface()) stopUnsafeConversionOutput()
             sdrSurfaceFailed = true
@@ -2046,6 +2080,7 @@ internal class MpvPlaybackEngine(
                             return
                         }
                     } else missingHardwareVideoSinceNs = 0L
+                    if (fileReady && acceleration.zeroCopy && checkZeroCopy()) return
                     if (fileReady && acceleration.decoder == "vulkan") {
                         getPropertyString("hwdec-current")?.takeIf { !it.startsWith("vulkan") && it.isNotBlank() }?.let {
                             val fallback = "Vulkan Video → $it: decoder negotiation"
@@ -2096,6 +2131,10 @@ internal class MpvPlaybackEngine(
                         reopenStream(lastPlaybackPositionMs)
                         return@repeat
                     }
+                    if (error < 0 && error != -14 && acceleration.zeroCopy && !zeroCopyRetried) {
+                        failZeroCopy("playback_error_$error")
+                        return@repeat
+                    }
                     if (error < 0 && error != -14 && fallbackAcceleration("playback_error_$error")) return@repeat
                     val durationAtEnd = runCatching { durationMs() }.getOrDefault(0L)
                     val endedEarly = error >= 0 && mpvEndedEarly(lastPlaybackPositionMs, durationAtEnd)
@@ -2107,6 +2146,7 @@ internal class MpvPlaybackEngine(
                     if (endedEarly) errorMessage = "MPV: unexpected end of stream at ${lastPlaybackPositionMs / 1000}s of ${durationAtEnd / 1000}s"
                 }
                 MPV_EVENT_FILE_LOADED -> {
+                    zeroCopyFrameCheckSinceNs = 0L
                     // A new file: read its Dolby Vision profile again (latchDolbyVisionProfile).
                     dolbyVisionProfile = null
                     dvSurfaceRestart = false
@@ -2202,6 +2242,58 @@ internal class MpvPlaybackEngine(
         else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")
     }
 
+    /**
+     * Zero-copy watchdog on vo=gpu: mpv ending on mediacodec-copy means the AImageReader interop
+     * is unavailable (remember it, nothing to reopen); an engaged zero-copy decoder whose VO has
+     * no output parameters 3 s into playback is treated as a black plane and reopened on copy-back.
+     */
+    private fun checkZeroCopy(): Boolean {
+        // Copy-back chosen at runtime for a filter/shader is not a zero-copy failure.
+        if (zeroCopyFrameCheckSinceNs == ZERO_COPY_CONFIRMED || getPropertyString("hwdec") != MPV_ZERO_COPY_HWDEC) return false
+        val current = getPropertyString("hwdec-current")
+        if (mpvZeroCopyInteropFailed(acceleration, current)) {
+            Timber.w("%s MPV zero-copy unavailable (hwdec-current=%s); copy-back from now on", HDR_AUDIT_TAG, current)
+            videoImagePreferences(context).mpvZeroCopyFailed = true
+            acceleration = acceleration.copy(zeroCopy = false)
+            return false
+        }
+        if (current?.trim() != "mediacodec" || !desiredPlayWhenReady || videoTracks().isEmpty()) {
+            zeroCopyFrameCheckSinceNs = 0L
+            return false
+        }
+        val now = System.nanoTime()
+        if (zeroCopyFrameCheckSinceNs == 0L) zeroCopyFrameCheckSinceNs = now
+        if (getPropertyString("video-out-params/w").isNullOrBlank()) {
+            if (now - zeroCopyFrameCheckSinceNs >= 3_000_000_000L && !zeroCopyRetried) {
+                failZeroCopy("no_video_frames")
+                return true
+            }
+        } else {
+            // Frames reach the VO: the check is done for this file.
+            zeroCopyFrameCheckSinceNs = ZERO_COPY_CONFIRMED
+        }
+        return false
+    }
+
+    /** Remember the failure and reopen this file on mediacodec-copy (once per engine). */
+    private fun failZeroCopy(reason: String) {
+        Timber.w("%s MPV zero-copy failed (%s); reopening with mediacodec-copy", HDR_AUDIT_TAG, reason)
+        videoImagePreferences(context).mpvZeroCopyFailed = true
+        zeroCopyRetried = true
+        zeroCopyFrameCheckSinceNs = 0L
+        acceleration = acceleration.copy(zeroCopy = false)
+        accelerationFallback = "MediaCodec zero-copy → copy-back: $reason"
+        val position = positionMs().takeIf { it > 0L } ?: lastPlaybackPositionMs
+        fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
+        setProperty("vo", "null")
+        setProperty("hwdec", acceleration.hwdec)
+        setProperty("vo", configuredVo)
+        fileReady = false
+        svpFilterDecided = false
+        ended = false
+        if (attached) reopenStream(position)
+    }
+
     private fun fallbackAcceleration(reason: String, reload: Boolean = true): Boolean {
         // OpenGL cannot signal HDR on Android: leave the passthrough player to the direct reopen.
         if (mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough, acceleration.vulkan, released)) {
@@ -2264,7 +2356,7 @@ internal class MpvPlaybackEngine(
         val sourceGamma = getPropertyString("video-params/gamma")
         val filteredGamma = getPropertyString("video-out-params/gamma")
         val supported = request != null && !conversionOutputUnsafe && attached && fileReady && !ended && errorMessage == null &&
-            !reducedVideoEffects(context) && acceleration.vulkan && hdr10SwapchainSupported != false &&
+            !performanceProfile(context).gateSdrToHdr && acceleration.vulkan && hdr10SwapchainSupported != false &&
             (isPlaying() || sdrToHdr.active) &&
             getPropertyString("current-gpu-context") == "androidvk" &&
             supportsMpvSdrToHdrInput(getPropertyString("current-vo"), getPropertyString("gpu-api"),
@@ -2275,6 +2367,22 @@ internal class MpvPlaybackEngine(
         if (sdrToHdr.rollbackFailed) {
             stopUnsafeConversionOutput()
             return SdrToHdrStatus.FAILED
+        }
+        if (status != SdrToHdrStatus.ACTIVE) sdrToHdrDisplayWatch.reset()
+        else {
+            val display = com.ambient.tv.ui.display.defaultDisplay(context)
+            val ratio = com.ambient.tv.ui.display.displayHdrSdrRatio(display)
+            display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(it.displayId, ratio) }
+            val displayHdr = com.ambient.tv.ui.display.displayHdrModeFromRatio(ratio,
+                display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(it.displayId) } == true)
+            if (sdrToHdrDisplayWatch.update(displayHdr,
+                    isPlaying() && !com.ambient.tv.ui.player.PlaybackOutputTransition.active(), now)) {
+                Timber.w("%s SDR to HDR disabled: display stayed SDR (ratio=%s); back to SDR output", HDR_AUDIT_TAG, ratio)
+                sdrToHdr.fail()
+                if (sdrToHdr.rollbackFailed) stopUnsafeConversionOutput()
+                conversionSampleStarted = 0L
+                return SdrToHdrStatus.FAILED
+            }
         }
         if (status != SdrToHdrStatus.ACTIVE || !isPlaying() ||
             getPropertyString("seeking") == "yes" || getPropertyString("paused-for-cache") == "yes" ||
@@ -2340,7 +2448,7 @@ internal class MpvPlaybackEngine(
             released || !attached || !fileReady || ended -> SdrToHdrUnavailableReason.NOT_READY
             errorMessage != null || sdrToHdr.conversionFailed || conversionOutputUnsafe -> SdrToHdrUnavailableReason.OUTPUT_FAILED
             !vulkanGpuNext || getPropertyString("current-gpu-context") != "androidvk" -> SdrToHdrUnavailableReason.PLAYER_OUTPUT
-            reducedVideoEffects(context) -> SdrToHdrUnavailableReason.REDUCED_EFFECTS
+            performanceProfile(context).gateSdrToHdr -> SdrToHdrUnavailableReason.REDUCED_EFFECTS
             hdr10SwapchainSupported == false -> SdrToHdrUnavailableReason.SWAPCHAIN_NO_HDR10
             !supportedInput -> SdrToHdrUnavailableReason.SOURCE_NOT_SDR
             listOf("icc-profile", "image-lut", "target-lut").any { !getPropertyString(it).isNullOrBlank() } -> SdrToHdrUnavailableReason.FILTER_CONFLICT

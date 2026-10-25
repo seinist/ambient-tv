@@ -105,6 +105,18 @@ class VlcPlaybackController(
     private val vulkanRequested = !audioOnly && videoOutputMode == "vulkan"
     // Before the startup probe finishes the plan is the provisional safe path, not a verdict.
     init { if (accelerationFallback != null && !nativeHdrPreferred && VideoAccelerationRuntime.capabilities.value.checked) VideoAccelerationRuntime.notifyUnavailable() }
+    /** VLC renders the picture itself (libplacebo, GL tone mapping, or no MediaCodec direct rendering). */
+    val rendersVideoOnGpu: Boolean get() = !audioOnly &&
+        (vulkanOutput || toneMappingRequired || configuredSoftwareProcessing || configuredSvpMode != "off")
+    /**
+     * "Renderauflösung" ([gpuRenderAtPanelResolution]). The direct MediaCodec path never fixes the
+     * buffer size; before, every VLC surface was forced to the physical 4K mode.
+     */
+    val gpuRenderAtPanel: Boolean get() = com.ambient.tv.ui.player.gpuRenderAtPanelResolution(
+        videoImagePreferences(context).gpuRenderResolutionKey, rendersVideoOnGpu,
+        com.ambient.tv.ui.player.performanceProfile(context).lowEndDevice,
+        effectiveImage().copy(svpMode = "off", svp = VlcImageOptions().svp) != VlcImageOptions().normalized().copy(svp = VlcImageOptions().svp),
+    )
     val videoOutputDescription: String get() = when {
         vulkanOutput -> "libplacebo / Vulkan"
         toneMappingRequired -> "OpenGL ES / HDR → SDR"
@@ -1877,6 +1889,7 @@ fun VlcVideoSurface(
     key(controller) { AndroidView(
         factory = { context ->
             VlcSurfaceHost(context).also {
+                it.renderAtDisplayResolution = controller.gpuRenderAtPanel
                 it.layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 // Keep Android View focus off the video surface so it never competes with the
                 // Compose Box that owns onPreviewKeyEvent for the on-screen buttons.
@@ -1888,6 +1901,7 @@ fun VlcVideoSurface(
         },
         onRelease = { controller.detach(it.videoSurface) },
         update = {
+            it.renderAtDisplayResolution = controller.gpuRenderAtPanel
             it.presentation = presentation
             it.sourceAspectRatio = sourceAspectRatio
             it.videoSurface.applyUiHdrHeadroom(hdrHeadroom)
@@ -1897,9 +1911,7 @@ fun VlcVideoSurface(
     ) }
 }
 
-private class VlcSurfaceHost(context: Context) : VideoSurfaceLayout(context) {
-    init { renderAtDisplayResolution = true }
-}
+private class VlcSurfaceHost(context: Context) : VideoSurfaceLayout(context)
 
 @Composable
 fun rememberVlcPlaybackSnapshot(

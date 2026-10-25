@@ -193,11 +193,31 @@ class SettingsBackupRegressionTest {
         assertEquals("maximum", prefs.performanceModeKey)
     }
 
+    @Test fun gpuOutputChoicesRoundTripAndOlderBackupsUseDefaults() {
+        val (source, _, exporter) = store()
+        source.allowHighRefreshDoubling = true
+        source.gpuRenderResolutionKey = "panel"
+        source.mpvSdrCurveKey = "gamma2.2"
+        source.svpExplicitChoice = true
+        val json = exporter.exportJson()
+        val (target, _, importer) = store()
+        importer.importJson(json)
+        assertEquals(true, target.allowHighRefreshDoubling)
+        assertEquals("panel", target.gpuRenderResolutionKey)
+        assertEquals("gamma2.2", target.mpvSdrCurveKey)
+        assertEquals(true, target.svpExplicitChoice)
+        importer.importJson("""{"schemaVersion":65,"exportedAtEpochMs":0,"gpuRenderResolutionKey":"ui","allowHighRefreshDoubling":true}""")
+        assertEquals(false, target.allowHighRefreshDoubling)
+        assertEquals("auto", target.gpuRenderResolutionKey)
+        assertEquals("auto", target.mpvSdrCurveKey)
+        assertEquals(false, target.svpExplicitChoice)
+    }
+
     @Test fun sdrReferenceWhiteRoundTripsAndOlderBackupsUseAuto() {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("65", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("66", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)

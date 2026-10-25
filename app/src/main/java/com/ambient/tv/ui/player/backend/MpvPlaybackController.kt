@@ -148,7 +148,7 @@ class MpvPlaybackController(
             }
         }
         val next = MpvEngineState(
-            status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters,
+            status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters, gpuRenderAtPanel = player.gpuRenderAtPanel, sdrSurfaceDataSpace = player.sdrSurfaceDataSpace,
             usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, shieldSoftwareStatus = player.shieldSoftwareStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
             deinterlaceModeKey = player.deinterlaceModeKey, deinterlaceFilterKey = player.deinterlaceFilterKey,
@@ -187,6 +187,9 @@ class MpvPlaybackController(
 
     val bitstreamPermitted get() = audioSession.bitstreamPermitted
     val supportsGpuFilters get() = state.supportsGpuFilters
+    /** The GPU output renders at the physical panel resolution (otherwise at the UI size). */
+    val gpuRenderAtPanel get() = state.gpuRenderAtPanel
+    val sdrSurfaceDataSpace get() = state.sdrSurfaceDataSpace
     override val usesRendererScaling get() = supportsGpuFilters
     override val usesFrameInterpolation get() = state.usesFrameInterpolation
     val accelerationFallback get() = state.accelerationFallback
@@ -465,6 +468,8 @@ private data class MpvEngineState(
     val status: PlaybackStatus = PlaybackStatus(),
     val wantsToPlay: Boolean = true,
     val supportsGpuFilters: Boolean = false,
+    val gpuRenderAtPanel: Boolean = false,
+    val sdrSurfaceDataSpace: Int? = null,
     val usesFrameInterpolation: Boolean = false,
     val accelerationFallback: String? = null,
     val shieldSoftwareStatus: String? = null,

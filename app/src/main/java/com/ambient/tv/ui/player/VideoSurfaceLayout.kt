@@ -54,11 +54,14 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
             if (field == value) return
             field = value
             if (!value) {
+                // Back to the layout size: the GPU output renders at the logical window size again.
                 fixedBufferSize = null
                 videoSurface.holder.setSizeFromLayout()
-            }
+            } else updateRenderTarget()
             requestLayout()
         }
+    /** Buffer size currently forced at the physical mode, null while it follows the layout. */
+    val forcedRenderSize: Pair<Int, Int>? get() = fixedBufferSize
     private var fixedBufferSize: Pair<Int, Int>? = null
     private val displayManager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
     private val displayListener = object : DisplayManager.DisplayListener {

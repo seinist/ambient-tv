@@ -95,6 +95,21 @@ internal fun PlayerVideoOutputControls(backend: String) {
             },
         )
     }
+    if (mpv && output != "direct") {
+        // Live A/B: re-applying the image options re-sends target-trc and re-tags the surface.
+        var curve by remember { mutableStateOf(preferences.mpvSdrCurveKey) }
+        val curves = com.ambient.tv.ui.settings.sdrCurveChoices()
+        PlayerDropUpSelector(
+            label = stringResource(R.string.renderer_sdr_curve),
+            value = curves.first { it.first == curve }.second,
+            options = curves, selectedKey = curve,
+            onSelected = { next ->
+                curve = next
+                preferences.mpvSdrCurveKey = next
+                activeMpv?.let { it.updateImageOptions(it.imageOptions) }
+            },
+        )
+    }
     ImageHint(stringResource(if (metadata.isLive) R.string.player_output_restart_live else R.string.player_output_restart))
     // An explicit GPU output under Sparsam still renders bilinear without shaders or SVP.
     if (sparsamGpuOutputHeadsUp(mpv, output, com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {

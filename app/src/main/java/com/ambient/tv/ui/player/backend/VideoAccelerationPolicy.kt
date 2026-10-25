@@ -43,10 +43,24 @@ data class VideoAccelerationCapabilities(
     val vlcVulkanOutput get() = checked && device.render && vlcOutputBuilt
 }
 
+/**
+ * MPV image work the user actually chose: what still needs a GPU after untouched defaults are
+ * replaced by their cheap variant ([effectiveMpvImageOptions] with cheapDefaults). The factory
+ * Lanczos/deband/sigmoid alone do not count; Auto then keeps the direct surface.
+ */
+internal fun mpvUserImageProcessing(o: MpvImageOptions, reducedEffects: Boolean, allowSvp: Boolean): Boolean =
+    mpvNeedsGpuProcessing(effectiveMpvImageOptions(o, reducedEffects, allowSvp, cheapDefaults = true))
+
 data class MpvAccelerationPlan(
     val output: String,
     val decoder: String,
     val fallback: String? = null,
+    /**
+     * vo=gpu may sample MediaCodec output through AImageReader (hwdec=mediacodec) instead of
+     * copying every frame to system memory and uploading it again (mediacodec-copy). mpv falls
+     * back to the next hwdec entry when the interop is unavailable. Off after a recorded failure.
+     */
+    val zeroCopy: Boolean = false,
 ) {
     val vulkan get() = output == "vulkan"
     val gpu get() = output == "gpu" || vulkan
@@ -55,10 +69,11 @@ data class MpvAccelerationPlan(
     val hwdec get() = when {
         decoder == "software" -> "no"
         decoder == "vulkan" -> "vulkan,mediacodec-copy"
-        // gpu-next/Vulkan and OpenGL need CPU-accessible frames. Opaque MediaCodec
-        // surfaces are fine for mediacodec_embed, but on vo=gpu they often produce a
-        // black video plane after a software→hardware switch.
-        vulkan || output == "gpu" -> "mediacodec-copy"
+        // gpu-next/Vulkan has no MediaCodec interop and needs CPU-accessible frames.
+        vulkan -> "mediacodec-copy"
+        // OpenGL: zero-copy through AImageReader first, mpv falls back to copy-back itself.
+        // A runtime copy→zero-copy switch is never made (black plane after a decoder switch).
+        output == "gpu" -> if (zeroCopy) MPV_ZERO_COPY_HWDEC else "mediacodec-copy"
         else -> "mediacodec"
     }
     /**
@@ -69,10 +84,26 @@ data class MpvAccelerationPlan(
     fun hwdecForProcessing(copyBack: Boolean, deinterlace: Boolean, cpuFrames: Boolean = copyBack): String = when {
         decoder == "software" -> "no"
         decoder == "vulkan" && (cpuFrames || deinterlace) -> "vulkan-copy,mediacodec-copy"
-        vulkan || output == "gpu" -> hwdec
+        vulkan -> hwdec
         copyBack || deinterlace -> "mediacodec-copy"
         else -> hwdec
     }
+}
+
+internal const val MPV_ZERO_COPY_HWDEC = "mediacodec,mediacodec-copy"
+
+/** hwdec-current of a zero-copy plan that ended on copy-back: the AImageReader interop failed. */
+internal fun mpvZeroCopyInteropFailed(plan: MpvAccelerationPlan, hwdecCurrent: String?): Boolean =
+    plan.zeroCopy && plan.output == "gpu" && hwdecCurrent?.trim() == "mediacodec-copy"
+
+/** Effective decoder path for stats: zero-copy, copy-back, Vulkan or software. */
+internal fun mpvDecoderPathLabel(hwdecCurrent: String?): String = when (hwdecCurrent?.trim()) {
+    null, "", "no" -> "Software"
+    "mediacodec" -> "MediaCodec (zero-copy)"
+    "mediacodec-copy" -> "MediaCodec (copy-back)"
+    "vulkan" -> "Vulkan Video (zero-copy)"
+    "vulkan-copy" -> "Vulkan Video (copy-back)"
+    else -> hwdecCurrent.trim()
 }
 
 /** Software is an emergency path only: with a hardware decoder present a stored "software" acts as Auto. */
@@ -100,6 +131,22 @@ fun planMpvAcceleration(
     hdrPassthrough: Boolean = false,
     /** HDR that cannot be presented natively needs a shader-capable output, even with neutral filters. */
     toneMappingRequired: Boolean = false,
+    /** vo=gpu may try zero-copy MediaCodec ([MpvAccelerationPlan.zeroCopy]); false after a failure. */
+    zeroCopy: Boolean = false,
+): MpvAccelerationPlan = planMpvAccelerationPath(output, decoder, capabilities, gpuProcessing, forceDefault,
+    nativeHdrPreferred, hdrPassthrough, toneMappingRequired).let { plan ->
+    if (zeroCopy && plan.output == "gpu" && plan.decoder == "mediacodec" && plan.fallback == null) plan.copy(zeroCopy = true) else plan
+}
+
+private fun planMpvAccelerationPath(
+    output: String,
+    decoder: String,
+    capabilities: VideoAccelerationCapabilities,
+    gpuProcessing: Boolean,
+    forceDefault: Boolean,
+    nativeHdrPreferred: Boolean,
+    hdrPassthrough: Boolean,
+    toneMappingRequired: Boolean,
 ): MpvAccelerationPlan {
     if (hdrPassthrough && capabilities.mpvVulkanOutput) return MpvAccelerationPlan("vulkan", when {
         decoder == "software" -> "software"
