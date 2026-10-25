@@ -1,11 +1,6 @@
 package com.ambient.tv.ui.section
 
 import com.ambient.tv.ui.theme.screenGutter
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -110,12 +105,8 @@ internal fun LibraryLoadingState(viewMode: SectionViewMode, gridColumns: Int, li
 
 @Composable
 private fun PulsingLibraryLoading(viewMode: SectionViewMode, gridColumns: Int, listRows: Int, page: SectionPage) {
-    val pulse = rememberInfiniteTransition(label = "librarySkeleton").animateFloat(
-        initialValue = 0.28f,
-        targetValue = 0.62f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "librarySkeletonAlpha",
-    )
+    // The shared skeleton clock runs only while the app is resumed.
+    val pulse = com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedSkeletonPulse)
     CompositionLocalProvider(LocalSkeletonPulse provides pulse) {
         LibraryLoadingBody(viewMode, gridColumns, listRows, page)
     }
