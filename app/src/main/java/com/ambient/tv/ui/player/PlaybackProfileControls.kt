@@ -153,6 +153,33 @@ internal fun PlaybackProfileControls(
     }
     if (titleKey != null) ImageHint(stringResource(if (metadata?.isLive == true) R.string.channel_profile_auto else R.string.playback_profile_auto_title))
     else ImageHint(stringResource(R.string.playback_profile_title_unavailable))
+    val scopes = remember(titleKey, revision) { TitleVideoSettingsStore.layerValues(context, metadata) }
+    if (titleKey != null && metadata?.isLive != true) {
+        val target = remember(titleKey, revision) { TitleVideoSettingsStore.rememberLayer(context, metadata) }
+        val episode = metadata?.videoScope?.episode == true
+        val movie = metadata?.videoScope != null && !episode
+        val labels = scopes.map { (layer, _) -> layer.key to videoScopeLabel(layer, episode, movie) }
+        if (scopes.size > 1) {
+            ImageChoice(R.string.playback_scope_remember_for, target?.key ?: titleKey, labels) { key ->
+                scopes.firstOrNull { it.first.key == key }?.let {
+                    TitleVideoSettingsStore.setRememberLayer(metadata, it.first)
+                    revision++
+                }
+            }
+        }
+        val origins = videoSettingOrigins(scopes, resolution)
+        val names = listOf(origins.renderer, origins.picture, origins.deinterlace, origins.output, origins.audio, origins.delay)
+            .map { stringResource(videoOriginLabel(it, episode, movie)) }
+        ImageHint(stringResource(R.string.playback_scope_origins, *names.toTypedArray()))
+        scopes.filter { (layer, value) -> layer.scope != VideoSettingsScope.TITLE && value != null }.forEach { (layer, _) ->
+            TvActionButton(text = stringResource(R.string.playback_scope_reset, videoScopeLabel(layer, episode, movie)), onClick = {
+                perform {
+                    TitleVideoSettingsStore.forgetScope(context, layer)
+                    apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
+                }
+            }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
+        }
+    }
     if (resolutionKey != null) {
         val label = VideoResolutionClass.label(resolutionKey.removePrefix("live:"))
         if (resolution != null) {
@@ -185,4 +212,29 @@ internal fun PlaybackProfileControls(
         }
     }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
 
+}
+
+@Composable
+private fun videoScopeLabel(layer: VideoScopeLayer, episode: Boolean, movie: Boolean): String = when (layer.scope) {
+    VideoSettingsScope.TITLE -> stringResource(when {
+        episode -> R.string.playback_scope_episode
+        movie -> R.string.playback_scope_movie
+        else -> R.string.playback_scope_title
+    })
+    VideoSettingsScope.SEASON -> stringResource(R.string.playback_scope_season)
+    VideoSettingsScope.SERIES -> stringResource(R.string.playback_scope_series)
+    VideoSettingsScope.COLLECTION -> stringResource(R.string.playback_scope_collection, layer.label.orEmpty())
+}
+
+private fun videoOriginLabel(origin: VideoSettingOrigin, episode: Boolean, movie: Boolean): Int = when (origin) {
+    VideoSettingOrigin.TITLE -> when {
+        episode -> R.string.playback_origin_episode
+        movie -> R.string.playback_origin_movie
+        else -> R.string.playback_origin_title
+    }
+    VideoSettingOrigin.SEASON -> R.string.playback_origin_season
+    VideoSettingOrigin.SERIES -> R.string.playback_origin_series
+    VideoSettingOrigin.COLLECTION -> R.string.playback_origin_collection
+    VideoSettingOrigin.RESOLUTION -> R.string.playback_origin_resolution
+    VideoSettingOrigin.DEFAULT -> R.string.playback_origin_default
 }

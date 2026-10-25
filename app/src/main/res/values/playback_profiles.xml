@@ -20,4 +20,21 @@
     <string name="playback_profile_reset_title">Reset changes for this video</string>
     <string name="playback_profile_reset_scope_hint">Reset affects only the selected scope. Live TV falls back to the regular preset for the same width, then global defaults. Automatically remembered video changes take priority.</string>
     <string name="playback_profile_auto_title">Changes are saved automatically for this video.</string>
+    <string name="playback_scope_remember_for">Remember changes for</string>
+    <string name="playback_scope_episode">This episode only</string>
+    <string name="playback_scope_movie">This movie only</string>
+    <string name="playback_scope_title">This video only</string>
+    <string name="playback_scope_season">All episodes of this season</string>
+    <string name="playback_scope_series">All episodes of this series</string>
+    <string name="playback_scope_collection">Collection “%1$s”</string>
+    <string name="playback_scope_reset">Reset: %1$s</string>
+    <string name="playback_scope_origins">Source – Player: %1$s · Picture: %2$s · Deinterlacing: %3$s · Output: %4$s · Audio: %5$s · Delay: %6$s</string>
+    <string name="playback_origin_episode">Episode</string>
+    <string name="playback_origin_movie">Movie</string>
+    <string name="playback_origin_title">Video</string>
+    <string name="playback_origin_season">Season</string>
+    <string name="playback_origin_series">Series</string>
+    <string name="playback_origin_collection">Collection</string>
+    <string name="playback_origin_resolution">Resolution</string>
+    <string name="playback_origin_default">Default</string>
 </resources>

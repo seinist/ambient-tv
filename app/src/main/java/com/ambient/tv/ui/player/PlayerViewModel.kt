@@ -177,6 +177,44 @@ class PlayerViewModel @Inject constructor(
     internal fun ownsCompanionMedia(media: com.ambient.tv.companion.CompanionMedia?) = com.ambient.tv.companion.samePlaybackMedia(companionMedia, media)
     private val companionMedia get() = runCatching { companionMapper.fromRoute(reopenRoute) }.getOrNull()
     private var parentMediaIds: List<String> = emptyList()
+    private var videoScope: PlaybackVideoScope? = null
+
+    /** Server, season, series and collections of [item]; episodes take the collections of their series. */
+    private suspend fun loadVideoScope(item: MediaItem): PlaybackVideoScope? {
+        val source = titleSource()
+        if (source !in setOf("plex", "jellyfin", "emby")) return null
+        val serverId = when (source) {
+            "plex" -> appPreferences.activeServerId
+            "jellyfin" -> appPreferences.activeJellyfinServerId
+            else -> appPreferences.activeEmbyServerId
+        }
+        val episode = item.type.equals("episode", ignoreCase = true)
+        val movie = item.type.equals("movie", ignoreCase = true)
+        if (!episode && !movie) return null
+        // Jellyfin/Emby fetch memberships separately (one request per collection, then cached by the repository).
+        suspend fun withCollections(media: MediaItem): List<com.ambient.tv.domain.model.MediaTag> =
+            media.collections.ifEmpty {
+                if (source == "plex") emptyList()
+                else mediaRepository.enrichCollections(listOf(media)).getOrNull()?.firstOrNull()?.collections.orEmpty()
+            }
+        val owner = if (movie) item.ratingKey else item.grandparentRatingKey?.takeIf { it.isNotBlank() }
+        val collections = owner?.let { id ->
+            val cacheKey = "$source:$serverId:$id"
+            // A slow or failed lookup must not hold up playback; it is not retried for this title.
+            SeriesCollectionsCache.get(cacheKey) ?: (kotlinx.coroutines.withTimeoutOrNull(2_000) {
+                if (movie) withCollections(item) else mediaRepository.getMetadata(id).getOrNull()?.let { withCollections(it) }
+            } ?: emptyList()).also { SeriesCollectionsCache.put(cacheKey, it) }
+        }.orEmpty()
+        return PlaybackVideoScope(
+            serverId = serverId,
+            seasonId = item.parentRatingKey.takeIf { episode },
+            seasonLabel = item.parentTitle.takeIf { episode },
+            seriesId = item.grandparentRatingKey.takeIf { episode },
+            seriesLabel = item.grandparentTitle.takeIf { episode },
+            collections = collections.filter { !it.id.isNullOrBlank() },
+            episode = episode,
+        )
+    }
     suspend fun loadTimeline(sourceKey: String, sourceIndex: Int) =
         mediaRepository.getPlaybackTimeline(sourceKey, sourceIndex).getOrDefault(com.ambient.tv.domain.model.PlaybackTimeline())
 
@@ -232,6 +270,7 @@ class PlayerViewModel @Inject constructor(
             mediaId = ratingKey,
             companionMedia = companionMedia,
             parentMediaIds = parentMediaIds,
+            videoScope = videoScope,
             companionNext = state.nextAudioTrack?.toNextUpCandidate(source = titleSource(ratingKey), headers = state.streamHeaders),
             hasVideo = !audioOnlyPlaybackHint(ratingKey, state.mediaType, state.videoCodec) &&
                 !state.mediaType.equals("photo", ignoreCase = true),
@@ -384,6 +423,8 @@ class PlayerViewModel @Inject constructor(
                     _uiState.value = PlayerUiState.Error(context.getString(R.string.player_media_not_found))
                     return@fold
                 }
+                videoScope = loadVideoScope(item)
+                currentCoroutineContext().ensureActive()
                 var selectedVersionIndex = forcedVersion ?: displayVersionSelector.selectIndex(item.mediaVersions, mediaIndex)
                 var version = item.mediaVersions.getOrNull(selectedVersionIndex)
                 if (version == null) {
@@ -477,7 +518,7 @@ class PlayerViewModel @Inject constructor(
 
                 val route = AudioPassthroughPolicy.probeCached(context)
                 val conversionMetadata = PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey,
-                    sourceWidth = version.width, sourceHeight = version.height)
+                    sourceWidth = version.width, sourceHeight = version.height, videoScope = videoScope)
                 val conversionSettings = conversionRestart?.settings ?: TitleVideoSettingsStore.load(context, conversionMetadata)?.audio
                     ?: ResolutionVideoProfileStore.load(context, conversionMetadata)?.audio ?: appPreferences.audioSettings
                 val conversionOptions = conversionSettings.currentForRoute(route.profile)
@@ -568,7 +609,7 @@ class PlayerViewModel @Inject constructor(
                         playbackBackendKey = resolvedPlaybackBackend(
                             audioOnly = audioOnlyPlaybackHint(ratingKey, item.type, version.videoCodec),
                             requested = TitleVideoSettingsStore.rendererFor(context,
-                                titleSource(), ratingKey,
+                                PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey, videoScope = videoScope),
                                 ResolutionVideoProfileStore.rendererFor(context, version.width,
                                     appPreferences.playbackBackendKey)).also { requestedBackendKey = it },
                             audioCodec = serverAudioFallbackCodec ?: assessment.audioCodec,
@@ -993,7 +1034,7 @@ class PlayerViewModel @Inject constructor(
         )
         // Recovery is temporary; only an explicit panel choice changes the title preference.
         if (persistForTitle) TitleVideoSettingsStore.rememberRenderer(context,
-            PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey),
+            PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey, videoScope = videoScope),
             if (makeGlobal || normalized == "auto") null else effective)
         val dolbyVisionFallbackReason = "Dolby Vision uses the Media3 hardware path"
         val fallbackReason = if (
@@ -1046,7 +1087,8 @@ class PlayerViewModel @Inject constructor(
             _uiState.value = current.copy(sourceWidth = width, sourceHeight = height)
             return
         }
-        val title = appPreferences.titleVideoSettings["${titleSource()}:$ratingKey"]
+        val title = TitleVideoSettingsStore.load(context,
+            PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey, videoScope = videoScope))
         val preferred = title?.rendererOrDefault(profile.rendererOrDefault(appPreferences.playbackBackendKey))
             ?: profile.rendererOrDefault(appPreferences.playbackBackendKey)
         val effective = RendererCapabilityPolicy.effectiveBackend(
@@ -1177,4 +1219,11 @@ class PlayerViewModel @Inject constructor(
         super.onCleared()
     }
 
+}
+
+/** Collections of a movie or series (episodes use their series), looked up once per process. */
+internal object SeriesCollectionsCache {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<com.ambient.tv.domain.model.MediaTag>>()
+    fun get(key: String): List<com.ambient.tv.domain.model.MediaTag>? = cache[key]
+    fun put(key: String, value: List<com.ambient.tv.domain.model.MediaTag>) { if (cache.size < 500) cache[key] = value }
 }
