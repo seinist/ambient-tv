@@ -285,9 +285,11 @@ private fun MpvVideoGroups(
     }
     if (section == "scaling" && controller.supportsGpuFilters) {
         // Sparsam or a low-end device: untouched defaults run cheap (bilinear, no sigmoid); a chosen value applies.
-        if (LocalPerformanceProfile.current.mpvCheapDefaults) MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
+        if (mpvCheapDefaultsActive()) MpvSparsamLockedRows(options, setOf(MpvSparsamField.UPSCALER, MpvSparsamField.CHROMA,
             MpvSparsamField.DOWNSCALER, MpvSparsamField.SIGMOID))
-        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler, ::change,
+        // A pick here is deliberate, also of the default value: it no longer runs cheap.
+        MpvScalingRows(options, visibility.shaderUpscalers, visibility.upscaler, visibility.downscaler,
+            { markMpvImageExplicitChoice(preferences); change(it) },
             hdr = visibility.hdrShaders)
         upscalerNotNeededHint(scale)?.let { ImageHint(stringResource(it)) }
     }
@@ -310,9 +312,12 @@ private fun MpvVideoGroups(
                 },
             )
         }
-        if (LocalPerformanceProfile.current.mpvCheapDefaults) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
+        if (mpvCheapDefaultsActive()) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
         if (visibility.deband) {
-            ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) { change(options.copy(deband = it)) }
+            ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) {
+                markMpvImageExplicitChoice(preferences)
+                change(options.copy(deband = it))
+            }
         }
         if (visibility.shaders) {
             if (options.scaler !in setOf("fsr", "nis")) {

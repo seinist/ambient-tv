@@ -437,7 +437,7 @@ internal fun MpvPlayerContent(
                     formatNerdByteRate(snapshot.cacheSpeedBytesPerSecond)?.let { add(stringResource(R.string.player_nerd_cache_speed) to it) }
                     if (controller.supportsGpuFilters) {
                         // Untouched defaults run cheap (Sparsam or a low-end device); chosen values run as chosen.
-                        val cheapDefaults = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.mpvCheapDefaults
+                        val cheapDefaults = com.ambient.tv.ui.player.mpvCheapDefaultsActive()
                         val stored = controller.imageOptions.normalized()
                         val defaults = com.ambient.tv.data.local.MpvImageOptions()
                         fun replaced(value: String, default: String) =

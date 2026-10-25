@@ -36,6 +36,11 @@ enum class MpvHdrGpuReason {
     OPENGL_FALLBACK,
     /** Sustained dropped frames on the GPU path with nothing left to reduce. */
     OVERLOAD,
+    /**
+     * OpenGL/EGL route: the producer dataspace of the window surface cannot be read on this
+     * device, so PQ cannot be confirmed. Never claimed as passthrough on the FBO format alone.
+     */
+    SURFACE_UNVERIFIABLE,
 }
 
 /**
@@ -80,8 +85,9 @@ internal fun mpvHdrGpuDecision(
         capabilities.device.hdr10SurfaceSupported == false -> MpvHdrGpuReason.SWAPCHAIN_NO_HDR10
         else -> null
     }
-    // No Vulkan HDR10: an EGL BT2020_PQ window surface with a 10-bit config carries PQ instead.
-    val openGl = vulkanReason != null && capabilities.checked && capabilities.eglHdr10Pq
+    // No Vulkan HDR10: an EGL BT2020_PQ window surface with a 10-bit config carries PQ instead,
+    // only with the patched libmpv that sets it and a readable surface dataspace to confirm it.
+    val openGl = vulkanReason != null && capabilities.mpvEglHdrRoute
     return when {
         source == HdrStandard.DOLBY_VISION -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.DOLBY_VISION)
         // HDR10+ on a display without HDR10+ reaches the panel as HDR10 anyway.
@@ -202,6 +208,13 @@ internal data class MpvHdrPassthroughFacts(
     val displayHdrSdrRatio: Float? = null,
     /** This display showed a ratio above 1 before, so 1.0 really means SDR ([com.ambient.tv.ui.display.DisplayHdrRatioEvidence]). */
     val displayRatioReliable: Boolean = false,
+    /**
+     * vo=gpu/EGL route. Its `video-target-params/pixelformat` is mpv's FBO format, not the
+     * window surface's: there only the surface dataspace (set from EGL_GL_COLORSPACE) confirms PQ.
+     */
+    val openGl: Boolean = false,
+    /** The surface dataspace can be read at all (libambientvulkan loaded); otherwise [dataSpace] is meaningless. */
+    val dataSpaceReadable: Boolean = true,
 )
 
 
@@ -257,9 +270,11 @@ internal class MpvHdrPassthroughMonitor(
             since = -1L
             return null
         }
+        // EGL: an unreadable dataspace cannot confirm anything; say so instead of trusting the FBO.
+        if (facts.openGl && !facts.dataSpaceReadable) return fail(MpvHdrGpuReason.SURFACE_UNVERIFIABLE)
         val ok = facts.targetGamma?.trim()?.lowercase() in setOf("pq", "smpte2084") &&
             facts.targetPrimaries?.trim()?.lowercase() == "bt.2020" &&
-            facts.targetPixelFormat?.trim()?.lowercase() in MPV_HDR_TARGET_PIXEL_FORMATS &&
+            (facts.openGl || facts.targetPixelFormat?.trim()?.lowercase() in MPV_HDR_TARGET_PIXEL_FORMATS) &&
             mpvHdrSurfaceConfirmed(facts.dataSpace)
         if (ok) {
             if (!confirmed) metadataPlausible = mpvHdrMetadataPlausible(facts.targetMaxLuma, facts.targetMaxCll)
@@ -392,7 +407,7 @@ object MpvHdrGpuSession {
     fun recordFailure(media: String, resolution: String?, display: String, reason: MpvHdrGpuReason) {
         synchronized(lock) {
             when (reason) {
-                MpvHdrGpuReason.SWAPCHAIN_NO_HDR10 -> displayFailures[display] = reason
+                MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, MpvHdrGpuReason.SURFACE_UNVERIFIABLE -> displayFailures[display] = reason
                 MpvHdrGpuReason.NOT_CONFIRMED -> {
                     val count = (notConfirmed[display] ?: 0) + 1
                     notConfirmed[display] = count

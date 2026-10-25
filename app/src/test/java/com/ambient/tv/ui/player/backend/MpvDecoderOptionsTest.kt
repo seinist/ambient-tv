@@ -10,15 +10,42 @@ class MpvDecoderOptionsTest {
     private val patches: File = listOf(File("../native/ambientmpv/patches"), File("native/ambientmpv/patches")).first { it.isDirectory }
     private fun patch(name: String) = File(patches, name).readText()
 
+    private val patched = setOf(MpvNativeFeatures.DV_ROUTING, MpvNativeFeatures.SD_SOFTWARE, MpvNativeFeatures.COLOR_INFO)
+
     @Test fun directSurfaceRoutesDolbyVisionByDisplay() {
-        assertEquals("dolbyvision=1", mpvLavcDecoderOptions(true, setOf(HdrStandard.HDR10, HdrStandard.DOLBY_VISION)))
+        assertEquals("dolbyvision=1", mpvLavcDecoderOptions(true, setOf(HdrStandard.HDR10, HdrStandard.DOLBY_VISION), patched))
         // No DV display: profile 7/8 decode their HDR10 base layer, only profile 5 keeps the DV decoder.
-        assertEquals("dolbyvision=2", mpvLavcDecoderOptions(true, setOf(HdrStandard.HDR10)))
-        assertEquals("dolbyvision=2", mpvLavcDecoderOptions(true, emptySet()))
+        assertEquals("dolbyvision=2", mpvLavcDecoderOptions(true, setOf(HdrStandard.HDR10), patched))
+        assertEquals("dolbyvision=2", mpvLavcDecoderOptions(true, emptySet(), patched))
     }
 
     @Test fun gpuOutputsLeaveSdMpegToSoftware() {
-        assertEquals("hw_min_height=720", mpvLavcDecoderOptions(false, setOf(HdrStandard.DOLBY_VISION)))
+        assertEquals("hw_min_height=720", mpvLavcDecoderOptions(false, setOf(HdrStandard.DOLBY_VISION), patched))
+    }
+
+    @Test fun librariesWithoutThePatchesKeepTheOldOptions() {
+        // An older libavcodec has dolbyvision as a 0..1 bool: 2 would be rejected (and ignored).
+        assertEquals("dolbyvision=1", mpvLavcDecoderOptions(true, setOf(HdrStandard.HDR10), emptySet()))
+        assertEquals("dolbyvision=1", mpvLavcDecoderOptions(true, emptySet(), setOf(MpvNativeFeatures.SD_SOFTWARE)))
+        // No hw_min_height without the SD-software patch: nothing is set for GPU outputs.
+        assertEquals("", mpvLavcDecoderOptions(false, emptySet(), emptySet()))
+        assertEquals("", mpvLavcDecoderOptions(false, emptySet(), setOf(MpvNativeFeatures.DV_ROUTING)))
+    }
+
+    @Test fun nativeFeatureListParses() {
+        assertEquals(setOf("ffmpeg-dv-routing", "mpv-egl-hdr-surface"), parseMpvNativeFeatures("ffmpeg-dv-routing, mpv-egl-hdr-surface,"))
+        assertEquals(emptySet<String>(), parseMpvNativeFeatures(null))
+        assertEquals(emptySet<String>(), parseMpvNativeFeatures(""))
+    }
+
+    @Test fun shimReportsEveryMarkerTheAppChecks() {
+        val shim = listOf(File("../native/ambientmpv/ambientmpv.c"), File("native/ambientmpv/ambientmpv.c")).first { it.isFile }.readText()
+        assertTrue(shim.contains("Java_com_ambient_tv_ui_player_backend_MpvNativeBridge_nativeFeatures"))
+        listOf(MpvNativeFeatures.DV_ROUTING, MpvNativeFeatures.SD_SOFTWARE, MpvNativeFeatures.COLOR_INFO,
+            MpvNativeFeatures.EGL_HDR_SURFACE).forEach { assertTrue(it, shim.contains("\"$it,")) }
+        // The EGL marker is an exported symbol of the patched libmpv.
+        assertTrue(patch("mpv-android-egl-hdr-surface.patch").contains("ambient_mpv_egl_hdr_surface"))
+        assertTrue(shim.contains("ambient_mpv_egl_hdr_surface"))
     }
 
     @Test fun optionsExistInTheNativePatches() {

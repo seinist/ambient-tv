@@ -478,8 +478,8 @@ internal class MpvPlaybackEngine(
         }
         // Only a direct display surface may engage native Dolby Vision, decided per display like
         // Kodi; GPU outputs leave SD MPEG-2/MPEG-4 to software instead ([mpvLavcDecoderOptions]).
-        setOption("vd-lavc-o", mpvLavcDecoderOptions(
-            directSurface = !acceleration.vulkan && !gpuQualityMode, display = displayHdrStandards))
+        mpvLavcDecoderOptions(directSurface = !acceleration.vulkan && !gpuQualityMode, display = displayHdrStandards)
+            .takeIf { it.isNotEmpty() }?.let { setOption("vd-lavc-o", it) }
         if (gpuQualityMode && needsHdrToSdr(declaredHdr)) {
             // Describe the actual SDR output; never send PQ/BT.2020 code values to it.
             setOption("target-prim", "bt.709")
@@ -1478,9 +1478,10 @@ internal class MpvPlaybackEngine(
         if (now - hdrPassthroughCheckedAt < 500L && hdr10SwapchainSupported != false) return
         hdrPassthroughCheckedAt = now
         val display = com.ambient.tv.ui.display.defaultDisplay(context)
-        val displayId = display?.displayId ?: android.view.Display.DEFAULT_DISPLAY
         val displayRatio = com.ambient.tv.ui.display.displayHdrSdrRatio(display)
-        com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(displayId, displayRatio)
+        // Only readings while the surface is marked PQ count as proof of the ratio signal.
+        com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(display, displayRatio, hdrOutput = hdrPassthroughMonitor.confirmed)
+        val openGlRoute = acceleration.output == "gpu"
         val facts = MpvHdrPassthroughFacts(
             fileReady = fileReady,
             playing = isPlaying() && getPropertyString("seeking") != "yes" &&
@@ -1490,11 +1491,13 @@ internal class MpvPlaybackEngine(
             targetPrimaries = getPropertyString("video-target-params/primaries"),
             targetPixelFormat = getPropertyString("video-target-params/pixelformat"),
             dataSpace = if (fileReady && isMpvHdrTransfer(sourceGamma)) sdrToHdrProperties.outputDataSpace() else 0,
+            openGl = openGlRoute,
+            dataSpaceReadable = VulkanNativeProbe.available,
             swapchainHdr10 = hdr10SwapchainSupported,
             targetMaxLuma = getPropertyDouble("video-target-params/max-luma", 0.0).takeIf { it > 0.0 },
             targetMaxCll = getPropertyDouble("video-params/max-cll", 0.0).takeIf { it > 0.0 },
             displayHdrSdrRatio = displayRatio,
-            displayRatioReliable = com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(displayId),
+            displayRatioReliable = com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(display),
         )
         val wasConfirmed = hdrPassthroughMonitor.confirmed
         val wasSwitched = hdrPassthroughMonitor.displaySwitched
@@ -1606,6 +1609,11 @@ internal class MpvPlaybackEngine(
         // Network/live inputs may omit HDR until decoding starts. Reopen once on GL
         // rather than leaving the direct codec surface to present HDR as SDR.
         if (!gpuQualityMode && needsHdrToSdr(sourceHdrStandard) && fallbackAcceleration("hdr_to_sdr")) return
+        // HDR found only now on a zero-copy plan: tone mapping runs on copy-back (not a zero-copy failure).
+        if (gpuQualityMode && acceleration.zeroCopy && !zeroCopyRetried && needsHdrToSdr(sourceHdrStandard)) {
+            failZeroCopy("hdr_to_sdr", remember = false)
+            return
+        }
         if (!gpuQualityMode) return
         if (probeShieldBroadcast()) return
         // container-fps arrives after the first setDeinterlace. Re-plan once per verdict so a
@@ -1854,7 +1862,9 @@ internal class MpvPlaybackEngine(
 
     /** Configured SDR curve for target-trc ([mpvSdrCurveTransfer]). */
     private fun sdrCurveTransfer(): String =
-        mpvSdrCurveTransfer(videoImagePreferences(context).mpvSdrCurveKey, displayHdrStandards.isNotEmpty())
+        mpvSdrCurveTransfer(videoImagePreferences(context).mpvSdrCurveKey,
+            com.ambient.tv.ui.display.displayHdrRatioMeansHdr(
+                com.ambient.tv.ui.display.displayHdrSdrRatio(com.ambient.tv.ui.display.defaultDisplay(context))) == true)
 
     /** Surface tag requested for SDR GPU output, null while untagged (stats). */
     @Volatile var sdrSurfaceDataSpace: Int? = null
@@ -2134,6 +2144,8 @@ internal class MpvPlaybackEngine(
                     val nativeError = runCatching { MpvNativeBridge.nativePlaybackError(handle) }.getOrDefault(0)
                     val eof = observedFlag("eof-reached") ?: (getPropertyString("eof-reached") == "yes")
                     if (!mpvTerminalEnd(reason, nativeError, eof)) return@repeat
+                    // Before the track cache goes: did the file open with a video track?
+                    val loadedWithVideo = fileReady && runCatching { videoTracks().isNotEmpty() }.getOrDefault(false)
                     invalidateTracks()
                     sdrToHdr.reset()
                     if (sdrToHdr.rollbackFailed) {
@@ -2165,7 +2177,9 @@ internal class MpvPlaybackEngine(
                         reopenStream(lastPlaybackPositionMs)
                         return@repeat
                     }
-                    if (error < 0 && error != -14 && acceleration.zeroCopy && !zeroCopyRetried) {
+                    // Only a video output/decoder failure is a zero-copy failure; network, demux
+                    // and load errors would lock zero-copy for a problem it did not cause.
+                    if (acceleration.zeroCopy && !zeroCopyRetried && mpvZeroCopyFailureError(error, loadedWithVideo)) {
                         failZeroCopy("playback_error_$error")
                         return@repeat
                     }
@@ -2309,10 +2323,14 @@ internal class MpvPlaybackEngine(
         return false
     }
 
-    /** Remember the failure and reopen this file on mediacodec-copy (once per engine). */
-    private fun failZeroCopy(reason: String) {
-        Timber.w("%s MPV zero-copy failed (%s); reopening with mediacodec-copy", HDR_AUDIT_TAG, reason)
-        videoImagePreferences(context).mpvZeroCopyFailed = true
+    /**
+     * Reopen this file on mediacodec-copy (once per engine). [remember] records a real failure
+     * for this app version; a planned switch (HDR→SDR found at runtime) does not lock zero-copy.
+     */
+    private fun failZeroCopy(reason: String, remember: Boolean = true) {
+        Timber.w("%s MPV zero-copy %s (%s); reopening with mediacodec-copy", HDR_AUDIT_TAG,
+            if (remember) "failed" else "not used", reason)
+        if (remember) videoImagePreferences(context).mpvZeroCopyFailed = true
         zeroCopyRetried = true
         zeroCopyFrameCheckSinceNs = 0L
         acceleration = acceleration.copy(zeroCopy = false)
@@ -2407,9 +2425,9 @@ internal class MpvPlaybackEngine(
         else {
             val display = com.ambient.tv.ui.display.defaultDisplay(context)
             val ratio = com.ambient.tv.ui.display.displayHdrSdrRatio(display)
-            display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(it.displayId, ratio) }
+            com.ambient.tv.ui.display.DisplayHdrRatioEvidence.note(display, ratio, hdrOutput = true)
             val displayHdr = com.ambient.tv.ui.display.displayHdrModeFromRatio(ratio,
-                display?.let { com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(it.displayId) } == true)
+                com.ambient.tv.ui.display.DisplayHdrRatioEvidence.reliable(display))
             if (sdrToHdrDisplayWatch.update(displayHdr,
                     isPlaying() && !com.ambient.tv.ui.player.PlaybackOutputTransition.active(), now)) {
                 Timber.w("%s SDR to HDR disabled: display stayed SDR (ratio=%s); back to SDR output", HDR_AUDIT_TAG, ratio)

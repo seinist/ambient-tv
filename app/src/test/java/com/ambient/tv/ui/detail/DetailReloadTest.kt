@@ -38,12 +38,25 @@ class DetailReloadTest {
     }
 
     @Test
-    fun everyTransitionToOnlineReloads() {
+    fun onlyARealRecoveryReloads() {
         val online = ServerConnectionState.Online(PlexServerIdentity(machineIdentifier = null, version = null, claimed = false))
-        assertTrue(connectionCameOnline(ServerConnectionState.Waking(10, 60), online))
-        assertTrue(connectionCameOnline(ServerConnectionState.Connecting, online))
-        assertFalse(connectionCameOnline(online, online))
-        assertFalse(connectionCameOnline(null, online))
-        assertFalse(connectionCameOnline(online, ServerConnectionState.Offline))
+        fun run(vararg states: ServerConnectionState): List<Boolean> {
+            var tracker = DetailConnectionTracker()
+            return states.map { state -> tracker.next(state).also { tracker = it.first }.second }
+        }
+        // First connect of the page: the initial load covers it.
+        assertEquals(listOf(false, false), run(ServerConnectionState.Checking, online))
+        // Passive re-check (resume, background probe): no reload.
+        assertEquals(listOf(false, false, false, false), run(online, ServerConnectionState.Checking, ServerConnectionState.Connecting, online))
+        // Real recovery after Offline, Error or a timed-out wake.
+        assertEquals(listOf(false, false, false, true), run(online, ServerConnectionState.Offline, ServerConnectionState.Checking, online))
+        assertEquals(listOf(false, true), run(ServerConnectionState.Error("x"), online))
+        assertEquals(listOf(false, false, true), run(ServerConnectionState.WakeTimedOut, ServerConnectionState.Connecting, online))
+        // A wake finished: the server was asleep, the page data is from before.
+        assertEquals(listOf(false, false, false, true),
+            run(online, ServerConnectionState.SendingWakePacket, ServerConnectionState.Waking(10, 60), online))
+        assertFalse(connectionCameOnline(online, false, online))
+        assertFalse(connectionCameOnline(null, false, online))
+        assertFalse(connectionCameOnline(ServerConnectionState.Offline, true, ServerConnectionState.Offline))
     }
 }

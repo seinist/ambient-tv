@@ -3,10 +3,10 @@ profiles 7/8 to the DV decoder when one advertises the profile; dolbyvision=2 (n
 decodes profiles 7/8/10 compatible base layers as HEVC/AV1 HDR10. Applies after ffmpeg-dolby-vision-decoder.patch.
 
 diff --git a/libavcodec/mediacodecdec.c b/libavcodec/mediacodecdec.c
-index 53b9500..c94ece2 100644
+index 53b9500..88a9585 100644
 --- a/libavcodec/mediacodecdec.c
 +++ b/libavcodec/mediacodecdec.c
-@@ -307,12 +307,101 @@ static int common_set_extradata(AVCodecContext *avctx, FFAMediaFormat *format)
+@@ -307,12 +307,124 @@ static int common_set_extradata(AVCodecContext *avctx, FFAMediaFormat *format)
  }
  #endif
  
@@ -67,6 +67,13 @@ index 53b9500..c94ece2 100644
 +        return NULL;
 +    }
 +    profile = 1 << dv->dv_profile;
++    /* Profile 7 (dual layer, compatible base) only on a Dolby Vision display and only with a
++     * decoder whose profileLevels really list it; otherwise the HDR10 base layer is safer. */
++    if (dv->dv_profile == 7 && (s->dolbyvision != 1 || !av_jni_get_java_vm(avctx))) {
++        av_log(avctx, AV_LOG_INFO, "Dolby Vision profile 7 gate: rejected (%s): decoding the base layer\n",
++               s->dolbyvision != 1 ? "no Dolby Vision display" : "profile levels cannot be checked");
++        return NULL;
++    }
 +    if (av_jni_get_java_vm(avctx)) {
 +        name = ff_AMediaCodecList_getCodecNameByType("video/dolby-vision", profile, 0, avctx);
 +        if (!name) {
@@ -74,6 +81,22 @@ index 53b9500..c94ece2 100644
 +                   "decoding the base layer\n", dv->dv_profile);
 +            return NULL;
 +        }
++        if (dv->dv_profile == 7) {
++            /* The lookup also accepts a decoder without any profileLevels. A profile no decoder
++             * lists finds exactly those; if it finds the same decoder, profile 7 was not listed. */
++            char *any = ff_AMediaCodecList_getCodecNameByType("video/dolby-vision", 1 << 30, 0, avctx);
++            const int listed = !any || strcmp(any, name);
++            av_free(any);
++            if (!listed) {
++                av_log(avctx, AV_LOG_INFO, "Dolby Vision profile 7 gate: rejected (%s lists no profile levels): "
++                       "decoding the base layer\n", name);
++                av_free(name);
++                return NULL;
++            }
++            av_log(avctx, AV_LOG_INFO, "Dolby Vision profile 7 gate: passed (Dolby Vision display, %s lists profile 7)\n",
++                   name);
++        }
++        av_log(avctx, AV_LOG_INFO, "Dolby Vision decoder %s supports profile %d\n", name, dv->dv_profile);
 +        av_free(name);
 +    } else if (dv->dv_profile != 5 && dv->dv_profile != 8) {
 +        /* Without a JVM the profile levels cannot be checked: keep the proven P5/P8 only. */
@@ -108,7 +131,7 @@ index 53b9500..c94ece2 100644
  
      FFAMediaFormat *format = NULL;
      MediaCodecH264DecContext *s = avctx->priv_data;
-@@ -335,6 +424,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+@@ -335,6 +447,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
          ret = common_set_extradata(avctx, format);
          if (ret < 0)
              goto done;
@@ -118,7 +141,7 @@ index 53b9500..c94ece2 100644
          break;
  #endif
  #if CONFIG_H264_MEDIACODEC_DECODER
-@@ -353,29 +445,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+@@ -353,29 +468,9 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
          ret = hevc_set_extradata(avctx, format);
          if (ret < 0)
              goto done;
@@ -151,7 +174,7 @@ index 53b9500..c94ece2 100644
          break;
  #endif
  #if CONFIG_MPEG2_MEDIACODEC_DECODER
-@@ -619,8 +691,8 @@ static const AVCodecHWConfigInternal *const mediacodec_hw_configs[] = {
+@@ -619,8 +714,8 @@ static const AVCodecHWConfigInternal *const mediacodec_hw_configs[] = {
  #define OFFSET(x) offsetof(MediaCodecH264DecContext, x)
  #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
  static const AVOption ff_mediacodec_vdec_options[] = {

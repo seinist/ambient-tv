@@ -183,7 +183,7 @@ class MpvHdrGpuPolicyTest {
         assertFalse(source.mpvHdrGpuEnabled)
         source.mpvHdrGpuEnabled = true
         val exported = SettingsBackupManager(source, TokenStore(memoryPreferences(), source)).exportJson()
-        assertTrue(Regex("\"schemaVersion\"\\s*:\\s*67\\b").containsMatchIn(exported))
+        assertTrue(Regex("\"schemaVersion\"\\s*:\\s*68\\b").containsMatchIn(exported))
         val target = AppPreferences(memoryPreferences())
         val manager = SettingsBackupManager(target, TokenStore(memoryPreferences(), target))
         manager.importJson(exported)

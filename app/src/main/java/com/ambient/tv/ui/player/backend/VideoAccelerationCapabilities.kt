@@ -66,12 +66,16 @@ object VideoAccelerationRuntime {
                     try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
                 val eglPq = MpvEglHdrProbe.hdr10Pq()
-                VideoAccelerationCapabilities(true, device, mpv and 1 != 0, mpv and 2 != 0, vlc, eglPq).also {
+                val eglSurfacePatch = MpvNativeFeatures.EGL_HDR_SURFACE in MpvNativeFeatures.current
+                VideoAccelerationCapabilities(true, device, mpv and 1 != 0, mpv and 2 != 0, vlc, eglPq,
+                    mpvEglHdrSurface = eglSurfacePatch, surfaceDataSpaceReadable = VulkanNativeProbe.available).also {
                     if (mutable.value.device.device != device.device || mutable.value.device.version != device.version)
                         mutableEvidence.value = emptyMap()
                     mutable.value = it
-                    Timber.i("VULKAN capabilities device=%s render=%s profiles=%s mpv=%d vlc=%s reason=%s eglPq=%s",
-                        device.device, device.render, device.profiles, mpv, vlc, device.reason, eglPq)
+                    Timber.i("VULKAN capabilities device=%s render=%s profiles=%s mpv=%d vlc=%s reason=%s eglPq=%s " +
+                        "mpvEglHdrSurface=%s dataSpaceReadable=%s nativeFeatures=%s",
+                        device.device, device.render, device.profiles, mpv, vlc, device.reason, eglPq,
+                        eglSurfacePatch, VulkanNativeProbe.available, MpvNativeFeatures.current.sorted())
                 }
             } finally { mutableChecking.value = false }
         }

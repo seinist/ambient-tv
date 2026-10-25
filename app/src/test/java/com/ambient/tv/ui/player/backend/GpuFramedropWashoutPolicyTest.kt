@@ -84,8 +84,8 @@ class GpuFramedropWashoutPolicyTest {
 
     // B2
     @Test fun sdrCurveAutoFollowsTheDisplayAndExplicitChoicesWin() {
-        assertEquals("gamma2.2", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_AUTO, hdrCapableDisplay = true))
-        assertEquals("bt.1886", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_AUTO, hdrCapableDisplay = false))
+        assertEquals("gamma2.2", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_AUTO, displayInHdrMode = true))
+        assertEquals("bt.1886", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_AUTO, displayInHdrMode = false))
         assertEquals("gamma2.2", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_GAMMA22, false))
         assertEquals("bt.1886", mpvSdrCurveTransfer(AppPreferences.MPV_SDR_CURVE_BT1886, true))
         assertEquals("bt.1886", mpvSdrCurveTransfer("garbage", false))

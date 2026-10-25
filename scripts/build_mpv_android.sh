@@ -277,7 +277,7 @@ install_arch() {
     -shared -fPIC -O2 \
     -I"$prefix/include" \
     "$ROOT_DIR/native/ambientmpv/ambientmpv.c" \
-    -L"$prefix/lib" -lmpv -lavcodec -llog \
+    -L"$prefix/lib" -lmpv -lavcodec -lavutil -ldl -llog \
     -Wl,-z,defs -Wl,-soname,libambientmpv.so \
     -o "$dest/libambientmpv.so"
 

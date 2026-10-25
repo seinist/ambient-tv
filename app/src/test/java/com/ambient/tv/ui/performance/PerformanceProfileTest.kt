@@ -82,6 +82,13 @@ class PerformanceProfileTest {
         assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true, playbackMode = PerformanceMode.BALANCED).mpvCheapDefaults)
         assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false, playbackMode = PerformanceMode.LOW).mpvCheapDefaults)
         assertFalse(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = false, playbackMode = PerformanceMode.BALANCED).mpvCheapDefaults)
+        // P1: playback Maximum is the explicit full-quality choice, also on a low-end device.
+        assertFalse(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true, playbackMode = PerformanceMode.MAXIMUM).mpvCheapDefaults)
+        assertTrue(PerformanceProfile.resolve(PerformanceMode.AUTO, lowEndDevice = true, playbackMode = PerformanceMode.AUTO).mpvCheapDefaults)
+        // A deliberate scaler/deband pick wins over the cheap defaults.
+        assertTrue(com.ambient.tv.ui.player.mpvCheapDefaultsApply(profileCheapDefaults = true, explicitChoice = false))
+        assertFalse(com.ambient.tv.ui.player.mpvCheapDefaultsApply(profileCheapDefaults = true, explicitChoice = true))
+        assertFalse(com.ambient.tv.ui.player.mpvCheapDefaultsApply(profileCheapDefaults = false, explicitChoice = false))
     }
 
     @Test

@@ -167,18 +167,27 @@ object AudioPassthroughPolicy {
         return selectAudioRouteDevices(devices.map { device ->
             // Sinks often list multichannel PCM only as float/24-bit profiles, or leave
             // audioProfiles empty while channelCounts/channelMasks still carry 6 or 8.
-            val profiled = if (android.os.Build.VERSION.SDK_INT >= 31) {
-                device.audioProfiles.filter { it.format in PCM_ENCODINGS }
-                    .flatMap { it.channelMasks.toList() + it.channelIndexMasks.toList() }.maxOfOrNull(Integer::bitCount)
-            } else null
+            val profiles = if (android.os.Build.VERSION.SDK_INT >= 31) device.audioProfiles else null
+            val profiled = profiles?.filter { it.format in PCM_ENCODINGS }
+                ?.flatMap { it.channelMasks.toList() + it.channelIndexMasks.toList() }?.maxOfOrNull(Integer::bitCount)
             val legacy = (device.channelCounts.toList() + device.channelMasks.map(Integer::bitCount) +
                 device.channelIndexMasks.map(Integer::bitCount)).maxOrNull()
-            val pcmChannels = listOfNotNull(profiled, legacy).maxOrNull()
-            AudioRouteDevice(device.type, device.encodings.toSet(), pcmChannels ?: 2, device.productName?.toString())
+            AudioRouteDevice(device.type, device.encodings.toSet(),
+                routePcmChannels(profilesReported = !profiles.isNullOrEmpty(), profiled = profiled, legacy = legacy),
+                device.productName?.toString())
         }, known)
     }
 
 }
+
+/**
+ * PCM channels of one output. API 31+ audioProfiles are authoritative when the device reports
+ * any: the legacy channelCounts/channelMasks union over every encoding (a 7.1 mask may belong to
+ * a compressed format only) and would announce multichannel PCM the sink cannot take. The legacy
+ * fields count only before API 31 or when the device leaves audioProfiles empty.
+ */
+internal fun routePcmChannels(profilesReported: Boolean, profiled: Int?, legacy: Int?): Int =
+    (if (profilesReported) profiled else legacy)?.takeIf { it > 0 } ?: 2
 
 /** On API 29–32 connected digital sinks are only hints. A personal output must not inherit
  * HDMI capabilities, and ambiguous/mirrored outputs use their common capabilities. */

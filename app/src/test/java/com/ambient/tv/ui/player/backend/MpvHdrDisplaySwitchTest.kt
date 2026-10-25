@@ -36,12 +36,40 @@ class MpvHdrDisplaySwitchTest {
     }
 
     @Test fun evidenceIsPerDisplayAndOnlyFromAnHdrReading() {
-        DisplayHdrRatioEvidence.note(0, 1f)
-        DisplayHdrRatioEvidence.note(0, null)
+        DisplayHdrRatioEvidence.note(0, 1f, hdrOutput = true, nowMs = 0L)
+        DisplayHdrRatioEvidence.note(0, null, hdrOutput = true, nowMs = 1_000L)
         assertFalse(DisplayHdrRatioEvidence.reliable(0))
-        DisplayHdrRatioEvidence.note(0, 3f)
+        repeat(DisplayHdrRatioEvidence.REQUIRED_HDR_READINGS) {
+            DisplayHdrRatioEvidence.note(0, 3f, hdrOutput = true, nowMs = 2_000L + it * 1_000L)
+        }
         assertTrue(DisplayHdrRatioEvidence.reliable(0))
         assertFalse(DisplayHdrRatioEvidence.reliable(1))
+    }
+
+    // R1
+    @Test fun oneStrayReadingOrSdrOutputProvesNothing() {
+        DisplayHdrRatioEvidence.note(0, 3f, hdrOutput = true, nowMs = 0L)
+        assertFalse(DisplayHdrRatioEvidence.reliable(0))
+        // Readings in quick succession are one observation.
+        DisplayHdrRatioEvidence.note(0, 3f, hdrOutput = true, nowMs = 100L)
+        DisplayHdrRatioEvidence.note(0, 3f, hdrOutput = true, nowMs = 200L)
+        assertFalse(DisplayHdrRatioEvidence.reliable(0))
+        // A ratio while the app outputs SDR (UI animation, other app) does not count.
+        repeat(5) { DisplayHdrRatioEvidence.note(1, 3f, hdrOutput = false, nowMs = it * 1_000L) }
+        assertFalse(DisplayHdrRatioEvidence.reliable(1))
+        // Barely above 1 is not HDR evidence.
+        repeat(5) { DisplayHdrRatioEvidence.note(2, 1.01f, hdrOutput = true, nowMs = it * 1_000L) }
+        assertFalse(DisplayHdrRatioEvidence.reliable(2))
+    }
+
+    @Test fun anotherDisplayBehindTheSameIdStartsUnproven() {
+        repeat(3) { DisplayHdrRatioEvidence.note(0, 3f, hdrOutput = true, displayKey = "TV A|2+3", nowMs = it * 1_000L) }
+        assertTrue(DisplayHdrRatioEvidence.reliable(0, "TV A|2+3"))
+        assertFalse(DisplayHdrRatioEvidence.reliable(0, "AVR|2"))
+        DisplayHdrRatioEvidence.note(0, 1f, hdrOutput = true, displayKey = "AVR|2", nowMs = 5_000L)
+        assertFalse(DisplayHdrRatioEvidence.reliable(0, "AVR|2"))
+        // Back on the first TV the old proof is gone as well (the display changed in between).
+        assertFalse(DisplayHdrRatioEvidence.reliable(0, "TV A|2+3"))
     }
 
     @Test fun sdrRatioOnAProvenDisplayFailsAfterSteadyPlayback() {

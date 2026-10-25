@@ -151,6 +151,7 @@ internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrG
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.VULKAN_FALLBACK -> R.string.player_output_hdr_gpu_vulkan_fallback
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OPENGL_FALLBACK -> R.string.player_output_hdr_gpu_opengl_fallback
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OVERLOAD -> R.string.player_output_hdr_gpu_overload
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.SURFACE_UNVERIFIABLE -> R.string.player_output_hdr_gpu_surface_unverifiable
 }
 
 @Composable

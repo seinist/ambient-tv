@@ -230,8 +230,28 @@ internal fun GpuOutputPreferenceSettings(mpv: Boolean) {
                     onClick = { curve = key; prefs.mpvSdrCurveKey = key })
             })
             ImageHint(stringResource(R.string.renderer_sdr_curve_hint))
+            ZeroCopyLockRow()
         }
     }
+}
+
+/** A recorded zero-copy failure (this app version only) can be cleared to try zero-copy again. */
+@Composable
+private fun ZeroCopyLockRow() {
+    val context = LocalContext.current
+    val prefs = remember(context) { com.ambient.tv.ui.player.videoImagePreferences(context) }
+    var locked by remember { mutableStateOf(prefs.mpvZeroCopyFailed) }
+    var reset by remember { mutableStateOf(false) }
+    if (!locked && !reset) return
+    ImageHint(stringResource(if (locked) R.string.settings_mpv_zero_copy_locked else R.string.settings_mpv_zero_copy_reset_done))
+    // Stays visible after the reset so D-pad focus does not jump away.
+    TvActionButton(stringResource(R.string.settings_mpv_zero_copy_reset), onClick = {
+        if (locked) {
+            prefs.mpvZeroCopyFailed = false
+            locked = false
+            reset = true
+        }
+    })
 }
 
 @Composable

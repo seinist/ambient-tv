@@ -2,7 +2,7 @@ Ambient TV: pass color-standard/-transfer/-range and CTA-861.3 hdr-static-info t
 at configure (as Kodi's CDVDVideoCodecAndroidMediaCodec does). Option color_info=0 disables it.
 
 diff --git a/libavcodec/mediacodecdec.c b/libavcodec/mediacodecdec.c
-index c94ece2..459d489 100644
+index 88a9585..4716ef3 100644
 --- a/libavcodec/mediacodecdec.c
 +++ b/libavcodec/mediacodecdec.c
 @@ -28,6 +28,7 @@
@@ -21,7 +21,7 @@ index c94ece2..459d489 100644
      // Ref. MediaFormat KEY_OPERATING_RATE
      int operating_rate;
  } MediaCodecH264DecContext;
-@@ -395,6 +397,76 @@ static const char *mediacodec_dolby_vision_mime(AVCodecContext *avctx,
+@@ -418,6 +420,79 @@ static const char *mediacodec_dolby_vision_mime(AVCodecContext *avctx,
  }
  #endif
  
@@ -35,7 +35,7 @@ index c94ece2..459d489 100644
 +static void mediacodec_set_color_info(AVCodecContext *avctx, FFAMediaFormat *format)
 +{
 +    const AVPacketSideData *sd;
-+    int standard = 0, transfer = 0;
++    int standard = 0, transfer = 0, static_info_set = 0;
 +    int range = ff_AMediaFormatColorRange_from_AVColorRange(avctx->color_range);
 +
 +    switch (avctx->color_primaries) {
@@ -88,17 +88,20 @@ index c94ece2..459d489 100644
 +        }
 +        for (int i = 0; i < 12; i++)
 +            AV_WL16(&info[1 + 2 * i], v[i]);
-+        if (mdm->has_primaries || mdm->has_luminance)
++        if (mdm->has_primaries || mdm->has_luminance) {
 +            ff_AMediaFormat_setBuffer(format, "hdr-static-info", info, sizeof(info));
++            static_info_set = 1;
++        }
 +    }
++    /* Logs what MediaCodec really received: side data without primaries/luminance sets nothing. */
 +    av_log(avctx, AV_LOG_INFO, "MediaCodec colour info: range=%d standard=%d transfer=%d hdr-static-info=%s\n",
-+           range, standard, transfer, sd ? "yes" : "no");
++           range, standard, transfer, static_info_set ? "yes" : sd ? "no (mastering display metadata empty)" : "no");
 +}
 +
  static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
  {
      int ret;
-@@ -531,6 +603,8 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+@@ -554,6 +629,8 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
      if (avctx->codec_type == AVMEDIA_TYPE_VIDEO) {
          ff_AMediaFormat_setInt32(format, "width", avctx->width);
          ff_AMediaFormat_setInt32(format, "height", avctx->height);
@@ -107,7 +110,7 @@ index c94ece2..459d489 100644
      } else {
          ff_AMediaFormat_setInt32(format, "channel-count", avctx->ch_layout.nb_channels);
          ff_AMediaFormat_setInt32(format, "sample-rate", avctx->sample_rate);
-@@ -693,6 +767,8 @@ static const AVCodecHWConfigInternal *const mediacodec_hw_configs[] = {
+@@ -716,6 +793,8 @@ static const AVCodecHWConfigInternal *const mediacodec_hw_configs[] = {
  static const AVOption ff_mediacodec_vdec_options[] = {
      { "dolbyvision", "Dolby Vision decoder for a direct display surface: 1 display renders DV, 2 it does not (base layer unless none is displayable)",
                     OFFSET(dolbyvision), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 2, VD },

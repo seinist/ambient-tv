@@ -71,7 +71,7 @@ class EmbyConnectionManager @Inject constructor(
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        connectRun.joinOrStart { connect() }
+        connectRun.joinOrStart(endpointKey()) { connect() }
     }
 
     /**
@@ -86,9 +86,11 @@ class EmbyConnectionManager @Inject constructor(
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.embyHost)) return@withLock false
             val checkedEndpoint = endpointKey()
+            val connectGeneration = connectRun.generation
             val identity = retryTransient(System.currentTimeMillis() + retryForMs) { repository.getIdentity() }.getOrNull()
                 ?: return@withLock false
-            if (checkedEndpoint != endpointKey()) return@withLock false
+            // A connect that started meanwhile owns the state; never overwrite its result.
+            if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
             _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
@@ -98,7 +100,7 @@ class EmbyConnectionManager @Inject constructor(
     }
 
     suspend fun ensureConnected(): Boolean = withContext(Dispatchers.IO) {
-        connectRun.joinOrStart { connect() }
+        connectRun.joinOrStart(endpointKey()) { connect() }
     }
 
     /**
@@ -107,7 +109,7 @@ class EmbyConnectionManager @Inject constructor(
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        watchWaking(_state, onWaking) { connectRun.joinOrStart { connect() } }
+        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpointKey()) { connect() } }
     }
 
     private suspend fun connect(): Boolean {

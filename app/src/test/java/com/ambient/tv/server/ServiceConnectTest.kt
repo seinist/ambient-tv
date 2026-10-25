@@ -74,15 +74,61 @@ class ServiceConnectTest {
         val run = SharedConnectRun(scope)
         val gate = CompletableDeferred<Unit>()
         var started = 0
-        val first = async(Dispatchers.Default) { run.joinOrStart { started++; gate.await(); true } }
+        val first = async(Dispatchers.Default) { run.joinOrStart("a") { started++; gate.await(); true } }
         while (!run.active) kotlinx.coroutines.delay(1)
-        val second = async(Dispatchers.Default) { run.joinOrStart { started++; true } }
+        val second = async(Dispatchers.Default) { run.joinOrStart("a") { started++; true } }
         kotlinx.coroutines.delay(20)
         first.cancel()
         assertTrue(run.active)
         gate.complete(Unit)
         assertTrue(withTimeout(5_000) { second.await() })
         assertEquals(1, started)
+    }
+
+    @Test
+    fun `a connect for another endpoint cancels the stale run and starts its own`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val run = SharedConnectRun(scope)
+        val order = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val stale = async(Dispatchers.Default) {
+            run.joinOrStart("old") {
+                order += "old-start"
+                try { kotlinx.coroutines.awaitCancellation() } finally { order += "old-reset" }
+            }
+        }
+        while (!run.active) kotlinx.coroutines.delay(1)
+        val generation = run.generation
+        val fresh = async(Dispatchers.Default) { run.joinOrStart("new") { order += "new-start"; true } }
+        assertTrue(withTimeout(5_000) { fresh.await() })
+        // The superseded caller gets no success from the old server.
+        assertFalse(withTimeout(5_000) { stale.await() })
+        // The stale run finished its reset before the new run touched the state.
+        assertEquals(listOf("old-start", "old-reset", "new-start"), order.toList())
+        assertTrue(run.startedSince(generation))
+    }
+
+    @Test
+    fun `the same endpoint joins and a passive check sees no connect in between`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val run = SharedConnectRun(scope)
+        val generation = run.generation
+        assertFalse(run.startedSince(generation))
+        assertTrue(run.joinOrStart("a") { true })
+        // A connect that ran (and finished) during a background check still counts.
+        assertTrue(run.startedSince(generation))
+        assertFalse(run.startedSince(run.generation))
+    }
+
+    @Test
+    fun `a cancelled caller still propagates its own cancellation`(): Unit = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val run = SharedConnectRun(scope)
+        val gate = CompletableDeferred<Unit>()
+        val caller = async(Dispatchers.Default) { run.joinOrStart("a") { gate.await(); true } }
+        while (!run.active) kotlinx.coroutines.delay(1)
+        caller.cancel()
+        assertTrue(runCatching { caller.await() }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+        gate.complete(Unit)
     }
 
     @Test

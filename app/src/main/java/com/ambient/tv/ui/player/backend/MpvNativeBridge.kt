@@ -8,6 +8,8 @@ internal object MpvNativeBridge {
 
     external fun nativeVersion(): String
     external fun nativeVulkanSupport(): Int
+    /** Comma-separated native patch markers ([MpvNativeFeatures]); missing in older libambientmpv builds. */
+    external fun nativeFeatures(): String
     external fun nativePlaybackError(handle: Long): Int
     external fun nativeEndReason(handle: Long): Int
     external fun nativeCreate(): Long

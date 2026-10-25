@@ -1062,7 +1062,7 @@
     <string name="image_media3_hint">Scaling and picture adjustment for SDR video. Enabling restarts video decoding.</string>
     <string name="image_media3_device_bypass">Media3 image effects are bypassed on this Shield to prevent black video and freezes. Saved settings are retained.</string>
     <string name="image_filters_sparsam_hint">Filters and motion interpolation are off in Low performance mode.</string>
-    <string name="image_mpv_sparsam_defaults_hint">On this device untouched defaults run cheap (bilinear scaling, no deband, no sigmoid) so OpenGL and Vulkan stay smooth. Whatever you choose is applied.</string>
+    <string name="image_mpv_sparsam_defaults_hint">On this device untouched defaults run cheap (bilinear scaling, no deband, no sigmoid) so OpenGL and Vulkan stay smooth. Whatever you choose is applied, Lanczos or deband included. With playback performance “Maximum performance” full quality always applies.</string>
     <string name="image_media3_waiting">Effects are waiting for an unprotected SDR video track.</string>
     <string name="image_media3_active">SDR effects enabled</string>
     <string name="image_vlc_fallback">Software filters could not be enabled. Playback continues without them.</string>
@@ -1931,7 +1931,7 @@
     <string name="renderer_sdr_curve_auto">Auto</string>
     <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
     <string name="renderer_sdr_curve_bt1886">BT.1886</string>
-    <string name="renderer_sdr_curve_hint">MPV GPU output: curve and matching surface tag for SDR. Auto uses Gamma 2.2 on HDR-capable TVs (no washed-out midtones when the TV composes SDR into HDR), otherwise BT.1886 like Direct.</string>
+    <string name="renderer_sdr_curve_hint">MPV GPU output: curve and matching surface tag for SDR. Auto uses Gamma 2.2 only while the TV really runs in HDR mode (SDR is then composed into HDR, no washed-out midtones), otherwise BT.1886 like Direct. Gamma 2.2 and BT.1886 stay selectable for an A/B comparison.</string>
     <string name="player_nerd_render_resolution">Render resolution</string>
     <string name="player_nerd_sdr_curve">SDR curve / surface</string>
 </resources>

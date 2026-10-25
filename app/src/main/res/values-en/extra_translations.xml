@@ -368,4 +368,8 @@
     <string name="player_output_hdr_gpu_no_effects">Process HDR on the GPU: no HDR-safe shader or deband is selected, so HDR stays on the direct surface.</string>
     <string name="settings_mpv_hdr_gpu_direct_hint">The default output “Direct” stays in place for SDR; HDR10 uses the GPU route as long as a shader or deband is selected. Choosing “Direct” in the player or a title profile keeps HDR direct.</string>
     <string name="image_mpv_hdr_shader_hint">HDR: only HDR-safe shaders (sharpening, RAVU Lite / FSR luma, deband) apply; chroma and SSim shaders are skipped.</string>
+    <string name="player_output_hdr_gpu_surface_unverifiable">Process HDR on the GPU: the surface tag cannot be read on this device, so PQ cannot be confirmed; using the direct surface.</string>
+    <string name="settings_mpv_zero_copy_locked">Zero-copy is locked: an earlier playback failed with it on this device, MPV uses copy-back. The lock lasts until the next app update.</string>
+    <string name="settings_mpv_zero_copy_reset">Reset zero-copy lock</string>
+    <string name="settings_mpv_zero_copy_reset_done">Zero-copy will be tried again on the next playback.</string>
 </resources>

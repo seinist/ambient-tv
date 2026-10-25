@@ -122,6 +122,7 @@ internal fun resetGlobalPlaybackProfile(preferences: AppPreferences) {
     preferences.playbackBackendKey = "auto"
     preferences.tvheadendPlaybackBackendKey = "auto"
     preferences.mpvImageOptions = MpvImageOptions()
+    preferences.mpvImageExplicitChoice = false
     preferences.vlcImageOptions = VlcImageOptions()
     preferences.media3ImageOptions = Media3ImageOptions()
     preferences.audioSettings = AudioSettings()

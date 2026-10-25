@@ -24,4 +24,7 @@
     <string name="update_network_error">The update could not be retrieved. Check your connection and try again.</string>
     <string name="update_signature_mismatch">This APK uses a different signing key and cannot update the installed app.</string>
     <string name="update_install_failed">The installer could not be opened or permission was not granted. Allow installation from Ambient TV and try again.</string>
+    <string name="update_channel">App updates</string>
+    <string name="update_confirm_title">Ambient TV update ready</string>
+    <string name="update_confirm_text">Select to confirm the installation.</string>
 </resources>

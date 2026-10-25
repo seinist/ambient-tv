@@ -2,7 +2,7 @@ Ambient TV: hw_min_height option (Kodi: SD MPEG-2/MPEG-4 Part 2 is decoded in so
 height the MediaCodec decoder refuses to open, so the caller falls back to libavcodec.
 
 diff --git a/libavcodec/mediacodecdec.c b/libavcodec/mediacodecdec.c
-index 459d489..e2769f2 100644
+index 4716ef3..173c641 100644
 --- a/libavcodec/mediacodecdec.c
 +++ b/libavcodec/mediacodecdec.c
 @@ -61,6 +61,7 @@ typedef struct MediaCodecH264DecContext {
@@ -13,7 +13,7 @@ index 459d489..e2769f2 100644
      // Ref. MediaFormat KEY_OPERATING_RATE
      int operating_rate;
  } MediaCodecH264DecContext;
-@@ -488,6 +489,17 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
+@@ -514,6 +515,17 @@ static av_cold int mediacodec_decode_init(AVCodecContext *avctx)
          goto done;
      }
  
@@ -31,7 +31,7 @@ index 459d489..e2769f2 100644
      switch (avctx->codec_id) {
  #if CONFIG_AV1_MEDIACODEC_DECODER
      case AV_CODEC_ID_AV1:
-@@ -769,6 +781,8 @@ static const AVOption ff_mediacodec_vdec_options[] = {
+@@ -795,6 +807,8 @@ static const AVOption ff_mediacodec_vdec_options[] = {
                     OFFSET(dolbyvision), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 2, VD },
      { "color_info", "Pass colour range/standard/transfer and HDR static metadata to the decoder",
                     OFFSET(color_info), AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, VD },
