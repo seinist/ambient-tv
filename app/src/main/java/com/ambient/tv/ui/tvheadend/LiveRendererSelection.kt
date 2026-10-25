@@ -27,11 +27,15 @@ internal fun selectLiveRenderer(
         recovery in supported -> LiveRendererSelection(recovery!!, LiveRendererOrigin.RECOVERY)
         manual in supported -> LiveRendererSelection(manual!!, LiveRendererOrigin.MANUAL)
         channel?.rendererKey in supported -> LiveRendererSelection(channel!!.rendererKey!!, LiveRendererOrigin.CHANNEL)
-        // Live Auto chooses Media3 first. Width presets still supply picture/audio options,
+        // A live profile's explicit player ("Player für diese Auflösung") overrides the Tvheadend
+        // default, also "auto"; its "auto" inherits the default.
+        liveProfile != null && liveProfile.rendererKey in setOf("media3", "vlc", "mpv") ->
+            LiveRendererSelection(liveProfile.rendererKey, LiveRendererOrigin.LIVE_PRESET)
+        // Live Auto chooses Media3 first. General width presets still supply picture/audio options,
         // but must not silently opt a channel into MPV and its inherited filter chain.
         // An explicitly loaded preset arrives through manual; recovery requires an error.
         live && default == "auto" -> LiveRendererSelection("auto", LiveRendererOrigin.DEFAULT)
-        liveProfile != null -> LiveRendererSelection(liveProfile.rendererOrDefault(default), LiveRendererOrigin.LIVE_PRESET)
+        liveProfile != null -> LiveRendererSelection(default.takeIf { it in supported } ?: "auto", LiveRendererOrigin.LIVE_PRESET)
         generalProfile != null -> LiveRendererSelection(generalProfile.rendererOrDefault(default), LiveRendererOrigin.VIDEO_PRESET)
         else -> LiveRendererSelection(default.takeIf { it in supported } ?: "auto", LiveRendererOrigin.DEFAULT)
     }

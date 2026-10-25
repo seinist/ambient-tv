@@ -29,8 +29,20 @@ internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel:
     var size by remember { mutableIntStateOf(viewModel.preferences.run { initializeTimeshiftStorage(context); liveTimeshiftMb }) }
     var lead by remember { mutableIntStateOf(LiveTvReminderScheduler.leadMinutes(context)) }
     var autoSwitch by remember { mutableStateOf(LiveTvReminderScheduler.autoSwitch(context)) }
-    LiveTvFeatureSwitches(showRecording = showRecording)
+    var timeshift by remember { mutableStateOf(viewModel.preferences.liveTimeshiftEnabled) }
+    // One Timeshift group: switch, buffer size and storage note together.
     SettingsGroup(title = stringResource(R.string.timeshift_title), subtitle = stringResource(R.string.timeshift_hint)) {
+        com.ambient.tv.ui.common.TvSettingRow(
+            title = stringResource(R.string.timeshift_title),
+            body = stringResource(R.string.live_timeshift_optional_hint),
+            checked = timeshift,
+            onCheckedChange = {
+                viewModel.preferences.initializeTimeshiftStorage(context)
+                if (it && viewModel.preferences.liveTimeshiftMb == 0) { viewModel.preferences.liveTimeshiftMb = 512; size = 512 }
+                viewModel.preferences.liveTimeshiftEnabled = it
+                timeshift = it
+            },
+        )
         SettingsSelect(options = AppPreferences.LIVE_TIMESHIFT_SIZES.filter { it > 0 }.map { megabytes ->
             SettingsSelectOption(
                 text = when { megabytes == 0 -> stringResource(R.string.timeshift_off); megabytes < 1024 -> "$megabytes MB"; else -> "${megabytes / 1024} GB" },
@@ -40,6 +52,7 @@ internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel:
         })
         Text(stringResource(R.string.timeshift_storage_hint), style = MaterialTheme.typography.bodySmall)
     }
+    LiveTvFeatureSwitches(showRecording = showRecording, showTimeshift = false)
     SettingsGroup(title = stringResource(R.string.settings_live_reminders)) {
         Text(stringResource(R.string.reminder_lead_title), style = MaterialTheme.typography.titleSmall)
         com.ambient.tv.ui.common.TvSettingRow(
@@ -63,11 +76,12 @@ internal fun LiveTvExtrasSettingsGroup(showRecording: Boolean = true, viewModel:
 internal fun LiveTvFeatureSwitches(
     onTimeshiftChanged: (() -> Unit)? = null,
     showRecording: Boolean = true,
+    showTimeshift: Boolean = true,
     viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel(),
 ) {
     val context = LocalContext.current
     val preferences = viewModel.preferences
-    com.ambient.tv.ui.common.TvSettingRow(
+    if (showTimeshift) com.ambient.tv.ui.common.TvSettingRow(
         title = stringResource(R.string.timeshift_title),
         body = stringResource(R.string.live_timeshift_optional_hint),
         checked = preferences.liveTimeshiftEnabled,

@@ -383,9 +383,9 @@
     <string name="settings_performance_auto">Auto</string>
     <string name="settings_performance_balanced">Balanced</string>
     <string name="settings_performance_low">Low</string>
-    <string name="settings_ui_performance">Interface performance</string>
+    <string name="settings_ui_performance">Interface</string>
     <string name="settings_ui_performance_hint">Animations, shimmer and heavy surfaces. Independent of playback filters.</string>
-    <string name="settings_playback_performance">Playback performance</string>
+    <string name="settings_playback_performance">Playback</string>
     <string name="settings_playback_performance_hint">Limits motion smoothing, heavy upscalers and double-rate deinterlacing; separate from interface effects.</string>
     <string name="settings_check_ui">Check interface</string>
     <string name="settings_check_playback">Check playback</string>
@@ -539,8 +539,8 @@
     <string name="settings_display_switch_pause_seconds">%1$s s</string>
     <string name="settings_display_switch_pause_recommended">%1$s · AV receiver</string>
     <string name="settings_playback_backend">Default player</string>
-    <string name="settings_defaults_renderer">Profile for player</string>
-    <string name="settings_defaults_renderer_hint">Choose which player profile to edit. This does not change the default playback player (Playback › Player).</string>
+    <string name="settings_defaults_renderer">Show settings for</string>
+    <string name="settings_defaults_renderer_hint">Choose which player’s settings are shown. This does not change the default player.</string>
     <string name="settings_defaults_renderer_auto_hint">The default player is Automatic, so the Media3 profile is being edited; choose VLC or MPV above to switch.</string>
     <string name="settings_playback_backend_hint">Default player for Plex, Jellyfin and SmartTube; TVHeadend has its own.</string>
     <string name="settings_background_page_title">Background appearance</string>
@@ -1936,4 +1936,11 @@
     <string name="renderer_sdr_curve_hint">MPV GPU output: curve and matching surface tag for SDR. Auto uses Gamma 2.2 only while the TV really runs in HDR mode (SDR is then composed into HDR, no washed-out midtones), otherwise BT.1886 like Direct. Gamma 2.2 and BT.1886 stay selectable for an A/B comparison.</string>
     <string name="player_nerd_render_resolution">Render resolution</string>
     <string name="player_nerd_sdr_curve">SDR curve / surface</string>
+    <string name="settings_gpu_output_link">Video output and GPU: Picture profiles</string>
+    <string name="settings_tvh_home_hint">Turns the Live TV row on the home screen on or off. Change its position under Home rows.</string>
+    <string name="settings_spotify_visualizer_link_hint">Visualization style and presets are set under Audio visualization.</string>
+    <string name="live_profiles_player">Player for this resolution</string>
+    <string name="live_profiles_player_inherit">Same as Tvheadend default</string>
+    <string name="live_profiles_audio_inherits">Inherits from Audio profiles until you change something here.</string>
+    <string name="live_profiles_deinterlace_overrides">Overrides the Tvheadend default.</string>
 </resources>

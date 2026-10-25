@@ -501,7 +501,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         SubmenuSettingsRow(MediaSystem.TVHEADEND, uiState, viewModel::onSidebarSettingsShortcutChanged)
                     }
                 }
-                item { TvSettingRow(stringResource(R.string.settings_tvh_home), null, uiState.tvheadendShowOnHome, viewModel::onTvheadendShowOnHomeChanged) }
+                item { TvSettingRow(stringResource(R.string.settings_tvh_home), stringResource(R.string.settings_tvh_home_hint), uiState.tvheadendShowOnHome, viewModel::onTvheadendShowOnHomeChanged) }
                 item {
                     SettingsGroup(
                         title = systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_playback_backend),
@@ -523,7 +523,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 ))
                             }
                         })
-                        SettingsVideoAcceleration(uiState, viewModel, uiState.tvheadendPlaybackBackendKey)
+                        SettingsPageLink(SettingsCategory.IMAGE, "tvh-gpu-output", R.string.settings_gpu_output_link)
                     }
                 }
                 item {
@@ -644,6 +644,8 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             ))
                         }
                     })
+                    Text(stringResource(R.string.settings_spotify_visualizer_link_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SettingsPageLink(SettingsCategory.VISUALIZER, "spotify-visualizer")
                 }
             }
             item { Text(stringResource(R.string.settings_spotify_native_note), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
