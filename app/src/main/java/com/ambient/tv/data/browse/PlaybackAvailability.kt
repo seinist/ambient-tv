@@ -83,7 +83,17 @@ class PlaybackAvailability @Inject constructor(
 
     private suspend fun serverReachable(provider: String): Boolean {
         if (availability.state(provider) == SourceHealth.ONLINE) return true
-        return withTimeoutOrNull(2_500) {
+        // Known down or still waking: say so at once instead of waiting for a request to time out.
+        if (hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE) return false
+        val connection = when (provider) {
+            "jellyfin" -> jellyfinConnection.get().state.value
+            "emby" -> embyConnection.get().state.value
+            else -> plexConnection.get().state.value
+        }
+        if (connection is com.ambient.tv.server.ServerConnectionState.Waking ||
+            connection == com.ambient.tv.server.ServerConnectionState.SendingWakePacket) return false
+        // As long as the client's own connect timeout: a slow but running server is not "offline".
+        return withTimeoutOrNull(SERVER_PROBE_TIMEOUT_MS) {
             when (provider) {
                 "jellyfin" -> jellyfin.getIdentity()
                 "emby" -> emby.getIdentity()
@@ -105,7 +115,10 @@ class PlaybackAvailability @Inject constructor(
             "tvheadend" -> tvheadendConnection.get()::reconnect.takeIf { preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank() }
             else -> null
         }
-        if (wake != null) wakeScope.launch { runCatching { wake() } }
+        // Once the wake connected, the source counts as online again: Play works without a reload.
+        if (wake != null) wakeScope.launch {
+            if (runCatching { wake() }.getOrDefault(false)) availability.online(provider)
+        }
         com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
             key = "playback:unavailable",
             message = if (wake != null) com.ambient.tv.R.string.browse_playback_waking else com.ambient.tv.R.string.browse_playback_offline,
@@ -124,3 +137,6 @@ class PlaybackAvailability @Inject constructor(
         return system?.let { preferences.systemNames[it.key]?.takeIf(String::isNotBlank) ?: it.brand } ?: provider
     }
 }
+
+/** The media clients connect with a 10 s timeout; the pre-play probe waits that long too. */
+internal const val SERVER_PROBE_TIMEOUT_MS = 10_500L

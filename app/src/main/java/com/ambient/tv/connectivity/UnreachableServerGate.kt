@@ -78,16 +78,19 @@ class UnreachableServerGate @Inject constructor(
         scope.launch {
             hosts.states.map { states -> states.mapValues { it.value.health } }.distinctUntilChanged().collect {
                 refresh()
+                // A machine that just came up may still be starting its services (503, refused):
+                // retry briefly instead of leaving them unreachable until the next 30 s round.
+                val startGraceMs = com.ambient.tv.server.CONNECT_RETRY_GRACE_MS
                 // Refresh actual service identities silently; never manufacture an authenticated state.
                 coroutineScope {
                     if (hosts.health("plex") == HostHealth.ONLINE && plex.state.value !is ServerConnectionState.Online)
-                        launch { if (plex.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                        launch { if (plex.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
                     if (hosts.health("jellyfin") == HostHealth.ONLINE && jellyfin.state.value !is ServerConnectionState.Online)
-                        launch { if (jellyfin.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                        launch { if (jellyfin.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
                     if (hosts.health("emby") == HostHealth.ONLINE && emby.state.value !is ServerConnectionState.Online)
-                        launch { if (emby.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                        launch { if (emby.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
                     if (hosts.health("tvheadend") == HostHealth.ONLINE && tvheadend.state.value !is ServerConnectionState.Online)
-                        launch { if (tvheadend.checkInBackground(force = true)) refreshBus.requestRefresh() }
+                        launch { if (tvheadend.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
                 }
             }
         }

@@ -32,6 +32,7 @@ class ConnectionNotifications @Inject constructor(
     private val resume: ResumeConnectivityMonitor,
     private val spotify: SpotifyRepository,
     private val wakeMachines: com.ambient.tv.wol.WakeMachines,
+    private val hosts: com.ambient.tv.connectivity.HostConnectivity,
 ) {
     private var started = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -55,7 +56,8 @@ class ConnectionNotifications @Inject constructor(
             }.collect { (route, targets) ->
                 // Wakes are announced per machine, shared with TVHeadend, NAS and DLNA on it.
                 targets.forEach { target ->
-                    val isWaking = target.state is ServerConnectionState.Waking || target.state == ServerConnectionState.SendingWakePacket
+                    // "Machine awake, service starting" ends the machine's wake; the connection notice carries on.
+                    val isWaking = isMachineWaking(target.state)
                     val machine = wakingMachines[target.system]
                     if (isWaking && machine == null) {
                         val key = wakeMachines.keyFor(target.system, target.host, target.mac)
@@ -64,7 +66,8 @@ class ConnectionNotifications @Inject constructor(
                     } else if (!isWaking && machine != null) {
                         wakingMachines.remove(target.system)
                         when (target.state) {
-                            ServerConnectionState.Connecting, is ServerConnectionState.Online -> WakeNotices.finish(machine, target.system, success = true)
+                            ServerConnectionState.Connecting, is ServerConnectionState.Online, is ServerConnectionState.Waking ->
+                                WakeNotices.finish(machine, target.system, success = true)
                             ServerConnectionState.WakeTimedOut, ServerConnectionState.Offline, is ServerConnectionState.Error ->
                                 WakeNotices.finish(machine, target.system, success = false)
                             else -> WakeNotices.cancel(machine, target.system)
@@ -82,7 +85,8 @@ class ConnectionNotifications @Inject constructor(
                 val notices = targets.filter { it.state != ServerConnectionState.NotConfigured }
                     .groupBy { wakeMachines.keyFor(it.system, it.host, it.mac) }
                     .mapValues { (host, group) ->
-                        val waking = group.any { it.state is ServerConnectionState.Waking || it.state == ServerConnectionState.SendingWakePacket }
+                        val waking = group.any { isMachineWaking(it.state) }
+                        val serviceStarting = !waking && group.any { (it.state as? ServerConnectionState.Waking)?.serviceStarting == true }
                         val failed = group.filter { it.state == ServerConnectionState.Offline || it.state == ServerConnectionState.WakeTimedOut || it.state is ServerConnectionState.Error }
                         val online = group.all { it.state is ServerConnectionState.Online }
                         val waitingForVpn = route == WireGuardRouteState.Connecting && !online && failed.isEmpty() && group.any {
@@ -112,6 +116,7 @@ class ConnectionNotifications @Inject constructor(
                             message = when {
                                 waitingForVpn -> R.string.notice_vpn_connecting
                                 waking -> R.string.notice_waking
+                                serviceStarting -> R.string.notice_service_starting
                                 failed.any { it.state == ServerConnectionState.WakeTimedOut } -> R.string.notice_wake_failed
                                 failed.isNotEmpty() && reason != null -> R.string.notice_unreachable_reason
                                 failed.isNotEmpty() -> R.string.notice_unreachable
@@ -135,6 +140,16 @@ class ConnectionNotifications @Inject constructor(
                     }
                 }
                 previous = notices
+            }
+        }
+        // A machine that answers again ends its wake card at once (also for NAS/DLNA members),
+        // instead of the card counting on to its budget while the services start.
+        scope.launch {
+            var previous = emptyMap<String, com.ambient.tv.connectivity.HostHealth>()
+            hosts.states.collect { states ->
+                val health = states.mapValues { it.value.health }
+                machinesNowOnline(previous, health).forEach(WakeNotices::machineOnline)
+                previous = health
             }
         }
         scope.launch {
@@ -212,3 +227,16 @@ class ConnectionNotifications @Inject constructor(
 
     private data class Target(val system: String, val host: String, val name: String?, val state: ServerConnectionState, val mac: String? = null)
 }
+
+/** Waking the machine itself (packets / waiting for it); not "machine awake, service starting". */
+internal fun isMachineWaking(state: ServerConnectionState): Boolean =
+    state == ServerConnectionState.SendingWakePacket ||
+        (state is ServerConnectionState.Waking && !state.serviceStarting)
+
+/** Machines whose health just turned ONLINE. */
+internal fun machinesNowOnline(
+    previous: Map<String, com.ambient.tv.connectivity.HostHealth>,
+    current: Map<String, com.ambient.tv.connectivity.HostHealth>,
+): List<String> = current.filter { (machine, health) ->
+    health == com.ambient.tv.connectivity.HostHealth.ONLINE && previous[machine] != com.ambient.tv.connectivity.HostHealth.ONLINE
+}.keys.toList()

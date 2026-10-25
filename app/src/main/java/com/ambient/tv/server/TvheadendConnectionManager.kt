@@ -4,7 +4,6 @@ import android.content.Context
 import com.ambient.tv.R
 import com.ambient.tv.connectivity.HostHealth
 import com.ambient.tv.connectivity.ResumeConnectivityMonitor
-import com.ambient.tv.connectivity.ResumeConnectivityPolicy
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.domain.model.PlexServerIdentity
 import com.ambient.tv.network.LocalNetworkPolicy
@@ -12,7 +11,6 @@ import com.ambient.tv.network.NetworkEndpoint
 import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.vpn.WireGuardRouteController
 import com.ambient.tv.wol.WolManager
-import com.ambient.tv.wol.wakeWithRetries
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Provider
@@ -52,7 +50,9 @@ class TvheadendConnectionManager @Inject constructor(
     private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
     private fun endpointKey() = listOf(preferences.tvheadendHost, preferences.tvheadendPort, preferences.tvheadendUseHttps, preferences.tvheadendUsername).joinToString("|")
+    /** Short checks only (background probe); a wake never holds it. */
     private val connectionMutex = Mutex()
+    private val connectRun = SharedConnectRun(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     private val reconnectPause = ReconnectPause()
 
     private val configured get() = preferences.isTvheadendConfigured && !preferences.tvheadendLoginRejected
@@ -68,23 +68,28 @@ class TvheadendConnectionManager @Inject constructor(
         repository.automaticWakePaused = false
     }
 
+    /** Joins a connect that is already running instead of starting a second one behind it. */
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock {
-            resumeAutomaticReconnect()
-            lastSuccessfulCheckMs = 0L
-            ensureConnectedLocked()
-        }
+        resumeAutomaticReconnect()
+        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        connectRun.joinOrStart { connect() }
     }
 
-    /** A single passive health request: no wake, VPN setup, or intermediate UI state. */
-    suspend fun checkInBackground(force: Boolean = false): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * A passive health request: no wake, VPN setup, or intermediate UI state. While a connect
+     * runs it reports the result itself, so this returns at once instead of queueing behind it.
+     * [retryForMs] keeps retrying a service that is still starting (5xx, refused) that long.
+     */
+    suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
+        if (connectRun.active) return@withContext false
         connectionMutex.withLock {
             if ((!force && !reconnectPause.isPaused(endpointKey())) || !configured) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
             if (!repository.portReachable()) return@withLock false
-            val info = repository.probeServerInfo().getOrNull() ?: return@withLock false
+            val info = retryTransient(System.currentTimeMillis() + retryForMs) { repository.probeServerInfo() }.getOrNull()
+                ?: return@withLock false
             if (checkedEndpoint != endpointKey()) return@withLock false
             _state.value = ServerConnectionState.Online(identity(info.version))
             resumeAutomaticReconnect()
@@ -95,39 +100,43 @@ class TvheadendConnectionManager @Inject constructor(
     }
 
     suspend fun ensureConnected(): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock { ensureConnectedLocked() }
+        connectRun.joinOrStart { connect() }
     }
 
+    /**
+     * Forced re-check (resume, playback recovery): joins a running wake, otherwise runs the full
+     * wake with its whole budget - a server needing 30 s to boot outlasts any short wait.
+     */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
-        connectionMutex.withLock {
-            lastSuccessfulCheckMs = 0L
-            ensureConnectedLocked(
-                wakeTimeoutMs = ResumeConnectivityPolicy.BRIEF_WAKE_TIMEOUT_MS,
-                wakePollMs = ResumeConnectivityPolicy.BRIEF_WAKE_POLL_MS,
-                wakeRetries = 0,
-                onWaking = onWaking,
-            )
+        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        watchWaking(_state, onWaking) { connectRun.joinOrStart { connect() } }
+    }
+
+    private suspend fun connect(): Boolean {
+        val before = _state.value
+        val check = hosts.begin("tvheadend")
+        val endpoint = endpointKey()
+        return try {
+            connectService().also { connected -> if (endpoint == endpointKey() && !connected) hosts.failure(check) }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
+            if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
+            throw cancelled
         }
     }
 
-    private suspend fun ensureConnectedLocked(
-        wakeTimeoutMs: Long = 60_000L,
-        wakePollMs: Long = 2_500L,
-        wakeRetries: Int = preferences.wolRetryCount,
-        onWaking: (() -> Unit)? = null,
-    ): Boolean {
-        val check = hosts.begin("tvheadend")
-        val endpoint = endpointKey()
-        val result = connectService(wakeTimeoutMs, wakePollMs, wakeRetries, onWaking)
-        if (endpoint == endpointKey() && !result) hosts.failure(check)
-        return result
+    /** TVHeadend's API answers (a 4xx too: it runs, the identity request then reports the login). */
+    private suspend fun serviceReady(): Boolean {
+        if (!repository.portReachable()) return false
+        val probe = repository.probeServerInfo()
+        val error = probe.exceptionOrNull() ?: return true
+        return (error as? com.ambient.tv.tvheadend.data.TvheadendHttpException)?.code in 400..499
     }
 
     private suspend fun connectService(
-        wakeTimeoutMs: Long,
-        wakePollMs: Long,
-        wakeRetries: Int,
-        onWaking: (() -> Unit)?,
+        wakeTimeoutMs: Long = 60_000L,
+        wakePollMs: Long = 2_500L,
+        wakeRetries: Int = preferences.wolRetryCount,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("tvheadend") != HostHealth.OFFLINE
         if (!configured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -146,38 +155,32 @@ class TvheadendConnectionManager @Inject constructor(
             return true
         }
         _state.value = ServerConnectionState.Checking
-        var reachable = repository.portReachable()
-        if (!reachable && !hosts.verifySystem("tvheadend")) {
-            val mac = preferences.tvheadendMacAddress
-            if (!preferences.tvheadendAutoWakeEnabled || mac.isNullOrBlank()) { _state.value = ServerConnectionState.Offline; return false }
-            _state.value = ServerConnectionState.SendingWakePacket
-            onWaking?.invoke()
-            var sentPackets = 0
-            reachable = wakeWithRetries(
-                retries = wakeRetries,
-                windowMs = wakeTimeoutMs,
-                pollMs = wakePollMs,
-                send = { attempt ->
-                    if (attempt > 0) { _state.value = ServerConnectionState.SendingWakePacket; onWaking?.invoke() }
-                    wolManager.sendWakeBurst(
-                        mac,
-                        wireGuardHost = preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled },
-                        retry = attempt > 0,
-                    )
-                },
-                reachable = { repository.portReachable() || hosts.verifySystem("tvheadend") },
-                onWaiting = { elapsed ->
-                    _state.value = ServerConnectionState.Waking(elapsed,
-                        (com.ambient.tv.wol.wakeBudgetMs(wakeRetries, wakeTimeoutMs) / 1000).toInt(),
-                        sentPackets, com.ambient.tv.wol.wakeCycles(wakeRetries), (wakeTimeoutMs / 1000).toInt())
-                    onWaking?.invoke()
-                },
-                onSent = { attempt, _ -> sentPackets = attempt + 1 },
-            )
-            if (!reachable) { _state.value = ServerConnectionState.WakeTimedOut; return false }
-        }
+        val mac = preferences.tvheadendMacAddress
+        // Success only once TVHeadend's API answers; another open port of the machine is not enough.
+        val wait = waitForService(
+            serviceReady = ::serviceReady,
+            machineAwake = { hosts.verifySystem("tvheadend") },
+            hostHealth = { hosts.health("tvheadend") },
+            canWake = preferences.tvheadendAutoWakeEnabled && !mac.isNullOrBlank(),
+            send = { attempt ->
+                wolManager.sendWakeBurst(
+                    mac.orEmpty(),
+                    wireGuardHost = preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled },
+                    retry = attempt > 0,
+                )
+            },
+            retries = wakeRetries,
+            windowMs = wakeTimeoutMs,
+            pollMs = wakePollMs,
+            setState = { _state.value = it },
+        )
+        wait.failure?.let { _state.value = it; return false }
         _state.value = ServerConnectionState.Connecting
-        val info = repository.probeServerInfo().getOrElse {
+        // Right after a wake the API may still answer 503, refuse, or reject the login once.
+        val info = retryTransient(
+            wait.identityDeadlineMs,
+            transient = { isTransientConnectFailure(it) || (wait.waited && com.ambient.tv.notifications.failureHttpCode(it) == 401) },
+        ) { repository.probeServerInfo() }.getOrElse {
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.tvheadendHost}:${preferences.tvheadendPort}"))
             return false
         }
