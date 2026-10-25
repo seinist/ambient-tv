@@ -766,6 +766,8 @@
     <string name="settings_youtube_video_preset">Video format (target resolution, frame rate and codec)</string>
     <string name="settings_youtube_video_preset_auto">Automatic (%1$s)</string>
     <string name="settings_youtube_max_resolution">Maximum video resolution</string>
+    <string name="settings_youtube_max_resolution_display">Display (recommended)</string>
+    <string name="settings_youtube_max_resolution_display_hint">Never higher than your TV can show. No 4K on a 1080p display.</string>
     <string name="settings_youtube_quality_hint">Choose quality and codec in the SmartTube player from the tracks that are available.</string>
     <string name="settings_spotify_enable">Enable Spotify</string>
     <string name="settings_spotify_enable_hint">Show Spotify as an independent system and Spotify Connect receiver.</string>

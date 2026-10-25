@@ -58,12 +58,25 @@ class MpvHdrGpuPolicyTest {
     }
 
     @Test fun deviceGateFailuresNameTheReason() {
-        assertEquals(MpvHdrGpuReason.DISPLAY_NO_HDR10, decide(display = emptySet()).reason)
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(capabilities = caps.copy(checked = false)).reason)
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(capabilities = caps.copy(device = caps.device.copy(hostQueryReset = false))).reason)
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(capabilities = caps.copy(device = caps.device.copy(version = (1L shl 22) or (1L shl 12)))).reason)
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, decide(capabilities = caps.copy(mpvOutputBuilt = false)).reason)
+        // Without an HDR10 display, a finished probe or the MPV Vulkan output the option does not exist.
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(display = emptySet()))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(capabilities = caps.copy(checked = false)))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(capabilities = caps.copy(device = caps.device.copy(hostQueryReset = false))))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(capabilities = caps.copy(device = caps.device.copy(version = (1L shl 22) or (1L shl 12)))))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(capabilities = caps.copy(mpvOutputBuilt = false)))
         assertEquals(MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, decide(capabilities = caps.copy(device = caps.device.copy(surfaceColorSpaces = listOf(0)))).reason)
+    }
+
+    @Test fun optionExistsOnlyOnHdr10TvsWithVulkan() {
+        assertTrue(mpvHdrGpuOptionAvailable(true, caps, hdr10Display))
+        assertFalse(mpvHdrGpuOptionAvailable(false, caps, hdr10Display))
+        assertFalse(mpvHdrGpuOptionAvailable(true, caps.copy(checked = false), hdr10Display))
+        assertFalse(mpvHdrGpuOptionAvailable(true, caps.copy(mpvOutputBuilt = false), hdr10Display))
+        assertFalse(mpvHdrGpuOptionAvailable(true, caps, setOf(HdrStandard.HLG)))
+        // Pure OpenGL (EGL PQ without Vulkan) no longer gets the option.
+        val openGlOnly = caps.copy(mpvOutputBuilt = false, eglHdr10Pq = true, mpvEglHdrSurface = true, surfaceDataSpaceReadable = true)
+        assertFalse(mpvHdrGpuOptionAvailable(true, openGlOnly, hdr10Display))
+        assertEquals(MpvHdrGpuDecision.NOT_APPLICABLE, decide(capabilities = openGlOnly))
     }
 
     @Test fun directOutputSparsamAndRuntimeFailuresFallBack() {
@@ -78,8 +91,8 @@ class MpvHdrGpuPolicyTest {
     @Test fun settingsShowOnlyDeviceLevelReasons() {
         assertNull(mpvHdrGpuDeviceReason(caps, hdr10Display))
         assertNull(mpvHdrGpuDeviceReason(caps.copy(checked = false), hdr10Display))
-        assertEquals(MpvHdrGpuReason.DISPLAY_NO_HDR10, mpvHdrGpuDeviceReason(caps, emptySet()))
-        assertEquals(MpvHdrGpuReason.VULKAN_UNAVAILABLE, mpvHdrGpuDeviceReason(caps.copy(mpvOutputBuilt = false), hdr10Display))
+        assertNull(mpvHdrGpuDeviceReason(caps, emptySet()))
+        assertEquals(MpvHdrGpuReason.SWAPCHAIN_NO_HDR10, mpvHdrGpuDeviceReason(caps.copy(device = caps.device.copy(surfaceColorSpaces = listOf(0))), hdr10Display))
     }
 
     @Test fun passthroughPlansGpuNextOnVulkan() {

@@ -72,10 +72,50 @@ fun youtubeDefaultVideoPreset(decode: YouTubeDecodeCheck): YouTubeVideoPreset = 
  * The target for automatic selection: a chosen preset as is, "automatic" SmartTube's device
  * default; both limited by [maxHeight] (the user's cap or the display, 0 = none).
  */
-fun youtubeVideoTarget(presetKey: String?, maxHeight: Int, decode: YouTubeDecodeCheck): YouTubeVideoPreset {
+fun youtubeVideoTarget(presetKey: String?, maxHeight: Int, decode: YouTubeDecodeCheck, maxFps: Int = 0): YouTubeVideoPreset {
     val preset = youtubeVideoPreset(presetKey) ?: youtubeDefaultVideoPreset(decode)
-    return if (maxHeight > 0 && maxHeight < preset.height) preset.copy(height = maxHeight) else preset
+    val capped = if (maxHeight > 0 && maxHeight < preset.height) preset.copy(height = maxHeight) else preset
+    return if (maxFps > 0 && maxFps < capped.fps) capped.copy(fps = maxFps) else capped
 }
+
+/**
+ * What the display can show for YouTube: the quality step of its resolution ([youtubeAutoMaxHeight],
+ * short side) and the highest frame rate (60 only with a mode of at least 50 Hz at that size).
+ */
+data class YouTubeDisplayLimit(val height: Int, val maxFps: Int)
+
+/**
+ * The display limit under the display-mode policy: the automatic policies switch up to the largest
+ * permitted mode ([whitelist], else all), a fixed mode key pins that mode, "system" keeps [current].
+ * [canSwitchRate] false (adjustment off) leaves only the reference mode's own refresh rate.
+ * Null when no mode is known.
+ */
+fun youtubeDisplayLimit(
+    modes: List<com.ambient.tv.ui.player.SupportedDisplayMode>,
+    current: com.ambient.tv.ui.player.SupportedDisplayMode?,
+    preferredModeKey: String,
+    whitelist: Set<String> = emptySet(),
+    canSwitchRate: Boolean = true,
+): YouTubeDisplayLimit? {
+    val allowed = modes.filter { whitelist.isEmpty() || it.key in whitelist }.ifEmpty { modes }
+    val automatic = preferredModeKey == com.ambient.tv.data.local.AppPreferences.DISPLAY_MODE_AUTO_CONTENT ||
+        preferredModeKey == com.ambient.tv.data.local.AppPreferences.DISPLAY_MODE_AUTO_DISPLAY
+    val reference = when {
+        automatic -> allowed.maxWithOrNull(compareBy<com.ambient.tv.ui.player.SupportedDisplayMode>({ it.width.toLong() * it.height }, { it.refreshRate }))
+        else -> modes.firstOrNull { it.key == preferredModeKey }
+    } ?: current ?: return null
+    val rates = if (canSwitchRate || automatic) {
+        (allowed.filter { it.width == reference.width && it.height == reference.height } + reference)
+    } else listOf(reference)
+    val highFps = rates.any { it.refreshRate >= 49.5f }
+    return YouTubeDisplayLimit(youtubeAutoMaxHeight(minOf(reference.width, reference.height)), if (highFps) 60 else 30)
+}
+
+/**
+ * Media3 has no short-side limit: a square box of the [maxQualityHeight]'s 16:9 width (+5 %)
+ * keeps landscape, cinemascope and portrait streams of that quality step and drops larger ones.
+ */
+fun youtubeMedia3MaxVideoSize(maxQualityHeight: Int): Int = (maxQualityHeight * 16 / 9) * 105 / 100
 
 /** A selectable audio language: the original or a dubbed/described track; [kind] is YouTube's `acont`. */
 data class YouTubeAudioOption(val key: String, val language: String?, val original: Boolean, val kind: String? = null)
@@ -171,8 +211,8 @@ private fun videoKey(format: YouTubeAdaptiveFormat) =
     "v:${format.qualityHeight()}:${format.fps}:${youtubeVideoFamily(format.mimeType)}:${youtubeHdrKind(format.mimeType) ?: "sdr"}"
 
 /** The qualities offered in the player panel, best first. */
-fun youtubeVideoOptions(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck): List<YouTubeVideoOption> =
-    youtubeListedVideos(formats, decode)
+fun youtubeVideoOptions(formats: List<YouTubeAdaptiveFormat>, decode: YouTubeDecodeCheck, limit: YouTubeDisplayLimit? = null): List<YouTubeVideoOption> =
+    youtubeListedVideos(formats, decode).filter { it.fits(limit) }
         .map { YouTubeVideoOption(videoKey(it), it.qualityHeight(), it.fps, youtubeVideoFamily(it.mimeType)!!, youtubeHdrKind(it.mimeType), it.decodable(decode)) }
         .groupBy { it.key }.map { (_, same) -> same.firstOrNull { it.hardware } ?: same.first() }
         .sortedWith(
@@ -189,6 +229,10 @@ private fun fpsLess(a: Int, b: Int) = kotlin.math.abs(a - b) >= 10 && a < b
 /** Within the target: not larger (5 %) and not faster (10 fps) than it. */
 private fun YouTubeAdaptiveFormat.within(target: YouTubeVideoPreset) =
     !sizeLess(target.height, qualityHeight()) && !fpsLess(target.fps, effectiveFps(fps))
+
+/** Within the display's [limit] (null = no limit). */
+private fun YouTubeAdaptiveFormat.fits(limit: YouTubeDisplayLimit?) =
+    limit == null || (!sizeLess(limit.height, qualityHeight()) && !fpsLess(limit.maxFps, effectiveFps(fps)))
 
 /** HDR 3 points, frame rate 2, resolution 1; a tie within one codec goes to the higher bitrate. */
 private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): Int {
@@ -208,9 +252,13 @@ private fun compareVideo(a: YouTubeAdaptiveFormat, b: YouTubeAdaptiveFormat): In
  * of them by HDR, frame rate and resolution; equal ones by codec (VP9, H.264, AV1). Nothing
  * within the target: the smallest playable stream.
  */
-fun youtubePickVideo(formats: List<YouTubeAdaptiveFormat>, key: String, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck): YouTubeAdaptiveFormat? {
+fun youtubePickVideo(
+    formats: List<YouTubeAdaptiveFormat>, key: String, target: YouTubeVideoPreset, decode: YouTubeDecodeCheck,
+    limit: YouTubeDisplayLimit? = null,
+): YouTubeAdaptiveFormat? {
+    // An explicit choice above the display's limit (a remembered 4K pick on a 1080p display) falls back to automatic.
     if (key != YOUTUBE_STREAM_AUTO) {
-        youtubeListedVideos(formats, decode).filter { videoKey(it) == key }
+        youtubeListedVideos(formats, decode).filter { videoKey(it) == key && it.fits(limit) }
             .maxWithOrNull(compareBy<YouTubeAdaptiveFormat> { it.decodable(decode) }.thenBy { it.bitrate })?.let { return it }
     }
     val playable = youtubePlayableVideos(formats, decode)

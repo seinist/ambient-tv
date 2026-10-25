@@ -767,6 +767,8 @@
     <string name="settings_youtube_video_preset">Videoformat (Zielauflösung, Bildrate und Codec)</string>
     <string name="settings_youtube_video_preset_auto">Automatisch (%1$s)</string>
     <string name="settings_youtube_max_resolution">Maximale Videoauflösung</string>
+    <string name="settings_youtube_max_resolution_display">Display (empfohlen)</string>
+    <string name="settings_youtube_max_resolution_display_hint">Nie höher als dein Fernseher darstellen kann. Kein 4K auf einem 1080p-Display.</string>
     <string name="settings_youtube_quality_hint">Qualität und Codec wählst du im SmartTube-Player aus den verfügbaren Spuren.</string>
     <string name="settings_spotify_enable">Spotify aktivieren</string>
     <string name="settings_spotify_enable_hint">Spotify als eigenständiges System und Connect-Empfänger anzeigen.</string>

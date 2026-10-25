@@ -455,8 +455,9 @@ private fun youtubeWithStreamChoice(
     // The engine's pick is SDR; with HDR allowed "automatic" is chosen again here.
     if (playback.isLive || (videoKey == auto && audioKey == auto && !hdrAllowed)) return playback
     val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
-    val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxHeightPreference)
-    val video = com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, target, decode)?.url
+    val limit = com.ambient.tv.youtube.YouTubeDeviceVideo.displayLimit(context)
+    val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(presetKey, maxHeightPreference, limit, com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck())
+    val video = com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, videoKey, target, decode, limit)?.url
     val audio = com.ambient.tv.youtube.youtubePickAudio(playback.adaptiveFormats, audioKey)?.url
     return if (video != null && audio != null) playback.copy(adaptiveVideoUri = video, adaptiveAudioUri = audio) else playback
 }
@@ -478,10 +479,11 @@ private fun rememberYouTubeStreamPanel(
     val auto = com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO
     val choices = remember(playback.adaptiveFormats, presetKey, maxHeightPreference, hdrAllowed) {
         val decode = com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck(context, hdrAllowed)
-        val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxHeightPreference)
+        val limit = com.ambient.tv.youtube.YouTubeDeviceVideo.displayLimit(context)
+        val target = com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(presetKey, maxHeightPreference, limit, com.ambient.tv.youtube.YouTubeDeviceVideo.decodeCheck())
         Triple(
-            com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, auto, target, decode),
-            com.ambient.tv.youtube.youtubeVideoOptions(playback.adaptiveFormats, decode),
+            com.ambient.tv.youtube.youtubePickVideo(playback.adaptiveFormats, auto, target, decode, limit),
+            com.ambient.tv.youtube.youtubeVideoOptions(playback.adaptiveFormats, decode, limit),
             com.ambient.tv.youtube.youtubeAudioOptions(playback.adaptiveFormats),
         )
     }
