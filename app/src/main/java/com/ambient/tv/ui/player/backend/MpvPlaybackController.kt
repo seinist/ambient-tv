@@ -287,6 +287,7 @@ class MpvPlaybackController(
     override fun pause() { playIntent = false; command("play-state") { pause() } }
     override fun setOutputMuted(muted: Boolean) { command("output-mute") { setOutputMuted(muted) } }
     override fun reopenGeneration() = state.reopenGeneration
+    override fun reopenAudioOutput() { command("ao-reload") { reopenAudioOutput() } }
     fun playPause() { if (wantsToPlay()) pause() else play() }
     /** Target of a seek the engine has not applied yet; quick repeated steps build on it. */
     private var pendingSeekTargetMs: Long? = null

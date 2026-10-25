@@ -361,6 +361,7 @@
     <string name="player_output_hdr_gpu_reduced">Process HDR on the GPU: off in Low performance mode.</string>
     <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR output was not confirmed, using the direct surface.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">Process HDR on the GPU: the Vulkan output failed for this title, using the direct surface.</string>
+    <string name="player_output_hdr_gpu_opengl_fallback">Process HDR on the GPU: the OpenGL HDR output (EGL PQ) failed for this title, using the direct surface.</string>
     <string name="player_output_hdr_gpu_checking">Process HDR on the GPU: HDR10 plays through Vulkan (gpu-next), the HDR output is being confirmed.</string>
     <string name="player_output_hdr_gpu_overload">Process HDR on the GPU: too many dropped frames, using the direct surface.</string>
     <string name="image_mpv_hdr_passthrough">HDR output through the GPU: sharpening, deband and the RAVU Lite / FSR upscalers apply. Film grain is off here; denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>

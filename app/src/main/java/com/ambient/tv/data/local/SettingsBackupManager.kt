@@ -17,7 +17,7 @@ import com.ambient.tv.ui.theme.normalizedAccentKey
 @Serializable
 @OptIn(ExperimentalSerializationApi::class)
 data class SettingsBackup(
-    val schemaVersion: Int = 66,
+    val schemaVersion: Int = 67,
     val trailersEnabled: Boolean = true,
     val trailerLanguage: String = "auto",
     val tmdbApiKey: String? = null,
@@ -74,6 +74,7 @@ data class SettingsBackup(
     val allowDoubleRefreshRate: Boolean = true,
     val allowThreeTwoPulldown: Boolean = true,
     val displaySwitchPauseMs: Int = 0,
+    val syncPlaybackToDisplay: Boolean = false,
     val mediaSelectionBehaviorKey: String = MediaSelectionPreferences.DETAILS,
     val showLibraryRowsOnHome: Boolean = false,
     @SerialName("showContinueWatchingHub") val showContinueWatchingRow: Boolean = true,
@@ -363,6 +364,7 @@ class SettingsBackupManager @Inject constructor(
             allowDoubleRefreshRate = preferences.allowDoubleRefreshRate,
             allowThreeTwoPulldown = preferences.allowThreeTwoPulldown,
             displaySwitchPauseMs = preferences.displaySwitchPauseMs,
+            syncPlaybackToDisplay = preferences.syncPlaybackToDisplay,
             mediaSelectionBehaviorKey = preferences.mediaSelectionBehaviorKey,
             showLibraryRowsOnHome = preferences.showLibraryRowsOnHome,
             showContinueWatchingRow = preferences.showContinueWatchingRow,
@@ -845,6 +847,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.gpuRenderResolutionKey = if (schema66) backup.gpuRenderResolutionKey else AppPreferences.GPU_RENDER_AUTO
         preferences.mpvSdrCurveKey = if (schema66) backup.mpvSdrCurveKey else AppPreferences.MPV_SDR_CURVE_AUTO
         preferences.svpExplicitChoice = schema66 && backup.svpExplicitChoice
+        // "An Display synchronisieren" since schema 67; older backups restore "off".
+        preferences.syncPlaybackToDisplay = backup.schemaVersion >= 67 && backup.syncPlaybackToDisplay
         preferences.wolRetryCount = backup.wolRetryCount
         if (backup.homeRows != null) preferences.homeRows = backup.homeRows
         else preferences.resetHomeRowsToLegacy()
@@ -884,7 +888,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 66
+        const val CURRENT_SCHEMA_VERSION = 67
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

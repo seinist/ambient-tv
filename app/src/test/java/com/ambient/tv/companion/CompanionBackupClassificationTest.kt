@@ -1,6 +1,7 @@
 package com.ambient.tv.companion
 
 import com.ambient.tv.data.local.SettingsBackup
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,7 +36,7 @@ class CompanionBackupClassificationTest {
         fun merged(source: SettingsBackup, device: Boolean) = json.decodeFromString<SettingsBackup>(
             CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = device)).sdrToHdrReferenceWhiteNits
         assertTrue("sdrToHdrReferenceWhiteNits" in CompanionBackupPolicy.classifiedFields)
-        assertEquals(66, SettingsBackup(exportedAtEpochMs = 0).schemaVersion)
+        assertEquals(67, SettingsBackup(exportedAtEpochMs = 0).schemaVersion)
         assertEquals(300, merged(source, device = true))
         assertEquals(100, merged(source, device = false))
         assertEquals(100, merged(source.copy(schemaVersion = 64), device = true))
@@ -56,5 +57,18 @@ class CompanionBackupClassificationTest {
         assertTrue(device.allowHighRefreshDoubling && device.svpExplicitChoice)
         assertEquals("auto", merged(source, device = false).gpuRenderResolutionKey)
         assertEquals("auto", merged(source.copy(schemaVersion = 65), device = true).mpvSdrCurveKey)
+    }
+
+    @Test fun syncPlaybackToDisplayTravelsOnlyWithDeviceSettingsFromSchema67() {
+        val json = CompanionBackupPolicy.json
+        val target = SettingsBackup(exportedAtEpochMs = 1, syncPlaybackToDisplay = false)
+        val source = SettingsBackup(exportedAtEpochMs = 2, syncPlaybackToDisplay = true)
+        fun merged(source: SettingsBackup, device: Boolean) = json.decodeFromString<SettingsBackup>(
+            CompanionBackupPolicy.merge(source, target, "preferences", overwrite = true, deviceSettings = device)).syncPlaybackToDisplay
+        assertTrue("syncPlaybackToDisplay" in CompanionBackupPolicy.classifiedFields)
+        assertEquals(67, SettingsBackup(exportedAtEpochMs = 0).schemaVersion)
+        assertTrue(merged(source, device = true))
+        assertFalse(merged(source, device = false))
+        assertFalse(merged(source.copy(schemaVersion = 66), device = true))
     }
 }

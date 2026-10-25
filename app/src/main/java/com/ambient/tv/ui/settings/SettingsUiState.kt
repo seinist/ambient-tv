@@ -103,6 +103,7 @@ data class SettingsUiState(
     val allowDoubleRefreshRate: Boolean = true,
     val allowThreeTwoPulldown: Boolean = true,
     val displaySwitchPauseMs: Int = 0,
+    val syncPlaybackToDisplay: Boolean = false,
     val mediaSelectionBehaviorKey: String = MediaSelectionPreferences.DETAILS,
     val homeRows: List<HomeRowDefinition> = emptyList(),
     /** Rows switched off on a media server's own start page, as "system.rowType". */
@@ -315,6 +316,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     allowDoubleRefreshRate,
     allowThreeTwoPulldown,
     displaySwitchPauseMs,
+    syncPlaybackToDisplay,
     mediaSelectionBehaviorKey,
     homeRows,
     systemHomeHiddenRows,
@@ -480,6 +482,7 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     allowDoubleRefreshRate = if (draft.allowDoubleRefreshRate != baseline.allowDoubleRefreshRate) draft.allowDoubleRefreshRate else stored.allowDoubleRefreshRate,
     allowThreeTwoPulldown = if (draft.allowThreeTwoPulldown != baseline.allowThreeTwoPulldown) draft.allowThreeTwoPulldown else stored.allowThreeTwoPulldown,
     displaySwitchPauseMs = if (draft.displaySwitchPauseMs != baseline.displaySwitchPauseMs) draft.displaySwitchPauseMs else stored.displaySwitchPauseMs,
+    syncPlaybackToDisplay = if (draft.syncPlaybackToDisplay != baseline.syncPlaybackToDisplay) draft.syncPlaybackToDisplay else stored.syncPlaybackToDisplay,
     mediaSelectionBehaviorKey = if (draft.mediaSelectionBehaviorKey != baseline.mediaSelectionBehaviorKey) draft.mediaSelectionBehaviorKey else stored.mediaSelectionBehaviorKey,
     homeRows = if (draft.homeRows != baseline.homeRows) draft.homeRows else stored.homeRows,
     systemHomeHiddenRows = if (draft.systemHomeHiddenRows != baseline.systemHomeHiddenRows) draft.systemHomeHiddenRows else stored.systemHomeHiddenRows,

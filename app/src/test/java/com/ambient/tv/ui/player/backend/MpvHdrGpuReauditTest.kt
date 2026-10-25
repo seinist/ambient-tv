@@ -164,7 +164,7 @@ class MpvHdrGpuReauditTest {
         assertEquals("direct", mpvHdrGpuOutputMode(decide(HdrStandard.HDR10, failure = MpvHdrGpuReason.VULKAN_FALLBACK),
             "auto", MpvHdrGpuReason.VULKAN_FALLBACK))
         val engine = File("src/main/java/com/ambient/tv/ui/player/backend/MpvPlaybackEngine.kt").readText()
-        assertTrue(engine.contains("failHdrPassthrough(MpvHdrGpuReason.VULKAN_FALLBACK)"))
+        assertTrue(engine.contains("failHdrPassthrough(if (acceleration.vulkan) MpvHdrGpuReason.VULKAN_FALLBACK else MpvHdrGpuReason.OPENGL_FALLBACK)"))
     }
 
     // G5: live keys --------------------------------------------------------------------------------

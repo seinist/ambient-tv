@@ -15,6 +15,7 @@
     <string name="player_output_hdr_gpu_reduced">Process HDR on the GPU: off in Low performance mode.</string>
     <string name="player_output_hdr_gpu_not_confirmed">Process HDR on the GPU: HDR10 output surface not confirmed; using the direct surface.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">Process HDR on the GPU: the Vulkan output failed for this title, using the direct surface.</string>
+    <string name="player_output_hdr_gpu_opengl_fallback">Process HDR on the GPU: the OpenGL HDR output (EGL PQ) failed for this title, using the direct surface.</string>
     <string name="player_output_hdr_gpu_checking">Process HDR on the GPU: checking the HDR10 output surface (Vulkan). Physical display mode unknown.</string>
     <string name="player_output_hdr_gpu_display_switched">Process HDR on the GPU: HDR10 output surface confirmed (PQ/BT.2020), the display reports HDR mode.</string>
     <string name="player_output_hdr_gpu_display_waiting">Process HDR on the GPU: HDR10 output surface confirmed, but the display still reports SDR. Waiting for the HDR switch…</string>

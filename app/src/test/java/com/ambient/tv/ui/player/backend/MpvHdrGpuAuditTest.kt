@@ -72,10 +72,10 @@ class MpvHdrGpuAuditTest {
     }
 
     @Test fun passthroughNeverTakesTheOpenGlFallback() {
-        assertTrue(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, vulkan = true, released = false))
-        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, vulkan = true, released = true))
-        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = false, vulkan = true, released = false))
-        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, vulkan = false, released = false))
+        assertTrue(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, gpuOutput = true, released = false))
+        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, gpuOutput = true, released = true))
+        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = false, gpuOutput = true, released = false))
+        assertFalse(mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough = true, gpuOutput = false, released = false))
     }
 
     // M1 ---------------------------------------------------------------------------------------

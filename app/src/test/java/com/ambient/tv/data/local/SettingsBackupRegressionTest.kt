@@ -217,7 +217,7 @@ class SettingsBackupRegressionTest {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("66", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("67", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)
@@ -227,6 +227,18 @@ class SettingsBackupRegressionTest {
         assertEquals(600, target.sdrToHdrReferenceWhiteNits)
         target.sdrToHdrReferenceWhiteNits = -3
         assertEquals(0, target.sdrToHdrReferenceWhiteNits)
+    }
+
+    @Test fun syncPlaybackToDisplayRoundTripsAndOlderBackupsRestoreOff() {
+        val (source, _, exporter) = store()
+        assertFalse(source.syncPlaybackToDisplay)
+        source.syncPlaybackToDisplay = true
+        val json = exporter.exportJson()
+        val (target, _, importer) = store()
+        importer.importJson(json)
+        assertTrue(target.syncPlaybackToDisplay)
+        importer.importJson("""{"schemaVersion":66,"exportedAtEpochMs":0,"syncPlaybackToDisplay":true}""")
+        assertFalse(target.syncPlaybackToDisplay)
     }
 
     @Test fun oldBackupDoesNotClearSplitPerformanceModes() {

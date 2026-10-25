@@ -32,14 +32,21 @@ enum class MpvHdrGpuReason {
     DISPLAY_NOT_SWITCHED,
     /** The Vulkan output failed for this title (surface or VO init); kept for the media only. */
     VULKAN_FALLBACK,
+    /** The OpenGL/EGL PQ output (no Vulkan HDR10) failed for this title; kept for the media only. */
+    OPENGL_FALLBACK,
     /** Sustained dropped frames on the GPU path with nothing left to reduce. */
     OVERLOAD,
 }
 
-data class MpvHdrGpuDecision(val gpu: Boolean, val reason: MpvHdrGpuReason?) {
+/**
+ * [openGl]: the passthrough runs on vo=gpu/EGL with an EGL_EXT_gl_colorspace_bt2020_pq window
+ * surface (Kodi's GLES route) because Vulkan offers no HDR10 swapchain on this device.
+ */
+data class MpvHdrGpuDecision(val gpu: Boolean, val reason: MpvHdrGpuReason?, val openGl: Boolean = false) {
     companion object {
         val NOT_APPLICABLE = MpvHdrGpuDecision(false, null)
         val GPU = MpvHdrGpuDecision(true, null)
+        val GPU_OPENGL = MpvHdrGpuDecision(true, null, openGl = true)
         fun direct(reason: MpvHdrGpuReason) = MpvHdrGpuDecision(false, reason)
     }
 }
@@ -68,19 +75,26 @@ internal fun mpvHdrGpuDecision(
     tvDevice: Boolean = true,
 ): MpvHdrGpuDecision {
     if (!enabled || !tvDevice || source == null) return MpvHdrGpuDecision.NOT_APPLICABLE
+    val vulkanReason = when {
+        !capabilities.mpvVulkanOutput -> MpvHdrGpuReason.VULKAN_UNAVAILABLE
+        capabilities.device.hdr10SurfaceSupported == false -> MpvHdrGpuReason.SWAPCHAIN_NO_HDR10
+        else -> null
+    }
+    // No Vulkan HDR10: an EGL BT2020_PQ window surface with a 10-bit config carries PQ instead.
+    val openGl = vulkanReason != null && capabilities.checked && capabilities.eglHdr10Pq
     return when {
         source == HdrStandard.DOLBY_VISION -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.DOLBY_VISION)
         // HDR10+ on a display without HDR10+ reaches the panel as HDR10 anyway.
         source == HdrStandard.HLG || (source == HdrStandard.HDR10_PLUS && HdrStandard.HDR10_PLUS in display) ->
             MpvHdrGpuDecision.direct(MpvHdrGpuReason.NOT_HDR10)
         HdrStandard.HDR10 !in display -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.DISPLAY_NO_HDR10)
-        !capabilities.mpvVulkanOutput -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.VULKAN_UNAVAILABLE)
-        capabilities.device.hdr10SurfaceSupported == false -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.SWAPCHAIN_NO_HDR10)
+        vulkanReason != null && !openGl -> MpvHdrGpuDecision.direct(vulkanReason)
         // A runtime failure also routes this playback to "Direkt"; keep naming the cause.
         failure != null -> MpvHdrGpuDecision.direct(failure)
         output == "direct" && explicitDirect -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.OUTPUT_DIRECT)
         reducedEffects -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.REDUCED_EFFECTS)
         !effectsActive -> MpvHdrGpuDecision.direct(MpvHdrGpuReason.NO_EFFECTS)
+        openGl -> MpvHdrGpuDecision.GPU_OPENGL
         else -> MpvHdrGpuDecision.GPU
     }
 }
@@ -104,9 +118,12 @@ internal fun mpvHdrGpuEffectsActive(options: com.ambient.tv.data.local.MpvImageO
         mpvImageShaderKeys(options, sdr = false, upscaling = true, fittedScale = fittedScale, svpActive = false,
             hdr = true, gpuNext = true, pqOutput = true).isNotEmpty()
 
-/** Output handed to the controller: Vulkan for the passthrough, "Direkt" after a recorded failure. */
+/**
+ * Output handed to the controller: Vulkan (or OpenGL/EGL PQ) for the passthrough, "Direkt"
+ * after a recorded failure.
+ */
 internal fun mpvHdrGpuOutputMode(decision: MpvHdrGpuDecision, configured: String, failure: MpvHdrGpuReason?): String = when {
-    decision.gpu -> "vulkan"
+    decision.gpu -> if (decision.openGl) "gpu" else "vulkan"
     failure != null && decision.reason == failure -> "direct"
     else -> configured
 }
@@ -128,9 +145,24 @@ internal fun mpvHdrFailureHold(playIntent: Boolean, attached: Boolean = true): M
 internal fun mpvHdrNativePlayAllowed(playIntent: Boolean, failure: MpvHdrGpuReason?, attached: Boolean): Boolean =
     playIntent && (failure == null || !attached)
 
-/** OpenGL cannot signal HDR on Android: a passthrough player never takes the OpenGL fallback. */
-internal fun mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough: Boolean, vulkan: Boolean, released: Boolean): Boolean =
-    hdrGpuPassthrough && vulkan && !released
+/**
+ * A plain OpenGL surface cannot signal HDR: a passthrough player never takes the generic OpenGL
+ * fallback. [gpuOutput]: the passthrough runs on Vulkan or on the EGL PQ surface; either failure
+ * reopens the title on the direct surface instead.
+ */
+internal fun mpvHdrPassthroughBlocksGlFallback(hdrGpuPassthrough: Boolean, gpuOutput: Boolean, released: Boolean): Boolean =
+    hdrGpuPassthrough && gpuOutput && !released
+
+/**
+ * Options for the EGL PQ route (vo=gpu): mpv renders PQ/BT.2020 into a 10-bit EGL window surface;
+ * the native patch tags it EGL_GL_COLORSPACE_BT2020_PQ_EXT and adds SMPTE 2086/CTA 861.3 metadata.
+ */
+internal val MPV_HDR_OPENGL_OPTIONS = linkedMapOf(
+    "target-prim" to "bt.2020",
+    "target-trc" to "pq",
+    "egl-output-format" to "rgb10_a2",
+    "hdr-compute-peak" to "no",
+)
 
 /**
  * What a runtime source reading means for "HDR über GPU": Dolby Vision (any profile reported by

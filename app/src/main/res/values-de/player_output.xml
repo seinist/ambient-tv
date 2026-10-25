@@ -15,6 +15,7 @@
     <string name="player_output_hdr_gpu_reduced">HDR über GPU: im Modus Sparsam aus.</string>
     <string name="player_output_hdr_gpu_not_confirmed">HDR über GPU: HDR10-Ausgabefläche nicht bestätigt; die direkte Fläche wird genutzt.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">HDR über GPU: Die Vulkan-Ausgabe ist für diesen Titel ausgefallen, die direkte Fläche wird genutzt.</string>
+    <string name="player_output_hdr_gpu_opengl_fallback">HDR über GPU: Die OpenGL-HDR-Ausgabe (EGL PQ) ist für diesen Titel ausgefallen, die direkte Fläche wird genutzt.</string>
     <string name="player_output_hdr_gpu_checking">HDR über GPU: HDR10-Ausgabefläche wird geprüft (Vulkan). Tatsächlicher Display-Modus unbekannt.</string>
     <string name="player_output_hdr_gpu_display_switched">HDR über GPU: HDR10-Ausgabefläche bestätigt (PQ/BT.2020), das Display meldet den HDR-Modus.</string>
     <string name="player_output_hdr_gpu_display_waiting">HDR über GPU: HDR10-Ausgabefläche bestätigt, das Display meldet aber noch SDR. Warte auf die HDR-Umschaltung …</string>

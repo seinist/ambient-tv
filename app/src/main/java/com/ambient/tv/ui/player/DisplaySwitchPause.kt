@@ -70,6 +70,8 @@ internal interface DisplaySwitchPlayer {
     fun setOutputMuted(muted: Boolean)
     /** Bumped by the engine whenever it reopens the stream on its own (decoder switch, fallback). */
     fun reopenGeneration(): Int = 0
+    /** HDMI audio came back after the switch ([HdmiAudioWatch]); the engine reopens its sink. */
+    fun reopenAudioOutput() = Unit
 }
 
 internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
@@ -82,6 +84,7 @@ internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
         override fun seekTo(positionMs: Long) = handle.seekTo(positionMs)
         override fun setOutputMuted(muted: Boolean) = handle.setOutputMuted(muted)
         override fun reopenGeneration() = handle.reopenGeneration()
+        override fun reopenAudioOutput() = handle.reopenAudioOutput()
     }
 }
 
@@ -90,6 +93,8 @@ internal fun PlaybackHandle.asDisplaySwitchPlayer(): DisplaySwitchPlayer {
  * DisplayManager confirmation (bounded), wait the configured delay, then resume.
  * A user play/seek while paused ends the hold without auto-resume. When [stillOwned] is false
  * (title or engine changed) nothing is resumed. Other cancellation resumes immediately.
+ * With [hdmiAudio] the resume also waits for HDMI audio to come back (at least its minimum wait
+ * after the request) and reopens the audio output first, like Kodi after a refresh change.
  */
 internal suspend fun holdForDisplaySwitch(
     player: DisplaySwitchPlayer,
@@ -99,23 +104,41 @@ internal suspend fun holdForDisplaySwitch(
     request: () -> Unit,
     awaitConfirmed: suspend (timeoutMs: Long) -> Boolean,
     stillOwned: () -> Boolean,
+    hdmiAudio: HdmiAudioWatch? = null,
+    nowMs: () -> Long = android.os.SystemClock::elapsedRealtime,
 ): DisplaySwitchOutcome {
     val effective = if (hold == DisplaySwitchHold.PAUSE && !player.wantsToPlay()) DisplaySwitchHold.NONE else hold
     if (effective == DisplaySwitchHold.NONE) {
-        request()
+        if (hdmiAudio == null) {
+            request()
+            return DisplaySwitchOutcome.NOT_HELD
+        }
+        // Not held, but the sink can still drop out: reopen it once HDMI audio is back.
+        hdmiAudio.start()
+        try {
+            val requestedAt = nowMs()
+            request()
+            if (awaitHdmiAudioAfterSwitch(hdmiAudio, requestedAt, nowMs) && stillOwned()) player.reopenAudioOutput()
+        } finally {
+            hdmiAudio.stop()
+        }
         return DisplaySwitchOutcome.NOT_HELD
     }
     var pausedAt = player.positionMs()
     var generation = player.reopenGeneration()
     var userTookOver = false
     var completed = false
+    var audioReplugged = false
     if (effective == DisplaySwitchHold.PAUSE) player.pause() else player.setOutputMuted(true)
+    hdmiAudio?.start()
     try {
+        val requestedAt = if (hdmiAudio != null) nowMs() else 0L
         request()
         val confirmed = coroutineScope {
             val waiting = async {
                 val ok = awaitConfirmed(DisplaySwitchPause.CONFIRM_TIMEOUT_MS)
                 delay(delayMs.toLong())
+                if (hdmiAudio != null) audioReplugged = awaitHdmiAudioAfterSwitch(hdmiAudio, requestedAt, nowMs)
                 ok
             }
             while (waiting.isActive) {
@@ -143,7 +166,9 @@ internal suspend fun holdForDisplaySwitch(
         }
     } finally {
         withContext(NonCancellable) {
+            hdmiAudio?.stop()
             val owned = stillOwned()
+            if (audioReplugged && owned) runCatching { player.reopenAudioOutput() }
             if (effective == DisplaySwitchHold.MUTE) {
                 // Unmute even when the title changed: the engine can be reused by the next title.
                 runCatching { player.setOutputMuted(false) }

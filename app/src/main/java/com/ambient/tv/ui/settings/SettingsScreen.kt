@@ -845,6 +845,12 @@ fun SettingsScreen(
                                             checked = uiState.allowThreeTwoPulldown,
                                             onCheckedChange = viewModel::onAllowThreeTwoPulldownChanged,
                                         )
+                                        TvSettingRow(
+                                            title = stringResource(R.string.settings_display_sync_playback),
+                                            body = stringResource(R.string.settings_display_sync_playback_hint),
+                                            checked = uiState.syncPlaybackToDisplay,
+                                            onCheckedChange = viewModel::onSyncPlaybackToDisplayChanged,
+                                        )
                                         if (com.ambient.tv.ui.player.displaySwitchPauseVisible(supportedDisplayModes.size,
                                                 uiState.displayRefreshAdjustmentKey, uiState.preferredDisplayModeKey)) {
                                             com.ambient.tv.ui.player.DisplaySwitchPauseSlider(

@@ -50,10 +50,12 @@ internal fun PlayerVideoOutputControls(backend: String) {
             caps, reducedVideoEffects(context), failure, explicitDirect = explicit, effectsActive = effectsActive, tvDevice = tvDevice)
     val hdrGpu = hdrGpuFor(settings.mpvOutput, explicitDirect)
     // With "Direkt" chosen the passthrough must stay selectable again.
-    val hdrGpuAvailable = hdrGpuFor("vulkan", explicit = false).gpu
+    val hdrGpuProbe = hdrGpuFor("vulkan", explicit = false)
+    val hdrGpuAvailable = hdrGpuProbe.gpu
     val nativeHdr = nativeHdrSurfacePreferred(source, display) && !hdrGpu.gpu
     val output = if (mpv) settings.mpvOutput else settings.vlcOutput
-    val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr && !hdrGpuAvailable, hdrGpuAvailable)
+    val disabledOutputs = disabledPlayerVideoOutputs(backend, caps, nativeHdr && !hdrGpuAvailable,
+        hdrGpuAvailable && !hdrGpuProbe.openGl)
     val outputs = buildList {
         add("auto" to stringResource(R.string.player_automatic))
         if (mpv) {
@@ -147,6 +149,7 @@ internal fun mpvHdrGpuReasonRes(reason: com.ambient.tv.ui.player.backend.MpvHdrG
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.NOT_CONFIRMED -> R.string.player_output_hdr_gpu_not_confirmed
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.DISPLAY_NOT_SWITCHED -> R.string.player_output_hdr_gpu_display_not_switched
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.VULKAN_FALLBACK -> R.string.player_output_hdr_gpu_vulkan_fallback
+    com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OPENGL_FALLBACK -> R.string.player_output_hdr_gpu_opengl_fallback
     com.ambient.tv.ui.player.backend.MpvHdrGpuReason.OVERLOAD -> R.string.player_output_hdr_gpu_overload
 }
 

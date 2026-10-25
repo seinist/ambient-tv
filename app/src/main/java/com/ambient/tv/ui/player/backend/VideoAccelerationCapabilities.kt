@@ -65,12 +65,13 @@ object VideoAccelerationRuntime {
                     val instance = LibVLC(context.applicationContext, arrayListOf("--verbose=0"))
                     try { VulkanNativeProbe.vlcModules() } finally { instance.release() }
                 }.getOrDefault(false) else false
-                VideoAccelerationCapabilities(true, device, mpv and 1 != 0, mpv and 2 != 0, vlc).also {
+                val eglPq = MpvEglHdrProbe.hdr10Pq()
+                VideoAccelerationCapabilities(true, device, mpv and 1 != 0, mpv and 2 != 0, vlc, eglPq).also {
                     if (mutable.value.device.device != device.device || mutable.value.device.version != device.version)
                         mutableEvidence.value = emptyMap()
                     mutable.value = it
-                    Timber.i("VULKAN capabilities device=%s render=%s profiles=%s mpv=%d vlc=%s reason=%s",
-                        device.device, device.render, device.profiles, mpv, vlc, device.reason)
+                    Timber.i("VULKAN capabilities device=%s render=%s profiles=%s mpv=%d vlc=%s reason=%s eglPq=%s",
+                        device.device, device.render, device.profiles, mpv, vlc, device.reason, eglPq)
                 }
             } finally { mutableChecking.value = false }
         }
