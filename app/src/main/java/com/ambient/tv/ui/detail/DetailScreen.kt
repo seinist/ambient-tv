@@ -216,7 +216,7 @@ private fun DetailLoadingSkeleton(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current || com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current
+    val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current
     Box(modifier = Modifier.fillMaxSize().background(if (visibleBackgroundVideo) Color.Transparent else MaterialTheme.colorScheme.background)) {
         Box(
             Modifier
@@ -339,7 +339,7 @@ private fun DetailContent(
         ).hasMenuActions
     }
     var moreOpened by remember(item.ratingKey) { mutableStateOf(false) }
-    val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current || com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current
+    val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current
     // Both utility actions sit in an overlay above the list. Give their Down navigation an
     // explicit destination instead of making Compose infer one from distant geometry.
     val initialActionFocus = remember(item.ratingKey) { FocusRequester() }
