@@ -656,7 +656,7 @@ private fun TvheadendPlaybackSurface(
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(player.currentPosition, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(player.currentPosition, direction)
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
                 override fun play() { player.play() }

@@ -878,7 +878,7 @@ private fun YouTubeMedia3Playback(
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(position, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(position, direction)
                 override fun isPlaying() = player.isPlaying
                 override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
                 override fun play() { player.play() }
@@ -1183,7 +1183,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(displayedPosition, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }
@@ -1441,7 +1441,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             OsdKeyState(OsdContent.VIDEO, controls, panelOpen, seekModeVisible),
             OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(displayedPosition, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }

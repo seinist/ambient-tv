@@ -285,7 +285,7 @@ internal fun MpvTvheadendPlaybackSurface(
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(controller.positionMs(), direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(controller.positionMs(), direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }

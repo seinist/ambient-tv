@@ -70,4 +70,10 @@ class PlaybackTimelineTest {
         val blank = VideoChapter(4_000, "Arrival", "")
         assertEquals(sprite().frameAt(4_000), PlaybackTimeline(listOf(blank), sprite()).chapterFrame(blank))
     }
+    @Test fun generatedChapterNamesAreNotShownAsTitles() {
+        listOf("Chapter 3", "kapitel 03", "Ch. 2", "12", "00:12:00.000", "1:05", " ", null)
+            .forEach { assertNull(it, VideoChapter(0, it).meaningfulTitle) }
+        assertEquals("Chapter 3: The Heist", VideoChapter(0, " Chapter 3: The Heist ").meaningfulTitle)
+        assertEquals("Intro", VideoChapter(0, "Intro").meaningfulTitle)
+    }
 }

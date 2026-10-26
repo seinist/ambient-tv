@@ -316,7 +316,7 @@ internal fun VlcTvheadendPlaybackSurface(
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(controller.status().positionMs, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(controller.status().positionMs, direction)
                 override fun isPlaying() = snapshot.isPlaying
                 override fun togglePlayback() { controller.playPause() }
                 override fun play() { controller.play() }

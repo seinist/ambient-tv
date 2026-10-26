@@ -50,3 +50,9 @@ data class PlaybackTimeline(val chapters: List<VideoChapter> = emptyList(), val 
 
 private fun chapterImageFrame(chapter: VideoChapter?): PreviewFrame? =
     chapter?.imageUrl?.takeIf { it.isNotBlank() }?.let { PreviewFrame(it) }
+
+private val GENERIC_CHAPTER_TITLE = Regex("""^\s*((chapter|kapitel|chap|ch|cap[ií]tulo|chapitre)\.?\s*#?\s*)?\d+\s*$|^\s*\d{1,2}(:\d{2}){1,2}([.,]\d+)?\s*$""", RegexOption.IGNORE_CASE)
+
+/** Server-generated names like "Chapter 3" or "00:12:00.000" carry nothing worth showing. */
+val VideoChapter.meaningfulTitle: String?
+    get() = title?.trim()?.takeIf { it.isNotEmpty() && !GENERIC_CHAPTER_TITLE.matches(it) }

@@ -599,7 +599,7 @@ private fun PlayerContent(
             OsdKeyState(OsdContent.VIDEO, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekFeedbackVisible),
             OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
-                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.timeline?.chapterStepDelta(seek.positionMs, direction)
+                override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
                 // Buffering counts as playing for the explicit play/pause action.
                 override fun isPlaying() = media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)
                 override fun togglePlayback() {
@@ -1145,23 +1145,46 @@ internal fun TvPlayerSeekBar(
     ) {
         timelineContext?.invoke(displayedPosition)
         SeekPreview(if (!interactive) positionMs else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
+        if (timelineContext == null) CurrentChapterLabel(displayedPosition)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (highlighted) 9.dp else 6.dp)
-                .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
+                .height(if (highlighted) 9.dp else 6.dp),
         ) {
+            // Offscreen so chapter gaps can be cut out of track and progress alike.
             Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .fillMaxHeight()
-                    .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, RoundedCornerShape(50)),
-            )
-            if (durationMs > 0 && navigation != null) {
-                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-                    navigation.timeline.chapters.forEach { chapter ->
-                        val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * size.width
-                        drawLine(Color.Black.copy(alpha = 0.7f), androidx.compose.ui.geometry.Offset(x, 0f), androidx.compose.ui.geometry.Offset(x, size.height), 2.dp.toPx())
+                Modifier.matchParentSize()
+                    .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                    .background(Color.White.copy(alpha = 0.24f), RoundedCornerShape(50)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress)
+                        .fillMaxHeight()
+                        .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, RoundedCornerShape(50)),
+                )
+                if (durationMs > 0 && navigation != null) {
+                    val timeline = navigation.timeline
+                    val current = timeline.chapterAt(displayedPosition)
+                    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                        fun x(ms: Long) = (ms.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * size.width
+                        timeline.segments.forEach { segment ->
+                            val end = if (segment.endMs < 0) durationMs else segment.endMs
+                            drawRect(Color(0xFFFFD54F).copy(alpha = 0.35f), androidx.compose.ui.geometry.Offset(x(segment.startMs), 0f),
+                                androidx.compose.ui.geometry.Size(x(end) - x(segment.startMs), size.height))
+                        }
+                        if (highlighted && current != null) {
+                            val next = timeline.chapters.firstOrNull { it.startMs > current.startMs }?.startMs ?: durationMs
+                            val end = current.endMs?.takeIf { it > current.startMs }?.coerceAtMost(next) ?: next
+                            drawRect(Color.White.copy(alpha = 0.18f), androidx.compose.ui.geometry.Offset(x(current.startMs), 0f),
+                                androidx.compose.ui.geometry.Size(x(end) - x(current.startMs), size.height))
+                        }
+                        timeline.chapters.forEach { chapter ->
+                            if (chapter.startMs <= 0) return@forEach
+                            val cx = x(chapter.startMs)
+                            drawLine(Color.Black, androidx.compose.ui.geometry.Offset(cx, 0f), androidx.compose.ui.geometry.Offset(cx, size.height),
+                                2.5.dp.toPx(), blendMode = androidx.compose.ui.graphics.BlendMode.Clear)
+                        }
                     }
                 }
             }

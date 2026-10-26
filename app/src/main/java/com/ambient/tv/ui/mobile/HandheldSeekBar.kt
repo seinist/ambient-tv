@@ -63,6 +63,7 @@ fun HandheldSeekBar(
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         SeekPreview(dragFraction?.let { shownPosition }, durationMs)
+        com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition)
         Box(
             Modifier
                 .fillMaxWidth()

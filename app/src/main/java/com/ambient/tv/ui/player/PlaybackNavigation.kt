@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -60,6 +61,11 @@ class PlaybackNavigationState {
     var interactionVersion by mutableIntStateOf(0)
     val returnFocus = FocusRequester()
     fun interact() { interactionVersion++; BackgroundPlaybackSession.registerUserInteraction() }
+    /** Chapter the last chapter key jumped to; shown briefly even while the OSD is hidden. */
+    var chapterNotice by mutableStateOf<VideoChapter?>(null)
+    fun chapterStep(positionMs: Long, direction: Int): Long? = timeline.chapterStepDelta(positionMs, direction)?.also { delta ->
+        if (delta != 0L) chapterNotice = timeline.chapterAt(positionMs + delta)
+    }
 }
 val LocalPlaybackNavigation = staticCompositionLocalOf<PlaybackNavigationState?> { null }
 
@@ -115,6 +121,7 @@ fun PlaybackNavigationProvider(
     }
     CompositionLocalProvider(LocalPlaybackNavigation provides state.takeIf { enabled }) {
         SegmentSkipOverlay(metadata, key, state, onSeek, nextUpVisible, onPlayNext, canAutoAdvance, creditsHandledByNextUp, content)
+        state.chapterNotice?.takeIf { enabled }?.let { ChapterNotice(state.timeline, it) { state.chapterNotice = null } }
         if (state.chaptersOpen && enabled) {
             val position = snapshot.status.positionMs + metadata.timelineOffsetMs
             ChapterDialog(state.timeline, position,
@@ -127,6 +134,38 @@ fun PlaybackNavigationProvider(
                 })
         }
     }
+}
+
+@Composable
+private fun ChapterNotice(timeline: PlaybackTimeline, chapter: VideoChapter, onDone: () -> Unit) {
+    val index = timeline.chapters.indexOf(chapter)
+    LaunchedEffect(chapter) { delay(2_200); onDone() }
+    if (index < 0) return
+    val position = stringResource(R.string.player_chapter_position, index + 1, timeline.chapters.size)
+    androidx.compose.ui.window.Popup(alignment = Alignment.TopCenter, offset = IntOffset(0, with(LocalDensity.current) { 32.dp.roundToPx() }),
+        properties = androidx.compose.ui.window.PopupProperties(focusable = false)) {
+        Text(chapter.meaningfulTitle?.let { "$position · $it" } ?: position, color = Color.White, maxLines = 1,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.widthIn(max = 640.dp).clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = 0.72f))
+                .padding(horizontal = 18.dp, vertical = 8.dp))
+    }
+}
+
+/**
+ * Current chapter above the timeline; pointer taps open the chapter list. The line is reserved whenever any
+ * chapter has a title, so the timeline does not jump between titled and untitled chapters. Never a D-pad
+ * focus target: the seek bar owns OK and vertical focus.
+ */
+@Composable
+internal fun CurrentChapterLabel(positionMs: Long, modifier: Modifier = Modifier) {
+    val navigation = LocalPlaybackNavigation.current ?: return
+    if (navigation.timeline.chapters.none { it.meaningfulTitle != null }) return
+    val title = navigation.timeline.chapterAt(positionMs)?.meaningfulTitle
+    Text(title?.let { "● $it" }.orEmpty(), color = Color.White.copy(alpha = 0.9f), maxLines = 1, style = MaterialTheme.typography.bodyMedium,
+        modifier = modifier.clip(RoundedCornerShape(6.dp))
+            .focusProperties { canFocus = false }
+            .then(if (title != null) Modifier.clickable(role = Role.Button) { navigation.interact(); navigation.chaptersOpen = true } else Modifier)
+            .padding(horizontal = 2.dp, vertical = 1.dp))
 }
 
 @Composable
@@ -162,7 +201,7 @@ private fun ChapterDialog(timeline: PlaybackTimeline, positionMs: Long, onDismis
             itemsIndexed(chapters, key = { _, chapter -> chapter.startMs }) { index, chapter ->
                 var focused by remember { mutableStateOf(false) }
                 val shape = RoundedCornerShape(12.dp)
-                val title = chapter.title?.takeIf(String::isNotBlank) ?: stringResource(R.string.player_chapter_number, index + 1)
+                val title = chapter.meaningfulTitle ?: stringResource(R.string.player_chapter_number, index + 1)
                 Column(Modifier.width(if (handheld) 176.dp else 224.dp)
                     .then(if (index == initialIndex) Modifier.focusRequester(initialFocus) else Modifier)
                     .onFocusChanged { focused = it.isFocused }
@@ -229,7 +268,7 @@ fun SeekPreview(positionMs: Long?, durationMs: Long, modifier: Modifier = Modifi
     val progress = if (durationMs > 0L) shownPosition.toFloat() / durationMs.toFloat() else 0f
     val density = LocalDensity.current
     val chapterTitle = chapter?.let {
-        it.title?.takeIf(String::isNotBlank) ?: stringResource(R.string.player_chapter_number, timeline.chapters.indexOf(it) + 1)
+        it.meaningfulTitle ?: stringResource(R.string.player_chapter_number, timeline.chapters.indexOf(it) + 1)
     }
     AnimatedVisibility(
         visible = positionMs != null && (frame != null || chapter != null),
