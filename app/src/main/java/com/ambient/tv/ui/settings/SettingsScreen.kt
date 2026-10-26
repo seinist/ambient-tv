@@ -435,8 +435,6 @@ fun SettingsScreen(
                             }
                             item {
                                 SettingsGroup(
-                            item {
-                                SettingsGroup(
                                     title = stringResource(R.string.settings_intro_animation),
                                     subtitle = stringResource(R.string.settings_intro_animation_hint),
                                 ) {
@@ -455,6 +453,8 @@ fun SettingsScreen(
                                     }
                                 }
                             }
+                            item {
+                                SettingsGroup(
                                     title = stringResource(R.string.settings_ui_performance),
                                     subtitle = stringResource(R.string.settings_ui_performance_hint),
                                 ) {
@@ -2105,6 +2105,16 @@ private fun accentLabel(key: String): String = when (key) {
 
 
 @Composable
+private fun introAnimationLabel(key: String): String = when (key) {
+    IntroAnimation.OFF -> stringResource(R.string.settings_intro_off)
+    IntroAnimation.POWER_ON -> stringResource(R.string.settings_intro_power_on)
+    IntroAnimation.SIGNAL -> stringResource(R.string.settings_intro_signal)
+    IntroAnimation.SHIMMER -> stringResource(R.string.settings_intro_shimmer)
+    IntroAnimation.RIPPLE -> stringResource(R.string.settings_intro_ripple)
+    else -> stringResource(R.string.settings_intro_bloom)
+}
+
+@Composable
 private fun themeModeLabel(key: String): String = when (key) {
     "oled" -> stringResource(R.string.theme_oled)
     "dim" -> stringResource(R.string.theme_dim)
@@ -2125,16 +2135,6 @@ private fun PerformanceModeSelect(
             onClick = { onSelected(mode) },
         )
     })
-}
-
-@Composable
-private fun introAnimationLabel(key: String): String = when (key) {
-    IntroAnimation.OFF -> stringResource(R.string.settings_intro_off)
-    IntroAnimation.POWER_ON -> stringResource(R.string.settings_intro_power_on)
-    IntroAnimation.SIGNAL -> stringResource(R.string.settings_intro_signal)
-    IntroAnimation.SHIMMER -> stringResource(R.string.settings_intro_shimmer)
-    IntroAnimation.RIPPLE -> stringResource(R.string.settings_intro_ripple)
-    else -> stringResource(R.string.settings_intro_bloom)
 }
 
 @Composable

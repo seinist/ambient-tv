@@ -486,6 +486,7 @@ class SettingsViewModel @Inject constructor(
         homeBackgroundEverywhere = appPreferences.homeBackgroundEverywhere,
         focusArtworkBackdrop = appPreferences.focusArtworkBackdrop,
         homeHeroStyleKey = appPreferences.homeHeroStyleKey,
+        introAnimationKey = appPreferences.introAnimationKey,
         homeHeroIntensityPercent = appPreferences.homeHeroIntensityPercent,
         homeHeroSpreadKey = appPreferences.homeHeroSpreadKey,
         notificationDisplayDurationKey = appPreferences.notificationDisplayDurationKey,
@@ -509,7 +510,6 @@ class SettingsViewModel @Inject constructor(
         projectmHdr4kAllowed = appPreferences.projectmHdr4kAllowed,
         projectmShowPresetName = appPreferences.projectmShowPresetName,
         projectmPresetCategoryKey = appPreferences.projectmPresetCategoryKey,
-        introAnimationKey = appPreferences.introAnimationKey,
         bigSeekJumpSeconds = appPreferences.bigSeekJumpSeconds,
         creditsSkipMode = appPreferences.creditsSkipMode,
         introSkipMode = appPreferences.introSkipMode,
@@ -2090,6 +2090,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onFocusArtworkBackdropChanged(value: Boolean) = _uiState.update { it.copy(focusArtworkBackdrop = value) }
 
+    fun onIntroAnimationChanged(value: String) {
+        _uiState.update { it.copy(introAnimationKey = com.ambient.tv.data.local.IntroAnimation.normalize(value)) }
+    }
+
     fun onHomeHeroStyleChanged(value: String) {
         _uiState.update { it.copy(homeHeroStyleKey = HomeHeroStyle.normalize(value)) }
     }
@@ -2113,10 +2117,6 @@ class SettingsViewModel @Inject constructor(
 
     fun onNavSoundBankChanged(value: String) {
         _uiState.update { it.copy(navSoundBank = value) }
-    fun onIntroAnimationChanged(value: String) {
-        _uiState.update { it.copy(introAnimationKey = com.ambient.tv.data.local.IntroAnimation.normalize(value)) }
-    }
-
     }
 
     fun onNavSoundsVolumeChanged(value: Float) {
@@ -2577,6 +2577,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.homeBackgroundEverywhere = state.homeBackgroundEverywhere
         appPreferences.focusArtworkBackdrop = state.focusArtworkBackdrop
         appPreferences.homeHeroStyleKey = state.homeHeroStyleKey
+        appPreferences.introAnimationKey = state.introAnimationKey
         appPreferences.homeHeroIntensityPercent = state.homeHeroIntensityPercent
         appPreferences.homeHeroSpreadKey = state.homeHeroSpreadKey
         appPreferences.notificationDisplayDurationKey = state.notificationDisplayDurationKey
@@ -2600,7 +2601,6 @@ class SettingsViewModel @Inject constructor(
         appPreferences.projectmHdr4kAllowed = state.projectmHdr4kAllowed
         appPreferences.projectmShowPresetName = state.projectmShowPresetName
         appPreferences.projectmPresetCategoryKey = state.projectmPresetCategoryKey
-        appPreferences.introAnimationKey = state.introAnimationKey
         appPreferences.bigSeekJumpSeconds = state.bigSeekJumpSeconds
         appPreferences.creditsSkipMode = state.creditsSkipMode
         appPreferences.introSkipMode = state.introSkipMode
