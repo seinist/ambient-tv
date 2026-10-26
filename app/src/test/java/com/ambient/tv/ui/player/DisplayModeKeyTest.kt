@@ -5,6 +5,18 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class DisplayModeKeyTest {
+    @Test fun preferredDoubleBeatsNativeRate() {
+        val hz30 = mode("30", 3840, 2160, 30f)
+        val hz60 = mode("60", 3840, 2160, 60f)
+        val hz50 = mode("50", 3840, 2160, 50f)
+        val hz100 = mode("100", 3840, 2160, 100f)
+        assertEquals(hz60, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz30, hz60), 30f, true, true, preferDouble = true))
+        assertEquals(hz30, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz30, hz60), 30f, false, true, preferDouble = true))
+        assertEquals(hz30, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz30), 30f, true, true, preferDouble = true))
+        // 50→100 still needs the high-rate opt-in.
+        assertEquals(hz50, DisplayRefreshRateMatcher.selectCadenceMode(listOf(hz50, hz100), 50f, true, true, highDouble = false, preferDouble = true))
+    }
+
     @Test fun nativeRateComesFirstThenDoubleThenPulldown() {
         val native = mode("24", 1920, 1080, 24.000002f)
         val double = mode("48", 1920, 1080, 48f)
