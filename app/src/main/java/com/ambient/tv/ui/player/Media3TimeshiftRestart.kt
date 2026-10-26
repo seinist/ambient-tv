@@ -14,6 +14,20 @@ internal fun ExoPlayer.reopenTimeshiftAtLiveEdge(): Boolean {
         buffer.urlAt((LiveTimeshift.anchor.value ?: reopened.second) + currentPosition.coerceAtLeast(0L))
     else reopened
     LiveTimeshift.setAnchor(anchor)
+    com.ambient.tv.livetv.logTimeshiftLine("Timeshift restart reason=media3-effects keep_position=${buffer.recordingId != null} " +
+        "behind_live_ms=${buffer.liveWallMs - anchor}")
     setMediaItem(item.buildUpon().setUri(liveUrl).build(), 0L)
+    return true
+}
+
+/**
+ * Audio/route restart: reopen the buffer where the viewer is (not at the live edge), so a
+ * passthrough or HDMI change neither skips the delay nor lands on the thin live edge again.
+ */
+internal fun ExoPlayer.reopenTimeshiftKeepingPosition(reason: String): Boolean {
+    val item = currentMediaItem ?: return false
+    val url = item.localConfiguration?.uri?.toString() ?: return false
+    val (reopened, _) = LiveTimeshift.playbackUrlKeepingPosition(url, currentPosition, reason) ?: return false
+    setMediaItem(item.buildUpon().setUri(reopened).build(), 0L)
     return true
 }

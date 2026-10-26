@@ -619,8 +619,12 @@ class VlcPlaybackController(
     private fun confirmedPlaybackTimeMs(): Long = pendingRestorePositionMs
         ?: player.time.takeIf { it > 0L } ?: lastPlaybackTimeMs
 
+    /** Live timeshift: VLC clock position to keep across the next [prepare] (audio/route restart). */
+    private var pendingTimeshiftKeepMs: Long? = null
+
     private fun restartAudio() {
         if (released) return
+        if (liveStream) pendingTimeshiftKeepMs = confirmedPlaybackTimeMs().coerceAtLeast(0L)
         val position = vlcRestartPosition(
             pendingRestorePositionMs,
             confirmedPlaybackTimeMs(),
@@ -935,7 +939,10 @@ class VlcPlaybackController(
         externalSubtitleRequests.clear()
         externalSubtitleSources.clear()
         pendingExternalSubtitle = null
-        val playbackUrl = com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
+        // An audio/route restart keeps the timeshift position; other reopens go to the live edge.
+        val keepTimeshiftMs = pendingTimeshiftKeepMs.also { pendingTimeshiftKeepMs = null }
+        val playbackUrl = keepTimeshiftMs?.let { com.ambient.tv.livetv.LiveTimeshift.playbackUrlKeepingPosition(url, it, "vlc-audio")?.first }
+            ?: com.ambient.tv.livetv.LiveTimeshift.playbackUrl(url, reopening || reopeningTimeshift)
         val media = Media(libVlc, Uri.parse(if (playbackUrl == url) authProxy?.url ?: url else playbackUrl))
         if (!preferOriginalAudio) media.addOption(":audio-language=" + com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackAudioLanguage).joinToString(","))
@@ -976,6 +983,10 @@ class VlcPlaybackController(
         headers.entries.firstOrNull { it.key.equals("Cookie", true) }?.value?.takeIf { it.isNotBlank() }?.let { media.addOption(":http-cookie=$it") }
         // Reconnect at the current offset when an HTTP stream breaks off (all sources, not only YouTube).
         if (url.startsWith("http", ignoreCase = true)) media.addOption(":http-reconnect")
+        // Live TV: tolerate clock jitter instead of resetting the clock; more cache on the
+        // timeshift loopback (added after the YouTube cache below would not apply there).
+        com.ambient.tv.ui.player.vlcLiveMediaOptions(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(playbackUrl))
+            .forEach(media::addOption)
         if (networkCache) {
             // YouTube-only. googlevideo range requests drop without reconnect. Keep VLC's
             // 1200 ms cache so the first frame is not held behind a larger buffer.

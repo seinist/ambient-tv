@@ -29,6 +29,12 @@ class TimeshiftBuffer private constructor(
     @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN") // wait/notify need a real monitor object
     private val lock = java.lang.Object()
     @Volatile private var written = 0L
+    /** End of the range the recorder is writing right now; ring bytes below `reserved - capacity` are gone. */
+    @Volatile private var reserved = 0L
+    private val aligner = TsPacketAligner()
+    /** Upstream reconnects spliced into this buffer (diagnostics and tests). */
+    @Volatile internal var splices = 0
+        private set
     @Volatile private var stopped = false
     @Volatile private var failure: Throwable? = null
     private val ring = RandomAccessFile(file, "rw").apply { setLength(0) }
@@ -78,22 +84,35 @@ class TimeshiftBuffer private constructor(
         var reconnects = 0
         val buffer = ByteArray(64 * 1024)
         var lastIndex = 0L
+        var lostAt = 0L
+        val sink: (ByteArray, Int, Int) -> Unit = { bytes, offset, length -> append(bytes, offset, length) }
         try {
             while (!stopped) {
                 val input = stream ?: run {
                     if (reconnects++ >= MAX_RECONNECTS) throw IOException("Live stream ended")
                     Thread.sleep(1000)
                     if (stopped) return
-                    openUpstream(client, url, headers, upstream).second
+                    openUpstream(client, url, headers, upstream).second.also {
+                        val dropped = aligner.droppedBytes
+                        aligner.startSplice()
+                        splices++
+                        logTimeshiftLine("Timeshift upstream reconnected attempt=$reconnects/$MAX_RECONNECTS " +
+                            "gap_ms=${System.currentTimeMillis() - lostAt} byte=$written " +
+                            "dropped_partial=${aligner.droppedBytes - dropped} splice=$splices")
+                    }
                 }
                 stream = null
                 try {
                     input.use {
-                        pending?.let { bytes -> append(bytes, bytes.size); pending = null }
+                        pending?.let { bytes -> aligner.feed(bytes, bytes.size, sink); pending = null }
                         while (!stopped) {
                             val n = it.read(buffer)
-                            if (n < 0) break
-                            append(buffer, n)
+                            if (n < 0) {
+                                lostAt = System.currentTimeMillis()
+                                logTimeshiftLine("Timeshift upstream ended (EOF) byte=$written, reconnecting")
+                                break
+                            }
+                            aligner.feed(buffer, n, sink)
                             reconnects = 0
                             val now = System.currentTimeMillis()
                             if (now - lastIndex >= INDEX_INTERVAL_MS) {
@@ -108,21 +127,27 @@ class TimeshiftBuffer private constructor(
                     }
                 } catch (error: IOException) {
                     if (stopped) return
+                    lostAt = System.currentTimeMillis()
+                    logTimeshiftLine("Timeshift upstream error byte=$written: ${error.javaClass.simpleName}: ${error.message}, reconnecting")
                 }
             }
         } catch (error: Throwable) {
             failure = error
+            if (!stopped) logTimeshiftLine("Timeshift recording stopped byte=$written: ${error.message}")
         } finally {
             synchronized(lock) { stopped = stopped || failure != null; lock.notifyAll() }
         }
     }
 
-    private fun append(bytes: ByteArray, length: Int) {
+    private fun append(bytes: ByteArray, offset: Int, length: Int) {
+        // Announce the range first: a reader that copies ring bytes meanwhile must know they may
+        // already belong to this newer data (see [ringReadStillValid]).
+        synchronized(lock) { reserved = written + length }
         var done = 0
         while (done < length) {
             val position = (written + done) % capacity
             val chunk = minOf((length - done).toLong(), capacity - position).toInt()
-            synchronized(ring) { ring.seek(position); ring.write(bytes, done, chunk) }
+            synchronized(ring) { ring.seek(position); ring.write(bytes, offset + done, chunk) }
             done += chunk
         }
         synchronized(lock) { written += length; lock.notifyAll() }
@@ -162,9 +187,15 @@ class TimeshiftBuffer private constructor(
                 }
                 if (stopped) return
                 // Fell out of the ring (paused longer than the buffer holds): continue at the oldest data.
-                if (position < available - capacity) position = (available - capacity).let { it + (TS_PACKET - it % TS_PACKET) % TS_PACKET }
+                val oldest = ringOldestReadable(reserved, capacity)
+                if (position < oldest) {
+                    logTimeshiftLine("Timeshift reader fell out of the ring byte=$position -> $oldest (skipped ${oldest - position} bytes)")
+                    position = oldest
+                }
                 val length = minOf(chunk.size.toLong(), available - position, capacity - position % capacity).toInt()
                 synchronized(ring) { ring.seek(position % capacity); ring.readFully(chunk, 0, length) }
+                // The recorder may have overwritten part of what was just copied: drop it and retry.
+                if (!ringReadStillValid(position, reserved, capacity)) continue
                 out.write(chunk, 0, length)
                 position += length
             }
@@ -179,7 +210,8 @@ class TimeshiftBuffer private constructor(
     companion object {
         const val TS_PACKET = 188
         private const val INDEX_INTERVAL_MS = 500L
-        private const val LIVE_PREROLL_MS = 1500L
+        /** Lead behind the live edge: players start with a few seconds of data instead of ~1.5 s. */
+        const val LIVE_PREROLL_MS = LIVE_TIMESHIFT_PREROLL_MS
         private const val MAX_RECONNECTS = 5
         private val activeFiles = mutableSetOf<File>()
         private const val MIN_CAPACITY = 64L * 1024 * 1024
@@ -242,6 +274,35 @@ class TimeshiftBuffer private constructor(
         }
     }
 }
+
+/** Lead behind the live edge for every seekable live buffer (local ring and server recordings). */
+const val LIVE_TIMESHIFT_PREROLL_MS = 4_000L
+
+/** First absolute byte offset that is still intact in a ring of [capacity] while [reserved] is being written; packet-aligned. */
+internal fun ringOldestReadable(reserved: Long, capacity: Long): Long {
+    val floor = (reserved - capacity).coerceAtLeast(0L)
+    return floor + (TimeshiftBuffer.TS_PACKET - floor % TimeshiftBuffer.TS_PACKET) % TimeshiftBuffer.TS_PACKET
+}
+
+/** Bytes copied from absolute [position] are intact when the writer (up to [reservedAfterRead]) has not lapped them. */
+internal fun ringReadStillValid(position: Long, reservedAfterRead: Long, capacity: Long): Boolean =
+    position >= reservedAfterRead - capacity
+
+/**
+ * Wall-clock moment to resume at after a restart: [anchorWallMs] + [positionMs], or null when that
+ * would be closer to the live edge than [LIVE_TIMESHIFT_PREROLL_MS] or the position is unknown
+ * (then the live edge is right).
+ */
+internal fun timeshiftResumeWallMs(anchorWallMs: Long, positionMs: Long, liveWallMs: Long): Long? {
+    // No usable clock (still opening): the live edge, as before, never the start of the stream.
+    if (positionMs <= 0L) return null
+    val target = anchorWallMs + positionMs
+    return target.takeIf { it <= liveWallMs - LIVE_TIMESHIFT_PREROLL_MS }
+}
+
+/** A loopback URL served by [TimeshiftBuffer] (`http://127.0.0.1:<port>/<token>/<byte>.ts`). */
+fun isLiveTimeshiftUrl(url: String): Boolean =
+    Regex("""^http://127\.0\.0\.1:\d+/[0-9a-f]{32}/\d+\.ts$""").matches(url)
 
 /** Owns blocking network work before and after the recording buffer is published. */
 class UpstreamOwner : java.io.Closeable {
@@ -331,7 +392,25 @@ object LiveTimeshift {
             buffer.urlAt((anchor.value ?: reopened.second) + position.coerceAtLeast(0L))
         } else reopened
         setAnchor(wallMs)
+        logTimeshiftLine("Timeshift renderer reopen behind_live_ms=${buffer.liveWallMs - wallMs}")
         return liveUrl
+    }
+
+    /**
+     * Reopen for an audio/route restart that must not jump: the stream continues at the moment the
+     * viewer was watching ([positionMs] into the current stream), clamped to the live lead. Returns
+     * null when [url] is not a timeshift stream.
+     */
+    fun playbackUrlKeepingPosition(url: String, positionMs: Long, reason: String): Pair<String, Long>? {
+        val buffer = current ?: return null
+        val reopened = buffer.reopenedUrl(url) ?: return null
+        val start = anchor.value ?: reopened.second
+        val target = timeshiftResumeWallMs(start, positionMs, buffer.liveWallMs)
+        val result = if (target == null) reopened else buffer.urlAt(target)
+        setAnchor(result.second)
+        logTimeshiftLine("Timeshift restart reason=$reason keep_position=${target != null} " +
+            "behind_live_ms=${buffer.liveWallMs - result.second}")
+        return result
     }
 
     /** Install only after the server recording has become readable. Does not change preferences. */

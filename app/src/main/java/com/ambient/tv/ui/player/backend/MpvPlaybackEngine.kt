@@ -521,6 +521,8 @@ internal class MpvPlaybackEngine(
             setOption("cache", "yes")
             setOption("demuxer-max-bytes", "64MiB")
             setOption("demuxer-readahead-secs", "20")
+            com.ambient.tv.ui.player.mpvTimeshiftCacheOptions(com.ambient.tv.livetv.isLiveTimeshiftUrl(url))
+                .forEach { (name, value) -> setOption(name, value) }
         } else {
             setOption("cache", "no")
         }

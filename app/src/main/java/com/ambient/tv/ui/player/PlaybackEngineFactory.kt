@@ -101,6 +101,8 @@ object PlaybackEngineFactory {
         centerYouTubeCaptions: Boolean = metadata?.source == "youtube",
         /** Built but not prepared: the caller prepares once the previous player closed. */
         deferPrepare: Boolean = false,
+        /** Live TV: buffer thresholds from [media3LiveBufferThresholds]. */
+        liveStream: Boolean = metadata?.isLive == true,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
@@ -113,7 +115,7 @@ object PlaybackEngineFactory {
                 val wait = previous?.takeIf { !it.isDone }
                 val player = create(context.applicationContext, streamUrl, startPositionMs,
                     subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
-                    deferPrepare = wait != null)
+                    deferPrepare = wait != null, liveStream = liveStream)
                 Media3PlaybackHandle(player, joinsReleaseGate = gated).also {
                     if (wait != null) prepareAfterPreviousRelease(player, wait)
                 }
@@ -149,12 +151,19 @@ object PlaybackEngineFactory {
             .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
         val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
+        val liveBuffer = media3LiveBufferThresholds(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setTargetBufferBytes(media3TargetBufferBytes(heapMb))
+            .apply {
+                if (liveBuffer != null) setBufferDurationsMs(
+                    androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                    androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                    liveBuffer.startMs, liveBuffer.rebufferMs)
+            }
             .build()
         logPlaybackStartup("media3", "configured", started,
-            "start_buffer_ms=${androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
-                "rebuffer_ms=${androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
+            "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
+                "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
                 "target_bytes=${media3TargetBufferBytes(heapMb)} max_height=$maxVideoHeight")
 
         return ExoPlayer.Builder(context, renderersFactory)

@@ -161,7 +161,12 @@ class AudioSession(
         val after = outputPlan()
         // DSP load is diagnostic metadata, not an output-format change. Reopening a
         // PCM sink just to enable a saved night/EQ profile causes an unnecessary gap.
-        if (before.copy(heavyAudio = after.heavyAudio) != after) routeChanged(before, after)
+        if (before.copy(heavyAudio = after.heavyAudio) != after) {
+            runCatching { logAudioRouteLine("Audio route plan changed backend=$backend " +
+                "before=${before.mode}/${before.channels}/${before.spdifCodecs.joinToString(",").ifEmpty { "-" }} " +
+                "after=${after.mode}/${after.channels}/${after.spdifCodecs.joinToString(",").ifEmpty { "-" }}") }
+            routeChanged(before, after)
+        }
         else if (oldOptions != options) apply(oldOptions, options)
         logPlanIfChanged()
     }
