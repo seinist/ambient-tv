@@ -8,7 +8,7 @@ interface SeekableLiveBuffer {
     val finished: Boolean get() = false
     /** May read the server index; call on an IO dispatcher. */
     fun urlAt(wallMs: Long): Pair<String, Long>
-    fun liveUrl(): Pair<String, Long> = urlAt(liveWallMs - 1_500L)
+    fun liveUrl(): Pair<String, Long> = urlAt(liveWallMs - LIVE_TIMESHIFT_PREROLL_MS)
     fun reopenedUrl(url: String): Pair<String, Long>?
     fun stop()
 }

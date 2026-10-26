@@ -30,14 +30,15 @@ object Media3AudioProcessing {
     fun attach(player: ExoPlayer, session: AudioSession, context: Context) {
         sessions[player] = session
         val playerRef = WeakReference(player)
-        fun reconfigure() {
+        fun reconfigure(reason: String) {
             val target = playerRef.get() ?: return
             if (target.mediaItemCount == 0) return
             val playing = target.playWhenReady
             val position = target.currentPosition
             val live = target.isCurrentMediaItemLive
             target.stop()
-            if (!target.reopenTimeshiftAtLiveEdge()) {
+            // Timeshift: continue where the viewer is instead of jumping to the thin live edge.
+            if (!target.reopenTimeshiftKeepingPosition("media3-audio-$reason")) {
                 if (live) target.seekToDefaultPosition() else target.seekTo(position)
             }
             target.prepare()
@@ -46,9 +47,9 @@ object Media3AudioProcessing {
         session.apply = update@ { old, next ->
             val target = playerRef.get() ?: return@update
             if (session.bitstreamPermitted) target.setPlaybackSpeed(1f)
-            if (requiresAudioReconfiguration(old, next, session.sourcePassthrough)) reconfigure()
+            if (requiresAudioReconfiguration(old, next, session.sourcePassthrough)) reconfigure("options")
         }
-        session.routeChanged = { _, _ -> reconfigure() }
+        session.routeChanged = { _, _ -> reconfigure("route") }
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
                 val format = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.firstNotNullOfOrNull { group ->

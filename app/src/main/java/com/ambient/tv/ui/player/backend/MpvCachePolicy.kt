@@ -14,6 +14,9 @@ internal fun mpvTerminalEnd(reason: Int, error: Int, eof: Boolean): Boolean =
  */
 internal fun mpvUsesNetworkCache(url: String, forced: Boolean): Boolean {
     if (forced) return true
+    // The local timeshift loopback streams without ranges; there the cache is what lets mpv
+    // pause for data at the live edge instead of running dry.
+    if (com.ambient.tv.livetv.isLiveTimeshiftUrl(url)) return true
     val uri = runCatching { URI(url) }.getOrNull() ?: return false
     if (uri.scheme?.lowercase() !in setOf("http", "https")) return false
     val host = uri.host ?: return false
