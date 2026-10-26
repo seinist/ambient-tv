@@ -122,4 +122,15 @@ class ProfileAudioProcessorTest {
         val output = ProfileAudioProcessor(session).configure(AudioProcessor.AudioFormat(48000, 2, C.ENCODING_PCM_16BIT))
         assertEquals(2, output.channelCount)
     }
+
+    @Test fun surroundPlacementKeepsSpeakersAndSplitsBackCentre() {
+        val five = surroundPlacement(pcmSpeakerLayout(5), pcmSpeakerLayout(6))
+        assertEquals(1f, five[2][2]) // centre stays centre
+        assertEquals(0f, five[3].sum()) // no LFE invented
+        assertEquals(1f, five[4][3])
+        val sixOne = surroundPlacement(pcmSpeakerLayout(7), pcmSpeakerLayout(8))
+        assertEquals(0.70710677f, sixOne[4][4])
+        assertEquals(0.70710677f, sixOne[5][4])
+        assertEquals(1f, sixOne[6][5])
+    }
 }

@@ -123,8 +123,9 @@ internal class LocalAudioRenderer(
  * source, route and plan; 5.1 a 6+ channel source and route; stereo is always last.
  */
 internal fun localPcmChannelCandidates(sourceChannels: Int, routeChannels: Int, planned: String): List<Int> = buildList {
-    if (sourceChannels >= 8 && routeChannels >= 8 && planned in setOf("auto", "7.1")) add(8)
-    if (sourceChannels >= 6 && routeChannels >= 6 && planned in setOf("auto", "5.1", "7.1")) add(6)
+    // Nearest wider layout: 6.1 decodes as 7.1 and 3.0-5.0 as 5.1 instead of falling to stereo.
+    if (sourceChannels >= 7 && routeChannels >= 8 && planned in setOf("auto", "7.1")) add(8)
+    if (sourceChannels > 2 && routeChannels >= 6 && planned in setOf("auto", "5.1", "7.1")) add(6)
     add(2)
 }
 

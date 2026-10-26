@@ -36,4 +36,10 @@ class LocalPcmChannelsTest {
         assertEquals("stereo", localDecodePcmChannelMode("stereo", 8))
         assertEquals("stereo", localDecodePcmChannelMode("5.1", 2))
     }
+
+    @Test fun oddSurroundLayoutsUseTheNearestWiderLayout() {
+        assertEquals(listOf(8, 6, 2), localPcmChannelCandidates(7, 8, "7.1"))
+        assertEquals(listOf(6, 2), localPcmChannelCandidates(5, 8, "5.1"))
+        assertEquals(listOf(6, 2), localPcmChannelCandidates(3, 6, "auto"))
+    }
 }

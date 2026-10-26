@@ -31,8 +31,8 @@ fun AudioRouteCapabilities.forcedBy(options: AudioOptions): AudioRouteCapabiliti
 /** With a forced layout, "auto" becomes an explicit layout so MPV's auto-safe cannot fall back
  * to the reported stereo. Never invents channels the source does not have. */
 internal fun forcedPcmLayout(sourceChannels: Int?, channels: Int): String = when {
-    (sourceChannels ?: 0) >= 8 && channels >= 8 -> "7.1"
-    (sourceChannels ?: 0) >= 6 && channels >= 6 -> "5.1"
+    (sourceChannels ?: 0) >= 7 && channels >= 8 -> "7.1"
+    (sourceChannels ?: 0) > 2 && channels >= 6 -> "5.1"
     else -> "auto"
 }
 
