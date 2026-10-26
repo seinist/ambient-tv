@@ -81,6 +81,7 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
         super.onAttachedToWindow()
         displayManager.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
         updateRenderTarget()
+        AmbientVideoBackdrop.attach(videoSurface)
         // A replacement AndroidView can be laid out without another Compose draw. SurfaceView
         // creates its native surface in onPreDraw, so explicitly schedule the first window frame.
         post { if (isAttachedToWindow) rootView.postInvalidateOnAnimation() }
@@ -88,6 +89,7 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
 
     override fun onDetachedFromWindow() {
         displayManager.unregisterDisplayListener(displayListener)
+        AmbientVideoBackdrop.detach(videoSurface)
         super.onDetachedFromWindow()
     }
 
@@ -127,6 +129,14 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
         set(value) {
             field = value
             requestLayout()
+        }
+
+    /** Transparent letterbox so [AmbientVideoBackdropLayer] behind this view shows through. */
+    var ambientBackdrop: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            setBackgroundColor(if (value) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK)
         }
 
     var sourceAspectRatio: Float? = null

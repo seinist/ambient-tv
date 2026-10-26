@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -45,6 +46,20 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier) {
             .distinctUntilChanged()
     }.collectAsState(initial = remember { BackgroundPlaybackSession.snapshot.value.metadata?.sourceAspectRatioHint })
     val handle = BackgroundPlaybackSession.activeHandle()
+    // Ambient letterbox only on a portrait phone with a real picture; landscape stays black.
+    val portraitPhone = com.ambient.tv.ui.mobile.LocalHandheldUi.current &&
+        androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+    val ambient = portraitPhone && when (handle) {
+        is Media3PlaybackHandle -> true
+        is VlcPlaybackController -> !handle.audioSession.audioOnly
+        is MpvPlaybackController -> !handle.audioSession.audioOnly
+        else -> false
+    }
+    DisposableEffect(ambient) {
+        AmbientVideoBackdrop.enabled = ambient
+        onDispose { AmbientVideoBackdrop.enabled = false }
+    }
+    if (ambient) AmbientVideoBackdropLayer(modifier)
     key(handle) {
         when (handle) {
             is Media3PlaybackHandle -> PersistentMedia3Video(handle, sourceAspectRatioHint, modifier)
@@ -58,7 +73,7 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier) {
 @Composable
 private fun PersistentMedia3Video(handle: Media3PlaybackHandle, sourceAspectRatioHint: Float?, modifier: Modifier) {
     val presentation by BackgroundPlaybackSession.videoPresentation.collectAsState()
-    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+    Box(if (AmbientVideoBackdrop.enabled) modifier else modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         Media3VideoSurface(
             player = handle.player,
             resizeMode = presentation.resizeMode,
@@ -96,7 +111,9 @@ fun Media3VideoSurface(
         },
         update = { view ->
             if (view.player !== player) view.player = player
+            view.setBackgroundColor(if (AmbientVideoBackdrop.enabled) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK)
             (view.videoSurfaceView as? android.view.SurfaceView)?.let {
+                AmbientVideoBackdrop.attach(it)
                 Media3PlaybackHandle.forPlayer(player)?.attachVideoView(it)
                 it.applyUiHdrHeadroom(hdrHeadroom)
             }
@@ -121,6 +138,7 @@ fun Media3VideoSurface(
             }
         },
         onRelease = {
+            AmbientVideoBackdrop.detach(it.videoSurfaceView as? android.view.SurfaceView)
             Media3PlaybackHandle.forPlayer(player)?.detachVideoView(it.videoSurfaceView as? android.view.SurfaceView)
             it.player = null
         },
