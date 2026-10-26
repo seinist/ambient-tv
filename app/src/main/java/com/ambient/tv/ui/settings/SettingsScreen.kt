@@ -159,6 +159,8 @@ fun SettingsScreen(
     var accentPickerRole by remember { mutableStateOf<AccentColorRole?>(null) }
 
     var playbackOverview by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
+    val openSettingsPage = LocalOpenSettingsPage.current
+    var savedProfiles by remember { mutableStateOf<List<SavedProfileEntry>?>(null) }
     var liveProfiles by remember { mutableStateOf<PlaybackOverviewSnapshot?>(null) }
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
@@ -821,6 +823,13 @@ fun SettingsScreen(
                                     fillWidth = true,
                                 )
                             }
+                            item {
+                                TvActionButton(
+                                    text = stringResource(R.string.settings_saved_profiles),
+                                    onClick = { savedProfiles = viewModel.savedProfileEntries() },
+                                    fillWidth = true,
+                                )
+                            }
                             if (uiState.playbackBackendKey == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) {
                                 item { Text(stringResource(R.string.player_backend_mpv_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
@@ -945,8 +954,8 @@ fun SettingsScreen(
                         SettingsCategory.LIVE_TV -> {
                             item {
                                 TvActionButton(
-                                    text = stringResource(R.string.live_profiles_title),
-                                    onClick = { liveProfiles = viewModel.savedPlaybackOverview() },
+                                    text = stringResource(R.string.settings_saved_profiles),
+                                    onClick = { savedProfiles = viewModel.savedProfileEntries() },
                                     fillWidth = true,
                                 )
                             }
@@ -1590,9 +1599,23 @@ fun SettingsScreen(
     playbackOverview?.let { snapshot ->
         PlaybackOverviewDialog(snapshot, onDismiss = { playbackOverview = null })
     }
+    savedProfiles?.let { entries ->
+        SavedProfilesDialog(entries, onDelete = { entry ->
+            viewModel.deleteSavedProfile(entry)
+            savedProfiles = viewModel.savedProfileEntries()
+        }, onEditLive = { liveProfiles = viewModel.savedPlaybackOverview() }, onEditDefaults = {
+            savedProfiles = null
+            openSettingsPage(SettingsCategory.PLAYBACK, "player-playback-defaults")
+        }, onForgetRememberTarget = { entry ->
+            viewModel.forgetRememberTarget(entry)
+            savedProfiles = viewModel.savedProfileEntries()
+        }, onDismiss = { savedProfiles = null })
+    }
     liveProfiles?.let { snapshot ->
-        LiveTvProfileDialog(snapshot, save = viewModel::saveLiveResolutionProfile,
-            onDismiss = { liveProfiles = null })
+        LiveTvProfileDialog(snapshot, save = viewModel::saveLiveResolutionProfile, onDismiss = {
+            liveProfiles = null
+            if (savedProfiles != null) savedProfiles = viewModel.savedProfileEntries()
+        })
     }
 
     accentPickerRole?.let { role ->

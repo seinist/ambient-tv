@@ -37,8 +37,10 @@ data class TitleVideoSettings(
     /** Compatibility with former manually saved title snapshots. No new snapshots are created. */
     val snapshot: Boolean = false,
     val savedAt: Long = 0L,
+    /** Display name for the saved-profile manager (title, channel, season…); not a setting. */
+    val label: String? = null,
 ) {
-    val isEmpty: Boolean get() = copy(savedAt = 0L) == TitleVideoSettings()
+    val isEmpty: Boolean get() = copy(savedAt = 0L, label = null) == TitleVideoSettings()
     fun rendererOrDefault(default: String): String =
         rendererKey?.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: default
 

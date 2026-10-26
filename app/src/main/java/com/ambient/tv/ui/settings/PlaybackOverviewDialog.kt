@@ -92,55 +92,6 @@ internal fun PlaybackOverviewDialog(snapshot: PlaybackOverviewSnapshot, onDismis
                 AudioOverview(snapshot.audio.profiles[key] ?: AudioOptions(), snapshot.audioPassthrough)
             }
         }
-        val classes = (VideoResolutionClass.keys + snapshot.profiles.keys.filter { it != "all" }
-            .map { it.removePrefix("live:") }).distinct()
-        listOf(false, true).forEach { live ->
-            val entries = classes.mapNotNull { key ->
-                snapshot.profiles[if (live) "live:$key" else key]?.let { key to it }
-            }
-            OverviewSection(stringResource(if (live) R.string.settings_playback_overview_live_profiles else R.string.settings_playback_overview_video_profiles)) {
-                if (entries.isEmpty()) {
-                    Text(stringResource(R.string.settings_playback_overview_empty), style = MaterialTheme.typography.bodySmall)
-                }
-                entries.forEach { (key, profile) ->
-                    OverviewSubheading(VideoResolutionClass.label(key))
-                    OverviewLine(stringResource(R.string.settings_playback_overview_renderer), rendererName(profile.rendererKey))
-                    when (profile.rendererKey) {
-                        "mpv" -> {
-                            OverviewLine(stringResource(R.string.settings_playback_overview_output), profile.mpvOutput ?: snapshot.mpvOutput)
-                            OverviewLine(stringResource(R.string.settings_playback_overview_decoder), profile.mpvDecoder ?: snapshot.mpvDecoder)
-                            MpvOverview(profile.mpv ?: snapshot.mpv)
-                            if (live) {
-                                OverviewLine(stringResource(R.string.settings_playback_overview_live_deinterlace), profile.mpvDeinterlaceMode ?: snapshot.liveDeinterlaceMode)
-                                OverviewLine(stringResource(R.string.settings_playback_overview_deinterlace_filter), profile.mpvDeinterlaceFilter ?: snapshot.liveMpvDeinterlaceFilter)
-                            }
-                        }
-                        "vlc" -> {
-                            OverviewLine(stringResource(R.string.settings_playback_overview_output), profile.vlcOutput ?: snapshot.vlcOutput)
-                            VlcOverview(profile.vlc ?: snapshot.vlc)
-                            if (live) {
-                                OverviewLine(stringResource(R.string.settings_playback_overview_live_deinterlace), profile.vlcDeinterlaceMode ?: snapshot.liveDeinterlaceMode)
-                                OverviewLine(stringResource(R.string.settings_playback_overview_deinterlace_filter), profile.vlcDeinterlaceFilter ?: snapshot.liveVlcDeinterlaceFilter)
-                            }
-                        }
-                        "media3" -> Media3Overview(profile.media3 ?: snapshot.media3)
-                    }
-                    val audio = profile.audio
-                    if (audio == null) {
-                        Text(stringResource(R.string.settings_playback_overview_audio_inherited), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        OverviewSubheading(stringResource(R.string.settings_playback_overview_audio))
-                        OverviewLine(stringResource(R.string.settings_playback_overview_route),
-                            if (audio.selectedProfile == "auto") stringResource(R.string.audio_profile_auto) else routeName(audio.selectedProfile))
-                        AudioCatalog.profiles.forEach { route ->
-                            OverviewSubheading(routeName(route))
-                            AudioOverview(audio.profiles[route] ?: AudioOptions(), snapshot.audioPassthrough)
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -170,7 +121,7 @@ private fun OverviewLine(label: String, value: String) {
 private fun yesNo(value: Boolean) = stringResource(if (value) R.string.settings_playback_overview_yes else R.string.settings_playback_overview_no)
 
 @Composable
-private fun rendererName(key: String) = when (key) {
+internal fun rendererName(key: String) = when (key) {
     "mpv" -> "MPV"
     "vlc" -> "VLC"
     "media3" -> "Media3"

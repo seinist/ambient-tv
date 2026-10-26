@@ -3,11 +3,19 @@
 package com.ambient.tv.ui.player
 
 import android.content.Context
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.local.ResolutionVideoProfile
 import com.ambient.tv.data.local.TitleVideoSettings
@@ -124,14 +132,17 @@ internal fun PlaybackProfileControls(
     val pending = switching || resolutionState.pending
     val switchingLabel = stringResource(R.string.player_nerd_switching)
     @Composable
-    fun ProfileButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, fillWidth: Boolean = false) {
+    fun ProfileButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, fillWidth: Boolean = false,
+        selected: Boolean = false, focusId: String = text) {
         TvActionButton(text = rendererTransitionValue(text, !pending, switchingLabel), onClick = onClick,
-            modifier = modifier.playerPanelFocusKey("action:$text"), enabled = enabled, fillWidth = fillWidth, loading = pending)
+            modifier = modifier.playerPanelFocusKey("action:$focusId"), enabled = enabled, selected = selected, fillWidth = fillWidth, loading = pending)
     }
-    val resolution = remember(resolutionKey, revision) {
-        resolutionKey?.let { com.ambient.tv.data.local.resolutionProfileFor(
+    // The saved preset that applies: this width, a similar one, or for live TV the general width preset.
+    val appliedResolutionKey = remember(resolutionKey, revision, storeRevision) {
+        resolutionKey?.let { com.ambient.tv.data.local.resolutionProfileKeyFor(
             videoImagePreferences(context).resolutionVideoProfiles, it.removePrefix("live:"), metadata?.isLive == true) }
     }
+    val resolution = appliedResolutionKey?.let { videoImagePreferences(context).resolutionVideoProfiles[it] }
     fun perform(message: Int? = null, action: () -> Unit) {
         // The old engine is gone while switching; the buttons ignore clicks until the new one runs.
         if (pending) return
@@ -160,99 +171,153 @@ internal fun PlaybackProfileControls(
     if (titleKey != null) ImageHint(stringResource(if (metadata?.isLive == true) R.string.channel_profile_auto else R.string.playback_profile_auto_title))
     else ImageHint(stringResource(R.string.playback_profile_title_unavailable))
     val scopes = remember(titleKey, revision, storeRevision) { TitleVideoSettingsStore.layerValues(context, metadata) }
-    if (titleKey != null && metadata?.isLive != true) {
+    val episode = metadata?.videoScope?.episode == true
+    val movie = metadata?.videoScope != null && !episode
+    val live = metadata?.isLive == true
+    // Destructive actions need a second press on the same button.
+    var confirm by remember(titleKey) { mutableStateOf<String?>(null) }
+    @Composable
+    fun ConfirmButton(id: String, text: String, modifier: Modifier = Modifier, enabled: Boolean = true, action: () -> Unit) {
+        val confirming = confirm == id
+        ProfileButton(text = if (confirming) stringResource(R.string.saved_profiles_delete_confirm) else text, enabled = enabled,
+            onClick = { if (confirming) { confirm = null; action() } else confirm = id }, modifier = modifier, fillWidth = true, focusId = id)
+    }
+    fun reapply() = apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
+
+    // The cascade, narrow to broad: video, season, series, collection, width, global. Per setting the
+    // first layer that holds a value wins; each row names what it currently supplies.
+    val origins = videoSettingOrigins(scopes, resolution)
+    val originParts = listOf(
+        origins.renderer to stringResource(R.string.settings_playback_overview_renderer),
+        origins.picture to stringResource(R.string.saved_profiles_part_picture),
+        origins.deinterlace to stringResource(R.string.saved_profiles_part_deinterlace),
+        origins.output to stringResource(R.string.saved_profiles_part_output),
+        origins.audio to stringResource(R.string.saved_profiles_part_audio),
+        origins.delay to stringResource(R.string.saved_profiles_part_audio_delay),
+    )
+    val suppliesFormat = stringResource(R.string.playback_profile_supplies)
+    fun supplies(origin: VideoSettingOrigin): String? = originParts.filter { it.first == origin }
+        .takeIf { it.isNotEmpty() }?.joinToString(", ") { it.second }?.let { suppliesFormat.format(it) }
+    ProfileSection(stringResource(R.string.playback_profile_section_cascade))
+    ImageHint(stringResource(R.string.playback_profile_cascade_hint))
+
+    if (titleKey != null) {
         val target = remember(titleKey, revision, storeRevision) { TitleVideoSettingsStore.rememberLayer(context, metadata) }
-        val episode = metadata?.videoScope?.episode == true
-        val movie = metadata?.videoScope != null && !episode
-        val labels = scopes.map { (layer, _) -> layer.key to videoScopeLabel(layer, episode, movie) }
-        if (scopes.size > 1) {
-            val switchedBroad = stringResource(R.string.playback_scope_switched_broad)
-            val switchedTitle = stringResource(R.string.playback_scope_switched_title)
-            ImageChoice(R.string.playback_scope_remember_for, target?.key ?: titleKey, labels) { key ->
-                scopes.firstOrNull { it.first.key == key }?.let {
-                    if (it.first.key == target?.key) return@let
-                    TitleVideoSettingsStore.setRememberLayer(context, metadata, it.first)
-                    revision++
-                    val label = labels.firstOrNull { (k, _) -> k == key }?.second.orEmpty()
-                    profileNotice(R.string.playback_scope_switched, args = listOf(label,
-                        if (it.first.scope == VideoSettingsScope.TITLE) switchedTitle else switchedBroad))
+        val selectable = !live && scopes.size > 1
+        val switchedBroad = stringResource(R.string.playback_scope_switched_broad)
+        val switchedTitle = stringResource(R.string.playback_scope_switched_title)
+        scopes.forEach { (layer, value) ->
+            val name = if (live && layer.scope == VideoSettingsScope.TITLE) stringResource(R.string.playback_scope_channel)
+                else videoScopeLabel(layer, episode, movie)
+            val stored = value?.takeUnless { it.isEmpty }
+            val summary = stored?.let { com.ambient.tv.ui.settings.entrySummary(com.ambient.tv.ui.settings.settingsEntry(
+                com.ambient.tv.ui.settings.SavedProfileCategory.TITLE, com.ambient.tv.ui.settings.SavedProfileStore.TITLE,
+                layer.key, null, name, it)) }?.ifBlank { null } ?: stringResource(R.string.playback_profile_not_saved)
+            val active = (target?.key ?: titleKey) == layer.key
+            ProfileRow(name, summary, supplies(layer.scope.origin)) {
+                if (selectable) ProfileButton(
+                    text = stringResource(if (active) R.string.playback_scope_remembering else R.string.playback_scope_remember_here),
+                    selected = active, focusId = "remember:${layer.key}",
+                    onClick = {
+                        if (active) return@ProfileButton
+                        TitleVideoSettingsStore.setRememberLayer(context, metadata, layer)
+                        revision++
+                        profileNotice(R.string.playback_scope_switched, args = listOf(name,
+                            if (layer.scope == VideoSettingsScope.TITLE) switchedTitle else switchedBroad))
+                    }, modifier = Modifier.weight(1f), fillWidth = true)
+                ConfirmButton("scope:${layer.key}", stringResource(R.string.playback_profile_reset), Modifier.weight(1f),
+                    enabled = stored != null) {
+                    perform {
+                        if (layer.scope == VideoSettingsScope.TITLE) TitleVideoSettingsStore.forget(context, metadata)
+                        else TitleVideoSettingsStore.forgetScope(context, layer)
+                        // Broader scopes still apply: the title must not re-save the width profile over them.
+                        reapply()
+                    }
                 }
             }
         }
-        val origins = videoSettingOrigins(scopes, resolution)
-        val names = listOf(origins.renderer, origins.picture, origins.deinterlace, origins.output, origins.audio, origins.delay)
-            .map { stringResource(videoOriginLabel(it, episode, movie)) }
-        ImageHint(stringResource(R.string.playback_scope_origins, *names.toTypedArray()))
-        scopes.filter { (layer, value) -> layer.scope != VideoSettingsScope.TITLE && value != null }.forEach { (layer, _) ->
-            ProfileButton(text = stringResource(R.string.playback_scope_reset, videoScopeLabel(layer, episode, movie)), onClick = {
-                perform {
-                    TitleVideoSettingsStore.forgetScope(context, layer)
-                    apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
-                }
-            }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-        }
     }
-    // Video edits are remembered automatically; only shared defaults need explicit saving.
-    ProfileButton(text = stringResource(R.string.playback_profile_save_all), onClick = {
-        perform(R.string.playback_profile_saved_all) {
-            check(ResolutionVideoProfileStore.save(context, metadata, handle, global = true) != null)
-        }
-    }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
+
+    // Shared width preset: explicit save, load, delete.
     val label = resolutionKey?.let { VideoResolutionClass.label(it.removePrefix("live:")) }
-    ProfileButton(
-        text = if (metadata?.isLive == true && label != null) stringResource(R.string.live_profiles_save_scope, label)
-            else stringResource(R.string.playback_profile_save_resolution_scope),
-        enabled = resolutionKey != null,
-        onClick = {
+    ProfileRow(
+        title = when {
+            label == null -> stringResource(R.string.playback_profile_section_width_unknown)
+            live -> stringResource(R.string.playback_profile_section_live_width, label)
+            else -> stringResource(R.string.playback_profile_section_width, label)
+        },
+        summary = when {
+            label == null -> stringResource(R.string.playback_profile_resolution_unavailable)
+            else -> resolution?.let { profileSummary(resolutionKey, it) } ?: stringResource(R.string.playback_profile_not_saved)
+        },
+        supplies = supplies(VideoSettingOrigin.RESOLUTION),
+    ) {
+        ProfileButton(text = stringResource(R.string.playback_profile_save), enabled = label != null, onClick = {
             perform(R.string.playback_profile_saved_resolution) {
                 check(ResolutionVideoProfileStore.save(context, metadata, handle) != null)
             }
-        }, modifier = Modifier.fillMaxWidth(), fillWidth = true,
-    )
-    if (label != null) ImageHint(stringResource(if (metadata?.isLive == true) R.string.live_profiles_scope_hint
-        else R.string.playback_profile_resolution_scope, label))
-    if (ResolutionVideoProfileStore.global(context) != null) {
-        ProfileButton(text = stringResource(R.string.playback_profile_load_all), onClick = {
+        }, modifier = Modifier.weight(1f), fillWidth = true, focusId = "width:save")
+        ProfileButton(text = stringResource(R.string.playback_profile_load), enabled = resolution != null, onClick = {
             perform(R.string.playback_profile_loaded) {
                 TitleVideoSettingsStore.clearProfileOverrides(context, metadata)
-                apply(null, ResolutionVideoProfileStore.global(context))
+                apply(null, resolution)
             }
-        }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
+        }, modifier = Modifier.weight(1f), fillWidth = true, focusId = "width:load")
+        // Live TV only resets its own preset; an inherited general width preset is managed in Settings.
+        ConfirmButton("width", stringResource(R.string.playback_profile_reset), Modifier.weight(1f),
+            enabled = appliedResolutionKey != null && (!live || appliedResolutionKey.startsWith("live:"))) {
+            perform {
+                appliedResolutionKey?.let { ResolutionVideoProfileStore.forget(context, it) }
+                reapply()
+            }
+        }
     }
-    if (resolutionKey != null) {
-        val label = VideoResolutionClass.label(resolutionKey.removePrefix("live:"))
-        if (resolution != null) {
-            ProfileButton(text = stringResource(if (metadata?.isLive == true) R.string.live_profiles_load_scope
-                else R.string.playback_profile_load_resolution, label), onClick = {
-                perform(R.string.playback_profile_loaded) {
-                    TitleVideoSettingsStore.clearProfileOverrides(context, metadata)
-                    apply(null, resolution)
-                }
-            }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-        }
-    } else ImageHint(stringResource(R.string.playback_profile_resolution_unavailable))
-    ImageHint(stringResource(R.string.playback_profile_reset_scope_hint))
-    ProfileButton(text = stringResource(R.string.playback_profile_reset_all), onClick = {
-        perform {
-            resetGlobalPlaybackProfile(videoImagePreferences(context))
-            apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
-        }
-    }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-    ProfileButton(text = stringResource(R.string.playback_profile_reset_resolution), enabled = resolutionKey != null, onClick = {
-        perform {
-            resolutionKey?.let { ResolutionVideoProfileStore.forget(context, it) }
-            apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
-        }
-    }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-    if (titleKey != null) ProfileButton(text = stringResource(if (metadata?.isLive == true) R.string.channel_profile_reset else R.string.playback_profile_reset_title), onClick = {
-        perform {
-            TitleVideoSettingsStore.forget(context, metadata)
-            // Season/series/collection profiles still apply: the title must not re-save the width profile over them.
-            apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
-        }
-    }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
 
+    // Global fallback (the playback settings); edited in Settings, here only replaced by the running setup.
+    ProfileRow(stringResource(R.string.saved_profiles_default_title),
+        ResolutionVideoProfileStore.global(context)?.let { profileSummary("all", it) } ?: stringResource(R.string.playback_profile_global_plain),
+        supplies(VideoSettingOrigin.DEFAULT)) {
+        ProfileButton(text = stringResource(R.string.playback_profile_save_all), onClick = {
+            perform(R.string.playback_profile_saved_all) {
+                check(ResolutionVideoProfileStore.save(context, metadata, handle, global = true) != null)
+            }
+        }, modifier = Modifier.weight(1f), fillWidth = true, focusId = "global:save")
+    }
 }
+
+private val VideoSettingsScope.origin: VideoSettingOrigin get() = when (this) {
+    VideoSettingsScope.TITLE -> VideoSettingOrigin.TITLE
+    VideoSettingsScope.SEASON -> VideoSettingOrigin.SEASON
+    VideoSettingsScope.SERIES -> VideoSettingOrigin.SERIES
+    VideoSettingsScope.COLLECTION -> VideoSettingOrigin.COLLECTION
+}
+
+@Composable
+private fun ProfileSection(title: String) {
+    Text(title, modifier = Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary)
+}
+
+@Composable
+private fun ProfileRow(title: String, summary: String, supplies: String?, actions: @Composable RowScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(title, style = MaterialTheme.typography.bodyMedium)
+        ImageHint(summary)
+        supplies?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+        ProfileActions(actions)
+    }
+}
+
+@Composable
+private fun ProfileActions(content: @Composable RowScope.() -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+}
+
+@Composable
+private fun profileSummary(key: String, profile: ResolutionVideoProfile): String =
+    com.ambient.tv.ui.settings.entrySummary(com.ambient.tv.ui.settings.savedProfileEntries(
+        if (key == "all") emptyMap() else mapOf(key.removePrefix("live:") to profile), emptyMap(), emptyMap(),
+        global = profile.takeIf { key == "all" }).firstOrNull() ?: return "")
 
 @Composable
 private fun videoScopeLabel(layer: VideoScopeLayer, episode: Boolean, movie: Boolean): String = when (layer.scope) {
@@ -264,19 +329,6 @@ private fun videoScopeLabel(layer: VideoScopeLayer, episode: Boolean, movie: Boo
     VideoSettingsScope.SEASON -> stringResource(R.string.playback_scope_season)
     VideoSettingsScope.SERIES -> stringResource(R.string.playback_scope_series)
     VideoSettingsScope.COLLECTION -> stringResource(R.string.playback_scope_collection, layer.label.orEmpty())
-}
-
-private fun videoOriginLabel(origin: VideoSettingOrigin, episode: Boolean, movie: Boolean): Int = when (origin) {
-    VideoSettingOrigin.TITLE -> when {
-        episode -> R.string.playback_origin_episode
-        movie -> R.string.playback_origin_movie
-        else -> R.string.playback_origin_title
-    }
-    VideoSettingOrigin.SEASON -> R.string.playback_origin_season
-    VideoSettingOrigin.SERIES -> R.string.playback_origin_series
-    VideoSettingOrigin.COLLECTION -> R.string.playback_origin_collection
-    VideoSettingOrigin.RESOLUTION -> R.string.playback_origin_resolution
-    VideoSettingOrigin.DEFAULT -> R.string.playback_origin_default
 }
 
 private const val PROFILE_RESOLUTION_WAIT_MS = 3_000L

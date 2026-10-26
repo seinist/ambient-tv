@@ -87,6 +87,15 @@ internal object TitleVideoSettingsStore {
     /** Stop, or an explicit reset in the panel: the next capture starts a new baseline from what is stored. */
     fun endSession() { baseline = null }
 
+    /** Settings manager: layer key -> number of series/titles whose changes are remembered there. */
+    fun rememberTargets(context: Context): Map<String, Int> = choices(context).targetCounts()
+
+    /** Settings manager: changes aimed at [key] go back to the title itself. */
+    fun forgetRememberTarget(context: Context, key: String) {
+        choices(context).removeTarget(key)
+        changed()
+    }
+
     private fun logScopes(context: Context, metadata: PlaybackMetadata?, titleKey: String, values: List<Pair<VideoScopeLayer, TitleVideoSettings?>>) {
         runCatching {
             val line = videoScopeDiagnosticLine(titleKey, values, choices(context).index(values.map { it.first }),
@@ -127,7 +136,8 @@ internal object TitleVideoSettingsStore {
             all[layer.key] ?: legacyKey(metadata)?.let { all[it] }
         } else preferences.scopedVideoSettings[layer.key]
 
-    private fun write(preferences: com.ambient.tv.data.local.AppPreferences, metadata: PlaybackMetadata?, layer: VideoScopeLayer, value: TitleVideoSettings) {
+    private fun write(preferences: com.ambient.tv.data.local.AppPreferences, metadata: PlaybackMetadata?, layer: VideoScopeLayer, stored: TitleVideoSettings) {
+        val value = stored.copy(label = layerLabel(metadata, layer) ?: stored.label)
         if (layer.scope == VideoSettingsScope.TITLE) {
             val all = preferences.titleVideoSettings
             val legacy = legacyKey(metadata)
@@ -140,6 +150,12 @@ internal object TitleVideoSettingsStore {
             if (updated != all) { preferences.scopedVideoSettings = updated; changed() }
         }
     }
+
+    private fun layerLabel(metadata: PlaybackMetadata?, layer: VideoScopeLayer): String? = when (layer.scope) {
+        VideoSettingsScope.TITLE -> metadata?.let { listOf(it.title, it.subtitle) }
+        VideoSettingsScope.SEASON -> listOf(metadata?.videoScope?.seriesLabel, layer.label)
+        else -> listOf(layer.label)
+    }?.filterNot { it.isNullOrBlank() }?.joinToString(" · ")?.ifBlank { null }
 
     /** Stored values per scope, narrow to broad. */
     fun layerValues(context: Context, metadata: PlaybackMetadata?): List<Pair<VideoScopeLayer, TitleVideoSettings?>> {
@@ -173,7 +189,7 @@ internal object TitleVideoSettingsStore {
         val now = System.currentTimeMillis()
         values.forEachIndexed { i, (layer, before) ->
             val after = next[i] ?: TitleVideoSettings()
-            if (after.copy(savedAt = 0L) == (before ?: TitleVideoSettings()).copy(savedAt = 0L)) return@forEachIndexed
+            if (after.copy(savedAt = 0L, label = null) == (before ?: TitleVideoSettings()).copy(savedAt = 0L, label = null)) return@forEachIndexed
             write(preferences, metadata, layer, after.copy(savedAt = now))
         }
     }

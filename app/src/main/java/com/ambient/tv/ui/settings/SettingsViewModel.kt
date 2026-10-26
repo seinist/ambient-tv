@@ -129,6 +129,29 @@ class SettingsViewModel @Inject constructor(
     internal fun savedPlaybackOverview() = savedPlaybackOverview(appPreferences)
     internal fun feedbackScope(page: SettingsCategory?) = page?.let { "settings:${it.name}" } ?: "settings"
 
+    internal fun savedProfileEntries() = savedProfileEntries(
+        appPreferences.resolutionVideoProfiles, appPreferences.titleVideoSettings, appPreferences.scopedVideoSettings,
+        com.ambient.tv.data.local.ResolutionVideoProfile(rendererKey = appPreferences.playbackBackendKey),
+        com.ambient.tv.ui.player.TitleVideoSettingsStore.rememberTargets(context))
+
+    internal fun deleteSavedProfile(entry: SavedProfileEntry) {
+        when (entry.store) {
+            SavedProfileStore.GLOBAL -> com.ambient.tv.ui.player.resetGlobalPlaybackProfile(appPreferences)
+            SavedProfileStore.RESOLUTION -> appPreferences.resolutionVideoProfiles -= entry.key
+            SavedProfileStore.TITLE -> appPreferences.titleVideoSettings -= entry.key
+            SavedProfileStore.SCOPED -> {
+                appPreferences.scopedVideoSettings -= entry.key
+                // A deleted layer must not be recreated by the next change in the player.
+                com.ambient.tv.ui.player.TitleVideoSettingsStore.forgetRememberTarget(context, entry.key)
+            }
+        }
+        // An open player panel re-reads its layers.
+        com.ambient.tv.ui.player.TitleVideoSettingsStore.revision.update { it + 1 }
+    }
+
+    internal fun forgetRememberTarget(entry: SavedProfileEntry) =
+        com.ambient.tv.ui.player.TitleVideoSettingsStore.forgetRememberTarget(context, entry.key)
+
     internal fun saveLiveResolutionProfile(resolution: String, profile: com.ambient.tv.data.local.ResolutionVideoProfile?) {
         appPreferences.resolutionVideoProfiles = com.ambient.tv.data.local.withLiveResolutionProfile(
             appPreferences.resolutionVideoProfiles, resolution, profile)

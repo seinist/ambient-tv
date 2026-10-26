@@ -1,26 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="playback_profile_actions">Playback presets</string>
-    <string name="playback_profile_load_resolution">Load configuration for %1$s</string>
     <string name="playback_profile_saved_resolution">Audio/video configuration saved for this source width</string>
     <string name="playback_profile_loaded">Saved audio/video configuration loaded</string>
     <string name="playback_profile_failed">Configuration could not be applied or saved</string>
     <string name="playback_profile_unavailable">Available once playback is ready</string>
     <string name="playback_profile_title_unavailable">Changes to live TV, trailers and shared links apply to this playback only. Shared defaults can be saved explicitly.</string>
     <string name="playback_profile_resolution_unavailable">Width preset unavailable: source width is unknown or this is a trailer</string>
-    <string name="playback_profile_save_all">Save for all videos</string>
     <string name="playback_profile_saved_all">Audio/video configuration saved for all videos</string>
-    <string name="playback_profile_save_resolution_scope">Save for all videos with this width</string>
     <string name="playback_profile_resolution_scope">Source width: %1$s. * means any height. Also applies to slightly different widths (±3 %%, e.g. 1916 instead of 1920) without their own preset, and to live TV unless it has its own preset for this width.</string>
-    <string name="playback_profile_load_all">Load configuration for all videos</string>
     <string name="playback_profile_summary">Audio, video and renderer</string>
     <string name="playback_profile_includes">Audio, renderer, video output, decoder, picture and filter changes are remembered automatically for the current video. Save actions apply them as shared defaults.</string>
-    <string name="playback_profile_reset_all">Reset defaults for all videos</string>
-    <string name="playback_profile_reset_resolution">Reset this width preset</string>
-    <string name="playback_profile_reset_title">Reset changes for this video</string>
-    <string name="playback_profile_reset_scope_hint">Reset affects only the selected scope. Live TV falls back to the regular preset for the same width, then global defaults. Automatically remembered video changes take priority.</string>
     <string name="playback_profile_auto_title">Changes are saved automatically for this video.</string>
-    <string name="playback_scope_remember_for">Remember changes for</string>
     <string name="playback_scope_episode">This episode only</string>
     <string name="playback_scope_movie">This movie only</string>
     <string name="playback_scope_title">This video only</string>
@@ -30,14 +21,19 @@
     <string name="playback_scope_switched">Remember changes for: %1$s. %2$s</string>
     <string name="playback_scope_switched_broad">Changes already made in this playback were moved there.</string>
     <string name="playback_scope_switched_title">New changes apply only to this video.</string>
-    <string name="playback_scope_reset">Reset: %1$s</string>
-    <string name="playback_scope_origins">Source – Player: %1$s · Picture: %2$s · Deinterlacing: %3$s · Output: %4$s · Audio: %5$s · Delay: %6$s</string>
-    <string name="playback_origin_episode">Episode</string>
-    <string name="playback_origin_movie">Movie</string>
-    <string name="playback_origin_title">Video</string>
-    <string name="playback_origin_season">Season</string>
-    <string name="playback_origin_series">Series</string>
-    <string name="playback_origin_collection">Collection</string>
-    <string name="playback_origin_resolution">Resolution</string>
-    <string name="playback_origin_default">Default</string>
+    <string name="playback_profile_section_width">Width %1$s</string>
+    <string name="playback_profile_section_live_width">Live TV · width %1$s</string>
+    <string name="playback_profile_section_width_unknown">Width</string>
+    <string name="playback_profile_save">Save</string>
+    <string name="playback_profile_load">Load</string>
+    <string name="playback_profile_reset">Reset</string>
+    <string name="playback_profile_not_saved">Not saved</string>
+    <string name="playback_scope_channel">This channel</string>
+    <string name="playback_profile_save_all">Save for all videos</string>
+    <string name="playback_scope_remember_here">Remember here</string>
+    <string name="playback_scope_remembering">Remembering here</string>
+    <string name="playback_profile_section_cascade">Order</string>
+    <string name="playback_profile_cascade_hint">Top to bottom: each setting comes from the first layer that has a value saved.</string>
+    <string name="playback_profile_supplies">Currently supplies: %1$s</string>
+    <string name="playback_profile_global_plain">Playback settings</string>
 </resources>

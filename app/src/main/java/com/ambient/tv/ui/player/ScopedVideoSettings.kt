@@ -259,6 +259,16 @@ internal class VideoScopeChoices(
         if (before != next) onChange(LinkedHashMap(choices))
     }
 
+    /** Layer key -> how many series/titles currently remember into it. */
+    @Synchronized fun targetCounts(): Map<String, Int> = choices.values.groupingBy { it.key }.eachCount()
+
+    /** Points every choice aimed at [key] back to the title (e.g. after that layer was deleted). */
+    @Synchronized fun removeTarget(key: String) {
+        if (choices.values.none { it.key == key }) return
+        choices.values.removeAll { it.key == key }
+        onChange(LinkedHashMap(choices))
+    }
+
     @Synchronized fun clear() {
         if (choices.isEmpty()) return
         choices.clear()
