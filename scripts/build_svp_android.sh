@@ -40,7 +40,10 @@ if (( ${#build_abis[@]} == 0 )); then
 fi
 # API changes must pass the portable streaming/gating regressions before any
 # Android runtime is replaced. Vulkan/device playback still needs its own audit.
-cargo test --release --locked --no-default-features --lib --tests
+# Upstream metric.rs only imports _mm_unpacklo_epi64 with ssse3/avx2, which the
+# Android x86_64 target enables but the default host target does not.
+RUSTFLAGS="$RUSTFLAGS -C target-feature=+ssse3" \
+    cargo test --release --locked --no-default-features --lib --tests
 for abi in "${build_abis[@]}"; do
     cargo ndk --manifest-path "$ROOT/native/ambientsvp/Cargo.toml" -t "$abi" -P 29 \
         -o "$ROOT/app/src/main/jniLibs" build --release --locked --lib
