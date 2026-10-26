@@ -26,6 +26,8 @@ data class YouTubePlayerState(
     val liveEvent: com.ambient.tv.youtube.YouTubeLiveEvent? = null,
     val waitingForLive: Boolean = false,
     val successorsLoading: Boolean = false,
+    /** Channel of the playing video for the OSD's channel and subscribe buttons. */
+    val channel: com.ambient.tv.youtube.YouTubeChannelInfo? = null,
 )
 
 @HiltViewModel
@@ -39,7 +41,14 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private var foreground = true
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
 
-    init { load() }
+    init {
+        load()
+        viewModelScope.launch {
+            engine.subscriptionChanges.collect { changes ->
+                _uiState.update { current -> current.channel?.withSubscriptionChanges(changes)?.let { current.copy(channel = it) } ?: current }
+            }
+        }
+    }
 
     private var transitionToken: Long? = null
 
@@ -121,7 +130,12 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             val playback = checkNotNull(ready)
             if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return@launch
             transitionToken = null
-            _uiState.value = YouTubePlayerState(false, if (isTrailer) playback.copy(resumeMs = 0) else playback,
+            val chapterStart = YouTubeStartRequest.take(videoId)
+            _uiState.value = YouTubePlayerState(false, when {
+                isTrailer -> playback.copy(resumeMs = 0)
+                chapterStart != null -> playback.copy(resumeMs = chapterStart)
+                else -> playback
+            },
                 successorsLoading = !isTrailer)
             if (isTrailer) return@launch
             // SponsorBlock is optional; a slow/unavailable service must never hold the decoder.
@@ -136,7 +150,9 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 ?.suggestions
                 ?.asSequence()
                 ?.flatMap { it.items.asSequence() }
-                ?.firstOrNull { it.videoId != videoId && !it.isLive && !it.isUpcoming }
+                ?.firstOrNull { it.videoId != videoId && !it.isLive && !it.isUpcoming && !it.isChannel }
+            val channel = detail?.let(engine::channelOf)
+            val signedIn = channel != null && suspendResult { engine.isSignedIn() }.getOrDefault(false)
             _uiState.update { current ->
                 val playback = current.playback
                 val enriched = if (playback != null && detail != null) {
@@ -144,7 +160,20 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 } else {
                     playback
                 }
-                if (current.playback?.videoId == videoId) current.copy(playback = enriched, nextVideo = nextVideo, successorsLoading = false) else current
+                if (current.playback?.videoId == videoId) current.copy(
+                    playback = enriched, nextVideo = nextVideo, successorsLoading = false,
+                    channel = channel?.let { if (signedIn) it else it.copy(subscribed = null) },
+                ) else current
+            }
+        }
+    }
+    fun toggleSubscription() {
+        val channel = _uiState.value.channel?.takeIf { it.subscribed != null } ?: return
+        viewModelScope.launch {
+            engine.toggleSubscription(channel) { subscribed ->
+                _uiState.update { current ->
+                    if (current.channel?.channelId == channel.channelId) current.copy(channel = current.channel.copy(subscribed = subscribed)) else current
+                }
             }
         }
     }

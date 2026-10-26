@@ -27,9 +27,11 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ChildCare
 import androidx.compose.material.icons.filled.History
@@ -62,6 +64,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -268,19 +272,70 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     onCloseSearch:()->Unit,
     onOpenViewOptions:()->Unit,
 ) = Column(Modifier.fillMaxWidth().padding(screenGutter(), 24.dp, screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+    val channel = state.channel
     PageHeader(actions={
-        YouTubeAccountButton(state, vm::requestSignIn, vm::signOut)
+        if (channel == null) YouTubeAccountButton(state, vm::requestSignIn, vm::signOut)
+        else if (state.signedIn) channel.subscribed?.let { subscribed ->
+            TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed, icon=Icons.Filled.Subscriptions, onClick=vm::toggleSubscription)
+        }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
         TvChip(stringResource(R.string.action_view),modifier=viewOptionsModifier,icon=Icons.Filled.Tune,iconOnly=true,onClick=onOpenViewOptions)
-    }) { com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE) }
-    LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { items(state.visibleFeeds, key={it.key}) { feed -> TvChip(feedLabel(feed), state.feed==feed && state.query.isBlank(), icon=feedIcon(feed)) { onSelectFeed(feed) } } }
+    }) {
+        if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
+        else YouTubeChannelTitle(channel)
+    }
+    if (channel == null) LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { items(state.visibleFeeds, key={it.key}) { feed -> TvChip(feedLabel(feed), state.feed==feed && state.query.isBlank(), icon=feedIcon(feed)) { onSelectFeed(feed) } } }
     if (showSearch) {
         DeviceActionRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
-            TvTextField(state.query,vm::onQueryChanged,com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_search),searchFieldModifier.weight(1f))
+            TvTextField(state.query,vm::onQueryChanged,
+                if (channel != null) stringResource(R.string.youtube_channel_search)
+                else com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_search),
+                searchFieldModifier.weight(1f))
             PlayerIconButton(Icons.Filled.Close,stringResource(R.string.action_close),onCloseSearch,modifier=searchCloseModifier)
         }
     }
     state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=vm::refresh, loading=state.loading); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
+}
+
+/** Channel page title: round avatar and channel name in place of the system title. */
+@Composable
+private fun YouTubeChannelTitle(channel: com.ambient.tv.youtube.YouTubeChannelInfo) = Row(
+    horizontalArrangement = Arrangement.spacedBy(14.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    channel.avatarUrl?.let { ArtworkImage(it, channel.title.orEmpty(), Modifier.size(deviceDp(48.dp, 36.dp)).clip(CircleShape), ContentScale.Crop) }
+    Text(
+        channel.title ?: stringResource(R.string.youtube_channel_open),
+        style = MaterialTheme.typography.headlineMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/**
+ * 16:9 artwork of a tile. Channel avatars are square: they stay whole, round and centered on the
+ * tile, with SmartTube's new-content dot for subscribed channels that uploaded since.
+ */
+@Composable
+private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
+    if (!item.isChannel) {
+        ArtworkImage(item.imageUrl, item.title, modifier, ContentScale.Crop)
+        return
+    }
+    Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)), contentAlignment = Alignment.Center) {
+        ArtworkImage(item.imageUrl, item.title, Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape), ContentScale.Crop)
+        if (item.hasNewContent) {
+            val label = stringResource(R.string.youtube_channel_new_content)
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+                    .size(12.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                    .semantics { contentDescription = label },
+            )
+        }
+    }
 }
 
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
@@ -593,11 +648,9 @@ private fun YouTubeListItem(
             horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(
-                item.imageUrl,
-                item.title,
+            YouTubeItemArtwork(
+                item,
                 Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp)),
-                ContentScale.Crop,
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)))
@@ -833,6 +886,10 @@ private fun RowEndPlaceholder(modifier: Modifier, showText: Boolean) {
     }
 }
 
+/** Browse tile for other YouTube pages (the detail page's related videos). */
+@Composable
+internal fun YouTubeItemCard(item: YouTubeItem, onClick: (String) -> Unit, modifier: Modifier) = Card(item, onClick, modifier, true)
+
 @Composable
 private fun Card(
     item: YouTubeItem,
@@ -874,7 +931,7 @@ private fun Card(
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))) {
-                ArtworkImage(item.imageUrl, item.title, Modifier.fillMaxSize(), ContentScale.Crop)
+                YouTubeItemArtwork(item, Modifier.fillMaxSize())
                 com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", item.videoId)),
                     Modifier.align(Alignment.TopStart).padding(5.dp))
                 if (item.percentWatched > 0) {
@@ -985,5 +1042,5 @@ private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlayback
 @Composable private fun modeLabel(m:YouTubeViewMode)=stringResource(when(m){YouTubeViewMode.LANDSCAPE->R.string.library_view_landscape;YouTubeViewMode.LIST->R.string.library_view_list;YouTubeViewMode.INFO_LIST->R.string.library_view_info_list;YouTubeViewMode.WALL->R.string.library_view_wall;YouTubeViewMode.CINEMATIC->R.string.library_view_cinematic})
 @Composable private fun sortLabel(sort:YouTubeSort)=com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE,when(sort){YouTubeSort.DEFAULT->R.string.youtube_sort_default;YouTubeSort.TITLE->R.string.library_sort_title;YouTubeSort.DURATION->R.string.youtube_sort_duration})
 @Composable private fun filterLabel(filter:YouTubeFilter)=stringResource(when(filter){YouTubeFilter.ALL->R.string.library_filter_all;YouTubeFilter.UNWATCHED->R.string.library_filter_unwatched;YouTubeFilter.IN_PROGRESS->R.string.library_filter_in_progress;YouTubeFilter.LIVE->R.string.youtube_filter_live;YouTubeFilter.SHORTS->R.string.youtube_filter_shorts})
-@Composable private fun feedLabel(f:YouTubeFeed)=stringResource(when(f){YouTubeFeed.HOME->R.string.nav_youtube_home;YouTubeFeed.SUBSCRIPTIONS->R.string.nav_youtube_subscriptions;YouTubeFeed.HISTORY->R.string.nav_youtube_history;YouTubeFeed.PLAYLISTS->R.string.nav_youtube_playlists;YouTubeFeed.SHORTS->R.string.nav_youtube_shorts;YouTubeFeed.MUSIC->R.string.nav_youtube_music;YouTubeFeed.NEWS->R.string.nav_youtube_news;YouTubeFeed.GAMING->R.string.nav_youtube_gaming;YouTubeFeed.LIVE->R.string.nav_youtube_live;YouTubeFeed.KIDS->R.string.nav_youtube_kids})
-private fun feedIcon(f:YouTubeFeed)=when(f){YouTubeFeed.HOME->Icons.Filled.Home;YouTubeFeed.SUBSCRIPTIONS->Icons.Filled.Subscriptions;YouTubeFeed.HISTORY->Icons.Filled.History;YouTubeFeed.PLAYLISTS->Icons.AutoMirrored.Filled.PlaylistPlay;YouTubeFeed.SHORTS->Icons.Filled.SmartDisplay;YouTubeFeed.MUSIC->Icons.Filled.MusicNote;YouTubeFeed.NEWS->Icons.Filled.Newspaper;YouTubeFeed.GAMING->Icons.Filled.SportsEsports;YouTubeFeed.LIVE->Icons.Filled.LiveTv;YouTubeFeed.KIDS->Icons.Filled.ChildCare}
+@Composable private fun feedLabel(f:YouTubeFeed)=stringResource(when(f){YouTubeFeed.HOME->R.string.nav_youtube_home;YouTubeFeed.SUBSCRIPTIONS->R.string.nav_youtube_subscriptions;YouTubeFeed.CHANNELS->R.string.nav_youtube_channels;YouTubeFeed.HISTORY->R.string.nav_youtube_history;YouTubeFeed.PLAYLISTS->R.string.nav_youtube_playlists;YouTubeFeed.SHORTS->R.string.nav_youtube_shorts;YouTubeFeed.MUSIC->R.string.nav_youtube_music;YouTubeFeed.NEWS->R.string.nav_youtube_news;YouTubeFeed.GAMING->R.string.nav_youtube_gaming;YouTubeFeed.LIVE->R.string.nav_youtube_live;YouTubeFeed.KIDS->R.string.nav_youtube_kids})
+private fun feedIcon(f:YouTubeFeed)=when(f){YouTubeFeed.HOME->Icons.Filled.Home;YouTubeFeed.SUBSCRIPTIONS->Icons.Filled.Subscriptions;YouTubeFeed.CHANNELS->Icons.Filled.AccountCircle;YouTubeFeed.HISTORY->Icons.Filled.History;YouTubeFeed.PLAYLISTS->Icons.AutoMirrored.Filled.PlaylistPlay;YouTubeFeed.SHORTS->Icons.Filled.SmartDisplay;YouTubeFeed.MUSIC->Icons.Filled.MusicNote;YouTubeFeed.NEWS->Icons.Filled.Newspaper;YouTubeFeed.GAMING->Icons.Filled.SportsEsports;YouTubeFeed.LIVE->Icons.Filled.LiveTv;YouTubeFeed.KIDS->Icons.Filled.ChildCare}

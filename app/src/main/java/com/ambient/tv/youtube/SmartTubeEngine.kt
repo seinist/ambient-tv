@@ -16,6 +16,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.ensureActive
 import timber.log.Timber
 import com.ambient.tv.util.withoutUrlQueries
@@ -43,6 +44,10 @@ class SmartTubeEngine @Inject constructor(
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
     private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private val metadataInflight = java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Result<YouTubeMetadata>?>>()
+    /** Subscription changes of this session; cached metadata still carries the state it was loaded with. */
+    private val subscriptionOverrides = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    /** Channel id -> subscribed, for every change made in this session; screens below the one that changed it follow. */
+    val subscriptionChanges: kotlinx.coroutines.flow.StateFlow<Map<String, Boolean>> = subscriptionOverrides
 
     init {
         // Lets VLC/MPV keep playing after googlevideo expires a link (hours of pause): the relay
@@ -105,6 +110,8 @@ class SmartTubeEngine @Inject constructor(
     suspend fun signOut() = io {
         playbackMetadata.clear()
         rowContinuations.clear()
+        subscriptionOverrides.value = emptyMap()
+        likeOverrides.clear()
         runCatching { signInDisposable?.call("dispose") }
         signInDisposable = null
         val signIn = service("getSignInService")
@@ -208,6 +215,80 @@ class SmartTubeEngine @Inject constructor(
         arrayOf("getSearchObserve", "getSearch"),
         query, onRows = onRows,
     )
+    /** Subscribed channels as channel tiles, those with new uploads first (SmartTube's default order). */
+    suspend fun subscribedChannels(onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> = contentRows(
+        "getSubscribedChannelsByNewContentObserve", "getSubscribedChannelsObserve", "getSubscribedChannels", onRows = onRows,
+    )
+
+    /** Channel page rows (Uploads, Live, Shorts, Playlists, ...); [scope] keys their continuations. */
+    suspend fun channel(channelId: String, scope: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> =
+        withContext(RowContinuationScope(scope)) {
+            contentRowsWithArgs(arrayOf("getChannelObserve"), channelId, onRows = onRows)
+        }
+
+    suspend fun channelSearch(channelId: String, query: String, scope: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> =
+        withContext(RowContinuationScope(scope)) {
+            contentRowsWithArgs(arrayOf("getChannelSearchObserve", "getChannelSearch"), channelId, query, onRows = onRows)
+        }
+
+    /** Rating changes of this session; cached metadata still carries the rating it was loaded with. */
+    private val likeOverrides = java.util.concurrent.ConcurrentHashMap<String, YouTubeLikeStatus>()
+
+    fun likeOverride(videoId: String): YouTubeLikeStatus? = likeOverrides[videoId]
+
+    /** Moves the rating of [videoId] from [from] to [to], as SmartTube's like/dislike buttons do. */
+    suspend fun setLikeStatus(videoId: String, from: YouTubeLikeStatus, to: YouTubeLikeStatus) = io {
+        if (from == to) return@io
+        val media = service("getMediaItemService")
+        // The rating calls take a MediaItem but only read its video id.
+        val item = videoIdMediaItem(videoId)
+        fun run(method: String) {
+            val invocation = media.invokeDetailed(method, item)
+            check(invocation.found) { "SmartTube has no $method" }
+            invocation.error?.let { throw it }
+        }
+        when (from) {
+            YouTubeLikeStatus.LIKE -> run("removeLike")
+            YouTubeLikeStatus.DISLIKE -> run("removeDislike")
+            YouTubeLikeStatus.NONE -> Unit
+        }
+        when (to) {
+            YouTubeLikeStatus.LIKE -> run("setLike")
+            YouTubeLikeStatus.DISLIKE -> run("setDislike")
+            YouTubeLikeStatus.NONE -> Unit
+        }
+        likeOverrides[videoId] = to
+    }
+
+    private fun videoIdMediaItem(videoId: String): Any {
+        val iface = Class.forName("com.liskovsoft.mediaserviceinterfaces.data.MediaItem")
+        return Proxy.newProxyInstance(iface.classLoader, arrayOf(iface)) { proxy, method, args ->
+            when (method.name) {
+                "getVideoId" -> videoId
+                "toString" -> "AmbientTvMediaItem($videoId)"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                else -> when (method.returnType) {
+                    Int::class.javaPrimitiveType -> -1
+                    Long::class.javaPrimitiveType -> 0L
+                    Double::class.javaPrimitiveType -> 0.0
+                    Float::class.javaPrimitiveType -> 0f
+                    Boolean::class.javaPrimitiveType -> false
+                    else -> null
+                }
+            }
+        }
+    }
+
+    /** Session state of a channel subscription changed here; null when it was not changed. */
+    fun subscriptionOverride(channelId: String): Boolean? = subscriptionOverrides.value[channelId]
+
+    suspend fun setSubscribed(channelId: String, subscribed: Boolean) = io {
+        val invocation = service("getMediaItemService").invokeDetailed(if (subscribed) "subscribe" else "unsubscribe", channelId)
+        check(invocation.found) { "SmartTube has no subscription call" }
+        invocation.error?.let { throw it }
+        subscriptionOverrides.update { it + (channelId to subscribed) }
+    }
 
     /** SmartTube exposes these as top-level sections. Method names have changed between
      * MediaServiceCore revisions, so probe known public variants across revisions. */
@@ -224,6 +305,7 @@ class SmartTubeEngine @Inject constructor(
         buildSet {
             if (signedIn) add("home")
             if (signedIn && content.hasAnyMethod("getSubscriptions", "getSubscriptionsObserve", "getSubscriptionsRowObserve")) add("subscriptions")
+            if (signedIn && content.hasAnyMethod("getSubscribedChannelsByNewContentObserve", "getSubscribedChannelsObserve", "getSubscribedChannels")) add("channels")
             if (signedIn && content.hasAnyMethod("getHistory", "getHistoryObserve", "getHistoryRowObserve")) add("history")
             if (signedIn && content.hasAnyMethod("getPlaylists", "getPlaylistsObserve", "getPlaylistsRowObserve")) add("playlists")
             if (content.hasAnyMethod("getShorts", "getShortsObserve")) add("shorts")
@@ -278,6 +360,7 @@ class SmartTubeEngine @Inject constructor(
     private suspend fun feedRows(key: String, onRows: suspend (List<YouTubeRow>) -> Unit): List<YouTubeRow> = when (key) {
         "home" -> home(onRows)
         "subscriptions" -> subscriptions(onRows)
+        "channels" -> subscribedChannels(onRows)
         "history" -> history(onRows)
         "playlists" -> playlists(onRows)
         "shorts" -> section(context.getString(com.ambient.tv.R.string.nav_youtube_shorts), "getShortsObserve", "getShorts", onRows = onRows)
@@ -665,6 +748,17 @@ class SmartTubeEngine @Inject constructor(
             durationMs = meta.callLong("getDurationMs") ?: 0,
             percentWatched = meta.callInt("getPercentWatched") ?: 0,
             isLive = meta.callBool("isLive") ?: false,
+            channelId = meta.callString("getChannelId")?.takeIf(String::isNotBlank),
+            authorImageUrl = meta.callString("getAuthorImageUrl")?.takeIf(String::isNotBlank),
+            subscribed = meta.callBool("isSubscribed") ?: false,
+            viewCount = meta.callString("getViewCount")?.takeIf(String::isNotBlank),
+            publishedDate = meta.callString("getPublishedDate")?.takeIf(String::isNotBlank),
+            likeCount = meta.callString("getLikeCount")?.takeIf(String::isNotBlank),
+            likeStatus = likeOverrides[videoId] ?: when (meta.callInt("getLikeStatus")) {
+                1 -> YouTubeLikeStatus.LIKE
+                2 -> YouTubeLikeStatus.DISLIKE
+                else -> YouTubeLikeStatus.NONE
+            },
             suggestions = mapGroups(meta.call("getSuggestions")),
             chapters = (meta.call("getChapters") as? Iterable<*>)?.mapNotNull { value ->
                 val chapter = value ?: return@mapNotNull null
@@ -811,7 +905,7 @@ class SmartTubeEngine @Inject constructor(
         return rows
     }
 
-    /** Playable items of one MediaGroup; entries without a videoId (playlists, mixes, channels) are counted and logged. */
+    /** Playable items and channel tiles of one MediaGroup; other entries without a videoId (playlists, mixes) are counted and logged. */
     private fun mapGroupItems(group: Any, rowTitle: String): List<YouTubeItem> {
         val itemContainer = group.callFirst("getMediaItems", "getItems", "getVideos", "getContent")
         val rawItems = when (val resolved = unwrapReactive(itemContainer)) {
@@ -933,6 +1027,7 @@ class SmartTubeEngine @Inject constructor(
 
     private fun mapItem(raw: Any?): YouTubeItem? {
         raw ?: return null
+        if (raw.callInt("getType") == MEDIA_ITEM_TYPE_CHANNEL) return mapChannelItem(raw)
         val videoId = raw.callString("getVideoId")?.takeIf(String::isNotBlank) ?: return null
         return YouTubeItem(
             videoId = videoId,
@@ -948,6 +1043,19 @@ class SmartTubeEngine @Inject constructor(
             scheduledStartMs = youtubeScheduledStartMs(raw.callString("getUpcomingEventStartTime"), null),
             isShorts = raw.callBool("isShorts") ?: false,
             channelId = raw.callString("getChannelId"),
+        )
+    }
+
+    private fun mapChannelItem(raw: Any): YouTubeItem? {
+        val channelId = raw.callString("getChannelId")?.takeIf(String::isNotBlank) ?: return null
+        return YouTubeItem(
+            videoId = youtubeChannelKey(channelId),
+            title = raw.callString("getTitle") ?: "SmartTube",
+            subtitle = raw.call("getSecondTitle")?.toString()?.takeIf(String::isNotBlank),
+            imageUrl = raw.callString("getCardImageUrl")?.takeIf(String::isNotBlank),
+            backgroundUrl = raw.callString("getBackgroundImageUrl")?.takeIf(String::isNotBlank),
+            channelId = channelId,
+            hasNewContent = raw.callBool("hasNewContent") ?: false,
         )
     }
 
@@ -1182,3 +1290,5 @@ private class RowContinuationScope(val scope: String) : kotlin.coroutines.Abstra
 internal class IncompleteYouTubeFeedException(cause: Throwable? = null) : java.io.IOException("YouTube feed refresh incomplete", cause)
 
 private const val RENEW_TIMEOUT_MS = 20_000L
+/** MediaItem.TYPE_CHANNEL */
+private const val MEDIA_ITEM_TYPE_CHANNEL = 2

@@ -13,7 +13,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-data class YouTubeDetailState(val loading: Boolean = true, val metadata: YouTubeMetadata? = null, val error: String? = null, val offline: Boolean = false)
+data class YouTubeDetailState(
+    val loading: Boolean = true,
+    val metadata: YouTubeMetadata? = null,
+    val error: String? = null,
+    val offline: Boolean = false,
+    val channel: com.ambient.tv.youtube.YouTubeChannelInfo? = null,
+    /** Signed in: the page offers the rating buttons. */
+    val signedIn: Boolean = false,
+    val likeStatus: com.ambient.tv.youtube.YouTubeLikeStatus = com.ambient.tv.youtube.YouTubeLikeStatus.NONE,
+)
 
 @HiltViewModel
 class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine,
@@ -27,6 +36,13 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
     init {
         load()
         viewModelScope.launch {
+            engine.subscriptionChanges.collect { changes ->
+                val channel = _uiState.value.channel ?: return@collect
+                val updated = channel.withSubscriptionChanges(changes)
+                if (updated != channel) _uiState.value = _uiState.value.copy(channel = updated)
+            }
+        }
+        viewModelScope.launch {
             availability.changes.collect {
                 val offline = !availability.hasNetwork()
                 val previous = _uiState.value
@@ -36,6 +52,32 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
         }
     }
     fun retryOffline() { if (_uiState.value.offline && availability.hasNetwork() && loadJob?.isActive != true) load() }
+    private var ratingJob: kotlinx.coroutines.Job? = null
+
+    /** Like/dislike like SmartTube: pressing the active rating again removes it. */
+    fun rate(rating: com.ambient.tv.youtube.YouTubeLikeStatus) {
+        val state = _uiState.value
+        if (!state.signedIn || ratingJob?.isActive == true) return
+        val from = state.likeStatus
+        val to = if (from == rating) com.ambient.tv.youtube.YouTubeLikeStatus.NONE else rating
+        _uiState.value = state.copy(likeStatus = to)
+        ratingJob = viewModelScope.launch {
+            suspendResult { engine.setLikeStatus(videoId, from, to) }.onFailure {
+                _uiState.value = _uiState.value.copy(likeStatus = from)
+                com.ambient.tv.notifications.notifyResult("youtube:rating:$videoId", "youtube", state.metadata?.title, success = false,
+                    kind = com.ambient.tv.notifications.NoticeKind.LIBRARY, failureMessage = com.ambient.tv.R.string.youtube_rating_failed)
+            }
+        }
+    }
+
+    fun toggleSubscription() {
+        val channel = _uiState.value.channel?.takeIf { it.subscribed != null } ?: return
+        viewModelScope.launch {
+            engine.toggleSubscription(channel) { subscribed ->
+                _uiState.value = _uiState.value.copy(channel = _uiState.value.channel?.copy(subscribed = subscribed))
+            }
+        }
+    }
     fun load() {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -46,7 +88,11 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
             suspendResult { engine.metadata(videoId) }.onSuccess {
                 if (cache.revision() == revision) {
                     cache.putMetadata(it, revision)
-                    _uiState.value = YouTubeDetailState(false, it)
+                    val signedIn = suspendResult { engine.isSignedIn() }.getOrDefault(false)
+                    // Signed out the subscription is unknown: the page offers the channel, not the toggle.
+                    val channel = engine.channelOf(it)?.let { channel -> if (signedIn) channel else channel.copy(subscribed = null) }
+                    _uiState.value = YouTubeDetailState(false, it, channel = channel, signedIn = signedIn,
+                        likeStatus = engine.likeOverride(it.videoId) ?: it.likeStatus)
                 }
             }.onFailure {
                 _uiState.value = _uiState.value.copy(loading = false, offline = true, error = it.message)

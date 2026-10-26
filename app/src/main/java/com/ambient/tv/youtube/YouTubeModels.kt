@@ -17,7 +17,12 @@ data class YouTubeItem(
     val isShorts: Boolean = false,
     val channelId: String? = null,
     val scheduledStartMs: Long? = null,
-)
+    /** Subscribed-channel tiles: the channel uploaded since it was last opened. */
+    val hasNewContent: Boolean = false,
+) {
+    /** Channel tiles carry [youtubeChannelKey] as videoId, so rows, focus and paging keep one key. */
+    val isChannel: Boolean get() = youtubeChannelIdOf(videoId) != null
+}
 
 @kotlinx.serialization.Serializable
 data class YouTubeRow(val title: String, val items: List<YouTubeItem>, val id: String = title)
@@ -35,7 +40,36 @@ data class YouTubeMetadata(
     val isLive: Boolean = false,
     val suggestions: List<YouTubeRow> = emptyList(),
     val chapters: List<com.ambient.tv.domain.model.VideoChapter> = emptyList(),
+    val channelId: String? = null,
+    val authorImageUrl: String? = null,
+    val subscribed: Boolean = false,
+    /** YouTube's own texts, e.g. "1.234.567 Aufrufe" and "vor 3 Tagen". */
+    val viewCount: String? = null,
+    val publishedDate: String? = null,
+    val likeCount: String? = null,
+    val likeStatus: YouTubeLikeStatus = YouTubeLikeStatus.NONE,
 )
+
+/** MediaItemMetadata.LIKE_STATUS_* */
+@kotlinx.serialization.Serializable
+enum class YouTubeLikeStatus { NONE, LIKE, DISLIKE }
+
+/** Channel header of the channel page and the channel actions of details and player. */
+data class YouTubeChannelInfo(
+    val channelId: String,
+    val title: String? = null,
+    val avatarUrl: String? = null,
+    /** Null while unknown (signed out, or not yet loaded). */
+    val subscribed: Boolean? = null,
+)
+
+private const val CHANNEL_KEY_PREFIX = "channel:"
+
+/** Item key of a channel tile; YouTube video ids never contain ':'. */
+fun youtubeChannelKey(channelId: String): String = CHANNEL_KEY_PREFIX + channelId
+
+fun youtubeChannelIdOf(key: String): String? =
+    key.takeIf { it.startsWith(CHANNEL_KEY_PREFIX) }?.removePrefix(CHANNEL_KEY_PREFIX)?.takeIf(String::isNotBlank)
 
 data class YouTubePlayback(
     val videoId: String,

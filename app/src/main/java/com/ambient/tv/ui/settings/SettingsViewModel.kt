@@ -527,6 +527,7 @@ class SettingsViewModel @Inject constructor(
         youtubeSponsorBlockEnabled = appPreferences.youtubeSponsorBlockEnabled,
         youtubeAutoplayNextEnabled = appPreferences.youtubeAutoplayNextEnabled,
         youtubeFeedKeys = appPreferences.youtubeFeedKeys,
+        youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
         youtubeMaxVideoHeight = appPreferences.youtubeMaxVideoHeight,
         youtubeVideoPreset = appPreferences.youtubeVideoPreset,
         plexHiddenSectionKeys = appPreferences.plexHiddenSectionKeys,
@@ -2199,8 +2200,13 @@ class SettingsViewModel @Inject constructor(
     fun onYoutubeFeedChanged(key: String, enabled: Boolean) = _uiState.update { state ->
         if (key !in AppPreferences.YOUTUBE_FEED_KEYS || key !in state.youtubeSupportedFeedKeys) state else {
             val next = if (enabled) (state.youtubeFeedKeys + key).distinct() else state.youtubeFeedKeys.filterNot { it == key }
-            state.copy(youtubeFeedKeys = next.ifEmpty { listOf("home") })
+            val feeds = next.ifEmpty { listOf("home") }
+            // Switching the start section off falls back to Home, as the stored setting does.
+            state.copy(youtubeFeedKeys = feeds, youtubeStartFeedKey = state.youtubeStartFeedKey.takeIf { it in feeds } ?: "home")
         }
+    }
+    fun onYoutubeStartFeedChanged(key: String) = _uiState.update { state ->
+        if (key in state.youtubeFeedKeys) state.copy(youtubeStartFeedKey = key) else state
     }
     fun onYoutubeVideoPresetChanged(key: String) = _uiState.update {
         it.copy(youtubeVideoPreset = key.takeIf { k -> com.ambient.tv.youtube.youtubeVideoPreset(k) != null } ?: com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO)
@@ -2618,6 +2624,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.youtubeSponsorBlockEnabled = state.youtubeSponsorBlockEnabled
         appPreferences.youtubeAutoplayNextEnabled = state.youtubeAutoplayNextEnabled
         appPreferences.youtubeFeedKeys = state.youtubeFeedKeys
+        appPreferences.youtubeStartFeedKey = state.youtubeStartFeedKey
         appPreferences.youtubeMaxVideoHeight = state.youtubeMaxVideoHeight
         appPreferences.youtubeVideoPreset = state.youtubeVideoPreset
         appPreferences.screensaverEnabled = state.screensaverEnabled

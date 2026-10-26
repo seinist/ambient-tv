@@ -31,7 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class YouTubeFeed(val key: String) {
-    HOME("home"), SUBSCRIPTIONS("subscriptions"), HISTORY("history"),
+    HOME("home"), SUBSCRIPTIONS("subscriptions"), CHANNELS("channels"), HISTORY("history"),
     PLAYLISTS("playlists"), SHORTS("shorts"), MUSIC("music"),
     NEWS("news"), GAMING("gaming"), LIVE("live"), KIDS("kids");
 
@@ -65,15 +65,21 @@ data class YouTubeUiState(
     val signInCode: String? = null,
     /** Incremented only when an inline SmartTube sign-in has actually completed. */
     val completedSignInId: Int = 0,
+    /** Channel page: header of the channel whose rows are shown instead of a feed. */
+    val channel: com.ambient.tv.youtube.YouTubeChannelInfo? = null,
 )
 
 @HiltViewModel
 class YouTubeViewModel @Inject constructor(
+    savedStateHandle: androidx.lifecycle.SavedStateHandle,
     private val engine: SmartTubeEngine,
     private val preferences: AppPreferences,
     private val contentCache: YouTubeContentCache,
 ) : ViewModel() {
-    private fun stateKey(feed: YouTubeFeed) = "youtube:${feed.key}"
+    /** Set on the channel page route: the screen shows that channel instead of a feed. */
+    private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
+    // All channel pages share one view setup instead of one per visited channel.
+    private fun stateKey(feed: YouTubeFeed) = if (channelId != null) "youtube:channel" else "youtube:${feed.key}"
     fun focusedVideoId(feed: YouTubeFeed): String? = preferences.sectionFocus(stateKey(feed))
     fun focusedRowId(feed: YouTubeFeed): String? = preferences.sectionFocusRow(stateKey(feed))
     fun onItemFocused(feed: YouTubeFeed, rowId: String?, videoId: String) {
@@ -214,6 +220,14 @@ class YouTubeViewModel @Inject constructor(
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
             mediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
+            channel = channelId?.let {
+                com.ambient.tv.youtube.YouTubeChannelInfo(
+                    channelId = it,
+                    title = savedStateHandle.get<String>("title")?.takeIf(String::isNotBlank),
+                    avatarUrl = savedStateHandle.get<String>("avatar")?.takeIf(String::isNotBlank),
+                    subscribed = engine.subscriptionOverride(it),
+                )
+            },
         ),
     )
     private var signInWatchJob: Job? = null
@@ -221,7 +235,16 @@ class YouTubeViewModel @Inject constructor(
     private var displayedContentKey: String? = null
     val uiState: StateFlow<YouTubeUiState> = _uiState.asStateFlow()
 
-    init { refresh() }
+    init {
+        refresh()
+        viewModelScope.launch {
+            engine.subscriptionChanges.collect { changes ->
+                val channel = _uiState.value.channel ?: return@collect
+                val updated = channel.withSubscriptionChanges(changes)
+                if (updated != channel) _uiState.value = _uiState.value.copy(channel = updated)
+            }
+        }
+    }
 
     fun refresh() = load(_uiState.value.feed)
     fun selectFeed(feed: YouTubeFeed) {
@@ -263,6 +286,16 @@ class YouTubeViewModel @Inject constructor(
         preferences.youtubeMediaSelectionBehaviorKey = value
         _uiState.value = _uiState.value.copy(mediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey)
     }
+    fun toggleSubscription() {
+        val channel = _uiState.value.channel?.takeIf { it.subscribed != null } ?: return
+        if (!_uiState.value.signedIn) return
+        viewModelScope.launch {
+            engine.toggleSubscription(channel) { subscribed ->
+                _uiState.value = _uiState.value.copy(channel = _uiState.value.channel?.copy(subscribed = subscribed))
+            }
+        }
+    }
+
     fun onQueryChanged(value: String) {
         _uiState.value = _uiState.value.copy(query = value)
         if (value.trim().length >= 2) search(value) else load(_uiState.value.feed)
@@ -378,6 +411,7 @@ class YouTubeViewModel @Inject constructor(
     }
 
     private fun load(feed: YouTubeFeed) {
+        if (channelId != null) { loadChannel(channelId); return }
         contentJob?.cancel()
         resetPaging(null)
         showCachedContent("feed:${feed.key}")
@@ -428,6 +462,55 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
+    /** Channel page: its rows (Uploads, Live, Shorts, ...) take the place of a feed. */
+    private fun loadChannel(channelId: String) {
+        contentJob?.cancel()
+        resetPaging(null)
+        val cacheKey = "channel:$channelId"
+        showCachedContent(cacheKey)
+        contentJob = viewModelScope.launch {
+            contentCache.restore()
+            val cacheRevision = contentCache.revision()
+            if (!engine.available) {
+                _uiState.value = _uiState.value.copy(available = false, loading = false, error = null)
+                return@launch
+            }
+            suspendResult {
+                val signed = engine.isSignedIn()
+                _uiState.value = _uiState.value.copy(signedIn = signed, visibleFeeds = emptyList())
+                engine.channel(channelId, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
+            }.onSuccess { rows ->
+                if (contentCache.revision() != cacheRevision) return@onSuccess
+                _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))
+                if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
+                resolveChannelHeader(channelId, rows)
+            }.onFailure { e ->
+                _uiState.value = _uiState.value.copy(loading = false, error = e.userMessage().takeIf { _uiState.value.rows.isEmpty() })
+            }
+        }
+    }
+
+    /**
+     * YouTube reports the subscription only with a video's metadata, so the channel's first upload
+     * supplies it (and name and avatar when the route came without them, e.g. from the player).
+     */
+    private suspend fun resolveChannelHeader(channelId: String, rows: List<YouTubeRow>) {
+        val current = _uiState.value.channel ?: return
+        if (current.subscribed != null && current.title != null && current.avatarUrl != null) return
+        // Own uploads first; a featured video of another channel cannot tell this channel's state.
+        val videos = rows.asSequence().flatMap { it.items }.filterNot { it.isChannel }
+        val candidates = (videos.filter { it.channelId == channelId } + videos).map { it.videoId }.distinct().take(3)
+        val channel = candidates.firstNotNullOfOrNull { videoId ->
+            suspendResult { engine.metadata(videoId) }.getOrNull()?.let(engine::channelOf)?.takeIf { it.channelId == channelId }
+        } ?: return
+        val latest = _uiState.value.channel ?: return
+        _uiState.value = _uiState.value.copy(channel = latest.copy(
+            title = latest.title ?: channel.title,
+            avatarUrl = latest.avatarUrl ?: channel.avatarUrl,
+            subscribed = engine.subscriptionOverride(channelId) ?: latest.subscribed ?: channel.subscribed.takeIf { _uiState.value.signedIn },
+        ))
+    }
+
     private fun search(query: String) {
         contentJob?.cancel()
         resetPaging(null)
@@ -435,9 +518,13 @@ class YouTubeViewModel @Inject constructor(
             contentCache.restore()
             val cacheRevision = contentCache.revision()
             delay(350)
-            val cacheKey = "search:${query.trim().lowercase()}"
+            val cacheKey = channelId?.let { "channel:$it:search:${query.trim().lowercase()}" }
+                ?: "search:${query.trim().lowercase()}"
             showCachedContent(cacheKey)
-            suspendResult { engine.search(query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) } }
+            suspendResult {
+                if (channelId != null) engine.channelSearch(channelId, query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
+                else engine.search(query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
+            }
                 .onSuccess { rows ->
                     if (_uiState.value.query == query && contentCache.revision() == cacheRevision) {
                         _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))

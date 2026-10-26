@@ -1238,12 +1238,31 @@ class AppPreferences @Inject constructor(
             val raw = prefs.getString(KEY_YOUTUBE_FEEDS, null)
             val allowed = YOUTUBE_FEED_KEYS
             val parsed = raw?.split(',')?.map(String::trim)?.filter { it in allowed }?.distinct().orEmpty()
+            // Lists saved before the Channels section existed get it once, after Subscriptions.
+            if (parsed.isNotEmpty() && !prefs.getBoolean(KEY_YOUTUBE_FEEDS_CHANNELS_OFFERED, false)) {
+                val anchor = parsed.indexOf("subscriptions").takeIf { it >= 0 } ?: parsed.indexOf("home")
+                val migrated = if ("channels" in parsed) parsed
+                    else parsed.toMutableList().apply { add(anchor + 1, "channels") }
+                prefs.edit {
+                    putString(KEY_YOUTUBE_FEEDS, migrated.joinToString(","))
+                    putBoolean(KEY_YOUTUBE_FEEDS_CHANNELS_OFFERED, true)
+                }
+                return migrated
+            }
             return parsed.ifEmpty { DEFAULT_YOUTUBE_FEEDS }
         }
         set(value) {
             val normalized = value.filter { it in YOUTUBE_FEED_KEYS }.distinct().ifEmpty { listOf("home") }
-            prefs.edit { putString(KEY_YOUTUBE_FEEDS, normalized.joinToString(",")) }
+            prefs.edit {
+                putString(KEY_YOUTUBE_FEEDS, normalized.joinToString(","))
+                putBoolean(KEY_YOUTUBE_FEEDS_CHANNELS_OFFERED, true)
+            }
         }
+
+    /** SmartTube section opened as its start page; falls back to Home when that section is switched off. */
+    var youtubeStartFeedKey: String
+        get() = prefs.getString(KEY_YOUTUBE_START_FEED, null)?.takeIf { it in youtubeFeedKeys } ?: "home"
+        set(value) = prefs.edit { putString(KEY_YOUTUBE_START_FEED, value.takeIf { it in YOUTUBE_FEED_KEYS } ?: "home") }
 
     /** 0 = automatic/unlimited, otherwise maximum video height in pixels. */
     var youtubeMaxVideoHeight: Int
@@ -2154,8 +2173,8 @@ class AppPreferences @Inject constructor(
         const val KEY_YOUTUBE_FEEDS = "youtube_feed_keys"
         const val KEY_YOUTUBE_MAX_VIDEO_HEIGHT = "youtube_max_video_height"
         const val KEY_YOUTUBE_VIDEO_PRESET = "youtube_video_preset"
-        val YOUTUBE_FEED_KEYS = setOf("home", "subscriptions", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
-        val DEFAULT_YOUTUBE_FEEDS = listOf("home", "subscriptions", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
+        val YOUTUBE_FEED_KEYS = setOf("home", "subscriptions", "channels", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
+        val DEFAULT_YOUTUBE_FEEDS = listOf("home", "subscriptions", "channels", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
         const val KEY_SCREENSAVER_ENABLED = "screensaver_enabled"
         const val KEY_SCREENSAVER_TIMEOUT_MINUTES = "screensaver_timeout_minutes"
         const val KEY_SCREENSAVER_MODE = "screensaver_mode"
@@ -2164,6 +2183,8 @@ class AppPreferences @Inject constructor(
         const val KEY_SCREENSAVER_24H_CLOCK = "screensaver_24h_clock"
         const val KEY_SCREENSAVER_USE_ARTWORK = "screensaver_use_artwork"
         const val KEY_SCREENSAVER_ARTWORK_INTERVAL_SECONDS = "screensaver_artwork_interval_seconds"
+        const val KEY_YOUTUBE_FEEDS_CHANNELS_OFFERED = "youtube_feed_channels_offered"
+        const val KEY_YOUTUBE_START_FEED = "youtube_start_feed_key"
         const val KEY_SCREENSAVER_DIM_PERCENT = "screensaver_dim_percent"
         const val KEY_SCREENSAVER_QUALITY = "screensaver_quality"
         const val KEY_TVH_ENABLED = "tvh_enabled"

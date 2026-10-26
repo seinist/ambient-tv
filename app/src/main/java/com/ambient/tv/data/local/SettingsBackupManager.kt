@@ -132,6 +132,8 @@ data class SettingsBackup(
     val bigSeekJumpSeconds: Int = 60,
     val youtubeSponsorBlockEnabled: Boolean = true,
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
+    /** Null in backups made before the setting existed: restoring them keeps the device's choice. */
+    val youtubeStartFeedKey: String? = null,
     val youtubeMaxVideoHeight: Int = 0,
     val youtubeVideoPreset: String = "auto",
     val screensaverEnabled: Boolean = true,
@@ -426,6 +428,7 @@ class SettingsBackupManager @Inject constructor(
             bigSeekJumpSeconds = preferences.bigSeekJumpSeconds,
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeFeedKeys = preferences.youtubeFeedKeys,
+            youtubeStartFeedKey = preferences.youtubeStartFeedKey,
             youtubeMaxVideoHeight = preferences.youtubeMaxVideoHeight,
             youtubeVideoPreset = preferences.youtubeVideoPreset,
             screensaverEnabled = preferences.screensaverEnabled,
@@ -776,6 +779,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.bigSeekJumpSeconds = backup.bigSeekJumpSeconds
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
+        backup.youtubeStartFeedKey?.let { preferences.youtubeStartFeedKey = it }
         preferences.youtubeMaxVideoHeight = backup.youtubeMaxVideoHeight
         // YouTube video preset since schema 66; older backups do not carry it, so their
         // default ("auto") must not replace the preset chosen on this device.

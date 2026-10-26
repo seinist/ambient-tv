@@ -310,6 +310,7 @@ private fun HandheldSources(
         if (youtube) add(withSettings(MediaSystem.YOUTUBE, feeds.ifEmpty { listOf("home") }.map { key ->
             SourceEntry(key, stringResource(when (key) {
                 "subscriptions" -> R.string.nav_youtube_subscriptions
+                "channels" -> R.string.nav_youtube_channels
                 "history" -> R.string.nav_youtube_history
                 "playlists" -> R.string.nav_youtube_playlists
                 "shorts" -> R.string.nav_youtube_shorts
@@ -319,7 +320,7 @@ private fun HandheldSources(
                 "live" -> R.string.nav_youtube_live
                 "kids" -> R.string.nav_youtube_kids
                 else -> R.string.nav_youtube_home
-            }), if (key == "home") Destinations.YOUTUBE else Destinations.youtubeFeed(key))
+            }), Destinations.youtubeSection(key, sidebarState.youtubeStartFeedKey))
         }))
         // Match TV sidebar: Spotify appears only once signed in.
         if (spotify) {

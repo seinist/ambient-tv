@@ -49,6 +49,8 @@ data class SidebarUiState(
     /** Server asleep or unreachable: TVHeadend stays, marked offline, with its cached data. */
     val tvheadendOffline: Boolean = false,
     val youtubeFeedKeys: List<String> = listOf("home"),
+    /** Section behind SmartTube's root route (see [Destinations.youtubeSection]). */
+    val youtubeStartFeedKey: String = "home",
     val spotifySubmenuKeys: List<String> = emptyList(),
     val tvheadendSubmenuKeys: List<String> = emptyList(),
     val settingsShortcutHidden: Set<String> = emptySet(),
@@ -256,7 +258,8 @@ class SidebarViewModel @Inject constructor(
                 val keys = appPreferences.youtubeFeedKeys.filter { it in supported }
                     .ifEmpty { AppPreferences.YOUTUBE_FEED_KEYS.filter { it in supported } }
                     .ifEmpty { listOf("home") }
-                _uiState.update { it.copy(youtubeFeedKeys = keys) }
+                val start = appPreferences.youtubeStartFeedKey.takeIf { it in keys } ?: "home"
+                _uiState.update { it.copy(youtubeFeedKeys = keys, youtubeStartFeedKey = start) }
             }
             if (!appPreferences.isConfigured) {
                 _uiState.update { it.copy(sections = emptyList()) }

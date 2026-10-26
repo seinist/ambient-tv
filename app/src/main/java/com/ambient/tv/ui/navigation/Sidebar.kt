@@ -261,6 +261,7 @@ internal fun SidebarContent(
             youtubeFeedKeys.ifEmpty { listOf("home") }.map { key ->
                 val label = stringResource(when (key) {
                     "subscriptions" -> R.string.nav_youtube_subscriptions
+                    "channels" -> R.string.nav_youtube_channels
                     "history" -> R.string.nav_youtube_history
                     "playlists" -> R.string.nav_youtube_playlists
                     "shorts" -> R.string.nav_youtube_shorts
@@ -271,7 +272,7 @@ internal fun SidebarContent(
                     "kids" -> R.string.nav_youtube_kids
                     else -> R.string.nav_youtube_home
                 })
-                MenuDestination("youtube:$key", label, iconForYouTubeFeed(key), if (key == "home") Destinations.YOUTUBE else Destinations.youtubeFeed(key))
+                MenuDestination("youtube:$key", label, iconForYouTubeFeed(key), Destinations.youtubeSection(key, sidebarState.youtubeStartFeedKey))
             }))
         // Signed in: native playback unlocks the full submenu; otherwise only Home.
         if (spotifyEnabled) {
@@ -933,6 +934,7 @@ private fun SidebarPageHeader(
 private fun iconForYouTubeFeed(key: String): ImageVector = when (key) {
     "home" -> Icons.Filled.Home
     "subscriptions" -> Icons.Filled.Subscriptions
+    "channels" -> Icons.Filled.AccountCircle
     "history" -> Icons.Filled.History
     "playlists" -> Icons.AutoMirrored.Filled.PlaylistPlay
     "shorts" -> Icons.Filled.SmartDisplay

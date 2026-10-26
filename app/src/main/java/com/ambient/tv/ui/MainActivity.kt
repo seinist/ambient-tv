@@ -768,7 +768,7 @@ open class MainActivity : ComponentActivity() {
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -937,10 +937,22 @@ private fun AmbientTvApp(
         }
     }
 
-    fun handleYouTubeSelection(videoId: String) {
+    fun openYouTubeChannel(channel: com.ambient.tv.youtube.YouTubeChannelInfo) {
+        navController.navigate(Destinations.youtubeChannel(channel.channelId, channel.title, channel.avatarUrl))
+    }
+
+    /** [replacePlayer]: a video started from a channel page opened in the player replaces that player. */
+    fun handleYouTubeSelection(videoId: String, replacePlayer: Boolean = false) {
+        // Channel tiles open the channel page whatever the selection behavior says.
+        com.ambient.tv.youtube.youtubeChannelIdOf(videoId)?.let { channelId ->
+            navController.navigate(Destinations.youtubeChannel(channelId))
+            return
+        }
         when (val route = youtubeSelectionRoute(appPreferences.youtubeMediaSelectionBehaviorKey, videoId)) {
             is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(route.videoId))
-            is YouTubeSelectionRoute.Play -> playOnSelectedTarget(Destinations.youtubePlayer(route.videoId))
+            is YouTubeSelectionRoute.Play -> playOnSelectedTarget(Destinations.youtubePlayer(route.videoId)) {
+                if (replacePlayer) popUpTo(Destinations.YOUTUBE_PLAYER) { inclusive = true }
+            }
             is YouTubeSelectionRoute.Ask -> pendingYouTubeVideoId = route.videoId
         }
     }
@@ -1453,8 +1465,7 @@ private fun AmbientTvApp(
         navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
     }
 
-    fun youtubeFeedRoute(feedKey: String) =
-        if (feedKey == "home") Destinations.YOUTUBE else Destinations.youtubeFeed(feedKey)
+    fun youtubeFeedRoute(feedKey: String) = Destinations.youtubeSection(feedKey, appPreferences.youtubeStartFeedKey)
 
     fun trailerFeedRoute(feed: com.ambient.tv.trailers.TrailerFeed) =
         if (feed == com.ambient.tv.trailers.TrailerFeed.CINEMA) Destinations.TRAILERS else Destinations.trailerFeed(feed.name)
@@ -1816,7 +1827,7 @@ private fun AmbientTvApp(
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onOpenHomeContent = { row ->
                                     when (row.system) {
-                                        HomeRowDefinition.SYSTEM_YOUTUBE -> if (row.contentKey == "home") navigateTopLevel(Destinations.YOUTUBE) else navigateToSection(Destinations.youtubeFeed(row.contentKey))
+                                        HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
                                         HomeRowDefinition.SYSTEM_TVHEADEND -> navigateToSection(Destinations.liveTvSection(row.contentKey))
                                     }
@@ -1879,6 +1890,7 @@ private fun AmbientTvApp(
                     composable(Destinations.YOUTUBE) {
                         RestorableSidebarContent {
                             YouTubeScreen(
+                                initialFeedKey = appPreferences.youtubeStartFeedKey.takeIf { it != "home" },
                                 onVideoClick = { videoId -> handleYouTubeSelection(videoId) },
                                 onBack = ::focusSidebar,
                                 onSelectFeed = { feed -> navigateSidebar(youtubeFeedRoute(feed.key)) },
@@ -1940,6 +1952,21 @@ private fun AmbientTvApp(
                             onBack = ::navigateBack,
                             onOpenSettings = ::openSettingsPreservingContext,
                             onPlay = { videoId -> playOnSelectedTarget(Destinations.youtubePlayer(videoId)) },
+                            onOpenChannel = ::openYouTubeChannel,
+                            onOpenItem = { videoId -> handleYouTubeSelection(videoId) },
+                        )
+                    }
+                    composable(
+                        route = Destinations.YOUTUBE_CHANNEL,
+                        arguments = listOf(
+                            navArgument("channelId") { type = NavType.StringType },
+                            navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("avatar") { type = NavType.StringType; defaultValue = "" },
+                        ),
+                    ) {
+                        YouTubeScreen(
+                            onVideoClick = { videoId -> handleYouTubeSelection(videoId, replacePlayer = true) },
+                            onBack = ::navigateBack,
                         )
                     }
                     composable(Destinations.TRAILERS) {
@@ -1992,6 +2019,7 @@ private fun AmbientTvApp(
                     ) { entry ->
                         YouTubePlayerScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navController.popBackStack() },
+                            onOpenChannel = { channel -> if (navController.currentBackStackEntry === entry) openYouTubeChannel(channel) },
                         )
                     }
                     composable(Destinations.LIVE_TV) {
@@ -2281,7 +2309,7 @@ private fun AmbientTvApp(
                 // Detail pages hide the sidebar, which normally owns this indicator.
                 // Draw above their backgrounds without adding a new D-pad focus target.
                 if (!handheld && currentRoute in setOf(
-                        Destinations.DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.SPOTIFY_DETAIL,
+                        Destinations.DETAIL, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_DETAIL,
                     )
                 ) {
                     val scale = com.ambient.tv.ui.common.rememberUhdScale()

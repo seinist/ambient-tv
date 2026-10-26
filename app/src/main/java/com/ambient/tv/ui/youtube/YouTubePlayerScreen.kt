@@ -85,6 +85,8 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -148,6 +150,8 @@ import com.ambient.tv.ui.player.OsdKeyTarget
 fun YouTubePlayerScreen(
     onBack: () -> Unit,
     onPlayNext: ((String) -> Unit)? = null,
+    /** Channel button of the OSD; null hides the channel actions. */
+    onOpenChannel: ((com.ambient.tv.youtube.YouTubeChannelInfo) -> Unit)? = null,
     viewModel: YouTubePlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -183,6 +187,18 @@ fun YouTubePlayerScreen(
     val context = LocalContext.current
     val prefs = remember { EntryPointAccessors.fromApplication(context.applicationContext, YouTubePrefsEntryPoint::class.java).prefs() }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
+    val channelOsd = state.channel?.takeIf { !isTrailer && onOpenChannel != null }?.let { channel ->
+        YouTubeChannelOsd(
+            channel = channel,
+            onOpen = {
+                // Like SmartTube: the video waits paused while the channel page is open.
+                BackgroundPlaybackSession.pause()
+                onOpenChannel?.invoke(channel)
+            },
+            onToggleSubscription = viewModel::toggleSubscription,
+        )
+    }
+    CompositionLocalProvider(LocalYouTubeChannelOsd provides channelOsd) {
     com.ambient.tv.ui.player.PersistentPlayerChrome(viewModel, state.loading) {
     Box(Modifier.fillMaxSize().background(if (persistentVideoHost) Color.Transparent else MaterialTheme.colorScheme.background)) {
         val playback = state.playback
@@ -442,7 +458,17 @@ fun YouTubePlayerScreen(
         }
     }
     }
+    }
 }
+
+/** Channel actions of the YouTube OSD; provided by the screen, read by every engine's controls. */
+private data class YouTubeChannelOsd(
+    val channel: com.ambient.tv.youtube.YouTubeChannelInfo,
+    val onOpen: () -> Unit,
+    val onToggleSubscription: () -> Unit,
+)
+
+private val LocalYouTubeChannelOsd = androidx.compose.runtime.compositionLocalOf<YouTubeChannelOsd?> { null }
 
 @dagger.hilt.EntryPoint
 @dagger.hilt.InstallIn(dagger.hilt.components.SingletonComponent::class)
@@ -1554,6 +1580,7 @@ private data class YouTubeOsdModel(
     val info: List<String>,
     /** "Passthrough", "→ PCM", "E-AC3 5.1 → PCM 5.1"; null for plain AAC/Opus decode. */
     val audioBadge: String? = null,
+    val channel: YouTubeChannelOsd? = null,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
@@ -1613,6 +1640,18 @@ private data class YouTubeOsdModel(
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
+                        channel?.let { osd ->
+                            PlayerIconButton(Icons.Filled.AccountCircle, osd.channel.title ?: stringResource(R.string.youtube_channel_open), osd.onOpen)
+                            // Signed out the subscription is unknown and cannot be changed.
+                            osd.channel.subscribed?.let { subscribed ->
+                                PlayerIconButton(
+                                    Icons.Filled.Subscriptions,
+                                    stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe),
+                                    osd.onToggleSubscription,
+                                    selected = subscribed,
+                                )
+                            }
+                        }
                         PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), { navigation?.open(UnifiedPlayerPanel.AUDIO) }, selected = panel.isAudio)
                         PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { navigation?.open(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES)
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo)
@@ -1667,6 +1706,7 @@ private fun YouTubeControls(
         onBack = onBack,
         info = info,
         audioBadge = com.ambient.tv.ui.player.audioOutputBadge(panelConfig.audioSession),
+        channel = LocalYouTubeChannelOsd.current,
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,

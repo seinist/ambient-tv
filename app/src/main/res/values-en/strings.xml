@@ -742,6 +742,19 @@
     <string name="settings_backup_passphrase_short">At least 8 characters.</string>
     <string name="settings_backup_passphrase_mismatch">The passphrases do not match.</string>
     <string name="settings_backup_passphrase_optional">Protect with a passphrase?</string>
+    <string name="nav_youtube_channels">Channels</string>
+    <string name="youtube_channel_open">Channel</string>
+    <string name="youtube_subscribe">Subscribe</string>
+    <string name="youtube_subscribed">Subscribed</string>
+    <string name="youtube_unsubscribed">Unsubscribed</string>
+    <string name="youtube_subscribe_failed">The subscription could not be changed.</string>
+    <string name="youtube_channel_search">Search this channel</string>
+    <string name="youtube_channel_new_content">New videos</string>
+    <string name="youtube_like">Like</string>
+    <string name="youtube_dislike">Dislike</string>
+    <string name="youtube_rating_failed">The rating could not be saved.</string>
+    <string name="youtube_chapters">Chapters</string>
+    <string name="youtube_suggestions">Related videos</string>
     <string name="settings_backup_passphrase_optional_hint">Optional: the backup is encrypted with this passphrase (at least 8 characters). Leave both fields empty to export a plain file as before.</string>
     <string name="settings_backup_export_plain">Export without passphrase</string>
     <string name="settings_backup_export_encrypted">Export encrypted</string>
@@ -801,6 +814,7 @@
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
     <string name="settings_youtube_sponsorblock_hint">Automatically skip identified sponsored segments in videos.</string>
     <string name="youtube_search">Search SmartTube</string>
+    <string name="settings_youtube_start_feed">Start page</string>
     <string name="youtube_activate">Sign in: yt.be/activate</string>
     <string name="youtube_activate_handheld">Open yt.be/activate in your browser and enter this code. Opening the link copies the code so you can paste it:</string>
     <string name="youtube_refresh">Refresh</string>

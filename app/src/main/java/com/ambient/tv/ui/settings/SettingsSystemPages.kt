@@ -723,9 +723,10 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             onCheckedChange = viewModel::onYoutubeAutoplayNextChanged,
                         )
                         Text(stringResource(R.string.settings_youtube_feeds), style = MaterialTheme.typography.titleSmall)
-                        listOf(
+                        val youtubeFeedLabels = listOf(
                             "home" to stringResource(R.string.nav_youtube_home),
                             "subscriptions" to stringResource(R.string.nav_youtube_subscriptions),
+                            "channels" to stringResource(R.string.nav_youtube_channels),
                             "history" to stringResource(R.string.nav_youtube_history),
                             "playlists" to stringResource(R.string.nav_youtube_playlists),
                             "shorts" to stringResource(R.string.nav_youtube_shorts),
@@ -734,13 +735,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "gaming" to stringResource(R.string.nav_youtube_gaming),
                             "live" to stringResource(R.string.nav_youtube_live),
                             "kids" to stringResource(R.string.nav_youtube_kids),
-                        ).filter { (key, _) -> key in uiState.youtubeSupportedFeedKeys }.forEach { (key, label) ->
+                        )
+                        youtubeFeedLabels.filter { (key, _) -> key in uiState.youtubeSupportedFeedKeys }.forEach { (key, label) ->
                             TvSettingRow(
                                 title = label,
                                 checked = key in uiState.youtubeFeedKeys,
                                 onCheckedChange = { enabled -> viewModel.onYoutubeFeedChanged(key, enabled) },
                             )
                         }
+                        // Start page: one of the sections switched on above.
+                        Text(stringResource(R.string.settings_youtube_start_feed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsSelect(options = youtubeFeedLabels
+                            .filter { (key, _) -> key in uiState.youtubeFeedKeys && key in uiState.youtubeSupportedFeedKeys }
+                            .map { (key, label) ->
+                                SettingsSelectOption(
+                                    text = label,
+                                    selected = uiState.youtubeStartFeedKey == key,
+                                    onClick = { viewModel.onYoutubeStartFeedChanged(key) },
+                                )
+                            })
                         SubmenuSettingsRow(MediaSystem.YOUTUBE, uiState, viewModel::onSidebarSettingsShortcutChanged)
                         Text(stringResource(R.string.settings_youtube_video_preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val youtubeContext = androidx.compose.ui.platform.LocalContext.current

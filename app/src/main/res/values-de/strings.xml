@@ -744,6 +744,19 @@
     <string name="settings_backup_passphrase_short">Mindestens 8 Zeichen.</string>
     <string name="settings_backup_passphrase_mismatch">Die Passphrasen stimmen nicht überein.</string>
     <string name="settings_backup_passphrase_optional">Mit Passwort schützen?</string>
+    <string name="nav_youtube_channels">Kanäle</string>
+    <string name="youtube_channel_open">Kanal</string>
+    <string name="youtube_subscribe">Abonnieren</string>
+    <string name="youtube_subscribed">Abonniert</string>
+    <string name="youtube_unsubscribed">Abo beendet</string>
+    <string name="youtube_subscribe_failed">Das Abo konnte nicht geändert werden.</string>
+    <string name="youtube_channel_search">Im Kanal suchen</string>
+    <string name="youtube_channel_new_content">Neue Videos</string>
+    <string name="youtube_like">Mag ich</string>
+    <string name="youtube_dislike">Mag ich nicht</string>
+    <string name="youtube_rating_failed">Die Bewertung konnte nicht gespeichert werden.</string>
+    <string name="youtube_chapters">Kapitel</string>
+    <string name="youtube_suggestions">Ähnliche Videos</string>
     <string name="settings_backup_passphrase_optional_hint">Optional: Das Backup wird mit diesem Passwort verschlüsselt (mindestens 8 Zeichen). Beide Felder leer lassen, um wie bisher eine unverschlüsselte Datei zu exportieren.</string>
     <string name="settings_backup_export_plain">Ohne Passwort exportieren</string>
     <string name="settings_backup_export_encrypted">Verschlüsselt exportieren</string>
@@ -803,6 +816,7 @@
     <string name="settings_youtube_sponsorblock_title">SponsorBlock</string>
     <string name="settings_youtube_sponsorblock_hint">Erkannte Sponsorabschnitte in Videos automatisch überspringen.</string>
     <string name="youtube_search">SmartTube durchsuchen</string>
+    <string name="settings_youtube_start_feed">Startseite</string>
     <string name="youtube_activate">Anmeldung: yt.be/activate</string>
     <string name="youtube_activate_handheld">Öffne yt.be/activate im Browser und gib diesen Code ein. Beim Öffnen wird der Code zum Einfügen kopiert:</string>
     <string name="youtube_refresh">Aktualisieren</string>

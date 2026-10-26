@@ -37,6 +37,7 @@ object Destinations {
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
     const val YOUTUBE_DETAIL = "youtube_detail/{videoId}"
+    const val YOUTUBE_CHANNEL = "youtube_channel/{channelId}?title={title}&avatar={avatar}"
     const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}"
     const val TVH_PLAYER = "tvh_player/{kind}/{id}?sourceId={sourceId}"
     const val DETAIL = "detail/{ratingKey}?collectionId={collectionId}&collectionSort={collectionSort}"
@@ -60,9 +61,13 @@ object Destinations {
     fun fileSource(sourceId: String) = "files_source/${Uri.encode(sourceId)}"
     fun dlnaServer(serverId: String) = "dlna/${Uri.encode(serverId)}"
     fun youtubeFeed(feedKey: String) = "youtube_feed/${Uri.encode(feedKey)}"
+    /** SmartTube's root route shows the chosen start section; every other section has its feed route. */
+    fun youtubeSection(feedKey: String, startFeedKey: String) = if (feedKey == startFeedKey) YOUTUBE else youtubeFeed(feedKey)
     fun trailerFeed(feedKey: String) = "trailers/feed/${Uri.encode(feedKey)}"
     fun spotifySection(sectionKey: String) = "spotify_section/${Uri.encode(sectionKey)}"
     fun youtubeDetail(videoId: String) = "youtube_detail/${Uri.encode(videoId)}"
+    fun youtubeChannel(channelId: String, title: String? = null, avatarUrl: String? = null) =
+        "youtube_channel/${Uri.encode(channelId)}?title=${Uri.encode(title.orEmpty())}&avatar=${Uri.encode(avatarUrl.orEmpty())}"
     fun spotifyDetail(type: String, id: String) = "spotify_detail/${Uri.encode(type)}/${Uri.encode(id)}"
     fun spotifyPlayer(uri: String? = null) = if (uri.isNullOrBlank()) "spotify_player" else "spotify_player?uri=${Uri.encode(uri)}"
     fun youtubePlayer(videoId: String) = "youtube_player/${Uri.encode(videoId)}"
