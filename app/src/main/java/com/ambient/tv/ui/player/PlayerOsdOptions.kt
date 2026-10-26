@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,6 +66,25 @@ val LocalOsdPlayer = staticCompositionLocalOf<OsdPlayer?> { null }
 
 /** Player of the action bar shown last: the playback settings list its buttons. */
 var activeOsdPlayer by mutableStateOf<OsdPlayer?>(null)
+
+/** Buttons the current bar offers for what is playing, hidden ones included. */
+class OsdPresence {
+    internal val counts = mutableStateMapOf<OsdButton, Int>()
+    fun add(button: OsdButton) { counts[button] = (counts[button] ?: 0) + 1 }
+    fun remove(button: OsdButton) {
+        val left = (counts[button] ?: 0) - 1
+        if (left > 0) counts[button] = left else counts.remove(button)
+    }
+}
+
+val LocalOsdPresence = staticCompositionLocalOf<OsdPresence?> { null }
+
+/** What the last shown bar offered; kept after the OSD hides so the settings can list it. */
+var activeOsdButtons by mutableStateOf<Set<OsdButton>>(emptySet())
+
+/** Buttons to offer in the settings: what the bar really shows, else the player's full list. */
+fun OsdPlayer.offeredButtons(): List<OsdButton> =
+    activeOsdButtons.takeIf { it.isNotEmpty() }?.let { present -> buttons.filter { it in present } } ?: buttons
 
 @Composable
 fun osdHiddenButtons(): Set<String> {

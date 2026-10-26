@@ -325,8 +325,20 @@ fun PlayerControlBar(
     leftContent: @Composable RowScope.() -> Unit,
     rightContent: @Composable RowScope.() -> Unit,
 ) {
-    if (player != null) androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.activeOsdPlayer = player }
-    androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.player.LocalOsdPlayer provides player) {
+    val presence = remember { com.ambient.tv.ui.player.OsdPresence() }
+    if (player != null) {
+        androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.activeOsdPlayer = player }
+        // Publishes what the bar offers; an empty set (bar leaving) keeps the last one.
+        LaunchedEffect(presence) {
+            androidx.compose.runtime.snapshotFlow { presence.counts.keys.toSet() }.collect {
+                if (it.isNotEmpty()) com.ambient.tv.ui.player.activeOsdButtons = it
+            }
+        }
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.ambient.tv.ui.player.LocalOsdPlayer provides player,
+        com.ambient.tv.ui.player.LocalOsdPresence provides presence.takeIf { player != null },
+    ) {
         PlayerControlBarContent(modifier, leftContent, rightContent)
     }
 }
@@ -586,7 +598,15 @@ fun PlayerIconButton(
     /** Action-bar button the viewer can hide for the current player. */
     osd: com.ambient.tv.ui.player.OsdButton? = null,
 ) {
-    if (osd != null && !com.ambient.tv.ui.player.osdButtonVisible(osd)) return
+    if (osd != null) {
+        // Registered before the visibility check: a hidden button stays switchable in the settings.
+        val presence = com.ambient.tv.ui.player.LocalOsdPresence.current
+        if (presence != null) androidx.compose.runtime.DisposableEffect(presence, osd) {
+            presence.add(osd)
+            onDispose { presence.remove(osd) }
+        }
+        if (!com.ambient.tv.ui.player.osdButtonVisible(osd)) return
+    }
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     var focused by remember { mutableStateOf(false) }
     val playPauseFocus = LocalPlayerPlayPauseFocus.current

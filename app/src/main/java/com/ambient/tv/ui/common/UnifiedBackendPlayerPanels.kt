@@ -36,6 +36,7 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
+import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.playerTechBadgesVisible
 import com.ambient.tv.ui.player.setPlayerTechBadgesVisible
 import com.ambient.tv.ui.player.videoImagePreferences
@@ -221,11 +222,12 @@ fun UnifiedBackendPlayerPanel(
             )
             com.ambient.tv.ui.player.activeOsdPlayer?.let { player ->
                 val hidden = com.ambient.tv.ui.player.osdHiddenButtons()
+                val offered = player.offeredButtons()
                 PlayerPanelEntry(
                     icon = Icons.Filled.ViewWeek,
                     title = stringResource(R.string.osd_buttons),
                     value = stringResource(R.string.osd_buttons_summary,
-                        player.buttons.count { "${player.name}/${it.name}" !in hidden }, player.buttons.size),
+                        offered.count { "${player.name}/${it.name}" !in hidden }, offered.size),
                     onClick = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
                 )
             }
@@ -457,7 +459,7 @@ fun UnifiedBackendPlayerPanel(
         ) {
             val player = com.ambient.tv.ui.player.activeOsdPlayer ?: return@UnifiedPlayerSidePanel
             Text(stringResource(R.string.osd_buttons_hint), style = MaterialTheme.typography.bodySmall)
-            player.buttons.forEach { button ->
+            player.offeredButtons().forEach { button ->
                 val visible = com.ambient.tv.ui.player.osdButtonVisible(button, player)
                 PlayerPanelEntry(
                     icon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
