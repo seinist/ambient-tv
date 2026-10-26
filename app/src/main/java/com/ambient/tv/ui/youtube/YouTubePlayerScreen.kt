@@ -621,8 +621,11 @@ private fun YouTubeMedia3Playback(
     val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled) {
         BackgroundPlaybackSession.acquire(context, metadata, "media3", listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled)) {
             val appContext = context.applicationContext
-            Media3PlaybackHandle(com.ambient.tv.ui.player.PlaybackEngineFactory.create(
+            // In the release gate like every player: after MPV/VLC, YouTube opens its stream only
+            // once the previous player closed ("Vorheriger Player wird beendet…" on their side).
+            com.ambient.tv.ui.player.PlaybackEngineFactory.gatedMedia3Handle { deferPrepare -> com.ambient.tv.ui.player.PlaybackEngineFactory.create(
                 appContext, playback.uri, if (playback.isLive) 0 else startPositionMs,
+                deferPrepare = deferPrepare,
                 streamHeaders = playback.headers, mimeType = playback.mimeType,
                 audioPassthroughEnabled = audioPassthroughEnabled,
                 maxVideoHeight = target.height,
@@ -638,7 +641,7 @@ private fun YouTubeMedia3Playback(
                 },
             ).apply {
                 setSeekParameters(SeekParameters.CLOSEST_SYNC)
-            })
+            } }
         }.player
     }
     com.ambient.tv.ui.player.RestoreMedia3PlaybackProfile(player, metadata)
@@ -1051,6 +1054,8 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         ))
         onRenderer("media3", snapshot.positionMs.takeIf { it > 0L } ?: startPositionMs, false)
     }
+    // "Vorheriger Player wird beendet…" and, after a dialog, focus back on the panel row.
+    com.ambient.tv.ui.player.VlcRenderOverloadDialog(controller, panelNavigation)
     LaunchedEffect(controller, onVideoFormatChanged) {
         var lastFormat = ""
         while (true) {
@@ -1323,7 +1328,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         val fps = snapshot.containerFps?.toFloat() ?: 0f
         if (fps > 0f || dimensions != null) onVideoFormatChanged(fps, dimensions?.first, dimensions?.second)
     }
-    com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller)
+    com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     var seekModeVersion by remember(controller) { mutableIntStateOf(0) }
     var seekModeVisible by remember(controller) { mutableStateOf(false) }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }

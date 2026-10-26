@@ -1,7 +1,7 @@
 package com.ambient.tv.ui.player.backend
 
 import com.ambient.tv.ui.player.PREVIOUS_PLAYER_HINT_DELAY_MS
-import com.ambient.tv.ui.player.media3JoinsReleaseGate
+import com.ambient.tv.ui.player.media3PrepareNow
 import com.ambient.tv.ui.player.previousPlayerHintVisible
 import org.junit.Assert.*
 import org.junit.Test
@@ -28,9 +28,10 @@ class LiveRendererSwitchTest {
         assertFalse(mpvStopsStreamBeforeDestroy(liveStream = false, broadcastSource = false))
     }
 
-    @Test fun onlyLiveMedia3JoinsTheGate() {
-        assertTrue(media3JoinsReleaseGate(isLive = true))
-        assertFalse(media3JoinsReleaseGate(isLive = false))
+    @Test fun media3PreparesOnlyAfterThePreviousPlayerClosed() {
+        assertTrue(media3PrepareNow(idle = true, waitingForPreviousRelease = false))
+        assertFalse(media3PrepareNow(idle = true, waitingForPreviousRelease = true))
+        assertFalse(media3PrepareNow(idle = false, waitingForPreviousRelease = false))
     }
 
     @Test fun hintOnlyAfterAShortWait() {

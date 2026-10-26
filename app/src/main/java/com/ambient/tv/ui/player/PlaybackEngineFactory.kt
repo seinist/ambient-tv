@@ -107,17 +107,13 @@ object PlaybackEngineFactory {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
                 listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
-                // Live TV (Tvheadend): Media3 takes part in the native release gate like MPV and
-                // VLC, so it neither opens a second server subscription while the previous player
-                // still holds one nor lets the next player open before its own stream is gone.
-                val gated = media3JoinsReleaseGate(metadata.isLive)
-                val previous = if (gated) com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot() else null
-                val wait = previous?.takeIf { !it.isDone }
-                val player = create(context.applicationContext, streamUrl, startPositionMs,
-                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
-                    deferPrepare = wait != null, liveStream = liveStream)
-                Media3PlaybackHandle(player, joinsReleaseGate = gated).also {
-                    if (wait != null) prepareAfterPreviousRelease(player, wait)
+                // Every Media3 player (Live TV, VOD, YouTube) takes part in the native release gate
+                // like MPV and VLC: it neither opens its stream while the previous player still
+                // holds one nor lets the next player open before its own stream is gone.
+                gatedMedia3Handle { deferPrepare ->
+                    create(context.applicationContext, streamUrl, startPositionMs,
+                        subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
+                        deferPrepare = deferPrepare, liveStream = liveStream)
                 }
             }.player
         }
@@ -226,7 +222,21 @@ object PlaybackEngineFactory {
     }
 
     /** Prepares [player] once the previous MPV/VLC/Media3 player closed (at most [com.ambient.tv.ui.player.backend.PREVIOUS_RELEASE_LIMIT_MS]). */
-    private fun prepareAfterPreviousRelease(player: ExoPlayer, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
+    /**
+     * A Media3 handle inside the native release gate. While the previous player (MPV, VLC or
+     * Media3) still closes, [build] gets deferPrepare = true and the player prepares afterwards.
+     * Call inside [BackgroundPlaybackSession.acquire]: the outgoing release has begun there.
+     */
+    internal fun gatedMedia3Handle(build: (deferPrepare: Boolean) -> ExoPlayer): Media3PlaybackHandle {
+        val wait = com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot().takeIf { !it.isDone }
+        val player = build(wait != null)
+        return Media3PlaybackHandle(player, joinsReleaseGate = true, waitingForPreviousRelease = wait != null).also { handle ->
+            if (wait != null) prepareAfterPreviousRelease(handle, wait)
+        }
+    }
+
+    private fun prepareAfterPreviousRelease(handle: Media3PlaybackHandle, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
+        val player = handle.player
         val main = android.os.Handler(android.os.Looper.getMainLooper())
         val started = android.os.SystemClock.elapsedRealtime()
         previous.whenSettled(delay = { ms, block -> main.postDelayed(block, ms) }) { outcome ->
@@ -236,7 +246,7 @@ object PlaybackEngineFactory {
                 if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
                     Timber.w(previous.failure, "Media3 start: previous player %s after %d ms; starting anyway", outcome, waited)
                 // Released meanwhile (channel change, Back): nothing to prepare.
-                if (Media3PlaybackHandle.forPlayer(player) != null) player.prepare()
+                if (Media3PlaybackHandle.forPlayer(player) != null) handle.previousReleaseSettled()
             }
         }
     }
@@ -290,5 +300,9 @@ private fun youtubeConstrainSquareVideo(player: androidx.media3.common.Player, t
         .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, allowed)).build()
 }
 
-/** Live TV Media3 players wait for and take part in the native release gate (MPV/VLC hand-off). */
-internal fun media3JoinsReleaseGate(isLive: Boolean): Boolean = isLive
+/**
+ * Whether a Media3 call may prepare() now: never while the player still waits for the previous
+ * one to close (the renderer hand-off's restore, Play or a found subtitle would open it early).
+ */
+internal fun media3PrepareNow(idle: Boolean, waitingForPreviousRelease: Boolean): Boolean =
+    idle && !waitingForPreviousRelease

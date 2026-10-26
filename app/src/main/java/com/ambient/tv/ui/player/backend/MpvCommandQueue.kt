@@ -5,6 +5,8 @@ internal class MpvCommandQueue(
     private val schedule: (() -> Unit) -> Unit,
     private val failed: (Throwable) -> Unit,
     private val capacity: Int = 64,
+    /** Called on the owner thread when an operation starts (its key) and ends (null). */
+    private val running: (String?) -> Unit = {},
 ) {
     private class Work(val action: () -> Unit, val discard: () -> Unit, val keepOnClose: Boolean = false)
     private val lock = Any()
@@ -56,11 +58,13 @@ internal class MpvCommandQueue(
     }
 
     private fun runNext() {
+        var key: String? = null
         val work = synchronized(lock) {
-            val key = pending.keys.firstOrNull()
-            if (key == null) { scheduled = false; null } else pending.remove(key)
+            key = pending.keys.firstOrNull()
+            key?.let { pending.remove(it) } ?: run { scheduled = false; null }
         } ?: return
-        try { work.action() } catch (error: Exception) { failed(error) }
+        running(key)
+        try { work.action() } catch (error: Exception) { failed(error) } finally { running(null) }
         val again = synchronized(lock) {
             if (pending.isEmpty()) { scheduled = false; false } else true
         }
