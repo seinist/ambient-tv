@@ -183,6 +183,7 @@ fun DetailScreen(
                     nextEpisode = state.nextEpisode,
                     similar = state.similar,
                     similarLoading = state.similarLoading,
+                    actorRows = state.actorRows,
                     actionInProgress = state.actionInProgress,
                     autoSelectDisplayVersion = state.autoSelectDisplayVersion,
                     onPlay = onPlay,
@@ -284,6 +285,7 @@ private fun DetailContent(
     nextEpisode: MediaItem?,
     similar: List<MediaItem>,
     similarLoading: Boolean,
+    actorRows: List<ActorRow>,
     actionInProgress: Boolean,
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
@@ -408,9 +410,10 @@ private fun DetailContent(
         val sectionKeys = buildList {
             add("hero")
             if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) add("children")
-            if (similar.isNotEmpty() || similarLoading) add("similar")
-            if (item.collections.isNotEmpty()) add("collections")
             if (item.cast.isNotEmpty()) add("cast")
+            if (similar.isNotEmpty() || similarLoading) add("similar")
+            actorRows.forEach { add("actor:${it.actorId}") }
+            if (item.collections.isNotEmpty()) add("collections")
         }
         val scrollScope = rememberCoroutineScope()
         // Resolve initial focus once per page, waiting for asynchronous rows when needed.
@@ -429,6 +432,7 @@ private fun DetailContent(
             if (restoreFocusPending) {
                 val section = when (restoreFocusKey?.substringBefore(':')) {
                     "collection" -> "collections"
+                    "actor" -> sectionKeys.firstOrNull { restoreFocusKey.startsWith("$it\u0000") }
                     else -> restoreFocusKey?.substringBefore(':')
                 }
                 val sectionIndex = sectionKeys.indexOf(section)
@@ -603,6 +607,14 @@ private fun DetailContent(
                 }
             }
 
+            if (item.cast.isNotEmpty()) {
+                item(key = "cast") {
+                    Section("cast") {
+                        CastSection(item, onBrowseActor, restoreFocusKey) { rememberFocused(it) }
+                    }
+                }
+            }
+
             if (similar.isNotEmpty() || similarLoading) {
                 item(key = "similar") {
                     Section("similar") {
@@ -611,18 +623,19 @@ private fun DetailContent(
                 }
             }
 
-            if (item.collections.isNotEmpty()) {
-                item(key = "collections") {
-                    Section("collections") {
-                        CollectionsSection(item, onBrowseCollection, restoreFocusKey) { rememberFocused(it) }
+            actorRows.forEach { row ->
+                val key = "actor:${row.actorId}"
+                item(key = key) {
+                    Section(key) {
+                        ActorRowSection(row, onOpenChild, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
 
-            if (item.cast.isNotEmpty()) {
-                item(key = "cast") {
-                    Section("cast") {
-                        CastSection(item, onBrowseActor, restoreFocusKey) { rememberFocused(it) }
+            if (item.collections.isNotEmpty()) {
+                item(key = "collections") {
+                    Section("collections") {
+                        CollectionsSection(item, onBrowseCollection, restoreFocusKey) { rememberFocused(it) }
                     }
                 }
             }
@@ -1284,6 +1297,40 @@ private fun SimilarSection(
                     item = related,
                     style = MediaTileStyle.POSTER,
                     onClick = { onOpenChild(related) },
+                    onFocused = { onFocused(focusKey) },
+                    requestInitialFocus = restoreFocusKey == focusKey,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActorRowSection(
+    row: ActorRow,
+    onOpenChild: (MediaItem) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
+        Text(
+            stringResource(R.string.detail_more_with, row.name),
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
+        )
+        val prefix = "actor:${row.actorId}\u0000"
+        LazyRow(
+            state = rememberDetailRowState(row.items.map { prefix + it.ratingKey }, restoreFocusKey),
+            contentPadding = PaddingValues(horizontal = screenGutter()),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier.containRowFocusExit(),
+        ) {
+            items(row.items, key = { it.ratingKey }) { media ->
+                val focusKey = prefix + media.ratingKey
+                MediaTile(
+                    item = media,
+                    style = MediaTileStyle.POSTER,
+                    onClick = { onOpenChild(media) },
                     onFocused = { onFocused(focusKey) },
                     requestInitialFocus = restoreFocusKey == focusKey,
                 )

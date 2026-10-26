@@ -181,6 +181,7 @@
     <string name="library_view_list">List</string>
     <string name="library_view_grid">Grid</string>
     <string name="detail_more_like_this">More like this</string>
+    <string name="detail_more_with">More with %1$s</string>
     <string name="detail_more_actions">More</string>
     <string name="detail_more_actions_hint">Playback and library status</string>
     <string name="detail_mark_watched">Mark as watched</string>

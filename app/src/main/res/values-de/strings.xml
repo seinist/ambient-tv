@@ -181,6 +181,7 @@
     <string name="library_view_list">Liste</string>
     <string name="library_view_grid">Raster</string>
     <string name="detail_more_like_this">Mehr wie das</string>
+    <string name="detail_more_with">Mehr mit %1$s</string>
     <string name="detail_more_actions">Mehr</string>
     <string name="detail_more_actions_hint">Wiedergabe und Bibliotheksstatus</string>
     <string name="detail_mark_watched">Als gesehen markieren</string>

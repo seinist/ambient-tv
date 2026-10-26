@@ -26,6 +26,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import com.ambient.tv.domain.model.dedupeCastMembers
 import kotlinx.coroutines.ensureActive
 
 sealed interface DetailUiState {
@@ -38,6 +41,7 @@ sealed interface DetailUiState {
         val nextEpisode: MediaItem? = null,
         val similar: List<MediaItem> = emptyList(),
         val similarLoading: Boolean = false,
+        val actorRows: List<ActorRow> = emptyList(),
         val actionInProgress: Boolean = false,
         val actionMessage: String? = null,
         val autoSelectDisplayVersion: Boolean = true,
@@ -47,6 +51,12 @@ sealed interface DetailUiState {
     ) : DetailUiState
     data class Error(val message: String, val messageRes: Int? = null) : DetailUiState
 }
+
+/** Plex-style "More with <actor>" row for one of the top-billed cast members. */
+data class ActorRow(val actorId: String, val name: String, val items: List<MediaItem>)
+
+private const val ACTOR_ROW_ACTORS = 2
+private const val ACTOR_ROW_MIN_ITEMS = 2
 
 private val BROWSABLE_TYPES = setOf("show", "season", "collection")
 private val RELATED_TYPES = setOf("movie", "show")
@@ -221,6 +231,7 @@ class DetailViewModel @Inject constructor(
                         // Reserve the recommendations row while it loads so the cast below it
                         // doesn't jump down when the row pops in.
                         similarLoading = item.type in RELATED_TYPES && previous?.similar.isNullOrEmpty(),
+                        actorRows = previous?.actorRows.orEmpty(),
                         actionInProgress = previous?.actionInProgress ?: false,
                         actionMessage = previous?.actionMessage,
                         autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
@@ -308,6 +319,19 @@ class DetailViewModel @Inject constructor(
                 updateLoaded { current ->
                     current.copy(similar = result.getOrNull()?.take(20) ?: current.similar, similarLoading = false)
                 }
+            }
+            launch {
+                val actors = item.cast.dedupeCastMembers().filter { !it.id.isNullOrBlank() }.take(ACTOR_ROW_ACTORS)
+                val rows = actors.map { actor ->
+                    async {
+                        val others = mediaRepository.getItemsByActor(actor.id!!).getOrNull().orEmpty()
+                            .filter { it.ratingKey != item.ratingKey && it.type in RELATED_TYPES }
+                            .distinctBy { it.ratingKey }
+                            .take(20)
+                        ActorRow(actor.id!!, actor.name, others).takeIf { others.size >= ACTOR_ROW_MIN_ITEMS }
+                    }
+                }.awaitAll().filterNotNull()
+                updateLoaded { it.copy(actorRows = rows) }
             }
         }
     }
