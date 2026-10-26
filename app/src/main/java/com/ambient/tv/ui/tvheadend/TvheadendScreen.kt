@@ -1,7 +1,6 @@
 package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.livetv.guideChannels
-import com.ambient.tv.livetv.guideEvents
 
 import com.ambient.tv.notifications.OperationFeedback
 import com.ambient.tv.ui.common.OperationFeedbackScope
@@ -139,44 +138,11 @@ fun TvheadendScreen(
         } else com.ambient.tv.livetv.LiveTvZapOrder.clear()
         onWatchChannel(channelUuid)
     }
-    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions) {
-        val dashboard = state.dashboard
-        val savedId = viewModel.focusedContentId(state.tab)
-        val savedRowId = viewModel.focusedRowId(state.tab)
-        when (state.tab) {
-            TvheadendTab.LIVE -> {
-                val ids = guideChannels(dashboard?.channels.orEmpty(),
-                    dashboard?.events.orEmpty().groupBy { it.channelUuid },
-                    System.currentTimeMillis() / 1000L, state.guideOptions).map { it.uuid }
-                TvhFocusTarget(savedId?.takeIf { it in ids } ?: ids.firstOrNull())
-            }
-            TvheadendTab.GUIDE -> {
-                val now = System.currentTimeMillis() / 1000L
-                val eventsByChannel = dashboard?.events.orEmpty().groupBy { it.channelUuid }
-                val rows = guideChannels(dashboard?.channels.orEmpty(), eventsByChannel, now, state.guideOptions).map { channel ->
-                    channel.uuid to guideEvents(eventsByChannel[channel.uuid].orEmpty(), now)
-                }
-                val savedRow = rows.firstOrNull { (rowId, events) ->
-                    rowId == savedRowId && (savedId == "channel:$rowId" || events.any { "event:${it.eventId}" == savedId })
-                }
-                val row = savedRow ?: rows.firstOrNull { (rowId, events) -> savedId == "channel:$rowId" || events.any { "event:${it.eventId}" == savedId } }
-                    ?: rows.firstOrNull()
-                val event = if (savedId == "channel:${row?.first}") null else savedId?.let { id -> row?.second?.firstOrNull { "event:${it.eventId}" == id } }
-                    ?: row?.second?.firstOrNull()
-                TvhFocusTarget(event?.let { "event:${it.eventId}" } ?: row?.first?.let { "channel:$it" }, row?.first)
-            }
-            TvheadendTab.RECORDINGS -> {
-                val rows = (dashboard?.recordings.orEmpty() + dashboard?.failedRecordings.orEmpty())
-                    .sortedByDescending { it.startEpochSeconds }
-                val id = savedId?.takeIf { value -> rows.any { it.uuid == value } } ?: rows.firstOrNull()?.uuid
-                TvhFocusTarget(id)
-            }
-            TvheadendTab.TIMERS -> {
-                val ids = dashboard?.upcoming.orEmpty().map { it.uuid } +
-                    dashboard?.autoRecs.orEmpty().map { "autorec:${it.uuid}" }
-                TvhFocusTarget(savedId?.takeIf { it in ids } ?: ids.firstOrNull())
-            }
-        }
+    // Back from the player: the channel watched last (also after zapping) becomes the selection.
+    val returnedChannel = remember { viewModel.consumeReturnFocus() }
+    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions, returnedChannel) {
+        liveTvFocusTarget(state.tab, state.dashboard, state.guideOptions,
+            viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab), System.currentTimeMillis() / 1000L)
     }
     var initialContentFocusPending by remember(initialTab) { mutableStateOf(true) }
     LaunchedEffect(Unit) { viewModel.start() }
@@ -192,6 +158,8 @@ fun TvheadendScreen(
             TvheadendTab.TIMERS -> dashboard.upcoming.isNotEmpty() || dashboard.autoRecs.isNotEmpty()
         }
         if (!initialContentFocusPending || state.loading || state.tab != initialTab || !hasContent) return@LaunchedEffect
+        // Live TV and the Guide scroll to their target first and focus it themselves.
+        if (state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE) return@LaunchedEffect
         delay(140)
         repeat(4) {
             if (runCatching { firstContentFocusRequester.requestFocus() }.getOrDefault(false)) {
@@ -278,6 +246,8 @@ fun TvheadendScreen(
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
                         onFocused = { id, rowId -> viewModel.onContentFocused(tab, id, rowId) },
+                        restoreFocus = initialContentFocusPending && tab == initialTab && state.tab == tab,
+                        onFocusRestored = { initialContentFocusPending = false },
                     )
                     TvheadendTab.GUIDE -> Guide(
                         options = state.guideOptions,
@@ -293,6 +263,8 @@ fun TvheadendScreen(
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
                         onFocused = { id, rowId -> viewModel.onContentFocused(tab, id, rowId) },
+                        restoreFocus = initialContentFocusPending && tab == initialTab && state.tab == tab,
+                        onFocusRestored = { initialContentFocusPending = false },
                     )
                     TvheadendTab.RECORDINGS -> RecordingList(
                         recordings = dashboard?.recordings.orEmpty(),

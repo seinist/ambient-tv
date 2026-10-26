@@ -45,8 +45,11 @@ internal fun Guide(
     onWatch: (String) -> Unit,
     canWatch: Boolean,
     refreshing: Boolean = false,
+    restoreFocus: Boolean = false,
+    onFocusRestored: () -> Unit = {},
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
-    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, refreshing = refreshing)
+    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, refreshing = refreshing,
+    restoreFocus = restoreFocus, onFocusRestored = onFocusRestored)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
 @Composable
@@ -66,6 +69,9 @@ internal fun LiveTvChannelBrowser(
     channelList: Boolean = false,
     upcoming: List<LiveTvRecording> = emptyList(),
     refreshing: Boolean = false,
+    /** Entering the tab (also back from the player): scroll to [focusTarget], then focus it. */
+    restoreFocus: Boolean = false,
+    onFocusRestored: () -> Unit = {},
 ) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
     LaunchedEffect(Unit) { while (true) { delay(60_000); now = System.currentTimeMillis() / 1000L } }
@@ -118,6 +124,35 @@ internal fun LiveTvChannelBrowser(
         }
     }
     LaunchedEffect(options, visibleChannels) { jumpJob?.cancel() }
+    val currentOnFocusRestored by rememberUpdatedState(onFocusRestored)
+    // The list keeps its old scroll position across the player, so the target row (for example a
+    // channel reached by zapping) may not be composed yet: bring it into view before focusing.
+    LaunchedEffect(restoreFocus, focusTarget, visibleChannels) {
+        if (!restoreFocus) return@LaunchedEffect
+        val rowId = if (channelList) focusTarget.contentId else focusTarget.rowId
+        val index = visibleChannels.indexOfFirst { it.uuid == rowId }
+        if (index >= 0) {
+            jumpJob?.cancel()
+            val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == rowId }
+            val viewportEnd = listState.layoutInfo.viewportEndOffset
+            if (visible == null || visible.offset < 0 || visible.offset + visible.size > viewportEnd) {
+                listState.scrollToItem((index - 1).coerceAtLeast(0))
+            }
+            snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == rowId } }.first { it }
+        }
+        withFrameNanos { }
+        repeat(8) {
+            if (runCatching { firstContentFocusRequester.requestFocus() }.getOrDefault(false)) {
+                currentOnFocusRestored()
+                return@LaunchedEffect
+            }
+            withFrameNanos { }
+        }
+        // A programme card outside its row's view: the channel itself is the next best target.
+        if (index >= 0 && runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() == true }.getOrDefault(false)) {
+            currentOnFocusRestored()
+        }
+    }
     LaunchedEffect(pendingAlphabet, showAlphabet) {
         if (pendingAlphabet && showAlphabet) {
             if (!handheld) {
@@ -177,12 +212,20 @@ internal fun LiveTvChannelBrowser(
                                 modifier = Modifier.focusRequester(rowFocus.getValue(channel.uuid))
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                         } else {
+                            // A channel target (back from the player) starts at the programme running now.
+                            val channelTarget = channel.uuid == focusTarget.rowId && focusTarget.contentId == "channel:${channel.uuid}"
                             val rowPosition = remember(browseState, channel.uuid) { browseState.position("guide:${channel.uuid}") }
+                                ?.takeUnless { channelTarget && restoreFocus }
                             val rowState = rememberLazyListState(
-                                initialFirstVisibleItemIndex = rowEvents.indexOfFirst {
+                                initialFirstVisibleItemIndex = if (rowPosition == null && channelTarget) guideLiveIndex(rowEvents, now)
+                                else rowEvents.indexOfFirst {
                                     if (rowPosition != null) it.eventId == rowPosition.itemId
                                     else channel.uuid == focusTarget.rowId && "event:${it.eventId}" == focusTarget.contentId
                                 }.coerceAtLeast(0), initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0)
+                            // The row may keep an old saved position: show the current programme again.
+                            if (channelTarget && restoreFocus) LaunchedEffect(Unit) {
+                                if (rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
+                            }
                             DisposableEffect(rowState, rowEvents) {
                                 onDispose { rowEvents.getOrNull(rowState.firstVisibleItemIndex)?.let {
                                     browseState.savePosition("guide:${channel.uuid}", it.eventId, rowState.firstVisibleItemScrollOffset)
