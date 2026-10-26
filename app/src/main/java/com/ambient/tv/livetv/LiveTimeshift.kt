@@ -450,6 +450,18 @@ object LiveTimeshift {
 
     fun setAnchor(wallMs: Long?) { mutableAnchor.value = wallMs }
 
+    /**
+     * Buffers left by an earlier process that ended without cleaning up (closed by the system,
+     * force-stopped). Only files last written before [olderThanWallMs]; a buffer started since
+     * this process began keeps writing and stays newer. Blocking; call off the main thread.
+     */
+    fun deleteLeftovers(context: android.content.Context, olderThanWallMs: Long) {
+        listOfNotNull(context.externalCacheDir, context.cacheDir).map { File(it, "timeshift") }.distinct().forEach { directory ->
+            directory.listFiles()?.filter { isLeftoverBuffer(it.name, it.lastModified(), olderThanWallMs) }
+                ?.forEach { runCatching { it.delete() } }
+        }
+    }
+
     fun stop() {
         pending?.close(); pending = null
         watcher?.cancel(); watcher = null
@@ -470,3 +482,7 @@ object LiveTimeshift {
         }
     }
 }
+
+/** A timeshift buffer file ("live-….ts") written before [olderThanWallMs]. */
+internal fun isLeftoverBuffer(name: String, lastModifiedWallMs: Long, olderThanWallMs: Long): Boolean =
+    name.startsWith("live-") && name.endsWith(".ts") && lastModifiedWallMs in 1 until olderThanWallMs

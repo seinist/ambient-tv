@@ -39,6 +39,8 @@ class UpdateInstallReceiver : BroadcastReceiver() {
                     // confirmation from a notification instead.
                     if (!notifyConfirm(context, confirm)) updater.reportInstallError()
                 } else {
+                    // The installer is our own flow: running playback waits for the answer.
+                    com.ambient.tv.ui.player.BackgroundPlaybackGuard.markExternalFlow()
                     runCatching { context.startActivity(confirm) }
                         .onFailure { if (!notifyConfirm(context, confirm)) updater.reportInstallError() }
                 }

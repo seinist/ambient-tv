@@ -651,6 +651,7 @@ On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube
 - Vertical wrap in panels, dialogs and long lists: past the last row focus continues at the first, past the first at the last. It only applies when nothing else is reachable that way — where something sits above the list (a header, filter chips), Up still leads there
 - Settings Back: subpage → overview/search → area → leave hub
 - Mini-player and background playback stay while browsing (optional visible background video)
+- Leaving the app (Home, another app, TV off, screen off): a video pauses at once and stops after 30 seconds with its position saved; back earlier, it waits paused. Live TV and timeshift stop at once. Music and audiobooks keep playing on a phone, and on a TV until standby. Closing the app from recents stops everything. File pickers, installation and sign-in opened by the app itself stop nothing.
 
 ### 11.1a Android TV home screen
 

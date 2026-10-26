@@ -651,6 +651,7 @@ Beim ersten Start bietet ein Einrichtungsbildschirm Plex, Jellyfin, Emby, TVHead
 - Senkrechter Umlauf in Panels, Dialogen und langen Listen: Ab unten geht es oben weiter, ab oben unten. Der Umlauf greift nur, wenn in der Richtung sonst nichts erreichbar ist — liegt etwas über der Liste (Kopfzeile, Filterchips), führt Ab-nach-oben wie bisher dorthin
 - Einstellungen-Zurück: Unterseite → Übersicht/Suche → Bereich → Hub verlassen
 - Miniplayer und Hintergrundwiedergabe bleiben beim Stöbern erhalten (sichtbares Hintergrundvideo optional)
+- Verlässt du die App (Home, andere App, TV aus, Bildschirm aus): Ein Video pausiert sofort und wird nach 30 Sekunden beendet, die Position ist gespeichert. Bist du vorher zurück, steht es pausiert da. Live-TV und Timeshift enden sofort. Musik und Hörbücher laufen am Handy weiter, am TV bis zum Standby. Schließen über „Zuletzt verwendet“ beendet alles. Dateiauswahl, Installation und Anmeldung, die die App selbst öffnet, beenden nichts.
 
 ### 11.1a Android-TV-Startbildschirm
 

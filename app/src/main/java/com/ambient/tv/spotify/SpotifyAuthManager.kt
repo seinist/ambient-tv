@@ -133,6 +133,8 @@ class SpotifyAuthManager @Inject constructor(
             val session = newPkceSession(stateSuffix = null, server = null)
             val uri = Uri.parse(authorizeUrl(session, REDIRECT_URI))
             try {
+                // The browser sign-in comes back to the app: running playback waits for it.
+                com.ambient.tv.ui.player.BackgroundPlaybackGuard.markExternalFlow()
                 context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (_: ActivityNotFoundException) {
                 context.startActivity(
