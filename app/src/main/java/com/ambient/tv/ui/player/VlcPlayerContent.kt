@@ -98,7 +98,7 @@ internal fun VlcPlayerContent(
     val playbackKey = com.ambient.tv.ui.player.LocalPlaybackMetadata.current?.route ?: state.streamUrl
     val panelNavigation = rememberPlayerPanelNavigation(playbackKey)
     var panel by panelNavigation
-    VlcRenderOverloadDialog(controller) { panelNavigation.openVideoSettings() }
+    VlcRenderOverloadDialog(controller, panelNavigation) { panelNavigation.openVideoSettings() }
     // Back is owned by the dispatcher, so nested panels/popups close one level per press.
     val snapshot = rememberVlcPlaybackSnapshot(
         controller,

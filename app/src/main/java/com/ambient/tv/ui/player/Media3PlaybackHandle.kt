@@ -15,7 +15,11 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresentationTarget {
+class Media3PlaybackHandle(
+    val player: ExoPlayer,
+    /** Live TV: the next MPV/VLC player waits until this player released its stream. */
+    private val joinsReleaseGate: Boolean = false,
+) : PlaybackHandle, VideoPresentationTarget {
     /**
      * Media3 only reads side-loaded subtitles when the item is prepared, so a subtitle found during
      * playback re-prepares the same item at the current position with it marked as default.
@@ -155,7 +159,9 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
         player.clearVideoSurface()
     }
     override fun release() {
+        if (released) return
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "release")
+        val gateRelease = if (joinsReleaseGate) com.ambient.tv.ui.player.backend.nativeAudioReleases.beginRelease() else null
         detachVideoOutput()
         released = true
         Media3ResumePrimer.release(player)
@@ -171,7 +177,9 @@ class Media3PlaybackHandle(val player: ExoPlayer) : PlaybackHandle, VideoPresent
             player.playWhenReady = false
             player.clearMediaItems()
         }
-        player.release()
+        runCatching { player.release() }
+            .onSuccess { gateRelease?.complete(Unit) }
+            .onFailure { gateRelease?.completeExceptionally(it); throw it }
     }
     companion object {
         private val handles = WeakHashMap<ExoPlayer, WeakReference<Media3PlaybackHandle>>()

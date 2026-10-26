@@ -1804,8 +1804,8 @@
     <string name="settings_next_up_credits_delay">Automatisch weiter im Abspann</string>
     <string name="settings_next_up_credits_delay_hint">Optionaler Countdown bei vorhandenem Abspann-Marker und aktivierter automatischer Wiedergabe. Zurück bricht ab, Pause hält an. Bekannte Szenen danach bleiben erhalten; unvollständige Marker können Szenen übersehen.</string>
     <string name="next_up_keep_watching">Weiter ansehen (Zurück)</string>
-    <string name="audio_output_release_pending">Die bisherige Audio-Ausgabe wird noch beendet.</string>
-    <string name="audio_output_release_failed">Die bisherige Audio-Ausgabe konnte nicht beendet werden.</string>
+    <string name="audio_output_release_pending">Vorheriger Player wird beendet…</string>
+    <string name="audio_output_release_failed">Der vorherige Player konnte nicht beendet werden.</string>
     <string name="audio_output_config_failed">Die Audio-Ausgabe konnte nicht eingerichtet werden.</string>
     <string name="settings_display_allow_high_double">100/120 Hz erlauben (50→100, 60→120 Hz)</string>
     <string name="settings_display_allow_high_double_hint">Nur ohne nativen 50/60-Hz-Modus. Verdoppelt GPU- und Kompositionsarbeit bei 4K.</string>

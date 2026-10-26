@@ -339,12 +339,22 @@ internal fun Media3FilterRows(
 
 /** Shown after the controller paused playback because loaded shaders/filters drop frames. */
 @Composable
-internal fun MpvRenderOverloadDialog(controller: MpvPlaybackController, onAdjust: (() -> Unit)? = null) {
+internal fun MpvRenderOverloadDialog(
+    controller: MpvPlaybackController,
+    panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation? = null,
+    onAdjust: (() -> Unit)? = null,
+) {
     var dismissedStall by remember(controller) { mutableStateOf(false) }
     LaunchedEffect(controller.backendUnresponsive) {
         if (!controller.backendUnresponsive) dismissedStall = false
     }
-    if (controller.backendUnresponsive && !dismissedStall) {
+    PreviousPlayerClosingHint(controller.waitingForPreviousPlayer)
+    val stallShown = controller.backendUnresponsive && !dismissedStall
+    // "Warten", Back or the end of the stall puts focus back on the panel row used before.
+    val focusReturn = com.ambient.tv.ui.common.rememberDialogFocusReturn(
+        panelNavigation ?: com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current,
+        stallShown || controller.renderOverloaded)
+    if (stallShown) {
         com.ambient.tv.ui.common.AppDialog(
             onDismiss = { dismissedStall = true },
             title = stringResource(R.string.mpv_unresponsive_title),
@@ -354,6 +364,7 @@ internal fun MpvRenderOverloadDialog(controller: MpvPlaybackController, onAdjust
                     dismissedStall = true
                 })
                 com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_stop), {
+                    focusReturn.forget()
                     dismissedStall = true
                     if (BackgroundPlaybackSession.owns(controller)) BackgroundPlaybackSession.stop()
                     else controller.release()
@@ -393,7 +404,14 @@ internal fun MpvRenderOverloadDialog(controller: MpvPlaybackController, onAdjust
 
 /** VLC's equivalent guard uses LibVLC's lost-picture counter after a media reopen. */
 @Composable
-internal fun VlcRenderOverloadDialog(controller: VlcPlaybackController, onAdjust: (() -> Unit)? = null) {
+internal fun VlcRenderOverloadDialog(
+    controller: VlcPlaybackController,
+    panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation? = null,
+    onAdjust: (() -> Unit)? = null,
+) {
+    PreviousPlayerClosingHint(controller.waitingForPreviousPlayer)
+    com.ambient.tv.ui.common.rememberDialogFocusReturn(
+        panelNavigation ?: com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current, controller.renderOverloaded)
     if (!controller.renderOverloaded) return
     val context = LocalContext.current
     val metadata = LocalPlaybackMetadata.current

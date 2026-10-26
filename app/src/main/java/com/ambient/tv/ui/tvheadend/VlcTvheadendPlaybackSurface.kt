@@ -168,7 +168,7 @@ internal fun VlcTvheadendPlaybackSurface(
     var panel by panelNavigation
     // Row key of the video panel's Player area, focused when Back leaves that area.
     val rendererEntryTitle = stringResource(R.string.player_renderer)
-    com.ambient.tv.ui.player.VlcRenderOverloadDialog(controller) { panelNavigation.openVideoSettings() }
+    com.ambient.tv.ui.player.VlcRenderOverloadDialog(controller, panelNavigation) { panelNavigation.openVideoSettings() }
     // Back is owned by the dispatcher, so nested panels/popups close one level per press.
     val snapshot = rememberVlcPlaybackSnapshot(
         controller,

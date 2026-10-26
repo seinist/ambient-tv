@@ -2657,6 +2657,13 @@ internal class MpvPlaybackEngine(
 
     override fun release() {
         if (released) return
+        if (mpvStopsStreamBeforeDestroy(liveStream, broadcastSource)) {
+            // Drop the server connection first, without waiting for mpv's reply: the old live
+            // subscription closes while the event pump and mpv_terminate_destroy finish, and the
+            // next player does not wait on a network read.
+            runCatching { MpvNativeBridge.nativeCommand(handle, arrayOf("async", "stop")) }
+                .onFailure { Timber.w(it, "MPV async stop before destroy failed") }
+        }
         finishDvPrime()
         sdrToHdr.reset()
         imageScope.cancel()
@@ -2668,6 +2675,10 @@ internal class MpvPlaybackEngine(
         else error("MPV event waiter did not stop; audio output is still owned")
     }
 }
+
+/** Live TV and Tvheadend recordings stop their stream before the handle is destroyed. */
+internal fun mpvStopsStreamBeforeDestroy(liveStream: Boolean, broadcastSource: Boolean): Boolean =
+    liveStream || broadcastSource
 
 /** Codecs MPV may send as bitstream (passthrough, DTS core, local AC3 plan). */
 internal fun mpvBitstreamCodec(codec: String?): Boolean =

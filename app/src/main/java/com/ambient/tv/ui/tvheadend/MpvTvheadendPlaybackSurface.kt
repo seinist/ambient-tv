@@ -177,7 +177,7 @@ internal fun MpvTvheadendPlaybackSurface(
         ) else snapshot.containerFps)?.toFloat() ?: 0f
         if (fps > 0f || dimensions != null) onVideoFormatChanged(fps, dimensions?.first, dimensions?.second)
     }
-    com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller) { panelNavigation.openVideoSettings() }
+    com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation) { panelNavigation.openVideoSettings() }
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     val projectMBrowser = rememberProjectMBrowser(com.ambient.tv.ui.player.videoImagePreferences(context).projectmPresetCategoryKey)
     val audioOnlyContent = controller.audioOnly || snapshot.confirmedAudioOnly

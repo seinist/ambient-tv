@@ -306,7 +306,16 @@ class VlcPlaybackController(
 
     private var prepared = false
     private val previousAudioRelease = nativeAudioReleases.snapshot()
+    private val createdAt = android.os.SystemClock.elapsedRealtime()
     private var awaitingAudioRelease = false
+    /** Null until the previous player's teardown settled (main thread). */
+    private var previousReleaseOutcome: PreviousReleaseOutcome? = null
+    /**
+     * The previous player is still closing its output: a short hint, not an error. Only after
+     * [PREVIOUS_RELEASE_LIMIT_MS] does this player report one (and Live TV picks another renderer).
+     */
+    var waitingForPreviousPlayer by mutableStateOf(false)
+        private set
     private var released = false
     private var desiredPlayWhenReady = true
     private var streamOpenRetried = false
@@ -814,31 +823,46 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released) return
-        if (!previousAudioRelease.isDone) {
+        if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
+            // Nothing to wait for: open in this call, not one main-thread round trip later.
+            previousReleaseOutcome = previousReleaseOutcome(true, previousAudioRelease.failed, 0L)
+            if (previousReleaseOutcome == PreviousReleaseOutcome.READY_AFTER_FAILURE)
+                Timber.w(previousAudioRelease.failure, "VLC start: previous player failed to close; starting anyway")
+        }
+        if (previousReleaseOutcome == null) {
             pendingRestorePositionMs = resumePositionMs
             desiredPlayWhenReady = resumePlaying
             if (!awaitingAudioRelease) {
                 awaitingAudioRelease = true
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    if (!released && !previousAudioRelease.isDone)
-                        errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_pending)
-                }, 5_000L)
-                previousAudioRelease.whenComplete { _, _ ->
-                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                val main = android.os.Handler(android.os.Looper.getMainLooper())
+                waitingForPreviousPlayer = !previousAudioRelease.isDone
+                previousAudioRelease.whenSettled(delay = { ms, block -> main.postDelayed(block, ms) }) { outcome ->
+                    main.post {
                         awaitingAudioRelease = false
-                        if (!released) {
-                            if (errorMessage == context.getString(com.ambient.tv.R.string.audio_output_release_pending)) errorMessage = null
-                            prepare()
+                        waitingForPreviousPlayer = false
+                        previousReleaseOutcome = outcome
+                        val waited = android.os.SystemClock.elapsedRealtime() - createdAt
+                        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("vlc", "previous player $outcome after $waited ms")
+                        when (outcome) {
+                            PreviousReleaseOutcome.TIMED_OUT -> {
+                                Timber.w("VLC start: previous player still closing after %d ms; not starting", waited)
+                                if (!released) errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
+                            }
+                            PreviousReleaseOutcome.READY_AFTER_FAILURE -> {
+                                Timber.w(previousAudioRelease.failure, "VLC start: previous player failed to close; starting anyway")
+                                if (!released) prepare()
+                            }
+                            PreviousReleaseOutcome.READY -> {
+                                if (waited >= 1_000L) Timber.i("VLC start waited %d ms for the previous player", waited)
+                                if (!released) prepare()
+                            }
                         }
                     }
                 }
             }
             return
         }
-        if (previousAudioRelease.isCompletedExceptionally) {
-            errorMessage = context.getString(com.ambient.tv.R.string.audio_output_release_failed)
-            return
-        }
+        if (previousReleaseOutcome == PreviousReleaseOutcome.TIMED_OUT) return
         if (!applyAudioOutputDevice()) {
             errorMessage = context.getString(com.ambient.tv.R.string.audio_output_config_failed)
             return
