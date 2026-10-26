@@ -213,6 +213,10 @@
     <string name="item_edit_save">Speichern</string>
     <string name="item_edit_lock">Feld sperren</string>
     <string name="item_edit_fields_hint">Gesperrte Felder bleiben beim Aktualisieren erhalten.</string>
+    <string name="item_edit_versions_title">Welche Version?</string>
+    <string name="item_edit_versions_hint">Dieser Titel fasst mehrere Dateien zusammen; eine falsch erkannte lässt sich einzeln korrigieren</string>
+    <string name="item_edit_versions_all">Alle Versionen</string>
+    <string name="item_edit_version_n">Version %1$d</string>
     <string name="notice_metadata_updated">Auf dem Server aktualisiert</string>
     <string name="action_close">Schließen</string>
     <string name="action_open_in_browser">Im Browser öffnen</string>

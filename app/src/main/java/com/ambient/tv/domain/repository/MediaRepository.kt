@@ -1,6 +1,11 @@
 package com.ambient.tv.domain.repository
 
+import com.ambient.tv.domain.model.ArtworkChoice
+import com.ambient.tv.domain.model.ArtworkKind
 import com.ambient.tv.domain.model.LibraryHub
+import com.ambient.tv.domain.model.MetadataEditSupport
+import com.ambient.tv.domain.model.MetadataFields
+import com.ambient.tv.domain.model.MetadataMatch
 import com.ambient.tv.domain.model.LibraryRecommendation
 import com.ambient.tv.domain.model.LibrarySection
 import com.ambient.tv.domain.model.MediaItem
@@ -82,6 +87,26 @@ interface MediaRepository {
     suspend fun markWatched(ratingKey: String): Result<Unit>
     suspend fun markUnwatched(ratingKey: String): Result<Unit>
     suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit>
+
+    /** Edit options for [item], from the last stored rights check; never does I/O. */
+    fun metadataEditSupport(item: MediaItem): MetadataEditSupport = MetadataEditSupport.NONE
+    /** Re-checks (throttled) whether the user administers the server of [ratingKey]; true when the stored answer changed. */
+    suspend fun refreshMetadataEditRights(ratingKey: String): Boolean = false
+    suspend fun searchMatches(ratingKey: String, title: String?, year: Int?): Result<List<MetadataMatch>> =
+        Result.failure(UnsupportedOperationException("Metadata matching is not supported"))
+    suspend fun applyMatch(ratingKey: String, match: MetadataMatch): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Metadata matching is not supported"))
+    suspend fun artworkChoices(ratingKey: String, kind: ArtworkKind): Result<List<ArtworkChoice>> =
+        Result.failure(UnsupportedOperationException("Artwork editing is not supported"))
+    suspend fun setArtwork(ratingKey: String, kind: ArtworkKind, choice: ArtworkChoice): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Artwork editing is not supported"))
+    /** After an edit of [ratingKeys]: forget how they were merged with duplicates, as a new match may split them. */
+    fun forgetMerged(ratingKeys: Set<String>) = Unit
+    suspend fun metadataFields(ratingKey: String): Result<MetadataFields> =
+        Result.failure(UnsupportedOperationException("Metadata editing is not supported"))
+    /** Writes the fields of [edited] that differ from [current], and every changed lock. */
+    suspend fun updateMetadataFields(ratingKey: String, current: MetadataFields, edited: MetadataFields): Result<Unit> =
+        Result.failure(UnsupportedOperationException("Metadata editing is not supported"))
     /** Video stays stream-copied; only audio is converted to [audioCodec] where the server lets the client pick it. */
     /** [audioChannels] is the channel ceiling for the converted track (output width, 2..8; AC3/E-AC3 at most 6). */
     suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String = "aac", audioStreamId: Long? = null, audioChannels: Int = 2): Result<String>

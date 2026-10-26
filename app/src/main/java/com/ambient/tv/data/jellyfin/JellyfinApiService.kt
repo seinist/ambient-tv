@@ -1,8 +1,15 @@
 package com.ambient.tv.data.jellyfin
 
+import com.ambient.tv.data.metadata.MediaBrowserImageInfo
+import com.ambient.tv.data.metadata.MediaBrowserRemoteImageList
+import com.ambient.tv.data.metadata.MediaBrowserRemoteSearchQuery
+import com.ambient.tv.data.metadata.MediaBrowserUserDto
+import com.ambient.tv.network.ElevatedRequest
+import kotlinx.serialization.json.JsonObject
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Headers
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -86,6 +93,18 @@ interface JellyfinApiService {
     @DELETE("Users/{userId}/PlayedItems/{id}") suspend fun markUnplayedLegacy(@Path("userId") userId: String, @Path("id") id: String)
     @POST("Users/{userId}/Items/{id}/UserData") suspend fun updateUserDataLegacy(@Path("userId") userId: String, @Path("id") id: String, @Body body: JellyfinUserDataUpdate): JellyfinUserData
     @POST("UserItems/{id}/UserData") suspend fun updateUserData(@Path("id") id: String, @Body body: JellyfinUserDataUpdate): JellyfinUserData
+
+    // Administrator-only metadata editing; see ElevatedRequest.
+    @GET("Users/{userId}") suspend fun getUser(@Path("userId") userId: String): MediaBrowserUserDto
+    @Headers(ElevatedRequest.MARKER) @POST("Items/RemoteSearch/{type}") suspend fun remoteSearch(@Path("type") type: String, @Body body: MediaBrowserRemoteSearchQuery): List<JsonObject>
+    @Headers(ElevatedRequest.MARKER) @POST("Items/RemoteSearch/Apply/{id}") suspend fun applyRemoteSearch(@Path("id") id: String, @Body body: JsonObject, @Query("replaceAllImages") replaceAllImages: Boolean = true)
+    @Headers(ElevatedRequest.MARKER) @GET("Items/{id}/RemoteImages") suspend fun getRemoteImageChoices(@Path("id") id: String, @Query("type") type: String, @Query("limit") limit: Int = 60, @Query("includeAllLanguages") includeAllLanguages: Boolean = false): MediaBrowserRemoteImageList
+    @Headers(ElevatedRequest.MARKER) @POST("Items/{id}/RemoteImages/Download") suspend fun downloadRemoteImage(@Path("id") id: String, @Query("type") type: String, @Query("imageUrl") imageUrl: String)
+    @Headers(ElevatedRequest.MARKER) @GET("Items/{id}/Images") suspend fun getImageInfos(@Path("id") id: String): List<MediaBrowserImageInfo>
+    @Headers(ElevatedRequest.MARKER) @POST("Items/{id}/Images/{type}/{index}/Index") suspend fun moveImage(@Path("id") id: String, @Path("type") type: String, @Path("index") index: Int, @Query("newIndex") newIndex: Int)
+    /** The complete item as the server stores it: an update must send every field back. */
+    @Headers(ElevatedRequest.MARKER) @GET("Items/{id}") suspend fun getItemJson(@Path("id") id: String, @Query("userId") userId: String): JsonObject
+    @Headers(ElevatedRequest.MARKER) @POST("Items/{id}") suspend fun updateItem(@Path("id") id: String, @Body body: JsonObject)
 
     companion object {
         const val ITEM_FIELDS = "Overview,Taglines,Genres,People,ProviderIds,DateCreated,PremiereDate,Studios,MediaSources,MediaStreams,ChildCount,RecursiveItemCount"

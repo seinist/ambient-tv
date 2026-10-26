@@ -22,6 +22,7 @@ data class DirectoryDto(
     val title: String,
     val type: String,
     val agent: String? = null,
+    val language: String? = null,
     val art: String? = null,
     val thumb: String? = null,
 )

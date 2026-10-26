@@ -79,7 +79,8 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
                     // Even an authentication/server error proves host reachability.
                     if (response.networkResponse != null) hosts.online(check)
                     report(scope, when (response.code) {
-                        401, 403 -> SourceHealth.AUTH_REQUIRED
+                        // An administrator-only request refused for a regular user says nothing about the login.
+                        401, 403 -> if (com.ambient.tv.network.ElevatedRequest.isElevated(chain.request())) SourceHealth.ONLINE else SourceHealth.AUTH_REQUIRED
                         in 200..499 -> SourceHealth.ONLINE
                         else -> SourceHealth.UNKNOWN
                     }, started)

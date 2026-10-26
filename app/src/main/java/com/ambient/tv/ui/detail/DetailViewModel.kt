@@ -56,6 +56,12 @@ sealed interface DetailUiState {
 data class ActorRow(val actorId: String, val name: String, val items: List<MediaItem>)
 
 private const val ACTOR_ROW_ACTORS = 2
+private const val METADATA_EDIT_POLLS = 6
+
+/** Whether an edit shows in the item yet (new title, match or artwork URL). */
+internal fun metadataEditVisible(before: MediaItem, after: MediaItem): Boolean =
+    before.title != after.title || before.year != after.year || before.guid != after.guid ||
+        before.summary != after.summary || before.thumbUrl != after.thumbUrl || before.artUrl != after.artUrl
 private const val ACTOR_ROW_MIN_ITEMS = 2
 
 private val BROWSABLE_TYPES = setOf("show", "season", "collection")
@@ -100,6 +106,10 @@ class DetailViewModel @Inject constructor(
      * offers (Plex's available backgrounds, Jellyfin/Emby image providers), then TMDb's (needs a key).
      */
     val fallbackBackdrop: StateFlow<String?> = _fallbackBackdrop.asStateFlow()
+
+    private val _editSupport = MutableStateFlow(com.ambient.tv.domain.model.MetadataEditSupport.NONE)
+    /** Edit options of the item; [MetadataEditSupport.NONE] unless the server confirmed admin rights. */
+    val editSupport: StateFlow<com.ambient.tv.domain.model.MetadataEditSupport> = _editSupport.asStateFlow()
 
     private fun sourceOffline() = availability.mediaState(ratingKey) in setOf(
         com.ambient.tv.data.browse.SourceHealth.OFFLINE,
@@ -146,6 +156,15 @@ class DetailViewModel @Inject constructor(
                     if (!tmdb.configured || item.type !in setOf("movie", "show")) return@collect
                     val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
                     tmdb.backdropFor(item, language).getOrNull()?.let { _fallbackBackdrop.value = it }
+                }
+        }
+        viewModelScope.launch {
+            // The stored rights decide at once; the background re-check only corrects them.
+            _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
+                .distinctUntilChanged { a, b -> a.ratingKey == b.ratingKey && a.type == b.type }
+                .collect { item ->
+                    _editSupport.value = mediaRepository.metadataEditSupport(item)
+                    if (mediaRepository.refreshMetadataEditRights(ratingKey)) _editSupport.value = mediaRepository.metadataEditSupport(item)
                 }
         }
         viewModelScope.launch {
@@ -390,6 +409,29 @@ class DetailViewModel @Inject constructor(
 
     fun removeFromContinueWatching() {
         runAction(R.string.notice_continue_removed) { mediaRepository.removeFromContinueWatching(ratingKey) }
+    }
+
+    /**
+     * The server accepted a new match or image. It applies a match in the background, so the
+     * item is re-read a few times until it changed; children and rows follow with a full load.
+     */
+    fun onMetadataEdited(success: Boolean) {
+        val before = (_uiState.value as? DetailUiState.Loaded)?.item ?: return
+        _editSupport.value = mediaRepository.metadataEditSupport(before)
+        notifyResult("detail:$ratingKey", detailSystem(), before.title, R.string.notice_metadata_updated, success = success, kind = NoticeKind.LIBRARY)
+        if (!success) return
+        viewModelScope.launch {
+            for (attempt in 0 until METADATA_EDIT_POLLS) {
+                kotlinx.coroutines.delay(if (attempt == 0) 400L else 1_500L)
+                val refreshed = mediaRepository.getMetadataFast(ratingKey).getOrNull() ?: continue
+                updateLoaded { it.copy(item = refreshed) }
+                if (metadataEditVisible(before, refreshed)) break
+            }
+            // Also when the opened version looks unchanged: another version may have left the
+            // merged title, which only the full load (duplicate resolution) shows.
+            _fallbackBackdrop.value = null
+            load()
+        }
     }
 
     private fun runAction(message: Int, block: suspend () -> Result<Unit>) {

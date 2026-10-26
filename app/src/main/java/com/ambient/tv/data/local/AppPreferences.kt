@@ -1645,6 +1645,18 @@ class AppPreferences @Inject constructor(
         LoginStateSignal.changed()
     }
 
+    /** Logins (provider:profile:user) whose last rights check found them allowed to edit metadata. */
+    fun isMetadataEditor(loginKey: String): Boolean =
+        prefs.getStringSet(KEY_METADATA_EDITORS, null)?.contains(loginKey) == true
+
+    /** Stores a rights check; true when it changed the stored answer. */
+    fun setMetadataEditor(loginKey: String, allowed: Boolean): Boolean {
+        val current = prefs.getStringSet(KEY_METADATA_EDITORS, null)?.toSet().orEmpty()
+        if ((loginKey in current) == allowed) return false
+        prefs.edit { putStringSet(KEY_METADATA_EDITORS, if (allowed) current + loginKey else current - loginKey) }
+        return true
+    }
+
     /** Address entered; enough to try a connection (settings test, verification). */
     val hasPlexEndpoint: Boolean
         get() = plexEnabled && host.isNotBlank()
@@ -2199,6 +2211,7 @@ class AppPreferences @Inject constructor(
         const val KEY_TVH_LOGIN_STATE = "tvh_login_state"
         const val KEY_PLEX_LOGIN_VERIFIED = "plex_login_verified"
         const val KEY_LOGIN_REJECTED = "login_rejected_profiles"
+        const val KEY_METADATA_EDITORS = "metadata_editor_logins"
         const val KEY_TVH_PORT = "tvh_port"
         const val KEY_TVH_HTTPS = "tvh_https"
         const val KEY_TVH_USERNAME = "tvh_username"

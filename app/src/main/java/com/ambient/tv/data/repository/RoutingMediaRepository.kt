@@ -6,7 +6,10 @@ import com.ambient.tv.data.dlna.DlnaKeys
 import com.ambient.tv.data.dlna.DlnaRepository
 import com.ambient.tv.data.jellyfin.JellyfinBackend
 import com.ambient.tv.data.jellyfin.JellyfinRepository
+import com.ambient.tv.domain.model.ArtworkChoice
+import com.ambient.tv.domain.model.ArtworkKind
 import com.ambient.tv.domain.model.LibraryRecommendation
+import com.ambient.tv.domain.model.MetadataMatch
 import com.ambient.tv.domain.model.LibrarySection
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.model.PlexServerIdentity
@@ -81,6 +84,16 @@ class RoutingMediaRepository @Inject constructor(
     override suspend fun markWatched(ratingKey: String) = forId(ratingKey).markWatched(ratingKey)
     override suspend fun markUnwatched(ratingKey: String) = forId(ratingKey).markUnwatched(ratingKey)
     override suspend fun removeFromContinueWatching(ratingKey: String) = forId(ratingKey).removeFromContinueWatching(ratingKey)
+    override fun metadataEditSupport(item: MediaItem) = forId(item.ratingKey).metadataEditSupport(item)
+    override suspend fun refreshMetadataEditRights(ratingKey: String) = forId(ratingKey).refreshMetadataEditRights(ratingKey)
+    override suspend fun searchMatches(ratingKey: String, title: String?, year: Int?) = forId(ratingKey).searchMatches(ratingKey, title, year)
+    override suspend fun applyMatch(ratingKey: String, match: MetadataMatch) = forId(ratingKey).applyMatch(ratingKey, match)
+    override suspend fun artworkChoices(ratingKey: String, kind: ArtworkKind) = forId(ratingKey).artworkChoices(ratingKey, kind)
+    override suspend fun setArtwork(ratingKey: String, kind: ArtworkKind, choice: ArtworkChoice) = forId(ratingKey).setArtwork(ratingKey, kind, choice)
+    override fun forgetMerged(ratingKeys: Set<String>) = ratingKeys.groupBy(::forId).forEach { (repository, keys) -> repository.forgetMerged(keys.toSet()) }
+    override suspend fun metadataFields(ratingKey: String) = forId(ratingKey).metadataFields(ratingKey)
+    override suspend fun updateMetadataFields(ratingKey: String, current: com.ambient.tv.domain.model.MetadataFields, edited: com.ambient.tv.domain.model.MetadataFields) =
+        forId(ratingKey).updateMetadataFields(ratingKey, current, edited)
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = forId(ratingKey).getAudioCompatibleStreamUrl(ratingKey, mediaIndex, startPositionMs, audioCodec, audioStreamId, audioChannels)
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int) = forId(ratingKey).getVideoCompatibleStreamUrl(ratingKey, mediaIndex, startPositionMs, audioChannels)
 }

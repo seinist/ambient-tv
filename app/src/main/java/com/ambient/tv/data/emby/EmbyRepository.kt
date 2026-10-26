@@ -29,6 +29,7 @@ class EmbyRepository @Inject constructor(
     private val urls: EmbyUrlBuilder,
     private val cache: EmbyMediaCache,
     private val preferences: AppPreferences,
+    json: kotlinx.serialization.json.Json,
     disk: com.ambient.tv.data.browse.BrowseDiskStore,
     scopes: com.ambient.tv.data.browse.BrowseScopes,
 ) : MediaRepository {
@@ -456,6 +457,42 @@ class EmbyRepository @Inject constructor(
             cache.removeFromOnDeck(setOf(ratingKey))
         }
     }
+
+    private val editor = com.ambient.tv.data.metadata.MediaBrowserMetadataEditor(
+        api = object : com.ambient.tv.data.metadata.MediaBrowserEditApi {
+            override suspend fun remoteSearch(type: String, body: com.ambient.tv.data.metadata.MediaBrowserRemoteSearchQuery) = api.remoteSearch(type, body)
+            override suspend fun applyRemoteSearch(id: String, body: kotlinx.serialization.json.JsonObject) = api.applyRemoteSearch(id, body)
+            override suspend fun remoteImages(id: String, type: String, includeAllLanguages: Boolean) = api.getRemoteImageChoices(id, type, includeAllLanguages = includeAllLanguages)
+            override suspend fun downloadRemoteImage(id: String, type: String, imageUrl: String) = api.downloadRemoteImage(id, type, imageUrl)
+            override suspend fun imageInfos(id: String) = api.getImageInfos(id)
+            override suspend fun moveImage(id: String, type: String, index: Int, newIndex: Int) = api.moveImage(id, type, index, newIndex)
+            override suspend fun itemJson(id: String) = api.getItemJson(id, userId())
+            override suspend fun updateItem(id: String, body: kotlinx.serialization.json.JsonObject) = api.updateItem(id, body)
+        },
+        json = json,
+        rights = com.ambient.tv.data.metadata.MetadataEditRights(
+            preferences,
+            loginKey = { preferences.activeEmbyServerId?.let { server -> preferences.embyUserId?.let { "emby:$server:$it" } } },
+            probe = { api.getUser(userId()).policy?.isAdministrator == true },
+        ),
+        raw = ::raw,
+    )
+
+    override fun metadataEditSupport(item: MediaItem) = editor.support(item)
+    override suspend fun refreshMetadataEditRights(ratingKey: String) = editor.refreshRights()
+    override suspend fun searchMatches(ratingKey: String, title: String?, year: Int?): Result<List<com.ambient.tv.domain.model.MetadataMatch>> {
+        val item = cachedMediaItem(ratingKey) ?: getMetadataFast(ratingKey).getOrElse { return Result.failure(it) }
+            ?: return Result.failure(NoSuchElementException(ratingKey))
+        return editor.searchMatches(item, title, year)
+    }
+    override suspend fun applyMatch(ratingKey: String, match: com.ambient.tv.domain.model.MetadataMatch) = editor.applyMatch(ratingKey, match)
+    override suspend fun artworkChoices(ratingKey: String, kind: com.ambient.tv.domain.model.ArtworkKind) = editor.artworkChoices(ratingKey, kind)
+    override suspend fun setArtwork(ratingKey: String, kind: com.ambient.tv.domain.model.ArtworkKind, choice: com.ambient.tv.domain.model.ArtworkChoice) =
+        editor.setArtwork(ratingKey, kind, choice)
+    override fun forgetMerged(ratingKeys: Set<String>) = cache.forgetMerged(ratingKeys)
+    override suspend fun metadataFields(ratingKey: String) = editor.fields(ratingKey)
+    override suspend fun updateMetadataFields(ratingKey: String, current: com.ambient.tv.domain.model.MetadataFields, edited: com.ambient.tv.domain.model.MetadataFields) =
+        editor.updateFields(ratingKey, current, edited)
 
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int): Result<String> =
         compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = false, audioCodec = audioCodec, audioStreamId = audioStreamId, audioChannels = audioChannels)

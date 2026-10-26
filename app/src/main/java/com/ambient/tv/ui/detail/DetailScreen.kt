@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.dp
 
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlaylistRemove
 import androidx.compose.material.icons.filled.PlayArrow
@@ -194,6 +195,9 @@ fun DetailScreen(
                     onBrowseCollection = onBrowseCollection,
                     onSetWatched = viewModel::setWatched,
                     onRemoveFromContinue = viewModel::removeFromContinueWatching,
+                    editSupport = viewModel.editSupport.collectAsState().value.takeIf { !state.offline && !state.removed }
+                        ?: com.ambient.tv.domain.model.MetadataEditSupport.NONE,
+                    onMetadataEdited = viewModel::onMetadataEdited,
                 )
             }
         }
@@ -296,8 +300,11 @@ private fun DetailContent(
     onBrowseCollection: (String, String) -> Unit,
     onSetWatched: (Boolean) -> Unit,
     onRemoveFromContinue: () -> Unit,
+    editSupport: com.ambient.tv.domain.model.MetadataEditSupport,
+    onMetadataEdited: (Boolean) -> Unit,
 ) {
     var showMore by remember(item.ratingKey) { mutableStateOf(false) }
+    var showEdit by remember(item.ratingKey) { mutableStateOf(false) }
     // Remember the last focused child without invalidating this whole, expensive detail tree on
     // every D-pad step. The saved holder is recreated when this back-stack entry is composed
     // again; only that first composition needs to request the remembered focus.
@@ -326,7 +333,7 @@ private fun DetailContent(
     val activePlayback = com.ambient.tv.companion.playbackIndicator(item)
     val heroHasFocusTarget = remember(
         item.type, item.mediaVersions, item.progressFraction, nextEpisode?.ratingKey,
-        playbackAvailable, trailerAvailable, activePlayback,
+        playbackAvailable, trailerAvailable, activePlayback, editSupport,
     ) {
         val directPlayback = playbackAvailable && item.type !in setOf("show", "season") &&
             (activePlayback != null || item.mediaVersions.any { it.streamUrl != null })
@@ -336,6 +343,7 @@ private fun DetailContent(
             playbackAvailable,
             item.mediaVersions.isNotEmpty(),
             (item.progressFraction ?: 0f) in 0.01f..0.94f,
+            editSupport.any,
         ).hasMenuActions
     }
     var moreOpened by remember(item.ratingKey) { mutableStateOf(false) }
@@ -582,6 +590,7 @@ private fun DetailContent(
                         moreOpened = true
                         showMore = true
                     },
+                    canEdit = editSupport.any,
                     onHeroFocused = { rememberFocused(null) },
                     initialActionFocus = initialActionFocus,
                     moreActionFocus = moreActionFocus,
@@ -681,6 +690,19 @@ private fun DetailContent(
                     showMore = false
                     onRemoveFromContinue()
                 },
+                editSupport = editSupport,
+                onEdit = {
+                    showMore = false
+                    showEdit = true
+                },
+            )
+        }
+        if (showEdit && editSupport.any) {
+            ItemEditDialog(
+                item = item,
+                support = editSupport,
+                onDismiss = { showEdit = false },
+                onEdited = onMetadataEdited,
             )
         }
     }
@@ -716,6 +738,7 @@ private fun DetailHero(
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
     onMore: (() -> Unit)?,
+    canEdit: Boolean,
     onHeroFocused: () -> Unit,
     initialActionFocus: FocusRequester,
     moreActionFocus: FocusRequester,
@@ -737,6 +760,7 @@ private fun DetailHero(
         playbackAvailable = playbackAvailable,
         hasMediaVersions = item.mediaVersions.isNotEmpty(),
         inProgress = (item.progressFraction ?: 0f) in 0.01f..0.94f,
+        canEdit = canEdit,
     )
 
     DeviceActionRow(
@@ -1351,6 +1375,8 @@ private fun DetailContextMenu(
     onPlayFromStart: () -> Unit,
     onSetWatched: (Boolean) -> Unit,
     onRemoveFromContinue: () -> Unit,
+    editSupport: com.ambient.tv.domain.model.MetadataEditSupport,
+    onEdit: () -> Unit,
 ) {
     val firstFocus = remember(item.ratingKey) { FocusRequester() }
     val handheld = LocalHandheldUi.current
@@ -1362,6 +1388,7 @@ private fun DetailContextMenu(
         playbackAvailable = playbackAvailable,
         hasMediaVersions = item.mediaVersions.isNotEmpty(),
         inProgress = inProgress,
+        canEdit = editSupport.any,
     )
     val metadata = buildList {
         item.year?.let { add(it.toString()) }
@@ -1437,13 +1464,22 @@ private fun DetailContextMenu(
                         modifier = if (!busy && !capabilities.canRestart && !capabilities.canSetWatched) Modifier.focusRequester(firstFocus) else Modifier,
                     )
                 }
+                if (capabilities.canEdit) {
+                    DetailContextAction(
+                        text = stringResource(R.string.detail_edit),
+                        icon = Icons.Filled.Edit,
+                        onClick = onEdit,
+                        enabled = !busy,
+                        modifier = if (!busy && !capabilities.canRestart && !capabilities.canSetWatched && !capabilities.canRemoveFromContinue) Modifier.focusRequester(firstFocus) else Modifier,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DetailContextAction(
+internal fun DetailContextAction(
     text: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,

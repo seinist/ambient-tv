@@ -15,7 +15,7 @@ class LoginStateInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
         val path = chain.request().url.encodedPath
-        if (!anonymous(path)) {
+        if (!anonymous(path) && !com.ambient.tv.network.ElevatedRequest.isElevated(chain.request())) {
             when {
                 response.code == 401 -> onLoginState(false)
                 response.isSuccessful -> onLoginState(true)

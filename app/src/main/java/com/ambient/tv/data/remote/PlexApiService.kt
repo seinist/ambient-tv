@@ -5,7 +5,11 @@ import com.ambient.tv.data.remote.dto.HubsResponse
 import com.ambient.tv.data.remote.dto.IdentityResponse
 import com.ambient.tv.data.remote.dto.LibrarySectionsResponse
 import com.ambient.tv.data.remote.dto.MetadataResponse
+import com.ambient.tv.data.remote.dto.PlexMatchesResponse
+import com.ambient.tv.data.remote.dto.PlexSectionRefResponse
+import com.ambient.tv.network.ElevatedRequest
 import retrofit2.http.GET
+import retrofit2.http.Headers
 import retrofit2.http.Path
 import retrofit2.http.Query
 import retrofit2.http.PUT
@@ -129,5 +133,60 @@ interface PlexApiService {
     @PUT("actions/removeFromContinueWatching")
     suspend fun removeFromContinueWatching(
         @Query("ratingKey") ratingKey: String,
+    )
+
+    // Administrator-only metadata editing; see ElevatedRequest.
+    /** Only the server's owner may read its settings: the cheapest admin check there is. */
+    @Headers(ElevatedRequest.MARKER)
+    @GET(":/prefs")
+    suspend fun getServerPrefs()
+
+    @GET("library/metadata/{id}")
+    suspend fun getSectionRef(@Path("id") ratingKey: String, @Query("excludeElements") excludeElements: String = "Media,Genre,Role,Guid"): PlexSectionRefResponse
+
+    @Headers(ElevatedRequest.MARKER)
+    @GET("library/metadata/{id}/posters")
+    suspend fun getPosters(@Path("id") ratingKey: String): com.ambient.tv.data.remote.dto.PlexArtsResponse
+
+    @Headers(ElevatedRequest.MARKER)
+    @PUT("library/metadata/{id}/poster")
+    suspend fun setPoster(@Path("id") ratingKey: String, @Query("url") url: String)
+
+    @Headers(ElevatedRequest.MARKER)
+    @PUT("library/metadata/{id}/art")
+    suspend fun setArt(@Path("id") ratingKey: String, @Query("url") url: String)
+
+    @Headers(ElevatedRequest.MARKER)
+    @GET("library/metadata/{id}/matches")
+    suspend fun getMatches(
+        @Path("id") ratingKey: String,
+        @Query("title") title: String?,
+        @Query("year") year: Int?,
+        @Query("agent") agent: String?,
+        @Query("language") language: String?,
+        @Query("manual") manual: Int = 1,
+    ): PlexMatchesResponse
+
+    @Headers(ElevatedRequest.MARKER)
+    @PUT("library/metadata/{id}/match")
+    suspend fun applyMatch(
+        @Path("id") ratingKey: String,
+        @Query("guid") guid: String,
+        @Query("name") name: String,
+        @Query("year") year: Int?,
+    )
+
+    @Headers(ElevatedRequest.MARKER)
+    @GET("library/metadata/{id}")
+    suspend fun getFields(@Path("id") ratingKey: String, @Query("excludeElements") excludeElements: String = "Media,Genre,Role,Guid"): com.ambient.tv.data.remote.dto.PlexFieldsResponse
+
+    /** Plex Web's edit call: `<field>.value` and `<field>.locked` per changed field. */
+    @Headers(ElevatedRequest.MARKER)
+    @PUT("library/sections/{section}/all")
+    suspend fun updateFields(
+        @Path("section") sectionId: String,
+        @Query("type") type: Int,
+        @Query("id") ratingKey: String,
+        @retrofit2.http.QueryMap fields: Map<String, String>,
     )
 }

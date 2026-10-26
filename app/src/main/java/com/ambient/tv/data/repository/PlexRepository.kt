@@ -6,7 +6,13 @@ import com.ambient.tv.data.local.LanguagePreferences
 import com.ambient.tv.data.remote.PlexApiService
 import com.ambient.tv.data.remote.PlexUrlBuilder
 import com.ambient.tv.data.remote.dto.toDomain
+import com.ambient.tv.domain.model.ArtworkChoice
+import com.ambient.tv.domain.model.ArtworkKind
 import com.ambient.tv.domain.model.LibraryHub
+import com.ambient.tv.domain.model.MetadataEditSupport
+import com.ambient.tv.domain.model.MetadataField
+import com.ambient.tv.domain.model.MetadataFields
+import com.ambient.tv.domain.model.MetadataMatch
 import com.ambient.tv.domain.model.LibraryRecommendation
 import com.ambient.tv.domain.model.LibrarySection
 import com.ambient.tv.domain.model.MediaItem
@@ -28,6 +34,7 @@ class PlexRepository @Inject constructor(
     private val urlBuilder: PlexUrlBuilder,
     private val cache: PlexMediaCache,
     private val preferences: AppPreferences,
+    tokenStore: com.ambient.tv.data.local.TokenStore,
     disk: com.ambient.tv.data.browse.BrowseDiskStore,
     scopes: com.ambient.tv.data.browse.BrowseScopes,
 ) : MediaRepository {
@@ -540,6 +547,93 @@ class PlexRepository @Inject constructor(
         }
     }
 
+    private val editRights = com.ambient.tv.data.metadata.MetadataEditRights(
+        preferences,
+        // The token tells the Plex Home profiles of one server apart; only a hash is stored.
+        loginKey = { preferences.activeServerId?.let { server -> tokenStore.token?.let { "plex:$server:${it.hashCode().toUInt().toString(16)}" } } },
+        probe = { api.getServerPrefs(); true },
+    )
+
+    private suspend inline fun <T> edit(block: () -> T): Result<T> =
+        suspendResult(block).onFailure(editRights::onWriteFailure)
+
+    override fun metadataEditSupport(item: MediaItem) =
+        if (editRights.granted()) MetadataEditSupport.forType(item.type) else MetadataEditSupport.NONE
+
+    override suspend fun refreshMetadataEditRights(ratingKey: String) = editRights.refresh()
+
+    override suspend fun searchMatches(ratingKey: String, title: String?, year: Int?): Result<List<MetadataMatch>> = edit {
+        // Fix match searches with the library's own agent and language, as Plex Web does.
+        val sectionId = api.getSectionRef(ratingKey).container.librarySectionID?.toString()
+        val section = sectionId?.let { id -> api.getLibrarySections().container.directories.firstOrNull { it.key == id } }
+        api.getMatches(ratingKey, title?.takeIf(String::isNotBlank), year, section?.agent, section?.language)
+            .container.results.mapNotNull { result ->
+                MetadataMatch(
+                    title = result.name?.takeIf(String::isNotBlank) ?: return@mapNotNull null,
+                    year = result.year,
+                    thumbUrl = urlBuilder.artworkUrl(result.thumb, 200, 300),
+                    source = result.guid?.substringBefore("://")?.takeIf { it != result.guid },
+                    score = result.score,
+                    overview = result.summary,
+                    handle = result.guid ?: return@mapNotNull null,
+                )
+            }
+    }
+
+    // Edits address exactly one physical item; the edit dialog decides which versions of a merged title.
+    override suspend fun applyMatch(ratingKey: String, match: MetadataMatch): Result<Unit> = edit {
+        api.applyMatch(ratingKey, guid = match.handle, name = match.title, year = match.year)
+    }
+
+    override suspend fun artworkChoices(ratingKey: String, kind: ArtworkKind): Result<List<ArtworkChoice>> = edit {
+        val (arts, width, height) = when (kind) {
+            ArtworkKind.POSTER -> Triple(api.getPosters(ratingKey).container.arts, 240, 360)
+            ArtworkKind.BACKDROP -> Triple(api.getArts(ratingKey).container.arts, 480, 270)
+        }
+        arts.mapNotNull { art ->
+            ArtworkChoice(
+                previewUrl = urlBuilder.artworkUrl(art.thumb ?: art.key, width, height) ?: return@mapNotNull null,
+                handle = art.ratingKey ?: art.key ?: return@mapNotNull null,
+                selected = art.selected,
+                provider = art.provider,
+            )
+        }
+    }
+
+    override suspend fun setArtwork(ratingKey: String, kind: ArtworkKind, choice: ArtworkChoice): Result<Unit> = edit {
+        when (kind) {
+            ArtworkKind.POSTER -> api.setPoster(ratingKey, choice.handle)
+            ArtworkKind.BACKDROP -> api.setArt(ratingKey, choice.handle)
+        }
+    }
+
+    override fun forgetMerged(ratingKeys: Set<String>) = cache.forgetMerged(ratingKeys)
+    override suspend fun metadataFields(ratingKey: String): Result<MetadataFields> = edit {
+        val item = requireNotNull(api.getFields(ratingKey).container.metadata.firstOrNull()) { "No metadata for $ratingKey" }
+        val lockedNames = item.fields.filter { it.locked }.mapNotNull { it.name }.toSet()
+        MetadataFields(
+            values = mapOf(
+                MetadataField.TITLE to item.title.orEmpty(),
+                MetadataField.SORT_TITLE to item.titleSort.orEmpty(),
+                MetadataField.ORIGINAL_TITLE to item.originalTitle.orEmpty(),
+                MetadataField.YEAR to item.year?.toString().orEmpty(),
+                MetadataField.SUMMARY to item.summary.orEmpty(),
+            ),
+            locked = PLEX_FIELD_NAMES.filterValues { it in lockedNames }.keys,
+            lockable = PLEX_FIELD_NAMES.keys,
+        )
+    }
+
+    override suspend fun updateMetadataFields(ratingKey: String, current: MetadataFields, edited: MetadataFields): Result<Unit> = edit {
+        val query = plexFieldUpdate(current, edited)
+        if (query.isEmpty()) return@edit
+        val response = api.getFields(ratingKey).container
+        val item = response.metadata.firstOrNull()
+        val sectionId = requireNotNull(item?.librarySectionID ?: response.librarySectionID) { "No library for $ratingKey" }
+        val type = requireNotNull(item?.type?.let(PLEX_TYPE_NUMBERS::get)) { "${item?.type} cannot be edited" }
+        api.updateFields(sectionId.toString(), type, ratingKey, query)
+    }
+
     override suspend fun getAudioCompatibleStreamUrl(
         ratingKey: String,
         mediaIndex: Int,
@@ -620,3 +714,29 @@ class PlexRepository @Inject constructor(
 /** Plex marks trailer extras with subtype "trailer" and extraType 1. */
 internal fun isPlexTrailerExtra(extra: com.ambient.tv.data.remote.dto.MetadataDto): Boolean =
     extra.subtype.equals("trailer", ignoreCase = true) || extra.extraType == 1
+
+private val PLEX_FIELD_NAMES = mapOf(
+    MetadataField.TITLE to "title",
+    MetadataField.SORT_TITLE to "titleSort",
+    MetadataField.ORIGINAL_TITLE to "originalTitle",
+    MetadataField.YEAR to "year",
+    MetadataField.SUMMARY to "summary",
+)
+
+/** Plex's numeric metadata types, which the section edit call expects. */
+private val PLEX_TYPE_NUMBERS = mapOf(
+    "movie" to 1, "show" to 2, "season" to 3, "episode" to 4,
+    "artist" to 8, "album" to 9, "track" to 10, "collection" to 18,
+)
+
+/** Query of Plex's edit call: changed values (locked, so a refresh keeps them) and changed locks. */
+internal fun plexFieldUpdate(current: MetadataFields, edited: MetadataFields): Map<String, String> = buildMap {
+    PLEX_FIELD_NAMES.forEach { (field, name) ->
+        val value = edited[field].trim()
+        val changed = value != current[field].trim()
+        if (changed) put("$name.value", value)
+        if (changed || (field in edited.locked) != (field in current.locked)) {
+            put("$name.locked", if (field in edited.locked) "1" else "0")
+        }
+    }
+}

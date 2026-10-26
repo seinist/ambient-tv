@@ -184,4 +184,60 @@ data class PlexArtsResponse(@SerialName("MediaContainer") val container: PlexArt
 data class PlexArtsContainer(@SerialName("Metadata") val arts: List<PlexArtDto> = emptyList())
 
 @Serializable
-data class PlexArtDto(val key: String? = null, val thumb: String? = null, val selected: Boolean = false)
+data class PlexArtDto(
+    val key: String? = null,
+    val thumb: String? = null,
+    val selected: Boolean = false,
+    /** What `PUT …/poster?url=` or `…/art?url=` expects to select this entry. */
+    val ratingKey: String? = null,
+    val provider: String? = null,
+)
+
+/** `library/metadata/{id}/matches`: the candidates of Plex's "Fix match". */
+@Serializable
+data class PlexMatchesResponse(@SerialName("MediaContainer") val container: PlexMatchesContainer = PlexMatchesContainer())
+
+@Serializable
+data class PlexMatchesContainer(@SerialName("SearchResult") val results: List<PlexMatchDto> = emptyList())
+
+@Serializable
+data class PlexMatchDto(
+    val guid: String? = null,
+    val name: String? = null,
+    val year: Int? = null,
+    val score: Int? = null,
+    val thumb: String? = null,
+    val summary: String? = null,
+)
+
+/** Just the library an item belongs to, whose agent and language a match search needs. */
+@Serializable
+data class PlexSectionRefResponse(@SerialName("MediaContainer") val container: PlexSectionRefContainer = PlexSectionRefContainer())
+
+@Serializable
+data class PlexSectionRefContainer(val librarySectionID: Long? = null)
+
+/** The editable text fields of one item and which of them are locked. */
+@Serializable
+data class PlexFieldsResponse(@SerialName("MediaContainer") val container: PlexFieldsContainer = PlexFieldsContainer())
+
+@Serializable
+data class PlexFieldsContainer(
+    val librarySectionID: Long? = null,
+    @SerialName("Metadata") val metadata: List<PlexFieldsDto> = emptyList(),
+)
+
+@Serializable
+data class PlexFieldsDto(
+    val type: String? = null,
+    val librarySectionID: Long? = null,
+    val title: String? = null,
+    val titleSort: String? = null,
+    val originalTitle: String? = null,
+    val year: Int? = null,
+    val summary: String? = null,
+    @SerialName("Field") val fields: List<PlexFieldLockDto> = emptyList(),
+)
+
+@Serializable
+data class PlexFieldLockDto(val name: String? = null, val locked: Boolean = false)

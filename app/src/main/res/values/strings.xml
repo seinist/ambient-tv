@@ -213,6 +213,10 @@
     <string name="item_edit_save">Save</string>
     <string name="item_edit_lock">Lock field</string>
     <string name="item_edit_fields_hint">Locked fields are kept on refresh.</string>
+    <string name="item_edit_versions_title">Which version?</string>
+    <string name="item_edit_versions_hint">This title combines several files; a wrongly matched one can be fixed on its own</string>
+    <string name="item_edit_versions_all">All versions</string>
+    <string name="item_edit_version_n">Version %1$d</string>
     <string name="notice_metadata_updated">Updated on the server</string>
     <string name="action_close">Close</string>
     <string name="action_open_in_browser">Open in browser</string>

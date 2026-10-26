@@ -303,6 +303,19 @@ open class PlexMediaCache @Inject constructor() {
         return merged
     }
 
+    /**
+     * An edit can change what a title is (new match): every merged entry containing [ratingKeys]
+     * is dropped, and duplicates are resolved again from the server the next time it is opened.
+     */
+    @Synchronized
+    fun forgetMerged(ratingKeys: Set<String>) {
+        val stale = ratingKeys.mapNotNull(mergedByRatingKey::get)
+        stale.forEach { item ->
+            item.allRatingKeys.forEach(mergedByRatingKey::remove)
+            resolvedCanonicalKeys -= item.canonicalContentKey
+        }
+    }
+
     fun mergedFor(ratingKey: String): MediaItem? = mergedByRatingKey[ratingKey]
     fun linkedKeys(ratingKey: String): List<String> = mergedByRatingKey[ratingKey]?.allRatingKeys ?: listOf(ratingKey)
     fun isCanonicalResolved(canonicalKey: String): Boolean = canonicalKey in resolvedCanonicalKeys
