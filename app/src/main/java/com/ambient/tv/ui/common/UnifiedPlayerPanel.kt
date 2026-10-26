@@ -38,6 +38,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
@@ -340,8 +341,22 @@ fun PlayerControlBar(
     }
     val focusManager = LocalFocusManager.current
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
+    val stowed = controlFocus?.seekFocused == true
+    // Slides down while the seek bar holds focus. Stays in the layout so D-pad down still finds it.
+    // The OSD opening straight onto the seek bar snaps instead of visibly sliding away.
+    val openedAt = remember { android.os.SystemClock.uptimeMillis() }
+    val stow = remember { androidx.compose.animation.core.Animatable(if (stowed) 1f else 0f) }
+    LaunchedEffect(stowed) {
+        val target = if (stowed) 1f else 0f
+        if (android.os.SystemClock.uptimeMillis() - openedAt < 300L) stow.snapTo(target)
+        else stow.animateTo(target, androidx.compose.animation.core.tween(200))
+    }
     Row(
         modifier = modifier.fillMaxWidth().height(58.dp)
+            .graphicsLayer {
+                translationY = stow.value * 72.dp.toPx()
+                alpha = 1f - stow.value
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {

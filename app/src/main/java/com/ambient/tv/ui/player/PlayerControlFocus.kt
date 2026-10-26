@@ -17,6 +17,9 @@ internal class PlayerControlFocus {
     private var focusedOwner: Any? = null
 
     val hasFocus: Boolean get() = focusedOwner != null
+    /** Observable so the action bar can slide away while the seek bar is focused. */
+    var seekFocused: Boolean by mutableStateOf(false)
+        private set
     fun target(fallback: FocusRequester): FocusRequester = controls[lastKey]?.requester ?: fallback
 
     fun buttonTarget(fallback: FocusRequester): FocusRequester = controls[lastButtonKey]?.requester ?: fallback
@@ -27,6 +30,7 @@ internal class PlayerControlFocus {
         lastKey = null
         lastButtonKey = null
         focusedOwner = null
+        seekFocused = false
     }
 
     fun register(key: String, requester: FocusRequester, owner: Any) {
@@ -35,7 +39,10 @@ internal class PlayerControlFocus {
 
     fun unregister(key: String, owner: Any) {
         if (controls[key]?.owner === owner) controls.remove(key)
-        if (focusedOwner === owner) focusedOwner = null
+        if (focusedOwner === owner) {
+            focusedOwner = null
+            seekFocused = false
+        }
     }
 
     fun focused(key: String, owner: Any, focused: Boolean) {
@@ -43,7 +50,11 @@ internal class PlayerControlFocus {
             lastKey = key
             if (key != "seek-bar") lastButtonKey = key
             focusedOwner = owner
-        } else if (focusedOwner === owner) focusedOwner = null
+            seekFocused = key == "seek-bar"
+        } else if (focusedOwner === owner) {
+            focusedOwner = null
+            seekFocused = false
+        }
     }
 }
 

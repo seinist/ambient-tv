@@ -47,7 +47,6 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.PlayerSleepTimerButton
-import com.ambient.tv.ui.player.ReferencePlaybackSummary
 import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
@@ -116,7 +115,6 @@ fun BoxScope.TvhReferencePlayerChrome(
 
     ReferencePlayerOverlayBackground()
     ReferencePlayerClock(
-        remainingMs = if (!source.isLive && durationMs > 0L) (durationMs - positionMs).coerceAtLeast(0L) else null,
         liveLabel = if (source.isLive) stringResource(if (com.ambient.tv.livetv.LiveTimeshift.current?.recordingId != null) R.string.live_recording_playback else R.string.tvh_live).uppercase() else null,
         modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 48.dp),
     )
@@ -202,7 +200,6 @@ fun BoxScope.TvhReferencePlayerChrome(
                 maxLines = 1,
             )
         } else if (!source.isLive && durationMs > 0L) {
-            ReferencePlaybackSummary(positionMs = positionMs, durationMs = durationMs)
             TvPlayerSeekBar(
                 positionMs = positionMs,
                 durationMs = durationMs,
@@ -226,6 +223,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
                 modifier = Modifier.focusRequester(seekFocusRequester),
+                showEndTime = false,
                 timelineContext = { previewPosition ->
                     if (nowEvent != null && liveEventDurationMs > 0L) {
                         val previewWallMs = oldest + previewPosition

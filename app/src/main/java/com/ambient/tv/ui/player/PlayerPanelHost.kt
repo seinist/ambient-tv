@@ -235,7 +235,6 @@ internal data class PlayerOsdModel(
     val durationMs: Long,
     /** Media3 shows the time line also without a known duration; VLC/MPV only with one. */
     val timelineAlways: Boolean,
-    val remainingMs: Long?,
     val clockEndPadding: androidx.compose.ui.unit.Dp,
     val isPlaying: Boolean,
     val loading: Boolean,
@@ -281,13 +280,11 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
     PlayerOverlayVisibility(visible = visible) {
         ReferencePlayerOverlayBackground()
         ReferencePlayerClock(
-            remainingMs = model.remainingMs,
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = model.clockEndPadding),
         )
         ReferencePlayerBottomContent {
             PlayerNowPlayingHeader(model.state)
             if (model.timelineAlways || model.durationMs > 0L) {
-                ReferencePlaybackSummary(positionMs = model.positionMs, durationMs = model.durationMs)
                 TvPlayerSeekBar(
                     positionMs = model.seekState.positionMs,
                     seekState = model.seekState,

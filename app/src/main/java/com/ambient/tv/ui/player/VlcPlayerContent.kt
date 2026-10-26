@@ -322,7 +322,6 @@ internal fun VlcPlayerContent(
             positionMs = seek.positionMs,
             durationMs = timelineDurationMs,
             timelineAlways = false,
-            remainingMs = timelineDurationMs.takeIf { it > 0L }?.let { (it - seek.positionMs).coerceAtLeast(0L) },
             clockEndPadding = 48.dp,
             isPlaying = snapshot.isPlaying,
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),

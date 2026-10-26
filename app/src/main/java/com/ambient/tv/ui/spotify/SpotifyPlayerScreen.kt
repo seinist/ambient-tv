@@ -64,7 +64,6 @@ import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
-import com.ambient.tv.ui.player.ReferencePlaybackSummary
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.OsdKeyState
@@ -222,7 +221,6 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
         PlayerOverlayVisibility(visible = controlsVisible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
-                remainingMs = state.durationMs.takeIf { it > 0L }?.let { (it - state.positionMs).coerceAtLeast(0L) },
                 liveLabel = null,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = deviceDp(48.dp, 16.dp)),
             )
@@ -239,7 +237,6 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                     artworkContentScale = ContentScale.Crop,
                 )
                 if (state.durationMs > 0L) {
-                    ReferencePlaybackSummary(positionMs = state.positionMs, durationMs = state.durationMs)
                     TvPlayerSeekBar(
                         state.positionMs,
                         state.durationMs,

@@ -832,7 +832,6 @@ private fun PlayerControlsOverlay(
         positionMs = positionMs,
         durationMs = durationMs,
         timelineAlways = true,
-        remainingMs = (durationMs - positionMs).coerceAtLeast(0L),
         clockEndPadding = deviceDp(48.dp, 16.dp),
         isPlaying = isPlaying,
         loading = isBuffering,
@@ -1002,6 +1001,7 @@ internal fun TvPlayerSeekBar(
     onTogglePlayback: () -> Unit = { BackgroundPlaybackSession.toggle() },
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
+    showEndTime: Boolean = true,
 ) {
     val seekable = interactive && durationMs > 0L
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
@@ -1183,8 +1183,19 @@ internal fun TvPlayerSeekBar(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatDuration(displayedPosition), color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp)
-            Text("−${formatDuration(remaining)}", color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp)
+            Text(
+                if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
+                color = Color.White.copy(alpha = 0.82f),
+                fontSize = 13.sp,
+            )
+            val endsAt = if (showEndTime && durationMs > 0L) {
+                java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+            } else null
+            Text(
+                endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",
+                color = Color.White.copy(alpha = 0.72f),
+                fontSize = 13.sp,
+            )
         }
     }
 

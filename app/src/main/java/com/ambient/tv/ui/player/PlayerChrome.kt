@@ -56,7 +56,6 @@ fun ReferencePlayerOverlayBackground(modifier: Modifier = Modifier) {
 
 @Composable
 fun BoxScope.ReferencePlayerClock(
-    remainingMs: Long?,
     modifier: Modifier = Modifier,
     liveLabel: String? = null,
 ) {
@@ -68,16 +67,8 @@ fun BoxScope.ReferencePlayerClock(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(now.format(formatter), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-        when {
-            remainingMs != null && remainingMs >= 0L -> {
-                val end = now.plusSeconds(remainingMs / 1000L)
-                Text(
-                    stringResource(R.string.player_ends_at, end.format(formatter)),
-                    color = Color.White.copy(alpha = 0.65f),
-                    fontSize = 12.sp,
-                )
-            }
-            !liveLabel.isNullOrBlank() -> Text(
+        if (!liveLabel.isNullOrBlank()) {
+            Text(
                 liveLabel,
                 color = Color.White.copy(alpha = 0.65f),
                 fontSize = 12.sp,
@@ -149,34 +140,6 @@ fun ReferencePlayerHeader(
 }
 
 @Composable
-fun ReferencePlaybackSummary(
-    positionMs: Long,
-    durationMs: Long,
-    modifier: Modifier = Modifier,
-) {
-    if (durationMs <= 0L) return
-    val remaining = (durationMs - positionMs).coerceAtLeast(0L)
-    val end = java.time.LocalTime.now().plusSeconds(remaining / 1000L)
-        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            "${referenceFormatDuration(positionMs)} / ${referenceFormatDuration(durationMs)}",
-            color = Color.White.copy(alpha = 0.82f),
-            fontSize = 13.sp,
-        )
-        Text(
-            stringResource(R.string.player_ends_at, end),
-            color = Color.White.copy(alpha = 0.64f),
-            fontSize = 13.sp,
-        )
-    }
-}
-
-@Composable
 fun BoxScope.ReferencePlayerBottomContent(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
@@ -199,5 +162,3 @@ fun BoxScope.ReferencePlayerBottomContent(
         }
     }
 }
-
-private fun referenceFormatDuration(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)

@@ -32,7 +32,6 @@ import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
-import com.ambient.tv.ui.player.ReferencePlaybackSummary
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.rememberMedia3NerdStats
 import com.ambient.tv.ui.player.PlaybackPerformanceNotice
@@ -1565,7 +1564,6 @@ private data class YouTubeOsdModel(
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
-                remainingMs = if (!playback.isLive && duration > 0L) (duration - position).coerceAtLeast(0L) else null,
                 liveLabel = if (playback.isLive) stringResource(R.string.youtube_live_badge) else null,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = deviceDp(48.dp, 16.dp)),
             )
@@ -1582,7 +1580,6 @@ private data class YouTubeOsdModel(
                     subtitle = playback.author,
                 )
                 if (!playback.isLive && duration > 0L) {
-                    ReferencePlaybackSummary(positionMs = position, durationMs = duration)
                     TvPlayerSeekBar(
                         positionMs = position,
                         durationMs = duration,
