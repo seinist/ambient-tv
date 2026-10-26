@@ -214,6 +214,8 @@ data class SettingsBackup(
     val svpExplicitChoice: Boolean = false,
     /** Since schema 68: MPV scaler/deband picked deliberately, so cheap defaults do not replace it. */
     val mpvImageExplicitChoice: Boolean = false,
+    /** Since schema 71: double rate preferred over the native one. */
+    val preferDoubleRefreshRate: Boolean = false,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
     val homeRows: List<HomeRowDefinition>? = null,
     val systemHomeHiddenRows: Set<String> = AppPreferences.DEFAULT_SYSTEM_HOME_HIDDEN_ROWS,
@@ -496,6 +498,7 @@ class SettingsBackupManager @Inject constructor(
             mpvSdrCurveKey = preferences.mpvSdrCurveKey,
             svpExplicitChoice = preferences.svpExplicitChoice,
             mpvImageExplicitChoice = preferences.mpvImageExplicitChoice,
+            preferDoubleRefreshRate = preferences.preferDoubleRefreshRate,
             wolRetryCount = preferences.wolRetryCount,
             homeRows = preferences.homeRows,
             systemHomeHiddenRows = preferences.systemHomeHiddenRows,
@@ -868,6 +871,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.gpuRenderResolutionKey = if (schema66) backup.gpuRenderResolutionKey else AppPreferences.GPU_RENDER_AUTO
         preferences.mpvSdrCurveKey = if (schema66) backup.mpvSdrCurveKey else AppPreferences.MPV_SDR_CURVE_AUTO
         preferences.svpExplicitChoice = schema66 && backup.svpExplicitChoice
+        preferences.preferDoubleRefreshRate = backup.schemaVersion >= 71 && backup.preferDoubleRefreshRate
         // "An Display synchronisieren" since schema 67; older backups restore "off".
         preferences.syncPlaybackToDisplay = backup.schemaVersion >= 67 && backup.syncPlaybackToDisplay
         // Deliberate MPV scaler/deband choice since schema 68; older backups restore "not chosen".
@@ -911,7 +915,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 70
+        const val CURRENT_SCHEMA_VERSION = 71
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

@@ -199,6 +199,12 @@ internal fun HighRefreshDoublingRow(state: SettingsUiState, model: SettingsViewM
         checked = state.allowHighRefreshDoubling,
         onCheckedChange = model::onAllowHighRefreshDoublingChanged,
     )
+    com.ambient.tv.ui.common.TvSettingRow(
+        title = stringResource(R.string.settings_display_prefer_double),
+        body = stringResource(R.string.settings_display_prefer_double_hint),
+        checked = state.preferDoubleRefreshRate,
+        onCheckedChange = model::onPreferDoubleRefreshRateChanged,
+    )
 }
 
 /** Device-wide GPU output choices: render resolution (mpv, VLC) and SDR curve (mpv), saved with Settings. */

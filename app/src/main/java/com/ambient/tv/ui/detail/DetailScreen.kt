@@ -355,14 +355,17 @@ private fun DetailContent(
         }
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        // Always a wide backdrop when one exists (own, the show's, other server backgrounds, TMDb's); a poster only as last resort.
-        val backdrop = item.wideBackdropUrl ?: fallbackBackdrop ?: item.thumbUrl
+        // Always a wide backdrop when one exists, the item's own landscape first: an episode's/clip's
+        // still before the show art Plex inherits into `art`; then other server backgrounds, TMDb's;
+        // a poster only as last resort.
+        val ownLandscape = item.thumbUrl?.takeIf { item.type in setOf("episode", "clip") }
+        val backdrop = ownLandscape ?: item.wideBackdropUrl ?: fallbackBackdrop ?: item.thumbUrl
         val artworkAccent = rememberArtworkAccent(backdrop)
         val heroAccent = if (LocalAccentModeKey.current == "artwork") artworkAccent else MaterialTheme.colorScheme.primary
         if (!visibleBackgroundVideo) ArtworkImage(
             model = backdrop,
             // A backdrop that fails to load falls through to the next wide source, then the poster.
-            fallbackModels = listOfNotNull(fallbackBackdrop, item.thumbUrl).filter { it != backdrop },
+            fallbackModels = listOfNotNull(item.wideBackdropUrl, fallbackBackdrop, item.thumbUrl).distinct().filter { it != backdrop },
             title = item.title,
             contentScale = ContentScale.Crop,
             focusCrop = true,

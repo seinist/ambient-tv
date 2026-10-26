@@ -1804,6 +1804,8 @@
     <string name="audio_output_config_failed">Die Audio-Ausgabe konnte nicht eingerichtet werden.</string>
     <string name="settings_display_allow_high_double">100/120 Hz erlauben (50→100, 60→120 Hz)</string>
     <string name="settings_display_allow_high_double_hint">Nur ohne nativen 50/60-Hz-Modus. Verdoppelt GPU- und Kompositionsarbeit bei 4K.</string>
+    <string name="settings_display_prefer_double">Doppelte Bildrate bevorzugen (30→60 Hz auch bei nativem 30-Hz-Modus)</string>
+    <string name="settings_display_prefer_double_hint">Gilt auch mit Video- oder voller Displayauflösung. Flüssigeres Menü/OSD; 24 fps bleibt nativ, sofern kein 48-Hz-Modus existiert.</string>
     <string name="renderer_render_resolution">Renderauflösung</string>
     <string name="renderer_render_resolution_auto">Auto</string>
     <string name="renderer_render_resolution_panel">Panel</string>

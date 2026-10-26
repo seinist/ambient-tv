@@ -425,6 +425,7 @@ class SettingsViewModel @Inject constructor(
         preferredDisplayModeKey = appPreferences.preferredDisplayModeKey,
         allowDoubleRefreshRate = appPreferences.allowDoubleRefreshRate,
         allowHighRefreshDoubling = appPreferences.allowHighRefreshDoubling,
+        preferDoubleRefreshRate = appPreferences.preferDoubleRefreshRate,
         gpuRenderResolutionKey = appPreferences.gpuRenderResolutionKey,
         mpvSdrCurveKey = appPreferences.mpvSdrCurveKey,
         allowThreeTwoPulldown = appPreferences.allowThreeTwoPulldown,
@@ -1829,6 +1830,7 @@ class SettingsViewModel @Inject constructor(
     }
     fun onAllowDoubleRefreshRateChanged(value: Boolean) = _uiState.update { it.copy(allowDoubleRefreshRate = value) }
     fun onAllowHighRefreshDoublingChanged(value: Boolean) = _uiState.update { it.copy(allowHighRefreshDoubling = value) }
+    fun onPreferDoubleRefreshRateChanged(value: Boolean) = _uiState.update { it.copy(preferDoubleRefreshRate = value) }
     fun onGpuRenderResolutionChanged(value: String) = _uiState.update {
         it.copy(gpuRenderResolutionKey = value.takeIf { key -> key in setOf(AppPreferences.GPU_RENDER_AUTO, AppPreferences.GPU_RENDER_PANEL, AppPreferences.GPU_RENDER_UI) } ?: AppPreferences.GPU_RENDER_AUTO)
     }
@@ -2494,6 +2496,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.preferredDisplayModeKey = state.preferredDisplayModeKey
         appPreferences.allowDoubleRefreshRate = state.allowDoubleRefreshRate
         appPreferences.allowHighRefreshDoubling = state.allowHighRefreshDoubling
+        appPreferences.preferDoubleRefreshRate = state.preferDoubleRefreshRate
         appPreferences.gpuRenderResolutionKey = state.gpuRenderResolutionKey
         appPreferences.mpvSdrCurveKey = state.mpvSdrCurveKey
         appPreferences.allowThreeTwoPulldown = state.allowThreeTwoPulldown

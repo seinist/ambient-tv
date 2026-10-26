@@ -651,6 +651,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, true)
         set(value) = prefs.edit { putBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, value) }
 
+    /** Double rate even when the native one exists (30→60 Hz instead of 30 Hz); off keeps native first. */
+    var preferDoubleRefreshRate: Boolean
+        get() = prefs.getBoolean(KEY_PREFER_DOUBLE_REFRESH_RATE, false)
+        set(value) = prefs.edit { putBoolean(KEY_PREFER_DOUBLE_REFRESH_RATE, value) }
+
     /** 50→100 / 60→120 Hz doubling; off by default because it doubles 4K GPU/composition work. */
     var allowHighRefreshDoubling: Boolean
         get() = prefs.getBoolean(KEY_ALLOW_HIGH_REFRESH_DOUBLING, false)
@@ -2025,6 +2030,7 @@ class AppPreferences @Inject constructor(
         const val KEY_ALLOW_DOUBLE_REFRESH_RATE = "allow_double_refresh_rate"
         const val KEY_ALLOW_THREE_TWO_PULLDOWN = "allow_three_two_pulldown"
         const val KEY_ALLOW_HIGH_REFRESH_DOUBLING = "allow_high_refresh_doubling"
+        const val KEY_PREFER_DOUBLE_REFRESH_RATE = "prefer_double_refresh_rate"
         const val KEY_GPU_RENDER_RESOLUTION = "gpu_render_resolution"
         const val KEY_MPV_SDR_CURVE = "mpv_sdr_curve"
         const val KEY_SVP_EXPLICIT_CHOICE = "svp_explicit_choice"

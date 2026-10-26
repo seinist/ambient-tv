@@ -1922,6 +1922,8 @@
     <string name="audio_output_config_failed">The audio output could not be configured.</string>
     <string name="settings_display_allow_high_double">Allow 100/120 Hz (50→100, 60→120 Hz)</string>
     <string name="settings_display_allow_high_double_hint">Only without a native 50/60 Hz mode. Doubles GPU and composition work at 4K.</string>
+    <string name="settings_display_prefer_double">Prefer double refresh rate (30→60 Hz even with a native 30 Hz mode)</string>
+    <string name="settings_display_prefer_double_hint">Also applies with video or full display resolution. Smoother menus and OSD; 24 fps stays native unless 48 Hz exists.</string>
     <string name="renderer_render_resolution">Render resolution</string>
     <string name="renderer_render_resolution_auto">Auto</string>
     <string name="renderer_render_resolution_panel">Panel</string>

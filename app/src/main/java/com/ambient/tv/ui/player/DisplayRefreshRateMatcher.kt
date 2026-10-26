@@ -258,16 +258,21 @@ object DisplayRefreshRateMatcher {
     @Volatile
     var highRateDoubling: Boolean = false
 
+    /** 2× before the native rate (30→60 even with a 30 Hz mode); [AppPreferences.preferDoubleRefreshRate]. */
+    @Volatile
+    var preferDoubleRate: Boolean = false
+
     internal fun selectCadenceMode(
         modes: List<SupportedDisplayMode>, fps: Float, double: Boolean, threeTwo: Boolean,
-        highDouble: Boolean = highRateDoubling,
+        highDouble: Boolean = highRateDoubling, preferDouble: Boolean = preferDoubleRate,
     ): SupportedDisplayMode? {
         if (!fps.isFinite() || fps <= 0f) return null
         // The video's native rate comes first (24→24, 25→25, 50→50): no judder, least GPU work.
         // Enabled double (24→48, 25→50, 30→60) and 3:2 (24→60) only apply when no native mode
         // exists. 2× above 60 Hz (50→100, 60→120) needs the explicit opt-in [highDouble].
         val doubleAllowed = double && (highDouble || fps * 2f <= MAX_DEFAULT_DOUBLE_HZ)
-        val multiples = listOf(1f) + (if (doubleAllowed) listOf(2f) else emptyList()) +
+        // "Doppelte Bildrate bevorzugen" tries 2× first, at whatever resolution the policy chose.
+        val multiples = (if (doubleAllowed && preferDouble) listOf(2f, 1f) else listOf(1f) + (if (doubleAllowed) listOf(2f) else emptyList())) +
             (if (threeTwo && fps in 23f..24.5f) listOf(2.5f) else emptyList())
         // Within a multiple the exact rate wins (minimum deviation). A near rate (24.000 Hz for
         // 23.976 fps) repeats or drops a frame periodically: logged, and smoothed by
@@ -408,7 +413,11 @@ fun rememberDisplayModeRequest(
     val hdrSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val requiredHdrType = if (hdrSnapshot.active) playbackHdrType() else null
     val interpolation = BackgroundPlaybackSession.activeHandle()?.usesFrameInterpolation == true
-    activity?.let { DisplayRefreshRateMatcher.highRateDoubling = videoImagePreferences(it).allowHighRefreshDoubling }
+    activity?.let {
+        val prefs = videoImagePreferences(it)
+        DisplayRefreshRateMatcher.highRateDoubling = prefs.allowHighRefreshDoubling
+        DisplayRefreshRateMatcher.preferDoubleRate = prefs.preferDoubleRefreshRate
+    }
     val rendererScaling = BackgroundPlaybackSession.activeHandle()?.usesRendererScaling == true
     // Panel locks are keyed by PlaybackMetadata.route so they stay aligned with the OSD selector.
     val sessionFixedModeKey = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)
