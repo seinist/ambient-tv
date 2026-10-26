@@ -942,6 +942,16 @@ private fun AmbientTvApp(
     val currentRoute = currentBackStackEntry?.destination?.route ?: startDestination
     val unreachableVm: com.ambient.tv.ui.home.UnreachableServerViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
     val unreachableServers by unreachableVm.state.collectAsState()
+    // A failure that clears within moments (startup checks, a quick reconnect) must not flash
+    // the dialog: present it only after the same failure has held for a short while.
+    val unreachableWanted = unreachableServers.prompt && unreachableServers.canDismiss
+    var unreachableSettled by remember { mutableStateOf(false) }
+    LaunchedEffect(unreachableWanted, unreachableServers.unreachable) {
+        if (!unreachableWanted) { unreachableSettled = false; return@LaunchedEffect }
+        if (unreachableSettled) return@LaunchedEffect
+        kotlinx.coroutines.delay(UNREACHABLE_DIALOG_SETTLE_MS)
+        unreachableSettled = true
+    }
     LaunchedEffect(unreachableServers.hidden, currentRoute) {
         if (!com.ambient.tv.connectivity.libraryRouteOwnedByHiddenSystem(currentRoute, unreachableServers.hidden)) return@LaunchedEffect
         // Leave a hidden server's library. Saved servers stay in Settings.
@@ -2317,7 +2327,7 @@ private fun AmbientTvApp(
             } // HandheldNavigationHost
             if (com.ambient.tv.connectivity.shouldPresentUnreachableDialog(
                     currentRoute,
-                    unreachableServers.prompt,
+                    unreachableServers.prompt && unreachableSettled,
                     unreachableServers.canDismiss,
                 )
             ) {
@@ -2411,3 +2421,5 @@ private data class ShellPlaybackState(
     val playing: Boolean,
     val wantsToPlay: Boolean,
 )
+
+private const val UNREACHABLE_DIALOG_SETTLE_MS = 2_000L
