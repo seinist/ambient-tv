@@ -221,14 +221,25 @@ class PlayerPanelNavigation {
         level.hadFocus = true
     }
 
-    /** A rescue holds focus on a stand-in row; that row must not replace the one to return to. */
+    /**
+     * A rescue holds focus on a stand-in row; that row must not replace the one to return to.
+     * Stays set until the rescue ends or the user presses a key ([endParking]), so it also covers
+     * a focus event Compose delivers after the request returned.
+     */
     private var parking = false
 
     /** Runs [focus] (a stand-in request) without overwriting the level's remembered row. */
     internal fun <T> parked(focus: () -> T): T {
         parking = true
-        try { return focus() } finally { parking = false }
+        return focus()
     }
+
+    internal fun endParking() {
+        parking = false
+    }
+
+    /** True while a player dialog is shown or puts focus back afterwards ([DialogFocusReturn]). */
+    internal var dialogFocusOwner by mutableStateOf<Any?>(null)
 
     internal fun notePanelFocused() {
         path.lastOrNull()?.hadFocus = true
@@ -243,6 +254,8 @@ class PlayerPanelNavigation {
         request = ::requestFocus,
         onFocused = ::notePanelFocused,
         park = { focus -> parked(focus) },
+        parkingDone = ::endParking,
+        dialogOwnsFocus = { dialogFocusOwner != null },
     )
 
     private fun restore(key: String?) {

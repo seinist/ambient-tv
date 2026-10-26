@@ -42,9 +42,22 @@ fun guideChannels(
     eventsByChannel: Map<String, List<LiveTvProgramme>>,
     now: Long,
     options: GuideOptions = GuideOptions(),
-): List<LiveTvChannel> {
+): List<LiveTvChannel> = guideChannelRows(channels, eventsByChannel, now, options).first
+
+/**
+ * The shown rows ([guideChannels]) and, for every channel that passes the filters, the UUID of
+ * the row that shows it. A duplicate merged into another row maps to that row, so a channel
+ * watched through its duplicate still finds its row.
+ */
+internal fun guideChannelRows(
+    channels: List<LiveTvChannel>,
+    eventsByChannel: Map<String, List<LiveTvProgramme>>,
+    now: Long,
+    options: GuideOptions = GuideOptions(),
+): Pair<List<LiveTvChannel>, Map<String, String>> {
     val programmes = eventsByChannel.mapValues { (_, events) -> guideEvents(events, now).map { it.identity() } }
-    val seen = mutableSetOf<Any>()
+    val rowFor = mutableMapOf<Any, String>()
+    val shownAs = mutableMapOf<String, String>()
     val matching = channels.distinctBy { it.sourceId to it.uuid }.filter { channel ->
         (options.kind == null || channel.kind == options.kind) &&
             (options.access == null || channel.access == options.access) &&
@@ -56,10 +69,14 @@ fun guideChannels(
         // Without programme evidence, only identical source/UUIDs can safely be collapsed.
         val identity: Any = if (schedule.isEmpty()) channel.sourceId to channel.uuid
         else listOf(channel.sourceId, guideName(channel.name), channel.kind, channel.access, schedule)
-        seen.add(identity)
+        val existing = rowFor[identity]
+        shownAs.putIfAbsent(channel.uuid, existing ?: channel.uuid)
+        if (existing == null) rowFor[identity] = channel.uuid
+        existing == null
     }
-    return when (options.sort) {
+    val sorted = when (options.sort) {
         GuideSort.NUMBER -> rows.sortedWith(compareBy<LiveTvChannel> { it.number ?: Int.MAX_VALUE }.thenBy { guideName(it.name) }.thenBy { it.uuid })
         GuideSort.NAME -> rows.sortedWith(compareBy<LiveTvChannel> { guideIndexLetter(it.name) }.thenBy { guideName(it.name) }.thenBy { it.number ?: Int.MAX_VALUE }.thenBy { it.uuid })
     }
+    return sorted to shownAs
 }

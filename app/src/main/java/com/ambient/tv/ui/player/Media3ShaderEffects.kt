@@ -48,11 +48,15 @@ uniform sampler2D uTexSampler;
 uniform vec2 uInputSize;
 varying vec2 vTexSamplingCoord;
 vec3 tap(vec2 texel) { return texture2D(uTexSampler, (texel + 0.5) / uInputSize).rgb; }
+uniform float uOutGamma;
+vec4 finish(vec3 c) { return uOutGamma == 1.0 ? vec4(c, 1.0) : vec4(pow(max(c, vec3(0.0)), vec3(uOutGamma)), 1.0); }
 """
 
 private abstract class Media3FragmentShaderProgram(
     useHighPrecision: Boolean,
     fragmentBody: String,
+    /** Gamma exponent fused into this pass (1 = none), saving the separate gamma texture. */
+    private val outGamma: Float = 1f,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
     private val program: GlProgram = try {
         GlProgram(VERTEX_SHADER, FRAGMENT_HEADER + fragmentBody).apply {
@@ -76,6 +80,7 @@ private abstract class Media3FragmentShaderProgram(
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, /* texUnitIndex= */ 0)
             program.setFloatsUniformIfPresent("uInputSize", inputSize)
+            program.setFloatsUniformIfPresent("uOutGamma", floatArrayOf(outGamma))
             setUniforms(program)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -98,9 +103,9 @@ private abstract class Media3FragmentShaderProgram(
 private fun GlProgram.float(name: String, value: Float) = setFloatsUniformIfPresent(name, floatArrayOf(value))
 
 /** Smooths 8-bit color steps in flat areas; edges above the threshold stay untouched. */
-internal class Media3DebandEffect(private val strength: String) : GlEffect {
+internal class Media3DebandEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        object : Media3FragmentShaderProgram(useHdr, DEBAND) {
+        object : Media3FragmentShaderProgram(useHdr, DEBAND, media3GammaExponent(gamma)) {
             override fun setUniforms(program: GlProgram) {
                 val medium = strength == "medium"
                 program.float("uRange", if (medium) 16f else 8f)
@@ -116,12 +121,13 @@ internal class Media3CubicScaleEffect(
     private val outputHeight: Int,
     private val b: Float,
     private val c: Float,
+    private val gamma: Int = 0,
 ) : GlEffect {
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
+        gamma == 0 && media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        object : Media3FragmentShaderProgram(useHdr, CUBIC) {
+        object : Media3FragmentShaderProgram(useHdr, CUBIC, media3GammaExponent(gamma)) {
             override fun outputSize(inputWidth: Int, inputHeight: Int) =
                 media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight).let { Size(it.first, it.second) }
             override fun setUniforms(program: GlProgram) {
@@ -132,28 +138,28 @@ internal class Media3CubicScaleEffect(
 }
 
 /** AMD FidelityFX FSR 1 EASU (edge-adaptive upscale) on RGB; [Media3SharpenEffect] "rcas" follows it. */
-internal class Media3FsrEasuEffect(private val outputWidth: Int, private val outputHeight: Int) : GlEffect {
+internal class Media3FsrEasuEffect(private val outputWidth: Int, private val outputHeight: Int, private val gamma: Int = 0) : GlEffect {
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
+        gamma == 0 && media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
-        object : Media3FragmentShaderProgram(useHdr, FSR_EASU) {
+        object : Media3FragmentShaderProgram(useHdr, FSR_EASU, media3GammaExponent(gamma)) {
             override fun outputSize(inputWidth: Int, inputHeight: Int) =
                 media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight).let { Size(it.first, it.second) }
         }
 }
 
 /** light/medium: unsharp mask; cas: AMD CAS; rcas: FSR 1 RCAS. */
-internal class Media3SharpenEffect(private val kind: String) : GlEffect {
+internal class Media3SharpenEffect(private val kind: String, private val gamma: Int = 0) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram = when (kind) {
-        "cas" -> object : Media3FragmentShaderProgram(useHdr, CAS) {
+        "cas" -> object : Media3FragmentShaderProgram(useHdr, CAS, media3GammaExponent(gamma)) {
             override fun setUniforms(program: GlProgram) = program.float("uSharpness", 0.6f)
         }
-        "rcas" -> object : Media3FragmentShaderProgram(useHdr, RCAS) {
+        "rcas" -> object : Media3FragmentShaderProgram(useHdr, RCAS, media3GammaExponent(gamma)) {
             // Same strength as the MPV FSR shader (0.2 stops below maximum).
             override fun setUniforms(program: GlProgram) = program.float("uSharpnessStops", 0.2f)
         }
-        else -> object : Media3FragmentShaderProgram(useHdr, UNSHARP) {
+        else -> object : Media3FragmentShaderProgram(useHdr, UNSHARP, media3GammaExponent(gamma)) {
             override fun setUniforms(program: GlProgram) = program.float("uAmount", if (kind == "medium") 0.8f else 0.4f)
         }
     }
@@ -191,7 +197,7 @@ void main() {
   vec3 flatMask = step(abs(center.rgb - avg), vec3(uThreshold));
   vec3 color = mix(center.rgb, avg, flatMask);
   color += (rand(pos + 31.0) - 0.5) * uGrain;
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
 }
 """
 
@@ -218,7 +224,7 @@ void main() {
       weights += w;
     }
   }
-  gl_FragColor = vec4(clamp(sum / weights, 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(sum / weights, 0.0, 1.0));
 }
 """
 
@@ -309,7 +315,7 @@ void main() {
   vec3 color = aC / aW;
   vec3 mn = min(min(f, g), min(j, k));
   vec3 mx = max(max(f, g), max(j, k));
-  gl_FragColor = vec4(clamp(clamp(color, mn, mx), 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(clamp(color, mn, mx), 0.0, 1.0));
 }
 """
 
@@ -335,7 +341,7 @@ void main() {
   float nz = clamp(abs(0.25 * (bL + dL + fL + hL) - eL) / max(range, 1e-5), 0.0, 1.0);
   lobe *= 1.0 - 0.5 * nz;
   vec3 color = (lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0);
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
 }
 """
 
@@ -363,7 +369,7 @@ void main() {
   float peak = -1.0 / mix(8.0, 5.0, clamp(uSharpness, 0.0, 1.0));
   vec3 w = amp * peak;
   vec3 color = (b * w + d * w + f * w + h * w + e) / (1.0 + 4.0 * w);
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
 }
 """
 
@@ -375,7 +381,7 @@ void main() {
   vec3 crossSum = tap(pos + vec2(0.0, -1.0)) + tap(pos + vec2(-1.0, 0.0)) + tap(pos + vec2(1.0, 0.0)) + tap(pos + vec2(0.0, 1.0));
   vec3 corners = tap(pos + vec2(-1.0, -1.0)) + tap(pos + vec2(1.0, -1.0)) + tap(pos + vec2(-1.0, 1.0)) + tap(pos + vec2(1.0, 1.0));
   vec3 blur = (4.0 * e + 2.0 * crossSum + corners) / 16.0;
-  gl_FragColor = vec4(clamp(e + uAmount * (e - blur), 0.0, 1.0), 1.0);
+  gl_FragColor = finish(clamp(e + uAmount * (e - blur), 0.0, 1.0));
 }
 """
 

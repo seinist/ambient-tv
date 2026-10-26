@@ -93,4 +93,21 @@ class LiveTvReturnFocusTest {
         val screen = File("src/main/java/com/ambient/tv/ui/tvheadend/TvheadendScreen.kt").readText()
         assertTrue(screen.contains("viewModel.consumeReturnFocus()"))
     }
+
+    @Test fun channelWatchedThroughAMergedDuplicateSelectsTheShownRow() {
+        // G7: two sources of the same channel collapse into one Guide row.
+        val twin = listOf(LiveTvChannel("x1", "Das Erste", 1, null), LiveTvChannel("x2", "Das Erste", 2, null))
+        val programmes = listOf(event("p1", "x1", now - 100, now + 100), event("p1", "x2", now - 100, now + 100))
+        val merged = LiveTvDashboard(LiveTvServerInfo("TVH", null, null), twin, programmes, emptyList(), emptyList())
+        assertEquals(listOf("x1"), visibleChannelIds(merged, GuideOptions(), now))
+        val selections = returnFocusSelections("x2", merged, GuideOptions(), now)
+        assertEquals(TvhFocusTarget("x1"), selections?.get(TvheadendTab.LIVE))
+        assertEquals(TvhFocusTarget("channel:x1", "x1"), selections?.get(TvheadendTab.GUIDE))
+        assertNull(returnFocusSelections("unknown", merged, GuideOptions(), now))
+    }
+
+    @Test fun guideJumpsWaitForTheRowOnlyBriefly() {
+        val guide = File("src/main/java/com/ambient/tv/ui/tvheadend/Guide.kt").readText()
+        assertEquals(2, Regex("withTimeoutOrNull\\(GUIDE_ROW_LAYOUT_WAIT_MS\\)").findAll(guide).count())
+    }
 }

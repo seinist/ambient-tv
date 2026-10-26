@@ -221,7 +221,6 @@ object PlaybackEngineFactory {
             }
     }
 
-    /** Prepares [player] once the previous MPV/VLC/Media3 player closed (at most [com.ambient.tv.ui.player.backend.PREVIOUS_RELEASE_LIMIT_MS]). */
     /**
      * A Media3 handle inside the native release gate. While the previous player (MPV, VLC or
      * Media3) still closes, [build] gets deferPrepare = true and the player prepares afterwards.
@@ -243,6 +242,10 @@ object PlaybackEngineFactory {
             main.post {
                 val waited = android.os.SystemClock.elapsedRealtime() - started
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "previous player $outcome after $waited ms")
+                // Deliberately different from MPV/VLC on TIMED_OUT: Media3 has no start-error path of
+                // its own. Its errors arrive as PlaybackException and trigger renderer fallbacks
+                // (Live TV switches to MPV/VLC), which would open yet another native player next to
+                // the hung one. Media3 plays through Android's AudioTrack, so it starts anyway.
                 if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
                     Timber.w(previous.failure, "Media3 start: previous player %s after %d ms; starting anyway", outcome, waited)
                 // Released meanwhile (channel change, Back): nothing to prepare.

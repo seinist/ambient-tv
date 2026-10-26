@@ -310,11 +310,14 @@ fun YouTubePlayerScreen(
             // Media3 reads the same captions from the MPD and needs no copies.
             val captionsNeeded = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3 && playback.captions.isNotEmpty()
             var captionFiles by remember(playback.videoId) { mutableStateOf(emptyMap<String, String>()) }
+            var captionFilesDone by remember(playback.videoId) { mutableStateOf(false) }
             LaunchedEffect(playback.videoId, captionsNeeded) {
-                if (!captionsNeeded || captionFiles.isNotEmpty()) return@LaunchedEffect
-                captionFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    com.ambient.tv.youtube.YouTubeCaptionFiles.prepare(context, playback.videoId, playback.captions, playback.headers)
+                if (!captionsNeeded || captionFilesDone) return@LaunchedEffect
+                // Tracks appear as they finish (in load order), not only after the last download.
+                com.ambient.tv.youtube.YouTubeCaptionFiles.prepare(context, playback.videoId, playback.captions, playback.headers) {
+                    captionFiles = it
                 }
+                captionFilesDone = true
             }
             val captionTracks = remember(playback.captions, captionFiles) {
                 com.ambient.tv.youtube.youtubeCaptionTracks(playback.captions, captionFiles)

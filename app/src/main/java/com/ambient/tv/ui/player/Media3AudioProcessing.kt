@@ -33,6 +33,13 @@ object Media3AudioProcessing {
         fun reconfigure(reason: String) {
             val target = playerRef.get() ?: return
             if (target.mediaItemCount == 0) return
+            // Still waiting for the previous MPV/VLC player to close: nothing is open yet, and
+            // previousReleaseSettled() prepares with the new route/options. Opening here would
+            // start the stream while the old player still holds the audio output.
+            if (!media3AudioRestartNow(Media3PlaybackHandle.forPlayer(target)?.waitingForPreviousRelease == true)) {
+                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "audio $reason restart deferred until previous player released")
+                return
+            }
             val playing = target.playWhenReady
             val position = target.currentPosition
             val live = target.isCurrentMediaItemLive
@@ -75,6 +82,9 @@ object Media3AudioProcessing {
         listeners.remove(player)?.let(player::removeListener)
         sessions.remove(player)?.release()
     }
+
+    /** An audio route/option restart may stop and prepare the player only once it may open its stream. */
+    internal fun media3AudioRestartNow(waitingForPreviousRelease: Boolean): Boolean = !waitingForPreviousRelease
 
     internal fun requiresAudioReconfiguration(old: com.ambient.tv.data.local.AudioOptions, next: com.ambient.tv.data.local.AudioOptions, sourceDefault: Boolean): Boolean =
         old.permitsBitstream(sourceDefault) != next.permitsBitstream(sourceDefault) ||

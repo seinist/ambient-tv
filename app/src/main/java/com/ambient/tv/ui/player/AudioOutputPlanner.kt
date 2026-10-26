@@ -210,6 +210,13 @@ object AudioCodecRejects {
         version++
     }
 
+    /** The output is back: codecs it rejected may be tried again. A missing DTS core is a source fact and stays. */
+    fun clearOutputRejects() {
+        if (rejected.isEmpty()) return
+        rejected.clear()
+        version++
+    }
+
     fun markDtsCoreMissing() {
         if (!dtsCoreMissing) { dtsCoreMissing = true; version++ }
     }

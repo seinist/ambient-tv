@@ -16,5 +16,5 @@
     <string name="audio_route_stereo_mix_hint">Passthrough aus – Mehrkanal wird zu Stereo gemischt</string>
     <string name="audio_force_channels">Kanäle erzwingen</string>
     <string name="audio_force_channels_hint">Für Verstärker, die weniger Kanäle melden, als sie abspielen können. Sendet trotzdem 5.1 oder 7.1; „Passthrough bevorzugen“ bleibt wählbar. Lehnt der Ausgang ab, spielt die Wiedergabe mit den gemeldeten Kanälen weiter.</string>
-    <string name="notice_audio_eac3_conversion">Der Medienserver wandelt die ausgewählte Tonspur zu E-AC3 5.1 um; das Video bleibt für Stream-Kopie vorgesehen.</string>
+    <string name="notice_audio_eac3_conversion">Der Medienserver wandelt die ausgewählte Tonspur in E-AC3 5.1 um. Das Video wird nicht neu kodiert.</string>
 </resources>

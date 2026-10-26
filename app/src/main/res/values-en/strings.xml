@@ -1065,6 +1065,7 @@
     <string name="image_mpv_sparsam_defaults_hint">On this device untouched defaults run cheap (bilinear scaling, no deband, no sigmoid) so OpenGL and Vulkan stay smooth. Whatever you choose is applied, Lanczos or deband included. With playback performance “Maximum performance” full quality always applies.</string>
     <string name="image_media3_waiting">Effects are waiting for an unprotected SDR video track.</string>
     <string name="image_media3_active">SDR effects enabled</string>
+    <string name="image_media3_filters_over_budget">Sharpening and debanding are off for this video (larger than Full HD at 60 frames per second) so it plays smoothly.</string>
     <string name="image_vlc_fallback">Software filters could not be enabled. Playback continues without them.</string>
     <string name="audio_profile">Audio profile</string>
     <string name="audio_profile_auto">Auto (current output)</string>

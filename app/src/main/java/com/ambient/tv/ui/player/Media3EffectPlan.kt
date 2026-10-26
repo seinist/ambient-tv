@@ -21,14 +21,22 @@ internal sealed interface Media3Stage {
  * display path scales as with direct output. FSR includes RCAS, so the sharpening choice is not
  * stacked on top while FSR runs.
  */
-internal fun media3EffectPlan(options: Media3ImageOptions, upscaling: Boolean): List<Media3Stage> {
+internal fun media3EffectPlan(
+    options: Media3ImageOptions,
+    upscaling: Boolean,
+    /** False above [media3FilterBudgetAllows] for the source: no deband pass. */
+    debandAllowed: Boolean = true,
+    /** False above [media3FilterBudgetAllows] for the sharpened size: no unsharp/CAS/RCAS pass. */
+    sharpenAllowed: Boolean = true,
+): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
     return buildList {
-        if (o.deband != "off") add(Media3Stage.Deband(o.deband))
+        if (o.deband != "off" && debandAllowed) add(Media3Stage.Deband(o.deband))
         scaler?.let { add(Media3Stage.Scale(it)) }
         when {
+            !sharpenAllowed -> Unit
             scaler == "fsr" -> add(Media3Stage.Sharpen("rcas"))
             o.sharpening != "off" -> add(Media3Stage.Sharpen(o.sharpening))
         }
@@ -39,6 +47,20 @@ internal fun media3EffectPlan(options: Media3ImageOptions, upscaling: Boolean): 
     }
 }
 
+/** Pixels per second the multi-tap deband/sharpen shaders may process: Full HD at 60 fps. */
+internal const val MEDIA3_FILTER_MAX_PIXEL_RATE = 1920L * 1088L * 60L
+
+/**
+ * Whether deband or sharpening may run on [width]×[height] at [fps]. Like the SDR→HDR budget,
+ * the GPU passes stay within Full HD at 60 fps; 4K60 would be four times that work on every frame.
+ * Unknown frame rates count as 30 fps (broadcast and most films).
+ */
+internal fun media3FilterBudgetAllows(width: Int, height: Int, fps: Float): Boolean {
+    if (width <= 0 || height <= 0) return true
+    val rate = if (fps.isFinite() && fps > 0f) fps else 30f
+    return width.toLong() * height * rate <= MEDIA3_FILTER_MAX_PIXEL_RATE
+}
+
 /** True when FSR replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
     upscalerApplies && options.normalized().scaler == "fsr"
@@ -46,3 +68,21 @@ internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boo
 internal fun media3ScalerLabel(key: String): String = VideoImageCatalog.media3Scalers[key] ?: key
 
 internal fun media3ScalerChoices(): List<Pair<String, String>> = VideoImageCatalog.media3Scalers.toList()
+
+/** A planned stage plus the gamma fused into its pass (0 = none). */
+internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)
+
+/**
+ * Saves one full-size GPU texture: a trailing gamma is computed in the previous own shader pass
+ * (deband, FSR/cubic scale, sharpen) instead of a pass of its own. Brightness, contrast and
+ * saturation run between them, so with any of those set gamma stays separate (same result).
+ * Lanczos is Media3's own effect and cannot take it either.
+ */
+internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage> {
+    val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
+    val previous = stages.getOrNull(stages.size - 2)
+    val fusable = previous is Media3Stage.Deband || previous is Media3Stage.Sharpen ||
+        (previous is Media3Stage.Scale && previous.scaler != "lanczos")
+    if (!fusable) return stages.map { Media3FusedStage(it) }
+    return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous!!, gamma.value)
+}
