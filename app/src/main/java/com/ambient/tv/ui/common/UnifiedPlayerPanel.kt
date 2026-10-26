@@ -536,6 +536,8 @@ fun PlayerIconButton(
     primary: Boolean = false,
     selected: Boolean = false,
     loading: Boolean = false,
+    /** False: stays visible and focusable, but dimmed and without action. */
+    enabled: Boolean = true,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     var focused by remember { mutableStateOf(false) }
@@ -552,7 +554,7 @@ fun PlayerIconButton(
         controlFocus?.register(controlKey, controlRequester, controlOwner)
         onDispose { controlFocus?.unregister(controlKey, controlOwner) }
     }
-    val click = { navigation?.fromOrigin(originKey, root = true, onClick) ?: onClick() }
+    val click: () -> Unit = { if (enabled) { navigation?.fromOrigin(originKey, root = true, onClick) ?: onClick() } }
     Row(
         modifier = modifier
             .then(if (controlFocus != null) Modifier.focusRequester(controlRequester).onFocusChanged {
@@ -572,7 +574,7 @@ fun PlayerIconButton(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val foreground = MaterialTheme.colorScheme.onSurface
+        val foreground = MaterialTheme.colorScheme.onSurface.let { if (enabled) it else it.copy(alpha = 0.38f) }
         if (loading) {
             CircularProgressIndicator(
                 color = foreground,

@@ -448,7 +448,6 @@ internal fun MpvTvheadendPlaybackSurface(
                     snapshot.audioCodec?.takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_audio) to it.uppercase()) }
                     formatNerdBitrate(snapshot.audioBitrateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_audio_bitrate) to it) }
                 },
-                settingsExtras = { JumpToLivePanelEntry(source.isLive, snapshot.positionMs) },
                 onDeinterlaceChanged = onDeinterlaceChanged,
             ))
         }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -153,6 +154,9 @@ fun BoxScope.TvhReferencePlayerChrome(
         val recordingPlayback = seekBuffer?.recordingId != null
         val behindMs = if (shiftable) ((seekBuffer?.liveWallMs ?: System.currentTimeMillis()) - watchedWallMs).coerceAtLeast(0L) else 0L
         val shifted = behindMs > TIMESHIFT_LIVE_TOLERANCE_MS
+        // Ticks with the buffer, so the button turns active while playback is paused.
+        val liveJumpAvailable = jumpToLiveAvailable(source.isLive, positionMs)
+        val liveJumpActive = shiftable && liveJumpAvailable
         if (source.isLive) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -300,6 +304,17 @@ fun BoxScope.TvhReferencePlayerChrome(
                         PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), {
                             seekLiveTimeshiftBy(positionMs, seekJumpMs)
                         })
+                        // Stays in place while live (dimmed), so the row does not shift and focus is kept.
+                        PlayerIconButton(
+                            Icons.Filled.LiveTv,
+                            stringResource(R.string.timeshift_go_live),
+                            {
+                                com.ambient.tv.livetv.LiveTimeshift.seekHandler?.invoke(null)
+                                // The player restarts at the live edge; continue from play/pause.
+                                runCatching { playFocusRequester.requestFocus() }
+                            },
+                            enabled = liveJumpActive,
+                        )
                     }
                     PlayerIconButton(Icons.Filled.SkipNext, stringResource(R.string.tvh_next_channel), { onZap(1) })
                 } else {

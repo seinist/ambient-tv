@@ -571,8 +571,6 @@
     <string name="player_fill_screen_hint">Bildschirm füllen; Ränder können beschnitten werden</string>
     <string name="player_speed">Wiedergabegeschwindigkeit</string>
     <string name="player_video_mode_fit">Einpassen</string>
-    <string name="player_jump_live">Zum Live-Punkt</string>
-    <string name="player_jump_live_hint">Zur aktuellen Live-Position springen</string>
     <string name="player_scaling_mode">Bildanpassung</string>
     <string name="player_stretch">Strecken</string>
     <string name="player_stretch_hint">Gewähltes Seitenverhältnis vollständig füllen, auch wenn das Bild dabei verzerrt wird</string>

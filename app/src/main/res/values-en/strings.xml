@@ -570,8 +570,6 @@
     <string name="player_fill_screen_hint">Fill the screen and crop the edges if needed</string>
     <string name="player_speed">Playback speed</string>
     <string name="player_video_mode_fit">Fit</string>
-    <string name="player_jump_live">Jump to live</string>
-    <string name="player_jump_live_hint">Return to the current live position</string>
     <string name="player_scaling_mode">Picture fit</string>
     <string name="player_stretch">Stretch</string>
     <string name="player_stretch_hint">Fill the selected aspect ratio completely, even if the image is distorted</string>

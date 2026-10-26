@@ -498,7 +498,6 @@ internal fun VlcTvheadendPlaybackSurface(
                         stats.lostAudioBuffers?.takeIf { it > 0 }?.let { add(stringResource(R.string.player_nerd_lost_audio_buffers) to it.toString()) }
                     }
                 },
-                settingsExtras = { JumpToLivePanelEntry(source.isLive, snapshot.positionMs) },
                 onDeinterlaceChanged = onDeinterlaceChanged,
             ))
         }
