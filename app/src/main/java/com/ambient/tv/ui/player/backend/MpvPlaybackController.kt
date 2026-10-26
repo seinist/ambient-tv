@@ -108,6 +108,8 @@ class MpvPlaybackController(
     private val ownerStep = MpvOwnerStep()
     /** Until the first picture (or loaded audio) the watchdog allows [MPV_OPENING_UNRESPONSIVE_MS]. */
     @Volatile private var opening = true
+    /** [MpvOwnerStep.reopens] as of the last sample; the watchdog reads it on the main thread. */
+    @Volatile private var seenReopens = 0
     private val mailbox = MpvCommandQueue(
         schedule = { task ->
             // Construction can happen inside remember(). Let that composition commit before
@@ -129,9 +131,10 @@ class MpvPlaybackController(
         override fun run() {
             if (released) return
             val now = SystemClock.elapsedRealtime()
-            val stalled = mpvBackendUnresponsive(now, lastProgress, ownerStarted, opening)
+            val openingPhase = mpvWatchdogOpening(opening, seenReopens, ownerStep.reopens)
+            val stalled = mpvBackendUnresponsive(now, lastProgress, ownerStarted, openingPhase)
             if (stalled && !backendUnresponsive) {
-                val report = mpvStallReport(ownerStep.name, ownerStep.sinceMs, lastProgress, now, opening)
+                val report = mpvStallReport(ownerStep.name, ownerStep.sinceMs, lastProgress, now, openingPhase)
                 Timber.w(report)
                 com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", report)
                 com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", report)
@@ -205,6 +208,13 @@ class MpvPlaybackController(
         if (released) return
         val now = SystemClock.elapsedRealtime()
         val status = player.status()
+        // A reopen (surface change, audio fallback, ended file) loads the stream again: the same
+        // opening allowance as the first start, until its first picture or loaded audio.
+        val reopens = ownerStep.reopens
+        if (reopens != seenReopens) {
+            opening = true
+            seenReopens = reopens
+        }
         if (opening && player.openingDone()) opening = false
         // Codec, size, decoder, tracks … change with a load/reconfigure: read them again in this
         // sample instead of handing the UI a value from before the change for up to 750 ms.

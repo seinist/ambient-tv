@@ -50,6 +50,10 @@ class PanelFocusRescue internal constructor(
     val onFocused: () -> Unit,
     /** Runs a stand-in focus request (parking) that must not become the remembered row. */
     val park: (() -> Boolean) -> Boolean = { it() },
+    /** The rescue ended (or the user pressed a key): rows focused from now on are remembered again. */
+    val parkingDone: () -> Unit = {},
+    /** A player dialog's focus return owns the hand-back right now; the rescue stays out of it. */
+    val dialogOwnsFocus: () -> Boolean = { false },
 )
 
 /**
@@ -67,8 +71,9 @@ internal enum class PanelRescueStep { CONTINUE, PAUSE, STOP }
  * target once the window is focused again, instead of counting as done. A key press by the user
  * ends it.
  */
-internal fun panelRescueStep(windowFocused: Boolean, userMoved: Boolean): PanelRescueStep = when {
-    userMoved -> PanelRescueStep.STOP
+internal fun panelRescueStep(windowFocused: Boolean, userMoved: Boolean, dialogOwnsFocus: Boolean = false): PanelRescueStep = when {
+    // Exactly one owner: the dialog's focus return puts the row back after it closes.
+    userMoved || dialogOwnsFocus -> PanelRescueStep.STOP
     !windowFocused -> PanelRescueStep.PAUSE
     else -> PanelRescueStep.CONTINUE
 }
@@ -78,5 +83,5 @@ internal fun panelRescueStep(windowFocused: Boolean, userMoved: Boolean): PanelR
  * panel's focus; otherwise only a panel that lost focus is rescued.
  */
 internal fun panelRescueShouldStart(retainFocus: Boolean, handheld: Boolean, hadPanelFocus: Boolean,
-    panelHasFocus: Boolean, windowFocused: Boolean, pausedTarget: String?): Boolean =
-    retainFocus && !handheld && hadPanelFocus && windowFocused && (!panelHasFocus || pausedTarget != null)
+    panelHasFocus: Boolean, windowFocused: Boolean, pausedTarget: String?, dialogOwnsFocus: Boolean = false): Boolean =
+    retainFocus && !handheld && hadPanelFocus && windowFocused && !dialogOwnsFocus && (!panelHasFocus || pausedTarget != null)

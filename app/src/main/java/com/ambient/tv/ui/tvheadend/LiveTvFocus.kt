@@ -3,6 +3,7 @@ package com.ambient.tv.ui.tvheadend
 import com.ambient.tv.livetv.GuideOptions
 import com.ambient.tv.livetv.LiveTvDashboard
 import com.ambient.tv.livetv.LiveTvProgramme
+import com.ambient.tv.livetv.guideChannelRows
 import com.ambient.tv.livetv.guideChannels
 import com.ambient.tv.livetv.guideEvents
 
@@ -53,13 +54,15 @@ internal fun visibleChannelIds(dashboard: LiveTvDashboard?, options: GuideOption
 
 /**
  * The selection to store for a channel coming back from the player, per tab, or null when the
- * channel is hidden by the current filters (then the previous selection stays).
+ * channel is hidden by the current filters (then the previous selection stays). A duplicate
+ * merged into another row selects that row.
  */
 internal fun returnFocusSelections(channelUuid: String, dashboard: LiveTvDashboard?, options: GuideOptions, now: Long): Map<TvheadendTab, TvhFocusTarget>? {
-    if (dashboard != null && channelUuid !in visibleChannelIds(dashboard, options, now)) return null
+    val row = if (dashboard == null) channelUuid else guideChannelRows(dashboard.channels,
+        dashboard.events.groupBy { it.channelUuid }, now, options).second[channelUuid] ?: return null
     return mapOf(
-        TvheadendTab.LIVE to TvhFocusTarget(channelUuid),
-        TvheadendTab.GUIDE to TvhFocusTarget("channel:$channelUuid", channelUuid),
+        TvheadendTab.LIVE to TvhFocusTarget(row),
+        TvheadendTab.GUIDE to TvhFocusTarget("channel:$row", row),
     )
 }
 

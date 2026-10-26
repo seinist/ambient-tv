@@ -11,7 +11,8 @@ class DialogFocusReturnTest {
         // The rescue holds focus on the first row while the renderer row is rebuilt.
         nav.parked { nav.noteFocused("video:first"); true }
         assertEquals("renderer:backend", nav.focusedKey)
-        // The user's own move still counts.
+        // The user's own move still counts: the key press ends parking first.
+        nav.endParking()
         nav.noteFocused("video:first")
         assertEquals("video:first", nav.focusedKey)
     }

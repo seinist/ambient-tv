@@ -63,6 +63,8 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     private var scalerInChain: String? = null
     private var applied: Triple<Media3ImageOptions, Int, Int>? = null
     private var updatePosted = false
+    /** Set by a settings change (user or Sparsam); format and surface changes leave it false. */
+    private var userChangePending = false
     var options by mutableStateOf(videoImagePreferences(context).media3ImageOptions)
         private set
     private val automaticOptions = AutomaticProfileValue(options)
@@ -79,6 +81,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     var sdrEffectsAllowed by mutableStateOf(media3ImageEffectsAllowed(player.videoFormat))
         private set
     var scaleRelation by mutableStateOf(VideoScaleRelation.UNKNOWN)
+        private set
+    /** Deband or sharpening is configured but skipped: the video is above the GPU budget. */
+    var filtersOverBudget by mutableStateOf(false)
         private set
     // Media3 1.4.1 retains its video sink after setVideoEffects(emptyList()). Do not describe
     // an empty chain as direct output: direct output returns with the next player instance.
@@ -135,13 +140,17 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
     fun updateOptions(value: Media3ImageOptions) {
         val next = value.normalized()
-        if (next != options) PlaybackOutputTransition.begin(appContext)
+        if (next != options) {
+            PlaybackOutputTransition.begin(appContext)
+            userChangePending = true
+        }
         options = next
         scheduleUpdate()
     }
 
     fun refreshPerformanceOverrides() {
         applied = null
+        userChangePending = true
         scheduleUpdate()
     }
 
@@ -174,18 +183,28 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             media3NeedsUpscaling(source.width, source.height, outputWidth, outputHeight,
                 source.pixelWidthHeightRatio, source.rotationDegrees)
         } == true
-        val stages = if (enabled) media3EffectPlan(effective, upscaling) else emptyList()
+        // Multi-tap deband/sharpen passes stay within the Full HD 60 fps budget (sharpening runs
+        // after the scaler, so on the output size while upscaling).
+        val fps = format?.frameRate ?: 0f
+        val debandAllowed = format?.let { media3FilterBudgetAllows(it.width, it.height, fps) } ?: true
+        val sharpenAllowed = if (upscaling) media3FilterBudgetAllows(outputWidth, outputHeight, fps) else debandAllowed
+        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed) else emptyList()
+        filtersOverBudget = enabled && stages != media3EffectPlan(effective, upscaling)
+        val userChange = userChangePending
+        userChangePending = false
         if (signature == applied && stages == appliedStages) return
         val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
-        val effects = stages.map { media3Effect(it, outputWidth, outputHeight) }
+        val effects = media3FusedStages(stages).map { media3Effect(it.stage, outputWidth, outputHeight, it.gamma) }
         applied = signature
         appliedStages = stages
-        when (media3ChainTransition(prevActive = effectsActive, nextEmpty = effects.isEmpty(), gpuInitialized = gpuPipelineInitialized)) {
+        when (media3ChainTransition(prevActive = effectsActive, nextEmpty = effects.isEmpty(),
+            gpuInitialized = gpuPipelineInitialized, userChange = userChange)) {
             // Even an empty list before prepare would unnecessarily enable the GPU sink.
             Media3ChainTransition.NONE -> Unit
             // First chain: 1.4.1+ only creates the sink when enabling/resetting the renderer.
-            // Last effect removed: the same restart, so the picture (also when paused) shows
-            // the unfiltered frame right away instead of keeping the filtered one.
+            // Last effect removed by a settings change: the same restart, so the picture (also
+            // when paused) shows the unfiltered frame right away instead of keeping the filtered one.
+            // A source/surface size change that drops the scaler only updates the chain.
             Media3ChainTransition.RESTART -> restartWithEffects(player, effects)
             Media3ChainTransition.UPDATE -> player.setVideoEffects(effects)
         }
@@ -207,7 +226,8 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         player.setVideoEffects(effects)
         // The renderer keeps its video sink until release, even with an empty chain.
         gpuPipelineInitialized = true
-        if (!player.reopenTimeshiftAtLiveEdge()) {
+        // Timeshift: continue where the viewer is, like an audio restart, not at the live edge.
+        if (!player.reopenTimeshiftKeepingPosition("media3-effects")) {
             if (live) player.seekToDefaultPosition() else player.seekTo(index, position)
         }
         player.playWhenReady = playWhenReady
@@ -229,15 +249,15 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 }
 
 /** GL effect for one planned stage; the built-in matrix effects merge into one pass. */
-private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int): Effect = when (stage) {
-    is Media3Stage.Deband -> Media3DebandEffect(stage.strength)
+private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int, gamma: Int = 0): Effect = when (stage) {
+    is Media3Stage.Deband -> Media3DebandEffect(stage.strength, gamma)
     is Media3Stage.Scale -> when (stage.scaler) {
         "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
-        "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight)
-        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f)
-        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f)
+        "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
+        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f, gamma = gamma)
+        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f, gamma = gamma)
     }
-    is Media3Stage.Sharpen -> Media3SharpenEffect(stage.kind)
+    is Media3Stage.Sharpen -> Media3SharpenEffect(stage.kind, gamma)
     is Media3Stage.Brightness -> Brightness(stage.value / 100f)
     is Media3Stage.Contrast -> Contrast(stage.value / 100f)
     is Media3Stage.Saturation -> HslAdjustment.Builder().adjustSaturation(stage.value.toFloat()).build()
@@ -279,6 +299,7 @@ internal fun Media3ImageControls(player: ExoPlayer) {
     if (o.enabled && processing.hasConfiguredEffects) {
         ImageHint(stringResource(if (processing.effectsActive) R.string.image_media3_active else R.string.image_media3_waiting))
     }
+    if (o.enabled && processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
 }
 
 internal enum class Media3ChainTransition { NONE, RESTART, UPDATE }
@@ -287,10 +308,18 @@ internal enum class Media3ChainTransition { NONE, RESTART, UPDATE }
  * How a new effect chain reaches ExoPlayer. [prevActive]: effects are running now; [nextEmpty]: the
  * new chain has no effect; [gpuInitialized]: the GPU video sink exists (it stays until release).
  * Before the sink exists, an empty chain changes nothing and the first effect needs a restart.
- * Removing the last effect restarts the same way, so filters stop at once, also while paused.
+ * Removing the last effect through a settings change ([userChange]) restarts the same way, so
+ * filters stop at once, also while paused. When the chain empties on its own (the source no
+ * longer needs upscaling: higher YouTube quality, SD→HD programme, smaller mini-player surface),
+ * an update is enough; restarting there would rebuffer on every quality step.
  */
-internal fun media3ChainTransition(prevActive: Boolean, nextEmpty: Boolean, gpuInitialized: Boolean): Media3ChainTransition = when {
+internal fun media3ChainTransition(
+    prevActive: Boolean,
+    nextEmpty: Boolean,
+    gpuInitialized: Boolean,
+    userChange: Boolean = true,
+): Media3ChainTransition = when {
     !gpuInitialized -> if (nextEmpty) Media3ChainTransition.NONE else Media3ChainTransition.RESTART
-    prevActive && nextEmpty -> Media3ChainTransition.RESTART
+    prevActive && nextEmpty && userChange -> Media3ChainTransition.RESTART
     else -> Media3ChainTransition.UPDATE
 }

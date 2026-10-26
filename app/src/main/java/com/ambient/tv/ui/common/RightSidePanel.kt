@@ -82,6 +82,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -342,9 +343,12 @@ private fun RightSidePanelChrome(
     // Parking on the first row while the real row is still missing must not make that row the
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
-    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused) {
+    val dialogOwnsFocus = focusRescue?.dialogOwnsFocus?.invoke() == true
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus) {
+        // A player dialog's focus return owns the hand-back: a paused target of ours is obsolete.
+        if (dialogOwnsFocus) rescue.pausedTarget = null
         if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
-                windowInfo.isWindowFocused, rescue.pausedTarget)) return@LaunchedEffect
+                windowInfo.isWindowFocused, rescue.pausedTarget, dialogOwnsFocus)) return@LaunchedEffect
         if (rescue.job?.isActive == true) return@LaunchedEffect
         val target = rescue.pausedTarget ?: focusRescue?.target?.invoke()
         rescue.pausedTarget = null
@@ -353,24 +357,31 @@ private fun RightSidePanelChrome(
         // row may come back a few hundred milliseconds later (renderer rebuild): keep trying
         // it for a while, holding focus on the first row meanwhile so the D-pad stays here.
         rescue.job = rescueScope.launch {
-            var parked = false
-            val placed = retryFocusFor {
-                when (panelRescueStep(windowInfo.isWindowFocused, rescue.userMoved)) {
-                    PanelRescueStep.STOP -> return@retryFocusFor true
-                    // A dialog took the window: keep the target and go on once it is closed.
-                    PanelRescueStep.PAUSE -> { rescue.pausedTarget = target; return@retryFocusFor true }
-                    PanelRescueStep.CONTINUE -> Unit
+            try {
+                var parked = false
+                val placed = retryFocusFor {
+                    when (panelRescueStep(windowInfo.isWindowFocused, rescue.userMoved,
+                        focusRescue?.dialogOwnsFocus?.invoke() == true)) {
+                        PanelRescueStep.STOP -> return@retryFocusFor true
+                        // A dialog took the window: keep the target and go on once it is closed.
+                        PanelRescueStep.PAUSE -> { rescue.pausedTarget = target; return@retryFocusFor true }
+                        PanelRescueStep.CONTINUE -> Unit
+                    }
+                    if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
+                    if (target == null) {
+                        if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
+                        return@retryFocusFor true
+                    }
+                    if (!panelHasFocus && !parked) parked = parkOnFirstRow()
+                    false
                 }
-                if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
-                if (target == null) {
-                    if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
-                    return@retryFocusFor true
+                if (!placed && !panelHasFocus && windowInfo.isWindowFocused) {
+                    if (!parkOnFirstRow()) runCatching { panelFocus.requestFocus() }
                 }
-                if (!panelHasFocus && !parked) parked = parkOnFirstRow()
-                false
-            }
-            if (!placed && !panelHasFocus && windowInfo.isWindowFocused) {
-                if (!parkOnFirstRow()) runCatching { panelFocus.requestFocus() }
+            } finally {
+                // Let the stand-in's focus event (possibly delivered a frame later) pass first.
+                if (isActive) runCatching { androidx.compose.runtime.withFrameNanos { } }
+                focusRescue?.parkingDone?.invoke()
             }
         }
     }
@@ -410,7 +421,12 @@ private fun RightSidePanelChrome(
                 }
             }
             // Any key ends a pending rescue: the user's own move wins.
-            .onPreviewKeyEvent { rescue.userMoved = true; false }
+            .onPreviewKeyEvent {
+                rescue.userMoved = true
+                // The user's own move is remembered again, even while a stand-in row was parked.
+                focusRescue?.parkingDone?.invoke()
+                false
+            }
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
             .tvModalFocus(initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,

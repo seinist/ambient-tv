@@ -28,6 +28,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Programme guide and channel list share filtering, alphabet navigation and focus handling. */
 @Composable
@@ -113,7 +114,9 @@ internal fun LiveTvChannelBrowser(
         jumpJob?.cancel()
         jumpJob = scope.launch {
             listState.scrollToItem(index)
-            snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == channel.uuid } }.first { it }
+            withTimeoutOrNull(GUIDE_ROW_LAYOUT_WAIT_MS) {
+                snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == channel.uuid } }.first { it }
+            }
             if (focus) {
                 withFrameNanos { }
                 repeat(4) {
@@ -138,7 +141,11 @@ internal fun LiveTvChannelBrowser(
             if (visible == null || visible.offset < 0 || visible.offset + visible.size > viewportEnd) {
                 listState.scrollToItem((index - 1).coerceAtLeast(0))
             }
-            snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == rowId } }.first { it }
+            // Bounded: a list that never lays the row out (hidden, detached) must not wait forever;
+            // the focus attempts below then fall back to the channel row.
+            withTimeoutOrNull(GUIDE_ROW_LAYOUT_WAIT_MS) {
+                snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.key == rowId } }.first { it }
+            }
         }
         withFrameNanos { }
         repeat(8) {
@@ -281,3 +288,6 @@ internal fun LiveTvChannelBrowser(
         }
     }
 }
+
+/** How long a guide jump waits for the target row to be laid out before it focuses anyway. */
+internal const val GUIDE_ROW_LAYOUT_WAIT_MS = 1_000L

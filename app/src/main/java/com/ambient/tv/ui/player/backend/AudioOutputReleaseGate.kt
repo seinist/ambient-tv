@@ -16,7 +16,10 @@ internal enum class PreviousReleaseOutcome {
     READY,
     /** Its teardown failed: logged once by this start, which opens anyway. */
     READY_AFTER_FAILURE,
-    /** Still closing after [PREVIOUS_RELEASE_LIMIT_MS]: this start reports an error. */
+    /**
+     * Still closing after [PREVIOUS_RELEASE_LIMIT_MS]: MPV and VLC do not open and report an error;
+     * Media3 opens anyway (see PlaybackEngineFactory.prepareAfterPreviousRelease).
+     */
     TIMED_OUT,
 }
 

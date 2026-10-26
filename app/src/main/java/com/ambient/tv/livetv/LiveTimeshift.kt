@@ -300,9 +300,39 @@ internal fun timeshiftResumeWallMs(anchorWallMs: Long, positionMs: Long, liveWal
     return target.takeIf { it <= liveWallMs - LIVE_TIMESHIFT_PREROLL_MS }
 }
 
-/** A loopback URL served by [TimeshiftBuffer] (`http://127.0.0.1:<port>/<token>/<byte>.ts`). */
-fun isLiveTimeshiftUrl(url: String): Boolean =
-    Regex("""^http://127\.0\.0\.1:\d+/[0-9a-f]{32}/\d+\.ts$""").matches(url)
+/**
+ * Where a restart continues for [url] in [buffer]: the moment the viewer was watching
+ * ([positionMs] after [anchorWallMs]) and whether that position was kept. Close to the live edge
+ * the buffer's live URL (with preroll); without a usable position (still opening) the URL the
+ * buffer reopens anyway. Null when [url] does not belong to [buffer].
+ */
+internal fun timeshiftUrlKeepingPosition(
+    buffer: SeekableLiveBuffer,
+    url: String,
+    anchorWallMs: Long?,
+    positionMs: Long,
+): Pair<Pair<String, Long>, Boolean>? {
+    val reopened = buffer.reopenedUrl(url) ?: return null
+    val start = anchorWallMs ?: reopened.second
+    val target = timeshiftResumeWallMs(start, positionMs, buffer.liveWallMs)
+    return when {
+        target != null -> buffer.urlAt(target) to true
+        // Near the edge: a server recording would otherwise reopen at its original start point.
+        positionMs > 0L -> buffer.liveUrl() to false
+        else -> reopened to false
+    }
+}
+
+private val localTimeshiftUrl = Regex("""^http://127\.0\.0\.1:\d+/[0-9a-f]{32}/\d+\.ts$""")
+private val recordingTimeshiftUrl =
+    Regex("""^http://127\.0\.0\.1:\d+/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/at/\d+\.ts$""")
+
+/**
+ * A loopback URL served by [TimeshiftBuffer] (`http://127.0.0.1:<port>/<token>/<byte>.ts`) or by
+ * [RecordingPlaybackBuffer] (`http://127.0.0.1:<port>/<uuid>/at/<wall-ms>.ts`). Both stream near
+ * the live edge, so the players use the same live buffer settings for them.
+ */
+fun isLiveTimeshiftUrl(url: String): Boolean = localTimeshiftUrl.matches(url) || recordingTimeshiftUrl.matches(url)
 
 /** Owns blocking network work before and after the recording buffer is published. */
 class UpstreamOwner : java.io.Closeable {
@@ -403,12 +433,9 @@ object LiveTimeshift {
      */
     fun playbackUrlKeepingPosition(url: String, positionMs: Long, reason: String): Pair<String, Long>? {
         val buffer = current ?: return null
-        val reopened = buffer.reopenedUrl(url) ?: return null
-        val start = anchor.value ?: reopened.second
-        val target = timeshiftResumeWallMs(start, positionMs, buffer.liveWallMs)
-        val result = if (target == null) reopened else buffer.urlAt(target)
+        val (result, kept) = timeshiftUrlKeepingPosition(buffer, url, anchor.value, positionMs) ?: return null
         setAnchor(result.second)
-        logTimeshiftLine("Timeshift restart reason=$reason keep_position=${target != null} " +
+        logTimeshiftLine("Timeshift restart reason=$reason keep_position=$kept " +
             "behind_live_ms=${buffer.liveWallMs - result.second}")
         return result
     }

@@ -150,10 +150,38 @@ class AudioSession(
 
     fun startRouteMonitoring(context: android.content.Context) {
         routeMonitor?.close()
-        routeMonitor = AudioRouteMonitor(context, ::updateRoute)
+        routeMonitor = AudioRouteMonitor(context, ::routeDevicesChanged)
     }
 
-    internal fun updateRoute(next: AudioRouteCapabilities) {
+    private var outputFallbackResets = 0
+
+    /**
+     * Debounced audio device change (HDMI back after a mode switch, receiver switched on). An
+     * output failure during the gap (AO init -14) left this playback on the route's channels,
+     * stereo PCM or without a bitstream codec. When the settled route offers more than stereo
+     * again, those fallbacks are lifted and the output reopens once with the real settings.
+     * At most [MAX_OUTPUT_FALLBACK_RESETS] times per playback, so a truly failing output does not
+     * cut the sound on every device event.
+     */
+    internal fun routeDevicesChanged(next: AudioRouteCapabilities) {
+        val rejects = AudioCodecRejects.snapshot()
+        val reset = audioFallbackResetOnRoute(
+            fallbackActive = forceStereoPcm || forcedChannelsFailed || rejects.isNotEmpty(),
+            routeOffersMore = next.pcmChannels > 2 || next.passthrough.isNotEmpty(),
+            resetsSoFar = outputFallbackResets,
+        )
+        if (reset) {
+            outputFallbackResets++
+            runCatching { logAudioRouteLine("Audio route back backend=$backend: retrying output " +
+                "(forced_channels_failed=$forcedChannelsFailed stereo=$forceStereoPcm rejected=${rejects.joinToString(",").ifEmpty { "-" }})") }
+            forceStereoPcm = false
+            forcedChannelsFailed = false
+            AudioCodecRejects.clearOutputRejects()
+        }
+        updateRoute(next, forceReconfigure = reset)
+    }
+
+    internal fun updateRoute(next: AudioRouteCapabilities, forceReconfigure: Boolean = false) {
         val oldOptions = options
         val before = outputPlan()
         route = next
@@ -161,7 +189,7 @@ class AudioSession(
         val after = outputPlan()
         // DSP load is diagnostic metadata, not an output-format change. Reopening a
         // PCM sink just to enable a saved night/EQ profile causes an unnecessary gap.
-        if (before.copy(heavyAudio = after.heavyAudio) != after) {
+        if (forceReconfigure || before.copy(heavyAudio = after.heavyAudio) != after) {
             runCatching { logAudioRouteLine("Audio route plan changed backend=$backend " +
                 "before=${before.mode}/${before.channels}/${before.spdifCodecs.joinToString(",").ifEmpty { "-" }} " +
                 "after=${after.mode}/${after.channels}/${after.spdifCodecs.joinToString(",").ifEmpty { "-" }}") }
@@ -305,3 +333,9 @@ class AudioSession(
         }
     }.joinToString(" · ")
 }
+
+internal const val MAX_OUTPUT_FALLBACK_RESETS = 2
+
+/** Whether a settled device change lifts this playback's output fallbacks (see [AudioSession.routeDevicesChanged]). */
+internal fun audioFallbackResetOnRoute(fallbackActive: Boolean, routeOffersMore: Boolean, resetsSoFar: Int): Boolean =
+    fallbackActive && routeOffersMore && resetsSoFar < MAX_OUTPUT_FALLBACK_RESETS

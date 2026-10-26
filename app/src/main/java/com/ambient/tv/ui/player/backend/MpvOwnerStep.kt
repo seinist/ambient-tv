@@ -10,6 +10,16 @@ internal class MpvOwnerStep(private val clock: () -> Long = { android.os.SystemC
     @Volatile var sinceMs: Long = clock()
         private set
 
+    /** Bumped by the owner right before it loads the stream again (surface change, audio fallback). */
+    @Volatile var reopens: Int = 0
+        private set
+
+    /** The owner is about to reload the stream: the watchdog allows the opening limit again. */
+    fun reopening(step: String) {
+        reopens++
+        mark(step)
+    }
+
     /** A mailbox operation began ([step]) or ended (null: the owner is idle again). */
     fun operation(step: String?) = mark(step ?: "idle")
 
@@ -36,3 +46,10 @@ internal fun mpvStallReport(step: String, stepSinceMs: Long, lastProgressMs: Lon
 /** The first picture (or, for audio only, the loaded file) ends the opening phase. */
 internal fun mpvOpeningDone(fileReady: Boolean, audioOnly: Boolean, videoWidth: Int): Boolean =
     fileReady && (audioOnly || videoWidth > 0)
+
+/**
+ * Whether the watchdog uses the opening limit: during the first open, and from a reopen
+ * ([reopens] differs from the count the controller last saw) until that stream shows its picture.
+ */
+internal fun mpvWatchdogOpening(opening: Boolean, seenReopens: Int, reopens: Int): Boolean =
+    opening || reopens != seenReopens

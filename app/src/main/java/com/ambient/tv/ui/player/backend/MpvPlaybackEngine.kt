@@ -2374,6 +2374,8 @@ internal class MpvPlaybackEngine(
 
     private fun reopenStream(positionMs: Long) {
         reopenGeneration++
+        // Same watchdog allowance as the first open while loadfile and the first frames run.
+        ownerStep?.reopening("reopen:loadfile")
         startupOpenedAt = System.nanoTime()
         if (liveStream) command("loadfile", playbackUrlForOpen(), "replace")
         else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${com.ambient.tv.ui.player.rendererReopenPositionMs(false, positionMs) / 1000.0}")
