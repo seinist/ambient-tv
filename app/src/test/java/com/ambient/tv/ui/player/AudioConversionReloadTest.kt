@@ -25,7 +25,7 @@ class AudioConversionReloadTest {
         assertFalse(next.localEncoderFailed)
         assertFalse(next.acceptsAutomaticProfile)
         assertEquals("ac3", serverAudioTarget(next.options, AudioRouteCapabilities(setOf("ac3"), 2), 6, true))
-        next.update(next.options.copy(localAc3 = false))
+        next.update(next.options.copy(channels = "stereo"))
         assertEquals("aac", serverAudioTarget(next.options, AudioRouteCapabilities(setOf("ac3"), 2), 6, true))
         assertTrue(restart.settings.currentForRoute("tv").localAc3)
     }

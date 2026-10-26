@@ -120,31 +120,36 @@ object AudioPassthroughPolicy {
      * a built-in stereo sink must not collapse HDMI to a software stereo downmix. Passthrough
      * still requires every candidate to advertise the encoding. This is not proof of a
      * renderer's actual AudioTrack format. */
-    @Volatile private var recentRoute: Pair<Long, AudioRouteCapabilities>? = null
+    private val routeCache = RouteCapabilitiesCache(ROUTE_CACHE_MS)
     @Volatile private var invalidationRegistered = false
 
     /**
      * Route capabilities for hot paths (format support on the playback thread, playback start).
      * A full [probe] costs ~20 binder calls; its result is reused for [ROUTE_CACHE_MS] and dropped
-     * as soon as an output device appears or disappears. The `mpvAvailable` flag is not part of
+     * as soon as an output device appears or disappears, or HDMI audio is plugged again (a new
+     * TV, AVR or EDID often keeps the same HDMI device). The `mpvAvailable` flag is not part of
      * the probe; callers still add it.
      */
     fun probeCached(context: Context): AudioRouteCapabilities {
         watchDevices(context)
-        val now = android.os.SystemClock.elapsedRealtime()
-        recentRoute?.let { (at, route) -> if (now - at in 0 until ROUTE_CACHE_MS) return route }
+        routeCache.get(android.os.SystemClock.elapsedRealtime())?.let { return it }
         return probe(context)
     }
+
+    /** Drops the cached route; the next [probeCached] asks Android again. */
+    fun invalidateCache() = routeCache.invalidate()
 
     private fun watchDevices(context: Context) {
         if (invalidationRegistered) return
         synchronized(this) {
             if (invalidationRegistered) return
-            val manager = context.applicationContext.getSystemService(AudioManager::class.java) ?: return
+            val app = context.applicationContext
+            val manager = app.getSystemService(AudioManager::class.java) ?: return
             manager.registerAudioDeviceCallback(object : android.media.AudioDeviceCallback() {
-                override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) { recentRoute = null }
-                override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) { recentRoute = null }
+                override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) = invalidateCache()
+                override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) = invalidateCache()
             }, android.os.Handler(android.os.Looper.getMainLooper()))
+            registerHdmiAudioPlug(app) { invalidateCache() }
             invalidationRegistered = true
         }
     }
@@ -152,6 +157,7 @@ object AudioPassthroughPolicy {
     /** Always queries the route; device callbacks use this, and it refreshes [probeCached]. */
     fun probe(context: Context): AudioRouteCapabilities {
         val started = android.os.SystemClock.elapsedRealtime()
+        val generation = routeCache.generation
         val passthrough = com.ambient.tv.data.local.AudioCatalog.codecs.filter { codec ->
             runCatching { assess(context, true, codec).supported }.getOrDefault(false)
         }.toSet()
@@ -160,7 +166,7 @@ object AudioPassthroughPolicy {
         val devices = manager?.let { candidateDevices(it, attrs, isTelevisionDevice(context)) }.orEmpty()
         return AudioRouteCapabilities(passthrough = passthrough, pcmChannels = routedPcmChannels(devices),
             profile = routedAudioProfile(devices), outputTypes = devices.map { it.type })
-            .also { recentRoute = started to it }
+            .also { routeCache.store(started, generation, it) }
             .also { logRoute(it, devices) }
     }
 

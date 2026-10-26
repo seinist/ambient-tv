@@ -1,7 +1,5 @@
 <resources>
-    <string name="audio_local_fallback">Audio-Fallback</string>
     <string name="audio_fallback_pcm">Nur PCM</string>
-    <string name="audio_local_fallback_hint">Dekodiert nicht unterstützten Ton lokal. Dolby-Digital-Umwandlung wird separat aktiviert.</string>
     <string name="player_local_audio_failed">Der Ton kann mit den verfügbaren Playern und diesem Videoformat lokal nicht wiedergegeben werden. Wähle eine andere Tonspur oder ändere die Audioausgabe. Server-Transcoding wurde nicht angefordert.</string>
     <string name="player_video_compatibility_failed">Das Video konnte lokal nicht wiedergegeben werden und der Kompatibilitätsstream des Servers ist fehlgeschlagen oder nicht verfügbar.</string>
     <string name="notice_audio_ac3_conversion">Der Medienserver wandelt die ausgewählte Tonspur zu AC3 um; das Video bleibt für Stream-Kopie vorgesehen.</string>

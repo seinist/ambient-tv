@@ -782,6 +782,8 @@ internal class MpvPlaybackEngine(
      */
     override fun reopenAudioOutput() {
         if (released || !loaded) return
+        // The route cache may still hold the capabilities from before the mode switch.
+        com.ambient.tv.ui.player.AudioPassthroughPolicy.invalidateCache()
         applyAudioOptions()
         command("ao-reload")
         Timber.i("%s MPV audio output reopened after HDMI audio plug", HDR_AUDIT_TAG)
@@ -2171,6 +2173,67 @@ internal class MpvPlaybackEngine(
     }
 
     private var missingHardwareVideoSinceNs = 0L
+    private var audioDroppedSinceNs = 0L
+
+    /**
+     * mpv's AO init failure ends only audio-only files with -14. With video, mpv drops the audio
+     * track and keeps playing silent video. The same re-plan therefore also runs when the
+     * selected audio track has had no active output for [MPV_AUDIO_DROP_CONFIRM_NS].
+     */
+    private fun checkDroppedAudio(): Boolean {
+        // Cheapest read first: normally an audio track is active and nothing else is queried.
+        val dropped = !audioSession.forceStereoPcm && fileReady && desiredPlayWhenReady && !audioOnly &&
+            dvPrimeTarget == null && getPropertyString("current-tracks/audio/id").isNullOrBlank() &&
+            positionMs() > 1_500 &&
+            mpvAudioOutputDropped(
+                selectedAid = getPropertyString("aid"),
+                currentAudioId = null,
+                hasAudioTracks = runCatching { audioTracks().isNotEmpty() }.getOrDefault(false),
+                hasVideoTracks = runCatching { videoTracks().isNotEmpty() }.getOrDefault(false),
+            )
+        if (!dropped) {
+            audioDroppedSinceNs = 0L
+            return false
+        }
+        val now = System.nanoTime()
+        if (audioDroppedSinceNs == 0L) audioDroppedSinceNs = now
+        if (now - audioDroppedSinceNs < MPV_AUDIO_DROP_CONFIRM_NS) return false
+        audioDroppedSinceNs = 0L
+        recoverAudioOutputFailure("audio track dropped by mpv", positionMs())
+        return true
+    }
+
+    /**
+     * MPV_ERROR_AO_INIT_FAILED or a dropped audio track. Reject only the passthrough codec and
+     * re-plan (multichannel PCM or local AC3). Force stereo if that open fails as well.
+     */
+    private fun recoverAudioOutputFailure(cause: String, reopenPositionMs: Long) {
+        fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
+        val rejected = mutableListOf<String>()
+        syncAudioFilters("", false, rejected)
+        fileReady = false
+        svpFilterDecided = false
+        ended = false
+        // Only a bitstream codec has a different plan to fall back to. A PCM codec
+        // (AAC, MP3, FLAC, Opus) would reopen the same PCM output, so it goes
+        // straight to the stereo retry.
+        val codec = audioSession.sourceCodec
+        if (audioSession.options.normalized().forcesOutput() && !audioSession.forcedChannelsFailed) {
+            // A forced 5.1/7.1 asked for more than the output accepts: follow the
+            // route again for this playback; the saved setting stays as it is.
+            audioSession.forcedChannelsFailed = true
+            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output rejected forced output " +
+                "(${audioSession.options.forceChannels}ch, ${audioSession.options.output}; $cause); using the reported output for this playback")
+        } else if (!audioAoInitRetried && mpvBitstreamCodec(codec)) {
+            audioAoInitRetried = true
+            com.ambient.tv.ui.player.AudioCodecRejects.reject(codec)
+        } else {
+            audioSession.forceStereoPcm = true
+            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output failed ($cause); stereo PCM for this playback")
+        }
+        applyAudioOptions()
+        reopenStream(reopenPositionMs)
+    }
 
     fun pollEvents() {
         if (released) return
@@ -2205,6 +2268,7 @@ internal class MpvPlaybackEngine(
                             return
                         }
                     } else missingHardwareVideoSinceNs = 0L
+                    if (checkDroppedAudio()) return
                     if (fileReady && acceleration.zeroCopy && checkZeroCopy()) return
                     if (fileReady && acceleration.decoder == "vulkan") {
                         getPropertyString("hwdec-current")?.takeIf { !it.startsWith("vulkan") && it.isNotBlank() }?.let {
@@ -2238,31 +2302,7 @@ internal class MpvPlaybackEngine(
                     // MPV_ERROR_AO_INIT_FAILED. Reject only the passthrough codec and re-plan
                     // (multichannel PCM or local AC3). Force stereo if that open also returns -14.
                     if (error == -14 && !audioSession.forceStereoPcm) {
-                        fallbackTrackSelection = listOf("aid", "sid", "speed").map(::getPropertyString)
-                        val rejected = mutableListOf<String>()
-                        syncAudioFilters("", false, rejected)
-                        fileReady = false
-                        svpFilterDecided = false
-                        ended = false
-                        // Only a bitstream codec has a different plan to fall back to. A PCM codec
-                        // (AAC, MP3, FLAC, Opus) would reopen the same PCM output, so it goes
-                        // straight to the stereo retry.
-                        val codec = audioSession.sourceCodec
-                        if (audioSession.options.forceChannels > 0 && !audioSession.forcedChannelsFailed) {
-                            // "Kanäle erzwingen" asked for more than the output accepts: follow the
-                            // route again for this playback; the saved setting stays as it is.
-                            audioSession.forcedChannelsFailed = true
-                            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output rejected forced " +
-                                "${audioSession.options.forceChannels}ch (AO init $error); using the reported output for this playback")
-                        } else if (!audioAoInitRetried && mpvBitstreamCodec(codec)) {
-                            audioAoInitRetried = true
-                            com.ambient.tv.ui.player.AudioCodecRejects.reject(codec)
-                        } else {
-                            audioSession.forceStereoPcm = true
-                            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output failed (AO init $error); stereo PCM for this playback")
-                        }
-                        applyAudioOptions()
-                        reopenStream(lastPlaybackPositionMs)
+                        recoverAudioOutputFailure("AO init $error", lastPlaybackPositionMs)
                         return@repeat
                     }
                     // Only a video output/decoder failure is a zero-copy failure; network, demux
@@ -2693,6 +2733,14 @@ internal class MpvPlaybackEngine(
 /** Live TV and Tvheadend recordings stop their stream before the handle is destroyed. */
 internal fun mpvStopsStreamBeforeDestroy(liveStream: Boolean, broadcastSource: Boolean): Boolean =
     liveStream || broadcastSource
+
+/** Audio stays off with an audio track selected: mpv dropped it after an output failure. */
+internal fun mpvAudioOutputDropped(selectedAid: String?, currentAudioId: String?, hasAudioTracks: Boolean, hasVideoTracks: Boolean): Boolean =
+    hasVideoTracks && hasAudioTracks && selectedAid != null && selectedAid != "no" && selectedAid != "false" &&
+        currentAudioId.isNullOrBlank()
+
+/** Sustained time without audio output before [mpvAudioOutputDropped] counts (track switches are shorter). */
+internal const val MPV_AUDIO_DROP_CONFIRM_NS = 1_500_000_000L
 
 /** Codecs MPV may send as bitstream (passthrough, DTS core, local AC3 plan). */
 internal fun mpvBitstreamCodec(codec: String?): Boolean =

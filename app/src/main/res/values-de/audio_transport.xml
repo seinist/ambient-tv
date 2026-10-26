@@ -1,14 +1,11 @@
 <resources>
     <string name="audio_ac3_video_constraint">Lokale AC3-Umwandlung dieser Tonspur benötigt MPV, aber dieses Video muss mit Media3 abgespielt werden. Bitte PCM oder Server-Umwandlung verwenden.</string>
     <string name="audio_vlc_pcm_limit_fallback">VLC kann Mehrkanal-PCM an diesem Ausgang nicht auf 5.1 begrenzen. Stereo hält die Kanalgrenze ein; für 5.1 bitte Media3 oder MPV verwenden.</string>
-    <string name="audio_pcm_channels">PCM-Kanäle der Verbindung</string>
-    <string name="audio_pcm_channels_hint">Begrenzt nur dekodiertes PCM. Eine 2.0-Verbindung kann weiterhin AC3 5.1 per Passthrough übertragen.</string>
+    <string name="audio_pcm_channels">PCM-Kanäle</string>
+    <string name="audio_pcm_channels_hint">Gilt für dekodierten Ton (PCM), nicht für Passthrough. Automatisch folgt dem Ausgang. 2.0 mischt auf Stereo. 5.1 und 7.1 senden diese Kanäle auch, wenn der Ausgang weniger meldet; lehnt er ab, geht es mit den gemeldeten Kanälen weiter.</string>
     <string name="audio_channel_mix">Kanalmischung / Downmix</string>
-    <string name="audio_ac3_transcode">Dolby Digital (AC3) umwandeln</string>
-    <string name="audio_ac3_transcode_hint">Natives Passthrough hat Vorrang. Anderer Mehrkanalton wird bei einer 2.0-PCM-Verbindung als AC3 5.1 ausgegeben. Atmos-Höhenkanäle entfallen.</string>
     <string name="audio_ac3_no_route">AC3-Umwandlung nicht verfügbar: Der Ausgang muss AC3 bestätigen und AC3 muss in der Codec-Liste aktiviert sein.</string>
-    <string name="audio_ac3_no_passthrough">AC3-Umwandlung benötigt Passthrough. Ausgabe auf Automatisch oder Bitstream bevorzugen und Kanalmischung auf Automatisch stellen.</string>
-    <string name="audio_ac3_no_fallback">AC3-Umwandlung benötigt den Audio-Fallback Automatisch.</string>
+    <string name="audio_ac3_no_passthrough">AC3-Umwandlung braucht Passthrough. Stelle die Audio-Ausgabe auf Automatisch oder Passthrough erzwingen und die Kanalmischung auf Automatisch.</string>
     <string name="audio_ac3_multichannel_pcm">Mehrkanal-PCM erhält Surround ohne erneute Kodierung. AC3-Umwandlung ist bei einer 2.0-PCM-Verbindung verfügbar.</string>
     <string name="audio_ac3_no_encoder">AC3-Umwandlung ist mit den installierten Playern nicht verfügbar.</string>
 </resources>

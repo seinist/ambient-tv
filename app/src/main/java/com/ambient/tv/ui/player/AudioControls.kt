@@ -81,25 +81,33 @@ internal fun AudioProfileEditor(
     flatLive: Boolean = false,
     panelSection: String? = null,
     onOpenSection: ((String) -> Unit)? = null,
-    /** Player only: "Kanäle erzwingen" or the stereo retry was rejected for this playback. */
+    /** Player only: forced PCM channels/passthrough or the stereo retry was rejected for this playback. */
     forcedChannelsFailed: Boolean = false,
 ) {
     val o = settings.currentForRoute(route.profile)
-    // "Kanäle erzwingen" widens what the editor offers: PCM 5.1/7.1 and the bitstream choice.
+    // Forcing widens what the editor offers: "Passthrough erzwingen" adds Dolby/DTS.
     val forcedRoute = route.forcedBy(o)
-    val bitstreamRoute = if (o.forceChannels > 0) route.forcedBy(o.copy(output = "bitstream")) else route
-    val codecs = visibleBitstreamCodecs(bitstreamRoute).filter { it !in AudioCodecRejects.snapshot() }
+    val codecs = visibleBitstreamCodecs(forcedRoute).filter { it !in AudioCodecRejects.snapshot() }
     if (!flatLive || panelSection == null) {
         ImageChoice(R.string.audio_profile, settings.selectedProfile, listOf(
             "auto" to stringResource(R.string.audio_profile_auto),
-            "tv" to "TV", "avr" to "HDMI / AVR", "headphones" to stringResource(R.string.audio_headphones),
+            "tv" to "TV", "avr" to stringResource(R.string.audio_profile_hdmi), "headphones" to stringResource(R.string.audio_headphones),
         ), selectProfile)
-        if (settings.selectedProfile == "auto") ImageHint(stringResource(R.string.audio_profile_active,
-            when (route.profile) {
-                "avr" -> "HDMI / AVR"
-                "headphones" -> stringResource(R.string.audio_headphones)
-                else -> "TV"
+        if (settings.selectedProfile == "auto") {
+            ImageHint(stringResource(R.string.audio_profile_active,
+                when (route.profile) {
+                    "avr" -> stringResource(R.string.audio_profile_hdmi)
+                    "headphones" -> stringResource(R.string.audio_headphones)
+                    else -> "TV"
+                }))
+            ImageHint(stringResource(when (audioProfileReason(route)) {
+                AudioProfileReason.HDMI -> R.string.audio_profile_reason_hdmi
+                AudioProfileReason.ARC -> R.string.audio_profile_reason_arc
+                AudioProfileReason.SPEAKER -> R.string.audio_profile_reason_speaker
+                AudioProfileReason.PERSONAL -> R.string.audio_profile_reason_personal
+                AudioProfileReason.MIXED -> R.string.audio_profile_reason_mixed
             }))
+        }
         ImageHint(stringResource(R.string.audio_profile_hint))
     }
     var group by remember(backend, flatLive) { mutableStateOf("output") }
@@ -110,7 +118,7 @@ internal fun AudioProfileEditor(
     )).let { it.encoded && !it.applyDsp }
     val liveVisibility = if (flatLive) playerPanelAudioVisibility(
         supportsNight = supportsNight,
-        routeOffersBitstream = routeOffersBitstream(bitstreamRoute.passthrough, AudioCodecRejects.snapshot()),
+        routeOffersBitstream = routeOffersBitstream(forcedRoute.passthrough, AudioCodecRejects.snapshot()),
         engine = backend,
         dspSuspended = dspSuspended,
     ) else null
@@ -150,25 +158,24 @@ internal fun AudioProfileEditor(
                 forcedChannelsFailed, AudioCodecRejects.snapshot())
             ImageHint(stringResource(R.string.audio_route_output) + ": " + audioRouteSummaryText(summary))
             if (summary.stereoMixHint) ImageHint(stringResource(R.string.audio_route_stereo_mix_hint))
+            // Media3 checks the sink itself and cannot force formats; MPV and VLC can.
+            val forceOffered = backend != "media3" || o.forcesPassthrough()
             val outputs = buildList {
-                add("source" to stringResource(R.string.audio_source_default))
                 add("auto" to stringResource(R.string.player_automatic))
-                add("pcm" to "PCM")
-                if (codecs.isNotEmpty() && liveVisibility?.bitstream != false) add("bitstream" to stringResource(R.string.audio_prefer_bitstream))
+                add("pcm" to stringResource(R.string.audio_fallback_pcm))
+                if (forceOffered) add("force" to stringResource(R.string.audio_prefer_bitstream))
             }
-            ImageChoice(R.string.audio_output, o.output, outputs) { change(o.copy(output = it, channels = if (it == "bitstream") "auto" else o.channels)) }
+            ImageChoice(R.string.audio_output, displayedAudioOutput(o, sourcePassthrough), outputs) { change(withAudioOutput(o, it)) }
             ImageHint(stringResource(R.string.audio_output_hint))
-            ImageChoice(R.string.audio_pcm_channels, o.pcmChannelLimit.toString(), buildList {
+            ImageChoice(R.string.audio_pcm_channels, displayedPcmChannels(o), buildList {
                 add("0" to stringResource(R.string.player_automatic))
                 add("2" to "2.0")
-                if (backend != "vlc" && forcedRoute.pcmChannels >= 6) add("6" to "5.1")
-                if (backend != "vlc" && forcedRoute.pcmChannels >= 8) add("8" to "7.1")
-            }) { change(o.copy(pcmChannelLimit = it.toInt())) }
+                if (backend != "vlc") {
+                    add("6" to "5.1")
+                    add("8" to "7.1")
+                }
+            }) { change(withPcmChannels(o, it)) }
             ImageHint(stringResource(R.string.audio_pcm_channels_hint))
-            ImageChoice(R.string.audio_force_channels, o.forceChannels.toString(), listOf(
-                "0" to stringResource(R.string.player_off), "6" to "5.1", "8" to "7.1",
-            )) { change(o.copy(forceChannels = it.toInt())) }
-            ImageHint(stringResource(R.string.audio_force_channels_hint))
             PlayerDropUpSelector(stringResource(R.string.audio_delay), "${o.delayMs} ms",
                 listOf("-100" to "−100 ms", "-25" to "−25 ms", "0" to stringResource(R.string.audio_reset_delay), "+25" to "+25 ms", "+100" to "+100 ms"),
                 selectedKey = "0", onSelected = { change(o.copy(delayMs = if (it == "0") 0 else o.delayMs + it.toInt())) })
@@ -187,34 +194,27 @@ internal fun AudioProfileEditor(
             }
             BitstreamRouteHint(route)
             if (backend == "vlc") ImageHint(stringResource(R.string.audio_vlc_output_hint))
-            ImageChoice(R.string.audio_conversion_location, o.conversionLocation, listOf(
-                "local" to stringResource(R.string.audio_conversion_local),
-                "server" to stringResource(R.string.audio_conversion_server),
-            )) { change(o.copy(conversionLocation = it)) }
-            ImageHint(stringResource(R.string.audio_conversion_location_hint))
-            ImageChoice(R.string.audio_local_fallback, o.localFallback, listOf(
-                "auto" to stringResource(R.string.player_automatic),
-                "pcm" to stringResource(R.string.audio_fallback_pcm),
-                "off" to stringResource(R.string.player_off),
-            )) { change(o.copy(localFallback = it)) }
-            ImageHint(stringResource(R.string.audio_local_fallback_hint))
+            val ac3Options = withUnsupportedAudio(o, "ac3")
             val ac3Unavailable = when {
                 "ac3" !in codecs || "ac3" !in o.allowedCodecs -> R.string.audio_ac3_no_route
                 !o.permitsBitstream(sourcePassthrough) -> R.string.audio_ac3_no_passthrough
-                o.localFallback != "auto" -> R.string.audio_ac3_no_fallback
-                o.pcmChannels(route.pcmChannels) > 2 -> R.string.audio_ac3_multichannel_pcm
-                o.conversionLocation != "server" && backend != "mpv" && !route.mpvAvailable &&
+                ac3Options.pcmChannels(route.pcmChannels) > 2 -> R.string.audio_ac3_multichannel_pcm
+                backend != "mpv" && !route.mpvAvailable &&
                     !(backend in setOf("auto", "media3") && com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE &&
                         (sourceCodec == null || com.ambient.tv.ui.player.audio.localDecodableSourceCodec(sourceCodec))) ->
                     if (mpvBlockedByVideo) R.string.audio_ac3_video_constraint else R.string.audio_ac3_no_encoder
                 else -> null
             }
-            if (ac3Unavailable == null) {
-                ImageChoice(R.string.audio_ac3_transcode, if (o.localAc3) "on" else "off", imageOnOff()) {
-                    change(o.copy(localAc3 = it == "on"))
-                }
-                ImageHint(stringResource(R.string.audio_ac3_transcode_hint))
-            } else ImageHint(stringResource(ac3Unavailable))
+            val unsupported = displayedUnsupportedAudio(o)
+            ImageChoice(R.string.audio_unsupported, unsupported, buildList {
+                add("auto" to stringResource(R.string.player_automatic))
+                if (ac3Unavailable == null || unsupported == "ac3") add("ac3" to stringResource(R.string.audio_unsupported_ac3))
+                add("pcm" to stringResource(R.string.audio_fallback_pcm))
+                add("server" to stringResource(R.string.audio_unsupported_server))
+                add("off" to stringResource(R.string.player_off))
+            }) { change(withUnsupportedAudio(o, it)) }
+            ImageHint(stringResource(R.string.audio_unsupported_hint))
+            if (unsupported == "ac3" && ac3Unavailable != null) ImageHint(stringResource(ac3Unavailable))
             val planned = actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough,
                 rejectedCodecs = AudioCodecRejects.snapshot(), sourceChannels = sourceChannels)
             if (sourceCodec != null) ImageHint(outputModeLabel(planned.mode))
@@ -309,7 +309,7 @@ internal fun AudioProfileEditor(
     }
     if (!flatLive || panelSection == null) com.ambient.tv.ui.common.TvActionButton(
         text = stringResource(R.string.audio_reset_profile),
-        onClick = { change(AudioOptions()) },
+        onClick = { change(AudioOptions(output = "auto")) },
         modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
         fillWidth = true,
     )

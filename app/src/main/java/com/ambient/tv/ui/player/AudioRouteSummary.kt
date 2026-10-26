@@ -42,7 +42,7 @@ internal data class AudioRouteSummary(
     val kind: AudioOutputKind?,
     val channels: Int,
     val bitstream: Boolean,
-    /** 6 or 8 when "Kanäle erzwingen" raised the width above what the output reports. */
+    /** 6 or 8 when "Passthrough erzwingen"/the PCM channel setting raised the width above what the output reports. */
     val forcedChannels: Int = 0,
     /** Passthrough is off although the output confirms encoded formats and PCM stays below 5.1. */
     val stereoMixHint: Boolean = false,
@@ -56,7 +56,7 @@ internal fun audioRouteSummary(
     forcedChannelsFailed: Boolean = false,
     rejectedCodecs: Set<String> = emptySet(),
 ): AudioRouteSummary {
-    val effective = if (forcedChannelsFailed) options.copy(forceChannels = 0) else options
+    val effective = if (forcedChannelsFailed) options.withoutForcing() else options
     val forced = route.forcedBy(effective)
     val pcm = effective.pcmChannels(route.pcmChannels)
     val confirmed = route.passthrough.any { it !in rejectedCodecs }

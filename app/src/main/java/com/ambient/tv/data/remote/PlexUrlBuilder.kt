@@ -177,20 +177,25 @@ class PlexUrlBuilder @Inject constructor(
             .toString()
     }
 
-    /** Full compatibility fallback: H.264 video + AAC audio over HLS. */
+    /**
+     * Full compatibility fallback: H.264 video + AAC audio over HLS. [audioChannels] is the
+     * output's PCM width; above 2 the AAC limit is lifted so surround is not mixed down to stereo.
+     */
     fun videoFallbackUrl(
         ratingKey: String,
         mediaIndex: Int,
         startPositionMs: Long,
         audioStreamId: Long? = null,
         forcedSubtitleStreamId: Long? = null,
+        audioChannels: Int = 2,
     ): String? {
         val host = allowedHost() ?: return null
         val token = tokenStore.token?.takeIf { it.isNotBlank() }
-        val profileExtra = listOf(
+        val profileExtra = listOfNotNull(
             "append-transcode-target-codec(type=videoProfile&context=streaming&protocol=hls&videoCodec=h264&audioCodec=aac)",
             "append-transcode-target-video-codec(type=videoProfile&context=streaming&protocol=hls&videoCodec=h264)",
             "append-transcode-target-audio-codec(type=videoProfile&context=streaming&protocol=hls&audioCodec=aac)",
+            plexAacChannelLimitation(audioChannels),
         ).joinToString("+")
 
         return "${scheme()}://${NetworkEndpoint.authorityHost(host)}:${appPreferences.port}/video/:/transcode/universal/start.m3u8"
@@ -253,4 +258,10 @@ internal fun plexBackdropSize(windowLongSide: Int): Pair<Int, Int> {
         else -> 3840
     }
     return width to width * 9 / 16
+}
+
+/** Raises Plex's stereo default for AAC in the video fallback to the output width (null for 2.0). */
+internal fun plexAacChannelLimitation(audioChannels: Int): String? {
+    val limit = serverAudioChannelLimit("aac", audioChannels)
+    return if (limit > 2) "add-limitation(scope=videoAudioCodec&scopeName=aac&type=upperBound&name=audio.channels&value=$limit&replace=true)" else null
 }

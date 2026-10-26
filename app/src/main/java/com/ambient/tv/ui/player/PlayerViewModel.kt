@@ -492,11 +492,21 @@ class PlayerViewModel @Inject constructor(
                 } else {
                     item.viewOffsetMs ?: 0L
                 }
+                val route = AudioPassthroughPolicy.probeCached(context)
+                val conversionMetadata = PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey,
+                    sourceWidth = version.width, sourceHeight = version.height, videoScope = videoScope)
+                val conversionSettings = conversionRestart?.settings ?: TitleVideoSettingsStore.load(context, conversionMetadata)?.audio
+                    ?: ResolutionVideoProfileStore.load(context, conversionMetadata)?.audio ?: appPreferences.audioSettings
+                val conversionOptions = conversionSettings.currentForRoute(route.profile)
+                val preferredAudio = conversionRestart?.streamId?.let { id -> version.tracks.firstOrNull { it.type == MediaTrackType.AUDIO && it.id == id } }
+                    ?: com.ambient.tv.data.local.audioTrackForConversion(version.tracks,
+                    appPreferences.playbackAudioLanguage, conversionSettings.tracks)
                 var plan = when {
                     com.ambient.tv.data.shared.SharedMediaRepository.owns(ratingKey) || com.ambient.tv.data.files.FileKeys.owns(ratingKey) || com.ambient.tv.data.dlna.DlnaKeys.owns(ratingKey) -> PlaybackPlanner.directPlay(version)
                     assessment.videoFallbackRecommended -> {
                         videoFallbackAttempted = true
-                        mediaRepository.getVideoCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex, startPositionMs)
+                        videoFallbackChannels = videoFallbackAudioChannels(conversionOptions, route, preferredAudio?.channels)
+                        mediaRepository.getVideoCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex, startPositionMs, videoFallbackChannels)
                             .fold(
                                 onSuccess = { PlaybackPlanner.videoFallback(it, assessment.videoCodec) },
                                 onFailure = {
@@ -509,15 +519,6 @@ class PlayerViewModel @Inject constructor(
                     else -> PlaybackPlanner.directPlay(version)
                 }
 
-                val route = AudioPassthroughPolicy.probeCached(context)
-                val conversionMetadata = PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey,
-                    sourceWidth = version.width, sourceHeight = version.height, videoScope = videoScope)
-                val conversionSettings = conversionRestart?.settings ?: TitleVideoSettingsStore.load(context, conversionMetadata)?.audio
-                    ?: ResolutionVideoProfileStore.load(context, conversionMetadata)?.audio ?: appPreferences.audioSettings
-                val conversionOptions = conversionSettings.currentForRoute(route.profile)
-                val preferredAudio = conversionRestart?.streamId?.let { id -> version.tracks.firstOrNull { it.type == MediaTrackType.AUDIO && it.id == id } }
-                    ?: com.ambient.tv.data.local.audioTrackForConversion(version.tracks,
-                    appPreferences.playbackAudioLanguage, conversionSettings.tracks)
                 var convertedStreamId: Long? = null
                 if (plan?.mode == PlaybackMode.DIRECT_PLAY && supportsServerAudioConversion(playbackRatingKey) &&
                     ((conversionRestart?.wasServerConverted == true && conversionOptions.conversionLocation == "server" && conversionOptions.localFallback != "off") ||
@@ -691,6 +692,21 @@ class PlayerViewModel @Inject constructor(
         else -> null
     } ?: routedAudioOptions()
 
+    private fun activeAudioSession(): AudioSession? = when (val handle = BackgroundPlaybackSession.activeHandle()) {
+        is Media3PlaybackHandle -> Media3AudioProcessing.session(handle.player)
+        is com.ambient.tv.ui.player.backend.MpvPlaybackController -> handle.audioSession
+        is com.ambient.tv.ui.player.backend.VlcPlaybackController -> handle.audioSession
+        else -> null
+    }
+
+    /** The active profile limited by what failed in this playback (stereo retry, rejected forced channels). */
+    private fun activeConversionOptions(): com.ambient.tv.data.local.AudioOptions =
+        activeAudioSession()?.let { serverConversionOptions(it.options, it.forceStereoPcm, it.forcedChannelsFailed) }
+            ?: routedAudioOptions()
+
+    /** Audio width of the current H.264/AAC video fallback; reused when a seek re-requests it. */
+    private var videoFallbackChannels = 2
+
     fun serverAudioSelectionEnabled(): Boolean = (_uiState.value as? PlayerUiState.Ready)?.let {
         supportsServerAudioConversion(it.sourceRatingKey) && activeAudioOptions().conversionLocation == "server"
     } == true
@@ -701,7 +717,7 @@ class PlayerViewModel @Inject constructor(
         val track = current.audioTracks.firstOrNull { it.id == streamId } ?: return
         if (!supportsServerAudioConversion(current.sourceRatingKey)) return
         startServerAudioFallback(current, positionMs,
-            serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId,
+            serverAudioTarget(activeConversionOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId,
             sourceChannels = track.channels)
     }
 
@@ -848,7 +864,7 @@ class PlayerViewModel @Inject constructor(
                 return@launch
             }
             if (current.playbackMode != PlaybackMode.TRANSCODE) return@launch
-            val result = mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, target)
+            val result = mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, target, videoFallbackChannels)
             result.onSuccess { url ->
                 if ((_uiState.value as? PlayerUiState.Ready)?.streamUrl != current.streamUrl) return@onSuccess
                 _uiState.value = current.copy(streamUrl = url, runtimeHdrStandard = null, runtimeHdrKnown = false, startPositionMs = 0L, timelineOffsetMs = target,
@@ -868,7 +884,7 @@ class PlayerViewModel @Inject constructor(
             val track = com.ambient.tv.data.local.audioTrackForConversion(current.audioTracks,
                 current.preferredAudioLanguage, appPreferences.audioSettings.tracks)
             startServerAudioFallback(current, positionMs,
-                serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels, appPreferences.mediaAudioPassthroughEnabled), track?.id,
+                serverAudioTarget(activeConversionOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels, appPreferences.mediaAudioPassthroughEnabled), track?.id,
                 sourceChannels = track?.channels)
             return
         }
@@ -935,7 +951,7 @@ class PlayerViewModel @Inject constructor(
             "eac3" -> R.string.notice_audio_eac3_conversion
             else -> R.string.notice_audio_aac_conversion
         })
-        val channels = serverAudioChannels(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), sourceChannels, codec)
+        val channels = serverAudioChannels(activeConversionOptions(), AudioPassthroughPolicy.probeCached(context), sourceChannels, codec)
         Timber.i("Server audio conversion target=%s channels=%d", codec, channels)
         viewModelScope.launch {
             mediaRepository.getAudioCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex,
@@ -981,8 +997,13 @@ class PlayerViewModel @Inject constructor(
         }
         videoFallbackAttempted = true
         val absolutePosition = (positionMs + current.timelineOffsetMs).coerceAtLeast(0L)
+        val track = current.serverAudioStreamId?.let { id -> current.audioTracks.firstOrNull { it.id == id } }
+            ?: com.ambient.tv.data.local.audioTrackForConversion(current.audioTracks,
+                current.preferredAudioLanguage, appPreferences.audioSettings.tracks)
+        videoFallbackChannels = videoFallbackAudioChannels(activeConversionOptions(),
+            AudioPassthroughPolicy.probeCached(context), track?.channels)
         viewModelScope.launch {
-            mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, absolutePosition).fold(
+            mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, absolutePosition, videoFallbackChannels).fold(
                 onSuccess = { url ->
                     currentCoroutineContext().ensureActive()
                     if (ratingKey != current.requestedRatingKey || changingItem) return@fold

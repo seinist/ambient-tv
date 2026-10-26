@@ -955,7 +955,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
         SettingsCategory.BACKGROUND -> null
         SettingsCategory.LIBRARY -> "${state.libraryGridColumns} × ${state.libraryListRows}"
         SettingsCategory.SEEK -> stringResource(R.string.settings_seek_jump_seconds, state.bigSeekJumpSeconds)
-        SettingsCategory.AUDIO -> when (state.audioSettings.selectedProfile) { "auto" -> stringResource(R.string.audio_profile_auto); "avr" -> "HDMI / AVR"; "headphones" -> stringResource(R.string.audio_headphones); else -> "TV" }
+        SettingsCategory.AUDIO -> when (state.audioSettings.selectedProfile) { "auto" -> stringResource(R.string.audio_profile_auto); "avr" -> stringResource(R.string.audio_profile_hdmi); "headphones" -> stringResource(R.string.audio_headphones); else -> "TV" }
         else -> null
     }
 }

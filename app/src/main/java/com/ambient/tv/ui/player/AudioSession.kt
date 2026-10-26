@@ -118,7 +118,7 @@ class AudioSession(
     var forceStereoPcm by mutableStateOf(false)
     /** The output rejected the forced 5.1/7.1 layout; this playback follows the route again. */
     var forcedChannelsFailed by mutableStateOf(false)
-    /** Output channel capacity after "Kanäle erzwingen", unless that failed for this playback. */
+    /** Output channel capacity after the forced PCM channel setting, unless that failed for this playback. */
     val outputPcmChannels: Int get() =
         if (forcedChannelsFailed || forceStereoPcm) route.pcmChannels else options.forcedChannels(route.pcmChannels)
     internal var apply: (AudioOptions, AudioOptions) -> Unit = { _, _ -> }
@@ -216,7 +216,7 @@ class AudioSession(
         sourceCodec: String?, sourceChannels: Int?,
         media3CanDecode: Boolean = true, options: AudioOptions = this.options,
     ): AudioOutputPlan {
-        val base = if (forcedChannelsFailed) options.copy(forceChannels = 0) else options
+        val base = if (forcedChannelsFailed) options.withoutForcing() else options
         val effective = when {
             forceStereoPcm -> base.copy(output = "pcm", channels = "stereo", localFallback = "pcm", localAc3 = false, forceChannels = 0)
             audioOnly -> base.copy(output = "pcm", localFallback = "pcm", localAc3 = false)

@@ -19,10 +19,10 @@ class PanelVisibilityRulesTest {
         assertEquals("pcm", bitstreamToggleOutput(false, "source", null, permitsAll))
         assertEquals("source", bitstreamToggleOutput(true, "pcm", "source", permitsAll))
         assertEquals("auto", bitstreamToggleOutput(true, "pcm", "auto", permitsAll))
-        assertEquals("bitstream", bitstreamToggleOutput(true, "pcm", null, permitsAll))
-        // "auto" with PCM processing does not permit bitstream: fall back to an explicit request.
-        assertEquals("bitstream", bitstreamToggleOutput(true, "pcm", "auto") { it == "bitstream" })
-        assertEquals("bitstream", bitstreamToggleOutput(true, "auto", null) { it == "bitstream" })
+        // Without a remembered output the toggle asks for "auto", never for forced passthrough.
+        assertEquals("auto", bitstreamToggleOutput(true, "pcm", null, permitsAll))
+        assertEquals("force", bitstreamToggleOutput(true, "pcm", "force", permitsAll))
+        assertEquals("force", bitstreamToggleOutput(true, "force", null, permitsAll))
     }
 
     @Test fun superResOnlyWhenItWouldLoad() {

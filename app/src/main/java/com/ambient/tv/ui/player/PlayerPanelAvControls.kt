@@ -228,10 +228,10 @@ internal fun PlayerPanelAudioGroup(session: AudioSession?) {
     }
     if (visibility.bitstream) {
         val enabled = options.permitsBitstream(session.sourcePassthrough)
-        // Off remembers the output it replaced (source/auto), so On restores it instead of forcing "bitstream".
+        // Off remembers the output it replaced (source/auto/force), so On restores it.
         var previousOutput by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
         ImageChoice(
-            R.string.audio_prefer_bitstream,
+            R.string.audio_passthrough,
             if (enabled) "on" else "off",
             imageOnOff(),
         ) { key ->
@@ -251,11 +251,11 @@ internal fun bitstreamToggleApplies(sourceCodec: String?): Boolean =
 
 /**
  * Output for the bitstream toggle. Off is PCM. On restores the output that Off replaced when it
- * still permits bitstream (for example "source" or "auto"), otherwise asks for bitstream.
+ * still permits bitstream (for example "source", "auto" or "force"), otherwise uses "auto".
  */
 internal fun bitstreamToggleOutput(on: Boolean, current: String, previous: String?, permits: (String) -> Boolean): String {
     if (!on) return "pcm"
     if (current != "pcm" && permits(current)) return current
     if (previous != null && previous != "pcm" && permits(previous)) return previous
-    return "bitstream"
+    return "auto"
 }

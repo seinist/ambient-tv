@@ -460,8 +460,8 @@ class EmbyRepository @Inject constructor(
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int): Result<String> =
         compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = false, audioCodec = audioCodec, audioStreamId = audioStreamId, audioChannels = audioChannels)
 
-    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long): Result<String> =
-        compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = true)
+    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int): Result<String> =
+        compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = true, audioChannels = audioChannels)
 
     private suspend fun compatibilityUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, video: Boolean, audioCodec: String = "aac", audioStreamId: Long? = null, audioChannels: Int = 2): Result<String> = cache.withGeneration {
         suspendResult {
@@ -497,8 +497,9 @@ class EmbyRepository @Inject constructor(
                 startPositionMs, false, preferredAudio?.id?.toInt(), forcedSubtitle?.id?.toInt() ?: -1,
                 audioCodec, info.playSessionId, audioChannels)
             else remoteSource?.transcodingUrl?.let(urls::absolute)
+                ?.let { com.ambient.tv.data.remote.withServerAudioChannels(it, audioChannels) }
                 ?: urls.compatibilityUrl(ratingKey, remoteSource?.id, startPositionMs, true,
-                    preferredAudio?.id?.toInt(), forcedSubtitle?.id?.toInt() ?: -1)
+                    preferredAudio?.id?.toInt(), forcedSubtitle?.id?.toInt() ?: -1, audioChannels = audioChannels)
 
         }
     }

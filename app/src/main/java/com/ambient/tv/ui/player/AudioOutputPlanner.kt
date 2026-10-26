@@ -13,19 +13,19 @@ data class AudioRouteCapabilities(
     val outputTypes: List<Int> = emptyList(),
 )
 
-/** Bitstream formats "Kanäle erzwingen" may try without the output confirming them. Lossless
+/** Bitstream formats "Passthrough erzwingen" may try without the output confirming them. Lossless
  * formats (TrueHD, DTS-HD MA) are excluded: they need HDMI bandwidth a forced guess cannot assume. */
 internal val FORCED_BITSTREAM_CODECS = setOf("ac3", "eac3", "dts")
 
 /**
- * The route as the user's "Kanäle erzwingen" setting sees it: at least 5.1/7.1 PCM, and with
- * an explicit Bitstream choice also the common Dolby/DTS formats. Without the setting the
- * route is returned unchanged.
+ * The route as the user's forcing settings see it: PCM channels 5.1/7.1 raise the reported PCM
+ * width, "Passthrough erzwingen" adds the common Dolby/DTS formats. Otherwise unchanged.
  */
 fun AudioRouteCapabilities.forcedBy(options: AudioOptions): AudioRouteCapabilities {
-    if (options.forceChannels !in setOf(6, 8)) return this
-    val forcedPassthrough = if (options.output == "bitstream") FORCED_BITSTREAM_CODECS.filter { it in options.allowedCodecs } else emptyList()
-    return copy(pcmChannels = options.forcedChannels(pcmChannels), passthrough = passthrough + forcedPassthrough)
+    val forcedPassthrough = if (options.forcesPassthrough()) FORCED_BITSTREAM_CODECS.filter { it in options.allowedCodecs } else emptyList()
+    val channels = options.forcedChannels(pcmChannels)
+    if (forcedPassthrough.all { it in passthrough } && channels == pcmChannels) return this
+    return copy(pcmChannels = channels, passthrough = passthrough + forcedPassthrough.filterNot { it in passthrough })
 }
 
 /** With a forced layout, "auto" becomes an explicit layout so MPV's auto-safe cannot fall back
@@ -54,9 +54,14 @@ data class AudioOutputPlan(
     val pcmLimitFallback: Boolean = false,
 )
 
-/** Maps container codec names onto the five bitstream keys the route probe understands. */
+/**
+ * Maps container codec names onto the five bitstream keys the route probe understands.
+ * Includes VLC's FourCCs ("a52 ", "eac3", "dts ", "trhd", "mlp ") and its descriptions
+ * ("A52 Audio (aka AC3)", "A/52 B Audio (aka E-AC3)", "DTS Audio", "TrueHD Audio").
+ */
 fun normalizeSourceCodec(codec: String?): String? {
-    val value = codec?.trim()?.lowercase()?.replace('_', '-') ?: return null
+    val raw = codec?.trim()?.lowercase()?.replace('_', '-') ?: return null
+    val value = vlcCodecAlias(raw) ?: raw
     return when {
         value in setOf("truehd", "mlp") || value.contains("truehd") -> "truehd"
         value in setOf("dts-hd", "dtshd", "dca-ma", "dts-hra") || value.startsWith("dts-hd") -> "dts-hd"
@@ -65,6 +70,17 @@ fun normalizeSourceCodec(codec: String?): String? {
         value in setOf("ac3", "ac-3") -> "ac3"
         else -> null
     }
+}
+
+/** VLC names the Dolby/DTS formats differently from FFmpeg and the media servers. */
+private fun vlcCodecAlias(value: String): String? = when {
+    value == "trhd" || value.startsWith("truehd audio") -> "truehd"
+    value == "mlp" || value.startsWith("mlp audio") -> "mlp"
+    value.contains("aka e-ac3") || value.startsWith("a/52 b") || value.startsWith("a52 b") -> "eac3"
+    value == "a52" || value == "a/52" || value.contains("aka ac3") || value.startsWith("a52 audio") ||
+        value.startsWith("a/52 audio") -> "ac3"
+    value == "dts audio" -> "dts"
+    else -> null
 }
 
 fun clipChannelMode(requested: String, pcmChannels: Int): String {
@@ -182,15 +198,9 @@ fun planAudioOutput(
 fun visibleBitstreamCodecs(route: AudioRouteCapabilities): List<String> =
     AudioCatalog.codecs.filter { it in route.passthrough }
 
-fun visibleChannelModes(route: AudioRouteCapabilities): List<String> = buildList {
-    add("auto")
-    add("stereo")
-    add("mono")
-    add("left")
-    add("right")
-    if (route.pcmChannels >= 6) add("5.1")
-    if (route.pcmChannels >= 8) add("7.1")
-}
+/** Channel mix choices. 5.1/7.1 live in "PCM-Kanäle" only (one setting per purpose). */
+@Suppress("UNUSED_PARAMETER")
+fun visibleChannelModes(route: AudioRouteCapabilities): List<String> = listOf("auto", "stereo", "mono", "left", "right")
 
 /** Codecs the current playback already saw rejected. Cleared when a new item starts. */
 object AudioCodecRejects {

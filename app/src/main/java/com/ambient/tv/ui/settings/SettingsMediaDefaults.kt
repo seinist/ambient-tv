@@ -55,17 +55,6 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ImageHint(stringResource(R.string.settings_defaults_hint))
-        SettingsGroup(
-            title = stringResource(R.string.settings_media_passthrough_title),
-            subtitle = stringResource(R.string.settings_media_passthrough_subtitle),
-        ) {
-            TvSettingRow(
-                title = stringResource(R.string.settings_media_passthrough_toggle),
-                body = stringResource(R.string.settings_passthrough_visualizer_hint),
-                checked = state.mediaAudioPassthroughEnabled,
-                onCheckedChange = model::onMediaAudioPassthroughChanged,
-            )
-        }
         ImageHint(stringResource(R.string.settings_audio_shared))
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
         if (state.playbackBackendKey == "auto") {
@@ -76,13 +65,16 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
             renderer,
             listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV"),
         ) { renderer = it }
+        // Passthrough is chosen per audio profile ("Audio-Ausgabe"); the former global switch
+        // only remains as the meaning of untouched "source" profiles.
         ImageHint(stringResource(R.string.settings_audio_source_hint))
+        ImageHint(stringResource(R.string.settings_passthrough_visualizer_hint))
         if (renderer == "vlc") ImageHint(stringResource(R.string.settings_audio_vlc_night))
         val route = rememberAudioRoute()
         AudioProfileEditor(
             settings = state.audioSettings,
             backend = renderer,
-            // Preview uses the global passthrough pref (same flag applied in all playback paths).
+            // Untouched "source" profiles still follow the stored former global switch.
             sourcePassthrough = state.mediaAudioPassthroughEnabled,
             supportsNight = renderer != "vlc" || vlcNightAvailable,
             selectProfile = { model.onAudioSettingsChanged(state.audioSettings.copy(selectedProfile = it)) },
