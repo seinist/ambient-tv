@@ -4,11 +4,55 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AudioOptionsTest {
-    @Test fun automaticProfileDoesNotEnableGlobalPassthrough() {
-        val preferences = AppPreferences(memoryPreferences())
+    @Test fun freshInstallDefaultsToAutomaticPassthrough() {
+        val memory = memoryPreferences()
+        val preferences = AppPreferences(memory)
         assertEquals("auto", preferences.audioSettings.selectedProfile)
+        // Unset = "Automatisch": bitstream only for formats the output confirms (planner gate).
+        assertTrue(preferences.mediaAudioPassthroughEnabled)
+        assertTrue(preferences.audioSettings.currentForRoute("avr").permitsBitstream(preferences.mediaAudioPassthroughEnabled))
+        // Reading the default must not persist it; a later default change still reaches this install.
+        assertFalse(memory.contains(AppPreferences.KEY_MEDIA_AUDIO_PASSTHROUGH))
+    }
+
+    @Test fun explicitPassthroughOffStaysOff() {
+        val memory = memoryPreferences()
+        memory.edit().putBoolean(AppPreferences.KEY_MEDIA_AUDIO_PASSTHROUGH, false).commit()
+        val preferences = AppPreferences(memory)
         assertFalse(preferences.mediaAudioPassthroughEnabled)
         assertFalse(preferences.audioSettings.currentForRoute("avr").permitsBitstream(preferences.mediaAudioPassthroughEnabled))
+    }
+
+    @Test fun legacyPassthroughFlagsBothOffStayOff() {
+        val memory = memoryPreferences()
+        memory.edit().putBoolean(AppPreferences.KEY_PLEX_AUDIO_PASSTHROUGH, false).commit()
+        assertFalse(AppPreferences(memory).mediaAudioPassthroughEnabled)
+        assertTrue(memory.contains(AppPreferences.KEY_MEDIA_AUDIO_PASSTHROUGH))
+    }
+
+    @Test fun forceChannelsTravelsWithTheBackupFromSchema70() {
+        val source = AppPreferences(memoryPreferences())
+        source.audioSettings = AudioSettings().update(AudioOptions(forceChannels = 8))
+        val json = SettingsBackupManager(source, TokenStore(memoryPreferences(), source)).exportJson()
+        val target = AppPreferences(memoryPreferences())
+        SettingsBackupManager(target, TokenStore(memoryPreferences(), target)).importJson(json)
+        assertEquals(8, target.audioSettings.current.forceChannels)
+
+        // A pre-70 file cannot carry the setting; a hand-edited one must not force channels.
+        val old = json.replace(Regex("\"schemaVersion\"\\s*:\\s*\\d+"), "\"schemaVersion\": 69")
+        val oldTarget = AppPreferences(memoryPreferences())
+        SettingsBackupManager(oldTarget, TokenStore(memoryPreferences(), oldTarget)).importJson(old)
+        assertEquals(0, oldTarget.audioSettings.current.forceChannels)
+    }
+
+    @Test fun forceChannelsIsBoundedAndRaisesOnlyTheRoute() {
+        assertEquals(0, AudioOptions(forceChannels = 4).normalized().forceChannels)
+        assertEquals(8, AudioOptions(forceChannels = 8).normalized().forceChannels)
+        assertEquals(6, AudioOptions(forceChannels = 6).pcmChannels(2))
+        assertEquals(8, AudioOptions(forceChannels = 6).pcmChannels(8))
+        // The PCM limit still wins over the forced width.
+        assertEquals(2, AudioOptions(forceChannels = 8, pcmChannelLimit = 2).pcmChannels(2))
+        assertEquals(2, AudioOptions().pcmChannels(2))
     }
     @Test fun legacyAudioProfileDefaultsToAutomaticLocalRecovery() {
         val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }

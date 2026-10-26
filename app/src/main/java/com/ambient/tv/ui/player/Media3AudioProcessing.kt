@@ -61,6 +61,7 @@ object Media3AudioProcessing {
                 if (tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }) {
                     session.updateAudioOnly(tracks.groups.none { it.type == C.TRACK_TYPE_VIDEO })
                 }
+                session.logPlanIfChanged()
             }
         }
         listeners[player] = listener
@@ -78,7 +79,7 @@ object Media3AudioProcessing {
         old.permitsBitstream(sourceDefault) != next.permitsBitstream(sourceDefault) ||
             old.output != next.output || old.allowedCodecs != next.allowedCodecs || old.channels != next.channels ||
             old.upmix != next.upmix || old.localAc3 != next.localAc3 || old.localFallback != next.localFallback ||
-            old.pcmChannelLimit != next.pcmChannelLimit
+            old.pcmChannelLimit != next.pcmChannelLimit || old.forceChannels != next.forceChannels
 
     fun factory(context: Context, session: AudioSession, analyzer: AudioSpectrumAnalyzer): DefaultRenderersFactory =
         object : DefaultRenderersFactory(context) {
@@ -103,7 +104,8 @@ object Media3AudioProcessing {
                             // from the main-thread callback responsible for reconfiguring the sink.
                             val route = AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = session.route.mpvAvailable)
                             val plan = planAudioOutput(
-                                session.options, key, route, session.backend, session.sourcePassthrough,
+                                if (session.forcedChannelsFailed) session.options.copy(forceChannels = 0) else session.options,
+                                key, route, session.backend, session.sourcePassthrough,
                                 rejectedCodecs = AudioCodecRejects.snapshot(),
                             )
                             if (!plan.encoded || key == null || key !in plan.spdifCodecs) {

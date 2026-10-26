@@ -644,7 +644,7 @@ class VlcPlaybackController(
     private fun applyAudioOutputDevice(): Boolean {
         val plan = audioSession.outputPlan()
         val device = if (plan.mode == com.ambient.tv.ui.player.AudioOutputMode.PASSTHROUGH) vlcEncodedDevice(plan.spdifCodecs) else if (
-            plan.channels in setOf("stereo", "mono", "left", "right") || audioSession.route.pcmChannels < 6
+            plan.channels in setOf("stereo", "mono", "left", "right") || audioSession.outputPcmChannels < 6
         ) "stereo" else "pcm"
         if (appliedAudioDevice == device) return true
         // Explicit devices bypass LibVLC Java's cached digital-output toggle.

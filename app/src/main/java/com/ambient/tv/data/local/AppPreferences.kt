@@ -1078,11 +1078,15 @@ class AppPreferences @Inject constructor(
      * Global audio passthrough for library + live playback (Plex/JF/Emby/Files/TVH/YouTube).
      * Migrated from legacy [KEY_PLEX_AUDIO_PASSTHROUGH] / [KEY_TVH_AUDIO_PASSTHROUGH]:
      * if either old flag was true → true.
+     *
+     * Unset means "Automatisch" (true): only formats the current output confirms are ever sent
+     * as bitstream (see planAudioOutput), so this is safe on phones and stereo outputs. A stored
+     * value, including an explicit "off", is never overridden.
      */
     var mediaAudioPassthroughEnabled: Boolean
         get() {
             migrateMediaAudioPassthroughOnce()
-            return prefs.getBoolean(KEY_MEDIA_AUDIO_PASSTHROUGH, false)
+            return prefs.getBoolean(KEY_MEDIA_AUDIO_PASSTHROUGH, MEDIA_AUDIO_PASSTHROUGH_DEFAULT)
         }
         set(value) {
             migrateMediaAudioPassthroughOnce()
@@ -1092,6 +1096,8 @@ class AppPreferences @Inject constructor(
     /** One-shot: OR of legacy plex/tvh flags into [KEY_MEDIA_AUDIO_PASSTHROUGH], then drop old keys. */
     private fun migrateMediaAudioPassthroughOnce() {
         if (prefs.contains(KEY_MEDIA_AUDIO_PASSTHROUGH)) return
+        // Nothing to migrate: leave the key unset so the default applies.
+        if (!prefs.contains(KEY_PLEX_AUDIO_PASSTHROUGH) && !prefs.contains(KEY_TVH_AUDIO_PASSTHROUGH)) return
         val enabled = prefs.getBoolean(KEY_PLEX_AUDIO_PASSTHROUGH, false) ||
             prefs.getBoolean(KEY_TVH_AUDIO_PASSTHROUGH, false)
         prefs.edit {
@@ -2088,6 +2094,8 @@ class AppPreferences @Inject constructor(
         val MPV_SCALING_FILTERS = VideoImageCatalog.mpvScalers.keys
         val VLC_SCALING_FILTERS = VideoImageCatalog.vlcScalers.keys
         const val KEY_MEDIA_AUDIO_PASSTHROUGH = "media_audio_passthrough"
+        /** Unset passthrough = "Automatisch": bitstream only for formats the output confirms. */
+        const val MEDIA_AUDIO_PASSTHROUGH_DEFAULT = true
         /** @deprecated Migrated into [KEY_MEDIA_AUDIO_PASSTHROUGH]; kept for one-shot local migrate. */
         const val KEY_PLEX_AUDIO_PASSTHROUGH = "plex_audio_passthrough"
         /** @deprecated Migrated into [KEY_MEDIA_AUDIO_PASSTHROUGH]; kept for one-shot local migrate. */

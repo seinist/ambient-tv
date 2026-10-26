@@ -300,6 +300,7 @@ internal fun VlcPlayerContent(
         val showFpsOverlay = controller.audioSession.showFpsOverlay
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.runtimeStats?.audioCodec),
+            audioRoute = audioRouteSummaryText(controller.audioSession),
             enabled = showNerdOverlay,
             model = rememberVlcNerdOverlayModel(
                 snapshot = snapshot,
@@ -417,6 +418,7 @@ internal fun VlcPlayerContent(
                         formatNerdBytes(stats.readBytes)?.let { add(stringResource(R.string.player_nerd_input_read) to it) }
                         formatNerdBytes(stats.demuxReadBytes)?.let { add(stringResource(R.string.player_nerd_demux_read) to it) }
                     }
+                    add(stringResource(R.string.audio_route_output) to audioRouteSummaryText(controller.audioSession))
                     add(stringResource(R.string.player_info_audio_output) to DirectAvDiagnostics.audio(context, controller.bitstreamPermitted, state.audioCodec, planMode = controller.audioSession.outputPlan().mode))
                     audioConversionDiagnostic(context, state, controller.audioSession)?.let { add(stringResource(R.string.audio_conversion_location) to it) }
                     (snapshot.runtimeStats?.audioFormatLabel() ?: state.audioCodec?.uppercase())?.let { add(stringResource(R.string.player_audio) to it) }

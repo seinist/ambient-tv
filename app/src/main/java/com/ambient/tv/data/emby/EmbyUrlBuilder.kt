@@ -105,7 +105,7 @@ class EmbyUrlBuilder @Inject constructor(
         return resolved.newBuilder().addQueryParameter("api_key", tokenStore.embyToken).build().toString()
     }
 
-    fun compatibilityUrl(itemId: String, mediaSourceId: String?, startPositionMs: Long, video: Boolean, audioStreamIndex: Int? = null, subtitleStreamIndex: Int = -1, audioCodec: String = "aac", playSessionId: String? = null): String = url(
+    fun compatibilityUrl(itemId: String, mediaSourceId: String?, startPositionMs: Long, video: Boolean, audioStreamIndex: Int? = null, subtitleStreamIndex: Int = -1, audioCodec: String = "aac", playSessionId: String? = null, audioChannels: Int = if (audioCodec == "aac") 2 else 6): String = url(
         "Videos/${EmbyBackend.raw(itemId)}/master.m3u8",
         buildMap {
             put("UserId", preferences.embyUserId)
@@ -114,7 +114,7 @@ class EmbyUrlBuilder @Inject constructor(
             put("AudioStreamIndex", audioStreamIndex?.toString())
             put("SubtitleStreamIndex", subtitleStreamIndex.toString())
             put("VideoCodec", if (video) "h264" else "copy")
-            putAll(com.ambient.tv.data.remote.serverAudioConversionQuery(audioCodec, video, audioStreamIndex, playSessionId))
+            putAll(com.ambient.tv.data.remote.serverAudioConversionQuery(audioCodec, video, audioStreamIndex, playSessionId, audioChannels))
             put("DeviceId", preferences.clientIdentifier)
             put("SegmentContainer", "ts")
             put("Protocol", "hls")

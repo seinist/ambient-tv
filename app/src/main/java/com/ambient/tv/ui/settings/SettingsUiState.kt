@@ -159,7 +159,7 @@ data class SettingsUiState(
     val vlcVideoOutputModeKey: String = "auto",
     val visibleBackgroundVideoPlayback: Boolean = false,
     val backgroundVideoDimPercent: Int = 75,
-    val mediaAudioPassthroughEnabled: Boolean = false,
+    val mediaAudioPassthroughEnabled: Boolean = com.ambient.tv.data.local.AppPreferences.MEDIA_AUDIO_PASSTHROUGH_DEFAULT,
     val audioVisualizerModeKey: String = "projectm",
     val projectmPresetIntervalSeconds: Int = 60,
     val projectmTransitionSeconds: Int = 2,

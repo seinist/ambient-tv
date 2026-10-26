@@ -524,8 +524,10 @@ class PlayerViewModel @Inject constructor(
                     shouldConvertAudioOnServer(conversionOptions, preferredAudio?.codec ?: assessment.audioCodec,
                         preferredAudio?.channels, route, assessment.audioSupported))) {
                     val codec = serverAudioTarget(conversionOptions, route, preferredAudio?.channels, appPreferences.mediaAudioPassthroughEnabled)
+                    val channels = serverAudioChannels(conversionOptions, route, preferredAudio?.channels, codec)
+                    Timber.i("Server audio conversion target=%s channels=%d", codec, channels)
                     val result = mediaRepository.getAudioCompatibleStreamUrl(playbackRatingKey, playbackMediaIndex,
-                        startPositionMs, codec, preferredAudio?.id)
+                        startPositionMs, codec, preferredAudio?.id, channels)
                     if (result.isFailure) {
                         _uiState.value = PlayerUiState.Error(context.getString(R.string.player_audio_conversion_failed))
                         return@fold
@@ -614,7 +616,7 @@ class PlayerViewModel @Inject constructor(
                         ),
                         seekJumpMs = appPreferences.bigSeekJumpSeconds * 1000L,
                         audioVisualizerModeKey = appPreferences.audioVisualizerModeKey,
-                        audioPassthroughEnabled = serverAudioFallbackCodec == "ac3" || appPreferences.mediaAudioPassthroughEnabled,
+                        audioPassthroughEnabled = serverAudioTargetIsEncoded(serverAudioFallbackCodec) || appPreferences.mediaAudioPassthroughEnabled,
                         projectmPresetIntervalSeconds = appPreferences.projectmPresetIntervalSeconds,
                         projectmTransitionSeconds = appPreferences.projectmTransitionSeconds,
                         projectmQualityKey = appPreferences.projectmQualityKey,
@@ -699,7 +701,8 @@ class PlayerViewModel @Inject constructor(
         val track = current.audioTracks.firstOrNull { it.id == streamId } ?: return
         if (!supportsServerAudioConversion(current.sourceRatingKey)) return
         startServerAudioFallback(current, positionMs,
-            serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId)
+            serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track.channels, appPreferences.mediaAudioPassthroughEnabled), streamId,
+            sourceChannels = track.channels)
     }
 
     fun restoreReloadedAudio(session: AudioSession) {
@@ -865,7 +868,8 @@ class PlayerViewModel @Inject constructor(
             val track = com.ambient.tv.data.local.audioTrackForConversion(current.audioTracks,
                 current.preferredAudioLanguage, appPreferences.audioSettings.tracks)
             startServerAudioFallback(current, positionMs,
-                serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels, appPreferences.mediaAudioPassthroughEnabled), track?.id)
+                serverAudioTarget(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), track?.channels, appPreferences.mediaAudioPassthroughEnabled), track?.id,
+                sourceChannels = track?.channels)
             return
         }
         val active = if (current.playbackBackendKey == "auto") "media3" else current.playbackBackendKey
@@ -882,7 +886,7 @@ class PlayerViewModel @Inject constructor(
                 lastAudioRecoveryPositionMs = positionMs
                 _uiState.value = PlayerUiState.Error(context.getString(
                     when (serverAudioFallbackCodec) {
-                        "ac3" -> R.string.player_audio_ac3_failed
+                        "ac3", "eac3" -> R.string.player_audio_ac3_failed
                         "aac" -> R.string.player_audio_conversion_failed
                         else -> R.string.player_local_audio_failed
                     }))
@@ -905,26 +909,37 @@ class PlayerViewModel @Inject constructor(
         ))
     }
 
-    fun canTryAacAudioFallback(): Boolean = serverAudioFallbackCodec == "ac3" && lastReadyForAudioRecovery != null
-    fun isServerAc3FallbackActive(): Boolean = serverAudioFallbackCodec == "ac3"
+    fun canTryAacAudioFallback(): Boolean = serverAudioTargetIsEncoded(serverAudioFallbackCodec) && lastReadyForAudioRecovery != null
+    fun isServerAc3FallbackActive(): Boolean = serverAudioTargetIsEncoded(serverAudioFallbackCodec)
     fun isServerAudioFallbackActive(): Boolean = serverAudioFallbackCodec != null
 
     fun tryAacAudioFallback() {
         if (_uiState.value !is PlayerUiState.Error || !canTryAacAudioFallback()) return
-        startServerAudioFallback(lastReadyForAudioRecovery ?: return, lastAudioRecoveryPositionMs, "aac")
+        val ready = lastReadyForAudioRecovery ?: return
+        startServerAudioFallback(ready, lastAudioRecoveryPositionMs, "aac",
+            sourceChannels = ready.audioTracks.firstOrNull { it.id == ready.serverAudioStreamId }?.channels)
     }
 
-    private fun startServerAudioFallback(current: PlayerUiState.Ready, positionMs: Long, codec: String, streamId: Long? = current.serverAudioStreamId) {
+    private fun startServerAudioFallback(
+        current: PlayerUiState.Ready, positionMs: Long, codec: String, streamId: Long? = current.serverAudioStreamId,
+        sourceChannels: Int? = null,
+    ) {
         if (serverAudioFallbackInFlight || !supportsServerAudioConversion(current.sourceRatingKey)) return
         serverAudioFallbackInFlight = true
         lastReadyForAudioRecovery = current.copy(serverAudioStreamId = streamId)
         lastAudioRecoveryPositionMs = positionMs
         val absolutePosition = (positionMs + current.timelineOffsetMs).coerceAtLeast(0L)
         _uiState.value = PlayerUiState.Loading
-        postAudioRecoveryNotice(if (codec == "ac3") R.string.notice_audio_ac3_conversion else R.string.notice_audio_aac_conversion)
+        postAudioRecoveryNotice(when (codec) {
+            "ac3" -> R.string.notice_audio_ac3_conversion
+            "eac3" -> R.string.notice_audio_eac3_conversion
+            else -> R.string.notice_audio_aac_conversion
+        })
+        val channels = serverAudioChannels(activeAudioOptions(), AudioPassthroughPolicy.probeCached(context), sourceChannels, codec)
+        Timber.i("Server audio conversion target=%s channels=%d", codec, channels)
         viewModelScope.launch {
             mediaRepository.getAudioCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex,
-                absolutePosition, codec, streamId).fold(
+                absolutePosition, codec, streamId, channels).fold(
                 onSuccess = { url ->
                     currentCoroutineContext().ensureActive()
                     if (ratingKey != current.requestedRatingKey || changingItem) return@fold
@@ -939,7 +954,7 @@ class PlayerViewModel @Inject constructor(
                         audioCodec = codec,
                         serverAudioStreamId = streamId,
                         serverAudioConversionCodec = codec,
-                        audioPassthroughEnabled = serverAudioFallbackCodec == "ac3" || appPreferences.mediaAudioPassthroughEnabled,
+                        audioPassthroughEnabled = serverAudioTargetIsEncoded(serverAudioFallbackCodec) || appPreferences.mediaAudioPassthroughEnabled,
                         startPositionMs = 0L,
                         timelineOffsetMs = absolutePosition,
                     )

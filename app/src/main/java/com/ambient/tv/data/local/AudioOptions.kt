@@ -26,6 +26,12 @@ data class AudioOptions(
     val localAc3: Boolean = false,
     /** 0 follows the route; this limits PCM transport, not passthrough or AC3. */
     val pcmChannelLimit: Int = 0,
+    /**
+     * Counterpart to [pcmChannelLimit]: 6 or 8 treat the output as at least 5.1/7.1 even when
+     * Android reports only stereo (TV speakers, ARC, a 2ch EDID). 0 follows the route. The
+     * limit still wins when both are set.
+     */
+    val forceChannels: Int = 0,
     /** Automatic local recovery; legacy localAc3 remains readable in saved profiles. */
     val localFallback: String = "auto",
     val conversionLocation: String = "local",
@@ -34,6 +40,7 @@ data class AudioOptions(
 ) {
     fun normalized() = copy(
         pcmChannelLimit = pcmChannelLimit.takeIf { it in setOf(0, 2, 6, 8) } ?: 0,
+        forceChannels = forceChannels.takeIf { it in setOf(0, 6, 8) } ?: 0,
         conversionLocation = conversionLocation.takeIf { it in setOf("local", "server") } ?: "local",
         localFallback = localFallback.takeIf { it in setOf("auto", "pcm", "off") } ?: "auto",
         output = output.takeIf { it in setOf("source", "auto", "pcm", "bitstream") } ?: "source",
@@ -59,8 +66,13 @@ data class AudioOptions(
         else -> sourceDefault
     }
 
-    fun pcmChannels(routeChannels: Int): Int =
-        if (pcmChannelLimit in setOf(2, 6, 8)) minOf(routeChannels, pcmChannelLimit) else routeChannels
+    /** Channels the output is treated as accepting: the route, raised by [forceChannels]. */
+    fun forcedChannels(routeChannels: Int): Int =
+        if (forceChannels in setOf(6, 8)) maxOf(routeChannels, forceChannels) else routeChannels
+
+    fun pcmChannels(routeChannels: Int): Int = forcedChannels(routeChannels).let { channels ->
+        if (pcmChannelLimit in setOf(2, 6, 8)) minOf(channels, pcmChannelLimit) else channels
+    }
 
     fun transcodesAc3(sourceDefault: Boolean, sourceChannels: Int?, routeChannels: Int, ac3Supported: Boolean): Boolean =
         localAc3 && localFallback == "auto" && permitsBitstream(sourceDefault) &&

@@ -123,18 +123,20 @@ class PlexUrlBuilder @Inject constructor(
         audioStreamId: Long? = null,
         forcedSubtitleStreamId: Long? = null,
         audioCodec: String = "aac",
+        audioChannels: Int = if (audioCodec == "aac") 2 else 6,
     ): String? {
         val host = allowedHost() ?: return null
         val token = tokenStore.token?.takeIf { it.isNotBlank() }
-        val targetAudio = if (audioCodec == "ac3") "ac3" else "aac"
+        val targetAudio = if (audioCodec == "ac3" || audioCodec == "eac3") audioCodec else "aac"
+        val channelLimit = serverAudioChannelLimit(targetAudio, audioChannels)
         // An HTTP/Matroska direct-stream target lets Plex copy HEVC/H.264 video unchanged while
         // converting only the unsupported audio track. The Generic HLS target rejects some HEVC
         // sources outright (HTTP 400); Plex's own TV/Kodi clients use the Chrome profile and the
         // universal start.mkv endpoint for this same remux path. The Chrome profile caps
-        // transcoded audio at stereo; AC3 is only worth it with 5.1, so lift that limit for it.
+        // transcoded audio at stereo; lift it to the output width (AAC up to 7.1, AC3/E-AC3 5.1).
         val profileExtra =
             "add-transcode-target(type=videoProfile&context=streaming&protocol=http&container=mkv&videoCodec=hevc,h264&audioCodec=$targetAudio&replace=true)" +
-                if (targetAudio == "ac3") "+add-limitation(scope=videoAudioCodec&scopeName=ac3&type=upperBound&name=audio.channels&value=6&replace=true)" else ""
+                if (channelLimit > 2) "+add-limitation(scope=videoAudioCodec&scopeName=$targetAudio&type=upperBound&name=audio.channels&value=$channelLimit&replace=true)" else ""
 
         return "${scheme()}://${NetworkEndpoint.authorityHost(host)}:${appPreferences.port}/video/:/transcode/universal/start.mkv"
             .toHttpUrl()

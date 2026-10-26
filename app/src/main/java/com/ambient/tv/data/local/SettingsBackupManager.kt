@@ -824,7 +824,12 @@ class SettingsBackupManager @Inject constructor(
         preferences.mpvDebandEnabled = backup.mpvDebandEnabled
         preferences.vlcScalingFilterKey = backup.vlcScalingFilterKey
         // Import replaces advanced defaults as well; old backups must not retain stale filters.
-        preferences.audioSettings = backup.audioSettings ?: AudioSettings()
+        // Schema 70 added "Kanäle erzwingen" (AudioOptions.forceChannels). Older backups cannot
+        // carry it; never let a hand-edited old file force a channel layout.
+        preferences.audioSettings = (backup.audioSettings ?: AudioSettings()).let { audio ->
+            if (backup.schemaVersion >= 70) audio
+            else audio.copy(profiles = audio.profiles.mapValues { (_, options) -> options.copy(forceChannels = 0) })
+        }
         preferences.mpvImageOptions = backup.mpvImageOptions ?: MpvImageOptions(
             scaler = backup.mpvScalingFilterKey, deband = if (backup.mpvDebandEnabled) "medium" else "off",
         )
@@ -906,7 +911,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 69
+        const val CURRENT_SCHEMA_VERSION = 70
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

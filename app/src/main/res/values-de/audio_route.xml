@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_output_kind_speaker">Lautsprecher</string>
+    <string name="audio_output_kind_hdmi">HDMI</string>
+    <string name="audio_output_kind_hdmi_arc">HDMI ARC</string>
+    <string name="audio_output_kind_hdmi_earc">HDMI eARC</string>
+    <string name="audio_output_kind_headphones">Kopfhörer</string>
+    <string name="audio_output_kind_bluetooth">Bluetooth</string>
+    <string name="audio_output_kind_usb">USB</string>
+    <string name="audio_output_kind_optical">Digital (optisch)</string>
+    <string name="audio_output_kind_other">Ausgang</string>
+    <string name="audio_route_bitstream_on">Bitstream an</string>
+    <string name="audio_route_bitstream_off">Bitstream aus</string>
+    <string name="audio_route_forced">(%1$s erzwungen)</string>
+    <string name="audio_route_output">Aktueller Ausgang</string>
+    <string name="audio_route_stereo_mix_hint">Passthrough aus – Mehrkanal wird zu Stereo gemischt</string>
+    <string name="audio_force_channels">Kanäle erzwingen</string>
+    <string name="audio_force_channels_hint">Für Verstärker, die weniger Kanäle melden, als sie abspielen können. Sendet trotzdem 5.1 oder 7.1; „Passthrough bevorzugen“ bleibt wählbar. Lehnt der Ausgang ab, spielt die Wiedergabe mit den gemeldeten Kanälen weiter.</string>
+    <string name="notice_audio_eac3_conversion">Der Medienserver wandelt die ausgewählte Tonspur zu E-AC3 5.1 um; das Video bleibt für Stream-Kopie vorgesehen.</string>
+</resources>

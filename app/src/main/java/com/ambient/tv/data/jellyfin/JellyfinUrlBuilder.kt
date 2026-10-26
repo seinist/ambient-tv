@@ -103,7 +103,7 @@ class JellyfinUrlBuilder @Inject constructor(
         return resolved.newBuilder().addQueryParameter("ApiKey", tokenStore.jellyfinToken).build().toString()
     }
 
-    fun compatibilityUrl(itemId: String, mediaSourceId: String?, startPositionMs: Long, video: Boolean, audioStreamIndex: Int? = null, subtitleStreamIndex: Int = -1, audioCodec: String = "aac", playSessionId: String? = null): String = url(
+    fun compatibilityUrl(itemId: String, mediaSourceId: String?, startPositionMs: Long, video: Boolean, audioStreamIndex: Int? = null, subtitleStreamIndex: Int = -1, audioCodec: String = "aac", playSessionId: String? = null, audioChannels: Int = if (audioCodec == "aac") 2 else 6): String = url(
         "Videos/${JellyfinBackend.raw(itemId)}/main.m3u8",
         buildMap {
             put("UserId", preferences.jellyfinUserId)
@@ -112,7 +112,7 @@ class JellyfinUrlBuilder @Inject constructor(
             put("AudioStreamIndex", audioStreamIndex?.toString())
             put("SubtitleStreamIndex", subtitleStreamIndex.toString())
             put("VideoCodec", if (video) "h264" else "copy")
-            putAll(com.ambient.tv.data.remote.serverAudioConversionQuery(audioCodec, video, audioStreamIndex, playSessionId))
+            putAll(com.ambient.tv.data.remote.serverAudioConversionQuery(audioCodec, video, audioStreamIndex, playSessionId, audioChannels))
             put("DeviceId", preferences.clientIdentifier)
             put("SegmentContainer", "ts")
             put("Protocol", "hls")

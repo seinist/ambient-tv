@@ -2070,6 +2070,7 @@ internal class MpvPlaybackEngine(
     }
 
     private var lastAudioOutputLog: String? = null
+    private var lastAudioOutputLogDiagnostics = false
 
     /** Logs the opened audio output once per change (source layout, AO layout, driver, plan). */
     private fun logAudioOutput() {
@@ -2080,10 +2081,11 @@ internal class MpvPlaybackEngine(
             "out=$format ${getPropertyString("audio-out-params/channels") ?: "?"}(${getPropertyDouble("audio-out-params/channel-count", 0.0).toInt()}ch) " +
             "audio-channels=${getPropertyString("audio-channels") ?: "?"} spdif=${getPropertyString("audio-spdif").orEmpty().ifEmpty { "-" }} " +
             "plan=${plan.mode}/${plan.channels} routePcmChannels=${audioSession.route.pcmChannels}"
-        if (line == lastAudioOutputLog) return
+        val diagnostics = com.ambient.tv.diagnostics.DiagnosticLog.enabled
+        if (line == lastAudioOutputLog && diagnostics == lastAudioOutputLogDiagnostics) return
         lastAudioOutputLog = line
-        com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO,
-            com.ambient.tv.ui.player.AUDIO_ROUTE_LOG_TAG, line, deduplicate = false)
+        lastAudioOutputLogDiagnostics = diagnostics
+        com.ambient.tv.ui.player.logAudioRouteLine(line)
     }
     fun audioOutputDriver(): String? = getPropertyString("current-ao")?.takeIf { it.isNotBlank() }
 
@@ -2234,11 +2236,18 @@ internal class MpvPlaybackEngine(
                         // (AAC, MP3, FLAC, Opus) would reopen the same PCM output, so it goes
                         // straight to the stereo retry.
                         val codec = audioSession.sourceCodec
-                        if (!audioAoInitRetried && mpvBitstreamCodec(codec)) {
+                        if (audioSession.options.forceChannels > 0 && !audioSession.forcedChannelsFailed) {
+                            // "Kanäle erzwingen" asked for more than the output accepts: follow the
+                            // route again for this playback; the saved setting stays as it is.
+                            audioSession.forcedChannelsFailed = true
+                            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output rejected forced " +
+                                "${audioSession.options.forceChannels}ch (AO init $error); using the reported output for this playback")
+                        } else if (!audioAoInitRetried && mpvBitstreamCodec(codec)) {
                             audioAoInitRetried = true
                             com.ambient.tv.ui.player.AudioCodecRejects.reject(codec)
                         } else {
                             audioSession.forceStereoPcm = true
+                            com.ambient.tv.ui.player.logAudioRouteLine("MPV audio output failed (AO init $error); stereo PCM for this playback")
                         }
                         applyAudioOptions()
                         reopenStream(lastPlaybackPositionMs)

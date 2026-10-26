@@ -52,7 +52,7 @@ internal class LocalAudioRenderer(
         // canonical layout; decoding straight to S16 stereo would lose peak headroom.
         if (plan.channels in setOf("stereo", "mono", "left", "right"))
             return localDownmixInputChannels(format.channelCount)
-        return localPcmChannelCandidates(format.channelCount, session.route.pcmChannels, plan.channels)
+        return localPcmChannelCandidates(format.channelCount, session.outputPcmChannels, plan.channels)
             .firstOrNull { it == 2 || sinkSupportsFormat(output(false, it)) } ?: 2
     }
 

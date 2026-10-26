@@ -140,7 +140,7 @@ class DlnaRepository @Inject constructor(
     override suspend fun markWatched(ratingKey: String): Result<Unit> = runCatching { store.recordProgress(ratingKey, 0, completed = true) }
     override suspend fun markUnwatched(ratingKey: String): Result<Unit> = runCatching { store.recordProgress(ratingKey, 0, completed = false) }
     override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = runCatching { store.removeProgress(ratingKey) }
-    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?) = Result.failure<String>(UnsupportedOperationException("DLNA has no common transcoder API"))
+    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("DLNA has no common transcoder API"))
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long) = Result.failure<String>(UnsupportedOperationException("DLNA has no common transcoder API"))
 
     private fun soap(server: DlnaServer, action: String, values: Map<String, String>): String {

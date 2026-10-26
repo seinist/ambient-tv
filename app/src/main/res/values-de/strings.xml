@@ -750,7 +750,7 @@
     <string name="settings_tvh_playback_backend_hint">Standard-Player für Live-TV und Aufnahmen; im Player auch umschaltbar.</string>
     <string name="settings_passthrough_visualizer_hint">Die Musikvisualisierung bleibt an, solange der Ton nicht direkt als Bitstream durchgereicht wird.</string>
     <string name="settings_media_passthrough_title">Audio-Passthrough</string>
-    <string name="settings_media_passthrough_subtitle">Gibt Dolby- und DTS-Ton direkt an Fernseher oder Verstärker weiter, wenn das Gerät es kann.</string>
+    <string name="settings_media_passthrough_subtitle">Automatisch: Gibt Dolby- und DTS-Ton direkt an Fernseher oder Verstärker weiter, aber nur Formate, die der aktuelle Ausgang bestätigt. Alles andere wird als PCM abgespielt.</string>
     <string name="settings_media_passthrough_toggle">Passthrough für Bibliothek &amp; Live-Wiedergabe</string>
     <string name="settings_spotify_web_title">Spotify-Konto</string>
     <string name="settings_spotify_web_subtitle">Mit Spotify anmelden, um deine Bibliothek und Playlists zu verwenden.</string>
