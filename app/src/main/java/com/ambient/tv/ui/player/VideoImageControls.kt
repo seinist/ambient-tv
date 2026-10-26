@@ -307,11 +307,34 @@ internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3Imag
     ImageChoice(R.string.image_processing, if (o.enabled) "on" else "off", imageOnOff()) { change(o.copy(enabled = it == "on")) }
     ImageHint(stringResource(R.string.image_media3_hint))
     if (o.enabled) {
-        ImageChoice(R.string.player_upscaler, o.scaler, listOf("bilinear" to "Bilinear", "lanczos" to "Lanczos · 3")) { change(o.copy(scaler = it)) }
+        ImageChoice(R.string.player_upscaler, o.scaler, media3ScalerChoices()) { change(o.copy(scaler = it)) }
+        // Saved defaults: the source size is not known here, so FSR counts as upscaling.
+        Media3FilterRows(o, fsrSharpens = media3FsrSharpens(o, upscalerApplies = true), change = change)
         ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
         ImageLevel(R.string.image_contrast, o.contrast) { change(o.copy(contrast = it)) }
         ImageLevel(R.string.image_saturation, o.saturation) { change(o.copy(saturation = it)) }
+        ImageLevel(R.string.image_gamma, o.gamma) { change(o.copy(gamma = it)) }
     }
+}
+
+/**
+ * Media3 deband and sharpening, with MPV's labels. FSR brings RCAS, so its sharpening row is
+ * replaced by the same hint MPV shows instead of stacking a second sharpening pass.
+ */
+@Composable
+internal fun Media3FilterRows(
+    o: Media3ImageOptions,
+    fsrSharpens: Boolean,
+    deband: Boolean = true,
+    sharpen: Boolean = true,
+    change: (Media3ImageOptions) -> Unit,
+) {
+    if (deband) ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
+    if (sharpen) {
+        if (fsrSharpens) ImageHint(stringResource(R.string.image_fsr_integrated_sharpen))
+        else ImageChoice(R.string.image_sharpen, o.sharpening, imageStrengths() + ("cas" to "AMD CAS")) { change(o.copy(sharpening = it)) }
+    }
+    ImageHint(stringResource(R.string.image_media3_filter_hint))
 }
 
 /** Shown after the controller paused playback because loaded shaders/filters drop frames. */

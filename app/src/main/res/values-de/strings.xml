@@ -437,7 +437,6 @@
     <string name="settings_playback_overview_antiring">Anti-Ringing</string>
     <string name="settings_playback_overview_sigmoid">Sigmoid</string>
     <string name="settings_playback_overview_picture">Helligkeit / Kontrast / Sättigung / Gamma</string>
-    <string name="settings_playback_overview_picture_rgb">Helligkeit / Kontrast / Sättigung</string>
     <string name="settings_playback_overview_tone_mapping">Tonemapping</string>
     <string name="settings_playback_overview_dither">Dithering-Tiefe</string>
     <string name="settings_playback_overview_software">Softwareverarbeitung</string>
@@ -1062,7 +1061,8 @@
     <string name="image_vlc_software">Software-Filter · SDR</string>
     <string name="image_vlc_scaler_hint">Gilt, wenn FFmpeg das Bild skaliert; die Android-Skalierung kann ihn umgehen.</string>
     <string name="image_vlc_cpu_hint">Software-Decodierung aktiviert diese Filter für SDR; Änderungen starten die Wiedergabe neu, aufwendige Videos können ruckeln.</string>
-    <string name="image_media3_hint">Skalierung und Bildanpassung für SDR-Videos. Das Einschalten startet die Videodekodierung neu.</string>
+    <string name="image_media3_hint">Skalierung, Filter und Bildanpassung für SDR-Videos. Das Einschalten startet die Videodekodierung neu.</string>
+    <string name="image_media3_filter_hint">Läuft auf der GPU, nur bei SDR-Videos. Am besten mit „Leicht“ beginnen: starke Schärfung hebt auch Rauschen hervor.</string>
     <string name="image_media3_device_bypass">Media3-Bildeffekte werden auf dieser Shield ausgesetzt, um schwarzes Video und Hänger zu vermeiden. Gespeicherte Einstellungen bleiben erhalten.</string>
     <string name="image_filters_sparsam_hint">Filter und Zwischenbildberechnung sind im Leistungsmodus Sparsam aus.</string>
     <string name="image_mpv_sparsam_defaults_hint">Auf diesem Gerät laufen unveränderte Standardwerte günstig (bilineare Skalierung, kein Debanding, kein Sigmoid), damit OpenGL und Vulkan flüssig bleiben. Was du selbst wählst, wird angewendet, auch Lanczos oder Debanding. Mit Wiedergabe-Leistung „Maximale Leistung“ gilt immer die volle Qualität.</string>

@@ -440,7 +440,6 @@
     <string name="settings_playback_overview_antiring">Anti-ringing</string>
     <string name="settings_playback_overview_sigmoid">Sigmoid</string>
     <string name="settings_playback_overview_picture">Brightness / contrast / saturation / gamma</string>
-    <string name="settings_playback_overview_picture_rgb">Brightness / contrast / saturation</string>
     <string name="settings_playback_overview_tone_mapping">Tone mapping</string>
     <string name="settings_playback_overview_dither">Dithering depth</string>
     <string name="settings_playback_overview_software">Software processing</string>
@@ -1061,7 +1060,8 @@
     <string name="image_vlc_software">Software filters · SDR</string>
     <string name="image_vlc_scaler_hint">Used when FFmpeg resizes the video; Android scaling may bypass it.</string>
     <string name="image_vlc_cpu_hint">Software decoding enables these filters for SDR; changes restart playback and heavy video may stutter.</string>
-    <string name="image_media3_hint">Scaling and picture adjustment for SDR video. Enabling restarts video decoding.</string>
+    <string name="image_media3_hint">Scaling, filters and picture adjustment for SDR video. Enabling restarts video decoding.</string>
+    <string name="image_media3_filter_hint">Runs on the GPU for SDR video only. Start with Light: strong sharpening also brings out noise.</string>
     <string name="image_media3_device_bypass">Media3 image effects are bypassed on this Shield to prevent black video and freezes. Saved settings are retained.</string>
     <string name="image_filters_sparsam_hint">Filters and motion interpolation are off in Low performance mode.</string>
     <string name="image_mpv_sparsam_defaults_hint">On this device untouched defaults run cheap (bilinear scaling, no deband, no sigmoid) so OpenGL and Vulkan stay smooth. Whatever you choose is applied, Lanczos or deband included. With playback performance “Maximum performance” full quality always applies.</string>

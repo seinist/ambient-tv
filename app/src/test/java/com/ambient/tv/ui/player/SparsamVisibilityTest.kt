@@ -21,5 +21,6 @@ class SparsamVisibilityTest {
         assertTrue(vlc.deinterlace)
         val m3 = playerPanelVideoVisibility("media3", false, false, true, media3SdrAllowed = true).sparsam(true, media3 = true)
         assertFalse(m3.media3Processing || m3.picture || m3.upscaler)
+        assertFalse(m3.deband || m3.shaders || m3.pictureGamma)
     }
 }

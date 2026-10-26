@@ -144,26 +144,18 @@ class PlaybackNerdStatsOverlayTest {
             applied = media3AppliedProcessing(
                 effectsActive = true,
                 scaler = "lanczos",
-                brightness = -5,
-                contrast = 0,
-                saturation = 10,
-                outputWidth = 1920,
-                outputHeight = 1080,
+                stages = listOf(Media3Stage.Scale("lanczos"), Media3Stage.Brightness(-5), Media3Stage.Saturation(10)),
             ),
         )
         assertEquals("brightness -5, saturation 10", active.video.first { it.label == "Video filters" }.value)
-        assertEquals("Lanczos", active.video.first { it.label == "Upscaler" }.value)
+        assertEquals("Lanczos · 3", active.video.first { it.label == "Upscaler" }.value)
         assertEquals("n/a", active.video.first { it.label == "Deinterlacer" }.value)
         assertEquals("n/a", active.video.first { it.label == "Frame interpolation" }.value)
 
         val idle = media3AppliedProcessing(
             effectsActive = false,
             scaler = "lanczos",
-            brightness = -5,
-            contrast = 0,
-            saturation = 10,
-            outputWidth = 1920,
-            outputHeight = 1080,
+            stages = listOf(Media3Stage.Brightness(-5)),
         )
         assertEquals("off", idle.videoFilters)
         assertEquals("n/a", idle.upscaler)

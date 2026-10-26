@@ -576,15 +576,20 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
             ImageHint(stringResource(R.string.image_media3_hint))
         }
         if (visibility.upscaler) {
-            ImageChoice(R.string.player_upscaler, options.scaler, listOf("bilinear" to "Bilinear", "lanczos" to "Lanczos · 3")) {
+            ImageChoice(R.string.player_upscaler, options.scaler, media3ScalerChoices()) {
                 change(options.copy(scaler = it))
             }
         }
+    }
+    if (section == "filters" && (visibility.deband || visibility.shaders)) {
+        Media3FilterRows(options, fsrSharpens = media3FsrSharpens(options, visibility.upscaler),
+            deband = visibility.deband, sharpen = visibility.shaders, change = ::change)
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }
         ImageLevel(R.string.image_contrast, options.contrast) { change(options.copy(contrast = it)) }
         ImageLevel(R.string.image_saturation, options.saturation) { change(options.copy(saturation = it)) }
+        if (visibility.pictureGamma) ImageLevel(R.string.image_gamma, options.gamma) { change(options.copy(gamma = it)) }
     }
 }
 
@@ -733,11 +738,12 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
     return when (key) {
         "filters" -> mpv?.let { listOf(it.deband != m.deband, it.sharpening != m.sharpening, it.denoise != m.denoise,
             it.deblock != m.deblock, it.filmGrain != m.filmGrain, it.superResolution != m.superResolution).count { c -> c } }
-            ?: vlc?.let { listOf(it.softwareProcessing != v.softwareProcessing, it.deband != v.deband, it.denoise != v.denoise).count { c -> c } } ?: 0
+            ?: vlc?.let { listOf(it.softwareProcessing != v.softwareProcessing, it.deband != v.deband, it.denoise != v.denoise).count { c -> c } }
+            ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening).count { c -> c } } ?: 0
         "motion" -> if ((mpv?.svpMode ?: vlc?.svpMode ?: "off") != "off") 1 else 0
         "color" -> mpv?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
             ?: vlc?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
-            ?: media3?.let { listOf(it.brightness - d.brightness, it.contrast - d.contrast, it.saturation - d.saturation).count { x -> x != 0 } } ?: 0
+            ?: media3?.let { listOf(it.brightness - d.brightness, it.contrast - d.contrast, it.saturation - d.saturation, it.gamma - d.gamma).count { x -> x != 0 } } ?: 0
         else -> 0
     }
 }
@@ -756,7 +762,7 @@ private fun videoSectionSummary(
             !upscalerApplies -> ""
             mpv != null -> VideoImageCatalog.mpvScalers[mpv.scaler] ?: mpv.scaler
             vlc != null -> VideoImageCatalog.vlcScalers[vlc.scaler] ?: vlc.scaler
-            media3 != null -> if (media3.enabled) (if (media3.scaler == "lanczos") "Lanczos · 3" else "Bilinear") else stringResource(R.string.player_off)
+            media3 != null -> if (media3.enabled) media3ScalerLabel(media3.scaler) else stringResource(R.string.player_off)
             else -> ""
         }
         "output" -> stringResource(R.string.video_section_output_summary)

@@ -25,7 +25,7 @@ class VideoImageOptionsTest {
             svpMode = "balanced")
         source.vlcImageOptions = VlcImageOptions(softwareProcessing = true, scaler = "spline", deband = "light",
             denoise = "medium", brightness = 5, contrast = -5, saturation = 10, gamma = -10)
-        source.media3ImageOptions = Media3ImageOptions(true, "lanczos", 5, -10, 15)
+        source.media3ImageOptions = Media3ImageOptions(true, "fsr", 5, -10, 15, sharpening = "cas", deband = "medium", gamma = 7)
         val exported = SettingsBackupManager(source, TokenStore(memoryPreferences(), source)).exportJson()
         val target = AppPreferences(memoryPreferences())
         SettingsBackupManager(target, TokenStore(memoryPreferences(), target)).importJson(exported)
@@ -61,6 +61,11 @@ class VideoImageOptionsTest {
         assertEquals("auto", mpv.toneMapping)
         assertEquals("bilinear", VlcImageOptions(scaler = "evil", denoise = "bad").normalized().scaler)
         assertEquals("bilinear", Media3ImageOptions(scaler = "evil").normalized().scaler)
+        val junk = Media3ImageOptions(sharpening = "evil", deband = "evil", gamma = -99).normalized()
+        assertEquals("off", junk.sharpening)
+        assertEquals("off", junk.deband)
+        assertEquals(-20, junk.gamma)
+        assertEquals("fsr", Media3ImageOptions(scaler = "fsr").normalized().scaler)
     }
 
     @Test fun integratedSharpenersDisableStackedSsimSuperRes() {

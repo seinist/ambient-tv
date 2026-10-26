@@ -22,6 +22,8 @@ class VideoSectionSummaryTest {
         assertEquals(1, videoSectionChanges("motion", mpv, null, null))
         assertEquals(1, videoSectionChanges("filters", null, VlcImageOptions(denoise = "light"), null))
         assertEquals(2, videoSectionChanges("color", null, null, Media3ImageOptions(contrast = 3, saturation = -1)))
+        assertEquals(3, videoSectionChanges("color", null, null, Media3ImageOptions(contrast = 3, saturation = -1, gamma = 4)))
+        assertEquals(2, videoSectionChanges("filters", null, null, Media3ImageOptions(deband = "light", sharpening = "cas")))
     }
 
     @Test fun everyAreaHasATitle() {
