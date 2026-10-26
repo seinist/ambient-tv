@@ -11,7 +11,7 @@
     <string name="playback_profile_save_all">Save for all videos</string>
     <string name="playback_profile_saved_all">Audio/video configuration saved for all videos</string>
     <string name="playback_profile_save_resolution_scope">Save for all videos with this width</string>
-    <string name="playback_profile_resolution_scope">Source width: %1$s. * means any height. Also applies to live TV unless it has its own preset for this width.</string>
+    <string name="playback_profile_resolution_scope">Source width: %1$s. * means any height. Also applies to slightly different widths (±3 %%, e.g. 1916 instead of 1920) without their own preset, and to live TV unless it has its own preset for this width.</string>
     <string name="playback_profile_load_all">Load configuration for all videos</string>
     <string name="playback_profile_summary">Audio, video and renderer</string>
     <string name="playback_profile_includes">Audio, renderer, video output, decoder, picture and filter changes are remembered automatically for the current video. Save actions apply them as shared defaults.</string>
@@ -27,6 +27,9 @@
     <string name="playback_scope_season">All episodes of this season</string>
     <string name="playback_scope_series">All episodes of this series</string>
     <string name="playback_scope_collection">Collection “%1$s”</string>
+    <string name="playback_scope_switched">Remember changes for: %1$s. %2$s</string>
+    <string name="playback_scope_switched_broad">Changes already made in this playback were moved there.</string>
+    <string name="playback_scope_switched_title">New changes apply only to this video.</string>
     <string name="playback_scope_reset">Reset: %1$s</string>
     <string name="playback_scope_origins">Source – Player: %1$s · Picture: %2$s · Deinterlacing: %3$s · Output: %4$s · Audio: %5$s · Delay: %6$s</string>
     <string name="playback_origin_episode">Episode</string>

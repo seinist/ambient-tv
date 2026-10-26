@@ -21,8 +21,9 @@ internal fun selectLiveRenderer(
     mpvAvailable: Boolean = true,
 ): LiveRendererSelection {
     val supported = setOf("auto", "media3", "vlc", "mpv")
-    val liveProfile = if (live && widthKey != null) profiles["live:$widthKey"] else null
-    val generalProfile = widthKey?.let(profiles::get)
+    // Exact width first, else a saved preset of a similar width (same standard class, ±3 %).
+    val liveProfile = if (live) com.ambient.tv.data.local.matchingResolutionKey(profiles, widthKey, "live:")?.let(profiles::get) else null
+    val generalProfile = com.ambient.tv.data.local.matchingResolutionKey(profiles, widthKey)?.let(profiles::get)
     val selection = when {
         recovery in supported -> LiveRendererSelection(recovery!!, LiveRendererOrigin.RECOVERY)
         manual in supported -> LiveRendererSelection(manual!!, LiveRendererOrigin.MANUAL)

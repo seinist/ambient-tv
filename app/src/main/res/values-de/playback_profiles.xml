@@ -11,7 +11,7 @@
     <string name="playback_profile_save_all">Für alle Videos speichern</string>
     <string name="playback_profile_saved_all">Audio-/Videokonfiguration für alle Videos gespeichert</string>
     <string name="playback_profile_save_resolution_scope">Für alle Videos dieser Breite speichern</string>
-    <string name="playback_profile_resolution_scope">Quellbreite: %1$s. * steht für beliebige Höhe. Gilt auch für Live-TV, solange dort kein eigenes Preset dieser Breite gespeichert ist.</string>
+    <string name="playback_profile_resolution_scope">Quellbreite: %1$s. * steht für beliebige Höhe. Gilt auch für leicht abweichende Breiten (±3 %%, z. B. 1916 statt 1920) ohne eigenes Preset und für Live-TV, solange dort kein eigenes Preset dieser Breite gespeichert ist.</string>
     <string name="playback_profile_load_all">Konfiguration für alle Videos laden</string>
     <string name="playback_profile_summary">Audio, Video und Renderer</string>
     <string name="playback_profile_includes">Änderungen an Audio, Renderer, Videoausgabe, Decoder, Bild und Filtern werden automatisch für das aktuelle Video gemerkt. Mit den Speicheraktionen werden sie als gemeinsame Vorgaben übernommen.</string>
@@ -27,6 +27,9 @@
     <string name="playback_scope_season">Alle Folgen dieser Staffel</string>
     <string name="playback_scope_series">Alle Folgen dieser Serie</string>
     <string name="playback_scope_collection">Sammlung „%1$s“</string>
+    <string name="playback_scope_switched">Änderungen merken für: %1$s. %2$s</string>
+    <string name="playback_scope_switched_broad">Bereits in dieser Wiedergabe geänderte Werte wurden dorthin übernommen.</string>
+    <string name="playback_scope_switched_title">Neue Änderungen gelten nur noch für dieses Video.</string>
     <string name="playback_scope_reset">Zurücksetzen: %1$s</string>
     <string name="playback_scope_origins">Herkunft – Player: %1$s · Bild: %2$s · Deinterlacing: %3$s · Ausgabe: %4$s · Audio: %5$s · Verzögerung: %6$s</string>
     <string name="playback_origin_episode">Folge</string>

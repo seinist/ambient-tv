@@ -83,12 +83,40 @@ internal fun ResolutionVideoProfile.liveRendererOrDefault(default: String): Stri
 /** New live profile from a general width profile: options carry over, the player stays "auto" (inherit). */
 internal fun liveProfileTemplate(general: ResolutionVideoProfile): ResolutionVideoProfile = general.copy(rendererKey = "auto")
 
+/** Standard source widths; a width within [SIMILAR_WIDTH_TOLERANCE] of one belongs to its class. */
+private val standardVideoWidths = listOf(720, 854, 1280, 1920, 2560, 3840, 7680)
+
+/** Encodes often crop a few pixels (1916 or 1904 instead of 1920): ±3 % still counts as the same width. */
+internal const val SIMILAR_WIDTH_TOLERANCE = 0.03
+
+/** Standard width class of [width], or null when no standard width is within the tolerance. */
+internal fun standardWidthClass(width: Int?): Int? = width?.takeIf { it > 0 }?.let { w ->
+    standardVideoWidths.minByOrNull { kotlin.math.abs(it - w) }?.takeIf { kotlin.math.abs(it - w) <= it * SIMILAR_WIDTH_TOLERANCE }
+}
+
+/**
+ * Saved key for [widthKey] ("width:<n>") among keys with [prefix] ("" or "live:"): the exact width first,
+ * else the saved width of the same standard class closest to it (ties: the smaller width). Null if none.
+ */
+internal fun matchingResolutionKey(profiles: Map<String, ResolutionVideoProfile>, widthKey: String?, prefix: String = ""): String? {
+    widthKey ?: return null
+    "$prefix$widthKey".let { if (it in profiles) return it }
+    val width = widthKey.removePrefix("width:").toIntOrNull() ?: return null
+    val target = standardWidthClass(width) ?: return null
+    return profiles.keys.mapNotNull { key ->
+        val saved = key.takeIf { it.startsWith("${prefix}width:") }?.removePrefix("${prefix}width:")?.toIntOrNull() ?: return@mapNotNull null
+        if (standardWidthClass(saved) == target) key to saved else null
+    }.minWithOrNull(compareBy({ kotlin.math.abs(it.second - width) }, { it.second }))?.first
+}
+
+/** Saved key that applies to [widthKey]: live preset (exact or similar) first for live, then the regular one. */
+internal fun resolutionProfileKeyFor(profiles: Map<String, ResolutionVideoProfile>, widthKey: String?, live: Boolean): String? =
+    (if (live) matchingResolutionKey(profiles, widthKey, "live:") else null) ?: matchingResolutionKey(profiles, widthKey)
+
 /** Resolve whole profiles: a Live TV override wins without merging in the regular filter chain. */
 internal fun resolutionProfileFor(
     profiles: Map<String, ResolutionVideoProfile>, widthKey: String?, live: Boolean,
-): ResolutionVideoProfile? = widthKey?.let {
-    (if (live) profiles["live:$it"] else null) ?: profiles[it]
-}
+): ResolutionVideoProfile? = resolutionProfileKeyFor(profiles, widthKey, live)?.let(profiles::get)
 
 /** Live defaults must never overwrite the corresponding regular width profile. */
 internal fun withLiveResolutionProfile(

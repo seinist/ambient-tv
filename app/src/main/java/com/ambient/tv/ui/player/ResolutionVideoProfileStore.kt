@@ -38,6 +38,13 @@ internal object ResolutionVideoProfileStore {
         return resolutionProfileFor(profiles, key(metadata)?.removePrefix("live:"), metadata.isLive) ?: global(context)
     }
 
+    /** Saved width preset that applies to [metadata] (exact width or a similar one), without the global fallback. */
+    fun matchedKey(context: Context, metadata: PlaybackMetadata?): String? {
+        if (metadata == null || metadata.isTrailer || !metadata.hasVideo) return null
+        return com.ambient.tv.data.local.resolutionProfileKeyFor(videoImagePreferences(context).resolutionVideoProfiles,
+            key(metadata)?.removePrefix("live:"), metadata.isLive)
+    }
+
     /** Global controls remain editable from Settings after an explicit global save. */
     fun global(context: Context): ResolutionVideoProfile? {
         val prefs = videoImagePreferences(context)
@@ -52,13 +59,19 @@ internal object ResolutionVideoProfileStore {
         val profiles = videoImagePreferences(context).resolutionVideoProfiles
         val key = VideoResolutionClass.key(width) ?: return default
         // A live profile's "auto" inherits the Tvheadend default ([liveRendererOrDefault]).
-        if (isLive) profiles["live:$key"]?.let { return it.liveRendererOrDefault(default) }
-        return profiles[key]?.rendererOrDefault(default) ?: default
+        if (isLive) com.ambient.tv.data.local.matchingResolutionKey(profiles, key, "live:")?.let { return profiles.getValue(it).liveRendererOrDefault(default) }
+        return com.ambient.tv.data.local.matchingResolutionKey(profiles, key)?.let { profiles.getValue(it).rendererOrDefault(default) } ?: default
     }
 
+    /** Removes the preset that applies to [key]: the exact width, else the similar width that was used. */
     fun forget(context: Context, key: String) {
         val prefs = videoImagePreferences(context)
-        prefs.resolutionVideoProfiles = prefs.resolutionVideoProfiles - key
+        val profiles = prefs.resolutionVideoProfiles
+        val live = key.startsWith("live:")
+        val actual = key.takeIf { it in profiles }
+            ?: com.ambient.tv.data.local.matchingResolutionKey(profiles, key.removePrefix("live:"), if (live) "live:" else "")
+            ?: key
+        prefs.resolutionVideoProfiles = profiles - actual
     }
 
     fun save(context: Context, metadata: PlaybackMetadata?, handle: PlaybackHandle?, global: Boolean = false): String? {
