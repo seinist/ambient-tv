@@ -177,47 +177,41 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val stages = if (enabled) media3EffectPlan(effective, upscaling) else emptyList()
         if (signature == applied && stages == appliedStages) return
         val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
-        if (!enabled && !gpuPipelineInitialized) {
-            effectsActive = false
-            scalerInChain = null
-            appliedStages = emptyList()
-            applied = signature
-            publishApplied()
-            return // Even an empty list before prepare would unnecessarily enable the GPU sink.
-        }
         val effects = stages.map { media3Effect(it, outputWidth, outputHeight) }
         applied = signature
         appliedStages = stages
-        if (effects.isEmpty() && !gpuPipelineInitialized) {
-            effectsActive = false
-            scalerInChain = null
-            publishApplied()
-            return
-        }
-        if (!gpuPipelineInitialized) {
-            // 1.4.1 only creates the sink when enabling/resetting the renderer. stop() resets
-            // renderers outside foreground mode; setVideoEffects MUST precede prepare().
-            val index = player.currentMediaItemIndex
-            val position = player.currentPosition.coerceAtLeast(0L)
-            val playWhenReady = player.playWhenReady
-            val live = player.isCurrentMediaItemLive ||
-                ((BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player === player &&
-                    BackgroundPlaybackSession.snapshot.value.metadata?.isLive == true)
-            player.setForegroundMode(false)
-            player.stop()
-            player.setVideoEffects(effects)
-            gpuPipelineInitialized = true
-            if (!player.reopenTimeshiftAtLiveEdge()) {
-                if (live) player.seekToDefaultPosition() else player.seekTo(index, position)
-            }
-            player.playWhenReady = playWhenReady
-            player.prepare()
-        } else {
-            player.setVideoEffects(effects)
+        when (media3ChainTransition(prevActive = effectsActive, nextEmpty = effects.isEmpty(), gpuInitialized = gpuPipelineInitialized)) {
+            // Even an empty list before prepare would unnecessarily enable the GPU sink.
+            Media3ChainTransition.NONE -> Unit
+            // First chain: 1.4.1+ only creates the sink when enabling/resetting the renderer.
+            // Last effect removed: the same restart, so the picture (also when paused) shows
+            // the unfiltered frame right away instead of keeping the filtered one.
+            Media3ChainTransition.RESTART -> restartWithEffects(player, effects)
+            Media3ChainTransition.UPDATE -> player.setVideoEffects(effects)
         }
         effectsActive = enabled && effects.isNotEmpty()
         scalerInChain = scaler
         publishApplied()
+    }
+
+    /** stop() resets the renderers outside foreground mode; setVideoEffects MUST precede prepare(). */
+    private fun restartWithEffects(player: ExoPlayer, effects: List<Effect>) {
+        val index = player.currentMediaItemIndex
+        val position = player.currentPosition.coerceAtLeast(0L)
+        val playWhenReady = player.playWhenReady
+        val live = player.isCurrentMediaItemLive ||
+            ((BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player === player &&
+                BackgroundPlaybackSession.snapshot.value.metadata?.isLive == true)
+        player.setForegroundMode(false)
+        player.stop()
+        player.setVideoEffects(effects)
+        // The renderer keeps its video sink until release, even with an empty chain.
+        gpuPipelineInitialized = true
+        if (!player.reopenTimeshiftAtLiveEdge()) {
+            if (live) player.seekToDefaultPosition() else player.seekTo(index, position)
+        }
+        player.playWhenReady = playWhenReady
+        player.prepare()
     }
 
     companion object {
@@ -285,4 +279,18 @@ internal fun Media3ImageControls(player: ExoPlayer) {
     if (o.enabled && processing.hasConfiguredEffects) {
         ImageHint(stringResource(if (processing.effectsActive) R.string.image_media3_active else R.string.image_media3_waiting))
     }
+}
+
+internal enum class Media3ChainTransition { NONE, RESTART, UPDATE }
+
+/**
+ * How a new effect chain reaches ExoPlayer. [prevActive]: effects are running now; [nextEmpty]: the
+ * new chain has no effect; [gpuInitialized]: the GPU video sink exists (it stays until release).
+ * Before the sink exists, an empty chain changes nothing and the first effect needs a restart.
+ * Removing the last effect restarts the same way, so filters stop at once, also while paused.
+ */
+internal fun media3ChainTransition(prevActive: Boolean, nextEmpty: Boolean, gpuInitialized: Boolean): Media3ChainTransition = when {
+    !gpuInitialized -> if (nextEmpty) Media3ChainTransition.NONE else Media3ChainTransition.RESTART
+    prevActive && nextEmpty -> Media3ChainTransition.RESTART
+    else -> Media3ChainTransition.UPDATE
 }
