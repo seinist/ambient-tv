@@ -446,9 +446,7 @@ fun ArtworkImage(
     var visibleFraction by remember(currentModel) { mutableStateOf<Float?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
     val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, headers, visibleFraction) else null
-    val hdrFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
-        com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
-    )
+    val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
             AsyncImage(
@@ -510,6 +508,8 @@ fun CrossfadeBackdropImage(
     durationMillis: Int = 450,
     /** Crop backdrops around detected faces instead of [alignment] (see rememberArtworkFocusAlignment). */
     focusCrop: Boolean = false,
+    /** Fixed decode bound instead of the measured (full-screen) size, for dimmed backdrops. */
+    decodeSize: IntSize? = null,
 ) {
     val context = LocalContext.current
     val layers = remember { androidx.compose.runtime.mutableStateListOf<BackdropLayer>() }
@@ -528,10 +528,14 @@ fun CrossfadeBackdropImage(
     Box(if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         layers.forEach { layer ->
             androidx.compose.runtime.key(layer.id) {
-                val request = remember(layer.model, context, headers, constrainDecode) {
+                val request = remember(layer.model, context, headers, constrainDecode, decodeSize) {
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
                         .apply {
                             requestHeaders(headers)
+                            if (decodeSize != null) {
+                                size(decodeSize.width, decodeSize.height)
+                                scale(if (contentScale == ContentScale.Fit || contentScale == ContentScale.Inside) coil3.size.Scale.FIT else coil3.size.Scale.FILL)
+                            }
                             if (constrainDecode) {
                                 bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
                             }
@@ -550,9 +554,7 @@ fun CrossfadeBackdropImage(
                     val index = layers.indexOf(layer)
                     if (index > 0) layers.removeRange(0, index)
                 }
-                val hdrFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
-                    com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
-                )
+                val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
                 AsyncImage(
                     model = request,
                     contentDescription = contentDescription,

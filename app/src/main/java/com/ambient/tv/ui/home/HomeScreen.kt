@@ -114,6 +114,7 @@ import com.ambient.tv.ui.common.rememberArtworkSampledAccent
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -255,13 +256,15 @@ fun HomeScreen(
 
 /** Focus previews have their own state/draw layer, so their crossfade never invalidates rows. */
 @Composable
-private fun HomeFocusBackdrop(heroContent: StateFlow<HomeHeroContent?>) {
+private fun HomeFocusBackdrop(heroContent: StateFlow<HomeHeroContent?>, rowsScrolling: StateFlow<Boolean>) {
     if (com.ambient.tv.ui.player.LocalVisibleBackgroundVideo.current || !com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) return
     var displayed by remember(heroContent) { mutableStateOf(heroContent.value) }
     LaunchedEffect(heroContent) {
         heroContent.collectLatest { hero ->
-            // Do not decode every intermediate backdrop while a direction is held.
+            // Do not decode every intermediate backdrop while a direction is held, and never
+            // start the full-screen decode and fade while the rows glide to a new row.
             delay(250)
+            awaitRowScrollSettled(rowsScrolling)
             displayed = hero
         }
     }
@@ -273,6 +276,8 @@ private fun HomeFocusBackdrop(heroContent: StateFlow<HomeHeroContent?>) {
             contentDescription = null,
             headers = hero?.imageHeaders.orEmpty(),
             modifier = Modifier.fillMaxSize(),
+            // Under the 78-94 % scrim half resolution looks the same with a quarter of the pixels.
+            decodeSize = HomeBackdropDecodeSize,
         )
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
             0f to background.copy(alpha = 0.78f),
@@ -412,8 +417,11 @@ internal fun LibraryContent(
     // gets the same visual handoff from the hero's cheap opaque-to-transparent overlay.
     val maskRows = performance.allowRowFadeSaveLayer
     Box(modifier = Modifier.fillMaxSize()) {
-        HomeFocusBackdrop(heroContent)
-        HomeHeroAmbient(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize())
+        // Snapshot of rowListState.isScrollInProgress for the hero/backdrop collectors, which
+        // must not read composition state (BrowseWorkBudget.scrolling is not observable).
+        val rowsScrolling = remember { MutableStateFlow(false) }
+        HomeFocusBackdrop(heroContent, rowsScrolling)
+        HomeHeroAmbient(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize(), rowsScrolling)
         // Only restore focus/scroll once per screen entry (e.g. returning from Detail),
         // captured from the key present when this composable first entered composition.
         // Rebinding this to the live state.focusedRatingKey instead would re-fire on every
@@ -454,6 +462,9 @@ internal fun LibraryContent(
         val rowListState = rememberLazyListState(
             initialFirstVisibleItemIndex = if (restoreArmed) contentListIndex(restoreRowIndex) else 0,
         )
+        LaunchedEffect(rowListState) {
+            snapshotFlow { rowListState.isScrollInProgress }.collect { rowsScrolling.value = it }
+        }
         LaunchedEffect(refreshRecovery) {
             val index = state.rowKeys.indexOf(refreshRecovery?.rowId)
             if (index >= 0 && rowListState.layoutInfo.visibleItemsInfo.none { it.index == index }) rowListState.scrollToItem(index)
@@ -587,6 +598,7 @@ internal fun LibraryContent(
             spreadKey = homeHeroSpreadKey,
             entranceProgress = entranceProgress,
             drawAmbient = false,
+            rowsScrolling = rowsScrolling,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -623,7 +635,7 @@ private fun HomeShortcutRow(
                     else -> row.displayTitle(LocalContext.current)
                 },
                 onClick = { onOpen(row) },
-                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id).focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
+                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, row.id, soundsOnFocus = true).focusRequester(firstFocus).onFocusChanged { if (it.isFocused) onFocused(row) },
             )
         }
     }
@@ -734,6 +746,7 @@ internal fun HomeHero(
     entranceProgress: () -> Float,
     modifier: Modifier = Modifier,
     drawAmbient: Boolean = true,
+    rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -741,13 +754,20 @@ internal fun HomeHero(
     var artworkItem by remember(heroContent) { mutableStateOf(heroContent.value) }
     LaunchedEffect(heroContent) {
         heroContent.collectLatest { item ->
-            if (metadataItem != null) delay(150)
+            if (metadataItem != null) {
+                delay(150)
+                // New text layout and the crossfade land after the row glide, not inside it.
+                awaitRowScrollSettled(rowsScrolling)
+            }
             metadataItem = item
         }
     }
     LaunchedEffect(heroContent) {
         heroContent.collectLatest { item ->
-            if (artworkItem != null) delay(230)
+            if (artworkItem != null) {
+                delay(230)
+                awaitRowScrollSettled(rowsScrolling)
+            }
             artworkItem = item
         }
     }
@@ -763,7 +783,7 @@ internal fun HomeHero(
             .height(HomeHeroHeight),
     ) {
         if (drawAmbient) {
-            HomeHeroAmbient(heroContent, heroStyleKey, intensityPercent, spreadKey, Modifier.matchParentSize())
+            HomeHeroAmbient(heroContent, heroStyleKey, intensityPercent, spreadKey, Modifier.matchParentSize(), rowsScrolling)
         }
         Box(Modifier.matchParentSize().homeHeroVeil(MaterialTheme.colorScheme.background, performance.allowRowFadeSaveLayer))
         HomeStaticImage(
@@ -941,14 +961,15 @@ private fun HomeStaticImage(
                 model = request,
                 contentDescription = null,
                 contentScale = contentScale,
-                colorFilter = com.ambient.tv.ui.display.uiHdrBitmapColorFilter(
-                    com.ambient.tv.ui.display.LocalUiHdrState.current?.headroom ?: 1f,
-                ),
+                colorFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter(),
                 modifier = Modifier.fillMaxSize(),
             )
         }
     }
 }
+
+/** Backdrop decode bound (half of a 1080p UI); see [HomeFocusBackdrop]. */
+private val HomeBackdropDecodeSize = IntSize(960, 540)
 
 /** Kept behind the rows so the light can extend below the pinned metadata. */
 @Composable
@@ -958,13 +979,17 @@ internal fun HomeHeroAmbient(
     intensityPercent: Int,
     spreadKey: String,
     modifier: Modifier,
+    rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling,
 ) {
     // The visible background video is the backdrop; animated light on top only competes with it.
     if (com.ambient.tv.ui.player.LocalVisibleBackgroundVideo.current) return
     var heroArtwork by remember(heroContent) { mutableStateOf(heroContent.value) }
     LaunchedEffect(heroContent) {
         heroContent.collectLatest {
-            if (heroArtwork != null) delay(230)
+            if (heroArtwork != null) {
+                delay(230)
+                awaitRowScrollSettled(rowsScrolling)
+            }
             heroArtwork = it
         }
     }

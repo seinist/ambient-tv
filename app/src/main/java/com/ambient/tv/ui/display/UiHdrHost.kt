@@ -345,11 +345,29 @@ fun uiHdrHighlight(color: Color, headroom: Float): Color {
     )
 }
 
-/** Same headroom gain for poster bitmaps. SDR (headroom ≤ 1) stays bit-exact, with no filter. */
+/** Last filter per gain: ColorMatrix compares by array identity, so a fresh filter per call
+ * made every image painter look changed on each recomposition. */
+private class CachedHdrFilter(val gain: Float, val filter: androidx.compose.ui.graphics.ColorFilter)
+@Volatile private var cachedHdrFilter: CachedHdrFilter? = null
+
+/** Same headroom gain for poster bitmaps. SDR (headroom ≤ 1) stays bit-exact, with no filter.
+ * Equal headroom returns the same instance. */
 fun uiHdrBitmapColorFilter(headroom: Float): androidx.compose.ui.graphics.ColorFilter? {
     if (!headroom.isFinite() || headroom <= 1f) return null
     val gain = minOf(headroom, UI_HDR_HEADROOM_CAP)
-    return androidx.compose.ui.graphics.ColorFilter.colorMatrix(
+    cachedHdrFilter?.takeIf { it.gain == gain }?.let { return it.filter }
+    return newHdrFilter(gain).also { cachedHdrFilter = CachedHdrFilter(gain, it) }
+}
+
+/** [uiHdrBitmapColorFilter] for [LocalUiHdrState], stable across recompositions. */
+@androidx.compose.runtime.Composable
+fun rememberUiHdrBitmapColorFilter(): androidx.compose.ui.graphics.ColorFilter? {
+    val headroom = LocalUiHdrState.current?.headroom ?: 1f
+    return androidx.compose.runtime.remember(headroom) { uiHdrBitmapColorFilter(headroom) }
+}
+
+private fun newHdrFilter(gain: Float): androidx.compose.ui.graphics.ColorFilter =
+    androidx.compose.ui.graphics.ColorFilter.colorMatrix(
         androidx.compose.ui.graphics.ColorMatrix(floatArrayOf(
             gain, 0f, 0f, 0f, 0f,
             0f, gain, 0f, 0f, 0f,
@@ -357,4 +375,3 @@ fun uiHdrBitmapColorFilter(headroom: Float): androidx.compose.ui.graphics.ColorF
             0f, 0f, 0f, 1f, 0f,
         )),
     )
-}
