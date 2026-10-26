@@ -1,27 +1,31 @@
 package com.ambient.tv.ui.tvheadend
 
 import androidx.compose.runtime.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.ui.res.stringResource
-import com.ambient.tv.R
-import com.ambient.tv.ui.common.PlayerPanelEntry
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import com.ambient.tv.livetv.LIVE_TIMESHIFT_PREROLL_MS
 import com.ambient.tv.livetv.LiveTimeshift
+
+/**
+ * Wall-clock target of a relative timeshift seek, or null for the live edge. A forward seek that
+ * would land closer to live than the preroll opens the live URL instead, so playback keeps the
+ * full preroll and does not stall right after the reopen.
+ */
+internal fun timeshiftSeekTarget(anchorMs: Long, positionMs: Long, deltaMs: Long, oldestMs: Long, edgeMs: Long): Long? {
+    val oldest = oldestMs.coerceAtMost(edgeMs)
+    val position = anchorMs + positionMs.coerceIn(0L, (edgeMs - anchorMs).coerceAtLeast(0L))
+    val target = (position + deltaMs).coerceIn(oldest, edgeMs)
+    return if (deltaMs > 0 && target >= edgeMs - LIVE_TIMESHIFT_PREROLL_MS) null else target
+}
 
 internal fun seekLiveTimeshiftBy(positionMs: Long, deltaMs: Long) {
     val buffer = LiveTimeshift.current ?: return
     val anchor = LiveTimeshift.anchor.value ?: return
     val seek = LiveTimeshift.seekHandler ?: return
-    val edge = buffer.liveWallMs
-    val oldest = buffer.oldestWallMs.coerceAtMost(edge)
-    val position = anchor + positionMs.coerceIn(0L, (edge - anchor).coerceAtLeast(0L))
-    val target = (position + deltaMs).coerceIn(oldest, edge)
-    seek(if (deltaMs > 0 && target >= edge - 1_500L) null else target)
+    seek(timeshiftSeekTarget(anchor, positionMs, deltaMs, buffer.oldestWallMs, buffer.liveWallMs))
 }
 
 internal fun handleTimeshiftMediaKey(
@@ -43,14 +47,17 @@ internal fun handleTimeshiftMediaKey(
     return true
 }
 
-/** Closer to the broadcast than this counts as live (player start-up and network buffering). */
+/** Closer to the broadcast than this counts as live (preroll, player start-up and network buffering). */
 internal const val TIMESHIFT_LIVE_TOLERANCE_MS = 10_000L
+
+/** "Zurück zu Live" is active when playback is clearly behind, or the server recording has ended. */
+internal fun liveJumpEnabled(shiftable: Boolean, behindMs: Long, recordingFinished: Boolean = false): Boolean =
+    shiftable && (recordingFinished || behindMs > TIMESHIFT_LIVE_TOLERANCE_MS)
 
 internal fun canJumpToLive(isLive: Boolean, anchorMs: Long?, positionMs: Long, edgeMs: Long?, canSeek: Boolean, recordingFinished: Boolean = false): Boolean {
     if (!isLive || anchorMs == null || edgeMs == null || !canSeek) return false
-    if (recordingFinished) return true
     val elapsed = (edgeMs - anchorMs).coerceAtLeast(0L)
-    return elapsed - positionMs.coerceIn(0L, elapsed) > TIMESHIFT_LIVE_TOLERANCE_MS
+    return liveJumpEnabled(true, elapsed - positionMs.coerceIn(0L, elapsed), recordingFinished)
 }
 
 @Composable
@@ -65,21 +72,4 @@ internal fun jumpToLiveAvailable(isLive: Boolean, positionMs: Long): Boolean {
         }
     }
     return canJumpToLive(isLive, anchor, positionMs, window.first, LiveTimeshift.seekHandler != null, window.second)
-}
-
-@Composable
-internal fun JumpToLivePanelEntry(isLive: Boolean, positionMs: Long) {
-    val available = jumpToLiveAvailable(isLive, positionMs)
-    // Seeking replaces the stream and immediately makes this action unavailable. Keep the
-    // same focus target until the panel closes instead of removing its focused child.
-    var wasAvailable by remember(isLive) { mutableStateOf(false) }
-    SideEffect { if (available) wasAvailable = true }
-    if (isLive && (available || wasAvailable)) {
-        PlayerPanelEntry(
-            icon = Icons.Filled.PlayArrow,
-            title = stringResource(R.string.player_jump_live),
-            value = stringResource(R.string.player_jump_live_hint),
-            onClick = { if (available) LiveTimeshift.seekHandler?.invoke(null) },
-        )
-    }
 }

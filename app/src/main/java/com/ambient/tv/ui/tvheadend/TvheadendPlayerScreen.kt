@@ -910,9 +910,6 @@ private fun TvheadendPlaybackSurface(
                     formatNerdDurationMs(nerdStats.bufferDurationMs)?.let { add(stringResource(R.string.player_nerd_buffer_health) to it) }
                     formatNerdBitrate(nerdStats.bandwidthEstimateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_network_throughput) to it) }
                 },
-                settingsExtras = {
-                    JumpToLivePanelEntry(source.isLive, positionMs)
-                },
                 showVisualizer = hasAudioTrack && !hasVideoTrack,
                 hasVideoExtras = true,
                 // Only a hint, no options: no "Advanced" heading above it.
@@ -1090,7 +1087,6 @@ private fun TvhSettingsPanel(
         }
         item { TvhSettingsRow(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), audio, Modifier, onOpenAudio) }
         item { TvhSettingsRow(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), subtitle, Modifier, onOpenSubtitles) }
-        item { JumpToLivePanelEntry(source.isLive, player.currentPosition) }
         item {
             TvhSettingsRow(
                 Icons.Filled.Bedtime,
