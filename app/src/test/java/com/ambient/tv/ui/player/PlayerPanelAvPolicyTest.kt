@@ -84,9 +84,12 @@ class PlayerPanelAvPolicyTest {
         )
         assertTrue(allowed.upscaler)
         assertTrue(allowed.picture)
-        assertFalse(allowed.pictureGamma)
+        assertTrue(allowed.pictureGamma)
+        assertTrue(allowed.deband)
+        assertTrue(allowed.shaders)
         assertFalse(allowed.shaderUpscalers)
         assertTrue(allowed.media3Processing)
+        assertFalse(blocked.deband || blocked.shaders || blocked.pictureGamma)
     }
 
     @Test

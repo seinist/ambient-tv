@@ -17,11 +17,11 @@ internal data class PlayerPanelVideoVisibility(
     val svp: Boolean = false,
     /** Brightness, contrast and saturation. SDR only. */
     val picture: Boolean = false,
-    /** Gamma. Media3's effect chain has no gamma stage. */
+    /** Gamma. SDR only. */
     val pictureGamma: Boolean = false,
     /** Media3 can turn its SDR effect chain on. The scaler itself stays behind [upscaler]. */
     val media3Processing: Boolean = false,
-    /** MPV deband runs on a GPU VO even for HDR. VLC deband needs software processing. */
+    /** MPV deband runs on a GPU VO even for HDR. VLC deband needs software processing; Media3 its SDR effect chain. */
     val deband: Boolean = false,
     /** Source is larger than the fitted output; a downscaler can run. */
     val downscaler: Boolean = false,
@@ -134,11 +134,13 @@ internal fun playerPanelVideoVisibility(
         upscaler = media3ScalerApplies && scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.UPSCALE),
         shaderUpscalers = false,
         denoise = false,
-        shaders = false,
+        // Sharpening shaders of the SDR effect chain; FSR replaces them (see media3FsrSharpens).
+        shaders = media3ScalerApplies,
         svp = false,
         picture = media3ScalerApplies,
-        pictureGamma = false,
+        pictureGamma = media3ScalerApplies,
         media3Processing = media3SdrAllowed,
+        deband = media3ScalerApplies,
     )
     else -> PlayerPanelVideoVisibility(deinterlace = false, upscaler = false, shaderUpscalers = false)
 }

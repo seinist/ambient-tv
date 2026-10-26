@@ -157,7 +157,7 @@ private fun Media3PanelVideoGroup(player: ExoPlayer) {
     )
     if (!visibility.upscaler) return
     val preferences = androidx.compose.runtime.remember(context) { videoImagePreferences(context) }
-    val choices = listOf("bilinear" to "Bilinear", "lanczos" to "Lanczos · 3")
+    val choices = media3ScalerChoices()
     val selected = processing.options.scaler
     RightPanelSectionTitle(stringResource(R.string.player_video))
     PlayerDropUpSelector(

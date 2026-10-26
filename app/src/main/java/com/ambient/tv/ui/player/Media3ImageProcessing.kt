@@ -59,7 +59,8 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     private var format: Format? = player.videoFormat
     private var outputWidth = 0
     private var outputHeight = 0
-    private var lanczosInChain = false
+    /** Scaler key the chain really upscales with; null while the display path scales. */
+    private var scalerInChain: String? = null
     private var applied: Triple<Media3ImageOptions, Int, Int>? = null
     private var updatePosted = false
     var options by mutableStateOf(videoImagePreferences(context).media3ImageOptions)
@@ -85,12 +86,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         private set
 
     val hasConfiguredEffects: Boolean
-        get() = options.enabled && (
-            options.scaler == "lanczos" ||
-                options.brightness != 0 ||
-                options.contrast != 0 ||
-                options.saturation != 0
-            )
+        get() = media3EffectPlan(options, upscaling = true).isNotEmpty()
 
     init {
         player.addAnalyticsListener(object : AnalyticsListener {
@@ -111,30 +107,17 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
     /** Compose-visible copy of the chain last handed to ExoPlayer. */
     var appliedForStats by mutableStateOf(
-        media3AppliedProcessing(
-            effectsActive = false,
-            scaler = null,
-            brightness = 0,
-            contrast = 0,
-            saturation = 0,
-            outputWidth = 0,
-            outputHeight = 0,
-        ),
+        media3AppliedProcessing(effectsActive = false, scaler = null, stages = emptyList()),
     )
         private set
+    private var appliedStages: List<Media3Stage> = emptyList()
 
     /** Effect chain last handed to ExoPlayer, not the saved settings defaults. */
     fun appliedProcessing(): AppliedVideoProcessing {
-        val signature = applied
-        val options = signature?.first
         return media3AppliedProcessing(
             effectsActive = effectsActive,
-            scaler = options?.scaler?.takeIf { lanczosInChain },
-            brightness = options?.brightness ?: 0,
-            contrast = options?.contrast ?: 0,
-            saturation = options?.saturation ?: 0,
-            outputWidth = signature?.second ?: 0,
-            outputHeight = signature?.third ?: 0,
+            scaler = scalerInChain,
+            stages = appliedStages,
         )
     }
 
@@ -143,7 +126,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     }
 
     fun diagnosticSummary(): String = when {
-        effectsActive -> "SDR GPU requested · ${options.scaler} · brightness ${options.brightness} · contrast ${options.contrast} · saturation ${options.saturation}"
+        effectsActive -> "SDR GPU requested · " + appliedStages.joinToString(" · ") { media3StageSummary(it) }
         gpuPipelineInitialized -> "GPU initialized · effects bypassed"
         !gpuEffectsSupported && options.enabled -> "Direct · GPU effects bypassed on Shield Android 11"
         options.enabled -> "Direct · waiting for eligible SDR track"
@@ -186,32 +169,28 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val enabled = gpuEffectsSupported && gated.enabled && media3ImageEffectsAllowed(format)
         val effective = if (enabled) gated else Media3ImageOptions()
         val signature = Triple(effective, outputWidth, outputHeight)
-        val needsLanczos = enabled && effective.scaler == "lanczos" && format?.let { source ->
+        // Scalers only run while the fitted picture is larger than the source: never past the display.
+        val upscaling = enabled && format?.let { source ->
             media3NeedsUpscaling(source.width, source.height, outputWidth, outputHeight,
                 source.pixelWidthHeightRatio, source.rotationDegrees)
         } == true
-        if (signature == applied && needsLanczos == lanczosInChain) return
+        val stages = if (enabled) media3EffectPlan(effective, upscaling) else emptyList()
+        if (signature == applied && stages == appliedStages) return
+        val scaler = stages.firstNotNullOfOrNull { (it as? Media3Stage.Scale)?.scaler }
         if (!enabled && !gpuPipelineInitialized) {
             effectsActive = false
-            lanczosInChain = false
+            scalerInChain = null
+            appliedStages = emptyList()
             applied = signature
             publishApplied()
             return // Even an empty list before prepare would unnecessarily enable the GPU sink.
         }
-        val effects = buildList<Effect> {
-            if (enabled) {
-                if (needsLanczos) {
-                    add(LanczosResample.scaleToFit(outputWidth, outputHeight))
-                }
-                if (effective.brightness != 0) add(Brightness(effective.brightness / 100f))
-                if (effective.contrast != 0) add(Contrast(effective.contrast / 100f))
-                if (effective.saturation != 0) add(HslAdjustment.Builder().adjustSaturation(effective.saturation.toFloat()).build())
-            }
-        }
+        val effects = stages.map { media3Effect(it, outputWidth, outputHeight) }
         applied = signature
+        appliedStages = stages
         if (effects.isEmpty() && !gpuPipelineInitialized) {
             effectsActive = false
-            lanczosInChain = false
+            scalerInChain = null
             publishApplied()
             return
         }
@@ -237,7 +216,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             player.setVideoEffects(effects)
         }
         effectsActive = enabled && effects.isNotEmpty()
-        lanczosInChain = needsLanczos
+        scalerInChain = scaler
         publishApplied()
     }
 
@@ -246,21 +225,29 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         fun gpuInitialized(player: ExoPlayer): Boolean = instances[player]?.gpuPipelineInitialized == true
         /** No processor means nothing has been applied. Does not create one. */
         fun peekApplied(player: ExoPlayer): AppliedVideoProcessing =
-            instances[player]?.appliedForStats ?: media3AppliedProcessing(
-                effectsActive = false,
-                scaler = null,
-                brightness = 0,
-                contrast = 0,
-                saturation = 0,
-                outputWidth = 0,
-                outputHeight = 0,
-            )
+            instances[player]?.appliedForStats ?: media3AppliedProcessing(effectsActive = false, scaler = null, stages = emptyList())
         fun get(context: Context, player: ExoPlayer): Media3ImageProcessing =
             instances.getOrPut(player) { Media3ImageProcessing(context.applicationContext, player) }
         fun release(player: ExoPlayer) {
             instances.remove(player)?.let { it.handler.removeCallbacksAndMessages(null) }
         }
     }
+}
+
+/** GL effect for one planned stage; the built-in matrix effects merge into one pass. */
+private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int): Effect = when (stage) {
+    is Media3Stage.Deband -> Media3DebandEffect(stage.strength)
+    is Media3Stage.Scale -> when (stage.scaler) {
+        "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
+        "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight)
+        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f)
+        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f)
+    }
+    is Media3Stage.Sharpen -> Media3SharpenEffect(stage.kind)
+    is Media3Stage.Brightness -> Brightness(stage.value / 100f)
+    is Media3Stage.Contrast -> Contrast(stage.value / 100f)
+    is Media3Stage.Saturation -> HslAdjustment.Builder().adjustSaturation(stage.value.toFloat()).build()
+    is Media3Stage.Gamma -> Media3GammaEffect(stage.value)
 }
 
 @Composable

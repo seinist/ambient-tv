@@ -144,17 +144,14 @@ internal fun vlcAppliedProcessing(snapshot: VlcPlaybackSnapshot): AppliedVideoPr
 }
 
 /**
- * Media3 only applies the GPU effect list (Lanczos / brightness / contrast / saturation).
+ * Media3 only applies its GPU effect list (deband, upscaler, sharpening, picture controls).
  * It has no deinterlacer and no frame interpolation, so those stay "n/a".
+ * [scaler] is the scaler really upscaling in the chain, null when the display path scales.
  */
 internal fun media3AppliedProcessing(
     effectsActive: Boolean,
     scaler: String?,
-    brightness: Int,
-    contrast: Int,
-    saturation: Int,
-    outputWidth: Int,
-    outputHeight: Int,
+    stages: List<Media3Stage>,
 ): AppliedVideoProcessing {
     if (!effectsActive) {
         return AppliedVideoProcessing(
@@ -164,16 +161,27 @@ internal fun media3AppliedProcessing(
             frameInterpolation = "n/a",
         )
     }
-    val filters = buildList {
-        if (brightness != 0) add("brightness $brightness")
-        if (contrast != 0) add("contrast $contrast")
-        if (saturation != 0) add("saturation $saturation")
-    }.joinToString(", ").ifBlank { "off" }
-    val upscaler = if (scaler == "lanczos" && outputWidth > 0 && outputHeight > 0) "Lanczos" else "n/a"
+    val filters = stages.filter { it !is Media3Stage.Scale }
+        .joinToString(", ") { media3StageSummary(it) }.ifBlank { "off" }
     return AppliedVideoProcessing(
         videoFilters = filters,
         deinterlacer = "n/a",
-        upscaler = upscaler,
+        upscaler = scaler?.let { media3ScalerLabel(it) } ?: "n/a",
         frameInterpolation = "n/a",
     )
+}
+
+/** English Stats-for-Nerds wording for one Media3 stage. */
+internal fun media3StageSummary(stage: Media3Stage): String = when (stage) {
+    is Media3Stage.Deband -> "deband ${stage.strength}"
+    is Media3Stage.Scale -> media3ScalerLabel(stage.scaler)
+    is Media3Stage.Sharpen -> when (stage.kind) {
+        "cas" -> "sharpen CAS"
+        "rcas" -> "sharpen RCAS (FSR)"
+        else -> "sharpen ${stage.kind}"
+    }
+    is Media3Stage.Brightness -> "brightness ${stage.value}"
+    is Media3Stage.Contrast -> "contrast ${stage.value}"
+    is Media3Stage.Saturation -> "saturation ${stage.value}"
+    is Media3Stage.Gamma -> "gamma ${stage.value}"
 }

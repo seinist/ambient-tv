@@ -53,6 +53,17 @@ object VideoImageCatalog {
     )
     val strengths = setOf("off", "light", "medium", "strong")
     val sharpening = setOf("off", "light", "medium", "cas", "adaptive")
+    /**
+     * Media3 GPU upscalers, defined once for the panel, settings overview and Stats for Nerds.
+     * Bicubic and Catmull-Rom use mpv's B/C values; FSR brings its own RCAS sharpening.
+     */
+    val media3Scalers = linkedMapOf(
+        "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
+        "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
+    )
+    /** light/medium: unsharp mask; cas: AMD Contrast Adaptive Sharpening. */
+    val media3Sharpening = setOf("off", "light", "medium", "cas")
+    val media3Deband = setOf("off", "light", "medium")
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
     val svpModes = setOf("off", "light", "balanced", "quality")
 }
@@ -193,10 +204,17 @@ data class Media3ImageOptions(
     val brightness: Int = 0,
     val contrast: Int = 0,
     val saturation: Int = 0,
+    /** Added later: profiles and backups without these fields read as off / 0. */
+    val sharpening: String = "off",
+    val deband: String = "off",
+    val gamma: Int = 0,
 ) {
     fun normalized() = copy(
-        scaler = scaler.takeIf { it in setOf("bilinear", "lanczos") } ?: "bilinear",
+        scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
         brightness = brightness.coerceIn(-20, 20), contrast = contrast.coerceIn(-20, 20),
         saturation = saturation.coerceIn(-20, 20),
+        sharpening = sharpening.takeIf { it in VideoImageCatalog.media3Sharpening } ?: "off",
+        deband = deband.takeIf { it in VideoImageCatalog.media3Deband } ?: "off",
+        gamma = gamma.coerceIn(-20, 20),
     )
 }

@@ -192,11 +192,7 @@ internal fun buildMedia3NerdOverlayModel(
     applied: AppliedVideoProcessing = media3AppliedProcessing(
         effectsActive = false,
         scaler = null,
-        brightness = 0,
-        contrast = 0,
-        saturation = 0,
-        outputWidth = 0,
-        outputHeight = 0,
+        stages = emptyList(),
     ),
 ): NerdStatsOverlayModel {
     val video = buildList {
