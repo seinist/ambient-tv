@@ -107,31 +107,17 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
     val handheld = LocalHandheldUi.current
     // Connectivity has several independent producers. Present their current phases inside
     // one stable surface, so wake/resume/provider updates never stack separate connection cards.
-    val connectionKinds = setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN)
-    val connections = visible.filter { it.notice.kind in connectionKinds }
-    val others = visible.filterNot { it.notice.kind in connectionKinds }
+    val connections = visible.filter { it.notice.kind in CONNECTIVITY_KINDS }
+    val others = visible.filterNot { it.notice.kind in CONNECTIVITY_KINDS }
     Box(Modifier.fillMaxSize()
         .then(if (handheld) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
         .padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
         Column(Modifier.align(Alignment.TopEnd).widthIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (connections.isNotEmpty()) {
-                val colors = MaterialTheme.colorScheme
-                val shape = RoundedCornerShape(14.dp)
                 DismissibleNotification(handheld, onDismiss = {
                     connections.forEach { AppNotifications.dismiss(it.notice.key) }
                 }) {
-                    Column(Modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
-                        .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)) {
-                        connections.groupBy { listOf(it.notice.kind, it.notice.phase, it.notice.message, it.notice.args) }
-                            .values.forEach { entries ->
-                                val notice = entries.first().notice.copy(
-                                    systems = entries.flatMap { it.notice.systems }.distinct(),
-                                    subject = entries.mapNotNull { it.notice.subject }.distinct()
-                                        .joinToString(", ").ifBlank { null },
-                                )
-                                NotificationCard(notice, reduced, grouped = true)
-                            }
-                    }
+                    ConnectionGroup(connections, reduced)
                 }
             }
             others.forEach { entry ->
@@ -143,6 +129,46 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
             }
         }
     }
+}
+
+private val CONNECTIVITY_KINDS = setOf(NoticeKind.CONNECTION, NoticeKind.WAKE, NoticeKind.VPN)
+
+/** One surface for all connectivity phases; entries with the same text share a row. */
+@Composable
+private fun ConnectionGroup(connections: List<NoticeEntry>, reduced: Boolean, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(14.dp)
+    Column(modifier.fillMaxWidth().background(colors.surface.copy(alpha = .98f), shape)
+        .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)) {
+        connections.groupBy { listOf(it.notice.kind, it.notice.phase, it.notice.message, it.notice.args) }
+            .values.forEach { entries ->
+                val notice = entries.first().notice.copy(
+                    systems = entries.flatMap { it.notice.systems }.distinct(),
+                    subject = entries.mapNotNull { it.notice.subject }.distinct()
+                        .joinToString(", ").ifBlank { null },
+                )
+                NotificationCard(notice, reduced, grouped = true)
+            }
+    }
+}
+
+/**
+ * Connectivity work still running (wake, connect, VPN), as the start intro waits on it. Like the
+ * card host, a connect that only waits for its machine's wake is covered by the wake.
+ */
+fun workingConnectivity(snapshot: NotificationSnapshot): List<NoticeEntry> {
+    val working = snapshot.pending.filter { it.notice.kind in CONNECTIVITY_KINDS && it.notice.phase == NoticePhase.WORKING }
+    val waking = working.filter { it.notice.kind == NoticeKind.WAKE }.flatMap { it.notice.systems }.toSet()
+    return working.filterNot {
+        it.notice.kind == NoticeKind.CONNECTION && it.notice.systems.isNotEmpty() && it.notice.systems.all(waking::contains)
+    }
+}
+
+/** The connectivity card inside the start intro, while the intro holds the regular cards back. */
+@Composable
+fun IntroConnectionStatus(entries: List<NoticeEntry>, modifier: Modifier = Modifier) {
+    if (entries.isEmpty()) return
+    ConnectionGroup(entries, LocalPerformanceProfile.current.reducedEffects || rememberAnimationsDisabled(), modifier)
 }
 
 /** Gesture handling is limited to the card, leaving the surrounding overlay touch-through. */

@@ -486,6 +486,7 @@ class SettingsViewModel @Inject constructor(
         projectmHdr4kAllowed = appPreferences.projectmHdr4kAllowed,
         projectmShowPresetName = appPreferences.projectmShowPresetName,
         projectmPresetCategoryKey = appPreferences.projectmPresetCategoryKey,
+        introAnimationKey = appPreferences.introAnimationKey,
         bigSeekJumpSeconds = appPreferences.bigSeekJumpSeconds,
         creditsSkipMode = appPreferences.creditsSkipMode,
         introSkipMode = appPreferences.introSkipMode,
@@ -2089,6 +2090,10 @@ class SettingsViewModel @Inject constructor(
 
     fun onNavSoundBankChanged(value: String) {
         _uiState.update { it.copy(navSoundBank = value) }
+    fun onIntroAnimationChanged(value: String) {
+        _uiState.update { it.copy(introAnimationKey = com.ambient.tv.data.local.IntroAnimation.normalize(value)) }
+    }
+
     }
 
     fun onNavSoundsVolumeChanged(value: Float) {
@@ -2572,6 +2577,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.projectmHdr4kAllowed = state.projectmHdr4kAllowed
         appPreferences.projectmShowPresetName = state.projectmShowPresetName
         appPreferences.projectmPresetCategoryKey = state.projectmPresetCategoryKey
+        appPreferences.introAnimationKey = state.introAnimationKey
         appPreferences.bigSeekJumpSeconds = state.bigSeekJumpSeconds
         appPreferences.creditsSkipMode = state.creditsSkipMode
         appPreferences.introSkipMode = state.introSkipMode

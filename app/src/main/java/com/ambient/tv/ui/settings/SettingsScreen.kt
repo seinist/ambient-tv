@@ -74,6 +74,7 @@ import com.ambient.tv.branding.BrandWordmark
 import com.ambient.tv.R
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.HomeHeroStyle
+import com.ambient.tv.data.local.IntroAnimation
 import com.ambient.tv.data.local.systemHomeRowTypes
 import com.ambient.tv.ui.common.systemHomeRowTypeTitle
 import com.ambient.tv.data.local.MediaSelectionPreferences
@@ -432,6 +433,26 @@ fun SettingsScreen(
                             }
                             item {
                                 SettingsGroup(
+                            item {
+                                SettingsGroup(
+                                    title = stringResource(R.string.settings_intro_animation),
+                                    subtitle = stringResource(R.string.settings_intro_animation_hint),
+                                ) {
+                                    SettingsSelect(options = IntroAnimation.keys.map { key ->
+                                        SettingsSelectOption(
+                                            text = introAnimationLabel(key),
+                                            selected = uiState.introAnimationKey == key,
+                                            onClick = { viewModel.onIntroAnimationChanged(key) },
+                                        )
+                                    })
+                                    if (uiState.introAnimationKey != IntroAnimation.OFF) {
+                                        TvActionButton(
+                                            text = stringResource(R.string.settings_intro_preview),
+                                            onClick = { com.ambient.tv.ui.intro.IntroPreviewRequests.requests.tryEmit(uiState.introAnimationKey) },
+                                        )
+                                    }
+                                }
+                            }
                                     title = stringResource(R.string.settings_ui_performance),
                                     subtitle = stringResource(R.string.settings_ui_performance_hint),
                                 ) {
@@ -2081,6 +2102,16 @@ private fun PerformanceModeSelect(
             onClick = { onSelected(mode) },
         )
     })
+}
+
+@Composable
+private fun introAnimationLabel(key: String): String = when (key) {
+    IntroAnimation.OFF -> stringResource(R.string.settings_intro_off)
+    IntroAnimation.POWER_ON -> stringResource(R.string.settings_intro_power_on)
+    IntroAnimation.SIGNAL -> stringResource(R.string.settings_intro_signal)
+    IntroAnimation.SHIMMER -> stringResource(R.string.settings_intro_shimmer)
+    IntroAnimation.RIPPLE -> stringResource(R.string.settings_intro_ripple)
+    else -> stringResource(R.string.settings_intro_bloom)
 }
 
 @Composable

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_intro_animation">Start-Animation</string>
+    <string name="settings_intro_animation_hint">Läuft einmal beim Kaltstart, in deinen Akzentfarben. Weckt die App gerade einen Server, zeigt sie den Fortschritt; jede Taste fährt fort.</string>
+    <string name="settings_intro_off">Aus</string>
+    <string name="settings_intro_power_on">Einschalten</string>
+    <string name="settings_intro_bloom">Ambient-Glühen</string>
+    <string name="settings_intro_signal">Signalsuche</string>
+    <string name="settings_intro_shimmer">Lichtstreif</string>
+    <string name="settings_intro_ripple">Sendewellen</string>
+    <string name="settings_intro_preview">Vorschau</string>
+    <string name="intro_skip_hint">Beliebige Taste zum Fortfahren</string>
+</resources>

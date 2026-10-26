@@ -14,7 +14,7 @@ internal object CompanionBackupPolicy {
         "preferredSubtitleLanguage", "subtitlesEnabled", "forcedSubtitlesEnabled", "subtitleModeKey",
         "subtitleLanguageKey", "subtitleFallbackLanguageKey", "fullSubtitlesOnForeignAudio", "forcedSubtitlesInUiLanguage", "mediaSelectionBehaviorKey",
         "showLibraryRowsOnHome", "showContinueWatchingHub", "showRecentHomeHubs", "showCollectionHomeHubs",
-        "accentColorKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "notificationDisplayDurationKey",
+        "accentColorKey", "customAccentHex", "customPlaybackAccentHex", "dualAccentEnabled", "themeModeKey", "homeHeroStyleKey", "introAnimationKey", "notificationDisplayDurationKey",
         "trailersEnabled", "trailerLanguage", "youtubeSponsorBlockEnabled", "youtubeFeedKeys",
         "youtubeAutoplayNextEnabled", "youtubeMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",

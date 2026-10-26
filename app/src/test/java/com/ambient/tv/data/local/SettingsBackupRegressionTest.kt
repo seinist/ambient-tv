@@ -240,7 +240,7 @@ class SettingsBackupRegressionTest {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("71", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("72", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)

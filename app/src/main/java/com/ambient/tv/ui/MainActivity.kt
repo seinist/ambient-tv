@@ -298,6 +298,12 @@ open class MainActivity : ComponentActivity() {
     // Public Activity/Window.Callback override; core's intermediate implementation is restricted.
     @android.annotation.SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // The start intro covers the UI: a key only skips it, volume keeps working.
+        if (com.ambient.tv.ui.intro.IntroPresentation.active && event.keyCode !in setOf(
+                KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) com.ambient.tv.ui.intro.IntroPresentation.skip()
+            return true
+        }
         if (event.action == KeyEvent.ACTION_DOWN) com.ambient.tv.companion.CompanionRemoteInput.hide()
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         if (event.action == KeyEvent.ACTION_DOWN) uiSoundPlayer.navigationInput(event.keyCode, event.eventTime)
@@ -581,9 +587,14 @@ open class MainActivity : ComponentActivity() {
         // handheld hand-off, so the activity that stays connects once.
         if (savedInstanceState == null) launcherOpener.open(intent)
         if (intent?.action == PlaybackService.ACTION_OPEN) registerUserInteraction()
+        // Launcher cold start only: a launcher row or playback notification goes straight to its target.
+        val startIntro = if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) {
+            appPreferences.introAnimationKey
+        } else com.ambient.tv.data.local.IntroAnimation.OFF
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             splashScreen.setOnExitAnimationListener { splash ->
-                splash.animate().alpha(0f).setDuration(160L).withEndAction { splash.remove() }.start()
+                // The intro draws the mark itself over the same background; no cross-fade needed.
+                if (startIntro != com.ambient.tv.data.local.IntroAnimation.OFF) splash.remove() else splash.animate().alpha(0f).setDuration(160L).withEndAction { splash.remove() }.start()
             }
         }
         enableEdgeToEdge()
@@ -594,6 +605,14 @@ open class MainActivity : ComponentActivity() {
         setContent {
             com.ambient.tv.notifications.DisplayChangeNotifications(this@MainActivity, appPreferences)
             var uiScale by remember { mutableStateOf(appPreferences.uiScale) }
+            var introStyle by remember { mutableStateOf(startIntro) }
+            var introRun by remember { mutableLongStateOf(0L) }
+            LaunchedEffect(Unit) {
+                com.ambient.tv.ui.intro.IntroPreviewRequests.requests.collect {
+                    introStyle = it
+                    introRun++
+                }
+            }
             var accentColorKey by remember { mutableStateOf(appPreferences.accentColorKey) }
             var customAccentHex by remember { mutableStateOf(appPreferences.customAccentHex) }
             var customPlaybackAccentHex by remember { mutableStateOf(appPreferences.customPlaybackAccentHex) }
@@ -673,6 +692,7 @@ open class MainActivity : ComponentActivity() {
                     },
                 ) {
                 // Overscan inset wraps the whole UI, playback included, so nothing lands behind the TV bezel.
+                androidx.compose.foundation.layout.Box {
                 com.ambient.tv.ui.common.OverscanBox(if (com.ambient.tv.ui.mobile.isTelevision(this@MainActivity)) appPreferences.overscanPercent else 0) {
                     AmbientTvApp(
                         openPlaybackRequest = openPlaybackRequest.longValue + if (intent.action == PlaybackService.ACTION_OPEN) 1 else 0,
@@ -721,6 +741,12 @@ open class MainActivity : ComponentActivity() {
                             recreate()
                         },
                     )
+                }
+                if (introStyle != com.ambient.tv.data.local.IntroAnimation.OFF) {
+                    androidx.compose.runtime.key(introRun) {
+                        com.ambient.tv.ui.intro.IntroAnimationOverlay(introStyle, onFinished = { introStyle = com.ambient.tv.data.local.IntroAnimation.OFF })
+                    }
+                }
                 }
                 }
             }
@@ -2327,7 +2353,7 @@ private fun AmbientTvApp(
             } // HandheldNavigationHost
             if (com.ambient.tv.connectivity.shouldPresentUnreachableDialog(
                     currentRoute,
-                    unreachableServers.prompt && unreachableSettled,
+                    unreachableServers.prompt && unreachableSettled && !com.ambient.tv.ui.intro.IntroPresentation.active,
                     unreachableServers.canDismiss,
                 )
             ) {
@@ -2346,7 +2372,8 @@ private fun AmbientTvApp(
             // A programme reminder that is due while the app is open.
             com.ambient.tv.livetv.LiveTvReminderPromptDialog()
             com.ambient.tv.notifications.AppNotificationHost(
-                hidden = screensaverOverlayPresent,
+                // The intro shows connectivity itself; held cards keep their full reading time.
+                hidden = screensaverOverlayPresent || com.ambient.tv.ui.intro.IntroPresentation.active,
                 playback = onPlayerScreen,
             )
             com.ambient.tv.companion.CompanionDialogs(companionVm)

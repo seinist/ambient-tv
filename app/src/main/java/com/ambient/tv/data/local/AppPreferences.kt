@@ -887,6 +887,10 @@ class AppPreferences @Inject constructor(
             awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
         }
 
+    var introAnimationKey: String
+        get() = IntroAnimation.normalize(prefs.getString(KEY_INTRO_ANIMATION, IntroAnimation.DEFAULT))
+        set(value) = prefs.edit { putString(KEY_INTRO_ANIMATION, IntroAnimation.normalize(value)) }
+
     var homeHeroStyleKey: String
         get() = HomeHeroStyle.normalize(prefs.getString(KEY_HOME_HERO_STYLE, HomeHeroStyle.DEFAULT))
         set(value) = prefs.edit { putString(KEY_HOME_HERO_STYLE, HomeHeroStyle.normalize(value)) }
@@ -2086,6 +2090,7 @@ class AppPreferences @Inject constructor(
         const val KEY_HOME_BACKGROUND_EVERYWHERE = "home_background_everywhere"
         const val KEY_FOCUS_ARTWORK_BACKDROP = "focus_artwork_backdrop"
         const val KEY_HOME_HERO_STYLE = "home_hero_style"
+        const val KEY_INTRO_ANIMATION = "intro_animation"
         const val KEY_HOME_HERO_INTENSITY = "home_hero_intensity"
         const val KEY_HOME_HERO_SPREAD = "home_hero_spread"
         const val KEY_NOTIFICATION_DISPLAY_DURATION = "notification_display_duration"
