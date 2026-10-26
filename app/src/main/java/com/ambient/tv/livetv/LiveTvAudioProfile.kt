@@ -32,28 +32,51 @@ internal data class LiveTvAudioProfile(val codecs: List<String>, val maxChannels
     )
 }
 
-internal fun planLiveTvAudioProfile(options: AudioOptions, sourcePassthrough: Boolean, backend: String, route: AudioRouteCapabilities, decoderChannels: Map<String, Int>): LiveTvAudioProfile {
+/**
+ * [localDecoders]: codecs Media3 decodes with the bundled FFmpeg core (LocalAudioRenderer) when
+ * no MediaCodec exists. They count as playable as long as the audio fallback is not off.
+ */
+internal fun planLiveTvAudioProfile(
+    options: AudioOptions, sourcePassthrough: Boolean, backend: String, route: AudioRouteCapabilities,
+    decoderChannels: Map<String, Int>, localDecoders: Set<String> = emptySet(),
+): LiveTvAudioProfile {
     val nativeDecode = backend in setOf("mpv", "vlc") || options.localFallback != "off" && route.mpvAvailable
+    val local = if (options.localFallback != "off" && backend in setOf("auto", "media3")) localDecoders else emptySet()
     // Keep all original channels when a native local decoder/fallback can handle them.
     // Media3-only devices advertise their decoder limit instead of assuming stereo or 7.1.
     val codecs = buildList {
         listOf("aac", "ac3", "eac3", "dts", "truehd", "mp3", "mp2", "flac", "opus").filterTo(this) {
-            nativeDecode || it in decoderChannels || options.permitsBitstream(sourcePassthrough) && it in route.passthrough && it in options.allowedCodecs
+            nativeDecode || it in decoderChannels || it in local ||
+                options.permitsBitstream(sourcePassthrough) && it in route.passthrough && it in options.allowedCodecs
         }
         // DTS core is not DTS-HD. Advertise HD when a native decoder can play it,
         // or when the route and the allowed list both name dts-hd.
-        if (nativeDecode || "dts-hd" in route.passthrough && "dts-hd" in options.allowedCodecs) {
+        if (nativeDecode || "dts-hd" in local || "dts-hd" in route.passthrough && "dts-hd" in options.allowedCodecs) {
             val afterDts = indexOf("dts")
             add(if (afterDts >= 0) afterDts + 1 else size, "dts-hd")
         }
     }
-    return LiveTvAudioProfile(codecs.ifEmpty { listOf("aac") }, if (nativeDecode) 8 else (decoderChannels["aac"] ?: 2).coerceIn(2, 8))
+    val localSurround = local.any { it in setOf("ac3", "eac3", "dts", "dts-hd", "truehd") }
+    val maxChannels = if (nativeDecode || localSurround) 8 else (decoderChannels["aac"] ?: 2).coerceIn(2, 8)
+    return LiveTvAudioProfile(codecs.ifEmpty { listOf("aac") }, maxChannels)
 }
+
+/** Codecs the bundled FFmpeg core decodes on Media3 (see localDecoderName); empty without it. */
+internal val MEDIA3_LOCAL_DECODERS = setOf("ac3", "eac3", "truehd", "dts", "dts-hd", "mp2")
 
 internal fun liveTvAudioProfile(context: Context, preferences: AppPreferences): LiveTvAudioProfile {
     val route = AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = MpvBackendAvailability.isAvailable)
+    val local = media3LocalDecoders
     return planLiveTvAudioProfile(preferences.audioSettings.currentForRoute(route.profile), preferences.mediaAudioPassthroughEnabled,
-        preferences.tvheadendPlaybackBackendKey, route, platformAudioDecoders)
+        preferences.tvheadendPlaybackBackendKey, route, platformAudioDecoders, local)
+}
+
+private val media3LocalDecoders: Set<String> by lazy {
+    if (!com.ambient.tv.ui.player.audio.LocalAudioBridge.AVAILABLE) return@lazy emptySet()
+    MEDIA3_LOCAL_DECODERS.filterTo(mutableSetOf()) { codec ->
+        val ffmpeg = if (codec == "dts" || codec == "dts-hd") "dca" else codec
+        runCatching { com.ambient.tv.ui.player.audio.LocalAudioBridge.supports(ffmpeg) }.getOrDefault(false)
+    }
 }
 
 private val platformAudioDecoders: Map<String, Int> by lazy {

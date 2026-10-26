@@ -38,31 +38,53 @@ data class AudioOptions(
     val upmix: Boolean = false,
     val maintainDownmixVolume: Boolean = false,
 ) {
-    fun normalized() = copy(
-        pcmChannelLimit = pcmChannelLimit.takeIf { it in setOf(0, 2, 6, 8) } ?: 0,
-        forceChannels = forceChannels.takeIf { it in setOf(0, 6, 8) } ?: 0,
-        conversionLocation = conversionLocation.takeIf { it in setOf("local", "server") } ?: "local",
-        localFallback = localFallback.takeIf { it in setOf("auto", "pcm", "off") } ?: "auto",
-        output = output.takeIf { it in setOf("source", "auto", "pcm", "bitstream") } ?: "source",
-        allowedCodecs = AudioCatalog.codecs.filter { it in allowedCodecs && (it != "dts-hd" || "dts" in allowedCodecs) },
-        delayMs = delayMs.coerceIn(-2000, 2000),
-        channels = channels.takeIf { it in setOf("auto", "stereo", "mono", "left", "right", "5.1", "7.1") } ?: "auto",
-        dialogue = dialogue.coerceIn(0, 6),
-        replayGain = replayGain.takeIf { it in setOf("off", "track", "album") } ?: "off",
-        preampDb = preampDb.coerceIn(-12, 0),
-        eqDb = List(10) { eqDb.getOrElse(it) { 0 }.coerceIn(-12, 12) },
-    )
+    fun normalized(): AudioOptions {
+        val force = forceChannels.takeIf { it in setOf(0, 6, 8) } ?: 0
+        val limit = pcmChannelLimit.takeIf { it in setOf(0, 2, 6, 8) } ?: 0
+        // Legacy channel mix 5.1/7.1 duplicated the PCM channel setting: it becomes a PCM limit
+        // with the same effect (the smaller value wins, as the planner clipped it before).
+        val mixLimit = when (channels) { "5.1" -> 6; "7.1" -> 8; else -> 0 }
+        return copy(
+            pcmChannelLimit = if (mixLimit == 0) limit else if (limit in setOf(2, 6, 8)) minOf(limit, mixLimit) else mixLimit,
+            forceChannels = force,
+            conversionLocation = conversionLocation.takeIf { it in setOf("local", "server") } ?: "local",
+            localFallback = localFallback.takeIf { it in setOf("auto", "pcm", "off") } ?: "auto",
+            // Legacy "bitstream" ("Passthrough bevorzugen") equalled "auto"; only together with
+            // forced channels did it also force Dolby/DTS. That combination is now "force".
+            output = when (output) {
+                "bitstream" -> if (force in setOf(6, 8)) "force" else "auto"
+                in setOf("source", "auto", "pcm", "force") -> output
+                else -> "source"
+            },
+            allowedCodecs = AudioCatalog.codecs.filter { it in allowedCodecs && (it != "dts-hd" || "dts" in allowedCodecs) },
+            delayMs = delayMs.coerceIn(-2000, 2000),
+            channels = channels.takeIf { it in setOf("auto", "stereo", "mono", "left", "right") } ?: "auto",
+            dialogue = dialogue.coerceIn(0, 6),
+            replayGain = replayGain.takeIf { it in setOf("off", "track", "album") } ?: "off",
+            preampDb = preampDb.coerceIn(-12, 0),
+            eqDb = List(10) { eqDb.getOrElse(it) { 0 }.coerceIn(-12, 12) },
+        )
+    }
+
+    /** "Passthrough erzwingen": Dolby/DTS are sent even when the output does not report them. */
+    fun forcesPassthrough(): Boolean = output == "force" || output == "bitstream" && forceChannels in setOf(6, 8)
+
+    /** Anything the output is asked for beyond what it reports (channels or passthrough). */
+    fun forcesOutput(): Boolean = forceChannels in setOf(6, 8) || forcesPassthrough()
+
+    /** Fallback after the output rejected a forced format: back to what it reports. */
+    fun withoutForcing(): AudioOptions =
+        copy(forceChannels = 0, output = if (forcesPassthrough()) "auto" else output)
 
     /**
      * Explicit stereo/mono selections require PCM, including when bitstream was preferred.
      * source: inherit the per-source passthrough switch.
      * auto: use confirmed encoded output; saved DSP settings apply only when decoding.
-     * bitstream: prefer encoded output even if saved DSP controls must be suspended.
+     * force (legacy bitstream): like auto, and Dolby/DTS are sent even when not reported.
      */
     fun permitsBitstream(sourceDefault: Boolean): Boolean = channels !in setOf("stereo", "mono", "left", "right") && when (output) {
         "pcm" -> false
-        "bitstream" -> true
-        "auto" -> true
+        "force", "bitstream", "auto" -> true
         else -> sourceDefault
     }
 

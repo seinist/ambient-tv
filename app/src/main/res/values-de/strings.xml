@@ -422,7 +422,7 @@
     <string name="settings_playback_overview_deinterlace_filter">Deinterlacing-Filter</string>
     <string name="settings_playback_overview_route">Gewähltes Audioprofil</string>
     <string name="settings_playback_overview_tracks">Spurvorlieben (Rolle / Kanäle)</string>
-    <string name="settings_playback_overview_hdmi">HDMI/AVR</string>
+    <string name="settings_playback_overview_hdmi">HDMI</string>
     <string name="settings_playback_overview_headphones">Kopfhörer</string>
     <string name="settings_playback_overview_yes">An</string>
     <string name="settings_playback_overview_no">Aus</string>
@@ -746,9 +746,6 @@
     <string name="settings_tvh_playback_backend">TVHeadend-Player</string>
     <string name="settings_tvh_playback_backend_hint">Standard-Player für Live-TV und Aufnahmen; im Player auch umschaltbar.</string>
     <string name="settings_passthrough_visualizer_hint">Die Musikvisualisierung bleibt an, solange der Ton nicht direkt als Bitstream durchgereicht wird.</string>
-    <string name="settings_media_passthrough_title">Audio-Passthrough</string>
-    <string name="settings_media_passthrough_subtitle">Automatisch: Gibt Dolby- und DTS-Ton direkt an Fernseher oder Verstärker weiter, aber nur Formate, die der aktuelle Ausgang bestätigt. Alles andere wird als PCM abgespielt.</string>
-    <string name="settings_media_passthrough_toggle">Passthrough für Bibliothek &amp; Live-Wiedergabe</string>
     <string name="settings_spotify_web_title">Spotify-Konto</string>
     <string name="settings_spotify_web_subtitle">Mit Spotify anmelden, um deine Bibliothek und Playlists zu verwenden.</string>
     <string name="settings_spotify_redirect">Die Weiterleitungsadresse ist fest eingebaut und muss in der Spotify-App genauso eingetragen sein.</string>
@@ -1078,9 +1075,8 @@
     <string name="audio_sound">Klang</string>
     <string name="audio_equalizer">Equalizer</string>
     <string name="audio_track_preferences">Spurvorlieben</string>
-    <string name="audio_source_default">Quellvorgabe</string>
-    <string name="audio_prefer_bitstream">Passthrough bevorzugen</string>
-    <string name="audio_output_hint">Verwendet automatisch passende Audioformate.</string>
+    <string name="audio_prefer_bitstream">Passthrough erzwingen</string>
+    <string name="audio_output_hint">Automatisch: Dolby- und DTS-Ton geht direkt an Fernseher oder Verstärker, wenn der Ausgang das Format meldet, sonst als PCM. Nur PCM: Der Ton wird immer in diesem Gerät dekodiert. Passthrough erzwingen: Dolby Digital, Dolby Digital Plus und DTS werden auch gesendet, wenn der Ausgang sie nicht meldet, etwa bei einem Verstärker hinter dem Fernseher. Klappt das nicht, wird PCM verwendet. Media3 kann nichts erzwingen.</string>
     <string name="audio_delay">Audioverzögerung</string>
     <string name="audio_reset_delay">Auf 0 ms setzen</string>
     <string name="audio_delay_hint">Positiv: Ton später. Negativ: Ton früher. Bereich: −2000 bis +2000 ms.</string>
@@ -1256,8 +1252,8 @@
     <string name="settings_add_system">System hinzufügen</string>
     <string name="settings_actions_immediate">Änderungen werden sofort gespeichert. Adressen, Ports und Anmeldedaten werden beim Verlassen der Seite gespeichert.</string>
     <string name="settings_defaults_hint">Standardwerte für die nächste Wiedergabe. Die laufende Wiedergabe wird nicht verändert.</string>
-    <string name="settings_audio_shared">Die Profile TV, HDMI/AVR und Kopfhörer gelten für alle Player und zeigen nur passende Optionen.</string>
-    <string name="settings_audio_source_hint">Bei Quellvorgabe folgt Passthrough den Audioprofilen; Klangeffekte pausieren bei Passthrough.</string>
+    <string name="settings_audio_shared">Die Profile TV, HDMI und Kopfhörer gelten für alle Player und zeigen nur passende Optionen.</string>
+    <string name="settings_audio_source_hint">Passthrough stellst du pro Audioprofil unter „Audio-Ausgabe“ ein. Während Passthrough pausieren Klangeffekte.</string>
     <string name="settings_audio_vlc_night">VLC-Nachtmodus benötigt die Unterstützung von Android DynamicsProcessing auf dem Wiedergabegerät.</string>
     <string name="settings_audio_tracks_language">Bevorzugte Audiosprache</string>
     <string name="settings_export_saved_hint">Exportiert die gespeicherten Werte. Änderungen vorher speichern.</string>

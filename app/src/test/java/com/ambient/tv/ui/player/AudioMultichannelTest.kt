@@ -88,9 +88,9 @@ class AudioMultichannelTest {
         val forced = route.forcedBy(AudioOptions(output = "bitstream", forceChannels = 6))
         assertEquals(setOf("ac3", "eac3", "dts"), forced.passthrough)
         assertEquals(6, forced.pcmChannels)
-        assertTrue(visibleChannelModes(forced).contains("5.1"))
-        assertFalse(visibleChannelModes(forced).contains("7.1"))
-        assertTrue(visibleChannelModes(route.forcedBy(AudioOptions(forceChannels = 8))).contains("7.1"))
+        // 5.1/7.1 are chosen under "PCM-Kanäle", never duplicated in the channel mix.
+        assertFalse(visibleChannelModes(forced).contains("5.1"))
+        assertFalse(visibleChannelModes(route.forcedBy(AudioOptions(forceChannels = 8))).contains("7.1"))
         // Lossless formats are not guessed.
         assertFalse("truehd" in forced.passthrough)
         val plan = planAudioOutput(AudioOptions(output = "bitstream", forceChannels = 6), "eac3", route, "mpv", true, sourceChannels = 6)

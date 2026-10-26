@@ -647,17 +647,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                 val profiles = repository.streamProfiles()
                 val candidates = profiles
                     .filterNot { it.name.equals(currentProfile, ignoreCase = true) }
-                    .sortedByDescending { profile ->
-                        val text = "${profile.name} ${profile.profileClass.orEmpty()}".lowercase()
-                        when {
-                            "h264" in text || "avc" in text -> 5
-                            "webtv" in text -> 4
-                            "matroska" in text -> 3
-                            "mpegts" in text || "mpeg-ts" in text -> 2
-                            "pass" in text -> 0
-                            else -> 1
-                        }
-                    }
+                    .sortedByDescending { profile -> tvheadendFallbackProfileRank(profile.name, profile.profileClass) }
                 val selected = candidates.firstOrNull() ?: error(reason.ifBlank { context.getString(com.ambient.tv.R.string.tvh_no_fallback_profile) })
                 timeshifted(acquireStream { repository.liveStream(channel, selected.name) }, channel.uuid)
             }.fold(
@@ -800,4 +790,28 @@ internal fun zapChannels(channels: List<TvhChannel>, order: List<String>?): List
     if (order == null) return channels
     val byId = channels.associateBy { it.uuid }
     return order.mapNotNull(byId::get).ifEmpty { channels }
+}
+
+/**
+ * Order of TVHeadend profiles for the video fallback. A video transcode (H.264) comes first.
+ * Among equal video choices a profile that names surround audio (AC3, E-AC3, 5.1) wins over one
+ * that names stereo, so the fallback does not mix a surround channel down without need.
+ * The audio of a profile is configured on the server; only its name and class are visible here.
+ */
+internal fun tvheadendFallbackProfileRank(name: String, profileClass: String?): Int {
+    val text = "$name ${profileClass.orEmpty()}".lowercase()
+    val video = when {
+        "h264" in text || "avc" in text -> 5
+        "webtv" in text -> 4
+        "matroska" in text -> 3
+        "mpegts" in text || "mpeg-ts" in text -> 2
+        "pass" in text -> 0
+        else -> 1
+    }
+    val audio = when {
+        listOf("eac3", "e-ac3", "ac3", "ac-3", "5.1", "7.1", "surround", "multichannel").any { it in text } -> 2
+        listOf("stereo", "2ch", "2.0").any { it in text } -> 0
+        else -> 1
+    }
+    return video * 10 + audio
 }

@@ -83,14 +83,13 @@ internal fun PlaybackOverviewDialog(snapshot: PlaybackOverviewSnapshot, onDismis
         OverviewSection("VLC · ${stringResource(R.string.settings_playback_overview_filters)}") { VlcOverview(snapshot.vlc) }
         OverviewSection("Media3 · ${stringResource(R.string.settings_playback_overview_filters)}") { Media3Overview(snapshot.media3) }
         OverviewSection(stringResource(R.string.settings_playback_overview_audio)) {
-            OverviewLine(stringResource(R.string.settings_media_passthrough_title), yesNo(snapshot.audioPassthrough))
             OverviewLine(stringResource(R.string.settings_playback_overview_route),
                 if (snapshot.audio.selectedProfile == "auto") stringResource(R.string.audio_profile_auto) else routeName(snapshot.audio.selectedProfile))
             OverviewLine(stringResource(R.string.settings_playback_overview_tracks),
                 "${snapshot.audio.tracks.role} · ${snapshot.audio.tracks.channels}")
             AudioCatalog.profiles.forEach { key ->
                 OverviewSubheading(routeName(key))
-                AudioOverview(snapshot.audio.profiles[key] ?: AudioOptions())
+                AudioOverview(snapshot.audio.profiles[key] ?: AudioOptions(), snapshot.audioPassthrough)
             }
         }
         val classes = (VideoResolutionClass.keys + snapshot.profiles.keys.filter { it != "all" }
@@ -136,7 +135,7 @@ internal fun PlaybackOverviewDialog(snapshot: PlaybackOverviewSnapshot, onDismis
                             if (audio.selectedProfile == "auto") stringResource(R.string.audio_profile_auto) else routeName(audio.selectedProfile))
                         AudioCatalog.profiles.forEach { route ->
                             OverviewSubheading(routeName(route))
-                            AudioOverview(audio.profiles[route] ?: AudioOptions())
+                            AudioOverview(audio.profiles[route] ?: AudioOptions(), snapshot.audioPassthrough)
                         }
                     }
                 }
@@ -239,17 +238,25 @@ private fun Media3Overview(o: Media3ImageOptions) {
 }
 
 @Composable
-private fun AudioOverview(o: AudioOptions) {
-    OverviewLine(stringResource(R.string.settings_playback_overview_output), when (o.output) {
-        "source" -> stringResource(R.string.audio_source_default)
-        "auto" -> stringResource(R.string.player_automatic)
-        "bitstream" -> stringResource(R.string.audio_prefer_bitstream)
-        else -> "PCM"
-    })
+private fun AudioOverview(o: AudioOptions, sourcePassthrough: Boolean) {
+    OverviewLine(stringResource(R.string.settings_playback_overview_output),
+        when (com.ambient.tv.ui.player.displayedAudioOutput(o, sourcePassthrough)) {
+            "force" -> stringResource(R.string.audio_prefer_bitstream)
+            "pcm" -> stringResource(R.string.audio_fallback_pcm)
+            else -> stringResource(R.string.player_automatic)
+        })
+    OverviewLine(stringResource(R.string.audio_pcm_channels),
+        when (com.ambient.tv.ui.player.displayedPcmChannels(o)) {
+            "2" -> "2.0"; "6" -> "5.1"; "8" -> "7.1"
+            else -> stringResource(R.string.player_automatic)
+        })
     OverviewLine(stringResource(R.string.settings_playback_overview_codecs), o.allowedCodecs.joinToString().ifEmpty { "—" })
-    OverviewLine(stringResource(R.string.settings_playback_overview_fallback), when (o.localFallback) {
+    OverviewLine(stringResource(R.string.audio_unsupported), when (com.ambient.tv.ui.player.displayedUnsupportedAudio(o)) {
+        "ac3" -> stringResource(R.string.audio_unsupported_ac3)
         "pcm" -> stringResource(R.string.audio_fallback_pcm)
-        else -> strength(o.localFallback)
+        "server" -> stringResource(R.string.audio_unsupported_server)
+        "off" -> stringResource(R.string.player_off)
+        else -> stringResource(R.string.player_automatic)
     })
     OverviewLine(stringResource(R.string.settings_playback_overview_delay), "${o.delayMs} ms")
     OverviewLine(stringResource(R.string.settings_playback_overview_channels), strength(o.channels))

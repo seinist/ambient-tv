@@ -97,6 +97,9 @@ object Media3AudioProcessing {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioOutputPlaybackParams: Boolean): AudioSink {
                 // Deprecated without replacement; false keeps speed changes in the Sonic processor,
                 // which bitstream passthrough and the profile DSP rely on.
+                // 16-bit PCM on purpose: Media3's float output skips the audio processors
+                // (profile DSP/downmix, spectrum tee, Sonic speed), and LocalAudioBridge decodes
+                // to 16 bit. Hi-res PCM is left to MPV (its AudioTrack output defaults to float).
                 val processor = ProfileAudioProcessor(session)
                 @Suppress("DEPRECATION")
                 val sink = DefaultAudioSink.Builder(context)
@@ -115,7 +118,7 @@ object Media3AudioProcessing {
                             // from the main-thread callback responsible for reconfiguring the sink.
                             val route = AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = session.route.mpvAvailable)
                             val plan = planAudioOutput(
-                                if (session.forcedChannelsFailed) session.options.copy(forceChannels = 0) else session.options,
+                                if (session.forcedChannelsFailed) session.options.withoutForcing() else session.options,
                                 key, route, session.backend, session.sourcePassthrough,
                                 rejectedCodecs = AudioCodecRejects.snapshot(),
                             )
@@ -180,6 +183,8 @@ object Media3AudioProcessing {
         MimeTypes.AUDIO_DTS -> "dts"
         MimeTypes.AUDIO_DTS_HD -> "dts-hd"
         MimeTypes.AUDIO_TRUEHD -> "truehd"
+        // AUDIO_DTS_X is DTS:X Profile 2 (DTS-UHD), not DTS-HD: a DTS-HD passthrough route
+        // cannot carry it, so it stays unmapped and is decoded instead of mis-sent as DTS-HD.
         else -> null
     }
 }

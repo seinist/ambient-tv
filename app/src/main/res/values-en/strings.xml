@@ -425,7 +425,7 @@
     <string name="settings_playback_overview_deinterlace_filter">Deinterlacing filter</string>
     <string name="settings_playback_overview_route">Selected audio profile</string>
     <string name="settings_playback_overview_tracks">Track preferences (role / channels)</string>
-    <string name="settings_playback_overview_hdmi">HDMI/AVR</string>
+    <string name="settings_playback_overview_hdmi">HDMI</string>
     <string name="settings_playback_overview_headphones">Headphones</string>
     <string name="settings_playback_overview_yes">On</string>
     <string name="settings_playback_overview_no">Off</string>
@@ -745,9 +745,6 @@
     <string name="settings_tvh_playback_backend">TVHeadend player</string>
     <string name="settings_tvh_playback_backend_hint">Default player for live TV and recordings; you can also switch it in the player.</string>
     <string name="settings_passthrough_visualizer_hint">The music visualizer stays on unless the audio is passed through as a bitstream.</string>
-    <string name="settings_media_passthrough_title">Audio passthrough</string>
-    <string name="settings_media_passthrough_subtitle">Automatic: sends Dolby and DTS audio straight to the TV or receiver, but only formats the current output confirms. Everything else is played as PCM.</string>
-    <string name="settings_media_passthrough_toggle">Passthrough for library &amp; live playback</string>
     <string name="settings_spotify_web_title">Spotify account</string>
     <string name="settings_spotify_web_subtitle">Sign in to Spotify to access your library and playlists.</string>
     <string name="settings_spotify_redirect">The return address is built in and must be entered the same way in the Spotify app.</string>
@@ -1077,9 +1074,8 @@
     <string name="audio_sound">Sound</string>
     <string name="audio_equalizer">Equalizer</string>
     <string name="audio_track_preferences">Track preferences</string>
-    <string name="audio_source_default">Source default</string>
-    <string name="audio_prefer_bitstream">Prefer passthrough</string>
-    <string name="audio_output_hint">Automatically uses compatible audio formats.</string>
+    <string name="audio_prefer_bitstream">Force passthrough</string>
+    <string name="audio_output_hint">Automatic: Dolby and DTS audio goes straight to the TV or receiver when the output reports the format, otherwise as PCM. PCM only: audio is always decoded on this device. Force passthrough: Dolby Digital, Dolby Digital Plus and DTS are sent even when the output does not report them, for example a receiver behind the TV. If that fails, PCM is used. Media3 cannot force formats.</string>
     <string name="audio_delay">Audio delay</string>
     <string name="audio_reset_delay">Reset to 0 ms</string>
     <string name="audio_delay_hint">Positive: sound later. Negative: sound earlier. Range: −2000 to +2000 ms.</string>
@@ -1255,8 +1251,8 @@
     <string name="settings_add_system">Add service</string>
     <string name="settings_actions_immediate">Changes are saved immediately. Addresses, ports and sign-in data are saved when you leave the page.</string>
     <string name="settings_defaults_hint">Defaults for the next playback session. Current playback is not changed.</string>
-    <string name="settings_audio_shared">The TV, HDMI/AVR and headphones profiles apply to every player and show only the options that fit.</string>
-    <string name="settings_audio_source_hint">With Source default, passthrough follows the audio profiles; sound effects pause during passthrough.</string>
+    <string name="settings_audio_shared">The TV, HDMI and headphones profiles apply to every player and show only the options that fit.</string>
+    <string name="settings_audio_source_hint">Passthrough is set per audio profile under “Audio output”. Sound effects pause during passthrough.</string>
     <string name="settings_audio_vlc_night">VLC night mode requires Android DynamicsProcessing support on the playback device.</string>
     <string name="settings_audio_tracks_language">Preferred audio language</string>
     <string name="settings_export_saved_hint">Exports saved values. Save changes first.</string>

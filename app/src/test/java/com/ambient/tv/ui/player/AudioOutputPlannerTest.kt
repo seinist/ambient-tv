@@ -218,7 +218,7 @@ class AudioOutputPlannerTest {
         assertFalse(visibleChannelModes(stereo).contains("5.1"))
         assertEquals("stereo", clipChannelMode("7.1", 2))
         assertEquals("5.1", clipChannelMode("7.1", 6))
-        assertTrue(visibleChannelModes(AudioRouteCapabilities(pcmChannels = 8)).contains("7.1"))
+        assertFalse(visibleChannelModes(AudioRouteCapabilities(pcmChannels = 8)).contains("7.1"))
     }
 
     @Test fun media3DecodeMissAsksForMpvWithoutInventingBitstream() {

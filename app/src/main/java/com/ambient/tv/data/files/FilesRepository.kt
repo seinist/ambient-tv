@@ -124,7 +124,7 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
     }
     override suspend fun removeFromContinueWatching(ratingKey: String) = markWatched(ratingKey)
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("Local files have no server transcoder"))
-    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long) = Result.failure<String>(UnsupportedOperationException("Local files have no server transcoder"))
+    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int) = Result.failure<String>(UnsupportedOperationException("Local files have no server transcoder"))
 
     private companion object {
         val SUBTITLE_MIME = mapOf("srt" to "application/x-subrip", "ass" to "text/x-ssa", "ssa" to "text/x-ssa", "vtt" to "text/vtt")

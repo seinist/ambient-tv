@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_passthrough">Passthrough</string>
+    <string name="audio_profile_hdmi">HDMI (Fernseher oder Verstärker)</string>
+    <string name="audio_profile_reason_hdmi">Der Ton geht über HDMI hinaus. Android kann nicht erkennen, ob dort ein Fernseher oder ein Verstärker hängt; deshalb gilt das HDMI-Profil für beide. Formate und Kanäle kommen immer vom angeschlossenen Gerät.</string>
+    <string name="audio_profile_reason_arc">Der Ton geht über HDMI ARC oder eARC an eine Soundbar oder einen Verstärker. Formate und Kanäle kommen von diesem Gerät.</string>
+    <string name="audio_profile_reason_speaker">Der Ton kommt aus den Lautsprechern des Fernsehers.</string>
+    <string name="audio_profile_reason_personal">Der Ton geht an Kopfhörer oder Bluetooth.</string>
+    <string name="audio_profile_reason_mixed">Es gilt das TV-Profil. Formate und Kanäle kommen vom aktuellen Ausgang.</string>
+    <string name="audio_unsupported">Nicht unterstützter Ton</string>
+    <string name="audio_unsupported_ac3">Dolby Digital (AC3)</string>
+    <string name="audio_unsupported_server">Medienserver</string>
+    <string name="audio_unsupported_hint">Für Ton, den der Ausgang nicht direkt abspielen kann. Automatisch: wird in diesem Gerät dekodiert; bei DTS-HD wird wenn möglich der DTS-Kern gesendet. Dolby Digital (AC3): Mehrkanalton wird als AC3 5.1 gesendet, wenn PCM nur Stereo erlaubt; Atmos-Höhenkanäle entfallen. Nur PCM: immer als PCM dekodieren. Medienserver: Plex, Emby oder Jellyfin wandeln den Ton um; andere Quellen wandeln in diesem Gerät um. Aus: keine zusätzliche Umwandlung.</string>
+</resources>

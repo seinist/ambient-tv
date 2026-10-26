@@ -82,5 +82,5 @@ class RoutingMediaRepository @Inject constructor(
     override suspend fun markUnwatched(ratingKey: String) = forId(ratingKey).markUnwatched(ratingKey)
     override suspend fun removeFromContinueWatching(ratingKey: String) = forId(ratingKey).removeFromContinueWatching(ratingKey)
     override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = forId(ratingKey).getAudioCompatibleStreamUrl(ratingKey, mediaIndex, startPositionMs, audioCodec, audioStreamId, audioChannels)
-    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long) = forId(ratingKey).getVideoCompatibleStreamUrl(ratingKey, mediaIndex, startPositionMs)
+    override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioChannels: Int) = forId(ratingKey).getVideoCompatibleStreamUrl(ratingKey, mediaIndex, startPositionMs, audioChannels)
 }

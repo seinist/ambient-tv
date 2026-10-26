@@ -61,7 +61,9 @@ class AudioConversionTest {
         assertFalse(shouldConvertAudioOnServer(server, "ac3", 6, route, true))
         assertFalse(shouldConvertAudioOnServer(server.copy(localFallback = "off"), "eac3", 8, route, false))
         assertEquals("ac3", serverAudioTarget(server, route, 8))
-        assertEquals("aac", serverAudioTarget(server.copy(localAc3 = false), route, 8))
+        // The server path needs no separate AC3 switch; a stereo mix keeps AAC.
+        assertEquals("ac3", serverAudioTarget(server.copy(localAc3 = false), route, 8))
+        assertEquals("aac", serverAudioTarget(server.copy(channels = "stereo"), route, 8))
         assertEquals("aac", serverAudioTarget(server, route.copy(passthrough = emptySet()), 8))
         assertEquals("aac", serverAudioTarget(server.copy(output = "pcm"), route, 8))
     }

@@ -3,7 +3,6 @@
     <string name="audio_conversion_location">Audio-Umwandlung</string>
     <string name="audio_conversion_local">Lokal auf diesem Gerät</string>
     <string name="audio_conversion_server">Durch den Medienserver</string>
-    <string name="audio_conversion_location_hint">Wo nicht unterstützter Ton umgewandelt wird; ohne Server-Transcoder lokal.</string>
     <string name="audio_badge_dts_core">DTS-Kern</string>
     <string name="audio_badge_server">Server</string>
     <string name="audio_route_confirmed">Ausgang bestätigt: %1$s</string>
