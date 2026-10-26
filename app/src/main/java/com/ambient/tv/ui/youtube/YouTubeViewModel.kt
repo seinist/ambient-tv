@@ -161,7 +161,16 @@ class YouTubeViewModel @Inject constructor(
         if (showPlaceholder) _uiState.value = _uiState.value.copy(loadingRows = _uiState.value.loadingRows + rowId)
         var finished = false
         try {
-            val page = engine.continueRow(session, rowId)
+            // Pages of only duplicates or unplayable entries (shorts shelves, playlists) still
+            // carry a next page key; skip a few of them instead of ending the row early.
+            val known = row.items.mapTo(HashSet()) { it.videoId }
+            var page = engine.continueRow(session, rowId)
+            var skipped = 0
+            while (page != null && page.hasMore && page.items.none { it.videoId !in known } && skipped < YouTubeRowPaging.MAX_EMPTY_PAGES) {
+                if (paging.token != token) return
+                skipped++
+                page = engine.continueRow(session, rowId)
+            }
             if (paging.token != token) return
             // A page for a row the user already left lands once input settles, not mid-scroll.
             if (focusedRowId != rowId) awaitQuietInput(maxWaitMs = 3_000L)

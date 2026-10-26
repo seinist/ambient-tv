@@ -104,6 +104,8 @@ internal class YouTubeRowPaging(private val nowMs: () -> Long) {
         const val INITIAL_MIN_ITEMS = 8
         const val RETRY_AFTER_MS = 30_000L
         const val MAX_INITIAL_PARALLEL = 2
+        /** Pages without new playable items skipped in one continuation before the row ends. */
+        const val MAX_EMPTY_PAGES = 3
         /** Focus must rest this long in a row before it continues; vertical passes never load. */
         const val FOCUS_SETTLE_MS = 350L
         const val MAX_ITEMS_PER_ROW = YouTubeContentCache.MAX_ITEMS_PER_ROW

@@ -937,7 +937,7 @@ private fun YouTubeLoadingRows(gridColumns: Int, pulse: androidx.compose.runtime
                         horizontalArrangement = Arrangement.spacedBy(spacing),
                         userScrollEnabled = false,
                     ) {
-                        items(visibleColumns + 1) {
+                        items(visibleColumns) {
                             Column(
                                 modifier = Modifier
                                     .width(cardWidth)
