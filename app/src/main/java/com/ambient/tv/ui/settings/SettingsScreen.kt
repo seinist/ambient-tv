@@ -948,7 +948,6 @@ fun SettingsScreen(
                             }
                             item { TvSettingRow(stringResource(R.string.settings_auto_display_version), stringResource(R.string.settings_auto_display_version_hint), uiState.autoSelectDisplayVersion, viewModel::onAutoSelectDisplayVersionToggled) }
                             item { PlayerOsdSettingsGroup() }
-                            item { SettingsPageLink(SettingsCategory.LIVE_TV, "player-live-tv") }
                         }
 
                         SettingsCategory.LIVE_TV -> {
