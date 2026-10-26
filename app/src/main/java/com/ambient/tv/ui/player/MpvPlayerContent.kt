@@ -257,7 +257,7 @@ internal fun MpvPlayerContent(
             else viewModel.reportPlaybackError(message)
         }
     }
-    MpvRenderOverloadDialog(controller) { panelNavigation.openVideoSettings() }
+    MpvRenderOverloadDialog(controller, panelNavigation) { panelNavigation.openVideoSettings() }
     LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(

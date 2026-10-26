@@ -217,8 +217,17 @@ class PlayerPanelNavigation {
     /** A keyed row ([focusRequester]) of the open level took focus. */
     internal fun noteFocused(key: String) {
         val level = path.lastOrNull() ?: return
-        level.focusedKey = key
+        level.focusedKey = rememberedPanelFocusKey(level.focusedKey, key, parking)
         level.hadFocus = true
+    }
+
+    /** A rescue holds focus on a stand-in row; that row must not replace the one to return to. */
+    private var parking = false
+
+    /** Runs [focus] (a stand-in request) without overwriting the level's remembered row. */
+    internal fun <T> parked(focus: () -> T): T {
+        parking = true
+        try { return focus() } finally { parking = false }
     }
 
     internal fun notePanelFocused() {
@@ -233,6 +242,7 @@ class PlayerPanelNavigation {
         target = { panelFocusRescueTarget(restoreKey, focusedKey) },
         request = ::requestFocus,
         onFocused = ::notePanelFocused,
+        park = { focus -> parked(focus) },
     )
 
     private fun restore(key: String?) {

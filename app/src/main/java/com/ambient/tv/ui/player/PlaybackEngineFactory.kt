@@ -99,12 +99,24 @@ object PlaybackEngineFactory {
         mpvAudioAllowed: Boolean = sourceHdrStandard != HdrStandard.DOLBY_VISION,
         /** YouTube only: center automatic captions that YouTube pins to the left edge. */
         centerYouTubeCaptions: Boolean = metadata?.source == "youtube",
+        /** Built but not prepared: the caller prepares once the previous player closed. */
+        deferPrepare: Boolean = false,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
                 listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
-                Media3PlaybackHandle(create(context.applicationContext, streamUrl, startPositionMs,
-                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions))
+                // Live TV (Tvheadend): Media3 takes part in the native release gate like MPV and
+                // VLC, so it neither opens a second server subscription while the previous player
+                // still holds one nor lets the next player open before its own stream is gone.
+                val gated = media3JoinsReleaseGate(metadata.isLive)
+                val previous = if (gated) com.ambient.tv.ui.player.backend.nativeAudioReleases.snapshot() else null
+                val wait = previous?.takeIf { !it.isDone }
+                val player = create(context.applicationContext, streamUrl, startPositionMs,
+                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
+                    deferPrepare = wait != null)
+                Media3PlaybackHandle(player, joinsReleaseGate = gated).also {
+                    if (wait != null) prepareAfterPreviousRelease(player, wait)
+                }
             }.player
         }
         val started = System.nanoTime()
@@ -200,8 +212,24 @@ object PlaybackEngineFactory {
                 playWhenReady = true
                 Media3ImageProcessing.get(context, this)
                 if (primeResume) Media3ResumePrimer.start(this, startPositionMs)
-                prepare()
+                if (!deferPrepare) prepare()
             }
+    }
+
+    /** Prepares [player] once the previous MPV/VLC/Media3 player closed (at most [com.ambient.tv.ui.player.backend.PREVIOUS_RELEASE_LIMIT_MS]). */
+    private fun prepareAfterPreviousRelease(player: ExoPlayer, previous: com.ambient.tv.ui.player.backend.PreviousRelease) {
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val started = android.os.SystemClock.elapsedRealtime()
+        previous.whenSettled(delay = { ms, block -> main.postDelayed(block, ms) }) { outcome ->
+            main.post {
+                val waited = android.os.SystemClock.elapsedRealtime() - started
+                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("media3", "previous player $outcome after $waited ms")
+                if (outcome != com.ambient.tv.ui.player.backend.PreviousReleaseOutcome.READY)
+                    Timber.w(previous.failure, "Media3 start: previous player %s after %d ms; starting anyway", outcome, waited)
+                // Released meanwhile (channel change, Back): nothing to prepare.
+                if (Media3PlaybackHandle.forPlayer(player) != null) player.prepare()
+            }
+        }
     }
 
     internal fun externalSubtitleConfiguration(track: MediaTrack): MediaItem.SubtitleConfiguration? {
@@ -252,3 +280,6 @@ private fun youtubeConstrainSquareVideo(player: androidx.media3.common.Player, t
     player.trackSelectionParameters = parameters.buildUpon()
         .setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, allowed)).build()
 }
+
+/** Live TV Media3 players wait for and take part in the native release gate (MPV/VLC hand-off). */
+internal fun media3JoinsReleaseGate(isLive: Boolean): Boolean = isLive

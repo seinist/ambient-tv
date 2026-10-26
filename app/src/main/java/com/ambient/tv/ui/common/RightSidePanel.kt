@@ -339,11 +339,15 @@ private fun RightSidePanelChrome(
     val rescue = remember { RescueRun() }
     val footerAllowed = panelFocusFallback(focusRescue?.levelFresh != false) == PanelFocusFallback.FOOTER
     fun focusFirstRow(): Boolean = runCatching { bodyFocus.requestFocus() }.getOrDefault(false)
+    // Parking on the first row while the real row is still missing must not make that row the
+    // one remembered for later (e.g. after "Warten" in a player dialog).
+    fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
     LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused) {
-        if (!retainFocus || isHandheld || !hadPanelFocus || panelHasFocus || !windowInfo.isWindowFocused)
-            return@LaunchedEffect
+        if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
+                windowInfo.isWindowFocused, rescue.pausedTarget)) return@LaunchedEffect
         if (rescue.job?.isActive == true) return@LaunchedEffect
-        val target = focusRescue?.target?.invoke()
+        val target = rescue.pausedTarget ?: focusRescue?.target?.invoke()
+        rescue.pausedTarget = null
         rescue.userMoved = false
         // A removed capability row can leave Compose without a focused child. The remembered
         // row may come back a few hundred milliseconds later (renderer rebuild): keep trying
@@ -351,17 +355,22 @@ private fun RightSidePanelChrome(
         rescue.job = rescueScope.launch {
             var parked = false
             val placed = retryFocusFor {
-                if (!windowInfo.isWindowFocused || rescue.userMoved) return@retryFocusFor true
+                when (panelRescueStep(windowInfo.isWindowFocused, rescue.userMoved)) {
+                    PanelRescueStep.STOP -> return@retryFocusFor true
+                    // A dialog took the window: keep the target and go on once it is closed.
+                    PanelRescueStep.PAUSE -> { rescue.pausedTarget = target; return@retryFocusFor true }
+                    PanelRescueStep.CONTINUE -> Unit
+                }
                 if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
                 if (target == null) {
                     if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
                     return@retryFocusFor true
                 }
-                if (!panelHasFocus && !parked) parked = focusFirstRow()
+                if (!panelHasFocus && !parked) parked = parkOnFirstRow()
                 false
             }
             if (!placed && !panelHasFocus && windowInfo.isWindowFocused) {
-                if (!focusFirstRow()) runCatching { panelFocus.requestFocus() }
+                if (!parkOnFirstRow()) runCatching { panelFocus.requestFocus() }
             }
         }
     }
@@ -620,4 +629,6 @@ fun RightPanelInfoRow(text: String, modifier: Modifier = Modifier) {
 private class RescueRun {
     var job: kotlinx.coroutines.Job? = null
     var userMoved = false
+    /** Row a rescue still has to reach after a dialog window gave the focus back. */
+    var pausedTarget: String? = null
 }

@@ -48,4 +48,35 @@ class PanelFocusRescue internal constructor(
     val target: () -> String?,
     val request: (String) -> Boolean,
     val onFocused: () -> Unit,
+    /** Runs a stand-in focus request (parking) that must not become the remembered row. */
+    val park: (() -> Boolean) -> Boolean = { it() },
 )
+
+/**
+ * The row a level returns to after [focused] took focus. A row that only holds focus while a
+ * rescue waits for the real one (parking) keeps the earlier row remembered.
+ */
+internal fun rememberedPanelFocusKey(current: String?, focused: String, parking: Boolean): String? =
+    if (parking && current != null) current else focused
+
+/** What a running focus rescue does in this frame. */
+internal enum class PanelRescueStep { CONTINUE, PAUSE, STOP }
+
+/**
+ * A dialog or popup window took the window focus: the rescue pauses and resumes with the same
+ * target once the window is focused again, instead of counting as done. A key press by the user
+ * ends it.
+ */
+internal fun panelRescueStep(windowFocused: Boolean, userMoved: Boolean): PanelRescueStep = when {
+    userMoved -> PanelRescueStep.STOP
+    !windowFocused -> PanelRescueStep.PAUSE
+    else -> PanelRescueStep.CONTINUE
+}
+
+/**
+ * Whether a rescue starts now. A paused rescue resumes even though a stand-in row holds the
+ * panel's focus; otherwise only a panel that lost focus is rescued.
+ */
+internal fun panelRescueShouldStart(retainFocus: Boolean, handheld: Boolean, hadPanelFocus: Boolean,
+    panelHasFocus: Boolean, windowFocused: Boolean, pausedTarget: String?): Boolean =
+    retainFocus && !handheld && hadPanelFocus && windowFocused && (!panelHasFocus || pausedTarget != null)

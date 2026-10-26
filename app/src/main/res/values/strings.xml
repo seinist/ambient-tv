@@ -1805,8 +1805,8 @@
     <string name="settings_next_up_credits_delay">Advance during credits</string>
     <string name="settings_next_up_credits_delay_hint">Optional countdown with a credits marker and autoplay enabled. Back cancels; Pause freezes it. Known later scenes are preserved; incomplete markers may miss scenes.</string>
     <string name="next_up_keep_watching">Keep watching (Back)</string>
-    <string name="audio_output_release_pending">Waiting for the previous audio output to close.</string>
-    <string name="audio_output_release_failed">The previous audio output could not be closed.</string>
+    <string name="audio_output_release_pending">Closing the previous player…</string>
+    <string name="audio_output_release_failed">The previous player could not be closed.</string>
     <string name="audio_output_config_failed">The audio output could not be configured.</string>
     <string name="settings_display_allow_high_double">Allow 100/120 Hz (50→100, 60→120 Hz)</string>
     <string name="settings_display_allow_high_double_hint">Only without a native 50/60 Hz mode. Doubles GPU and composition work at 4K.</string>

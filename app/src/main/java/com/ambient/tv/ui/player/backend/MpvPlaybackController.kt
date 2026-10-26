@@ -93,11 +93,22 @@ class MpvPlaybackController(
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
     private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
+    private val createdAt = SystemClock.elapsedRealtime()
+    /** Completed once the previous player closed, failed to close, or [PREVIOUS_RELEASE_LIMIT_MS] passed. */
+    private val ownerReady = java.util.concurrent.CompletableFuture<PreviousReleaseOutcome>()
+    /**
+     * The previous player (MPV, VLC or live Media3) is still closing its output. Shown as a short
+     * hint instead of "Player antwortet nicht": this player has not started yet, nothing hangs.
+     */
+    var waitingForPreviousPlayer by mutableStateOf(!previousAudioRelease.isDone)
+        private set
+    /** The owner began building the engine: from here on the watchdog counts. */
+    @Volatile private var ownerStarted = false
     private val mailbox = MpvCommandQueue(
         schedule = { task ->
             // Construction can happen inside remember(). Let that composition commit before
             // the owner reads the AudioSession's Compose state for the first time.
-            previousAudioRelease.whenComplete { _, _ ->
+            ownerReady.whenComplete { _, _ ->
                 main.post { worker.post { task() } }
             }
         },
@@ -112,7 +123,7 @@ class MpvPlaybackController(
     private val tick: Runnable = object : Runnable {
         override fun run() {
             if (released) return
-            backendUnresponsive = SystemClock.elapsedRealtime() - lastProgress >= 5_000L
+            backendUnresponsive = mpvBackendUnresponsive(SystemClock.elapsedRealtime(), lastProgress, ownerStarted)
             mailbox.submit("sample") { sample() }
             main.postDelayed(this, 250L)
         }
@@ -122,8 +133,27 @@ class MpvPlaybackController(
         audioSession.apply = { _, _ -> main.post { command("audio") { applyAudioOptions() } } }
         audioSession.routeChanged = { _, _ -> main.post { command("audio") { applyAudioOptions() } } }
         audioSession.startRouteMonitoring(context)
+        previousAudioRelease.whenSettled(delay = { ms, block -> main.postDelayed(block, ms) }) { outcome ->
+            main.post { waitingForPreviousPlayer = false }
+            ownerReady.complete(outcome)
+        }
         mailbox.submit("initialize") {
-            previousAudioRelease.join()
+            // Already settled: the mailbox only runs once ownerReady completed. Never blocks.
+            val outcome = ownerReady.getNow(PreviousReleaseOutcome.TIMED_OUT)
+            val waited = SystemClock.elapsedRealtime() - createdAt
+            com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", "previous player $outcome after $waited ms")
+            when (outcome) {
+                PreviousReleaseOutcome.TIMED_OUT -> {
+                    Timber.w("MPV start: previous player still closing after %d ms; not starting", waited)
+                    main.post { if (!released) failure = context.getString(com.ambient.tv.R.string.audio_output_release_failed) }
+                    return@submit
+                }
+                PreviousReleaseOutcome.READY_AFTER_FAILURE ->
+                    Timber.w(previousAudioRelease.failure, "MPV start: previous player failed to close; starting anyway")
+                PreviousReleaseOutcome.READY -> if (waited >= 1_000L) Timber.i("MPV start waited %d ms for the previous player", waited)
+            }
+            lastProgress = SystemClock.elapsedRealtime()
+            ownerStarted = true
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
@@ -541,3 +571,13 @@ internal fun mpvSeekByTarget(pendingTargetMs: Long?, sampledPositionMs: Long, de
 
 /** Upper bound for surfaceDestroyed waiting on the VO detach (main thread; far below ANR). */
 internal const val SURFACE_DETACH_WAIT_MS = 500L
+
+/** No progress for this long after the engine began starting: "Player antwortet nicht". */
+internal const val MPV_UNRESPONSIVE_MS = 5_000L
+
+/**
+ * Whether the MPV owner counts as hung. Only after it began building the engine: before that it
+ * waits for the previous player to close (renderer switch), which is shown as its own hint.
+ */
+internal fun mpvBackendUnresponsive(nowMs: Long, lastProgressMs: Long, ownerStarted: Boolean,
+    limitMs: Long = MPV_UNRESPONSIVE_MS): Boolean = ownerStarted && nowMs - lastProgressMs >= limitMs
