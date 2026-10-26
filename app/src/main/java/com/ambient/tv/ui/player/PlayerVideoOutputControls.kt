@@ -120,7 +120,7 @@ internal fun PlayerVideoOutputControls(backend: String) {
     }
     if (nativeHdr) ImageHint(stringResource(R.string.player_output_hdr_direct))
     // "Als HDR markiert" once mpv and Android tagged the output PQ; the TV's mode only if Android reports it.
-    if (passthroughRunning) ImageHint(stringResource(mpvHdrPassthroughStatusRes(passthroughConfirmed, activeMpv?.hdrDisplaySwitched)))
+    if (passthroughRunning) ImageHint(stringResource(mpvHdrPassthroughStatusRes(passthroughConfirmed, activeMpv.hdrDisplaySwitched)))
     hdrGpu.reason?.takeUnless { passthroughRunning }?.let { ImageHint(stringResource(mpvHdrGpuReasonRes(it))) }
 
 }

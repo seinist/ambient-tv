@@ -84,5 +84,5 @@ internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage
     val fusable = previous is Media3Stage.Deband || previous is Media3Stage.Sharpen ||
         (previous is Media3Stage.Scale && previous.scaler != "lanczos")
     if (!fusable) return stages.map { Media3FusedStage(it) }
-    return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous!!, gamma.value)
+    return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
 }

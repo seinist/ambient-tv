@@ -427,7 +427,7 @@ class SmartTubeEngine @Inject constructor(
             com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(appPreferences.playbackBackendKey) !=
             com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
         val deferredDash = if (deferMpd) backgroundScope.async { generatedDashManifest(info, videoId) } else null
-        val uri = if (deferMpd) hls ?: direct ?: adaptivePair?.first else selectYouTubePlaybackUri(
+        val uri = if (deferMpd) hls ?: direct ?: adaptivePair.first else selectYouTubePlaybackUri(
             isLive = isLive,
             vodPolicy = vodPolicy,
             hls = hls,
@@ -494,7 +494,7 @@ class SmartTubeEngine @Inject constructor(
         formatClientRestored = true
         runCatching {
             val data = Class.forName("com.liskovsoft.youtubeapi.service.internal.MediaServiceData").getMethod("instance").invoke(null)
-            val ordinal = data.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return
+            val ordinal = data?.callInt("getVideoInfoType")?.takeIf { it >= 0 } ?: return
             val service = Class.forName("com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService").getMethod("instance").invoke(null)
             val client = Class.forName("com.liskovsoft.youtubeapi.common.helpers.AppClient").enumConstants?.getOrNull(ordinal) ?: return
             val known = service.javaClass.getDeclaredField("VIDEO_INFO_TYPE_LIST").apply { isAccessible = true }.get(null) as? Array<*>
