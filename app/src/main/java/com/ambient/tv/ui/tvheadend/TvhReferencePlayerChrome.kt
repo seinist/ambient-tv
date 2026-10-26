@@ -267,15 +267,16 @@ fun BoxScope.TvhReferencePlayerChrome(
         }
 
         PlayerControlBar(
+            player = com.ambient.tv.ui.player.OsdPlayer.LIVE_TV,
             leftContent = {
                 val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
                 if (source.isLive) {
-                    PlayerIconButton(Icons.Filled.SkipPrevious, stringResource(R.string.tvh_previous_channel), { onZap(-1) })
+                    PlayerIconButton(Icons.Filled.SkipPrevious, stringResource(R.string.tvh_previous_channel), { onZap(-1) }, osd = com.ambient.tv.ui.player.OsdButton.ZAP)
                     if (shiftable) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), {
                         seekLiveTimeshiftBy(positionMs, -seekJumpMs)
-                    })
+                    }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                 } else {
-                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeekBy(-seekJumpMs) })
+                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeekBy(-seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                 }
                 PlayerIconButton(
                     if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -285,7 +286,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                     primary = true,
                     loading = loading,
                 )
-                PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), onStop)
+                PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), onStop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
                 val recording = LocalLiveRecordingControl.current
                 if (source.isLive && recording.available) {
                     PlayerIconButton(
@@ -294,6 +295,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                         recording.record,
                         selected = recording.scheduled,
                         loading = recording.busy,
+                        osd = com.ambient.tv.ui.player.OsdButton.RECORD,
                     )
                 }
 
@@ -301,7 +303,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                     if (shiftable) {
                         PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), {
                             seekLiveTimeshiftBy(positionMs, seekJumpMs)
-                        })
+                        }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         // Stays in place while live (dimmed), so the row does not shift and focus is kept.
                         PlayerIconButton(
                             Icons.Filled.LiveTv,
@@ -312,21 +314,22 @@ fun BoxScope.TvhReferencePlayerChrome(
                                 runCatching { playFocusRequester.requestFocus() }
                             },
                             enabled = liveJumpActive,
+                            osd = com.ambient.tv.ui.player.OsdButton.GO_LIVE,
                         )
                     }
-                    PlayerIconButton(Icons.Filled.SkipNext, stringResource(R.string.tvh_next_channel), { onZap(1) })
+                    PlayerIconButton(Icons.Filled.SkipNext, stringResource(R.string.tvh_next_channel), { onZap(1) }, osd = com.ambient.tv.ui.player.OsdButton.ZAP)
                 } else {
-                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeekBy(seekJumpMs) })
+                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeekBy(seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                 }
             },
             rightContent = {
                 PlayerExitButton(onBack)
-                PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), onOpenAudio, selected = audioSelected)
-                PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), onOpenSubtitles, selected = subtitlesSelected)
+                PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), onOpenAudio, selected = audioSelected, osd = com.ambient.tv.ui.player.OsdButton.AUDIO)
+                PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), onOpenSubtitles, selected = subtitlesSelected, osd = com.ambient.tv.ui.player.OsdButton.SUBTITLES)
                 if (onOpenVisualizer != null) {
-                    PlayerIconButton(Icons.Filled.GraphicEq, stringResource(R.string.player_visualizer), onOpenVisualizer, selected = visualizerSelected)
+                    PlayerIconButton(Icons.Filled.GraphicEq, stringResource(R.string.player_visualizer), onOpenVisualizer, selected = visualizerSelected, osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER)
                 } else {
-                    PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), onOpenRenderer, selected = rendererSelected)
+                    PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), onOpenRenderer, selected = rendererSelected, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                 }
                 PlayerSleepTimerButton(onOpenSleep, selected = sleepSelected)
                 PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), onOpenSettings, selected = settingsSelected)

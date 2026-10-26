@@ -1624,9 +1624,10 @@ private data class YouTubeOsdModel(
                     audioBadge?.let { MetaBadge(it) }
                 }
                 PlayerControlBar(
+                    player = com.ambient.tv.ui.player.OsdPlayer.YOUTUBE,
                     leftContent = {
                         val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-seekJumpMs) })
+                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         PlayerIconButton(
                             if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             stringResource(if (playing) R.string.player_pause else R.string.player_play),
@@ -1635,13 +1636,13 @@ private data class YouTubeOsdModel(
                             primary = true,
                             loading = loading,
                         )
-                        PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(seekJumpMs) })
+                        PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
+                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
                         channel?.let { osd ->
-                            PlayerIconButton(Icons.Filled.AccountCircle, osd.channel.title ?: stringResource(R.string.youtube_channel_open), osd.onOpen)
+                            PlayerIconButton(Icons.Filled.AccountCircle, osd.channel.title ?: stringResource(R.string.youtube_channel_open), osd.onOpen, osd = com.ambient.tv.ui.player.OsdButton.CHANNEL)
                             // Signed out the subscription is unknown and cannot be changed.
                             osd.channel.subscribed?.let { subscribed ->
                                 PlayerIconButton(
@@ -1649,12 +1650,13 @@ private data class YouTubeOsdModel(
                                     stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe),
                                     osd.onToggleSubscription,
                                     selected = subscribed,
+                                    osd = com.ambient.tv.ui.player.OsdButton.SUBSCRIBE,
                                 )
                             }
                         }
-                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), { navigation?.open(UnifiedPlayerPanel.AUDIO) }, selected = panel.isAudio)
-                        PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { navigation?.open(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES)
-                        PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo)
+                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), { navigation?.open(UnifiedPlayerPanel.AUDIO) }, selected = panel.isAudio, osd = com.ambient.tv.ui.player.OsdButton.AUDIO)
+                        PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { navigation?.open(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES, osd = com.ambient.tv.ui.player.OsdButton.SUBTITLES)
+                        PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                         PlayerSleepTimerButton({ navigation?.open(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
                         PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { navigation?.open(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)
                     },

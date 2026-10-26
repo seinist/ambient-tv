@@ -109,6 +109,7 @@ data class SettingsBackup(
     val navSoundBank: String = "",
     val playbackBackendKey: String = "auto",
     val playerTechBadgesVisible: Boolean = true,
+    val osdHiddenButtons: List<String> = emptyList(),
     val tvheadendPlaybackBackendKey: String? = null,
     val mpvVideoOutputModeKey: String = "direct",
     val mpvVideoDecoderKey: String = "auto",
@@ -411,6 +412,7 @@ class SettingsBackupManager @Inject constructor(
             navSoundBank = preferences.navSoundBank,
             playbackBackendKey = preferences.playbackBackendKey,
             playerTechBadgesVisible = preferences.playerTechBadgesVisible,
+            osdHiddenButtons = preferences.osdHiddenButtons.sorted(),
             tvheadendPlaybackBackendKey = preferences.tvheadendPlaybackBackendKey,
             mpvVideoOutputModeKey = preferences.mpvVideoOutputModeKey,
             mpvVideoDecoderKey = preferences.mpvVideoDecoderKey,
@@ -756,6 +758,7 @@ class SettingsBackupManager @Inject constructor(
         if (backup.schemaVersion >= 50) preferences.navSoundBank = backup.navSoundBank
         preferences.playbackBackendKey = backup.playbackBackendKey
         preferences.playerTechBadgesVisible = backup.playerTechBadgesVisible
+        preferences.osdHiddenButtons = backup.osdHiddenButtons.toSet()
         preferences.tvheadendPlaybackBackendKey = backup.tvheadendPlaybackBackendKey ?: backup.playbackBackendKey
         preferences.mpvVideoOutputModeKey = backup.mpvVideoOutputModeKey
         preferences.mpvVideoDecoderKey = backup.mpvVideoDecoderKey

@@ -300,10 +300,11 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
             val state = model.state
             val nextItem = state.nextAudioTrack ?: state.nextVideoItem
             PlayerControlBar(
+                player = com.ambient.tv.ui.player.OsdPlayer.MEDIA,
                 leftContent = {
                     val seekJumpMs = state.seekJumpMs
                     val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
-                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { model.onSeekButton(-seekJumpMs) })
+                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { model.onSeekButton(-seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     PlayerIconButton(
                         if (model.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         stringResource(if (model.isPlaying) R.string.player_pause else R.string.player_play),
@@ -312,25 +313,26 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         primary = true,
                         loading = model.loading,
                     )
-                    PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop)
-                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { model.onSeekButton(seekJumpMs) })
+                    PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
+                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { model.onSeekButton(seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     nextItem?.let { next ->
                         PlayerIconButton(
                             Icons.Filled.SkipNext,
                             stringResource(if (state.nextEpisode != null) R.string.player_next_episode else R.string.player_next_item),
                             { model.onPlayNext(next.ratingKey) },
+                            osd = com.ambient.tv.ui.player.OsdButton.NEXT,
                         )
                     }
                 },
                 rightContent = {
                     PlayerExitButton(model.onBack)
-                    PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), { model.onPanelChange(UnifiedPlayerPanel.AUDIO) }, selected = panel.isAudio)
-                    PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { model.onPanelChange(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES)
+                    PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.player_audio), { model.onPanelChange(UnifiedPlayerPanel.AUDIO) }, selected = panel.isAudio, osd = com.ambient.tv.ui.player.OsdButton.AUDIO)
+                    PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { model.onPanelChange(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES, osd = com.ambient.tv.ui.player.OsdButton.SUBTITLES)
                     // Audio-only: MilkDrop takes the video slot; the renderer lives under settings.
                     if (model.visualizerButton) {
-                        PlayerIconButton(Icons.Filled.GraphicEq, stringResource(R.string.player_visualizer), { model.onPanelChange(UnifiedPlayerPanel.VISUALIZER) }, selected = panel.isVisualizer)
+                        PlayerIconButton(Icons.Filled.GraphicEq, stringResource(R.string.player_visualizer), { model.onPanelChange(UnifiedPlayerPanel.VISUALIZER) }, selected = panel.isVisualizer, osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER)
                     } else {
-                        PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { model.onPanelChange(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo)
+                        PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { model.onPanelChange(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                     }
                     PlayerSleepTimerButton({ model.onPanelChange(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
                     PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { model.onPanelChange(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)

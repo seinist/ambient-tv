@@ -22,7 +22,7 @@ internal object CompanionBackupPolicy {
         "spotifySubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
         "homeHeroIntensityPercent", "homeHeroSpreadKey", "homeBackgroundEverywhere", "focusArtworkBackdrop", "chooseServerOnStartup", "themeMusicVolume", "plexAutoRefreshIntervalSeconds",
         "plexThemeMusicEnabled", "jellyfinThemeMusicEnabled", "embyThemeMusicEnabled", "tvheadendShowOnHome",
-        "playerTechBadgesVisible", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
+        "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
         "audioVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
         "screensaverEnabled", "screensaverTimeoutMinutes", "screensaverModeKey", "screensaverShowClock", "screensaverShowDate",
         "screensaverUse24HourClock", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",

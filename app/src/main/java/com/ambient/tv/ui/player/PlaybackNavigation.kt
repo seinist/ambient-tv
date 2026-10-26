@@ -135,7 +135,7 @@ fun ChapterButton() {
     if (navigation.timeline.chapters.isEmpty()) return
     PlayerIconButton(Icons.AutoMirrored.Filled.ViewList, stringResource(R.string.player_chapters),
         onClick = { navigation.interact(); navigation.chaptersOpen = true },
-        modifier = Modifier.focusRequester(navigation.returnFocus))
+        modifier = Modifier.focusRequester(navigation.returnFocus), osd = OsdButton.CHAPTERS)
 }
 
 @Composable

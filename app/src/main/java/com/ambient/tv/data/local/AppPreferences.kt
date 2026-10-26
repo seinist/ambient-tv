@@ -944,6 +944,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_PLAYER_TECH_BADGES_VISIBLE, true)
         set(value) = prefs.edit { putBoolean(KEY_PLAYER_TECH_BADGES_VISIBLE, value) }
 
+    /** Action-bar buttons hidden per player, as "PLAYER/BUTTON"; new buttons start visible. */
+    var osdHiddenButtons: Set<String>
+        get() = prefs.getStringSet(KEY_OSD_HIDDEN_BUTTONS, emptySet()).orEmpty().toSet()
+        set(value) = prefs.edit { putStringSet(KEY_OSD_HIDDEN_BUTTONS, value.toSet()) }
+
     private val liveTvOptionsRevision = androidx.compose.runtime.mutableIntStateOf(0)
     var liveTimeshiftEnabled: Boolean
         get() { liveTvOptionsRevision.intValue; return prefs.getBoolean("live_timeshift_enabled", false) }
@@ -2132,6 +2137,7 @@ class AppPreferences @Inject constructor(
         val MPV_VIDEO_DECODERS = setOf("auto", "mediacodec", "vulkan", "software")
         val VLC_VIDEO_OUTPUT_MODES = setOf("auto", "android", "vulkan")
         val MPV_SCALING_FILTERS = VideoImageCatalog.mpvScalers.keys
+        const val KEY_OSD_HIDDEN_BUTTONS = "osd_hidden_buttons"
         val VLC_SCALING_FILTERS = VideoImageCatalog.vlcScalers.keys
         const val KEY_MEDIA_AUDIO_PASSTHROUGH = "media_audio_passthrough"
         /** Unset passthrough = "Automatisch": bitstream only for formats the output confirms. */

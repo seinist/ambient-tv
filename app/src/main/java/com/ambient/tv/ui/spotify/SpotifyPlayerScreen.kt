@@ -253,8 +253,9 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                     if (state.connected) MetaBadge(state.deviceName)
                 }
                 PlayerControlBar(
+                    player = com.ambient.tv.ui.player.OsdPlayer.SPOTIFY,
                     leftContent = {
-                        PlayerIconButton(Icons.Default.SkipPrevious, stringResource(R.string.spotify_previous), viewModel::previous)
+                        PlayerIconButton(Icons.Default.SkipPrevious, stringResource(R.string.spotify_previous), viewModel::previous, osd = com.ambient.tv.ui.player.OsdButton.NEXT)
                         PlayerIconButton(
                             if (state.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                             stringResource(if (state.playing) R.string.spotify_pause else R.string.player_play),
@@ -262,17 +263,17 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                             modifier = Modifier.focusRequester(primaryFocusRequester),
                             primary = true,
                         )
-                        PlayerIconButton(Icons.Default.Stop, stringResource(R.string.player_stop), { viewModel.stop(); onBack() })
-                        PlayerIconButton(Icons.Default.SkipNext, stringResource(R.string.spotify_next), viewModel::next)
+                        PlayerIconButton(Icons.Default.Stop, stringResource(R.string.player_stop), { viewModel.stop(); onBack() }, osd = com.ambient.tv.ui.player.OsdButton.STOP)
+                        PlayerIconButton(Icons.Default.SkipNext, stringResource(R.string.spotify_next), viewModel::next, osd = com.ambient.tv.ui.player.OsdButton.NEXT)
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
                         com.ambient.tv.ui.common.PlayerSleepTimerButton({ panel = UnifiedPlayerPanel.SLEEP }, selected = panel == UnifiedPlayerPanel.SLEEP)
-                        PlayerIconButton(Icons.Default.Shuffle, stringResource(R.string.spotify_shuffle), viewModel::shuffle)
-                        PlayerIconButton(Icons.Default.Repeat, stringResource(R.string.spotify_repeat, state.repeatMode), viewModel::repeat)
-                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeDown, stringResource(R.string.spotify_volume_down), { viewModel.volume(-5) })
-                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.spotify_volume_up), { viewModel.volume(5) })
-                        PlayerIconButton(Icons.Default.GraphicEq, stringResource(R.string.player_visualizer), { panel = UnifiedPlayerPanel.VISUALIZER }, selected = panel.isVisualizer)
+                        PlayerIconButton(Icons.Default.Shuffle, stringResource(R.string.spotify_shuffle), viewModel::shuffle, osd = com.ambient.tv.ui.player.OsdButton.SHUFFLE)
+                        PlayerIconButton(Icons.Default.Repeat, stringResource(R.string.spotify_repeat, state.repeatMode), viewModel::repeat, osd = com.ambient.tv.ui.player.OsdButton.REPEAT)
+                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeDown, stringResource(R.string.spotify_volume_down), { viewModel.volume(-5) }, osd = com.ambient.tv.ui.player.OsdButton.VOLUME)
+                        PlayerIconButton(Icons.AutoMirrored.Filled.VolumeUp, stringResource(R.string.spotify_volume_up), { viewModel.volume(5) }, osd = com.ambient.tv.ui.player.OsdButton.VOLUME)
+                        PlayerIconButton(Icons.Default.GraphicEq, stringResource(R.string.player_visualizer), { panel = UnifiedPlayerPanel.VISUALIZER }, selected = panel.isVisualizer, osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER)
                         PlayerIconButton(Icons.Default.Settings, stringResource(R.string.player_playback_settings), { panel = UnifiedPlayerPanel.SETTINGS }, selected = panel != UnifiedPlayerPanel.NONE && !panel.isVisualizer)
                     },
                 )

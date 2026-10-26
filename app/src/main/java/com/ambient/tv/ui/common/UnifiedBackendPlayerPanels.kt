@@ -15,7 +15,9 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import com.ambient.tv.ui.common.projectm.LocalProjectMBrowser
 import com.ambient.tv.ui.common.projectm.ProjectMPresetPanel
@@ -198,6 +200,17 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.VISUALIZER) },
                 )
             }
+            // A hidden sleep button would leave the timer without any entry point.
+            com.ambient.tv.ui.player.activeOsdPlayer
+                ?.takeIf { !com.ambient.tv.ui.player.osdButtonVisible(com.ambient.tv.ui.player.OsdButton.SLEEP, it) }
+                ?.let {
+                    PlayerPanelEntry(
+                        icon = Icons.Filled.Bedtime,
+                        title = stringResource(R.string.player_sleep_timer),
+                        value = stringResource(if (sleepTimer.kind == SleepTimerKind.OFF) R.string.player_off else R.string.player_on),
+                        onClick = { onPanelChange(UnifiedPlayerPanel.SLEEP) },
+                    )
+                }
             settingsExtrasTitle?.let { RightPanelSectionTitle(it) }
             settingsExtras()
             PlayerPanelEntry(
@@ -206,6 +219,16 @@ fun UnifiedBackendPlayerPanel(
                 value = stringResource(if (techBadgesVisible) R.string.player_on else R.string.player_off),
                 onClick = { setPlayerTechBadgesVisible(videoImagePreferences(context), !techBadgesVisible) },
             )
+            com.ambient.tv.ui.player.activeOsdPlayer?.let { player ->
+                val hidden = com.ambient.tv.ui.player.osdHiddenButtons()
+                PlayerPanelEntry(
+                    icon = Icons.Filled.ViewWeek,
+                    title = stringResource(R.string.osd_buttons),
+                    value = stringResource(R.string.osd_buttons_summary,
+                        player.buttons.count { "${player.name}/${it.name}" !in hidden }, player.buttons.size),
+                    onClick = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
+                )
+            }
             audioSession?.let { session ->
                 PlayerPanelEntry(
                     icon = Icons.Filled.Info,
@@ -425,6 +448,24 @@ fun UnifiedBackendPlayerPanel(
         ) {
             Text(stringResource(R.string.player_sleep_action_hint), style = MaterialTheme.typography.bodySmall)
             SleepTimerControls(sleepTimer, isLive, onSleepChanged)
+        }
+
+        UnifiedPlayerPanel.OSD_BUTTONS -> UnifiedPlayerSidePanel(
+            title = stringResource(R.string.osd_buttons),
+            modifier = modifier,
+            onBack = back,
+        ) {
+            val player = com.ambient.tv.ui.player.activeOsdPlayer ?: return@UnifiedPlayerSidePanel
+            Text(stringResource(R.string.osd_buttons_hint), style = MaterialTheme.typography.bodySmall)
+            player.buttons.forEach { button ->
+                val visible = com.ambient.tv.ui.player.osdButtonVisible(button, player)
+                PlayerPanelEntry(
+                    icon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    title = stringResource(button.label),
+                    value = stringResource(if (visible) R.string.player_on else R.string.player_off),
+                    onClick = { com.ambient.tv.ui.player.setOsdButtonVisible(videoImagePreferences(context), player, button, !visible) },
+                )
+            }
         }
 
         UnifiedPlayerPanel.VISUALIZER, UnifiedPlayerPanel.VISUALIZER_SETTINGS -> {

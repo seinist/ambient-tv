@@ -80,7 +80,9 @@ enum class UnifiedPlayerPanel {
     VIDEO_SECTION,
     /** SVP motion smoothing below Motion, and its advanced level. */
     VIDEO_SVP, VIDEO_SVP_ADVANCED,
-    AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES, SLEEP, VISUALIZER, VISUALIZER_SETTINGS;
+    AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES, SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
+    /** Which action-bar buttons the current player shows. */
+    OSD_BUTTONS;
 
     val isAudio: Boolean get() = this == AUDIO || this == AUDIO_SECTION || this == AUDIO_CODECS
     val isVisualizer: Boolean get() = this == VISUALIZER || this == VISUALIZER_SETTINGS
@@ -319,6 +321,19 @@ val LocalPlayerPlayPauseFocus = compositionLocalOf<FocusRequester?> { null }
 @Composable
 fun PlayerControlBar(
     modifier: Modifier = Modifier,
+    player: com.ambient.tv.ui.player.OsdPlayer? = null,
+    leftContent: @Composable RowScope.() -> Unit,
+    rightContent: @Composable RowScope.() -> Unit,
+) {
+    if (player != null) androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.activeOsdPlayer = player }
+    androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.player.LocalOsdPlayer provides player) {
+        PlayerControlBarContent(modifier, leftContent, rightContent)
+    }
+}
+
+@Composable
+private fun PlayerControlBarContent(
+    modifier: Modifier,
     leftContent: @Composable RowScope.() -> Unit,
     rightContent: @Composable RowScope.() -> Unit,
 ) {
@@ -541,6 +556,7 @@ fun PlayerSleepTimerButton(onClick: () -> Unit, selected: Boolean) {
         stringResource(R.string.player_sleep_timer),
         onClick,
         selected = selected,
+        osd = com.ambient.tv.ui.player.OsdButton.SLEEP,
     )
 }
 
@@ -551,6 +567,7 @@ fun PlayerExitButton(onBack: () -> Unit) {
         icon = if (handheld) Icons.AutoMirrored.Filled.ArrowBack else Icons.Filled.FullscreenExit,
         label = stringResource(if (handheld) R.string.back else R.string.player_exit_fullscreen),
         onClick = onBack,
+        osd = com.ambient.tv.ui.player.OsdButton.EXIT,
     )
 }
 
@@ -566,7 +583,10 @@ fun PlayerIconButton(
     loading: Boolean = false,
     /** False: stays visible and focusable, but dimmed and without action. */
     enabled: Boolean = true,
+    /** Action-bar button the viewer can hide for the current player. */
+    osd: com.ambient.tv.ui.player.OsdButton? = null,
 ) {
+    if (osd != null && !com.ambient.tv.ui.player.osdButtonVisible(osd)) return
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     var focused by remember { mutableStateOf(false) }
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
