@@ -64,11 +64,24 @@ class MpvPlaybackController(
     private var failure by mutableStateOf<String?>(null)
     var backendUnresponsive by mutableStateOf(false)
         private set
+    /**
+     * The path the engine will start on, known before it exists: the panel keeps the GPU (or
+     * direct) layout through a renderer switch instead of collapsing until the first sample.
+     * Shown as expected ([engineConfirmed] false) until the running engine reports it.
+     */
+    private val expectedGpuFilters = runCatching {
+        initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions, nativeHdrPreferred,
+            hdrGpuPassthrough, declaredHdr != null &&
+                !nativeHdrSurfacePreferred(declaredHdr, HdrSupport.displayStandards(context))).gpu
+    }.getOrDefault(false)
     private var state by mutableStateOf(MpvEngineState(imageOptions = initialImageOptions.normalized(),
-        status = PlaybackStatus(positionMs = initialStartPositionMs)))
+        status = PlaybackStatus(positionMs = initialStartPositionMs), supportsGpuFilters = expectedGpuFilters))
     private var values by mutableStateOf<Map<String, Any?>>(emptyMap())
     private val changes = MutableStateFlow(0L)
     val stateChanges = changes.asStateFlow()
+    /** Bumped on the main thread whenever a sampled value changed; lets the snapshot pick it up. */
+    var valuesRevision = 0L
+        private set
     val eventDriven = true
     private val presentation = MutableStateFlow(VideoPresentation())
     val videoPresentation = presentation.asStateFlow()
@@ -78,6 +91,7 @@ class MpvPlaybackController(
     }
     private val queries = ConcurrentHashMap<String, Query>()
     private val sampledValues = mutableMapOf<String, Any?>() // owner thread only
+    private var sampledMediaInfoGeneration = -1 // owner thread only
     private val previousAudioRelease = nativeAudioReleases.snapshot()
     private val mailbox = MpvCommandQueue(
         schedule = { task ->
@@ -132,7 +146,12 @@ class MpvPlaybackController(
 
     @Suppress("UNCHECKED_CAST")
     private fun <T> read(key: String, fallback: T, spacing: Long = 750L, getter: MpvPlaybackEngine.() -> T): T {
-        if (!released) queries.getOrPut(key) { Query(getter, spacing) }.requested = SystemClock.elapsedRealtime()
+        if (!released) {
+            var added = false
+            queries.getOrPut(key) { added = true; Query(getter, spacing) }.requested = SystemClock.elapsedRealtime()
+            // A value asked for the first time is sampled now, not on the next 250 ms tick.
+            if (added) mailbox.submit("sample") { sample() }
+        }
         return if (values.containsKey(key)) values[key] as T else fallback
     }
 
@@ -141,6 +160,11 @@ class MpvPlaybackController(
         if (released) return
         val now = SystemClock.elapsedRealtime()
         val status = player.status()
+        // Codec, size, decoder, tracks … change with a load/reconfigure: read them again in this
+        // sample instead of handing the UI a value from before the change for up to 750 ms.
+        val generation = player.mediaInfoGeneration
+        if (mpvMediaInfoChanged(sampledMediaInfoGeneration, generation)) queries.values.forEach { it.sampled = 0L }
+        sampledMediaInfoGeneration = generation
         for ((key, query) in queries) {
             if (now - query.requested <= 2_500L && (query.sampled == 0L || now - query.sampled >= query.spacing)) {
                 sampledValues[key] = query.read(player)
@@ -148,6 +172,7 @@ class MpvPlaybackController(
             }
         }
         val next = MpvEngineState(
+            confirmed = true,
             status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters, gpuRenderAtPanel = player.gpuRenderAtPanel, sdrSurfaceDataSpace = player.sdrSurfaceDataSpace,
             usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, shieldSoftwareStatus = player.shieldSoftwareStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
@@ -170,6 +195,7 @@ class MpvPlaybackController(
         main.post {
             if (!released) {
                 val changed = state != next || values != readings
+                if (values != readings) valuesRevision++
                 if (pendingSeekRevision?.let { completed >= it } == true) { pendingSeekRevision = null; pendingSeekTargetMs = null }
                 state = next
                 values = readings
@@ -187,6 +213,8 @@ class MpvPlaybackController(
 
     val bitstreamPermitted get() = audioSession.bitstreamPermitted
     val supportsGpuFilters get() = state.supportsGpuFilters
+    /** False until the running engine reported its state; until then output facts are expected. */
+    val engineConfirmed get() = state.confirmed
     /** The GPU output renders at the physical panel resolution (otherwise at the UI size). */
     val gpuRenderAtPanel get() = state.gpuRenderAtPanel
     val sdrSurfaceDataSpace get() = state.sdrSurfaceDataSpace
@@ -466,6 +494,8 @@ class MpvPlaybackController(
 }
 
 private data class MpvEngineState(
+    /** Sampled from a running engine; false for the pre-start defaults/expectations. */
+    val confirmed: Boolean = false,
     val status: PlaybackStatus = PlaybackStatus(),
     val wantsToPlay: Boolean = true,
     val supportsGpuFilters: Boolean = false,
@@ -500,6 +530,10 @@ private data class MpvEngineState(
     val restoredOutputAudioSelection: Boolean = false,
     val restoreOutput: List<String?>? = null,
 )
+
+/** Media info must be re-read when mpv reported a load/reconfigure since the last sample. */
+internal fun mpvMediaInfoChanged(sampledGeneration: Int, currentGeneration: Int): Boolean =
+    sampledGeneration != currentGeneration
 
 /** A step from the not-yet-applied seek target if any, else from the last sampled position. */
 internal fun mpvSeekByTarget(pendingTargetMs: Long?, sampledPositionMs: Long, deltaMs: Long): Long =

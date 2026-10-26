@@ -348,7 +348,10 @@ fun rememberMpvPlaybackSnapshot(
         var lastNerdPollMs = 0L
         var mediaInfoSeen = -1
         var lastMediaInfoMs = 0L
+        var mediaInfoChangedAtMs = android.os.SystemClock.elapsedRealtime()
+        var valuesSeen = -1L
         var changesSeen = -1L
+        val startedAtMs = android.os.SystemClock.elapsedRealtime()
         while (true) {
             // With the event pump, mpv's events were already drained when they arrived.
             if (!controller.eventDriven) controller.pollEvents()
@@ -356,20 +359,33 @@ fun rememberMpvPlaybackSnapshot(
             val now = android.os.SystemClock.elapsedRealtime()
             // Codecs, size, decoder and frame rate change only on load/reconfigure events; read
             // them then (and every 2 s for the estimated fps) instead of on every 350 ms tick.
-            val refreshMediaInfo = mediaInfoSeen != controller.mediaInfoGeneration || now - lastMediaInfoMs >= 2_000L
+            val generationChanged = mediaInfoSeen != controller.mediaInfoGeneration
+            if (generationChanged) mediaInfoChangedAtMs = now
+            val valuesChanged = valuesSeen != controller.valuesRevision
+            valuesSeen = controller.valuesRevision
+            // A value requested at the change usually lands one sample later: take it then
+            // (while the media info is settling) instead of on the next 2 s refresh.
+            val refreshMediaInfo = mpvRefreshMediaInfo(generationChanged, valuesChanged,
+                settling = now - mediaInfoChangedAtMs < MPV_MEDIA_INFO_SETTLE_MS ||
+                    (snapshot.videoCodec == null && snapshot.audioCodec == null),
+                sinceLastRefreshMs = now - lastMediaInfoMs)
+            val timedRefresh = generationChanged || now - lastMediaInfoMs >= 2_000L
             if (refreshMediaInfo) {
                 mediaInfoSeen = controller.mediaInfoGeneration
                 lastMediaInfoMs = now
             }
             val observedAudioCodec = if (refreshMediaInfo) controller.audioCodec() else snapshot.audioCodec
-            if (refreshMediaInfo) controller.noteAudioCodecName(observedAudioCodec)
-            val pollNerdStats = nerdStatsEnabled && (lastNerdPollMs == 0L || now - lastNerdPollMs >= 750L)
+            if (refreshMediaInfo && (timedRefresh || observedAudioCodec != snapshot.audioCodec)) controller.noteAudioCodecName(observedAudioCodec)
+            // The first stats come quickly after a switch or enabling, then the normal cadence.
+            val nerdWarmup = now - startedAtMs < MPV_NERD_WARMUP_MS
+            val pollNerdStats = nerdStatsEnabled && (lastNerdPollMs == 0L || now - lastNerdPollMs >= mpvNerdPollIntervalMs(nerdWarmup))
             val sampleSvp = refreshMediaInfo || pollNerdStats
             val svp = if (sampleSvp) controller.svpState() else snapshot.svpState
             snapshot = snapshot.copy(
                 confirmedAudioOnly = if (refreshMediaInfo) controller.isConfirmedAudioOnly() else snapshot.confirmedAudioOnly,
                 audioOutputFormat = if (pollNerdStats) controller.audioOutputFormat() else snapshot.audioOutputFormat,
-                audioOutputDriver = if (pollNerdStats) controller.audioOutputDriver() else snapshot.audioOutputDriver,
+                // Also with the media info: the panel shows VO/AO without Stats for Nerds.
+                audioOutputDriver = if (pollNerdStats || refreshMediaInfo) controller.audioOutputDriver() else snapshot.audioOutputDriver,
                 isPlaying = controller.isPlaying(),
                 wantsToPlay = controller.wantsToPlay(),
                 positionMs = controller.positionMs(),
@@ -399,7 +415,7 @@ fun rememberMpvPlaybackSnapshot(
                 activeShaderPreset = if (pollNerdStats) controller.activeShaderPreset() else snapshot.activeShaderPreset,
                 configuredScaler = if (pollNerdStats) controller.imageOptions.scaler else snapshot.configuredScaler,
                 sparsam = controller.supportsGpuFilters && sparsam,
-                videoOutput = if (pollNerdStats) controller.configuredVideoOutput() else snapshot.videoOutput,
+                videoOutput = if (pollNerdStats || refreshMediaInfo) controller.configuredVideoOutput() else snapshot.videoOutput,
                 accelerationFallback = controller.accelerationFallback,
                 shieldSoftwareStatus = controller.shieldSoftwareStatus,
                 processingSampled = if (pollNerdStats) true else snapshot.processingSampled,
@@ -412,7 +428,7 @@ fun rememberMpvPlaybackSnapshot(
             if (controller.eventDriven) {
                 // Rebuild on a pushed change (pause, seek, buffering, codec, end …) or on a tick
                 // that only advances the position: 500 ms while playing, 2 s while paused.
-                val tickMs = mpvSnapshotTickMs(snapshot.isPlaying, nerdStatsEnabled)
+                val tickMs = mpvSnapshotTickMs(snapshot.isPlaying, nerdStatsEnabled, nerdWarmup)
                 val seen = changesSeen
                 kotlinx.coroutines.withTimeoutOrNull(com.ambient.tv.ui.player.playbackPollInterval(tickMs, appVisible)) {
                     controller.stateChanges.first { it != seen }
@@ -431,8 +447,27 @@ fun rememberMpvPlaybackSnapshot(
 private const val MPV_SNAPSHOT_MIN_SPACING_MS = 100L
 
 /** Position-only refresh interval of the event-driven snapshot. */
-internal fun mpvSnapshotTickMs(playing: Boolean, nerdStats: Boolean): Long = when {
-    nerdStats -> 750L
+internal fun mpvSnapshotTickMs(playing: Boolean, nerdStats: Boolean, nerdWarmup: Boolean = false): Long = when {
+    nerdStats -> mpvNerdPollIntervalMs(nerdWarmup)
     playing -> 500L
     else -> 2_000L
 }
+
+/** Stats for Nerds poll faster for this long after a renderer switch or enabling them. */
+internal const val MPV_NERD_WARMUP_MS = 3_000L
+
+/** Media info is re-read on every pushed value change for this long after a load/reconfigure. */
+internal const val MPV_MEDIA_INFO_SETTLE_MS = 5_000L
+
+internal fun mpvNerdPollIntervalMs(warmup: Boolean): Long = if (warmup) 250L else 750L
+
+/**
+ * Whether the snapshot re-reads codec, size, decoder, fps and outputs: on a load/reconfigure, every
+ * 2 s, and while the info is still settling whenever the controller delivered new values.
+ */
+internal fun mpvRefreshMediaInfo(
+    generationChanged: Boolean,
+    valuesChanged: Boolean,
+    settling: Boolean,
+    sinceLastRefreshMs: Long,
+): Boolean = generationChanged || sinceLastRefreshMs >= 2_000L || (valuesChanged && settling)

@@ -1926,11 +1926,14 @@ fun rememberVlcPlaybackSnapshot(
     LaunchedEffect(controller, nerdStatsEnabled, changingItem) {
         if (changingItem) return@LaunchedEffect
         var lastNerdPollMs = 0L
+        val startedAtMs = android.os.SystemClock.elapsedRealtime()
         while (true) {
             val status = controller.status()
             val now = android.os.SystemClock.elapsedRealtime()
+            // Right after a renderer switch the stream is still being parsed: look again soon.
+            val warmup = vlcStreamInfoWarmup(now - startedAtMs, snapshot.runtimeStats != null)
             // Stream properties also feed codec badges and the information panel.
-            val pollStreamInfo = lastNerdPollMs == 0L || now - lastNerdPollMs >= 1000L
+            val pollStreamInfo = lastNerdPollMs == 0L || now - lastNerdPollMs >= vlcStreamInfoIntervalMs(warmup)
             val pollNerdStats = nerdStatsEnabled && pollStreamInfo
             val applied = if (pollNerdStats) controller.appliedVideoProcessing() else null
             val svp = if (pollStreamInfo) controller.svpState() else snapshot.svpState
@@ -1954,11 +1957,20 @@ fun rememberVlcPlaybackSnapshot(
             )
             controller.checkVulkanOutput()
             if (pollStreamInfo) lastNerdPollMs = now
-            delay(com.ambient.tv.ui.player.playbackPollInterval(500, appVisible))
+            delay(com.ambient.tv.ui.player.playbackPollInterval(if (warmup) VLC_WARMUP_POLL_MS else 500L, appVisible))
         }
     }
     return snapshot
 }
+
+/** Faster stream-info polling for this long after the engine appeared, until VLC reports stats. */
+internal const val VLC_STREAM_INFO_WARMUP_MS = 3_000L
+internal const val VLC_WARMUP_POLL_MS = 250L
+
+internal fun vlcStreamInfoWarmup(sinceStartMs: Long, statsKnown: Boolean): Boolean =
+    sinceStartMs < VLC_STREAM_INFO_WARMUP_MS || !statsKnown && sinceStartMs < 2 * VLC_STREAM_INFO_WARMUP_MS
+
+internal fun vlcStreamInfoIntervalMs(warmup: Boolean): Long = if (warmup) VLC_WARMUP_POLL_MS else 1_000L
 
 /** SVP for VLC needs both the shared engine gate and a libVLC build that contains the filter. */
 internal fun vlcSvpAllowed(context: Context): Boolean = com.ambient.tv.BuildConfig.VLC_SVP && svpAllowed(context)
