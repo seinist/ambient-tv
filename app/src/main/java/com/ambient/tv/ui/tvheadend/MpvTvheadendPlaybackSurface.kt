@@ -397,7 +397,7 @@ internal fun MpvTvheadendPlaybackSurface(
                 projectMBrowser = LocalProjectMBrowser.current,
                 audioSession = controller.audioSession,
                 showVisualizer = showProjectM,
-                hasVideo = snapshot.videoCodec?.isNotBlank() == true,
+                hasVideo = com.ambient.tv.ui.player.mpvPanelHasVideo(snapshot.videoCodec, audioOnlyContent),
                 isLive = source.isLive,
                 scalingKey = resizeKey,
                 aspectKey = aspectKey,
@@ -420,7 +420,7 @@ internal fun MpvTvheadendPlaybackSurface(
                 infoLines = buildList {
                     add(stringResource(R.string.player_nerd_backend) to "MPV")
                     add(stringResource(R.string.player_playback_info) to (source.streamProfile ?: if (source.isLive) "Live TV" else "Recording"))
-                    add(stringResource(R.string.player_info_video_output) to com.ambient.tv.ui.player.DirectAvDiagnostics.video(context, snapshot.videoCodec, null, null, null, if (controller.supportsGpuFilters) "MPV GPU" else "MPV Direct"))
+                    add(stringResource(R.string.player_info_video_output) to com.ambient.tv.ui.player.DirectAvDiagnostics.video(context, snapshot.videoCodec, null, null, null, com.ambient.tv.ui.player.rendererTransitionValue(if (controller.supportsGpuFilters) "MPV GPU" else "MPV Direct", controller.engineConfirmed, stringResource(R.string.player_nerd_switching))))
                     snapshot.videoOutput?.let { add(stringResource(R.string.player_nerd_vo) to it) }
                     snapshot.audioOutputDriver?.let { add(stringResource(R.string.player_nerd_ao) to it) }
                     listOfNotNull(snapshot.videoSize, formatNerdFps(snapshot.fps), snapshot.videoCodec?.uppercase()).joinToString(" · ").takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_video) to it) }

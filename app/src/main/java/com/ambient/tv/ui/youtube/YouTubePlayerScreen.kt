@@ -1449,7 +1449,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 { key, global -> onRenderer(key, displayedPosition, global) },
                 listOfNotNull(snapshot.videoSize, controller.sourceHdrStandard?.label, snapshot.videoCodec, snapshot.audioCodec, snapshot.decoder),
                 YouTubePanelConfig(
-                    hasVideo = snapshot.videoCodec?.isNotBlank() == true,
+                    hasVideo = com.ambient.tv.ui.player.mpvPanelHasVideo(snapshot.videoCodec, controller.audioOnly || snapshot.confirmedAudioOnly),
                     scalingKey = resize,
                     aspectKey = aspect,
                     zoomFactor = zoom,

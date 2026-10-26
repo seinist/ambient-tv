@@ -382,7 +382,7 @@ internal fun MpvPlayerContent(
                 projectMBrowser = LocalProjectMBrowser.current,
                 audioSession = controller.audioSession,
                 showVisualizer = showProjectM,
-                hasVideo = snapshot.videoCodec?.isNotBlank() == true,
+                hasVideo = com.ambient.tv.ui.player.mpvPanelHasVideo(snapshot.videoCodec, audioOnlyContent),
                 isLive = false,
                 scalingKey = resizeKey,
                 aspectKey = aspectKey,
@@ -413,7 +413,7 @@ internal fun MpvPlayerContent(
                         formatNerdBitrate(kbps.toLong() * 1000L)?.let { add(stringResource(R.string.player_nerd_source_bitrate) to it) }
                     }
                     add(stringResource(R.string.player_info_video_output) to DirectAvDiagnostics.video(
-                        context, state.videoCodec, state.videoDynamicRange, state.videoBitDepth, state.videoProfile, if (controller.supportsGpuFilters) "MPV GPU" else "MPV Direct",
+                        context, state.videoCodec, state.videoDynamicRange, state.videoBitDepth, state.videoProfile, com.ambient.tv.ui.player.rendererTransitionValue(if (controller.supportsGpuFilters) "MPV GPU" else "MPV Direct", controller.engineConfirmed, stringResource(R.string.player_nerd_switching)),
                     ))
                     snapshot.videoOutput?.let { add(stringResource(R.string.player_nerd_vo) to it) }
                     snapshot.audioOutputDriver?.let { add(stringResource(R.string.player_nerd_ao) to it) }

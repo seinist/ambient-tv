@@ -71,6 +71,26 @@ private val OBSERVED_PROPERTIES: List<Pair<String, Int>> = listOf(
 private const val HDR_AUDIT_TAG = "HDR-AUDIT"
 private const val ZERO_COPY_CONFIRMED = Long.MIN_VALUE
 
+/**
+ * The output path a new engine starts on. Also read by [MpvPlaybackController] before the engine
+ * exists, so the panel can lay out the expected (GPU or direct) options during a renderer switch.
+ */
+internal fun initialMpvAccelerationPlan(
+    context: Context,
+    videoOutputMode: String,
+    decoderMode: String,
+    initialImageOptions: MpvImageOptions,
+    nativeHdrPreferred: Boolean,
+    hdrGpuPassthrough: Boolean,
+    toneMappingRequired: Boolean,
+): MpvAccelerationPlan = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
+    // Select the processing path from the chosen width/title image settings.
+    // Auto goes to the GPU only for image work the user chose; untouched defaults stay direct.
+    gpuProcessing = mpvUserImageProcessing(initialImageOptions, reducedVideoEffects(context), svpAllowed(context)),
+    nativeHdrPreferred = nativeHdrPreferred,
+    hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = toneMappingRequired,
+    zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed)
+
 internal class MpvPlaybackEngine(
     private val context: Context,
     val audioSession: com.ambient.tv.ui.player.AudioSession,
@@ -109,13 +129,8 @@ internal class MpvPlaybackEngine(
     private val displayHdrStandards = com.ambient.tv.ui.player.HdrSupport.displayStandards(context)
     private fun needsHdrToSdr(source: HdrStandard?): Boolean = source != null &&
         !com.ambient.tv.ui.player.nativeHdrSurfacePreferred(source, displayHdrStandards)
-    private var acceleration = planMpvAcceleration(videoOutputMode, decoderMode, VideoAccelerationRuntime.current(context),
-        // Select the processing path from the chosen width/title image settings.
-        // Auto goes to the GPU only for image work the user chose; untouched defaults stay direct.
-        gpuProcessing = mpvUserImageProcessing(initialImageOptions, reducedVideoEffects(context), svpAllowed(context)),
-        nativeHdrPreferred = nativeHdrPreferred,
-        hdrPassthrough = hdrGpuPassthrough, toneMappingRequired = needsHdrToSdr(declaredHdr),
-        zeroCopy = !videoImagePreferences(context).mpvZeroCopyFailed)
+    private var acceleration = initialMpvAccelerationPlan(context, videoOutputMode, decoderMode, initialImageOptions,
+        nativeHdrPreferred, hdrGpuPassthrough, needsHdrToSdr(declaredHdr))
     /** One copy-back reopen per engine after zero-copy failed at runtime. */
     private var zeroCopyRetried = false
     private var zeroCopyFrameCheckSinceNs = 0L

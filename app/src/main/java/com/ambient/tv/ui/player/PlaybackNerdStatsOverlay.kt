@@ -95,6 +95,7 @@ data class NerdStatsOverlayLabels(
     val cadence: String = "Display cadence",
     val doubleRate: String = "Double frame rate",
     val pulldown: String = "3:2 pulldown",
+    val switching: String = "switching…",
 )
 
 @Composable
@@ -145,6 +146,7 @@ internal fun nerdStatsOverlayLabels(context: Context): NerdStatsOverlayLabels = 
     cadence = context.getString(R.string.player_cadence),
     doubleRate = context.getString(R.string.player_cadence_double),
     pulldown = context.getString(R.string.player_cadence_pulldown),
+    switching = context.getString(R.string.player_nerd_switching),
 )
 
 internal fun displayRefreshHz(context: Context): Double? =
@@ -242,7 +244,9 @@ internal fun buildMedia3NerdOverlayModel(
         }
     }
     val system = buildList {
-        add(NerdStatsOverlayRow(labels.backend, "Media3"))
+        // Until the new player reported a format the renderer is only expected, not running yet.
+        add(NerdStatsOverlayRow(labels.backend, rendererTransitionValue("Media3",
+            confirmed = videoSummary != null || audioSummary != null, labels.switching)))
         formatNerdDurationMs(stats.bufferDurationMs)?.let {
             add(NerdStatsOverlayRow(labels.bufferHealth, it))
         }
@@ -258,6 +262,10 @@ internal fun buildMedia3NerdOverlayModel(
     }
     return NerdStatsOverlayModel(video = video, audio = audio, system = system)
 }
+
+/** mpv reported the opened stream (a codec), so its rows are values of the running renderer. */
+internal fun mpvNerdStatsConfirmed(snapshot: MpvPlaybackSnapshot): Boolean =
+    snapshot.videoCodec?.isNotBlank() == true || snapshot.audioCodec?.isNotBlank() == true
 
 internal fun buildMpvNerdOverlayModel(
     snapshot: MpvPlaybackSnapshot,
@@ -314,7 +322,8 @@ internal fun buildMpvNerdOverlayModel(
         }
     }
     val system = buildList {
-        add(NerdStatsOverlayRow(labels.backend, backendLabel))
+        add(NerdStatsOverlayRow(labels.backend, rendererTransitionValue(backendLabel,
+            confirmed = mpvNerdStatsConfirmed(snapshot), labels.switching)))
         snapshot.videoOutput?.let {
             add(NerdStatsOverlayRow(labels.vo, it))
         }
@@ -391,7 +400,8 @@ internal fun buildVlcNerdOverlayModel(
         }
     }
     val system = buildList {
-        add(NerdStatsOverlayRow(labels.backend, "VLC"))
+        add(NerdStatsOverlayRow(labels.backend, rendererTransitionValue("VLC",
+            confirmed = stats != null, labels.switching)))
         snapshot.videoOutput?.let { add(NerdStatsOverlayRow(labels.vo, it)) }
         snapshot.accelerationFallback?.let { add(NerdStatsOverlayRow("Fallback", it, warn = true)) }
         playbackCadenceLabel(stats?.videoFps.takeIf { snapshot.hasVideo && snapshot.svpStatus == null }, displayRefreshHz, labels.doubleRate, labels.pulldown)?.let {
