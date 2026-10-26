@@ -82,6 +82,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.Role
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Handheld windows can be narrower than the television panel width, above all in portrait, where
@@ -180,6 +181,7 @@ fun RightSidePanel(
     header: (@Composable () -> Unit)? = null,
     onOutsideTap: (() -> Unit)? = onBack,
     retainFocus: Boolean = false,
+    focusRescue: PanelFocusRescue? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scrollState = rememberScrollState()
@@ -211,6 +213,7 @@ fun RightSidePanel(
         header = header,
         onOutsideTap = onOutsideTap,
         retainFocus = retainFocus,
+        focusRescue = focusRescue,
     ) {
         Column(
             modifier = Modifier
@@ -298,6 +301,7 @@ private fun RightSidePanelChrome(
     header: (@Composable () -> Unit)?,
     onOutsideTap: (() -> Unit)?,
     retainFocus: Boolean = false,
+    focusRescue: PanelFocusRescue? = null,
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
@@ -312,7 +316,8 @@ private fun RightSidePanelChrome(
                     .pointerInput(onOutsideTap) { detectTapGestures { onOutsideTap() } },
             )
             RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
-                scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, retainFocus = retainFocus, body = body)
+                scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, retainFocus = retainFocus,
+                focusRescue = focusRescue, body = body)
         }
         return
     }
@@ -325,23 +330,47 @@ private fun RightSidePanelChrome(
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
-    var hadPanelFocus by remember { mutableStateOf(false) }
+    // A rebuilt level that already held focus rescues it like a panel that just lost it.
+    var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
     val panelFocus = remember { FocusRequester() }
     val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
     val isHandheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val rescueScope = androidx.compose.runtime.rememberCoroutineScope()
+    val rescue = remember { RescueRun() }
+    val footerAllowed = panelFocusFallback(focusRescue?.levelFresh != false) == PanelFocusFallback.FOOTER
+    fun focusFirstRow(): Boolean = runCatching { bodyFocus.requestFocus() }.getOrDefault(false)
     LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused) {
         if (!retainFocus || isHandheld || !hadPanelFocus || panelHasFocus || !windowInfo.isWindowFocused)
             return@LaunchedEffect
-        // A removed capability row can leave Compose without a focused child. Let
-        // the new rows attach; popup/dialog windows keep ownership while open.
-        androidx.compose.runtime.withFrameNanos { }
-        if (!panelHasFocus && windowInfo.isWindowFocused)
-            runCatching { panelFocus.requestFocus() }
+        if (rescue.job?.isActive == true) return@LaunchedEffect
+        val target = focusRescue?.target?.invoke()
+        rescue.userMoved = false
+        // A removed capability row can leave Compose without a focused child. The remembered
+        // row may come back a few hundred milliseconds later (renderer rebuild): keep trying
+        // it for a while, holding focus on the first row meanwhile so the D-pad stays here.
+        rescue.job = rescueScope.launch {
+            var parked = false
+            val placed = retryFocusFor {
+                if (!windowInfo.isWindowFocused || rescue.userMoved) return@retryFocusFor true
+                if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
+                if (target == null) {
+                    if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
+                    return@retryFocusFor true
+                }
+                if (!panelHasFocus && !parked) parked = focusFirstRow()
+                false
+            }
+            if (!placed && !panelHasFocus && windowInfo.isWindowFocused) {
+                if (!focusFirstRow()) runCatching { panelFocus.requestFocus() }
+            }
+        }
     }
     if (requestHeaderFocus) {
         LaunchedEffect(Unit) {
             delay(400)
-            if (!panelHasFocus) runCatching { footerFocus.requestFocus() }
+            if (panelHasFocus) return@LaunchedEffect
+            // Back only for a level that was just opened; elsewhere the next OK would leave it.
+            if (footerAllowed || !focusFirstRow()) runCatching { footerFocus.requestFocus() }
         }
     }
     val tokens = LocalUiTokens.current
@@ -366,8 +395,13 @@ private fun RightSidePanelChrome(
             .focusRequester(panelFocus)
             .onFocusChanged {
                 panelHasFocus = it.hasFocus
-                if (it.hasFocus) hadPanelFocus = true
+                if (it.hasFocus) {
+                    hadPanelFocus = true
+                    focusRescue?.onFocused?.invoke()
+                }
             }
+            // Any key ends a pending rescue: the user's own move wins.
+            .onPreviewKeyEvent { rescue.userMoved = true; false }
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
             .tvModalFocus(initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
@@ -581,4 +615,9 @@ fun RightPanelInfoRow(text: String, modifier: Modifier = Modifier) {
             .focusable()
             .padding(horizontal = 10.dp, vertical = 4.dp),
     )
+}
+
+private class RescueRun {
+    var job: kotlinx.coroutines.Job? = null
+    var userMoved = false
 }

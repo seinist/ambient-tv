@@ -14,6 +14,7 @@ import com.ambient.tv.data.local.TitleVideoSettings
 import com.ambient.tv.data.local.VideoResolutionClass
 import com.ambient.tv.notifications.*
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.playerPanelFocusKey
 import com.ambient.tv.ui.player.backend.MpvPlaybackController
 import com.ambient.tv.ui.player.backend.VlcPlaybackController
 
@@ -91,22 +92,49 @@ internal fun PlaybackProfileControls(
 ) {
     val context = LocalContext.current
     val metadata = LocalPlaybackMetadata.current
-    val handle = BackgroundPlaybackSession.activeHandle()
+    // A renderer switch or restart drops the handle (and the resolution) for a moment: keep the
+    // last ones so the buttons stay in place (and keep focus), marked as switching.
+    val liveHandle = BackgroundPlaybackSession.activeHandle()?.takeIf { playbackProfileRenderer(it) != null }
+    val titleKey = TitleVideoSettingsStore.key(metadata)
+    val lastValues = remember(titleKey) { arrayOfNulls<Any>(2) }
+    val handleState = stickyDuringRestart(liveHandle, lastValues[0] as? PlaybackHandle)
+    if (liveHandle != null) lastValues[0] = liveHandle
+    val handle = handleState.value
+    val switching = handleState.pending
     var revision by remember { mutableIntStateOf(0) }
     // Store changes made while the panel is open (polling capture, other panels) refresh the layers.
     val storeRevision by TitleVideoSettingsStore.revision.collectAsState()
     ImageHint(stringResource(R.string.playback_profile_includes))
-    if (handle == null || playbackProfileRenderer(handle) == null) {
+    if (handle == null) {
         ImageHint(stringResource(R.string.playback_profile_unavailable))
         return
     }
-    val titleKey = TitleVideoSettingsStore.key(metadata)
-    val resolutionKey = ResolutionVideoProfileStore.key(metadata, handle)
+    val liveResolutionKey = if (switching) null else ResolutionVideoProfileStore.key(metadata, handle)
+    // The new engine reports the video size shortly after it starts; if it never does, stop waiting.
+    var resolutionWaitOver by remember(titleKey, liveHandle) { mutableStateOf(false) }
+    if (!switching && liveResolutionKey == null && lastValues[1] != null) {
+        LaunchedEffect(titleKey, liveHandle) {
+            kotlinx.coroutines.delay(PROFILE_RESOLUTION_WAIT_MS)
+            resolutionWaitOver = true
+        }
+    }
+    val resolutionState = stickyDuringRestart(liveResolutionKey, lastValues[1] as? String, expired = resolutionWaitOver)
+    resolutionState.value?.let { lastValues[1] = it }
+    val resolutionKey = resolutionState.value
+    val pending = switching || resolutionState.pending
+    val switchingLabel = stringResource(R.string.player_nerd_switching)
+    @Composable
+    fun ProfileButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, fillWidth: Boolean = false) {
+        TvActionButton(text = rendererTransitionValue(text, !pending, switchingLabel), onClick = onClick,
+            modifier = modifier.playerPanelFocusKey("action:$text"), enabled = enabled, fillWidth = fillWidth, loading = pending)
+    }
     val resolution = remember(resolutionKey, revision) {
         resolutionKey?.let { com.ambient.tv.data.local.resolutionProfileFor(
             videoImagePreferences(context).resolutionVideoProfiles, it.removePrefix("live:"), metadata?.isLive == true) }
     }
     fun perform(message: Int? = null, action: () -> Unit) {
+        // The old engine is gone while switching; the buttons ignore clicks until the new one runs.
+        if (pending) return
         try {
             action()
             revision++
@@ -156,7 +184,7 @@ internal fun PlaybackProfileControls(
             .map { stringResource(videoOriginLabel(it, episode, movie)) }
         ImageHint(stringResource(R.string.playback_scope_origins, *names.toTypedArray()))
         scopes.filter { (layer, value) -> layer.scope != VideoSettingsScope.TITLE && value != null }.forEach { (layer, _) ->
-            TvActionButton(text = stringResource(R.string.playback_scope_reset, videoScopeLabel(layer, episode, movie)), onClick = {
+            ProfileButton(text = stringResource(R.string.playback_scope_reset, videoScopeLabel(layer, episode, movie)), onClick = {
                 perform {
                     TitleVideoSettingsStore.forgetScope(context, layer)
                     apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
@@ -165,13 +193,13 @@ internal fun PlaybackProfileControls(
         }
     }
     // Video edits are remembered automatically; only shared defaults need explicit saving.
-    TvActionButton(text = stringResource(R.string.playback_profile_save_all), onClick = {
+    ProfileButton(text = stringResource(R.string.playback_profile_save_all), onClick = {
         perform(R.string.playback_profile_saved_all) {
             check(ResolutionVideoProfileStore.save(context, metadata, handle, global = true) != null)
         }
     }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
     val label = resolutionKey?.let { VideoResolutionClass.label(it.removePrefix("live:")) }
-    TvActionButton(
+    ProfileButton(
         text = if (metadata?.isLive == true && label != null) stringResource(R.string.live_profiles_save_scope, label)
             else stringResource(R.string.playback_profile_save_resolution_scope),
         enabled = resolutionKey != null,
@@ -184,7 +212,7 @@ internal fun PlaybackProfileControls(
     if (label != null) ImageHint(stringResource(if (metadata?.isLive == true) R.string.live_profiles_scope_hint
         else R.string.playback_profile_resolution_scope, label))
     if (ResolutionVideoProfileStore.global(context) != null) {
-        TvActionButton(text = stringResource(R.string.playback_profile_load_all), onClick = {
+        ProfileButton(text = stringResource(R.string.playback_profile_load_all), onClick = {
             perform(R.string.playback_profile_loaded) {
                 TitleVideoSettingsStore.clearProfileOverrides(context, metadata)
                 apply(null, ResolutionVideoProfileStore.global(context))
@@ -194,7 +222,7 @@ internal fun PlaybackProfileControls(
     if (resolutionKey != null) {
         val label = VideoResolutionClass.label(resolutionKey.removePrefix("live:"))
         if (resolution != null) {
-            TvActionButton(text = stringResource(if (metadata?.isLive == true) R.string.live_profiles_load_scope
+            ProfileButton(text = stringResource(if (metadata?.isLive == true) R.string.live_profiles_load_scope
                 else R.string.playback_profile_load_resolution, label), onClick = {
                 perform(R.string.playback_profile_loaded) {
                     TitleVideoSettingsStore.clearProfileOverrides(context, metadata)
@@ -204,19 +232,19 @@ internal fun PlaybackProfileControls(
         }
     } else ImageHint(stringResource(R.string.playback_profile_resolution_unavailable))
     ImageHint(stringResource(R.string.playback_profile_reset_scope_hint))
-    TvActionButton(text = stringResource(R.string.playback_profile_reset_all), onClick = {
+    ProfileButton(text = stringResource(R.string.playback_profile_reset_all), onClick = {
         perform {
             resetGlobalPlaybackProfile(videoImagePreferences(context))
             apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
         }
     }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-    TvActionButton(text = stringResource(R.string.playback_profile_reset_resolution), enabled = resolutionKey != null, onClick = {
+    ProfileButton(text = stringResource(R.string.playback_profile_reset_resolution), enabled = resolutionKey != null, onClick = {
         perform {
             resolutionKey?.let { ResolutionVideoProfileStore.forget(context, it) }
             apply(TitleVideoSettingsStore.load(context, metadata), ResolutionVideoProfileStore.load(context, metadata))
         }
     }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
-    if (titleKey != null) TvActionButton(text = stringResource(if (metadata?.isLive == true) R.string.channel_profile_reset else R.string.playback_profile_reset_title), onClick = {
+    if (titleKey != null) ProfileButton(text = stringResource(if (metadata?.isLive == true) R.string.channel_profile_reset else R.string.playback_profile_reset_title), onClick = {
         perform {
             TitleVideoSettingsStore.forget(context, metadata)
             // Season/series/collection profiles still apply: the title must not re-save the width profile over them.
@@ -249,4 +277,19 @@ private fun videoOriginLabel(origin: VideoSettingOrigin, episode: Boolean, movie
     VideoSettingOrigin.COLLECTION -> R.string.playback_origin_collection
     VideoSettingOrigin.RESOLUTION -> R.string.playback_origin_resolution
     VideoSettingOrigin.DEFAULT -> R.string.playback_origin_default
+}
+
+private const val PROFILE_RESOLUTION_WAIT_MS = 3_000L
+
+/** A value shown while the player restarts: [value] and whether it is the previous engine's ([pending]). */
+internal data class StickyValue<T>(val value: T?, val pending: Boolean)
+
+/**
+ * The running engine's [current] value, or during a restart (current null) the [last] one,
+ * marked pending so the UI keeps its controls but shows "switching". [expired] ends the wait.
+ */
+internal fun <T> stickyDuringRestart(current: T?, last: T?, expired: Boolean = false): StickyValue<T> = when {
+    current != null -> StickyValue(current, pending = false)
+    last != null && !expired -> StickyValue(last, pending = true)
+    else -> StickyValue(null, pending = false)
 }

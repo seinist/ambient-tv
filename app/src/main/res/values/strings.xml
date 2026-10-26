@@ -1441,6 +1441,7 @@
     <string name="diag_mode_pcm">PCM</string>
     <string name="player_nerd_backend">Backend</string>
     <string name="player_nerd_switching">switching…</string>
+    <string name="player_panel_switching_hint">Renderer is switching… these settings will be back in a moment.</string>
     <string name="player_nerd_source_bitrate">Source bitrate</string>
     <string name="player_nerd_video_bitrate">Video bitrate</string>
     <string name="player_nerd_audio_bitrate">Audio bitrate</string>

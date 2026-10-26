@@ -1942,7 +1942,11 @@ fun rememberVlcPlaybackSnapshot(
                 wantsToPlay = controller.wantsToPlay(),
                 positionMs = status.positionMs,
                 durationMs = status.durationMs,
-                hasVideo = runCatching { !controller.trackAccess.getVideoTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasVideo),
+                // Empty track lists while VLC opens the stream do not mean audio-only.
+                hasVideo = runCatching {
+                    com.ambient.tv.ui.player.playbackPanelHasVideo(controller.trackAccess.getVideoTracks()?.size ?: 0,
+                        controller.trackAccess.getAudioTracks()?.size ?: 0, controller.audioOnly)
+                }.getOrDefault(snapshot.hasVideo),
                 hasAudio = runCatching { !controller.trackAccess.getAudioTracks().isNullOrEmpty() }.getOrDefault(snapshot.hasAudio),
                 runtimeStats = if (pollStreamInfo) controller.runtimeStats(includeCounters = nerdStatsEnabled) else snapshot.runtimeStats,
                 svpState = svp,

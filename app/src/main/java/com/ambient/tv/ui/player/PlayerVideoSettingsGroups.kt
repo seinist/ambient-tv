@@ -135,8 +135,23 @@ internal fun PlayerVideoSettingsGroups(
         ?: remember { com.ambient.tv.ui.common.VideoPanelState() }
     var section by videoState::section
     val sections = available.map { it.first to stringResource(it.second) }
-    val activeSection = subPage
-        ?: section.takeIf { selected -> sections.any { it.first == selected } } ?: sections.firstOrNull()?.first ?: return
+    // Right after a renderer/output switch the new engine has not reported what it supports yet:
+    // keep the open area instead of falling back to the first one (which looked like a jump).
+    val capabilitiesConfirmed = when (handle) {
+        is MpvPlaybackController -> handle.engineConfirmed
+        null -> false
+        else -> true
+    }
+    val resolvedSection = resolveVideoSection(section, available.map { it.first }, capabilitiesConfirmed)
+    val navigation = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current
+    if (sectionView && subPage == null && resolvedSection == null && navigation != null) {
+        // The area really is gone for this renderer: back to the list of areas.
+        androidx.compose.runtime.LaunchedEffect(navigation, section) {
+            navigation.back(com.ambient.tv.ui.common.UnifiedPlayerPanel.VIDEO_SECTION)
+        }
+    }
+    val sectionPending = sectionView && subPage == null && !capabilitiesConfirmed && available.none { it.first == section }
+    val activeSection = subPage ?: resolvedSection ?: sections.firstOrNull()?.first ?: return
     if (!sectionView && onOpenSection != null) {
         // The list: one row per area with what is set there; OK opens the area as its own level.
         if (hasSdrToHdrControl) PlayerSdrToHdrControl()
@@ -154,6 +169,7 @@ internal fun PlayerVideoSettingsGroups(
         return
     }
     androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalVideoPanelState provides videoState) {
+        if (sectionPending) ImageHint(stringResource(R.string.player_panel_switching_hint))
         if (activeSection == "renderer" && showRenderer && onRendererSelected != null && rendererKey != null) {
             PlayerRendererSelector(rendererKey, onRendererSelected)
             val backend = BackgroundPlaybackSession.activeHandle()?.let { handle ->
