@@ -151,8 +151,11 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
         if (style == IntroAnimation.OFF) { finished(); return@LaunchedEffect }
         var skipped = false
         val run = launch {
+            val shownAt = SystemClock.uptimeMillis()
             if (still) progress.snapTo(1f)
             else progress.animateTo(1f, tween(IntroAnimation.durationMs(style), easing = LinearEasing))
+            // Short intros and Sparsam's still mark stay up long enough to read, not just flash.
+            delay(MIN_VISIBLE_MS - (SystemClock.uptimeMillis() - shownAt))
             holdWhileConnecting { holding = it }
         }
         val skipWatch = launch {
@@ -239,6 +242,7 @@ private suspend fun holdWhileConnecting(onHolding: (Boolean) -> Unit) {
     }
 }
 
+private const val MIN_VISIBLE_MS = 1_800L
 private const val MAX_HOLD_MS = 3 * 60_000L
 private const val CONNECT_HOLD_MS = 6_000L
 
