@@ -17,9 +17,21 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class Media3PlaybackHandle(
     val player: ExoPlayer,
-    /** Live TV: the next MPV/VLC player waits until this player released its stream. */
+    /** The next MPV/VLC/Media3 player waits until this player released its stream. */
     private val joinsReleaseGate: Boolean = false,
+    /** Built with deferred prepare: the previous player still closes ([previousReleaseSettled]). */
+    waitingForPreviousRelease: Boolean = false,
 ) : PlaybackHandle, VideoPresentationTarget {
+    @Volatile var waitingForPreviousRelease = waitingForPreviousRelease
+        private set
+
+    /** The previous player closed (or the wait ended): open the stream now, exactly once. */
+    fun previousReleaseSettled() {
+        if (!waitingForPreviousRelease) return
+        waitingForPreviousRelease = false
+        if (!released && player.playbackState == Player.STATE_IDLE) player.prepare()
+    }
+
     /**
      * Media3 only reads side-loaded subtitles when the item is prepared, so a subtitle found during
      * playback re-prepares the same item at the current position with it marked as default.
@@ -38,7 +50,7 @@ class Media3PlaybackHandle(
             .setPreferredTextLanguage(track.languageCode ?: track.language).build()
         player.setMediaItem(current.buildUpon().setSubtitleConfigurations(existing + config).build(), position)
         player.playWhenReady = playing
-        player.prepare()
+        if (!waitingForPreviousRelease) player.prepare()
     }
 
     private var surfaceView: SurfaceView? = null
@@ -132,7 +144,7 @@ class Media3PlaybackHandle(
     override fun wantsToPlay(): Boolean = player.playWhenReady && player.playbackState != Player.STATE_ENDED
     override fun play() {
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (media3PrepareNow(player.playbackState == Player.STATE_IDLE, waitingForPreviousRelease)) player.prepare()
         player.play()
     }
     override fun pause() = player.pause()
@@ -152,7 +164,7 @@ class Media3PlaybackHandle(
     override fun restoreAfterRendererSwitch(positionMs: Long, playWhenReady: Boolean, isLive: Boolean) {
         if (!isLive) seekTo(positionMs.coerceAtLeast(0L))
         player.playWhenReady = playWhenReady
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        if (media3PrepareNow(player.playbackState == Player.STATE_IDLE, waitingForPreviousRelease)) player.prepare()
     }
     override fun detachVideoOutput() {
         detachVideoView(surfaceView)

@@ -104,6 +104,10 @@ class MpvPlaybackController(
         private set
     /** The owner began building the engine: from here on the watchdog counts. */
     @Volatile private var ownerStarted = false
+    /** The owner's current step, named in the log when the stall dialog appears. */
+    private val ownerStep = MpvOwnerStep()
+    /** Until the first picture (or loaded audio) the watchdog allows [MPV_OPENING_UNRESPONSIVE_MS]. */
+    @Volatile private var opening = true
     private val mailbox = MpvCommandQueue(
         schedule = { task ->
             // Construction can happen inside remember(). Let that composition commit before
@@ -116,6 +120,7 @@ class MpvPlaybackController(
             Timber.e(error, "MPV owner operation failed")
             main.post { if (!released) failure = context.getString(com.ambient.tv.R.string.mpv_command_failed, -1) }
         },
+        running = ownerStep::operation,
     )
 
     // This monitor never calls MPV. It also detects a blocked constructor/filter/teardown-independent
@@ -123,7 +128,15 @@ class MpvPlaybackController(
     private val tick: Runnable = object : Runnable {
         override fun run() {
             if (released) return
-            backendUnresponsive = mpvBackendUnresponsive(SystemClock.elapsedRealtime(), lastProgress, ownerStarted)
+            val now = SystemClock.elapsedRealtime()
+            val stalled = mpvBackendUnresponsive(now, lastProgress, ownerStarted, opening)
+            if (stalled && !backendUnresponsive) {
+                val report = mpvStallReport(ownerStep.name, ownerStep.sinceMs, lastProgress, now, opening)
+                Timber.w(report)
+                com.ambient.tv.diagnostics.DiagnosticLog.warn("playback", report)
+                com.ambient.tv.diagnostics.CrashBreadcrumbs.add("mpv", report)
+            }
+            backendUnresponsive = stalled
             mailbox.submit("sample") { sample() }
             main.postDelayed(this, 250L)
         }
@@ -154,10 +167,12 @@ class MpvPlaybackController(
             }
             lastProgress = SystemClock.elapsedRealtime()
             ownerStarted = true
+            ownerStep.mark("initialize:engine_create")
             engine = MpvPlaybackEngine(context, audioSession, worker, {
                 main.post { if (!released && BackgroundPlaybackSession.owns(this)) PlaybackOutputTransition.begin(context) }
             }, url, initialStartPositionMs, headers, audioPassthroughEnabled, videoOutputMode,
-                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource)
+                initialImageOptions, networkCache, decoderMode, knownAudioCodec, nativeHdrPreferred, hdrGpuPassthrough, liveStream, declaredHdr, audioOnly, preferOriginalAudio, reopeningTimeshift, broadcastSource, ownerStep)
+            ownerStep.mark("initialize:first_sample")
             sample()
         }
         main.post(tick)
@@ -190,6 +205,7 @@ class MpvPlaybackController(
         if (released) return
         val now = SystemClock.elapsedRealtime()
         val status = player.status()
+        if (opening && player.openingDone()) opening = false
         // Codec, size, decoder, tracks … change with a load/reconfigure: read them again in this
         // sample instead of handing the UI a value from before the change for up to 750 ms.
         val generation = player.mediaInfoGeneration
@@ -580,4 +596,5 @@ internal const val MPV_UNRESPONSIVE_MS = 5_000L
  * waits for the previous player to close (renderer switch), which is shown as its own hint.
  */
 internal fun mpvBackendUnresponsive(nowMs: Long, lastProgressMs: Long, ownerStarted: Boolean,
-    limitMs: Long = MPV_UNRESPONSIVE_MS): Boolean = ownerStarted && nowMs - lastProgressMs >= limitMs
+    opening: Boolean = false, limitMs: Long = mpvUnresponsiveLimitMs(opening)): Boolean =
+    ownerStarted && nowMs - lastProgressMs >= limitMs

@@ -112,7 +112,14 @@ fun rememberMpvPlaybackController(
     val metadata = LocalPlaybackMetadata.current
     val preferences = videoImagePreferences(context)
     val title = remember(metadata?.route, metadata?.source, metadata?.mediaId) { com.ambient.tv.ui.player.TitleVideoSettingsStore.load(context, metadata) }
-    val resolution = remember(metadata?.route, metadata?.sourceWidth, metadata?.sourceHeight) { com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata) }
+    // The size this stream started with picks the resolution profile. A size the running player
+    // reports later (YouTube, Media3 hand-off) must not change the start key: that rebuilt MPV
+    // a second time right after it opened. Only a stream that started without a size takes the
+    // first one it learns.
+    val startSize = remember(metadata?.route, url) { MpvStartSize() }
+    val profileSize = startSize.resolve(mpvSourceSize(metadata?.sourceWidth, metadata?.sourceHeight))
+    val profileMetadata = metadata?.let { mpvProfileMetadata(it, profileSize) }
+    val resolution = remember(metadata?.route, profileSize) { com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, profileMetadata) }
     val settings = BackgroundPlaybackSession.videoSettings(metadata,
         com.ambient.tv.ui.player.PlayerVideoSettings.from(preferences).copy(mpvOutput = videoOutputMode)
             .withResolution(resolution).withTitle(title))
@@ -124,7 +131,7 @@ fun rememberMpvPlaybackController(
     val displayKey = mpvHdrGpuDisplayKey(context, displayHdr)
     // Failures and detections follow the title (source + id), not the URL: Plex remux URLs share one path.
     val mediaKey = mpvHdrGpuMediaKey(metadata, url)
-    val resolutionKey = mpvHdrGpuResolutionKey(metadata)
+    val resolutionKey = mpvHdrGpuResolutionKey(profileMetadata)
     val hdrFailure = MpvHdrGpuSession.failure(mediaKey, resolutionKey, displayKey)
     // The player's own HDR "direct" (automaticHdrDirect) is no explicit choice.
     val explicitDirect = mpvHdrGpuExplicitDirect(BackgroundPlaybackSession.videoSettingsOverride(metadata)?.mpvOutput,
@@ -471,3 +478,19 @@ internal fun mpvRefreshMediaInfo(
     settling: Boolean,
     sinceLastRefreshMs: Long,
 ): Boolean = generationChanged || sinceLastRefreshMs >= 2_000L || (valuesChanged && settling)
+
+/** A known source size, or null while width or height is missing. */
+internal fun mpvSourceSize(width: Int?, height: Int?): Pair<Int, Int>? =
+    if (width != null && height != null && width > 0 && height > 0) width to height else null
+
+/** The first known source size of one stream; later reports do not replace it. */
+internal class MpvStartSize {
+    private var size: Pair<Int, Int>? = null
+    fun resolve(current: Pair<Int, Int>?): Pair<Int, Int>? = mpvStartSize(size, current).also { size = it }
+}
+
+internal fun mpvStartSize(started: Pair<Int, Int>?, current: Pair<Int, Int>?): Pair<Int, Int>? = started ?: current
+
+/** [metadata] with the size the start key uses; unchanged when no size is known. */
+internal fun mpvProfileMetadata(metadata: com.ambient.tv.ui.player.PlaybackMetadata, size: Pair<Int, Int>?) =
+    if (size == null) metadata else metadata.copy(sourceWidth = size.first, sourceHeight = size.second)

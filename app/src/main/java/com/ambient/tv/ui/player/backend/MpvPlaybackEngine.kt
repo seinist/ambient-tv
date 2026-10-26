@@ -115,6 +115,8 @@ internal class MpvPlaybackEngine(
     reopeningTimeshift: Boolean = false,
     /** Live TV or a TVHeadend recording: broadcast transport streams that can be interlaced. */
     private val broadcastSource: Boolean = liveStream,
+    /** Names the running native step for the stall log ([MpvOwnerStep]); never read back here. */
+    private val ownerStep: MpvOwnerStep? = null,
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     init { check(android.os.Looper.myLooper() === workerHandler.looper) }
 
@@ -552,6 +554,7 @@ internal class MpvPlaybackEngine(
                 .joinToString(",") { "${it.key}: ${it.value}".replace(",", "\\,") }
             if (fields.isNotBlank()) setOption("http-header-fields", fields)
         }
+        ownerStep?.mark("initialize:mpv_initialize")
         val init = MpvNativeBridge.nativeInitialize(handle)
         if (init < 0) {
             MpvNativeBridge.nativeDestroy(handle)
@@ -652,6 +655,7 @@ internal class MpvPlaybackEngine(
             return
         }
         hdr10SwapchainSupported = null
+        ownerStep?.mark("surface:vulkan_probe")
         if (acceleration.vulkan && !VideoAccelerationRuntime.surfaceSupported(surface, "mpv") {
                 hdr10SwapchainSupported = it.hdr10SurfaceSupported
             }) {
@@ -659,6 +663,7 @@ internal class MpvPlaybackEngine(
             // Passthrough does not switch to OpenGL; the view reopens on the direct surface.
             if (hdrGpuFailure != null) return
         }
+        ownerStep?.mark("surface:attach")
         MpvNativeBridge.nativeAttachSurface(handle, surface)
         surfaceWidth = width
         surfaceHeight = height
@@ -672,6 +677,7 @@ internal class MpvPlaybackEngine(
             setProperty("vo", configuredVo)
             detachedVideoSelection?.let { setProperty("vid", it) }
             // Matches mpv-android's first-surface ordering: attach, force a window, then load.
+            ownerStep?.mark("surface:force_window")
             setProperty("force-window", "yes")
             startupOpenedAt = System.nanoTime()
             com.ambient.tv.ui.player.logPlaybackStartup("mpv", "initial_load_requested", startupConstructionAt,
@@ -682,6 +688,7 @@ internal class MpvPlaybackEngine(
             val resume = requestedResume?.takeUnless { prime }
             ended = false
             errorMessage = null
+            ownerStep?.mark("surface:loadfile")
             if (prime) command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=0")
             else if (resume == null) command("loadfile", playbackUrlForOpen(), "replace")
             else command("loadfile", playbackUrlForOpen(), "replace", "-1", "start=${resume / 1000.0}")
@@ -1961,6 +1968,9 @@ internal class MpvPlaybackEngine(
         if (loaded && fileReady && !awaitingEofReset && dvPrimeTarget == null && eof) ended = true
         return PlaybackStatus(positionMs(), durationMs(), isPlaying(), ended, errorMessage)
     }
+    /** First picture shown (or audio file loaded): ends the watchdog's opening phase. */
+    fun openingDone(): Boolean = mpvOpeningDone(fileReady, audioOnly,
+        if (fileReady && !audioOnly) getPropertyDouble("video-params/w", 0.0).toInt() else 0)
     fun videoCodec(): String? = getPropertyString("video-codec") ?: getPropertyString("video-format")
     fun audioCodec(): String? = if (isObserved("audio-codec-name")) (observed["audio-codec-name"] as? String)?.takeIf(String::isNotEmpty)
         else getPropertyString("audio-codec-name")
