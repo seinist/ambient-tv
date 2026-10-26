@@ -53,7 +53,49 @@ internal object TitleVideoSettingsStore {
 
     // "Remember changes for": chosen in the player; carried to further episodes of the same series
     // (season choice follows into the episode's season), other titles start with the title itself.
-    private val rememberChoices = VideoScopeChoices()
+    // Saved per series so the choice survives an app restart.
+    @Volatile private var rememberChoices: VideoScopeChoices? = null
+
+    private fun choices(context: Context): VideoScopeChoices = rememberChoices ?: synchronized(this) {
+        rememberChoices ?: run {
+            val preferences = videoImagePreferences(context)
+            val saved = preferences.videoScopeChoices.mapNotNull { (anchor, value) -> decodeVideoScopeChoice(value)?.let { anchor to it } }.toMap()
+            VideoScopeChoices(initial = saved, onChange = { all ->
+                preferences.videoScopeChoices = all.mapValues { encodeVideoScopeChoice(it.value) }
+            }).also { rememberChoices = it }
+        }
+    }
+
+    /**
+     * Stored layers when the playing title started ("session baseline"). A change counts as made in this
+     * session when it differs from these values, even after the automatic capture stored it on the title.
+     */
+    private class SessionBaseline(val titleKey: String, val values: Map<String, TitleVideoSettings?>)
+    @Volatile private var baseline: SessionBaseline? = null
+
+    /** Baseline for [values] of [metadata]; a new title starts a new one (and writes the video-scope diagnostics line). */
+    private fun baselineFor(context: Context, metadata: PlaybackMetadata?, values: List<Pair<VideoScopeLayer, TitleVideoSettings?>>): List<TitleVideoSettings?> {
+        val titleKey = key(metadata) ?: return values.map { it.second }
+        val current = baseline?.takeIf { it.titleKey == titleKey }
+        // Layers that appear later (e.g. a collection) start with what is stored now.
+        val merged = values.associate { (layer, value) -> layer.key to if (current != null && layer.key in current.values) current.values[layer.key] else value }
+        if (current == null || merged.keys != current.values.keys) baseline = SessionBaseline(titleKey, merged)
+        if (current == null) logScopes(context, metadata, titleKey, values)
+        return values.map { merged[it.first.key] }
+    }
+
+    /** Stop, or an explicit reset in the panel: the next capture starts a new baseline from what is stored. */
+    fun endSession() { baseline = null }
+
+    private fun logScopes(context: Context, metadata: PlaybackMetadata?, titleKey: String, values: List<Pair<VideoScopeLayer, TitleVideoSettings?>>) {
+        runCatching {
+            val line = videoScopeDiagnosticLine(titleKey, values, choices(context).index(values.map { it.first }),
+                ResolutionVideoProfileStore.key(metadata), ResolutionVideoProfileStore.matchedKey(context, metadata),
+                videoSettingOrigins(values, ResolutionVideoProfileStore.load(context, metadata)))
+            android.util.Log.i(VIDEO_SCOPE_LOG_TAG, line)
+            com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO, VIDEO_SCOPE_LOG_TAG, line, deduplicate = false)
+        }
+    }
 
     fun layers(context: Context, metadata: PlaybackMetadata?): List<VideoScopeLayer> =
         videoScopeLayers(key(metadata), metadata?.source.orEmpty(), metadata?.videoScope.takeIf { metadata?.isLive != true },
@@ -61,11 +103,21 @@ internal object TitleVideoSettingsStore {
 
     fun rememberLayer(context: Context, metadata: PlaybackMetadata?): VideoScopeLayer? {
         val layers = layers(context, metadata)
-        return layers.getOrNull(rememberChoices.index(layers))
+        return layers.getOrNull(choices(context).index(layers))
     }
 
+    /**
+     * Points "remember changes for" at [layer]. A broader scope also takes over the player chosen in this
+     * session at once; picture, audio and output changes of this session follow with the next capture.
+     */
     fun setRememberLayer(context: Context, metadata: PlaybackMetadata?, layer: VideoScopeLayer) {
-        rememberChoices.choose(layers(context, metadata), layer)
+        synchronized(lock) {
+            val values = layerValues(context, metadata)
+            val start = baselineFor(context, metadata, values)
+            choices(context).choose(values.map { it.first }, layer)
+            val index = values.indexOfFirst { it.first.key == layer.key }
+            if (index > 0) writeChanged(context, metadata, values, sessionRendererInScopes(values.map { it.second }, start, index))
+        }
         changed()
     }
 
@@ -106,7 +158,8 @@ internal object TitleVideoSettingsStore {
         if (sessionRendererSelection.get() > 0) return
         synchronized(lock) {
             val values = layerValues(context, metadata).takeIf { it.isNotEmpty() } ?: return
-            val index = rememberChoices.index(values.map { it.first })
+            baselineFor(context, metadata, values)
+            val index = choices(context).index(values.map { it.first })
             // The target stores the choice (null = default); narrower scopes drop their own player either way.
             writeChanged(context, metadata, values, rememberRendererInScopes(values.map { it.second }, index, renderer))
         }
@@ -132,6 +185,7 @@ internal object TitleVideoSettingsStore {
         val all = preferences.titleVideoSettings
         val keys = setOfNotNull(key, legacyKey(metadata))
         if (keys.any { it in all }) { preferences.titleVideoSettings = all - keys; changed() }
+        endSession()
     }
 
     /** Panel action: drop one season/series/collection scope. */
@@ -140,6 +194,7 @@ internal object TitleVideoSettingsStore {
         val preferences = videoImagePreferences(context)
         val all = preferences.scopedVideoSettings
         if (layer.key in all) { preferences.scopedVideoSettings = all - layer.key; changed() }
+        endSession()
     }
 
     fun clearProfileOverrides(context: Context, metadata: PlaybackMetadata?) {
@@ -152,6 +207,7 @@ internal object TitleVideoSettingsStore {
             vlcDeinterlaceMode = null, vlcDeinterlaceFilter = null,
             mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null)
         write(preferences, metadata, layer, updated)
+        endSession()
     }
 
     /**
@@ -185,7 +241,8 @@ internal object TitleVideoSettingsStore {
 
     private fun captureLocked(context: Context, metadata: PlaybackMetadata?, handle: PlaybackHandle, output: PlayerVideoSettings?) {
         val values = layerValues(context, metadata).takeIf { it.isNotEmpty() } ?: return
-        val index = rememberChoices.index(values.map { it.first })
+        val start = baselineFor(context, metadata, values)
+        val index = choices(context).index(values.map { it.first })
         val titleTarget = index == 0
         val preferences = videoImagePreferences(context)
         val profile = ResolutionVideoProfileStore.load(context, metadata)
@@ -237,7 +294,7 @@ internal object TitleVideoSettingsStore {
             observe(VideoScopeFields.MPV_DECODER, chosen.mpvDecoder, defaults.mpvDecoder)
             observe(VideoScopeFields.VLC_OUTPUT, chosen.vlcOutput, defaults.vlcOutput)
         }
-        val next = captureIntoScopes(values.map { it.second }, index, observed, full).toMutableList()
+        val next = captureIntoScopes(values.map { it.second }, index, observed, full, start).toMutableList()
         // Overload signatures are title-only.
         if (handle is MpvPlaybackController || handle is VlcPlaybackController) {
             val title = next[0] ?: TitleVideoSettings()
@@ -249,6 +306,8 @@ internal object TitleVideoSettingsStore {
         writeChanged(context, metadata, values, next)
     }
 }
+
+internal const val VIDEO_SCOPE_LOG_TAG = "video-scope"
 
 /** Output/decoder chosen for this title over the global defaults. */
 internal fun PlayerVideoSettings.withTitle(title: TitleVideoSettings?): PlayerVideoSettings = if (title == null) this else copy(

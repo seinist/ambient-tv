@@ -1090,7 +1090,9 @@ class PlayerViewModel @Inject constructor(
         val current = _uiState.value as? PlayerUiState.Ready ?: return
         if ((current.sourceWidth ?: 0) > 0 && (current.sourceHeight ?: 0) > 0) return
         val key = com.ambient.tv.data.local.VideoResolutionClass.key(width) ?: return
-        val profile = appPreferences.resolutionVideoProfiles[key]
+        val profile = appPreferences.resolutionVideoProfiles.let { profiles ->
+            com.ambient.tv.data.local.matchingResolutionKey(profiles, key)?.let(profiles::get)
+        }
         if (profile == null) {
             _uiState.value = current.copy(sourceWidth = width, sourceHeight = height)
             return

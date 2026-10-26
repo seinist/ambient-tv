@@ -1020,6 +1020,16 @@ class AppPreferences @Inject constructor(
         } ?: emptyMap()
         set(value) { titlePrefs.edit { putString("scoped_video_settings_v1", json.encodeToString(value)) } }
 
+    /**
+     * "Remember changes for" per series (or title): series/title anchor key -> "<SCOPE>:<layer key>".
+     * Device-local player state, not part of settings backups.
+     */
+    var videoScopeChoices: Map<String, String>
+        get() = titlePrefs.getString("video_scope_choices_v1", null)?.let { raw ->
+            runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
+        } ?: emptyMap()
+        set(value) { titlePrefs.edit { putString("video_scope_choices_v1", json.encodeToString(value)) } }
+
     /** Width presets use a new storage key; preserve v1 so collapsed height variants can be recovered. */
     var resolutionVideoProfiles: Map<String, ResolutionVideoProfile>
         get() {

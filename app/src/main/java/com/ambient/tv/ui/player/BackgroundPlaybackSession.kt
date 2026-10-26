@@ -598,6 +598,8 @@ object BackgroundPlaybackSession {
         appContext?.let { context ->
             runCatching { TitleVideoSettingsStore.capture(context, snapshot.value.metadata, previous, videoSettingsOverride) }
         }
+        // The next start of any title compares "changed in this session" against what is stored then.
+        TitleVideoSettingsStore.endSession()
         if (previous != null) completed.addLast(completedSnapshot(snapshot.value, previous.status()))
         previous?.detachVideoOutput()
         // Invalidate before release; synchronous callbacks cannot revive the old owner.

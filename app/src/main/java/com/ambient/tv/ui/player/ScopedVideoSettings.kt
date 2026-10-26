@@ -117,21 +117,26 @@ internal data class ObservedVideoField(val field: VideoScopeField, val value: An
  *
  * - Title target: every observed value that differs from what the title inherits is kept on the title
  *   ([fullSnapshot]: old explicit snapshots keep every value).
- * - Broader target: only fields whose observed value differs from what is effective right now (i.e. changed
- *   in this session) move to the scope; the scope drops a value equal to what it inherits, and narrower
- *   scopes stop masking exactly those fields. Title overrides that were not touched never spread.
+ * - Broader target: only fields whose observed value differs from what was effective when playback started
+ *   ([baseline]: the stored layers at session start, i.e. changed in this session) move to the scope; the
+ *   scope drops a value equal to what it inherits, and narrower scopes stop masking exactly those fields.
+ *   Changes the automatic capture already put on the title during this session move along. Title overrides
+ *   from earlier sessions that were not touched never spread. A field changed back to its start value gets
+ *   its start values again in the target and every narrower layer.
  * - [VideoScopeField.titleOnly] fields always use the title rule on index 0.
  *
  * Returns the new layer values (same size and order); unchanged layers are returned as given.
  */
 internal fun captureIntoScopes(
     layers: List<TitleVideoSettings?>, target: Int, observed: List<ObservedVideoField>, fullSnapshot: Boolean = false,
+    baseline: List<TitleVideoSettings?> = layers,
 ): List<TitleVideoSettings?> {
     if (layers.isEmpty()) return layers
     val index = target.coerceIn(0, layers.lastIndex)
+    val start = baseline.takeIf { it.size == layers.size } ?: layers
     val result = layers.toMutableList()
-    fun firstValue(field: VideoScopeField, from: Int, default: Any?): Any? =
-        (from..layers.lastIndex).firstNotNullOfOrNull { i -> layers[i]?.let(field.get) } ?: default
+    fun firstValue(field: VideoScopeField, from: Int, default: Any?, values: List<TitleVideoSettings?> = layers): Any? =
+        (from..values.lastIndex).firstNotNullOfOrNull { i -> values[i]?.let(field.get) } ?: default
     for ((field, value, default) in observed) {
         val at = if (field.titleOnly) 0 else index
         val inherited = field.normalize(firstValue(field, at + 1, default))
@@ -140,8 +145,15 @@ internal fun captureIntoScopes(
             result[0] = field.set(result[0] ?: TitleVideoSettings(), stored)
             continue
         }
-        val effectiveNow = field.normalize(firstValue(field, 0, default))
-        if (field.normalize(value) == effectiveNow) continue // Not changed in this session: nothing spreads.
+        val effectiveAtStart = field.normalize(firstValue(field, 0, default, start))
+        if (field.normalize(value) == effectiveAtStart) {
+            // Not changed in this session: nothing spreads; layers this session touched get their start values back.
+            for (i in 0..at) {
+                val wanted = start[i]?.let(field.get)
+                if (result[i]?.let(field.get) != wanted) result[i] = field.set(result[i] ?: TitleVideoSettings(), wanted)
+            }
+            continue
+        }
         result[at] = field.set(result[at] ?: TitleVideoSettings(), value.takeIf { field.normalize(it) != inherited })
         for (i in 0 until at) result[i] = result[i]?.let { field.set(it, null) }
     }
@@ -175,6 +187,22 @@ internal fun rememberRendererInScopes(layers: List<TitleVideoSettings?>, target:
     }
 }
 
+/**
+ * Switching "remember for" to the broader [target]: a player chosen in this session (the effective player
+ * differs from [baseline], the layers at session start) and stored on a narrower layer moves to the target,
+ * and narrower layers drop theirs. Anything else stays as it is.
+ */
+internal fun sessionRendererInScopes(
+    layers: List<TitleVideoSettings?>, baseline: List<TitleVideoSettings?>, target: Int,
+): List<TitleVideoSettings?> {
+    if (layers.isEmpty() || target <= 0) return layers
+    val index = target.coerceAtMost(layers.lastIndex)
+    val now = layers.firstNotNullOfOrNull { it?.rendererKey }
+    if (now == baseline.firstNotNullOfOrNull { it?.rendererKey }) return layers
+    if ((0 until index).none { layers[it]?.rendererKey != null }) return layers
+    return rememberRendererInScopes(layers, index, now)
+}
+
 /** "Remember for" choice made in the player: scope kind plus the exact layer key. */
 internal data class VideoScopeChoice(val scope: VideoSettingsScope, val key: String)
 
@@ -194,22 +222,75 @@ internal fun rememberScopeIndex(layers: List<VideoScopeLayer>, choice: VideoScop
 internal fun rememberScopeAnchor(layers: List<VideoScopeLayer>): String? =
     layers.firstOrNull { it.scope == VideoSettingsScope.SERIES }?.key ?: layers.firstOrNull()?.key
 
+/** Stored form of a choice: "<SCOPE>:<layer key>" (scope names contain no ':'). */
+internal fun encodeVideoScopeChoice(choice: VideoScopeChoice): String = "${choice.scope.name}:${choice.key}"
+
+internal fun decodeVideoScopeChoice(value: String): VideoScopeChoice? {
+    val split = value.indexOf(':').takeIf { it > 0 } ?: return null
+    val scope = VideoSettingsScope.entries.firstOrNull { it.name == value.substring(0, split) } ?: return null
+    val key = value.substring(split + 1).takeIf { it.isNotBlank() } ?: return null
+    return if (scope == VideoSettingsScope.TITLE) null else VideoScopeChoice(scope, key)
+}
+
 /**
- * "Remember for" choices of the running playback session, thread-safe and bounded. A series/season choice
+ * "Remember for" choices, thread-safe and bounded (least recently used dropped). A series/season choice
  * carries over to further episodes of the same series; other titles start with the title itself.
+ * [initial] restores saved choices; [onChange] receives every change so the choice survives a restart.
  */
-internal class VideoScopeChoices(private val limit: Int = 64) {
+internal class VideoScopeChoices(
+    private val limit: Int = 200,
+    initial: Map<String, VideoScopeChoice> = emptyMap(),
+    private val onChange: (Map<String, VideoScopeChoice>) -> Unit = {},
+) {
     private val choices = object : LinkedHashMap<String, VideoScopeChoice>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VideoScopeChoice>?) = size > limit
     }
+
+    init { choices.putAll(initial) }
 
     @Synchronized fun index(layers: List<VideoScopeLayer>): Int =
         rememberScopeIndex(layers, rememberScopeAnchor(layers)?.let { choices[it] })
 
     @Synchronized fun choose(layers: List<VideoScopeLayer>, layer: VideoScopeLayer) {
         val anchor = rememberScopeAnchor(layers) ?: return
-        if (layer.scope == VideoSettingsScope.TITLE) choices.remove(anchor) else choices[anchor] = VideoScopeChoice(layer.scope, layer.key)
+        val before = choices[anchor]
+        val next = VideoScopeChoice(layer.scope, layer.key).takeUnless { layer.scope == VideoSettingsScope.TITLE }
+        if (next == null) choices.remove(anchor) else choices[anchor] = next
+        if (before != next) onChange(LinkedHashMap(choices))
     }
 
-    @Synchronized fun clear() = choices.clear()
+    @Synchronized fun clear() {
+        if (choices.isEmpty()) return
+        choices.clear()
+        onChange(emptyMap())
+    }
+}
+
+/**
+ * One diagnostics line for the start of a title: which layers exist and hold values, where "remember
+ * for" points, which width preset applies, and where each effective value comes from.
+ */
+internal fun videoScopeDiagnosticLine(
+    titleKey: String,
+    layers: List<Pair<VideoScopeLayer, TitleVideoSettings?>>,
+    rememberIndex: Int,
+    widthKey: String?,
+    matchedWidthKey: String?,
+    origins: VideoSettingOrigins,
+): String {
+    fun name(scope: VideoSettingsScope) = scope.name.lowercase()
+    val layerText = layers.joinToString(",") { (layer, value) ->
+        "${name(layer.scope)}=${if (value == null || value.isEmpty) "empty" else "set"}"
+    }
+    val remember = layers.getOrNull(rememberIndex)?.first?.scope?.let(::name) ?: "title"
+    val width = when {
+        widthKey == null -> "unknown"
+        matchedWidthKey == null -> "$widthKey(no preset)"
+        matchedWidthKey == widthKey -> "$widthKey(preset)"
+        else -> "$widthKey->$matchedWidthKey(similar preset)"
+    }
+    fun o(origin: VideoSettingOrigin) = origin.name.lowercase()
+    return "title=$titleKey layers=[$layerText] remember=$remember width=$width origin: player=${o(origins.renderer)} " +
+        "picture=${o(origins.picture)} deinterlace=${o(origins.deinterlace)} output=${o(origins.output)} " +
+        "audio=${o(origins.audio)} delay=${o(origins.delay)}"
 }
