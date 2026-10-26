@@ -692,6 +692,7 @@ private fun PlayerContent(
         val showFpsOverlay = audioSession?.showFpsOverlay == true
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, audioSession, exoPlayer.audioFormat?.sampleMimeType, exoPlayer.audioFormat?.channelCount),
+            audioRoute = audioSession?.let { audioRouteSummaryText(it) },
             enabled = showNerdOverlay,
             model = rememberMedia3NerdOverlayModel(
                 player = exoPlayer,
@@ -923,6 +924,7 @@ private fun PlayerControlsOverlay(
                     formatNerdBitrate(kbps.toLong() * 1000L)?.let { add(stringResource(R.string.player_nerd_source_bitrate) to it) }
                 }
                 add(stringResource(R.string.player_info_video_output) to DirectAvDiagnostics.video(context, exoPlayer.videoFormat, "Media3"))
+                audioSession?.let { add(stringResource(R.string.audio_route_output) to audioRouteSummaryText(it)) }
                 add(stringResource(R.string.player_info_audio_output) to DirectAvDiagnostics.audio(context, (audioSession?.bitstreamPermitted ?: state.audioPassthroughEnabled), state.audioCodec, planMode = audioSession?.outputPlan()?.mode))
                 audioConversionDiagnostic(context, state, audioSession, exoPlayer.audioFormat?.sampleMimeType, exoPlayer.audioFormat?.channelCount)?.let { add(stringResource(R.string.audio_conversion_location) to it) }
                 exoPlayer.videoFormat?.let { format ->

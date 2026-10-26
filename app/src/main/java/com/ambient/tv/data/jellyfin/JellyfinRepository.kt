@@ -482,13 +482,13 @@ class JellyfinRepository @Inject constructor(
         }
     }
 
-    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?): Result<String> =
-        compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = false, audioCodec = audioCodec, audioStreamId = audioStreamId)
+    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int): Result<String> =
+        compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = false, audioCodec = audioCodec, audioStreamId = audioStreamId, audioChannels = audioChannels)
 
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long): Result<String> =
         compatibilityUrl(ratingKey, mediaIndex, startPositionMs, video = true)
 
-    private suspend fun compatibilityUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, video: Boolean, audioCodec: String = "aac", audioStreamId: Long? = null): Result<String> = cache.withGeneration {
+    private suspend fun compatibilityUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, video: Boolean, audioCodec: String = "aac", audioStreamId: Long? = null, audioChannels: Int = 2): Result<String> = cache.withGeneration {
         suspendResult {
             val item = cachedMediaItem(ratingKey) ?: getMetadataFast(ratingKey).getOrThrow() ?: error("Jellyfin item not found")
             val source = item.mediaVersions.getOrNull(mediaIndex)
@@ -520,7 +520,7 @@ class JellyfinRepository @Inject constructor(
             sessions[ratingKey] = Session(remoteSource?.id, info.playSessionId, playMethod = PLAY_METHOD_TRANSCODE)
             if (!video) urls.compatibilityUrl(ratingKey, remoteSource?.id ?: source?.sourceId,
                 startPositionMs, false, preferredAudio?.id?.toInt(), forcedSubtitle?.id?.toInt() ?: -1,
-                audioCodec, info.playSessionId)
+                audioCodec, info.playSessionId, audioChannels)
             else remoteSource?.transcodingUrl?.let(urls::absolute)
                 ?: urls.compatibilityUrl(ratingKey, remoteSource?.id, startPositionMs, true,
                     preferredAudio?.id?.toInt(), forcedSubtitle?.id?.toInt() ?: -1)

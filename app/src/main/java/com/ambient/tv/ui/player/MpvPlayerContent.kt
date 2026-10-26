@@ -321,6 +321,7 @@ internal fun MpvPlayerContent(
         val displayRefreshHz = rememberDisplayRefreshHz()
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.audioCodec),
+            audioRoute = audioRouteSummaryText(controller.audioSession),
             enabled = showNerdOverlay,
             model = rememberMpvNerdOverlayModel(
                 snapshot = snapshot,
@@ -458,6 +459,7 @@ internal fun MpvPlayerContent(
                     }
                     snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
                     controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add(stringResource(R.string.player_nerd_shaders_loaded) to it.joinToString()) }
+                    add(stringResource(R.string.audio_route_output) to audioRouteSummaryText(controller.audioSession))
                     add(stringResource(R.string.player_info_audio_output) to DirectAvDiagnostics.audio(context, controller.bitstreamPermitted, snapshot.audioCodec ?: state.audioCodec, snapshot.audioOutputFormat, controller.audioSession.outputPlan().mode))
                     audioConversionDiagnostic(context, state, controller.audioSession, snapshot.audioCodec)?.let { add(stringResource(R.string.audio_conversion_location) to it) }
                     (snapshot.audioCodec ?: state.audioCodec)?.takeIf { it.isNotBlank() }?.let { add(stringResource(R.string.player_audio) to it.uppercase()) }

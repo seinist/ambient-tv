@@ -35,6 +35,7 @@ fun AudioControls(session: AudioSession, section: String? = null, onOpenSection:
         panelSection = section,
         onOpenSection = onOpenSection,
         delayScopeHint = if (session.titleScoped) stringResource(R.string.audio_delay_title_scope) else null,
+        forcedChannelsFailed = session.forcedChannelsFailed || session.forceStereoPcm,
     )
     session.warning?.let { ImageHint(stringResource(R.string.audio_rejected, it)) }
     if (session.outputPlan().pcmLimitFallback) ImageHint(stringResource(R.string.audio_vlc_pcm_limit_fallback))
@@ -80,9 +81,14 @@ internal fun AudioProfileEditor(
     flatLive: Boolean = false,
     panelSection: String? = null,
     onOpenSection: ((String) -> Unit)? = null,
+    /** Player only: "Kanäle erzwingen" or the stereo retry was rejected for this playback. */
+    forcedChannelsFailed: Boolean = false,
 ) {
     val o = settings.currentForRoute(route.profile)
-    val codecs = visibleBitstreamCodecs(route).filter { it !in AudioCodecRejects.snapshot() }
+    // "Kanäle erzwingen" widens what the editor offers: PCM 5.1/7.1 and the bitstream choice.
+    val forcedRoute = route.forcedBy(o)
+    val bitstreamRoute = if (o.forceChannels > 0) route.forcedBy(o.copy(output = "bitstream")) else route
+    val codecs = visibleBitstreamCodecs(bitstreamRoute).filter { it !in AudioCodecRejects.snapshot() }
     if (!flatLive || panelSection == null) {
         ImageChoice(R.string.audio_profile, settings.selectedProfile, listOf(
             "auto" to stringResource(R.string.audio_profile_auto),
@@ -104,7 +110,7 @@ internal fun AudioProfileEditor(
     )).let { it.encoded && !it.applyDsp }
     val liveVisibility = if (flatLive) playerPanelAudioVisibility(
         supportsNight = supportsNight,
-        routeOffersBitstream = routeOffersBitstream(route.passthrough, AudioCodecRejects.snapshot()),
+        routeOffersBitstream = routeOffersBitstream(bitstreamRoute.passthrough, AudioCodecRejects.snapshot()),
         engine = backend,
         dspSuspended = dspSuspended,
     ) else null
@@ -140,6 +146,10 @@ internal fun AudioProfileEditor(
     sections.forEach { section ->
         when (section) {
         "output" -> {
+            val summary = audioRouteSummary(route, o, o.permitsBitstream(sourcePassthrough), sourceChannels,
+                forcedChannelsFailed, AudioCodecRejects.snapshot())
+            ImageHint(stringResource(R.string.audio_route_output) + ": " + audioRouteSummaryText(summary))
+            if (summary.stereoMixHint) ImageHint(stringResource(R.string.audio_route_stereo_mix_hint))
             val outputs = buildList {
                 add("source" to stringResource(R.string.audio_source_default))
                 add("auto" to stringResource(R.string.player_automatic))
@@ -151,10 +161,14 @@ internal fun AudioProfileEditor(
             ImageChoice(R.string.audio_pcm_channels, o.pcmChannelLimit.toString(), buildList {
                 add("0" to stringResource(R.string.player_automatic))
                 add("2" to "2.0")
-                if (backend != "vlc" && route.pcmChannels >= 6) add("6" to "5.1")
-                if (backend != "vlc" && route.pcmChannels >= 8) add("8" to "7.1")
+                if (backend != "vlc" && forcedRoute.pcmChannels >= 6) add("6" to "5.1")
+                if (backend != "vlc" && forcedRoute.pcmChannels >= 8) add("8" to "7.1")
             }) { change(o.copy(pcmChannelLimit = it.toInt())) }
             ImageHint(stringResource(R.string.audio_pcm_channels_hint))
+            ImageChoice(R.string.audio_force_channels, o.forceChannels.toString(), listOf(
+                "0" to stringResource(R.string.player_off), "6" to "5.1", "8" to "7.1",
+            )) { change(o.copy(forceChannels = it.toInt())) }
+            ImageHint(stringResource(R.string.audio_force_channels_hint))
             PlayerDropUpSelector(stringResource(R.string.audio_delay), "${o.delayMs} ms",
                 listOf("-100" to "−100 ms", "-25" to "−25 ms", "0" to stringResource(R.string.audio_reset_delay), "+25" to "+25 ms", "+100" to "+100 ms"),
                 selectedKey = "0", onSelected = { change(o.copy(delayMs = if (it == "0") 0 else o.delayMs + it.toInt())) })
@@ -222,7 +236,7 @@ internal fun AudioProfileEditor(
             if (section == "sound") {
                 audioDownmixLabel(sourceChannels, actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough, sourceChannels = sourceChannels))?.let { ImageHint(it) }
                 if (liveVisibility?.channels ?: true) {
-                    val modes = if (backend == "vlc") listOf("auto", "stereo") else visibleChannelModes(route)
+                    val modes = if (backend == "vlc") listOf("auto", "stereo") else visibleChannelModes(forcedRoute)
                     ImageChoice(R.string.audio_channel_mix, o.channels, modes.map { it to channelLabel(it) }) { change(o.copy(channels = it)) }
                     if (!suspended && backend != "vlc" && upmixRowVisible(o.pcmChannels(route.pcmChannels), o.channels)) {
                         ImageChoice(R.string.audio_upmix, if (o.upmix) "on" else "off", imageOnOff()) { change(o.copy(upmix = it == "on")) }

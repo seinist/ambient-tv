@@ -15,7 +15,7 @@ class AudioOnlyOutputTest {
         sourceChannels = 6
     }
 
-    @Test fun rendererSwitchPreservesSafetyFallbackBeforeApplyingProfile() {
+    @Test fun rendererSwitchKeepsEncoderFailureButNotTheOldRenderersStereoRetry() {
         val previous = session("mpv", false)
         previous.update(AudioOptions(output = "bitstream"))
         previous.forceStereoPcm = true
@@ -24,13 +24,19 @@ class AudioOnlyOutputTest {
         var applied = false
         next.apply = { _, _ ->
             applied = true
-            assertTrue(next.forceStereoPcm)
+            // The stereo retry belongs to MPV's audio output; VLC sets it again if it fails too.
+            assertFalse(next.forceStereoPcm)
             assertTrue(next.localEncoderFailed)
-            assertEquals(AudioOutputMode.PCM, next.outputPlan().mode)
-            assertEquals("stereo", next.outputPlan().channels)
+            // The new renderer tries the confirmed bitstream again.
+            assertEquals(AudioOutputMode.PASSTHROUGH, next.outputPlan().mode)
         }
         next.restoreFromSession(previous)
         assertTrue(applied)
+        // A rebuild of the same renderer keeps the safety fallback.
+        val rebuilt = session("mpv", false)
+        rebuilt.restoreFromSession(previous)
+        assertTrue(rebuilt.forceStereoPcm)
+        assertEquals("stereo", rebuilt.outputPlan().channels)
     }
 
     @Test fun audioOnlyOverridesEncodedProfilesWithoutOverwritingThem() {

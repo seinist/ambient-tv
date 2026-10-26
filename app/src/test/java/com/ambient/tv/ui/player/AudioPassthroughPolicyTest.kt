@@ -73,6 +73,6 @@ class AudioPassthroughPolicyTest {
             listOf(AudioRouteDevice(android.media.AudioDeviceInfo.TYPE_HDMI, emptySet(), 8, "AVR", "profiles=3")),
         )
         org.junit.Assert.assertEquals(
-            "Audio route pcmChannels=8 profile=avr passthrough=ac3,eac3 devices=1 | type=9 name=AVR pcmChannels=8 profiles=3", line)
+            "Audio route pcmChannels=8 profile=avr passthrough=ac3,eac3 devices=1 | type=HDMI name=AVR pcmChannels=8 profiles=3", line)
     }
 }

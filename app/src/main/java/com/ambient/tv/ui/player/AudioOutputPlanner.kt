@@ -9,7 +9,32 @@ data class AudioRouteCapabilities(
     val pcmChannels: Int = 2,
     val mpvAvailable: Boolean = false,
     val profile: String = "tv",
+    /** AudioDeviceInfo types behind this route, routed device first; display and logs only. */
+    val outputTypes: List<Int> = emptyList(),
 )
+
+/** Bitstream formats "Kanäle erzwingen" may try without the output confirming them. Lossless
+ * formats (TrueHD, DTS-HD MA) are excluded: they need HDMI bandwidth a forced guess cannot assume. */
+internal val FORCED_BITSTREAM_CODECS = setOf("ac3", "eac3", "dts")
+
+/**
+ * The route as the user's "Kanäle erzwingen" setting sees it: at least 5.1/7.1 PCM, and with
+ * an explicit Bitstream choice also the common Dolby/DTS formats. Without the setting the
+ * route is returned unchanged.
+ */
+fun AudioRouteCapabilities.forcedBy(options: AudioOptions): AudioRouteCapabilities {
+    if (options.forceChannels !in setOf(6, 8)) return this
+    val forcedPassthrough = if (options.output == "bitstream") FORCED_BITSTREAM_CODECS.filter { it in options.allowedCodecs } else emptyList()
+    return copy(pcmChannels = options.forcedChannels(pcmChannels), passthrough = passthrough + forcedPassthrough)
+}
+
+/** With a forced layout, "auto" becomes an explicit layout so MPV's auto-safe cannot fall back
+ * to the reported stereo. Never invents channels the source does not have. */
+internal fun forcedPcmLayout(sourceChannels: Int?, channels: Int): String = when {
+    (sourceChannels ?: 0) >= 8 && channels >= 8 -> "7.1"
+    (sourceChannels ?: 0) >= 6 && channels >= 6 -> "5.1"
+    else -> "auto"
+}
 
 enum class AudioOutputMode {
     PASSTHROUGH,
@@ -80,7 +105,9 @@ fun planAudioOutput(
 ): AudioOutputPlan {
     val requested = options.normalized()
     val blocked = rejectedCodecs.mapNotNull(::normalizeSourceCodec).toSet()
-    val liveRoute = route.copy(passthrough = route.passthrough - blocked)
+    val forcedRoute = route.forcedBy(requested)
+    val liveRoute = forcedRoute.copy(passthrough = forcedRoute.passthrough - blocked)
+    val forcing = forcedRoute.pcmChannels > route.pcmChannels
     val permitted = requested.permitsBitstream(sourcePassthrough)
     val confirmed = AudioCatalog.codecs.filter { it in requested.allowedCodecs && it in liveRoute.passthrough }
     val source = normalizeSourceCodec(sourceCodec)
@@ -93,7 +120,8 @@ fun planAudioOutput(
         8 -> "7.1"
         else -> "auto"
     } else requested.channels
-    val channels = clipChannelMode(pcmMode, requested.pcmChannels(liveRoute.pcmChannels))
+    val clipped = clipChannelMode(pcmMode, requested.pcmChannels(liveRoute.pcmChannels))
+    val channels = if (forcing && clipped == "auto") forcedPcmLayout(sourceChannels, requested.pcmChannels(liveRoute.pcmChannels)) else clipped
 
     if (permitted && source != null && source in confirmed) {
         return AudioOutputPlan(

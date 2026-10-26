@@ -83,6 +83,7 @@ interface MediaRepository {
     suspend fun markUnwatched(ratingKey: String): Result<Unit>
     suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit>
     /** Video stays stream-copied; only audio is converted to [audioCodec] where the server lets the client pick it. */
-    suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String = "aac", audioStreamId: Long? = null): Result<String>
+    /** [audioChannels] is the channel ceiling for the converted track (output width, 2..8; AC3/E-AC3 at most 6). */
+    suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String = "aac", audioStreamId: Long? = null, audioChannels: Int = 2): Result<String>
     suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long): Result<String>
 }

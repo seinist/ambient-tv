@@ -55,7 +55,11 @@ class AudioSession(
 
     /** Keep manual edits and automatic-profile provenance across output/decoder restarts. */
     internal fun restoreFromSession(previous: AudioSession) {
-        forceStereoPcm = previous.forceStereoPcm
+        // Output failures belong to the renderer that hit them: a rebuild of the same renderer
+        // keeps them, a switch to another renderer starts clean (it re-sets them if it fails too).
+        val sameRenderer = previous.backend == backend
+        forceStereoPcm = previous.forceStereoPcm && sameRenderer
+        forcedChannelsFailed = previous.forcedChannelsFailed && sameRenderer
         localEncoderFailed = previous.localEncoderFailed
         audioOnly = audioOnly || previous.audioOnly
         restoreProfile(previous.settings, automatic = true)
@@ -112,6 +116,11 @@ class AudioSession(
     var sourceChannels by mutableStateOf<Int?>(null)
     var localEncoderFailed by mutableStateOf(false)
     var forceStereoPcm by mutableStateOf(false)
+    /** The output rejected the forced 5.1/7.1 layout; this playback follows the route again. */
+    var forcedChannelsFailed by mutableStateOf(false)
+    /** Output channel capacity after "Kanäle erzwingen", unless that failed for this playback. */
+    val outputPcmChannels: Int get() =
+        if (forcedChannelsFailed || forceStereoPcm) route.pcmChannels else options.forcedChannels(route.pcmChannels)
     internal var apply: (AudioOptions, AudioOptions) -> Unit = { _, _ -> }
     internal var routeChanged: (AudioOutputPlan, AudioOutputPlan) -> Unit = { _, _ -> }
     private var routeMonitor: AudioRouteMonitor? = null
@@ -120,6 +129,23 @@ class AudioSession(
     fun refreshRoute(context: android.content.Context, codec: String? = sourceCodec) {
         updateRoute(AudioPassthroughPolicy.probeCached(context).copy(mpvAvailable = MpvBackendAvailability.isAvailable))
         if (codec != null) sourceCodec = codec
+        logPlanIfChanged()
+    }
+
+    private var lastPlanLog: String? = null
+    private var lastPlanLogDiagnostics = false
+
+    /** Logs the audio decision under `audio-route` once per change (logcat, diagnostics file). */
+    internal fun logPlanIfChanged() {
+        val line = runCatching {
+            audioPlanLogLine(backend, sourcePassthrough, options, settings.selectedProfile, effectiveRoute,
+                sourceCodec, sourceChannels, outputPlan(), forcedChannelsFailed, forceStereoPcm)
+        }.getOrNull() ?: return
+        val diagnostics = com.ambient.tv.diagnostics.DiagnosticLog.enabled
+        if (line == lastPlanLog && diagnostics == lastPlanLogDiagnostics) return
+        lastPlanLog = line
+        lastPlanLogDiagnostics = diagnostics
+        logAudioRouteLine(line)
     }
 
     fun startRouteMonitoring(context: android.content.Context) {
@@ -137,6 +163,7 @@ class AudioSession(
         // PCM sink just to enable a saved night/EQ profile causes an unnecessary gap.
         if (before.copy(heavyAudio = after.heavyAudio) != after) routeChanged(before, after)
         else if (oldOptions != options) apply(oldOptions, options)
+        logPlanIfChanged()
     }
 
     fun release() {
@@ -156,11 +183,12 @@ class AudioSession(
         sourceCodec: String?, sourceChannels: Int?,
         media3CanDecode: Boolean = true, options: AudioOptions = this.options,
     ): AudioOutputPlan {
+        val base = if (forcedChannelsFailed) options.copy(forceChannels = 0) else options
         val effective = when {
-            forceStereoPcm -> options.copy(output = "pcm", channels = "stereo", localFallback = "pcm", localAc3 = false)
-            audioOnly -> options.copy(output = "pcm", localFallback = "pcm", localAc3 = false)
-            localEncoderFailed -> options.copy(localFallback = "pcm", localAc3 = false)
-            else -> options
+            forceStereoPcm -> base.copy(output = "pcm", channels = "stereo", localFallback = "pcm", localAc3 = false, forceChannels = 0)
+            audioOnly -> base.copy(output = "pcm", localFallback = "pcm", localAc3 = false)
+            localEncoderFailed -> base.copy(localFallback = "pcm", localAc3 = false)
+            else -> base
         }
         return planAudioOutput(
             effective, sourceCodec, effectiveRoute, backend, sourcePassthrough, media3CanDecode,
@@ -190,7 +218,7 @@ class AudioSession(
         val codec = sourceCodec
         val channels = sourceChannels
         val flags = (if (forceStereoPcm) 1 else 0) or (if (localEncoderFailed) 2 else 0) or
-            (if (audioOnly) 4 else 0) or (if (mpvAllowed) 8 else 0)
+            (if (audioOnly) 4 else 0) or (if (mpvAllowed) 8 else 0) or (if (forcedChannelsFailed) 16 else 0)
         val rejects = AudioCodecRejects.version
         pcmMemo?.let { memo ->
             if (options == pcmMemoOptions && route == pcmMemoRoute && codec == pcmMemoCodec &&
@@ -252,6 +280,7 @@ class AudioSession(
         renderOptions = optionsForPcm()
         warning = null
         if (!audioConversionRequiresReload(old, options) || !conversionLocationChanged(this)) apply(old, options)
+        logPlanIfChanged()
     }
 
     fun diagnosticSummary(): String = buildList {

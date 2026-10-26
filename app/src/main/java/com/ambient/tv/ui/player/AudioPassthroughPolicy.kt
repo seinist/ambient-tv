@@ -89,8 +89,15 @@ object AudioPassthroughPolicy {
         }
         if (!direct) return AudioPassthroughDecision(true, null, encoding, false, reason = "Android direct playback rejected")
 
-        val devices = candidateDevices(manager, attrs)
-        val acceptingOutput = devices.firstOrNull()?.takeIf { routeAcceptsEncoding(devices, encoding) }
+        val television = isTelevisionDevice(context)
+        val devices = candidateDevices(manager, attrs, television)
+        // API 33+: getDirectPlaybackSupport() above was asked for exactly these attributes, i.e.
+        // for the routed device. On a TV that is the answer of the TV's own audio HAL, also when
+        // it routes to the built-in speakers or ARC; trust it there.
+        val routedDirect = android.os.Build.VERSION.SDK_INT >= 33
+        val acceptingOutput = devices.firstOrNull()?.takeIf {
+            routeAcceptsEncoding(devices, encoding, television = television, routedDirectSupport = routedDirect)
+        }
         return if (acceptingOutput != null) {
             AudioPassthroughDecision(
                 requested = true,
@@ -150,22 +157,28 @@ object AudioPassthroughPolicy {
         }.toSet()
         val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val attrs = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MOVIE).build()
-        val devices = manager?.let { candidateDevices(it, attrs) }.orEmpty()
+        val devices = manager?.let { candidateDevices(it, attrs, isTelevisionDevice(context)) }.orEmpty()
         return AudioRouteCapabilities(passthrough = passthrough, pcmChannels = routedPcmChannels(devices),
-            profile = routedAudioProfile(devices))
+            profile = routedAudioProfile(devices), outputTypes = devices.map { it.type })
             .also { recentRoute = started to it }
             .also { logRoute(it, devices) }
     }
 
     @Volatile private var lastRouteLog: String? = null
+    @Volatile private var lastRouteLogDiagnostics = false
 
-    /** One diagnostic line per distinct route; repeated probes of the same route stay silent. */
+    /**
+     * One line per distinct route; repeated probes of the same route stay silent. The cache is
+     * keyed on the diagnostics switch too, so turning diagnostics on writes the current route
+     * into the file instead of waiting for the next route change.
+     */
     private fun logRoute(route: AudioRouteCapabilities, devices: List<AudioRouteDevice>) {
         val line = audioRouteLogLine(route, devices)
-        if (line == lastRouteLog) return
+        val diagnostics = com.ambient.tv.diagnostics.DiagnosticLog.enabled
+        if (line == lastRouteLog && diagnostics == lastRouteLogDiagnostics) return
         lastRouteLog = line
-        com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO, AUDIO_ROUTE_LOG_TAG, line,
-            deduplicate = false)
+        lastRouteLogDiagnostics = diagnostics
+        logAudioRouteLine(line)
     }
 
     private const val ROUTE_CACHE_MS = 2_000L
@@ -180,7 +193,13 @@ object AudioPassthroughPolicy {
     private fun audioProfilesOf(device: AudioDeviceInfo): List<SinkProfile> =
         device.audioProfiles.map { SinkProfile(it.format, it.channelMasks.toList(), it.channelIndexMasks.toList()) }
 
-    private fun candidateDevices(manager: AudioManager, attrs: AudioAttributes): List<AudioRouteDevice> {
+    /** FEATURE_LEANBACK or UI_MODE_TYPE_TELEVISION: a TV or TV box, not a phone or tablet. */
+    private fun isTelevisionDevice(context: Context): Boolean = runCatching {
+        com.ambient.tv.ui.mobile.isTelevision(context) ||
+            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    }.getOrDefault(false)
+
+    private fun candidateDevices(manager: AudioManager, attrs: AudioAttributes, television: Boolean): List<AudioRouteDevice> {
         val known = android.os.Build.VERSION.SDK_INT >= 33
         val devices = if (known) manager.getAudioDevicesForAttributes(attrs) else manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
         return selectAudioRouteDevices(devices.map { device ->
@@ -204,7 +223,7 @@ object AudioPassthroughPolicy {
             AudioRouteDevice(device.type, device.encodings.toSet(),
                 routePcmChannels(profiled = profiled, legacy = legacy),
                 device.productName?.toString(), detail)
-        }, known)
+        }, known, television)
     }
 
     private fun maskText(mask: Int): String = "0x" + Integer.toHexString(mask) + "(" + Integer.bitCount(mask) + ")"
@@ -237,12 +256,56 @@ internal fun profiledPcmChannels(profiles: List<Pair<Int, List<Int>>>): Int? =
 
 internal const val AUDIO_ROUTE_LOG_TAG = "audio-route"
 
+/** Writes an audio-route line to logcat (`adb logcat -s audio-route`) and, while diagnostics
+ * are on, to the diagnostic file. */
+internal fun logAudioRouteLine(line: String) {
+    runCatching { android.util.Log.i(AUDIO_ROUTE_LOG_TAG, line) }
+    com.ambient.tv.diagnostics.DiagnosticLog.log(com.ambient.tv.diagnostics.DiagnosticLevel.INFO, AUDIO_ROUTE_LOG_TAG, line,
+        deduplicate = false)
+}
+
+/** Readable name of an AudioDeviceInfo type for logs ("HDMI_ARC", "BUILTIN_SPEAKER"). */
+internal fun audioDeviceTypeName(type: Int): String = when (type) {
+    AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "BUILTIN_SPEAKER"
+    AudioDeviceInfo.TYPE_HDMI -> "HDMI"
+    AudioDeviceInfo.TYPE_HDMI_ARC -> "HDMI_ARC"
+    AudioDeviceInfo.TYPE_HDMI_EARC -> "HDMI_EARC"
+    AudioDeviceInfo.TYPE_LINE_DIGITAL -> "LINE_DIGITAL"
+    AudioDeviceInfo.TYPE_LINE_ANALOG -> "LINE_ANALOG"
+    AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "WIRED_HEADPHONES"
+    AudioDeviceInfo.TYPE_WIRED_HEADSET -> "WIRED_HEADSET"
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "BLUETOOTH_A2DP"
+    AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "BLUETOOTH_SCO"
+    AudioDeviceInfo.TYPE_BLE_HEADSET -> "BLE_HEADSET"
+    AudioDeviceInfo.TYPE_BLE_SPEAKER -> "BLE_SPEAKER"
+    AudioDeviceInfo.TYPE_USB_DEVICE -> "USB_DEVICE"
+    AudioDeviceInfo.TYPE_USB_HEADSET -> "USB_HEADSET"
+    AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB_ACCESSORY"
+    AudioDeviceInfo.TYPE_HEARING_AID -> "HEARING_AID"
+    AudioDeviceInfo.TYPE_TELEPHONY -> "TELEPHONY"
+    else -> "type$type"
+}
+
+/** One line per distinct playback decision: the user's switches next to what the route offers. */
+internal fun audioPlanLogLine(
+    backend: String, passthroughSwitch: Boolean, options: com.ambient.tv.data.local.AudioOptions,
+    selectedProfile: String, route: AudioRouteCapabilities, sourceCodec: String?, sourceChannels: Int?,
+    plan: AudioOutputPlan, forceFailed: Boolean = false, forceStereo: Boolean = false,
+): String = "Audio plan backend=$backend passthroughSwitch=${if (passthroughSwitch) "on" else "off"} " +
+    "output=${options.output} profile=$selectedProfile/${route.profile} channels=${options.channels} " +
+    "pcmLimit=${options.pcmChannelLimit} forceChannels=${options.forceChannels}${if (forceFailed) "(failed)" else ""} " +
+    "source=${sourceCodec ?: "?"}/${sourceChannels ?: "?"}ch routePcmChannels=${route.pcmChannels} " +
+    "confirmed=${route.passthrough.sorted().joinToString(",").ifEmpty { "none" }} " +
+    "devices=${route.outputTypes.joinToString(",", transform = ::audioDeviceTypeName).ifEmpty { "?" }} " +
+    "-> mode=${plan.mode} channels=${plan.channels} spdif=${plan.spdifCodecs.joinToString(",").ifEmpty { "-" }}" +
+    if (forceStereo) " forceStereo" else ""
+
 /** Diagnostic text for one probe: the chosen route followed by every kept device. */
 internal fun audioRouteLogLine(route: AudioRouteCapabilities, devices: List<AudioRouteDevice>): String =
     "Audio route pcmChannels=${route.pcmChannels} profile=${route.profile} " +
         "passthrough=${route.passthrough.sorted().joinToString(",").ifEmpty { "none" }} devices=${devices.size}" +
         devices.joinToString("") { device ->
-            " | type=${device.type} name=${device.name ?: "?"} pcmChannels=${device.pcmChannels} ${device.detail}".trimEnd()
+            " | type=${audioDeviceTypeName(device.type)} name=${device.name ?: "?"} pcmChannels=${device.pcmChannels} ${device.detail}".trimEnd()
         }
 
 /** On API 29–32 connected digital sinks are only hints. A personal output must not inherit
@@ -259,9 +322,15 @@ internal fun digitalAudioDevice(type: Int): Boolean = type in setOf(
     AudioDeviceInfo.TYPE_USB_ACCESSORY,
 )
 
-internal fun selectAudioRouteDevices(devices: List<AudioRouteDevice>, routingKnown: Boolean): List<AudioRouteDevice> {
+private val WIRED_PERSONAL = setOf(AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET)
+
+internal fun selectAudioRouteDevices(devices: List<AudioRouteDevice>, routingKnown: Boolean, television: Boolean = false): List<AudioRouteDevice> {
     if (routingKnown) return devices
-    val personal = devices.filter { it.type in setOf(
+    // Many TVs list their headphone/line-out jack permanently. Before API 33 an app cannot ask
+    // which device is routed, so on a TV a wired output only counts as headphones when no
+    // digital output (HDMI, ARC, eARC, optical) is there to take the sound instead.
+    val candidates = if (television && devices.any { digitalAudioDevice(it.type) }) devices.filterNot { it.type in WIRED_PERSONAL } else devices
+    val personal = candidates.filter { it.type in setOf(
         AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
         AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER, AudioDeviceInfo.TYPE_HEARING_AID,
         AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET,
@@ -270,12 +339,27 @@ internal fun selectAudioRouteDevices(devices: List<AudioRouteDevice>, routingKno
     if (personal.isNotEmpty()) return personal
     // Built-in speakers and an attached digital output can coexist. Without a route query,
     // choosing HDMI here would invent an active route; require common capabilities instead.
-    return devices
+    return candidates
 }
 
-internal fun routeAcceptsEncoding(devices: List<AudioRouteDevice>, encoding: Int): Boolean = devices.isNotEmpty() && devices.all {
-    digitalAudioDevice(it.type) && (encoding in it.encodings ||
-        (encoding == AudioFormat.ENCODING_E_AC3_JOC && AudioFormat.ENCODING_E_AC3 in it.encodings))
+/**
+ * Whether bitstream may be sent. Phones and tablets: every candidate must be a digital output
+ * advertising the encoding. TVs: when Android confirmed direct playback for the routed device
+ * (API 33+), that answer counts, also for built-in speakers or ARC, because the TV's audio HAL
+ * handles the bitstream itself. Before API 33 a TV's built-in speakers do not veto a digital
+ * output (ARC, eARC, HDMI) that advertises the encoding.
+ */
+internal fun routeAcceptsEncoding(
+    devices: List<AudioRouteDevice>, encoding: Int,
+    television: Boolean = false, routedDirectSupport: Boolean = false,
+): Boolean {
+    if (devices.isEmpty()) return false
+    if (television && routedDirectSupport) return true
+    val relevant = if (television) devices.filterNot { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER } else devices
+    return relevant.isNotEmpty() && relevant.all {
+        digitalAudioDevice(it.type) && (encoding in it.encodings ||
+            (encoding == AudioFormat.ENCODING_E_AC3_JOC && AudioFormat.ENCODING_E_AC3 in it.encodings))
+    }
 }
 
 /** Widest PCM layout among the devices [selectAudioRouteDevices] already kept.

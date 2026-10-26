@@ -60,7 +60,7 @@ class SharedMediaRepository @Inject constructor() : MediaRepository {
     override suspend fun markWatched(ratingKey: String) = Result.success(Unit)
     override suspend fun markUnwatched(ratingKey: String) = Result.success(Unit)
     override suspend fun removeFromContinueWatching(ratingKey: String) = Result.success(Unit)
-    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?) = noTranscoder()
+    override suspend fun getAudioCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long, audioCodec: String, audioStreamId: Long?, audioChannels: Int) = noTranscoder()
     override suspend fun getVideoCompatibleStreamUrl(ratingKey: String, mediaIndex: Int, startPositionMs: Long) = noTranscoder()
     private fun noTranscoder(): Result<String> = Result.failure(UnsupportedOperationException("Shared links require local decoding"))
 

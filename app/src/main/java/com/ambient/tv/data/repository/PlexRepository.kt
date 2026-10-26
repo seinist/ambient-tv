@@ -546,10 +546,11 @@ class PlexRepository @Inject constructor(
         startPositionMs: Long,
         audioCodec: String,
         audioStreamId: Long?,
+        audioChannels: Int,
     ): Result<String> = cache.withGeneration {
         suspendResult {
             val (audioId, forcedSubtitleId) = preferredServerTracks(ratingKey, mediaIndex, audioStreamId)
-            requireNotNull(urlBuilder.audioFallbackUrl(ratingKey, mediaIndex, startPositionMs, audioId, forcedSubtitleId, audioCodec)) {
+            requireNotNull(urlBuilder.audioFallbackUrl(ratingKey, mediaIndex, startPositionMs, audioId, forcedSubtitleId, audioCodec, audioChannels)) {
                 "Server address is not configured"
             }
         }

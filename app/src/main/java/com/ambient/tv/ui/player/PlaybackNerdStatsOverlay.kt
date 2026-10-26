@@ -522,6 +522,7 @@ fun BoxScope.PlaybackNerdStatsOverlay(
     modifier: Modifier = Modifier,
     alignment: Alignment = Alignment.TopStart,
     audioConversion: String? = null,
+    audioRoute: String? = null,
 ) {
     if (!enabled || model == null || model.isEmpty) return
     Column(
@@ -547,6 +548,7 @@ fun BoxScope.PlaybackNerdStatsOverlay(
         )
         NerdOverlaySection(stringResource(R.string.player_nerd_section_video), model.video)
         NerdOverlaySection(stringResource(R.string.player_nerd_section_audio), model.audio + listOfNotNull(
+            audioRoute?.let { NerdStatsOverlayRow(stringResource(R.string.audio_route_output), it) },
             audioConversion?.let { NerdStatsOverlayRow(stringResource(R.string.audio_conversion_location), it) },
         ))
         NerdOverlaySection(stringResource(R.string.player_nerd_section_system), model.system)
