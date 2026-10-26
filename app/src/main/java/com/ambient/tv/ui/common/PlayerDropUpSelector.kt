@@ -208,7 +208,10 @@ private fun PlayerDropUpSelectorImpl(
     val density = LocalDensity.current
     val rootView = LocalView.current.rootView
     val matchTrigger = selectorMenuMatchesTrigger(LocalHandheldUi.current)
-    val triggerFocus = remember { FocusRequester() }
+    // Keyed in the panel navigation, so a rebuilt level can put focus back on this selector.
+    val panelFocusKey = "selector:$selectorId"
+    val localTriggerFocus = remember { FocusRequester() }
+    val triggerFocus = panelNavigation?.focusRequester(panelFocusKey) ?: localTriggerFocus
     val optionKeys = remember(options) { options.map { it.first } }
     val optionFocus = remember(optionKeys) { optionKeys.map { FocusRequester() } }
     val startIndex = options.indexOfFirst { it.first == selectedKey && it.first !in disabledKeys }
@@ -230,10 +233,8 @@ private fun PlayerDropUpSelectorImpl(
     BackHandler(enabled = expanded, onBack = dismissAction)
     LaunchedEffect(videoState, selectorId) {
         if (videoState?.focusedSelector == selectorId && !expanded) {
-            repeat(12) {
-                withFrameNanos { }
-                if (videoState.focusedSelector != selectorId) return@LaunchedEffect
-                if (runCatching { triggerFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            retryFocusFor {
+                videoState.focusedSelector != selectorId || runCatching { triggerFocus.requestFocus() }.getOrDefault(false)
             }
         }
     }
@@ -273,6 +274,7 @@ private fun PlayerDropUpSelectorImpl(
                 .onFocusChanged {
                     focused = it.hasFocus
                     if (it.hasFocus) videoState?.focusedSelector = selectorId
+                    if (it.hasFocus) panelNavigation?.noteFocused(panelFocusKey)
                     if (it.hasFocus && !expanded) restoreTriggerFocus = false
                     if (it.isFocused) uiSounds?.playFocus()
                 }

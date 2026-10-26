@@ -818,7 +818,11 @@ private fun TvheadendPlaybackSurface(
                 scrimAlpha = 0.30f,
                 projectMBrowser = LocalProjectMBrowser.current,
                 audioSession = com.ambient.tv.ui.player.Media3AudioProcessing.session(player),
-                hasVideo = videoFormat != null || currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO },
+                // A channel still opening has no tracks yet: keep the video panel unless it is radio.
+                hasVideo = com.ambient.tv.ui.player.playbackPanelHasVideo(
+                    videoTracks = if (videoFormat != null) 1 else currentTracks.groups.count { it.type == C.TRACK_TYPE_VIDEO },
+                    audioTracks = currentTracks.groups.count { it.type == C.TRACK_TYPE_AUDIO },
+                    audioOnly = metadata?.hasVideo == false),
                 isLive = source.isLive,
                 scalingKey = when (playerResizeMode) {
                     PlayerResizeMode.ZOOM -> "zoom"

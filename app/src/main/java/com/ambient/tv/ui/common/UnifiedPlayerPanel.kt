@@ -96,7 +96,11 @@ enum class UnifiedPlayerPanel {
  */
 @Stable
 class PlayerPanelNavigation {
-    private class Level(val panel: UnifiedPlayerPanel, val originKey: String?)
+    private class Level(val panel: UnifiedPlayerPanel, val originKey: String?) {
+        /** Last focused keyed row of this level; focus returns there when the level's content is rebuilt. */
+        var focusedKey: String? = null
+        var hadFocus = false
+    }
 
     internal val videoState = VideoPanelState()
     internal val audioState = VideoPanelState().apply { section = "output" }
@@ -154,6 +158,19 @@ class PlayerPanelNavigation {
         }
     }
 
+    /**
+     * "Adjust" from a dialog outside the panels (render overload): shows the video settings.
+     * Already inside them it stays on the current level instead of stacking a second video
+     * level whose Back would lead to a duplicate; from anywhere else it starts a fresh path.
+     */
+    fun openVideoSettings() {
+        if (!videoAdjustOpensPanel(panel)) return
+        path.clear()
+        pendingOrigin = null
+        pendingRoot = false
+        open(UnifiedPlayerPanel.VIDEO)
+    }
+
     fun back(expectedPanel: UnifiedPlayerPanel = panel) {
         if (panel != expectedPanel) return
         val left = path.removeLastOrNull() ?: return
@@ -192,12 +209,42 @@ class PlayerPanelNavigation {
 
     fun focusRequester(key: String): FocusRequester = requesters.getOrPut(key) { FocusRequester() }
 
+    /** The open level has not held focus yet. */
+    internal val levelFresh: Boolean get() = path.lastOrNull()?.hadFocus != true
+
+    internal val focusedKey: String? get() = path.lastOrNull()?.focusedKey
+
+    /** A keyed row ([focusRequester]) of the open level took focus. */
+    internal fun noteFocused(key: String) {
+        val level = path.lastOrNull() ?: return
+        level.focusedKey = key
+        level.hadFocus = true
+    }
+
+    internal fun notePanelFocused() {
+        path.lastOrNull()?.hadFocus = true
+    }
+
+    internal fun requestFocus(key: String): Boolean =
+        requesters[key]?.let { runCatching { it.requestFocus() }.getOrDefault(false) } ?: false
+
+    internal fun focusRescue(): PanelFocusRescue = PanelFocusRescue(
+        levelFresh = levelFresh,
+        target = { panelFocusRescueTarget(restoreKey, focusedKey) },
+        request = ::requestFocus,
+        onFocused = ::notePanelFocused,
+    )
+
     private fun restore(key: String?) {
         restoreKey = key
         restoreFailed = false
         restoreGeneration++
     }
 }
+
+/** Whether "adjust video" has to open the video panel: not while one of its levels is shown. */
+internal fun videoAdjustOpensPanel(current: UnifiedPlayerPanel): Boolean =
+    !current.isVideo && current != UnifiedPlayerPanel.RENDERER
 
 val LocalPlayerPanelNavigation = compositionLocalOf<PlayerPanelNavigation?> { null }
 
@@ -212,15 +259,15 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
         val destination = navigation.panel
         val requester = navigation.focusRequester(key)
         // The origin re-enters composition with the parent level, or slides back in with the bar.
-        repeat(30) {
-            withFrameNanos { }
-            if (navigation.restoreGeneration != generation || navigation.panel != destination) return@LaunchedEffect
-            if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
-                navigation.restoreKey = null
-                return@LaunchedEffect
-            }
+        var placed = false
+        val finished = retryFocusFor {
+            if (navigation.restoreGeneration != generation || navigation.panel != destination) return@retryFocusFor true
+            placed = runCatching { requester.requestFocus() }.getOrDefault(false)
+            placed
         }
+        if (finished && !placed) return@LaunchedEffect
         navigation.restoreKey = null
+        if (placed) return@LaunchedEffect
         navigation.restoreFailed = true
     }
     return navigation
@@ -374,8 +421,11 @@ fun UnifiedPlayerSidePanel(
 ) {
     // A level re-entered by Back focuses the row that opened the child instead of its first row.
     val navigation = LocalPlayerPanelNavigation.current
+    // A level that already held focus (its content was rebuilt, e.g. by a renderer switch) puts
+    // focus back on its last row instead of starting over.
+    val levelFresh = remember { navigation?.levelFresh != false }
     val requestInitialFocus = remember {
-        navigation?.restoreKey == null &&
+        levelFresh && navigation?.restoreKey == null &&
             (navigation?.panel !in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.VIDEO_SVP, UnifiedPlayerPanel.VIDEO_SVP_ADVANCED, UnifiedPlayerPanel.RENDERER) ||
                 navigation?.videoState?.focusedSelector == null) &&
             (navigation?.panel?.isAudio != true || navigation.audioState.focusedSelector == null)
@@ -393,6 +443,7 @@ fun UnifiedPlayerSidePanel(
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         scrollable = true,
         retainFocus = true,
+        focusRescue = navigation?.focusRescue(),
         header = header,
         content = content,
     )
@@ -415,9 +466,17 @@ fun PlayerPanelEntry(
         selected = false,
         onClick = { navigation?.fromOrigin(originKey, root = false, onClick) ?: onClick() },
         modifier = modifier
-            .then(if (navigation != null) Modifier.focusRequester(navigation.focusRequester(originKey)) else Modifier)
+            .playerPanelFocusKey(originKey)
             .fillMaxWidth(),
     )
+}
+
+/** Gives a panel row a stable key: it is focused again after its level is rebuilt or a child level closes. */
+@Composable
+fun Modifier.playerPanelFocusKey(key: String): Modifier {
+    val navigation = LocalPlayerPanelNavigation.current ?: return this
+    return focusRequester(navigation.focusRequester(key))
+        .onFocusChanged { if (it.hasFocus) navigation.noteFocused(key) }
 }
 
 @Composable
@@ -427,7 +486,7 @@ fun PlayerPanelAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    TvActionButton(text = label, icon = icon, onClick = onClick, modifier = modifier)
+    TvActionButton(text = label, icon = icon, onClick = onClick, modifier = modifier.playerPanelFocusKey("action:$label"))
 }
 
 /**
