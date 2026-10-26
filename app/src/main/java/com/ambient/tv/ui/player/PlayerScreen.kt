@@ -1023,7 +1023,7 @@ internal fun TvPlayerSeekBar(
         Modifier
     }
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && seekable) {
-        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier)
+        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime)
         return
     }
     val navigation = LocalPlaybackNavigation.current

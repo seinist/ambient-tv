@@ -38,7 +38,7 @@ import com.ambient.tv.ui.common.LocalPlayerPlayPauseFocus
 import com.ambient.tv.ui.player.LocalPlaybackNavigation
 import com.ambient.tv.ui.player.SeekPreview
 
-/** Plex-styled touch scrubber. Its track matches the TV player while keeping a 48dp touch target. */
+/** Plex-styled touch scrubber. Its track matches the TV player inside a compact 32dp touch strip. */
 @Composable
 fun HandheldSeekBar(
     positionMs: Long,
@@ -46,6 +46,7 @@ fun HandheldSeekBar(
     onSeekBy: (Long) -> Unit,
     onInteraction: () -> Unit,
     modifier: Modifier = Modifier,
+    showEndTime: Boolean = true,
 ) {
     val accent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val navigation = LocalPlaybackNavigation.current
@@ -60,12 +61,13 @@ fun HandheldSeekBar(
     val shownPosition = if (dragFraction != null) (fraction * durationMs).toLong() else positionMs
     val accessibilityLabel = stringResource(R.string.player_seekbar_description, elapsedLabel(shownPosition), elapsedLabel(durationMs))
 
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         SeekPreview(dragFraction?.let { shownPosition }, durationMs)
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                // Tall enough to grab, without the empty bands a 48dp box left around the 6dp track.
+                .height(32.dp)
                 .then(if (playPauseFocus != null) Modifier.focusProperties { down = playPauseFocus } else Modifier)
                 .semantics {
                     contentDescription = accessibilityLabel
@@ -132,8 +134,19 @@ fun HandheldSeekBar(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(elapsedLabel(shownPosition), color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp)
-            Text("−${elapsedLabel((durationMs - shownPosition).coerceAtLeast(0L))}", color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp)
+            // Same readout as the TV player: position / duration, remaining time and end time.
+            val remaining = (durationMs - shownPosition).coerceAtLeast(0L)
+            Text(
+                if (durationMs > 0L) "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}" else elapsedLabel(shownPosition),
+                color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp,
+            )
+            val endsAt = if (showEndTime && durationMs > 0L) {
+                java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+            } else null
+            Text(
+                endsAt?.let { "−${elapsedLabel(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${elapsedLabel(remaining)}",
+                color = Color.White.copy(alpha = 0.72f), fontSize = 13.sp,
+            )
         }
     }
 }

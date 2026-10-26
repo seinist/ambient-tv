@@ -247,11 +247,13 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
 
     /** Connection ownership is independent of the output chosen for an individual start. */
     fun requestPlayback(media: CompanionMedia?, title: String = "", playLocally: () -> Unit) {
-        if (television || mutable.value.paired.isEmpty()) { playLocally(); return }
+        if (television) { playLocally(); return }
         if (mutable.value.enqueueSelection) {
             if (media != null) startMedia(media, title) else notice(R.string.companion_play_failed, error = true)
             return
         }
+        // Only ask for a target while a TV is actually connected; otherwise play here.
+        if (!mutable.value.online || mutable.value.target == null) { playLocally(); return }
         if (playbackRequest.value?.starting == true) return
         if (mutable.value.remotePanel) hideRemote()
         mutable.update { it.copy(panel = false, nowPlayingPanel = false, settingsPanel = false) }

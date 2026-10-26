@@ -640,7 +640,7 @@ private fun DetailContent(
                 }
             }
 
-            if (item.directors.isNotEmpty() || item.writers.isNotEmpty() || item.studio != null) {
+            if (item.directors.isNotEmpty() || item.writers.isNotEmpty() || item.studio != null || singleVersionFileName(item) != null) {
                 item(key = "credits") { CreditsSection(item) }
             }
 
@@ -994,6 +994,7 @@ private fun MediaVersionPicker(
     optimalIndex: Int,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
 ) {
+    val handheld = LocalHandheldUi.current
     Column(
         modifier = Modifier.bringFocusedContextIntoView(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1033,7 +1034,9 @@ private fun MediaVersionPicker(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            // Phones: long names scroll by swipe instead of being cut off.
+                            overflow = if (handheld) TextOverflow.Clip else TextOverflow.Ellipsis,
+                            modifier = if (handheld) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
                         )
                     }
                 }
@@ -1609,8 +1612,20 @@ private fun CreditsSection(item: MediaItem) {
         item.writers.takeIf { it.isNotEmpty() }?.let { Text(stringResource(R.string.detail_writers, it.joinToString(", ")), style = MaterialTheme.typography.bodySmall) }
         item.studio?.let { Text(stringResource(R.string.detail_studio, it), style = MaterialTheme.typography.bodySmall) }
         item.originallyAvailableAt?.let { Text(stringResource(R.string.detail_release_date, it), style = MaterialTheme.typography.bodySmall) }
+        // With several versions the picker lists each file; a single file is named here instead.
+        singleVersionFileName(item)?.let { name ->
+            Text(
+                stringResource(R.string.detail_file_name, name),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+            )
+        }
     }
 }
+
+private fun singleVersionFileName(item: MediaItem): String? =
+    item.mediaVersions.singleOrNull()?.fileName?.takeIf { it.isNotBlank() }
 
 @Composable
 private fun rememberMaxDisplayPixels(): Long {

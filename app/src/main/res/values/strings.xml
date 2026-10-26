@@ -159,6 +159,7 @@
     <string name="detail_studio">Studio: %1$s</string>
     <string name="detail_release_date">Released: %1$s</string>
     <string name="detail_more_info">More information</string>
+    <string name="detail_file_name">File: %1$s</string>
     <string name="detail_episode_progress">%1$d of %2$d episodes watched</string>
     <string name="library_load_failed">Could not load library</string>
     <string name="library_empty_title">Nothing here yet</string>
