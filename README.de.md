@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0--beta%20%28291%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0--beta%20%28317%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0-beta` (291)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0-beta` (317)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
 
 </p>
 
