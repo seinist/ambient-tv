@@ -493,6 +493,16 @@ class PlaybackService : Service() {
         super.onDestroy()
     }
 
+    /**
+     * Closed from recents: stop everything, music included. The report loop above still sends
+     * the stopped position and ends the service once nothing is left to report.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Timber.i("App closed from recents: stopping playback")
+        BackgroundPlaybackGuard.stopForAppClosed()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {

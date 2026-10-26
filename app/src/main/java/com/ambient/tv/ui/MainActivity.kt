@@ -231,6 +231,20 @@ open class MainActivity : ComponentActivity() {
         return result != ScreensaverInputResult.PASS
     }
 
+    /**
+     * Every start from this Activity passes here: startActivity, result launchers (file picker,
+     * settings pages, installer permission). Another app's screen opened from the app is part of
+     * the app's own flow, so running playback is not ended by the background rule.
+     */
+    @Deprecated("Called by the framework and the Activity Result API")
+    @Suppress("DEPRECATION")
+    override fun startActivityForResult(intent: Intent, requestCode: Int, options: Bundle?) {
+        if (com.ambient.tv.ui.player.opensOtherApp(intent.component?.packageName, packageName)) {
+            com.ambient.tv.ui.player.BackgroundPlaybackGuard.markExternalFlow()
+        }
+        super.startActivityForResult(intent, requestCode, options)
+    }
+
     override fun onPause() {
         setScreensaverActive(false)
         screensaverOverlayPresent.value = false

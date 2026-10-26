@@ -114,6 +114,12 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
         com.ambient.tv.companion.CompanionShareTargets.syncShareEntry(this)
         hostConnectivity.start()
         resumeConnectivityMonitor.start()
+        // Video pauses and then stops, live TV stops when the app leaves the screen.
+        com.ambient.tv.ui.player.BackgroundPlaybackGuard.install(this)
+        val processStartWallMs = System.currentTimeMillis()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            com.ambient.tv.livetv.LiveTimeshift.deleteLeftovers(this@AmbientTvApplication, processStartWallMs)
+        }
         // Off unless enabled in Settings; follows the app's foreground state.
         dlnaRenderer.attach()
         youTubeTvLink.attach()
