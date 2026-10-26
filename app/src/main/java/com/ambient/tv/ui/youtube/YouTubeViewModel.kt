@@ -12,6 +12,13 @@ import com.ambient.tv.data.local.MediaSelectionPreferences
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.youtube.YouTubeContentCache
+import com.ambient.tv.youtube.YouTubeRowPaging
+import com.ambient.tv.data.browse.BrowseWorkBudget
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import timber.log.Timber
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -52,6 +59,8 @@ data class YouTubeUiState(
     val visibleFeeds: List<YouTubeFeed> = listOf(YouTubeFeed.HOME),
     val query: String = "",
     val rows: List<YouTubeRow> = emptyList(),
+    /** Rows whose next page loads because focus neared their end (end-of-row placeholders). */
+    val loadingRows: Set<String> = emptySet(),
     val error: String? = null,
     val signInCode: String? = null,
     /** Incremented only when an inline SmartTube sign-in has actually completed. */
@@ -70,6 +79,113 @@ class YouTubeViewModel @Inject constructor(
     fun onItemFocused(feed: YouTubeFeed, rowId: String?, videoId: String) {
         preferences.setSectionFocus(stateKey(feed), videoId)
         preferences.setSectionFocusRow(stateKey(feed), rowId)
+        scheduleRowContinuation(rowId, videoId)
+    }
+
+    // --- Row continuation (SmartTube loads rows page by page, like its BrowsePresenter) -------
+
+    private val paging = YouTubeRowPaging(android.os.SystemClock::uptimeMillis)
+    private var pagingRevision = 0L
+    private var focusedRowId: String? = null
+    private var focusLoadRowId: String? = null
+    private var focusLoadJob: Job? = null
+    private var initialPagingJob: Job? = null
+    private val rowLoadJobs = HashMap<String, Job>()
+
+    /** Discards every row continuation state; [session] arms paging for that feed/search key. */
+    private fun resetPaging(session: String?, revision: Long = pagingRevision) {
+        focusLoadJob?.cancel()
+        initialPagingJob?.cancel()
+        rowLoadJobs.values.forEach { it.cancel() }
+        rowLoadJobs.clear()
+        paging.reset(session)
+        pagingRevision = revision
+        if (_uiState.value.loadingRows.isNotEmpty()) _uiState.value = _uiState.value.copy(loadingRows = emptySet())
+    }
+
+    /** After a completed load: rows below SmartTube's minimum continue once, two at a time, while the user rests. */
+    private fun armPaging(session: String, revision: Long) {
+        resetPaging(session, revision)
+        val candidates = paging.initialCandidates(_uiState.value.rows)
+        if (candidates.isEmpty()) return
+        initialPagingJob = viewModelScope.launch {
+            val permits = Semaphore(YouTubeRowPaging.MAX_INITIAL_PARALLEL)
+            coroutineScope {
+                candidates.forEach { rowId ->
+                    launch { permits.withPermit { awaitQuietInput(); continueRow(rowId, showPlaceholder = false) } }
+                }
+            }
+        }
+    }
+
+    private fun singleRowId(): String? {
+        val state = _uiState.value
+        return applyYouTubeViewOptions(state.rows, state.sort, state.filter).singleOrNull()?.id
+    }
+
+    private fun scheduleRowContinuation(rowId: String?, videoId: String) {
+        val grid = rowId == null
+        val target = rowId ?: singleRowId()
+        focusedRowId = target
+        if (target == null || paging.session == null) { focusLoadJob?.cancel(); return }
+        // Horizontal moves inside the pending row keep its timer; leaving the row cancels it,
+        // so passing rows vertically never starts a request.
+        if (focusLoadJob?.isActive == true && focusLoadRowId == target) return
+        focusLoadJob?.cancel()
+        val state = _uiState.value
+        val row = state.rows.firstOrNull { it.id == target } ?: return
+        val visible = applyYouTubeViewOptions(listOf(row), state.sort, state.filter).firstOrNull()?.items ?: return
+        val index = visible.indexOfFirst { it.videoId == videoId }
+        if (!paging.shouldLoadOnFocus(target, index, visible.size, grid) || target in rowLoadJobs) return
+        focusLoadRowId = target
+        focusLoadJob = viewModelScope.launch {
+            delay(YouTubeRowPaging.FOCUS_SETTLE_MS)
+            while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
+            if (focusedRowId != target || target in rowLoadJobs) return@launch
+            rowLoadJobs[target] = viewModelScope.launch {
+                try { continueRow(target, showPlaceholder = true) } finally { rowLoadJobs.remove(target) }
+            }
+        }
+    }
+
+    private suspend fun awaitQuietInput(maxWaitMs: Long = Long.MAX_VALUE) {
+        var waited = 0L
+        while (BrowseWorkBudget.recentlyInteracting() && waited < maxWaitMs) { delay(100); waited += 100 }
+    }
+
+    private suspend fun continueRow(rowId: String, showPlaceholder: Boolean) {
+        val session = paging.session ?: return
+        val row = _uiState.value.rows.firstOrNull { it.id == rowId } ?: return
+        if (!paging.begin(rowId, row.items.size)) return
+        val token = paging.token
+        if (showPlaceholder) _uiState.value = _uiState.value.copy(loadingRows = _uiState.value.loadingRows + rowId)
+        var finished = false
+        try {
+            val page = engine.continueRow(session, rowId)
+            if (paging.token != token) return
+            // A page for a row the user already left lands once input settles, not mid-scroll.
+            if (focusedRowId != rowId) awaitQuietInput(maxWaitMs = 3_000L)
+            if (paging.token != token || displayedContentKey != session) return
+            val before = _uiState.value.rows.firstOrNull { it.id == rowId }?.items?.size ?: 0
+            val rows = page?.items?.takeIf { it.isNotEmpty() }
+                ?.let { contentCache.appendItems(session, rowId, it, pagingRevision) }
+                ?: _uiState.value.rows
+            val after = rows.firstOrNull { it.id == rowId }?.items?.size ?: 0
+            paging.finish(rowId, token, page?.takeIf { after > before }, after)
+            finished = true
+            Timber.tag("youtube-rows").d("Row %s continued: +%d items (total %d, more=%s)", rowId, after - before, after, page?.hasMore)
+            // One state update: appended items and removed placeholders arrive together.
+            _uiState.value = _uiState.value.copy(rows = rows, loadingRows = _uiState.value.loadingRows - rowId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            paging.fail(rowId, token)
+            finished = true
+            Timber.tag("youtube-rows").w(error, "Row %s continuation failed; retry after %d ms", rowId, YouTubeRowPaging.RETRY_AFTER_MS)
+        } finally {
+            if (!finished) paging.abort(rowId, token)
+            if (rowId in _uiState.value.loadingRows) _uiState.value = _uiState.value.copy(loadingRows = _uiState.value.loadingRows - rowId)
+        }
     }
     private fun viewMode(feed: YouTubeFeed): YouTubeViewMode = preferences.sectionViewMode(stateKey(feed))
         ?.let { runCatching { YouTubeViewMode.valueOf(it) }.getOrNull() } ?: YouTubeViewMode.LANDSCAPE
@@ -254,6 +370,7 @@ class YouTubeViewModel @Inject constructor(
 
     private fun load(feed: YouTubeFeed) {
         contentJob?.cancel()
+        resetPaging(null)
         showCachedContent("feed:${feed.key}")
         contentJob = viewModelScope.launch {
             contentCache.restore()
@@ -295,6 +412,7 @@ class YouTubeViewModel @Inject constructor(
             }.onSuccess { (signed, rows) ->
                 if (contentCache.revision() != cacheRevision) return@onSuccess
                 _uiState.value = _uiState.value.copy(loading = false, signedIn = signed, rows = contentCache.replace(cacheKey, rows, cacheRevision))
+                if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
             }.onFailure { e ->
                 _uiState.value = _uiState.value.copy(loading = false, error = e.userMessage().takeIf { _uiState.value.rows.isEmpty() })
             }
@@ -303,14 +421,20 @@ class YouTubeViewModel @Inject constructor(
 
     private fun search(query: String) {
         contentJob?.cancel()
+        resetPaging(null)
         contentJob = viewModelScope.launch {
             contentCache.restore()
             val cacheRevision = contentCache.revision()
             delay(350)
             val cacheKey = "search:${query.trim().lowercase()}"
             showCachedContent(cacheKey)
-            suspendResult { engine.search(query) { rows -> showRows(cacheKey, rows, cacheRevision) } }
-                .onSuccess { rows -> if (_uiState.value.query == query && contentCache.revision() == cacheRevision) _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision)) }
+            suspendResult { engine.search(query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) } }
+                .onSuccess { rows ->
+                    if (_uiState.value.query == query && contentCache.revision() == cacheRevision) {
+                        _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))
+                        if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
+                    }
+                }
                 .onFailure { e -> if (_uiState.value.query == query && _uiState.value.rows.isEmpty()) _uiState.value = _uiState.value.copy(loading = false, error = e.userMessage()) }
         }
     }
