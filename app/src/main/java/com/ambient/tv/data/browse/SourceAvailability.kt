@@ -33,7 +33,7 @@ class SourceAvailability @Inject constructor(@ApplicationContext context: Contex
         }
         runCatching {
             connectivity.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = changed()
+                override fun onAvailable(network: Network) { changed(); hosts.recheckOffline() }
                 override fun onLost(network: Network) = changed()
                 override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed()
             })

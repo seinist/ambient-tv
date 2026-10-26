@@ -59,7 +59,7 @@ class FilesRepository @Inject constructor(val store: FileStore, private val acce
                 durationMs = old?.durationMs?.takeIf { it > 0 }, viewOffsetMs = offset, parentTitle = tags?.album ?: source.name,
                 parentRatingKey = null, grandparentTitle = tags?.albumArtist ?: tags?.artist, grandparentRatingKey = null, contentRating = null,
                 rating = null, studio = null, viewCount = if (old?.completed == true) 1 else 0,
-                mediaVersions = listOf(MediaVersion(url, null, null, null, FilePaths.extension(entry.name), tracks = subtitleTracks, sourceRatingKey = ratingKey)))
+                mediaVersions = listOf(MediaVersion(url, null, null, null, FilePaths.extension(entry.name), tracks = subtitleTracks, sourceRatingKey = ratingKey, fileName = entry.name)))
             synchronized(cache) {
                 cache[ratingKey] = Cached(item, source)
                 while (cache.size > 24) cache.remove(cache.keys.first())

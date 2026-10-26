@@ -83,8 +83,11 @@ class PlaybackAvailability @Inject constructor(
 
     private suspend fun serverReachable(provider: String): Boolean {
         if (availability.state(provider) == SourceHealth.ONLINE) return true
-        // Known down or still waking: say so at once instead of waiting for a request to time out.
-        if (hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE) return false
+        // Known down: a fresh port check (1.5 s) instead of the cached flag. Requests cut off while the app
+        // sat in the background (no network access there) leave a stale "offline" behind.
+        if (hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE)
+            return withTimeoutOrNull(2_500) { hosts.verifySystem(provider) } == true
+        // Still waking: say so at once instead of waiting for a request to time out.
         val connection = when (provider) {
             "jellyfin" -> jellyfinConnection.get().state.value
             "emby" -> embyConnection.get().state.value

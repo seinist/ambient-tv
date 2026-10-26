@@ -107,6 +107,14 @@ class HostConnectivity @Inject constructor(
         else -> null
     }
 
+    /** Network back (e.g. app returning from the background): outages seen without network are rechecked. */
+    fun recheckOffline() {
+        scope.launch {
+            endpoints().distinctBy { it.machine }.filter { store.current(it.machine).health == HostHealth.OFFLINE }
+                .forEach { launch { verify(store.begin(it.machine)) } }
+        }
+    }
+
     /** One passive confirmation per playback start/resume, shared by all three renderers. */
     fun start() {
         if (started) return
