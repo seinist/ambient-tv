@@ -79,6 +79,7 @@ class DetailViewModel @Inject constructor(
     private val plexConnection: com.ambient.tv.server.ServerConnectionManager,
     private val jellyfinConnection: com.ambient.tv.server.JellyfinConnectionManager,
     private val embyConnection: com.ambient.tv.server.EmbyConnectionManager,
+    private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private val cachedItem get() = mediaRepository.cachedMediaItem(ratingKey)
@@ -431,6 +432,9 @@ class DetailViewModel @Inject constructor(
             // merged title, which only the full load (duplicate resolution) shows.
             _fallbackBackdrop.value = null
             load()
+            // Libraries and Home re-query once they are shown again: order (sort title) and
+            // split duplicates only come from the server, not from the item cache.
+            refreshBus.requestRefresh()
         }
     }
 
