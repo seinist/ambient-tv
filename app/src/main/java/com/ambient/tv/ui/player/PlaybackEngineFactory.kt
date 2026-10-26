@@ -97,12 +97,14 @@ object PlaybackEngineFactory {
         preferOriginalAudio: Boolean = metadata?.source == "youtube",
         audioOnly: Boolean = metadata?.hasVideo == false,
         mpvAudioAllowed: Boolean = sourceHdrStandard != HdrStandard.DOLBY_VISION,
+        /** YouTube only: center automatic captions that YouTube pins to the left edge. */
+        centerYouTubeCaptions: Boolean = metadata?.source == "youtube",
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
                 listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
                 Media3PlaybackHandle(create(context.applicationContext, streamUrl, startPositionMs,
-                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed))
+                    subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions))
             }.player
         }
         val started = System.nanoTime()
@@ -132,6 +134,7 @@ object PlaybackEngineFactory {
             .setDefaultRequestProperties(streamHeaders)
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(DefaultDataSource.Factory(context, okHttpDataSourceFactory))
+            .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
         val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()

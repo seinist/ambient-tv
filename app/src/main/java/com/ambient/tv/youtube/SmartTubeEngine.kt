@@ -457,6 +457,7 @@ class SmartTubeEngine @Inject constructor(
             adaptiveAudioUri = adaptivePair?.second,
             adaptiveFormats = formats,
             deferredDash = deferredDash,
+            captions = if (isLive) emptyList() else captions(info),
             isLive = isLive,
             headers = headers,
             timeline = com.ambient.tv.domain.model.PlaybackTimeline(preview = if (isLive) null else storyboardPreview(info)),
@@ -826,6 +827,15 @@ class SmartTubeEngine @Inject constructor(
         }
         return items
     }
+
+    /** Caption tracks (WebVTT) from the player response; Media3 reads the same ones from the MPD. */
+    private fun captions(info: Any): List<YouTubeCaption> = runCatching {
+        (info.call("getSubtitles") as? List<*>).orEmpty().mapNotNull { sub ->
+            sub ?: return@mapNotNull null
+            val url = sub.callString("getBaseUrl")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+            YouTubeCaption(url, sub.callString("getLanguageCode"), sub.callString("getName"), sub.callString("getType") == "asr")
+        }
+    }.onFailure { Timber.w(it, "SmartTube caption list failed") }.getOrDefault(emptyList())
 
     private fun generatedDashManifest(info: Any, videoId: String): String? = runCatching {
         if (info.callBool("containsDashFormats") != true) return@runCatching null
