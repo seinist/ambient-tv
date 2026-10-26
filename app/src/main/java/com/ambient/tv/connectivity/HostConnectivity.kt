@@ -26,11 +26,24 @@ internal data class HostEndpoint(val system: String, val host: String, val port:
 
 /** Shared reachability evidence. Probes never establish VPN routes or send wake packets. */
 @Singleton
-class HostConnectivity @Inject constructor(
+class HostConnectivity internal constructor(
     private val preferences: AppPreferences,
     private val dlna: DlnaStore,
     private val machines: WakeMachines,
+    /** True for a host routed through WireGuard while the tunnel is not up. */
+    private val tunnelDown: (host: String) -> Boolean = { false },
 ) {
+    @Inject constructor(
+        preferences: AppPreferences,
+        dlna: DlnaStore,
+        machines: WakeMachines,
+        wireGuard: javax.inject.Provider<com.ambient.tv.vpn.WireGuardRouteController>,
+    ) : this(preferences, dlna, machines, { host ->
+        val route = wireGuard.get()
+        route.status.value !is com.ambient.tv.vpn.WireGuardRouteState.Up &&
+            route.tunnelHosts().any { it.equals(host, ignoreCase = true) }
+    })
+
     private val store = HostHealthStore()
     val states = store.states
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -84,9 +97,10 @@ class HostConnectivity @Inject constructor(
         if (current.generation != check.generation) return@withLock current.health == HostHealth.ONLINE
         val targets = endpoints().filter {
             it.machine == check.machine &&
-                (!preferences.localNetworkOnly || LocalNetworkPolicy.isPotentiallyLocalHost(it.host))
+                (!preferences.localNetworkOnly || LocalNetworkPolicy.isPotentiallyLocalHost(it.host)) &&
+                !tunnelDown(it.host)
         }
-        // A policy restriction is not evidence that a host went down.
+        // A policy restriction or a tunnel that is down (e.g. after the background) is not evidence that a host went down.
         if (targets.isEmpty()) return@withLock false
         val reachable = coroutineScope {
             targets.distinctBy { it.host to it.port }.map { target -> async {

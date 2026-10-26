@@ -32,6 +32,10 @@ class PlaybackAvailability @Inject constructor(
     private val jellyfinConnection: Provider<com.ambient.tv.server.JellyfinConnectionManager>,
     private val embyConnection: Provider<com.ambient.tv.server.EmbyConnectionManager>,
     private val tvheadendConnection: Provider<com.ambient.tv.server.TvheadendConnectionManager>,
+    private val fileWake: Provider<com.ambient.tv.data.files.WakeOnLan>,
+    private val dlnaWake: Provider<com.ambient.tv.data.dlna.DlnaWake>,
+    private val dlnaStore: Provider<com.ambient.tv.data.dlna.DlnaStore>,
+    private val wireGuard: Provider<com.ambient.tv.vpn.WireGuardRouteController>,
 ) {
     private val wakeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -83,6 +87,14 @@ class PlaybackAvailability @Inject constructor(
 
     private suspend fun serverReachable(provider: String): Boolean {
         if (availability.state(provider) == SourceHealth.ONLINE) return true
+        // Playback needs the tunnel anyway; without it every probe of a VPN host fails.
+        withTimeoutOrNull(12_500) {
+            when (provider) {
+                "jellyfin" -> wireGuard.get().ensureForJellyfin()
+                "emby" -> wireGuard.get().ensureForEmby()
+                else -> wireGuard.get().ensureForPlex()
+            }
+        }
         // Known down: a fresh port check (1.5 s) instead of the cached flag. Requests cut off while the app
         // sat in the background (no network access there) leave a stale "offline" behind.
         if (hosts.health(provider) == com.ambient.tv.connectivity.HostHealth.OFFLINE)
@@ -105,8 +117,12 @@ class PlaybackAvailability @Inject constructor(
         } == true
     }
 
-    private suspend fun hostReachable(system: String): Boolean =
-        hosts.machine(system) == null || withTimeoutOrNull(2_500) { hosts.verifySystem(system) } == true
+    private suspend fun hostReachable(system: String): Boolean {
+        system.removePrefix("files:").takeIf { system.startsWith("files:") }
+            ?.let { id -> preferences.fileSources.firstOrNull { it.id == id } }
+            ?.let { withTimeoutOrNull(12_500) { wireGuard.get().ensureForFileSource(it) } }
+        return hosts.machine(system) == null || withTimeoutOrNull(2_500) { hosts.verifySystem(system) } == true
+    }
 
     /** Says which system is down and, when it can be woken, starts that wake right away. */
     private fun blocked(provider: String, hostSystem: String?) {
@@ -116,6 +132,14 @@ class PlaybackAvailability @Inject constructor(
             "jellyfin" -> jellyfinConnection.get()::reconnect.takeIf { preferences.jellyfinAutoWakeEnabled && !preferences.jellyfinMacAddress.isNullOrBlank() }
             "emby" -> embyConnection.get()::reconnect.takeIf { preferences.embyAutoWakeEnabled && !preferences.embyMacAddress.isNullOrBlank() }
             "tvheadend" -> tvheadendConnection.get()::reconnect.takeIf { preferences.tvheadendAutoWakeEnabled && !preferences.tvheadendMacAddress.isNullOrBlank() }
+            "files" -> hostSystem?.substringAfter("files:")
+                ?.let { id -> preferences.fileSources.firstOrNull { it.id == id } }
+                ?.takeIf { it.kind != "local" && it.wolAuto && it.wolMac.isNotBlank() }
+                ?.let { source -> suspend { fileWake.get().wakeAndWait(source) } }
+            "dlna" -> hostSystem?.substringAfter("dlna:")
+                ?.let { dlnaStore.get().server(it) }
+                ?.takeIf { it.wolAuto && it.wolMac.isNotBlank() }
+                ?.let { server -> suspend { dlnaWake.get().ensureAwake(server); true } }
             else -> null
         }
         // Once the wake connected, the source counts as online again: Play works without a reload.
