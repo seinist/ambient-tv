@@ -202,6 +202,7 @@ class TvheadendPlayerViewModel @Inject constructor(
 
     init {
         com.ambient.tv.livetv.LiveTimeshift.seekHandler = timeshiftSeekHandler
+        if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
         if (sourceSystem == "tvheadend" && kind == "channel") viewModelScope.launch {
             uiState.map { (it as? TvheadendPlayerState.Ready)?.let { state -> state.channel?.uuid to state.nowEvent } }
@@ -777,6 +778,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                     projectmQualityKey = preferences.projectmQualityKey,
                     projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
                 ).withSelectedRenderer(restorePosition = false)
+                // Live TV and the Guide focus this channel when the player is left.
+                com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, channel.uuid)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 val channelName = channels.firstOrNull { it.uuid == currentChannelUuid }?.name

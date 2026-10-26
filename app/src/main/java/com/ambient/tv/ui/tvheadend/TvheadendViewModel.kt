@@ -129,6 +129,18 @@ class TvheadendViewModel @Inject constructor(
         preferences.setSectionFocusRow(focusStateKey(tab), rowId)
     }
 
+    /**
+     * The channel watched last (start or zap) becomes the Live TV and Guide selection once,
+     * when this screen is entered again. Returns it, or null if none or hidden by the filters.
+     */
+    fun consumeReturnFocus(nowEpochSeconds: Long = System.currentTimeMillis() / 1000L): String? {
+        val channelUuid = LiveTvReturnFocus.take(repository.source.id) ?: return null
+        val state = _uiState.value
+        val selections = returnFocusSelections(channelUuid, state.dashboard, state.guideOptions, nowEpochSeconds) ?: return null
+        selections.forEach { (tab, target) -> target.contentId?.let { onContentFocused(tab, it, target.rowId) } }
+        return channelUuid
+    }
+
     fun start() {
         val configured = true
         _uiState.update { it.copy(configured = configured) }
