@@ -20,7 +20,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onPlaced
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import kotlinx.coroutines.Job
@@ -36,11 +36,17 @@ import kotlin.math.abs
 class RowColumnFocus {
     private class Target(val requester: FocusRequester) {
         var coordinates: LayoutCoordinates? = null
+        /** The tile plays its own focus sound (MediaTile, TvActionButton). */
+        var soundsOnFocus = false
     }
 
     private val rows = HashMap<Any, LinkedHashMap<Any, Target>>()
     private var focusedRow: Any? = null
     private var focused: Target? = null
+    private var lastMoveTarget: Target? = null
+
+    /** Whether the target of the last successful move is silent itself and needs the tick. */
+    internal val lastMoveNeedsSound: Boolean get() = lastMoveTarget?.soundsOnFocus != true
 
     fun move(rowOrder: List<Any>, down: Boolean): Boolean {
         val sourceX = focusedCenterX() ?: return false
@@ -72,21 +78,26 @@ class RowColumnFocus {
             }
             ?.minByOrNull { it.second }?.first
             ?: return false
+        lastMoveTarget = target
         return runCatching { target.requester.requestFocus() }.getOrDefault(false)
     }
 
-    internal fun Modifier.target(rowKey: Any, itemKey: Any): Modifier = composed {
+    internal fun Modifier.target(rowKey: Any, itemKey: Any, soundsOnFocus: Boolean): Modifier = composed {
         val target = remember(rowKey, itemKey) { Target(FocusRequester()) }
+        target.soundsOnFocus = soundsOnFocus
         DisposableEffect(rowKey, itemKey) {
             rows.getOrPut(rowKey) { LinkedHashMap() }[itemKey] = target
             onDispose {
                 rows[rowKey]?.let { row -> if (row[itemKey] === target) row.remove(itemKey) }
                 if (rows[rowKey]?.isEmpty() == true) rows.remove(rowKey)
                 if (focused === target) focused = null
+                if (lastMoveTarget === target) lastMoveTarget = null
             }
         }
+        // The coordinates stay live and are only resolved on a key press; onGloballyPositioned
+        // would dispatch for every placed tile on every frame of the vertical glide.
         focusRequester(target.requester)
-            .onGloballyPositioned { target.coordinates = it }
+            .onPlaced { target.coordinates = it }
             .onFocusChanged {
                 if (it.hasFocus) {
                     focusedRow = rowKey
@@ -96,9 +107,12 @@ class RowColumnFocus {
     }
 }
 
-/** Registers a tile (or a container holding its focusable) as a [RowColumnFocus] target. */
-fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: Any): Modifier =
-    if (focus == null) this else with(focus) { target(rowKey, itemKey) }
+/**
+ * Registers a tile (or a container holding its focusable) as a [RowColumnFocus] target.
+ * [soundsOnFocus]: the tile plays its own focus sound, so an Up/Down move adds none.
+ */
+fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: Any, soundsOnFocus: Boolean = false): Modifier =
+    if (focus == null) this else with(focus) { target(rowKey, itemKey, soundsOnFocus) }
 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
@@ -123,7 +137,8 @@ fun Modifier.rowColumnFocusNavigation(
         if (wrapJob?.isActive == true) return@onPreviewKeyEvent true
         val order = rowOrder()
         if (focus.move(order, down)) {
-            uiSounds?.playFocus()
+            // Exactly one tick per move: self-sounding tiles already play it on focus.
+            if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
             return@onPreviewKeyEvent true
         }
         val column = scrollToTop?.let { focus.wrapColumn(order, down) } ?: return@onPreviewKeyEvent false
@@ -134,7 +149,7 @@ fun Modifier.rowColumnFocusNavigation(
             repeat(12) {
                 withFrameNanos { }
                 if (focus.focusNearest(first, column)) {
-                    uiSounds?.playFocus()
+                    if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                     return@launch
                 }
             }

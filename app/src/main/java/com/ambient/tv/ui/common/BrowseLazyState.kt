@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.unit.dp
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
@@ -25,6 +26,29 @@ private fun rememberBrowseCacheWindow(): LazyLayoutCacheWindow {
         )
     }
 }
+
+/**
+ * Window for horizontal rows nested in a vertical browse list: about one tile ahead
+ * (poster 160 dp + gap, or part of a 300 dp landscape tile) and a little behind. The viewport
+ * fractions of [rememberBrowseCacheWindow] meant ~0.75 screen widths of extra tiles per row,
+ * all composed in the frame a row slides in during the vertical glide.
+ */
+internal val BrowseRowCacheAhead = 200.dp
+internal val BrowseRowCacheBehind = 100.dp
+
+/** [rememberBrowseListState] for a horizontal row inside a browse column; see [BrowseRowCacheAhead]. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun rememberBrowseRowState(
+    initialFirstVisibleItemIndex: Int = 0,
+    initialFirstVisibleItemScrollOffset: Int = 0,
+): LazyListState = (if (LocalHandheldUi.current) {
+    rememberLazyListState(initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
+} else {
+    rememberLazyListState(
+        remember { LazyLayoutCacheWindow(ahead = BrowseRowCacheAhead, behind = BrowseRowCacheBehind) },
+        initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
+}).also { state -> ScrollToTopOnReselect { state.scrollToItem(0) } }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

@@ -133,6 +133,13 @@ class UiHdrPolicyTest {
         assertTrue("Dim animation frames must remain dim", dark.red < .02f)
     }
 
+    @Test fun bitmapFilterIsStableForEqualHeadroom() {
+        val first = uiHdrBitmapColorFilter(1.5f)
+        assertSame("Equal headroom must not invalidate image painters", first, uiHdrBitmapColorFilter(1.5f))
+        assertNotSame(first, uiHdrBitmapColorFilter(1.8f))
+        assertNull(uiHdrBitmapColorFilter(0.8f))
+    }
+
     @Test fun unknownPreferencesNeverEnableHdr() {
         assertEquals("auto", normalizedUiHdrMode("auto"))
         assertEquals("force", normalizedUiHdrMode("force"))

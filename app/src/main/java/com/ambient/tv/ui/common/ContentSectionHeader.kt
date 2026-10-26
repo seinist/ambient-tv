@@ -15,16 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorProducer
 import androidx.compose.ui.graphics.graphicsLayer
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
+import androidx.compose.foundation.text.BasicText
 
 /**
  * Shared heading for a logical content section/subcategory.
@@ -44,17 +44,19 @@ fun ContentSectionHeader(
 ) {
     if (title.isBlank()) return
     val motion = !LocalPerformanceProfile.current.reducedEffects
-    val indicatorScale by animateFloatAsState(
+    // The animated values are read only in the draw phase (graphicsLayer / ColorProducer), so a
+    // row change recomposes each header once, not on every frame of the 180 ms fade.
+    val indicatorScale = animateFloatAsState(
         targetValue = if (focused) 1f else 14f / 22f,
         animationSpec = if (motion) tween(durationMillis = 180) else snap(),
         label = "sectionIndicatorScale",
     )
-    val indicatorAlpha by animateFloatAsState(
+    val indicatorAlpha = animateFloatAsState(
         targetValue = if (focused) 1f else 0.5f,
         animationSpec = if (motion) tween(durationMillis = 180) else snap(),
         label = "sectionIndicatorAlpha",
     )
-    val titleColor by animateColorAsState(
+    val titleColor = animateColorAsState(
         targetValue = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = if (motion) tween(durationMillis = 180) else snap(),
         label = "sectionTitleColor",
@@ -75,10 +77,14 @@ fun ContentSectionHeader(
                 Modifier
                     // Focus must not remeasure the row while its parent is centering it.
                     .size(4.dp, 22.dp)
-                    .graphicsLayer { scaleY = indicatorScale; alpha = indicatorAlpha }
+                    .graphicsLayer { scaleY = indicatorScale.value; alpha = indicatorAlpha.value }
                     .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
             )
         }
-        Text(text = title, style = MaterialTheme.typography.titleLarge, color = titleColor)
+        BasicText(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            color = remember(titleColor) { ColorProducer { titleColor.value } },
+        )
     }
 }

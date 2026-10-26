@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.ambient.tv.ui.common.rememberBrowseListState as rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -56,7 +55,7 @@ fun ContentRow(
     val restoreIndex = remember(row.items, restoreRatingKey) {
         row.items.indexOfFirst { it.ratingKey == restoreRatingKey }.coerceAtLeast(0)
     }
-    val rowState = rememberLazyListState(
+    val rowState = rememberBrowseRowState(
         initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0),
     )
     BrowseScrollBudget(rowState)
@@ -113,7 +112,7 @@ fun ContentRow(
                     MediaTile(
                         item = item,
                         onClick = { onItemClick(item) },
-                        modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey),
+                        modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey, soundsOnFocus = true),
                         onFocused = { lastFocusedKey = item.ratingKey; onItemFocused(item) },
                         requestInitialFocus = item.ratingKey == restoreRatingKey || item.ratingKey == recoveryKey,
                         style = row.style,
