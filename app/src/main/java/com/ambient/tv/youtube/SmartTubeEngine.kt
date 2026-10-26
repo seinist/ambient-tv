@@ -37,6 +37,8 @@ class SmartTubeEngine @Inject constructor(
     @Volatile private var initialized = false
     private val initLock = Any()
     private val playbackMetadata = YouTubePlaybackMetadataCache()
+    /** scope (feed/search key) -> row title -> latest SmartTube MediaGroup of that row. */
+    private val rowContinuations = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, Any>>()
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
     private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
@@ -64,6 +66,7 @@ class SmartTubeEngine @Inject constructor(
     /** Keep YouTube/SmartTube metadata language independent from the app UI language. */
     fun applyMetadataLanguage() {
         playbackMetadata.clear()
+        rowContinuations.clear()
         val language = LanguagePreferences.baseLanguage(LanguagePreferences.resolve(appPreferences.metadataLanguageKey))
             ?: return
         globalPreferences()?.call("setPreferredLanguage", language)
@@ -101,6 +104,7 @@ class SmartTubeEngine @Inject constructor(
 
     suspend fun signOut() = io {
         playbackMetadata.clear()
+        rowContinuations.clear()
         runCatching { signInDisposable?.call("dispose") }
         signInDisposable = null
         val signIn = service("getSignInService")
@@ -146,6 +150,7 @@ class SmartTubeEngine @Inject constructor(
         check(prefs.invokeCompatible("setMediaServiceAccountData", merged).invoked) { "SmartTube account storage unavailable" }
         if (!initialized) return // The first manager() call restores the new list.
         playbackMetadata.clear()
+        rowContinuations.clear()
         val signIn = service("getSignInService")
         Class.forName("com.liskovsoft.youtubeapi.service.internal.YouTubeAccountManager")
             .getMethod("instance", signIn.javaClass).invoke(null, signIn)?.call("init")
@@ -230,7 +235,47 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun feed(key: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> = when (key) {
+    suspend fun feed(key: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> =
+        withContext(RowContinuationScope("feed:$key")) { feedRows(key, onRows) }
+
+    /** Search rows; [scope] keys their continuations like the caller's cache key. */
+    suspend fun search(query: String, scope: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> =
+        withContext(RowContinuationScope(scope)) { search(query, onRows) }
+
+    /**
+     * Next page of one row of the last load of [scope] (SmartTube ContentService.continueGroup,
+     * the call behind SmartTube's own row scrolling). Null: no continuable group is known, so the
+     * row ends. Upstream returns null at the end and skips pages that filtering emptied.
+     */
+    suspend fun continueRow(scope: String, rowId: String): YouTubeRowPage? = io {
+        if (!available) return@io null
+        val groups = rowContinuations[scope] ?: return@io null
+        val group = groups[rowId] ?: return@io null
+        if (group.callString("getNextPageKey").isNullOrBlank()) {
+            groups.remove(rowId, group)
+            return@io null
+        }
+        val invocation = service("getContentService").invokeDetailed("continueGroup", group)
+        if (!invocation.found) {
+            Timber.w("SmartTube has no continueGroup; row %s cannot continue", rowId)
+            return@io null
+        }
+        invocation.error?.let { throw it }
+        val next = unwrapReactive(invocation.value)
+        if (next == null) {
+            groups.remove(rowId, group)
+            return@io YouTubeRowPage(emptyList(), hasMore = false)
+        }
+        val items = mapGroupItems(next, rowId)
+        val hasMore = !next.callString("getNextPageKey").isNullOrBlank()
+        // Only advance the handle of the load that is still current for this scope.
+        if (rowContinuations[scope] === groups) {
+            if (hasMore) groups.replace(rowId, group, next) else groups.remove(rowId, group)
+        }
+        YouTubeRowPage(items, hasMore)
+    }
+
+    private suspend fun feedRows(key: String, onRows: suspend (List<YouTubeRow>) -> Unit): List<YouTubeRow> = when (key) {
         "home" -> home(onRows)
         "subscriptions" -> subscriptions(onRows)
         "history" -> history(onRows)
@@ -254,6 +299,7 @@ class SmartTubeEngine @Inject constructor(
 
     suspend fun requestSignInCode(): String? {
         playbackMetadata.clear()
+        rowContinuations.clear()
         val observable = io { service("getSignInService").call("signInObserve") } ?: return null
         val code = CompletableDeferred<String?>()
 
@@ -652,6 +698,7 @@ class SmartTubeEngine @Inject constructor(
         vararg args: Any?,
         onRows: suspend (List<YouTubeRow>) -> Unit = {},
     ): List<YouTubeRow> = withContext(Dispatchers.IO) {
+        val rowScope = coroutineContext[RowContinuationScope]?.scope
         val content = service("getContentService")
         var attempted = false
         var lastFailure: Throwable? = null
@@ -666,12 +713,17 @@ class SmartTubeEngine @Inject constructor(
                 continue
             }
             val accumulated = linkedMapOf<String, YouTubeRow>()
+            // Continuation handles of this load replace those of the previous load of the scope.
+            val continuations = rowScope?.let { scope ->
+                java.util.concurrent.ConcurrentHashMap<String, Any>().also { rowContinuations[scope] = it }
+            }
             suspend fun publish(raw: Any?) {
-                val incoming = mapGroups(raw)
+                val incoming = mapGroupsWithSource(raw)
                 if (incoming.isEmpty()) return
-                incoming.forEach { row ->
+                incoming.forEach { (row, group) ->
                     val previous = accumulated[row.title]
                     accumulated[row.title] = row.copy(items = (previous?.items.orEmpty() + row.items).distinctBy { it.videoId })
+                    if (continuations != null && group != null) continuations[row.title] = group
                 }
                 onRows(accumulated.values.toList())
             }
@@ -717,7 +769,10 @@ class SmartTubeEngine @Inject constructor(
         rows
     }
 
-    private fun mapGroups(raw: Any?): List<YouTubeRow> {
+    private fun mapGroups(raw: Any?): List<YouTubeRow> = mapGroupsWithSource(raw).map { it.first }
+
+    /** Rows with the SmartTube MediaGroup they came from (null for flat items), for continuation. */
+    private fun mapGroupsWithSource(raw: Any?): List<Pair<YouTubeRow, Any?>> {
         val value = unwrapReactive(raw)
         if (value == null) return emptyList()
 
@@ -726,7 +781,7 @@ class SmartTubeEngine @Inject constructor(
         val nested = listOf("getMediaGroups", "getGroups", "getRows", "getContent", "getItems")
             .firstNotNullOfOrNull { name -> value.call(name)?.takeIf { it !== value } }
         if (nested != null && nested !is CharSequence) {
-            val nestedRows = mapGroups(nested)
+            val nestedRows = mapGroupsWithSource(nested)
             if (nestedRows.isNotEmpty()) return nestedRows
         }
 
@@ -736,29 +791,40 @@ class SmartTubeEngine @Inject constructor(
             else -> listOf(value)
         }
 
-        val rows = mutableListOf<YouTubeRow>()
+        val rows = mutableListOf<Pair<YouTubeRow, Any?>>()
         for (group in groups) {
             group ?: continue
             val unwrappedGroup = unwrapReactive(group) ?: continue
-            val itemContainer = unwrappedGroup.callFirst("getMediaItems", "getItems", "getVideos", "getContent")
-            val rawItems = when (val resolved = unwrapReactive(itemContainer)) {
-                is Iterable<*> -> resolved.toList()
-                is Array<*> -> resolved.toList()
-                null -> emptyList()
-                else -> listOf(resolved)
-            }
-            val items = rawItems.mapNotNull(::mapItem)
+            val title = unwrappedGroup.callString("getTitle")?.takeIf(String::isNotBlank) ?: "SmartTube"
+            val items = mapGroupItems(unwrappedGroup, title)
             if (items.isNotEmpty()) {
-                rows += YouTubeRow(unwrappedGroup.callString("getTitle")?.takeIf(String::isNotBlank) ?: "SmartTube", items)
+                rows += YouTubeRow(title, items) to unwrappedGroup
                 continue
             }
 
             // A few feeds expose a flat collection of MediaItem objects with no MediaGroup wrapper.
             mapItem(unwrappedGroup)?.let { item ->
-                rows += YouTubeRow("SmartTube", listOf(item))
+                rows += YouTubeRow("SmartTube", listOf(item)) to null
             }
         }
         return rows
+    }
+
+    /** Playable items of one MediaGroup; entries without a videoId (playlists, mixes, channels) are counted and logged. */
+    private fun mapGroupItems(group: Any, rowTitle: String): List<YouTubeItem> {
+        val itemContainer = group.callFirst("getMediaItems", "getItems", "getVideos", "getContent")
+        val rawItems = when (val resolved = unwrapReactive(itemContainer)) {
+            is Iterable<*> -> resolved.toList()
+            is Array<*> -> resolved.toList()
+            null -> emptyList()
+            else -> listOf(resolved)
+        }
+        val items = rawItems.mapNotNull(::mapItem)
+        val dropped = rawItems.count { it != null } - items.size
+        if (dropped > 0 && items.isNotEmpty()) {
+            Timber.tag("youtube-rows").i("Row %s: %d of %d items without videoId skipped", rowTitle, dropped, rawItems.size)
+        }
+        return items
     }
 
     private fun generatedDashManifest(info: Any, videoId: String): String? = runCatching {
@@ -1097,6 +1163,11 @@ private fun Any.invokeCompatible(name: String, vararg args: Any?): ReflectionInv
 }
 private fun Any.hasMethod(name: String, arity: Int): Boolean = javaClass.methods.any { it.name == name && it.parameterTypes.size == arity }
 private fun Any.hasAnyMethod(vararg names: String): Boolean = names.any { hasMethod(it, 0) }
+
+/** Feed/search key whose loads record row continuation handles in [SmartTubeEngine]. */
+private class RowContinuationScope(val scope: String) : kotlin.coroutines.AbstractCoroutineContextElement(RowContinuationScope) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<RowContinuationScope>
+}
 
 internal class IncompleteYouTubeFeedException(cause: Throwable? = null) : java.io.IOException("YouTube feed refresh incomplete", cause)
 

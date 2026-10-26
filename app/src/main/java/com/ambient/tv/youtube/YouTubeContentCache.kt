@@ -70,6 +70,17 @@ class YouTubeContentCache() {
         return storeRows(key, merged)
     }
 
+    /**
+     * Appends a continuation page to one row in a single step (deduplicated by videoId). Process-local
+     * like partial responses: disk keeps the first page that the last completed load returned.
+     */
+    @Synchronized fun appendItems(key: String, rowId: String, items: List<YouTubeItem>, expected: Long = generation): List<YouTubeRow>? {
+        if (expected != generation) return null
+        val current = get(key) ?: return null
+        val appended = appendYouTubeRowItems(current, rowId, items)
+        return if (appended === current) current else storeRows(key, appended)
+    }
+
     @Synchronized fun replace(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val rows = storeRows(key, reconcileComplete(get(key).orEmpty(), incoming) { it.id })
@@ -114,7 +125,7 @@ class YouTubeContentCache() {
         source = null
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_ENTRIES = 24
         const val MAX_ROWS = 24
         const val MAX_ITEMS_PER_ROW = 120

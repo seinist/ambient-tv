@@ -210,6 +210,7 @@ import kotlinx.coroutines.delay
                     initialFocusRequester = contentItemFocusRequester,
                     focusTarget = contentFocusTarget,
                     onItemFocused = { rowId, videoId -> viewModel.onItemFocused(state.feed, rowId, videoId) },
+                    loadingRows = state.loadingRows,
                 )
             }
         }
@@ -339,10 +340,11 @@ private fun Content(
     initialFocusRequester: FocusRequester,
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
+    loadingRows: Set<String> = emptySet(),
 ) {
     val populatedRows = rows.filter { it.items.isNotEmpty() }
     if (populatedRows.hasSubsections()) {
-        SectionedYouTubeContent(populatedRows, mode, gridColumns, listRows, click, initialFocusRequester, focusTarget, onItemFocused)
+        SectionedYouTubeContent(populatedRows, mode, gridColumns, listRows, click, initialFocusRequester, focusTarget, onItemFocused, loadingRows)
         return
     }
 
@@ -386,6 +388,7 @@ private fun SectionedYouTubeContent(
     initialFocusRequester: FocusRequester,
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
+    loadingRows: Set<String>,
 ) {
     when (mode) {
         YouTubeViewMode.LANDSCAPE -> LazyColumn(
@@ -400,13 +403,13 @@ private fun SectionedYouTubeContent(
         ) {
             itemsIndexed(rows, key = { index, row -> "youtube-section:${row.id}" }) { index, row ->
                 val rowId = youtubeRowId(index, row)
-                RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused)
+                RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused, rowId in loadingRows)
             }
         }
         YouTubeViewMode.LIST -> SectionedYouTubeList(rows, listRows, click, detailed = false, initialFocusRequester, focusTarget, onItemFocused)
         YouTubeViewMode.INFO_LIST -> SectionedYouTubeList(rows, listRows, click, detailed = true, initialFocusRequester, focusTarget, onItemFocused)
         YouTubeViewMode.WALL -> SectionedYouTubeWall(rows, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused)
-        YouTubeViewMode.CINEMATIC -> SectionedYouTubeCinematic(rows, click, initialFocusRequester, focusTarget, onItemFocused)
+        YouTubeViewMode.CINEMATIC -> SectionedYouTubeCinematic(rows, click, initialFocusRequester, focusTarget, onItemFocused, loadingRows)
     }
 }
 
@@ -422,6 +425,7 @@ private fun RowMode(
     initialFocusRequester: FocusRequester,
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
+    loadingMore: Boolean,
 ) = Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
     ContentSectionHeader(title = row.title)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -444,6 +448,7 @@ private fun RowMode(
                     onFocused = { onItemFocused(rowId, item.videoId) },
                 )
             }
+            if (loadingMore) rowEndPlaceholders(rowId, Modifier.width(cardWidth), showText = true)
         }
     }
 }
@@ -716,6 +721,7 @@ private fun SectionedYouTubeCinematic(
     initialFocusRequester: FocusRequester,
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
+    loadingRows: Set<String>,
 ) {
     LazyColumn(
         allowUpExit = true,
@@ -736,6 +742,7 @@ private fun SectionedYouTubeCinematic(
                 initialFocusRequester = initialFocusRequester,
                 focusTarget = focusTarget,
                 onItemFocused = onItemFocused,
+                loadingMore = youtubeRowId(sectionIndex, row) in loadingRows,
             )
         }
     }
@@ -749,9 +756,11 @@ private fun YouTubeCinematicSection(
     initialFocusRequester: FocusRequester,
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
+    loadingMore: Boolean,
 ) {
     if (row.items.isEmpty()) return
     var hero by remember(row.title, row.items) { mutableStateOf(row.items.first()) }
+    val placeholderModifier = Modifier.width(landscapeCardWidth())
     Column(Modifier.fillMaxWidth()) {
         ContentSectionHeader(title = row.title)
         Box(Modifier.fillMaxWidth().height(deviceHeroHeight(500.dp, 390.dp))) {
@@ -783,8 +792,43 @@ private fun YouTubeCinematicSection(
                             },
                         )
                     }
+                    if (loadingMore) rowEndPlaceholders(rowId, placeholderModifier, showText = false)
                 }
             }
+        }
+    }
+}
+
+/** Number of static-sized, unfocusable cards shown after a row while its next page loads. */
+internal const val YOUTUBE_ROW_END_PLACEHOLDERS = 2
+
+/** Stable keys that never collide with videoId keys, so appending replaces them in one step. */
+internal fun youtubeRowEndPlaceholderKey(rowId: String, index: Int) = "youtube-row-more:$rowId:$index"
+
+private fun androidx.compose.foundation.lazy.LazyListScope.rowEndPlaceholders(rowId: String, modifier: Modifier, showText: Boolean) {
+    items(YOUTUBE_ROW_END_PLACEHOLDERS, key = { youtubeRowEndPlaceholderKey(rowId, it) }) {
+        RowEndPlaceholder(modifier, showText)
+    }
+}
+
+/** Card-shaped placeholder on the shared damped pulse (read at draw time); Sparsam stays static. */
+@Composable
+private fun RowEndPlaceholder(modifier: Modifier, showText: Boolean) {
+    val pulse = if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) null
+        else com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse)
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    Column(
+        modifier
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = .58f), RoundedCornerShape(10.dp))
+            .padding(if (showText) 8.dp else 3.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(7.dp)))
+        if (showText) {
+            Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth(.8f).height(13.dp).skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(3.dp)))
+            }
+            Box(Modifier.fillMaxWidth(.5f).height(10.dp).align(Alignment.CenterHorizontally).skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(3.dp)))
         }
     }
 }
