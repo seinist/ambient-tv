@@ -58,8 +58,7 @@ internal fun MediaItem.toLauncherTitle(style: com.ambient.tv.ui.common.MediaTile
     val resolved = com.ambient.tv.ui.common.resolveMediaTileStyle(style, type, handheld = false)
     val landscape = resolved != com.ambient.tv.ui.common.MediaTileStyle.POSTER &&
         resolved != com.ambient.tv.ui.common.MediaTileStyle.AUTO
-    val artwork = if (landscape && type != "episode") artUrl ?: thumbUrl
-        else com.ambient.tv.ui.common.mediaTileImageUrl(this, resolved)
+    val artwork = com.ambient.tv.ui.common.mediaTileImageUrl(this, resolved)
     return LauncherTitle(
         key = ratingKey,
         title = if (type == "episode") grandparentTitle?.takeIf { it.isNotBlank() } ?: title else title,

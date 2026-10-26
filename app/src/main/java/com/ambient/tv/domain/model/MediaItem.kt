@@ -112,6 +112,13 @@ data class MediaItem(
     val landscapeBackdropUrl: String?
         get() = wideBackdropUrl ?: thumbUrl
 
+    /**
+     * Image for 16:9 tiles: an episode's/clip's own still first, then a wide backdrop (own, then
+     * the show's/season's); the portrait thumb only when nothing wide exists, so it is not stretched.
+     */
+    val landscapeArtUrl: String?
+        get() = thumbUrl?.takeIf { type in setOf("episode", "clip") } ?: landscapeBackdropUrl
+
     /** A wide image for the background, or null when only a poster exists. */
     val wideBackdropUrl: String?
         get() = artUrl ?: parentBackdropUrl ?: thumbUrl?.takeIf { type in setOf("episode", "clip") }

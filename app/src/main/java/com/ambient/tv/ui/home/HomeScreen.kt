@@ -196,7 +196,7 @@ fun HomeScreen(
     LaunchedEffect(uiState) {
         val loaded = uiState as? HomeUiState.Loaded ?: return@LaunchedEffect
         ScreensaverArtworkRegistry.offerAll(
-            loaded.rows.asSequence().flatMap { it.items.asSequence() }.take(20).map { it.artUrl ?: it.thumbUrl }.asIterable(),
+            loaded.rows.asSequence().flatMap { it.items.asSequence() }.take(20).map { it.landscapeArtUrl }.asIterable(),
         )
         ScreensaverArtworkRegistry.offerAll((loaded.liveTvItems + loaded.recentTvItems).map { it.event?.imageUrl ?: it.channel.iconUrl })
     }

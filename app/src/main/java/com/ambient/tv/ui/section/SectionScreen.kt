@@ -827,7 +827,7 @@ private fun RecommendationListItem(
         ) {
             MediaArtworkWithStreamIcons(
                 item = item,
-                model = if (poster) item.posterArtUrl else item.artUrl ?: item.thumbUrl,
+                model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                 modifier = if (poster) {
                     Modifier.width(deviceDp(if (detailed) 84.dp else 60.dp, 52.dp) * rowScale).aspectRatio(2f / 3f).clip(RoundedCornerShape(7.dp))
                 } else {
@@ -935,7 +935,7 @@ private fun WallTile(
         ) {
             MediaArtworkWithStreamIcons(
                 item = item,
-                model = if (poster) item.posterArtUrl else item.thumbUrl ?: item.artUrl,
+                model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                 modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                 maxItems = 3,
             )
@@ -1142,7 +1142,7 @@ private fun RecommendationCinematicSection(
 ) {
     if (row.items.isEmpty()) return
     var hero by remember(row.id, row.items, focusedKey) { mutableStateOf(row.items.firstOrNull { it.ratingKey == focusedKey } ?: row.items.first()) }
-    val heroArtwork = hero.artUrl ?: hero.thumbUrl
+    val heroArtwork = hero.landscapeBackdropUrl
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
@@ -1369,7 +1369,7 @@ private fun StylishMediaList(
                 ) {
                     MediaArtworkWithStreamIcons(
                         item = item,
-                        model = if (poster) item.posterArtUrl else item.artUrl ?: item.thumbUrl,
+                        model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                         modifier = (if (poster) Modifier.width(deviceDp(76.dp, 52.dp) * rowScale).aspectRatio(2f / 3f) else Modifier.width(deviceDp(166.dp, 96.dp) * rowScale).aspectRatio(16f / 9f))
                             .clip(RoundedCornerShape(if (poster) 7.dp else 10.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
@@ -1545,7 +1545,7 @@ private fun InfoList(
                     ) {
                         MediaArtworkWithStreamIcons(
                             item = item,
-                            model = if (poster) item.posterArtUrl else item.artUrl ?: item.thumbUrl,
+                            model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                             modifier = if (poster) {
                                 Modifier.width(40.dp * rowScale).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp))
                             } else {
@@ -1582,7 +1582,7 @@ private fun InfoList(
             Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 MediaArtworkWithStreamIcons(
                     item = preview,
-                    model = preview.artUrl ?: preview.thumbUrl,
+                    model = preview.landscapeBackdropUrl,
                     modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
                     maxItems = 4,
                 )
@@ -1653,7 +1653,7 @@ private fun WallGrid(
                 ) {
                     MediaArtworkWithStreamIcons(
                         item = item,
-                        model = if (poster) item.posterArtUrl else item.thumbUrl ?: item.artUrl,
+                        model = if (poster) item.posterArtUrl else item.landscapeArtUrl,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                         maxItems = 3,
                     )
@@ -1682,7 +1682,7 @@ private fun CinematicView(
     var hero by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == restoreKey } ?: items.first()) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0))
-    val heroArtwork = hero.artUrl ?: hero.thumbUrl
+    val heroArtwork = hero.landscapeBackdropUrl
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     Box(Modifier.fillMaxSize()) {
@@ -1783,7 +1783,7 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
                 ) {
-                    ArtworkImage(model = c.representative.artUrl ?: c.representative.thumbUrl, title = c.title, contentScale = ContentScale.Crop, modifier = Modifier.width(deviceDp(178.dp, 96.dp) * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
+                    ArtworkImage(model = c.representative.landscapeArtUrl, title = c.title, contentScale = ContentScale.Crop, modifier = Modifier.width(deviceDp(178.dp, 96.dp) * rowScale).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)))
                     Column(Modifier.weight(1f)) {
                         Text(c.title, style = MaterialTheme.typography.titleMedium)
                         Text(stringResource(R.string.collection_item_count, c.itemCount), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

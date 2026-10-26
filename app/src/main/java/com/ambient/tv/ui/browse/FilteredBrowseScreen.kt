@@ -185,7 +185,7 @@ private fun BrowseList(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
                 ) {
                     MediaArtworkWithStreamIcons(
                         item = item,
-                        model = item.artUrl ?: item.thumbUrl,
+                        model = item.landscapeArtUrl,
                         modifier = Modifier.width(166.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
                     )

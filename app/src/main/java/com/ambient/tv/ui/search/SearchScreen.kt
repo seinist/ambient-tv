@@ -841,7 +841,7 @@ private fun SearchMediaListItem(
         ) {
             MediaArtworkWithStreamIcons(
                 item = item,
-                model = item.artUrl ?: item.thumbUrl,
+                model = item.landscapeArtUrl,
                 modifier = Modifier.width(166.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {

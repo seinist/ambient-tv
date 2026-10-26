@@ -43,5 +43,11 @@ class MediaTileStyleTest {
         assertEquals("series-poster", mediaTileImageUrl(episode, MediaTileStyle.POSTER))
         assertEquals("still", mediaTileImageUrl(episode, MediaTileStyle.CONTINUE))
         assertEquals("still", mediaTileImageUrl(episode, MediaTileStyle.EPISODE))
+        assertEquals("still", mediaTileImageUrl(episode, MediaTileStyle.LANDSCAPE))
+        val movie = episode.copy(type = "movie", thumbUrl = "poster")
+        assertEquals("art", mediaTileImageUrl(movie, MediaTileStyle.CONTINUE))
+        assertEquals("art", mediaTileImageUrl(movie, MediaTileStyle.LANDSCAPE))
+        val season = episode.copy(type = "season", thumbUrl = "poster", artUrl = null, parentBackdropUrl = "show-art")
+        assertEquals("show-art", mediaTileImageUrl(season, MediaTileStyle.LANDSCAPE))
     }
 }

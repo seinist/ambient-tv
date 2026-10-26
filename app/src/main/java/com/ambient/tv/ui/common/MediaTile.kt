@@ -75,8 +75,7 @@ fun resolveMediaTileStyle(style: MediaTileStyle, itemType: String, handheld: Boo
 
 fun mediaTileImageUrl(item: MediaItem, style: MediaTileStyle): String? = when (style) {
     MediaTileStyle.POSTER -> item.posterArtUrl
-    MediaTileStyle.LANDSCAPE -> item.artUrl ?: item.thumbUrl
-    MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> item.thumbUrl ?: item.artUrl
+    MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> item.landscapeArtUrl
     MediaTileStyle.AUTO -> item.posterArtUrl
 }
 
