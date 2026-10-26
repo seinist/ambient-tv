@@ -58,6 +58,8 @@ data class YouTubePlayback(
     val adaptiveFormats: List<YouTubeAdaptiveFormat> = emptyList(),
     /** Generated MPD still being built for VLC/MPV sessions; Media3 waits for it before opening. */
     val deferredDash: kotlinx.coroutines.Deferred<String?>? = null,
+    /** Caption tracks; VLC and MPV load them as external subtitles (Media3 reads them from the MPD). */
+    val captions: List<YouTubeCaption> = emptyList(),
     val isLive: Boolean = false,
     val durationMs: Long = 0,
     val resumeMs: Long = 0,

@@ -305,6 +305,20 @@ fun YouTubePlayerScreen(
             val sourceVideoFormat = externalPlayback.adaptiveFormats.firstOrNull { it.url == sourceVideoUri }
             val sourceVideoMimeType = if (vlcSelected) com.ambient.tv.youtube.youtubeVlcVideoMimeType(externalPlayback)
                 else sourceVideoFormat?.mimeType
+            // VLC/MPV: YouTube captions as local, centered WebVTT files. The shared subtitle policy loads
+            // them into the player and applies the subtitle mode, language and fallback settings.
+            // Media3 reads the same captions from the MPD and needs no copies.
+            val captionsNeeded = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackend.MEDIA3 && playback.captions.isNotEmpty()
+            var captionFiles by remember(playback.videoId) { mutableStateOf(emptyMap<String, String>()) }
+            LaunchedEffect(playback.videoId, captionsNeeded) {
+                if (!captionsNeeded || captionFiles.isNotEmpty()) return@LaunchedEffect
+                captionFiles = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    com.ambient.tv.youtube.YouTubeCaptionFiles.prepare(context, playback.videoId, playback.captions, playback.headers)
+                }
+            }
+            val captionTracks = remember(playback.captions, captionFiles) {
+                com.ambient.tv.youtube.youtubeCaptionTracks(playback.captions, captionFiles)
+            }
             PlaybackSessionContent(
                 timeline = playback.timeline,
                 metadata = PlaybackMetadata(
@@ -331,6 +345,7 @@ fun YouTubePlayerScreen(
                     },
                     isLive = playback.isLive,
                     isTrailer = isTrailer,
+                    subtitleTracks = captionTracks,
                     resumeState = playback.copy(resumeMs = resumePosition),
                     nextUp = nextUp,
                     successorsLoading = state.successorsLoading,
@@ -614,6 +629,7 @@ private fun YouTubeMedia3Playback(
                 preferredVideoMimeType = youtubeFamilyMimeType(target.family),
                 maxVideoFrameRate = target.fps,
                 preferOriginalAudio = true,
+                centerYouTubeCaptions = true,
                 streamUrlRenewer = { expired ->
                     val host = android.net.Uri.parse(expired).host.orEmpty()
                     if (host == "googlevideo.com" || host.endsWith(".googlevideo.com"))
