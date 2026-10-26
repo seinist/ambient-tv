@@ -35,13 +35,15 @@ object ContentDeduplicator {
         val orderedItems = listOf(representative) + items.filterNot { it === representative }
         val versions = orderedItems
             .flatMap { it.mediaVersions }
-            .distinctBy { version ->
+            .groupBy { version ->
                 listOf(
                     version.sourceRatingKey.orEmpty(),
                     version.sourceMediaIndex.toString(),
                     version.streamUrl.orEmpty(),
                 ).joinToString("|")
             }
+            // The same version from a list endpoint lacks the file name that full metadata carries.
+            .map { (_, same) -> same.first().let { first -> first.copy(fileName = first.fileName ?: same.firstNotNullOfOrNull { it.fileName }) } }
             // List endpoints only carry a resolution placeholder (no URL, no source). Once full
             // metadata is merged in, the placeholder must not survive as a selectable version.
             .let { all -> all.filterNot { it.isPlaceholder }.ifEmpty { all } }
