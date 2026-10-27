@@ -62,6 +62,13 @@ class Media3KernelScalersTest {
         val soft = MEDIA3_KERNELS.getValue("ewa_lanczossoft")
         assertTrue(sharp.value(1.0) < ewa.value(1.0))
         assertTrue(soft.value(1.0) > ewa.value(1.0))
+        // Blur scales the support (MPV: radius = blur * f.radius), not just the base.
+        assertEquals(JINC_R3 * 0.9812505837223707, sharp.support, 1e-12)
+        assertEquals(0.0, sharp.value(sharp.support), 0.0)
+        assertTrue(soft.value(JINC_R3 + 0.01) != 0.0)
+        // Ginseng is sinc windowed by jinc.
+        val ginseng = MEDIA3_KERNELS.getValue("ginseng")
+        assertEquals(media3Sinc(1.5) * media3Jinc(1.5 / 3.0 * JINC_WINDOW_RADIUS), ginseng.value(1.5), 1e-12)
         // Nearest takes exactly one tap.
         val nearest = MEDIA3_KERNELS.getValue("nearest")
         assertEquals(1.0, nearest.value(0.4), 0.0)
@@ -82,8 +89,9 @@ class Media3KernelScalersTest {
     @Test fun shadersAreGlslEs100WithTheirLoopBaked() {
         val ewa = media3KernelShader(MEDIA3_KERNELS.getValue("ewa_lanczos4sharpest"))
         assertTrue(ewa.startsWith("#version 100"))
-        assertTrue(ewa.contains("for (int y = -4; y <= 5; y++)"))
-        assertTrue(ewa.contains("4.241062864"))
+        // Blur 0.8845 shrinks the support to 3.751 like MPV's mp_init_filter: taps -3..4.
+        assertTrue(ewa.contains("for (int y = -3; y <= 4; y++)"))
+        assertTrue(ewa.contains("3.751271391"))
         val spline = media3KernelShader(MEDIA3_KERNELS.getValue("spline36"))
         assertTrue(spline.contains("for (int i = -2; i <= 3; i++)"))
         for (glsl in listOf(ewa, spline)) {

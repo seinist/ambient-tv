@@ -26,8 +26,9 @@ import kotlin.math.sqrt
  */
 
 /**
- * One MPV filter: [base] at x / [blur], times [window] stretched over the whole [radius]
- * ([windowRadius] is the window's own radius). Zero beyond [radius].
+ * One MPV filter: [base] at x / [blur], times [window] stretched over the whole [support]
+ * ([windowRadius] is the window's own radius). As in MPV's mp_init_filter, blur also scales the
+ * support: radius = blur * f.radius. Zero beyond [support].
  */
 internal class Media3Kernel(
     val radius: Double,
@@ -37,16 +38,19 @@ internal class Media3Kernel(
     val windowRadius: Double = 1.0,
     val blur: Double = 1.0,
 ) {
+    /** The kernel's extent in source pixels (MPV: filter->radius = blur * f.radius). */
+    val support: Double get() = radius * blur
+
     /** MPV's sample_filter for |x| in source pixels. */
     fun value(x: Double): Double {
         val ax = abs(x)
-        if (ax >= radius) return 0.0
-        val w = window?.let { it(ax / radius * windowRadius) } ?: 1.0
+        if (ax >= support) return 0.0
+        val w = window?.let { it(ax / support * windowRadius) } ?: 1.0
         return w * base(ax / blur)
     }
 
     /** Taps per side the shader loops over. */
-    val taps: Int get() = ceil(radius).toInt().coerceAtLeast(1)
+    val taps: Int get() = ceil(support).toInt().coerceAtLeast(1)
 }
 
 internal const val JINC_R3 = 3.2383154841662362
@@ -117,7 +121,8 @@ internal val MEDIA3_KERNELS: Map<String, Media3Kernel> = linkedMapOf(
     "spline36" to Media3Kernel(3.0, false, ::spline36),
     "spline64" to Media3Kernel(4.0, false, ::spline64),
     "sinc" to Media3Kernel(2.0, false, ::media3Sinc),
-    "ginseng" to Media3Kernel(3.0, false, ::media3Jinc, window = ::media3Sinc),
+    // MPV: sinc windowed by jinc.
+    "ginseng" to Media3Kernel(3.0, false, ::media3Sinc, ::media3Jinc, JINC_WINDOW_RADIUS),
     "gaussian" to Media3Kernel(2.0, false, { x -> exp(-2.0 * x * x) }),
     "ewa_lanczos" to Media3Kernel(JINC_R3, true, ::media3Jinc, ::media3Jinc, JINC_WINDOW_RADIUS),
     "ewa_lanczossharp" to Media3Kernel(JINC_R3, true, ::media3Jinc, ::media3Jinc, JINC_WINDOW_RADIUS, blur = 0.9812505837223707),
@@ -133,11 +138,11 @@ internal val MEDIA3_KERNEL_SCALERS: Set<String> = MEDIA3_KERNELS.keys + "oversam
 
 internal const val MEDIA3_KERNEL_LUT_SIZE = 1024
 
-/** The kernel over |x| in 0..radius, LUT_SIZE samples (texel i at x = i / (size - 1) * radius). */
+/** The kernel over |x| in 0..support, LUT_SIZE samples (texel i at x = i / (size - 1) * support). */
 internal fun media3KernelLut(kernel: Media3Kernel, size: Int = MEDIA3_KERNEL_LUT_SIZE): FloatArray =
     FloatArray(size) { i ->
-        // The last sample sits on the radius, where MPV's window is already zero; keep the limit.
-        val x = minOf(i.toDouble() / (size - 1) * kernel.radius, kernel.radius * (1 - 1e-9))
+        // The last sample sits on the support edge, where MPV's window is already zero; keep the limit.
+        val x = minOf(i.toDouble() / (size - 1) * kernel.support, kernel.support * (1 - 1e-9))
         kernel.value(x).toFloat()
     }
 
@@ -297,7 +302,7 @@ varying vec2 vTexSamplingCoord;
 /** Shader for [kernel], with its radius and tap loop baked in like MPV's generated code. */
 internal fun media3KernelShader(kernel: Media3Kernel): String {
     val taps = kernel.taps
-    val radius = String.format(java.util.Locale.ROOT, "%.9f", kernel.radius)
+    val radius = String.format(java.util.Locale.ROOT, "%.9f", kernel.support)
     val size = MEDIA3_KERNEL_LUT_SIZE
     val weight = """
 // Kernel weight at distance d (source pixels) from the LUT; zero at and beyond the radius.
@@ -352,7 +357,7 @@ void main() {
     return KERNEL_HEADER + weight + main
 }
 
-// MPV's pass_sample_oversample (threshold 0).
+// MPV's pass_sample_oversample (threshold 0): round to nearest, blend only across the texel edge.
 private const val MEDIA3_OVERSAMPLE = """#version 100
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;
@@ -364,7 +369,7 @@ uniform vec2 uInputSize;
 uniform vec2 uScale;
 varying vec2 vTexSamplingCoord;
 void main() {
-  vec2 pos = vTexSamplingCoord + 0.5 / uInputSize;
+  vec2 pos = vTexSamplingCoord - 0.5 / uInputSize;
   vec2 fcoord = fract(pos * uInputSize - 0.5);
   vec2 coeff = clamp(fcoord * uScale, 0.0, 1.0);
   vec3 color = texture2D(uTexSampler, pos + (coeff - fcoord) / uInputSize).rgb;
