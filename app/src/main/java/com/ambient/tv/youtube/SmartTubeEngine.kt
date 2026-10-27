@@ -216,33 +216,9 @@ class SmartTubeEngine @Inject constructor(
         query, onRows = onRows,
     )
     /** Subscribed channels as channel tiles, those with new uploads first (SmartTube's default order). */
-    suspend fun subscribedChannels(onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> {
-        val tv = contentRows(
-            "getSubscribedChannelsByNewContentObserve", "getSubscribedChannelsObserve", "getSubscribedChannels", onRows = onRows,
-        )
-        if (tv.any { it.items.isNotEmpty() }) return tv
-        return guideSubscribedChannels().also { if (it.isNotEmpty()) onRows(it) }
-    }
-
-    /**
-     * The TV client's subscribed-channel tabs carry only a reload key, no channel id (SmartTube
-     * opens them by that key), so they all map to nothing. The web guide lists the same
-     * subscriptions with their channel ids; SmartTube only uses it as its own fallback.
-     */
-    private suspend fun guideSubscribedChannels(): List<YouTubeRow> = io {
-        runCatching {
-            val browse = Class.forName("com.liskovsoft.youtubeapi.browse.v2.BrowseService2Wrapper").getField("INSTANCE").get(null)
-            val method = Class.forName("com.liskovsoft.youtubeapi.browse.v2.BrowseService2").getDeclaredMethod("getSubscribedChannelsWeb")
-            method.isAccessible = true
-            val group = method.invoke(browse) ?: return@runCatching emptyList()
-            val raw = (group.call("getMediaItems") as? List<*>).orEmpty().filterNotNull()
-            val items = raw.mapNotNull(::mapChannelItem)
-                .sortedBy { it.title.lowercase() }
-                .sortedByDescending { it.hasNewContent }
-            Timber.tag("youtube-rows").i("Subscribed channels from web guide: %d of %d", items.size, raw.size)
-            if (items.isEmpty()) emptyList() else listOf(YouTubeRow(group.callString("getTitle")?.takeIf(String::isNotBlank) ?: "SmartTube", items))
-        }.onFailure { Timber.w(it, "SmartTube web guide subscriptions failed") }.getOrDefault(emptyList())
-    }
+    suspend fun subscribedChannels(onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> = contentRows(
+        "getSubscribedChannelsByNewContentObserve", "getSubscribedChannelsObserve", "getSubscribedChannels", onRows = onRows,
+    )
 
     /** Channel page rows (Uploads, Live, Shorts, Playlists, ...); [scope] keys their continuations. */
     suspend fun channel(channelId: String, scope: String, onRows: suspend (List<YouTubeRow>) -> Unit = {}): List<YouTubeRow> =
@@ -1086,14 +1062,16 @@ class SmartTubeEngine @Inject constructor(
     }
 
     /**
-     * SmartTube's TabMediaItem (subscribed channels, TV client) leaves getChannelId unset; the
-     * channel id is the browseId of the tab's endpoint. Only real channel ids (UC...) count.
+     * SmartTube's TabMediaItem (subscribed channels, TV client) leaves getChannelId unset; its
+     * endpoint browses FEsubscriptions with base64 protobuf params that embed the channel id.
      */
     private fun tabChannelId(raw: Any): String? = runCatching {
         val field = raw.javaClass.declaredFields.firstOrNull { it.name == "tabItem" } ?: return null
         field.isAccessible = true
-        field.get(raw)?.call("getEndpoint")?.call("getBrowseEndpoint")?.callString("getBrowseId")
-    }.getOrNull()?.takeIf { it.startsWith("UC") }
+        val browse = field.get(raw)?.call("getEndpoint")?.call("getBrowseEndpoint") ?: return null
+        browse.callString("getBrowseId")?.takeIf { it.startsWith("UC") }
+            ?: browse.callString("getParams")?.let(::youtubeChannelIdInBrowseParams)
+    }.getOrNull()
 
     // --- "Watch on TV" (YouTube Lounge) ----------------------------------------------------
 
