@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 
 import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
+import com.ambient.tv.data.local.mpvProperties
 import com.ambient.tv.data.local.validateNnedi3ShaderSource
 import com.ambient.tv.ui.player.mpvCheapDefaults
 import com.ambient.tv.ui.player.reducedVideoEffects
@@ -533,6 +534,8 @@ internal class MpvPlaybackEngine(
         setOption("slang", com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
             videoImagePreferences(context).playbackSubtitleLanguage).joinToString(","))
         setOption("sub-auto", "fuzzy")
+        // Text subtitle look from Settings › Subtitles; ASS/SSA keep their own styles.
+        videoImagePreferences(context).subtitleAppearance.mpvProperties().forEach { (name, value) -> setOption(name, value) }
         setOption("audio-client-name", com.ambient.tv.branding.AppBrand.name)
         // File options must be configured before mpv_initialize(). Setting `start` afterwards can
         // leave mediacodec_embed on SHIELD displaying the requested frame with a stalled clock.

@@ -25,7 +25,7 @@ internal object CompanionBackupPolicy {
         "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
         "audioVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
         "screensaverEnabled", "screensaverTimeoutMinutes", "screensaverModeKey", "screensaverShowClock", "screensaverShowDate",
-        "screensaverUse24HourClock", "clock", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
+        "screensaverUse24HourClock", "clock", "subtitleAppearance", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
         "photoIncludeSubfolders", "photoSortKey",
         "photoSlideshowIntervalSeconds", "photoTransitionKey", "photoKenBurns", "photoShuffle", "photoShowInfo",
         "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds",
@@ -159,6 +159,7 @@ internal object CompanionBackupPolicy {
             (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
+                .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }
                 // Profiles left out by the sender (too large) arrive empty: the TV keeps its own.
                 .filter { it !in profileKeys || !profilesOmittedIn(source) }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }

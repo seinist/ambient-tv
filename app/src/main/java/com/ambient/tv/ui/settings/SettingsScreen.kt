@@ -1050,6 +1050,7 @@ fun SettingsScreen(
                                     SubtitleLanguageChoice(uiState.subtitleFallbackLanguageKey, true, viewModel::onSubtitleFallbackChanged)
                                 }
                             }
+                            subtitleAppearanceItems(uiState.subtitleAppearance, viewModel::onSubtitleAppearanceChanged)
                             item {
                                 com.ambient.tv.ui.player.OpenSubtitlesSettingsGroup { title, subtitle, body ->
                                     SettingsGroup(title = title, subtitle = subtitle) { body() }
