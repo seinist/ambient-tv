@@ -48,6 +48,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -773,6 +774,8 @@ internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
 private const val SETTINGS_PAGE_SERIAL = "settings_page_serial"
+/** Settings session an entry belongs to; an entry restored from an older session starts fresh. */
+private const val SETTINGS_SESSION_KEY = "settings_session"
 
 private data class ScreensaverPreview(
     val modeKey: String,
@@ -1169,6 +1172,11 @@ private fun AmbientTvApp(
     var contentHasFocus by remember { mutableStateOf(false) }
     var contentContainerFocused by remember { mutableStateOf(false) }
     var previousRoute by remember { mutableStateOf<String?>(currentRoute) }
+    // Advances each time Settings is closed (no Settings entry left on the back stack). A Settings
+    // entry composed in a later session forgets its page, area and focus and opens at the start,
+    // even when Navigation restores it from a saved tab stack. Survives recreation (UI language).
+    var settingsSession by rememberSaveable { mutableIntStateOf(0) }
+    var settingsOpen by remember { mutableStateOf(currentRoute == Destinations.SETTINGS) }
     var restoreFocusAfterNavigation by remember { mutableStateOf(false) }
     fun requestContentFocus(): Boolean {
         if (sidebarContentPending) return false
@@ -1226,6 +1234,12 @@ private fun AmbientTvApp(
         }
     }
     LaunchedEffect(currentRoute) {
+        if (currentRoute == Destinations.SETTINGS) {
+            settingsOpen = true
+        } else if (settingsOpen && runCatching { navController.getBackStackEntry(Destinations.SETTINGS) }.isFailure) {
+            settingsOpen = false
+            settingsSession++
+        }
         if (returnsFromFullscreenPlayer(previousRoute, currentRoute) ||
             (previousRoute == Destinations.SETTINGS && currentRoute != Destinations.SETTINGS)) {
             restoreFocusAfterNavigation = true
@@ -1354,6 +1368,9 @@ private fun AmbientTvApp(
 
     fun navigateTopLevel(route: String) {
         guardedSettingsExit {
+            // Settings never rides along in a saved tab stack: leaving it for a top-level page closes
+            // it, so restoring that page later cannot bring back an old Settings view on top.
+            if (navController.currentDestination?.route == Destinations.SETTINGS) navController.popBackStack()
             if (navController.currentDestination?.route == route) return@guardedSettingsExit
             // Home is the usual start destination, so Plex/Jellyfin sit on top of it.
             // popBackStack restores that existing entry; navigate()+restoreState can no-op
@@ -2119,11 +2136,19 @@ private fun AmbientTvApp(
                         }
                     }
                     composable(Destinations.SETTINGS) { entry ->
+                        // Restored from an earlier session: drop its page request before it is read.
+                        // A new entry has no session yet and keeps a page set by openSystemSettings.
+                        val entrySession = entry.savedStateHandle.get<Int>(SETTINGS_SESSION_KEY)
+                        if (entrySession != settingsSession) {
+                            if (entrySession != null) entry.savedStateHandle.remove<String>(SETTINGS_PAGE_KEY)
+                            entry.savedStateHandle[SETTINGS_SESSION_KEY] = settingsSession
+                        }
                         val settingsPage by entry.savedStateHandle.getStateFlow<String?>(SETTINGS_PAGE_KEY, null).collectAsState()
                         val settingsPageSerial by entry.savedStateHandle.getStateFlow(SETTINGS_PAGE_SERIAL, 0).collectAsState()
                         RestorableSidebarContent {
                             // A repeated shortcut reopens its page even after Settings moved elsewhere.
-                            androidx.compose.runtime.key(settingsPageSerial) {
+                            // The session in the key also drops rememberSaveable state (area, page, search).
+                            androidx.compose.runtime.key(settingsPageSerial, settingsSession) {
                                 SettingsScreen(
                                     initialCategoryKey = settingsPage,
                                     onExitGuardChanged = { settingsExitGuard = it },

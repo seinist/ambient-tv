@@ -506,6 +506,9 @@ internal fun SettingsHub(
                             modifier = Modifier.focusRequester(areaFocus.getValue(target))
                                 .onFocusChanged {
                                     if (it.isFocused) {
+                                        // Up/Down already shows the focused area's pages on the right;
+                                        // focus stays in the list (areaMenu) until Right or OK enters them.
+                                        if (target != area) selectArea(target)
                                         areaMenu = true
                                         lastRegionFocus = null
                                     }
