@@ -275,7 +275,7 @@ private fun SearchRows(
     val spotifyGroups = SpotifyEntityType.entries.mapNotNull { type ->
         state.spotifyResults.filter { it.type == type }.takeIf { it.isNotEmpty() }?.let { type to it }
     }
-    val mediaTileStyle = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE
+    val mediaTileStyle = MediaTileStyle.POSTER
     val firstMediaKey = plexGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: jellyfinGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
         ?: embyGroups.firstOrNull()?.second?.firstOrNull()?.ratingKey
@@ -412,7 +412,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourceStatusItem(
         SearchSourceState.LOADING -> item(key = key) {
             SkeletonRow(
                 title = stringResource(R.string.search_source_loading, labelOverride ?: labelRes?.let { stringResource(it) } ?: searchSystemName(system)),
-                style = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE,
+                style = MediaTileStyle.POSTER,
                 itemCount = 4,
             )
         }

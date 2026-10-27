@@ -84,6 +84,13 @@ class AppPreferences @Inject constructor(
 
     init {
         SystemNameOverrides.names = systemNames
+        if (!prefs.getBoolean(KEY_SECTION_VIEWS_DEFAULT_POSTER, false)) {
+            val stored = prefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap()
+            prefs.edit {
+                withPosterSectionViews(stored).forEach { (key, value) -> if (stored[key] != value) putString(key, value) }
+                putBoolean(KEY_SECTION_VIEWS_DEFAULT_POSTER, true)
+            }
+        }
     }
 
     /** Main-menu entries that have a divider below them (menu editor). Missing key = none. */
@@ -1919,12 +1926,17 @@ class AppPreferences @Inject constructor(
             prefs.all.keys
                 .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") }
                 .forEach(::remove)
-            values.forEach { (key, value) ->
+            withPosterSectionViews(values).forEach { (key, value) ->
                 if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_")) {
                     putString(key, value)
                 }
             }
         }
+    }
+
+    /** Landscape page views (also from older backups or a phone) become poster; YouTube has no poster view. */
+    private fun withPosterSectionViews(values: Map<String, String>): Map<String, String> = values.mapValues { (key, value) ->
+        if (key.startsWith("section_view_") && !key.startsWith("section_view_youtube:") && value in setOf("LANDSCAPE", "ROWS")) "POSTER" else value
     }
 
     fun updateActiveServerMac(mac: String) {
@@ -2003,6 +2015,7 @@ class AppPreferences @Inject constructor(
         const val KEY_SYSTEM_HOME_HIDDEN_ROWS = "system_home_hidden_rows"
         // Plex's own rows repeat much of what the other rows show, and a library has many of them.
         val DEFAULT_SYSTEM_HOME_HIDDEN_ROWS = setOf("${HomeRowDefinition.SYSTEM_PLEX}.${HomeRowDefinition.CONTENT_HUBS}")
+        const val KEY_SECTION_VIEWS_DEFAULT_POSTER = "section_views_default_poster"
         const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster_v2"
         val ALL_CONTINUE_DEFAULT_SYSTEMS = setOf(
             HomeRowDefinition.SYSTEM_PLEX,

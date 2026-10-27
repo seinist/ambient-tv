@@ -18,6 +18,22 @@ class HomeConfigurationTest {
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, trailers.withDefaultPosterCards().displayMode)
     }
 
+    @Test fun savedLandscapePageViewsBecomePosterExceptYouTube() {
+        val raw = memoryPreferences().apply {
+            edit().putString("section_view_plex:1:recommendations", "LANDSCAPE")
+                .putString("section_view_trailers:POPULAR", "LANDSCAPE")
+                .putString("section_view_plex:1:library", "LIST")
+                .putString("section_view_youtube:home", "LANDSCAPE").commit()
+        }
+        val prefs = AppPreferences(raw)
+        assertEquals("POSTER", prefs.sectionViewMode("plex:1:recommendations"))
+        assertEquals("POSTER", prefs.sectionViewMode("trailers:POPULAR"))
+        assertEquals("LIST", prefs.sectionViewMode("plex:1:library"))
+        assertEquals("LANDSCAPE", prefs.sectionViewMode("youtube:home"))
+        prefs.setSectionViewMode("plex:1:recommendations", "LANDSCAPE")
+        assertEquals("LANDSCAPE", AppPreferences(raw).sectionViewMode("plex:1:recommendations"))
+    }
+
     @Test fun genreRowsCarryTheirGenreInTheContentKey() {
         val row = HomeRowDefinition(system = HomeRowDefinition.SYSTEM_EMBY, contentKey = HomeRowDefinition.topGenre("Sci-Fi & Fantasy"))
         assertEquals("Sci-Fi & Fantasy", row.genre)
