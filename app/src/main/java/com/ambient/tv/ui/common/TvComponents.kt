@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -70,6 +71,34 @@ fun ContentRatingBadge(
         )
         Text(
             text = display,
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
+            maxLines = 1,
+        )
+    }
+}
+
+/** Plex-style "✓ Watched" chip, styled like [ContentRatingBadge] so both share one row. */
+@Composable
+fun WatchedBadge(modifier: Modifier = Modifier) {
+    val label = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.media_watched_badge)
+    val shape = RoundedCornerShape(6.dp)
+    Row(
+        modifier = modifier
+            .background(ArtworkChipFill, shape)
+            .border(1.dp, ArtworkChipBorder, shape)
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Check,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = label,
             color = Color.White,
             style = MaterialTheme.typography.labelMedium.copy(fontSize = 10.sp),
             maxLines = 1,

@@ -169,6 +169,7 @@
     <string name="library_filter_unwatched">Ungesehen</string>
     <string name="library_filter_in_progress">Begonnen</string>
     <string name="library_filter_watched">Gesehen</string>
+    <string name="media_watched_badge">Gesehen</string>
     <string name="library_sort_title">Titel</string>
     <string name="library_sort_year">Jahr</string>
     <string name="library_sort_release">Erscheinungsdatum</string>

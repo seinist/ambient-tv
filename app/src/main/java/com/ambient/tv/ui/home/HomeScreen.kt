@@ -50,6 +50,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -79,11 +83,13 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -315,7 +321,7 @@ private fun LoadingRows() {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(HomeHeroHeight)
+                .height(homeHeroHeight())
                 .background(
                     Brush.verticalGradient(
                         listOf(
@@ -448,7 +454,8 @@ internal fun LibraryContent(
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
         fun contentListIndex(index: Int): Int = state.rowKeys.indexOf(state.rows.getOrNull(index)?.id).coerceAtLeast(0)
-        val heroInsetPx = with(LocalDensity.current) { (HomeHeroHeight - HomeRowsLift).roundToPx() }
+        val heroHeight = homeHeroHeight()
+        val heroInsetPx = with(LocalDensity.current) { (heroHeight - HomeRowsLift).roundToPx() }
         val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
             row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
         }
@@ -508,7 +515,10 @@ internal fun LibraryContent(
                 }
             }
         }
-        CompositionLocalProvider(LocalBringIntoViewSpec provides ExplicitRowScrollSpec) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides ExplicitRowScrollSpec,
+            com.ambient.tv.ui.common.LocalHeroRowTiles provides true,
+        ) {
             LazyColumn(
                 allowUpExit = true,
                 state = rowListState,
@@ -517,14 +527,14 @@ internal fun LibraryContent(
                     .rowColumnFocusNavigation(columnFocus, scrollToTop = { rowListState.glideToItem(glideWrap, 0) }) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
-                    .fadeRowsBehindHomeHero(maskRows)
+                    .fadeRowsBehindHomeHero(maskRows, heroHeight)
                     .graphicsLayer {
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
                         alpha = progress
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    top = HomeHeroHeight - HomeRowsLift + 12.dp,
+                    top = heroHeight - HomeRowsLift + 12.dp,
                     bottom = 36.dp,
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -554,6 +564,9 @@ internal fun LibraryContent(
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
                                 rowKey = rowKey,
+                                onOpenGuide = if (recent) null else {
+                                    { onOpenHomeContent(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_TVHEADEND, contentKey = "guide")) }
+                                },
                             )
                         }
                         else -> if (rowKey.startsWith("shortcut:")) {
@@ -654,16 +667,28 @@ private fun HomeLiveTvRow(
     bringContextIntoView: Boolean = true,
     columnFocus: RowColumnFocus? = null,
     rowKey: String = "",
+    /** Plex-like "TV guide" shortcut as the row's first tile; null leaves it out. */
+    onOpenGuide: (() -> Unit)? = null,
 ) {
     val horizontalScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else TvBringIntoViewSpec
     val firstItemFocusRequester = remember { FocusRequester() }
     val rowState = com.ambient.tv.ui.common.rememberBrowseRowState(
         initialFirstVisibleItemIndex = (columnFocus?.rememberedItem(rowKey)
-            ?.let { key -> items.indexOfFirst { "${it.channel.sourceId}:${it.channel.uuid}" == key } } ?: 0)
+            ?.let { key -> items.indexOfFirst { "${it.channel.sourceId}:${it.channel.uuid}" == key } }
+            ?.plus(if (onOpenGuide != null) 1 else 0) ?: 0)
             .minus(1).coerceAtLeast(0),
     )
     com.ambient.tv.ui.common.RegisterRowColumnFocus(columnFocus, rowKey, rowState,
-        remember(items) { items.map { "${it.channel.sourceId}:${it.channel.uuid}" } })
+        remember(items, onOpenGuide != null) {
+            listOfNotNull(GuideTileKey.takeIf { onOpenGuide != null }) + items.map { "${it.channel.sourceId}:${it.channel.uuid}" }
+        })
+    // One clock per row moves every tile's progress bar each minute.
+    val nowSeconds by androidx.compose.runtime.produceState(System.currentTimeMillis() / 1000L) {
+        while (true) {
+            delay(60_000L - System.currentTimeMillis() % 60_000L)
+            value = System.currentTimeMillis() / 1000L
+        }
+    }
     LaunchedEffect(requestInitialFocus, items.map { it.channel.uuid }) {
         if (requestInitialFocus && items.isNotEmpty()) {
             withFrameNanos { }
@@ -689,60 +714,186 @@ private fun HomeLiveTvRow(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                itemsIndexed(items, key = { _, item -> "${item.channel.sourceId}:${item.channel.uuid}" }) { index, item ->
-                    var focused by remember { mutableStateOf(false) }
-                    val cardShape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
-                    androidx.tv.material3.Surface(
-                        onClick = { onWatch(item.channel) },
-                        colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
-                        scale = com.ambient.tv.ui.common.noSurfaceScale(),
-                        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = cardShape),
-                        modifier = Modifier
-                            .width(250.dp)
-                            .height(96.dp)
-                            .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
-                            .then(if (index == 0) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
-                            .activateOnTvKey { onWatch(item.channel) }
-                            .onFocusChanged {
-                                focused = it.isFocused
-                                if (it.isFocused) onItemFocused(item)
-                            },
-                    ) {
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), cardShape)
-                                .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
-                                .padding(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Box(Modifier.size(68.dp, 38.dp), contentAlignment = Alignment.Center) {
-                                    item.channel.iconUrl?.let { ArtworkImage(model = it, title = item.channel.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit, headers = item.imageHeaders) }
-                                }
-                                MarqueeTitle(listOf(item.sourceName, item.channel.name).filter { it.isNotBlank() }.joinToString(" · "), focused = focused, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                            }
-                            val event = item.event
-                            // Empty title line keeps the bar aligned with cards that have guide data.
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                MarqueeTitle(event?.title.orEmpty(), focused = focused, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                                val playbackSource = com.ambient.tv.companion.LocalPlaybackBrowseSources.current.live[item.channel.sourceId]
-                                if (playbackSource != null) com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(
-                                    com.ambient.tv.companion.CompanionMedia("live:channel", item.channel.uuid, playbackSource)))
-                            }
-                            if (event != null) {
-                                val now = System.currentTimeMillis() / 1000L
-                                val progress = ((now - event.startEpochSeconds).toFloat() / event.durationSeconds.coerceAtLeast(1L)).coerceIn(0f, 1f)
-                                androidx.compose.material3.LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-                            } else {
-                                androidx.compose.material3.LinearProgressIndicator(progress = { 0f }, modifier = Modifier.fillMaxWidth(), drawStopIndicator = {})
-                            }
-                        }
+                if (onOpenGuide != null) {
+                    item(key = GuideTileKey) {
+                        LiveGuideTile(onClick = onOpenGuide, modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey))
                     }
+                }
+                itemsIndexed(items, key = { _, item -> "${item.channel.sourceId}:${item.channel.uuid}" }) { index, item ->
+                    LiveChannelTile(
+                        item = item,
+                        nowSeconds = { nowSeconds },
+                        onClick = { onWatch(item.channel) },
+                        onFocused = { onItemFocused(item) },
+                        modifier = Modifier
+                            .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
+                            .then(if (index == 0) Modifier.focusRequester(firstItemFocusRequester) else Modifier),
+                    )
                 }
             }
         }
     }
+}
+
+private const val GuideTileKey = "live-tv-guide"
+
+/** Logo accents per channel icon, so tiles scrolling back in do not sample the logo again. */
+private val LiveLogoAccents = java.util.concurrent.ConcurrentHashMap<String, Color>()
+private val LiveTileFallbackAccent = Color(0xFF3A4C86)
+
+@Composable
+private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<Boolean>, Float> {
+    val focused = remember { mutableStateOf(false) }
+    val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused.value) tokens.focusScale else 1f, label = "liveTileScale")
+    return focused to scale
+}
+
+@Composable
+private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.common.rememberUhdScale()
+
+/**
+ * Plex-style live tile without programme artwork: the channel logo on a wash of its own colour,
+ * the running programme in one line, LIVE in the corner and the airing progress along the edge.
+ */
+@Composable
+private fun LiveChannelTile(
+    item: HomeLiveTvItem,
+    nowSeconds: () -> Long,
+    onClick: () -> Unit,
+    onFocused: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val (focusState, scale) = rememberLiveTileFocus()
+    val focused = focusState.value
+    val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(tokens.cardRadius)
+    val logo = item.channel.iconUrl
+    val cached = logo?.let { LiveLogoAccents[it] }
+    val sampled = com.ambient.tv.ui.common.rememberArtworkSampledAccent(
+        model = logo,
+        enabled = logo != null && cached == null,
+        fallback = cached ?: LiveTileFallbackAccent,
+        headers = item.imageHeaders,
+    )
+    LaunchedEffect(logo, sampled) {
+        if (logo != null && cached == null && sampled != LiveTileFallbackAccent) LiveLogoAccents[logo] = sampled
+    }
+    val background = MaterialTheme.colorScheme.background
+    val event = item.event
+    androidx.tv.material3.Surface(
+        onClick = onClick,
+        colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
+        scale = com.ambient.tv.ui.common.noSurfaceScale(),
+        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = shape),
+        modifier = modifier
+            .padding(vertical = 8.dp)
+            .width(liveTileWidth())
+            .aspectRatio(16f / 9f)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .activateOnTvKey(onClick = onClick)
+            .onFocusChanged {
+                focusState.value = it.isFocused
+                if (it.isFocused) onFocused()
+            },
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clip(shape)
+                .background(Brush.linearGradient(listOf(sampled.copy(alpha = 0.85f), background.copy(alpha = 0.9f))))
+                .border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.08f), shape),
+        ) {
+            logo?.let {
+                ArtworkImage(
+                    model = it,
+                    title = item.channel.name,
+                    contentScale = ContentScale.Fit,
+                    headers = item.imageHeaders,
+                    modifier = Modifier.align(Alignment.Center).fillMaxWidth(0.46f).fillMaxHeight(0.42f).padding(bottom = 10.dp),
+                )
+            } ?: Text(item.channel.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, modifier = Modifier.align(Alignment.Center))
+            if (event != null) {
+                LiveBadge(Modifier.align(Alignment.TopEnd).padding(7.dp))
+                Text(
+                    text = event.title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp + com.ambient.tv.ui.common.PlaybackStatusBarHeight),
+                )
+                com.ambient.tv.ui.common.PlaybackStatusBar(
+                    progress = ((nowSeconds() - event.startEpochSeconds).toFloat() / event.durationSeconds.coerceAtLeast(1L)).coerceIn(0f, 1f),
+                    modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
+                )
+            }
+            val playbackSource = com.ambient.tv.companion.LocalPlaybackBrowseSources.current.live[item.channel.sourceId]
+            if (playbackSource != null) {
+                Box(Modifier.align(Alignment.TopStart).padding(7.dp)) {
+                    com.ambient.tv.companion.PlaybackBadge(com.ambient.tv.companion.playbackIndicator(
+                        com.ambient.tv.companion.CompanionMedia("live:channel", item.channel.uuid, playbackSource)))
+                }
+            }
+        }
+    }
+}
+
+/** First tile of the live row, like Plex's "TV guide" card. */
+@Composable
+private fun LiveGuideTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val (focusState, scale) = rememberLiveTileFocus()
+    val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
+    val shape = androidx.compose.foundation.shape.RoundedCornerShape(tokens.cardRadius)
+    androidx.tv.material3.Surface(
+        onClick = onClick,
+        colors = com.ambient.tv.ui.common.transparentSurfaceColors(),
+        scale = com.ambient.tv.ui.common.noSurfaceScale(),
+        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = shape),
+        modifier = modifier
+            .padding(vertical = 8.dp)
+            .width(liveTileWidth())
+            .aspectRatio(16f / 9f)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .activateOnTvKey(onClick = onClick)
+            .onFocusChanged { focusState.value = it.isFocused },
+    ) {
+        Row(
+            Modifier
+                .fillMaxSize()
+                .clip(shape)
+                .background(Brush.linearGradient(listOf(Color(0xFF1B3F8F), Color(0xFF4A2A7A), Color(0xFF1F6F6B))))
+                .border(if (focusState.value) 2.dp else 1.dp, if (focusState.value) Color.White else Color.White.copy(alpha = 0.08f), shape),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            androidx.tv.material3.Icon(
+                androidx.compose.material.icons.Icons.AutoMirrored.Filled.ViewList,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(stringResource(R.string.tvh_guide), style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun LiveBadge(modifier: Modifier = Modifier) {
+    Text(
+        text = "LIVE",
+        style = MaterialTheme.typography.labelSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
+        color = Color.White,
+        maxLines = 1,
+        modifier = modifier
+            .background(Color(0xFFD32F2F), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -755,6 +906,9 @@ internal fun HomeHero(
     modifier: Modifier = Modifier,
     drawAmbient: Boolean = true,
     rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling,
+    height: Dp? = null,
+    /** False where no rows pass behind the hero, so nothing needs covering. */
+    rowsBehind: Boolean = true,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -785,22 +939,27 @@ internal fun HomeHero(
     val artworkWidth = deviceDp(240.dp, 96.dp)
     val horizontalPadding = screenGutter()
     val artworkGap = deviceDp(32.dp, 16.dp)
+    val heroHeight = height ?: homeHeroHeight()
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(HomeHeroHeight),
+            .height(heroHeight),
     ) {
         if (drawAmbient) {
             HomeHeroAmbient(heroContent, heroStyleKey, intensityPercent, spreadKey, Modifier.matchParentSize(), rowsScrolling)
         }
-        Box(Modifier.matchParentSize().homeHeroVeil(MaterialTheme.colorScheme.background, performance.allowRowFadeSaveLayer))
+        // Only reduced mode needs the veil to hide rows: full mode masks them in the row list,
+        // and a veil over the tall hero would also hide the animated background behind it.
+        if (rowsBehind && !performance.allowRowFadeSaveLayer) {
+            Box(Modifier.matchParentSize().homeHeroVeil(MaterialTheme.colorScheme.background))
+        }
         HomeStaticImage(
             model = heroArtwork.titleLogoUrl,
             headers = heroArtwork.imageHeaders,
             contentScale = ContentScale.Fit,
             modifier = Modifier.align(Alignment.CenterEnd)
                 .padding(end = horizontalPadding, bottom = HomeHeroFadeTail)
-                .width(artworkWidth).height(120.dp),
+                .width(artworkWidth).height(deviceDp(160.dp, 120.dp)),
         )
         Box(
             modifier = Modifier
@@ -860,15 +1019,16 @@ internal fun HomeHero(
                         )
                     }
                     val mediaItem = heroItem.mediaItem
-                    val contextLabel = buildList {
+                    val episode = mediaItem?.takeIf { it.type == "episode" }
+                    // Like Plex, an episode's own title gets the line under the series name in
+                    // place of the genres; its S/E marker leads the metadata row below.
+                    val episodeTitle = episode?.takeIf { !it.grandparentTitle.isNullOrBlank() }
+                        ?.let { heroItem.title.takeIf { title -> title.isNotBlank() } }
+                    val emphasizedContext = episodeTitle ?: heroItem.subtitle
+                    val contextLabel = if (heroItem.subtitle != null) heroItem.subtitle else buildList {
                         addAll(heroItem.metadata)
-                        if (mediaItem?.type == "episode") {
-                            // Without a series name the title row already shows the episode title.
-                            if (!mediaItem.grandparentTitle.isNullOrBlank()) {
-                                heroItem.title.takeIf { it.isNotBlank() }?.let(::add)
-                            }
-                            mediaItem.parentIndex?.let { add("S$it") }
-                            mediaItem.index?.let { add(stringResource(R.string.media_episode_short_label, it)) }
+                        if (episode != null) {
+                            episodeTitle?.let(::add)
                         } else if (mediaItem?.type == "season") {
                             mediaItem.parentTitle?.takeIf { it.isNotBlank() }?.let(::add)
                         } else {
@@ -877,14 +1037,25 @@ internal fun HomeHero(
                     }.joinToString("  ·  ")
                     Text(
                         text = contextLabel,
-                        style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = if (emphasizedContext != null) {
+                            MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, shadow = metadataShadow)
+                        } else {
+                            MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow)
+                        },
+                        color = if (emphasizedContext != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.fillMaxWidth().heightIn(min = 22.dp),
                     )
-                    val metaBeforeRating = mediaItem?.year?.toString().orEmpty()
-                    val durationLabel = formatDuration(mediaItem?.durationMs)
+                    val live = heroItem.live
+                    val metaBeforeRating = live?.timeLabel ?: mediaItem?.year?.toString().orEmpty()
+                    val durationLabel = formatDuration(
+                        live?.let { (it.stopEpochSeconds - it.startEpochSeconds) * 1000L } ?: mediaItem?.durationMs,
+                    )
+                    val liveProgress = live?.let {
+                        val now = System.currentTimeMillis() / 1000L
+                        ((now - it.startEpochSeconds).toFloat() / (it.stopEpochSeconds - it.startEpochSeconds).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                    }
                     val heroScore = mediaItem?.rating ?: mediaItem?.audienceRating ?: mediaItem?.criticRating
                     val heroScoreMax = when {
                         mediaItem?.rating != null -> 10.0
@@ -892,8 +1063,8 @@ internal fun HomeHero(
                         mediaItem?.criticRating != null -> 100.0
                         else -> 10.0
                     }
-                    val remainingLabel = mediaItem?.remainingMs
-                        ?.takeIf { (mediaItem.progressFraction ?: 0f) in 0.01f..0.94f }
+                    val remainingLabel = (live?.let { (it.stopEpochSeconds - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) * 1000L }
+                        ?: mediaItem?.remainingMs?.takeIf { (mediaItem.progressFraction ?: 0f) in 0.01f..0.94f })
                         ?.let { remaining ->
                             formatDuration(remaining)?.let { stringResource(R.string.media_remaining, it) }
                         }
@@ -903,11 +1074,18 @@ internal fun HomeHero(
                         horizontalArrangement = Arrangement.spacedBy(9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        if (live != null) LiveBadge()
+                        episode?.index?.let { number ->
+                            val marker = episode.parentIndex?.let { season -> "S$season · E$number" }
+                                ?: stringResource(R.string.media_episode_short_label, number)
+                            Text(marker, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
+                        }
                         if (metaBeforeRating.isNotBlank()) {
                             Text(metaBeforeRating, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
                         }
                         mediaItem?.contentRating?.takeIf { it.isNotBlank() }?.let { ContentRatingBadge(it) }
                         heroScore?.let { RatingScoreBadge(score = it, maxScore = heroScoreMax) }
+                        if (mediaItem?.isWatched == true) com.ambient.tv.ui.common.WatchedBadge()
                     }
                     // Runtime and playback progress get their own line, which leaves the badge
                     // row readable and gives continuing items a small visual progress cue.
@@ -925,7 +1103,7 @@ internal fun HomeHero(
                             )
                         }
                         remainingLabel?.let { label ->
-                            val progress = mediaItem.progressFraction ?: 0f
+                            val progress = liveProgress ?: mediaItem?.progressFraction ?: 0f
                             com.ambient.tv.ui.common.PlaybackStatusBar(
                                 progress = progress,
                                 modifier = Modifier.width(112.dp),
@@ -940,6 +1118,19 @@ internal fun HomeHero(
                                 maxLines = 1,
                             )
                         }
+                    }
+                    // Only the tall TV hero has room for the summary; the slot stays reserved
+                    // so the metadata does not jump between items with and without one.
+                    if (heroHeight > HomeHeroMinHeight) {
+                        Text(
+                            text = (heroItem.summary ?: mediaItem?.summary)?.takeIf { it.isNotBlank() }.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
+                            maxLines = 3,
+                            minLines = 3,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            // Plex-like measure: long lines across the whole TV are hard to read.
+                            modifier = Modifier.widthIn(max = 600.dp).padding(top = 4.dp),
+                        )
                     }
                 }
             }
@@ -1056,11 +1247,12 @@ internal fun HomeHeroAmbient(
         motionStrength = motionStrength,
         intensityScale = HomeHeroStyle.intensityScale(intensityPercent),
         radiusScale = HomeHeroStyle.radiusScale(spreadKey),
+        heroHeight = homeHeroHeight(),
     ))
 }
 
-private fun Modifier.homeHeroVeil(background: Color, maskRows: Boolean): Modifier = drawWithCache {
-    val top = background.copy(alpha = if (maskRows) 0.55f else 1f)
+private fun Modifier.homeHeroVeil(background: Color): Modifier = drawWithCache {
+    val top = background
     val veil = Brush.verticalGradient(
         0f to top,
         0.55f to top,
@@ -1071,7 +1263,18 @@ private fun Modifier.homeHeroVeil(background: Color, maskRows: Boolean): Modifie
     onDrawBehind { drawRect(veil) }
 }
 
-private val HomeHeroHeight = 190.dp
+/**
+ * On TV the hero takes the upper part of the screen, so the first row rests in the lower half
+ * like Plex's home and the freed space holds the summary. Handheld keeps the compact banner.
+ */
+@Composable
+private fun homeHeroHeight(): Dp {
+    if (LocalHandheldUi.current) return HomeHeroMinHeight
+    val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    return (screenHeight * 0.44f).coerceAtLeast(HomeHeroMinHeight)
+}
+
+private val HomeHeroMinHeight = 190.dp
 
 // Rows sit this far up into the hero's fade tail, leaving room below the focused row's labels.
 private val HomeRowsLift = 30.dp
@@ -1083,21 +1286,21 @@ private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
     ((progress - start) / (end - start)).coerceIn(0f, 1f)
 
 @Composable
-internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean): Modifier {
+internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean, heroHeight: Dp): Modifier {
     if (!allowSaveLayer) {
         // Reduced mode avoids the saveLayer; HomeHero's foreground veil covers rows smoothly.
         return this
     }
     val contentLayer = rememberGraphicsLayer()
     return drawWithCache {
-        val fadeHeight = HomeHeroHeight.toPx().coerceAtMost(size.height)
+        val fadeHeight = heroHeight.toPx().coerceAtMost(size.height)
         val fadeBounds = Rect(0f, 0f, size.width, fadeHeight)
         val layerPaint = Paint()
         val visibilityMask = Brush.verticalGradient(
+            // The tall hero's summary reaches far down, so rows only fade in at its lower edge.
             0f to Color.Transparent,
-            0.72f to Color.Transparent,
-            0.84f to Color.Black.copy(alpha = 0.18f),
-            0.94f to Color.Black.copy(alpha = 0.72f),
+            0.94f to Color.Transparent,
+            0.98f to Color.Black.copy(alpha = 0.55f),
             1f to Color.Black,
             startY = 0f,
             endY = fadeHeight,
@@ -1136,12 +1339,13 @@ internal fun Modifier.homeHeroAmbient(
     motionStrength: Float,
     intensityScale: Float,
     radiusScale: Float,
+    heroHeight: Dp,
     boundedPaint: Boolean = true,
 ): Modifier = drawWithCache {
     val artworkAccent = artworkAccent()
     val intensity = intensityScale.coerceIn(0f, 100f / HomeHeroStyle.DEFAULT_INTENSITY)
     val spread = radiusScale.coerceIn(0.72f, 1.32f)
-    val heroHeight = HomeHeroHeight.toPx().coerceAtLeast(1f)
+    val heroHeight = heroHeight.toPx().coerceAtLeast(1f)
     val glowRadius = heroHeight * when (style) {
         HomeHeroStyle.SWEEP -> 1.05f
         HomeHeroStyle.DEPTH, HomeHeroStyle.ARTWORK_COLOR -> 1.50f

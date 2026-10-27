@@ -61,10 +61,17 @@ import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
 
 private val POSTER_WIDTH = 160.dp
-private val EPISODE_WIDTH = 300.dp
-private val CONTINUE_WIDTH = 300.dp
+private val EPISODE_WIDTH = 252.dp
+private val CONTINUE_WIDTH = 252.dp
 /** Nearly opaque: a poster's own bright tagline often sits right where the metadata text goes. */
 private val MetadataBannerFill = Color.Black.copy(alpha = 0.58f)
+
+/**
+ * Plex-style rows under a hero (Home, recommendations on TV): the hero already shows title,
+ * year and metadata, so tiles drop their captions and the focused poster's metadata banner.
+ * Library grids keep both.
+ */
+val LocalHeroRowTiles = androidx.compose.runtime.staticCompositionLocalOf { false }
 
 enum class MediaTileStyle { AUTO, POSTER, LANDSCAPE, EPISODE, CONTINUE }
 
@@ -94,6 +101,7 @@ fun MediaTile(
     fillCell: Boolean = false,
 ) {
     val handheld = LocalHandheldUi.current
+    val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
     val uhdScale = rememberUhdScale()
     val width = when (resolvedStyle) {
@@ -209,7 +217,7 @@ fun MediaTile(
                 val progress = item.progressFraction?.takeIf { it > 0f && it < 1f }
 
                 // Only while focused, so unfocused posters stay clean.
-                MediaMetadataOverlay(
+                if (!heroRowTiles) MediaMetadataOverlay(
                     item = item,
                     focused = focused,
                     // The progress bar runs along the bottom edge; the text stays clear of it.
@@ -243,12 +251,14 @@ fun MediaTile(
         // Extra gap so the poster's focus-scale growth never bleeds down into its own
         // label text below (the outer Column padding only guards the top/bottom of the
         // whole tile, not this internal seam).
-        Spacer(modifier = Modifier.height(6.dp))
-        when (resolvedStyle) {
-            // A season's own episode list already sits under the series; only feed rows repeat it.
-            MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(item, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
-            MediaTileStyle.EPISODE -> EpisodeLabels(item, focused, showDescription)
-            else -> PosterLabels(item, focused, reserveEpisodeLines)
+        if (!heroRowTiles) {
+            Spacer(modifier = Modifier.height(6.dp))
+            when (resolvedStyle) {
+                // A season's own episode list already sits under the series; only feed rows repeat it.
+                MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(item, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
+                MediaTileStyle.EPISODE -> EpisodeLabels(item, focused, showDescription)
+                else -> PosterLabels(item, focused, reserveEpisodeLines)
+            }
         }
     }
 }
@@ -540,13 +550,15 @@ private fun SkeletonTileContent(
                 .aspectRatio(tileAspect)
                 .clip(tileShape).drawBehind { drawRect(fill) },
         )
-        Box(
+        // Placeholders match the loaded tile, which has no captions under a hero.
+        val captions = !LocalHeroRowTiles.current
+        if (captions) Box(
             Modifier
                 .fillMaxWidth(0.82f)
                 .height(13.dp)
                 .clip(textShape).drawBehind { drawRect(fill, alpha = 0.88f) },
         )
-        if (showDescription) Box(
+        if (captions && showDescription) Box(
             Modifier
                 .fillMaxWidth(0.52f)
                 .height(10.dp)

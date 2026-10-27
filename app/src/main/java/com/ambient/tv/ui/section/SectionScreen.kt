@@ -33,6 +33,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import com.ambient.tv.ui.home.HomeHero
+import com.ambient.tv.ui.home.toHomeHeroContent
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -718,29 +721,60 @@ private fun RecommendationRowsPage(
     LaunchedEffect(centeredRowIndex) {
         if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true)
     }
-    val rowScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
+    val handheld = LocalHandheldUi.current
+    val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
     val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
-    androidx.compose.runtime.CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
-        LazyColumn(
-            allowUpExit = true,
-            state = rowsState,
-            modifier = Modifier
-                .rowColumnFocusNavigation(columnFocus) { state.recommendationRows.map { it.id } }
-                .clipToBounds(),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
-        ) {
-            itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
-                ContentRow(
-                    row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
-                    onItemClick = { onItemClick(it.ratingKey) },
-                    onItemFocused = { item ->
-                        restoreArmed = false
-                        onRecommendationItemFocused(row.id, item)
-                    },
-                    onRowFocused = { centeredRowIndex = index },
-                    restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
-                    columnFocus = columnFocus,
+    // On TV the focused item gets the Home hero above the rows, so the rows rest in the lower
+    // part of the page like Plex's recommendations. The hero only swaps text, never the rows.
+    val heroContent = remember(state.recommendationRows) {
+        val initial = state.recommendationRows.firstNotNullOfOrNull { row ->
+            row.items.firstOrNull { item -> initialFocusKey != null && initialFocusKey in item.allRatingKeys }
+        } ?: state.recommendationRows.firstOrNull()?.items?.firstOrNull()
+        MutableStateFlow(initial?.toHomeHeroContent())
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val heroHeight = maxHeight * 0.42f
+        Column(Modifier.fillMaxSize()) {
+            if (!handheld) {
+                HomeHero(
+                    heroContent = heroContent,
+                    heroStyleKey = "",
+                    intensityPercent = 0,
+                    spreadKey = "",
+                    entranceProgress = { 1f },
+                    drawAmbient = false,
+                    height = heroHeight,
+                    rowsBehind = false,
                 )
+            }
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalBringIntoViewSpec provides rowScrollSpec,
+                com.ambient.tv.ui.common.LocalHeroRowTiles provides !handheld,
+            ) {
+                LazyColumn(
+                    allowUpExit = true,
+                    state = rowsState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .rowColumnFocusNavigation(columnFocus) { state.recommendationRows.map { it.id } }
+                        .clipToBounds(),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
+                ) {
+                    itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
+                        ContentRow(
+                            row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
+                            onItemClick = { onItemClick(it.ratingKey) },
+                            onItemFocused = { item ->
+                                restoreArmed = false
+                                heroContent.value = item.toHomeHeroContent()
+                                onRecommendationItemFocused(row.id, item)
+                            },
+                            onRowFocused = { centeredRowIndex = index },
+                            restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
+                            columnFocus = columnFocus,
+                        )
+                    }
+                }
             }
         }
     }
@@ -1225,8 +1259,8 @@ private fun CinematicHeroContent(
 }
 
 /**
- * Poster tiles in the cinematic row are compact covers without a caption: the hero already shows
- * the title, and a full poster MediaTile is too tall to leave room for the summary on a TV screen.
+ * Poster tiles in the cinematic row are covers without a caption: the hero already shows the
+ * title. On TV they match Plex's poster size; the summary gives up lines when height runs short.
  */
 @Composable
 private fun CinematicTile(
@@ -1243,7 +1277,7 @@ private fun CinematicTile(
             onClick = onClick,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
-            modifier = Modifier.width(deviceDp(100.dp, 84.dp) * rememberUhdScale()),
+            modifier = Modifier.width(deviceDp(172.dp, 84.dp) * rememberUhdScale()),
         )
     } else {
         MediaTile(
