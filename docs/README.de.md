@@ -14,6 +14,9 @@ Aktuelle Funktionen im Kompendium:
 - [Dateien/NAS mit WebDAV, SFTP und Musik-Tags](DOCUMENTATION.de.md#48-dateien)
 - [Externe und Online-Untertitel](DOCUMENTATION.de.md#62-untertitel)
 - [Wake-on-LAN-Gruppen](DOCUMENTATION.de.md#53-server--wake-on-lan)
+- [Uhr](DOCUMENTATION.de.md#39-uhr)
+- [Aufnahmen und Timer: bearbeiten, löschen, Bilder](DOCUMENTATION.de.md#43-tvheadend)
+- [Media3-GPU-Filter (MPV-Kernel, RAVU, NIS, Korn, Entrauschen)](DOCUMENTATION.de.md#74-bildoptionen-vlc-und-media3)
 
 ## Weitere Projektnotizen (Repo-Root)
 

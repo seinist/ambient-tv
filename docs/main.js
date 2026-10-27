@@ -18,7 +18,7 @@ const T = {
     f6h: "WireGuard unterwegs", f6: "WireGuard eingebaut, pro System schaltbar – die Mediatheken auch außer Haus.",
     f7h: "Handy und TV zusammen", f7: "Im selben Heimnetz per QR-Code koppeln. Das Handy als Touchpad oder Tastatur nutzen, unterstützte Inhalte am TV starten und Konten sowie Einstellungen nach Bestätigung übertragen. Ambient TV bleibt auf beiden Geräten geöffnet.",
     f8h: "Dateien ohne Medienserver", f8: "Lokale Ordner öffnen oder per SMB, NFS, WebDAV und SFTP verbinden. Eigene Videos und Musik direkt auf dem NAS oder Netzwerkspeicher durchstöbern.",
-    f9h: "Live-TV mit Pause", f9: "TVHeadend und IPTV-Listen mit Programmführer und Erinnerungen. Mit Timeshift unterstützte MPEG-TS-Streams pausieren und zurückspulen; Aufnahmen über TVHeadend planen.",
+    f9h: "Live-TV mit Pause", f9: "TVHeadend und IPTV-Listen mit Programmführer und Erinnerungen. Mit Timeshift unterstützte MPEG-TS-Streams pausieren und zurückspulen; Aufnahmen und Timer planen, bearbeiten und löschen.",
     f10h: "Deine eigene Startseite", f10: "Weiterschauen, neue Titel, zuletzt gesehene Sender und Mediathek-Zugänge so anordnen, wie du sie nutzen möchtest.",
     f11h: "Untertitel passend zum Film", f11: "Bevorzugte Sprachen wählen, Untertitel neben der Videodatei laden und ihre Verzögerung anpassen. Online-Suche mit eigenem OpenSubtitles-API-Schlüssel.",
     f12h: "Musik und Fotos", f12: "Musikordner mit Album-Tags und Coverbildern durchstöbern, Spektrum oder projectM-Visualisierungen ausprobieren oder Fotos als Diashow mit sanften Schwenks und Zooms zeigen.",
@@ -105,11 +105,11 @@ const SCREENSHOTS = [
     "name": "04-player-engine-selection",
     "en": [
       "Player selection",
-      "Choose Automatic, Media3, VLC or MPV in the player."
+      "Choose Media3, VLC or MPV in the player."
     ],
     "de": [
       "Player-Auswahl",
-      "Automatisch, Media3, VLC oder MPV direkt im Player wählen."
+      "Media3, VLC oder MPV direkt im Player wählen."
     ]
   },
   {

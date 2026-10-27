@@ -8,6 +8,18 @@ import com.ambient.tv.vpn.WireGuardRouteState
 /** Genres a system offers for a "top in genre" Home row; [loading] until the server answered. */
 data class HomeGenrePicker(val system: String, val loading: Boolean = true, val genres: List<String> = emptyList())
 
+/**
+ * Live WireGuard route and the last tunnel test: runtime state, never part of the saved draft.
+ * Kept apart so [SettingsUiState] stays below the JVM's 255 parameter slots per method.
+ */
+data class WireGuardLiveState(
+    val status: WireGuardRouteState = WireGuardRouteState.Idle,
+    val testing: Boolean = false,
+    /** Result of the last tunnel test; [testOk] tells success from failure. */
+    val testMessage: String? = null,
+    val testOk: Boolean = false,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -208,7 +220,6 @@ data class SettingsUiState(
     val screensaverModeKey: String = "ambient",
     val screensaverShowClock: Boolean = true,
     val screensaverShowDate: Boolean = true,
-    val screensaverUse24HourClock: Boolean = true,
     val clock: com.ambient.tv.data.local.ClockSettings = com.ambient.tv.data.local.ClockSettings(),
     val screensaverUseArtwork: Boolean = true,
     val screensaverArtworkIntervalSeconds: Int = 30,
@@ -256,11 +267,7 @@ data class SettingsUiState(
     val wireGuardJellyfinEnabled: Boolean = false,
     val wireGuardEmbyEnabled: Boolean = false,
     val wireGuardTvheadendEnabled: Boolean = false,
-    val wireGuardStatus: WireGuardRouteState = WireGuardRouteState.Idle,
-    val wireGuardTesting: Boolean = false,
-    /** Result of the last tunnel test; [wireGuardTestOk] tells success from failure. */
-    val wireGuardTestMessage: String? = null,
-    val wireGuardTestOk: Boolean = false,
+    val wireGuard: WireGuardLiveState = WireGuardLiveState(),
     val photoSlideshowIntervalSeconds: Int = 6,
     val photoTransitionKey: String = "fade",
     val photoKenBurns: Boolean = false,
@@ -417,7 +424,6 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     screensaverModeKey,
     screensaverShowClock,
     screensaverShowDate,
-    screensaverUse24HourClock,
     clock,
     screensaverUseArtwork,
     screensaverArtworkIntervalSeconds,
@@ -591,7 +597,6 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     screensaverModeKey = if (draft.screensaverModeKey != baseline.screensaverModeKey) draft.screensaverModeKey else stored.screensaverModeKey,
     screensaverShowClock = if (draft.screensaverShowClock != baseline.screensaverShowClock) draft.screensaverShowClock else stored.screensaverShowClock,
     screensaverShowDate = if (draft.screensaverShowDate != baseline.screensaverShowDate) draft.screensaverShowDate else stored.screensaverShowDate,
-    screensaverUse24HourClock = if (draft.screensaverUse24HourClock != baseline.screensaverUse24HourClock) draft.screensaverUse24HourClock else stored.screensaverUse24HourClock,
     clock = if (draft.clock != baseline.clock) draft.clock else stored.clock,
     screensaverUseArtwork = if (draft.screensaverUseArtwork != baseline.screensaverUseArtwork) draft.screensaverUseArtwork else stored.screensaverUseArtwork,
     screensaverArtworkIntervalSeconds = if (draft.screensaverArtworkIntervalSeconds != baseline.screensaverArtworkIntervalSeconds) draft.screensaverArtworkIntervalSeconds else stored.screensaverArtworkIntervalSeconds,

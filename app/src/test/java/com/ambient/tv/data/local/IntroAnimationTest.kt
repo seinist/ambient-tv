@@ -13,14 +13,16 @@ class IntroAnimationTest {
 
     @Test
     fun everyStyleHasADurationAndOffHasNone() {
-        IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 1500..4000) }
+        IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 1500..6000) }
         assertEquals(0, IntroAnimation.durationMs(IntroAnimation.OFF))
     }
 
-    @Test fun wordAndHorizonStaySelectable() {
-        assertEquals(IntroAnimation.WORD, IntroAnimation.normalize(IntroAnimation.WORD))
+    @Test fun horizonStaysSelectableAndRetiredStylesFallBack() {
         assertEquals(IntroAnimation.HORIZON, IntroAnimation.normalize(IntroAnimation.HORIZON))
-        assertEquals(true, IntroAnimation.WORD in IntroAnimation.keys)
         assertEquals(true, IntroAnimation.HORIZON in IntroAnimation.keys)
+        // Retired styles saved by older versions open with the default.
+        for (retired in listOf("word", "power_on", "signal", "shimmer", "ripple")) {
+            assertEquals(IntroAnimation.DEFAULT, IntroAnimation.normalize(retired))
+        }
     }
 }
