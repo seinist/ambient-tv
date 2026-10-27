@@ -119,7 +119,8 @@ class TvheadendViewModel @Inject constructor(
 
     /** Channel/EPG icon URLs point at the TVHeadend server and need the same Basic Auth
      * credentials as the API calls - Coil doesn't share those with [repository]'s own client. */
-    val imageHeaders: Map<String, String> get() = repository.authHeaders()
+    // Composition reads this; a source removed in settings must not crash the still-open screen.
+    val imageHeaders: Map<String, String> get() = runCatching { repository.authHeaders() }.getOrDefault(emptyMap())
 
     private fun focusStateKey(tab: TvheadendTab) = "${repository.source.id}:${tab.name.lowercase()}"
     fun focusedContentId(tab: TvheadendTab): String? = preferences.sectionFocus(focusStateKey(tab))
