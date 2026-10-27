@@ -123,10 +123,11 @@ data class MediaItem(
     val wideBackdropUrl: String?
         get() = artUrl ?: parentBackdropUrl ?: thumbUrl?.takeIf { type in setOf("episode", "clip") }
 
-    /** Vertical cover for poster tiles: series art for episodes/seasons, otherwise the item thumb. */
+    /** Vertical cover for poster tiles: series art for episodes, a season's own cover, otherwise the item thumb. */
     val posterArtUrl: String?
         get() = when (type) {
-            "episode", "season" -> grandparentThumbUrl ?: parentThumbUrl ?: thumbUrl
+            "episode" -> grandparentThumbUrl ?: parentThumbUrl ?: thumbUrl
+            "season" -> thumbUrl ?: parentThumbUrl
             else -> thumbUrl
         }
 
