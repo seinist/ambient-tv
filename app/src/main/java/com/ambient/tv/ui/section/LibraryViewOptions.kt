@@ -73,7 +73,7 @@ val SELECTABLE_VIEW_MODES = listOf(
 fun recommendationViewMode(stored: SectionViewMode?): SectionViewMode = when (stored) {
     SectionViewMode.GRID -> SectionViewMode.POSTER
     SectionViewMode.ROWS -> SectionViewMode.LANDSCAPE
-    null -> SectionViewMode.LANDSCAPE
+    null -> SectionViewMode.POSTER
     else -> stored
 }
 

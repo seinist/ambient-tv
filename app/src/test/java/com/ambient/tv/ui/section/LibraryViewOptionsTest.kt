@@ -112,7 +112,7 @@ class LibraryViewOptionsTest {
         assertEquals(SectionViewMode.CINEMATIC, recommendationViewMode(SectionViewMode.CINEMATIC))
         assertEquals(SectionViewMode.POSTER, recommendationViewMode(SectionViewMode.GRID))
         assertEquals(SectionViewMode.LANDSCAPE, recommendationViewMode(SectionViewMode.ROWS))
-        assertEquals(SectionViewMode.LANDSCAPE, recommendationViewMode(null))
+        assertEquals(SectionViewMode.POSTER, recommendationViewMode(null))
     }
 
     private fun titles(

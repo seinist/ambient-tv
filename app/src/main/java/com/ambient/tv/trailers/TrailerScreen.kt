@@ -153,7 +153,7 @@ internal fun TrailerCatalogContent(
     val feed = TrailerFeed.valueOf(selectedFeedName)
     val stateKey = "trailers:${feed.name}"
     var viewMode by remember(selectedFeedName) { mutableStateOf(preferences.sectionViewMode(stateKey)
-        ?.let { runCatching { TrailerViewMode.valueOf(it) }.getOrNull() } ?: TrailerViewMode.LANDSCAPE) }
+        ?.let { runCatching { TrailerViewMode.valueOf(it) }.getOrNull() } ?: TrailerViewMode.POSTER) }
     var sort by remember(selectedFeedName) { mutableStateOf(preferences.sectionSort(stateKey)
         ?.let { runCatching { TrailerSort.valueOf(it) }.getOrNull() } ?: TrailerSort.DEFAULT) }
     var filter by remember(selectedFeedName) { mutableStateOf(preferences.sectionFilter(stateKey)
