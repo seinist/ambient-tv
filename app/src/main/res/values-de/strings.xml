@@ -524,7 +524,7 @@
     <string name="settings_library_title">Mediathek</string>
     <string name="settings_advanced_title">Erweitert</string>
     <string name="settings_advanced_developer_pointer">Entwickleroptionen verschoben</string>
-    <string name="settings_advanced_developer_pointer_body">Die Spotify-Client-ID liegt unter Medienquellen &amp; Konten › Spotify › Spotify-Konto.</string>
+    <string name="settings_advanced_developer_pointer_body">Die Spotify-Client-ID liegt unter Streaming › Spotify › Spotify-Konto.</string>
     <string name="settings_advanced_open_spotify_developer">Zu Spotify › Spotify-Konto</string>
     <string name="settings_tvh_title">TVHeadend</string>
     <string name="settings_tvh_enable">TVHeadend aktivieren</string>
@@ -917,7 +917,7 @@
     <string name="spotify_visual_spectrum">Spektrum</string>
     <string name="player_stop">Stop</string>
     <string name="player_exit_fullscreen">Minimieren (weiterspielen)</string>
-    <string name="spotify_auth_client_id_missing">Für die Anmeldung fehlt eine Spotify-Client-ID. Erstelle eine eigene (siehe Spotify-Anleitung in der README) und trage sie in den Einstellungen unter Medienquellen &amp; Konten › Spotify › Spotify-Konto ein.</string>
+    <string name="spotify_auth_client_id_missing">Für die Anmeldung fehlt eine Spotify-Client-ID. Erstelle eine eigene (siehe Spotify-Anleitung in der README) und trage sie in den Einstellungen unter Streaming › Spotify › Spotify-Konto ein.</string>
     <string name="spotify_auth_cancelled">Spotify-Anmeldung abgebrochen: %1$s</string>
     <string name="spotify_auth_state_mismatch">Spotify OAuth-State stimmt nicht überein.</string>
     <string name="spotify_auth_code_missing">Spotify hat keinen Authorization Code geliefert.</string>
@@ -1006,7 +1006,7 @@
     <string name="tvh_test_vpn">WireGuard-Tunnel für TVHeadend fehlgeschlagen: %1$s</string>
     <string name="tvh_test_permission">Zugriff auf das lokale Netzwerk ist nicht erlaubt (Android-Berechtigung).</string>
     <string name="tvh_test_other">Test fehlgeschlagen: %1$s</string>
-    <string name="settings_spotify_client_missing_build">Für die Kontoanmeldung fehlt eine Spotify-Client-ID. Erstelle eine eigene (siehe Spotify-Anleitung in der README) und trage sie unter Medienquellen &amp; Konten › Spotify › Spotify-Konto ein.</string>
+    <string name="settings_spotify_client_missing_build">Für die Kontoanmeldung fehlt eine Spotify-Client-ID. Erstelle eine eigene (siehe Spotify-Anleitung in der README) und trage sie unter Streaming › Spotify › Spotify-Konto ein.</string>
     <string name="settings_spotify_client_override_active">Deine eigene Spotify-Client-ID wird verwendet.</string>
     <string name="settings_spotify_client_override_hint">Für die Anmeldung nötig, kostenlos auf developer.spotify.com.</string>
     <string name="settings_submenu_items">Untermenü-Einträge</string>
@@ -1316,9 +1316,13 @@
     <string name="player_sleep_input_summary">Nach %1$d Min. ohne Eingabe</string>
     <string name="player_sleep_input_hint">Jeder Tastendruck startet neu.</string>
     <string name="player_sleep_action_hint">Beendet die Wiedergabe, nicht den Fernseher.</string>
-    <string name="settings_area_start">Oberfläche &amp; Bedienung</string>
-    <string name="settings_area_systems">Medienquellen &amp; Konten</string>
-    <string name="settings_area_playback">Wiedergabe</string>
+    <string name="settings_area_start">Darstellung</string>
+    <string name="settings_area_home">Startseite</string>
+    <string name="settings_area_systems">Medienserver</string>
+    <string name="settings_area_television">Fernsehen</string>
+    <string name="settings_area_streaming">Streaming</string>
+    <string name="settings_area_picture">Bild &amp; Ton</string>
+    <string name="settings_area_playback">Player</string>
     <string name="settings_area_app">App &amp; Daten</string>
     <string name="settings_page_home_hint">Reihen auf der Startseite, zuletzt gesehene Sender und Reihenfolge</string>
     <string name="settings_page_media_selection_hint">Verhalten beim Auswählen eines Mediums</string>
@@ -1360,6 +1364,8 @@
     <string name="settings_source_guest">Ohne Anmeldung nutzbar</string>
     <string name="settings_source_check">Anmeldung beim Öffnen prüfen</string>
     <string name="settings_add_system">System hinzufügen</string>
+    <string name="settings_add_system_hint">Ein noch nicht eingerichtetes System auswählen.</string>
+    <string name="settings_add_system_empty">Alle Systeme sind bereits eingerichtet.</string>
     <string name="settings_actions_immediate">Änderungen werden sofort gespeichert. Adressen, Ports und Anmeldedaten werden beim Verlassen der Seite gespeichert.</string>
     <string name="settings_defaults_hint">Gilt ab der nächsten Wiedergabe.</string>
     <string name="settings_audio_shared">Die Profile TV, HDMI und Kopfhörer gelten für alle Player und zeigen nur passende Optionen.</string>

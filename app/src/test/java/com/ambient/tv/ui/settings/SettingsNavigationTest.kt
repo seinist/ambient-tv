@@ -3,19 +3,75 @@ package com.ambient.tv.ui.settings
 import com.ambient.tv.data.local.AudioOptions
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.MpvImageOptions
+import com.ambient.tv.ui.common.MediaSystem
 import org.junit.Assert.*
 import org.junit.Test
 
 class SettingsNavigationTest {
-    @Test fun settingsHaveFiveAreasWithUnambiguousOwnership() {
-        assertEquals(5, SettingsArea.entries.size)
+    @Test fun settingsAreasFollowTheRailOrderAndKeepEveryPage() {
+        assertEquals(
+            listOf(
+                SettingsArea.START, SettingsArea.HOME, SettingsArea.SYSTEMS, SettingsArea.TELEVISION,
+                SettingsArea.STREAMING, SettingsArea.PICTURE, SettingsArea.PLAYBACK, SettingsArea.NETWORK,
+                SettingsArea.APP,
+            ),
+            SettingsArea.entries,
+        )
+        assertEquals(SettingsArea.START, SettingsCategory.LANGUAGE.area)
         assertEquals(SettingsArea.START, SettingsCategory.APPEARANCE.area)
-        assertEquals(SettingsArea.START, SettingsCategory.NAV_SOUNDS.area)
-        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.LIVE_TV.area)
-        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.IMAGE.area)
-        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.AUDIO.area)
+        assertEquals(SettingsArea.START, SettingsCategory.BACKGROUND.area)
+        assertEquals(SettingsArea.START, SettingsCategory.SCREENSAVER.area)
+        assertEquals(SettingsArea.HOME, SettingsCategory.HOME.area)
+        assertEquals(SettingsArea.HOME, SettingsCategory.LIBRARY.area)
+        assertEquals(SettingsArea.HOME, SettingsCategory.MEDIA_SELECTION.area)
+        assertEquals(SettingsArea.HOME, SettingsCategory.NAV_SOUNDS.area)
+        assertEquals(SettingsArea.SYSTEMS, SettingsCategory.PLEX.area)
+        assertEquals(SettingsArea.SYSTEMS, SettingsCategory.DLNA.area)
+        assertEquals(SettingsArea.SYSTEMS, SettingsCategory.FILES.area)
+        assertEquals(SettingsArea.TELEVISION, SettingsCategory.TVHEADEND.area)
+        assertEquals(SettingsArea.TELEVISION, SettingsCategory.IPTV.area)
+        assertEquals(SettingsArea.TELEVISION, SettingsCategory.LIVE_TV.area)
+        assertEquals(SettingsArea.STREAMING, SettingsCategory.YOUTUBE.area)
+        assertEquals(SettingsArea.STREAMING, SettingsCategory.SPOTIFY.area)
+        assertEquals(SettingsArea.STREAMING, SettingsCategory.TRAILERS.area)
+        assertEquals(SettingsArea.PICTURE, SettingsCategory.IMAGE.area)
+        assertEquals(SettingsArea.PICTURE, SettingsCategory.AUDIO.area)
+        assertEquals(SettingsArea.PICTURE, SettingsCategory.SUBTITLES.area)
+        assertEquals(SettingsArea.PICTURE, SettingsCategory.VISUALIZER.area)
+        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.PLAYBACK.area)
+        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.SEEK.area)
+        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.NEXT_UP.area)
+        assertEquals(SettingsArea.PLAYBACK, SettingsCategory.PHOTOS.area)
         assertEquals(SettingsArea.APP, SettingsCategory.NOTIFICATIONS.area)
         assertEquals(SettingsArea.NETWORK, SettingsCategory.COMPANION.area)
+    }
+
+    @Test fun sourceAreasHideSystemsThatAreNotSetUpAndKeepLiveTv() {
+        val empty = SettingsUiState(plexEnabled = false, youtubeEnabled = false)
+        assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.SYSTEMS, systemListed(SettingsCategory.PLEX, empty)))
+        val plex = empty.copy(plexEnabled = true, plexConfigured = true)
+        assertTrue(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.SYSTEMS, systemListed(SettingsCategory.PLEX, plex)))
+        assertTrue(showsInAreaIndex(SettingsCategory.LIVE_TV, SettingsArea.TELEVISION, listed = false))
+        assertFalse(showsInAreaIndex(SettingsCategory.IPTV, SettingsArea.TELEVISION, listed = false))
+        assertFalse(showsInAreaIndex(SettingsCategory.YOUTUBE, SettingsArea.STREAMING, listed = false))
+        assertTrue(showsInAreaIndex(SettingsCategory.APPEARANCE, SettingsArea.START, listed = false))
+        assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.STREAMING, listed = true))
+        assertEquals(
+            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.TRAILERS, MediaSystem.FILES),
+            MediaSystem.addOrder,
+        )
+    }
+
+    @Test fun backFromAnAddedSystemReturnsToTheLogoCatalogThenTheArea() {
+        val fromPage = SettingsHubNav(page = SettingsCategory.PLEX, addingSystems = true, returnToAdd = true).pop()!!
+        assertNull(fromPage.page)
+        assertTrue(fromPage.addingSystems)
+        assertFalse(fromPage.search)
+        assertFalse(fromPage.areaMenu)
+        val fromCatalog = fromPage.pop()!!
+        assertFalse(fromCatalog.addingSystems)
+        assertFalse(fromCatalog.areaMenu)
+        assertTrue(fromCatalog.pop()!!.areaMenu)
     }
 
     @Test fun backFromEveryPageReturnsToTheAreaIndex() {

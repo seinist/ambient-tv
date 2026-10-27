@@ -1750,6 +1750,7 @@ private fun AmbientTvApp(
                             onSetupPlex = { setupSource("network") },
                             onSetupJellyfin = { setupSource("jellyfin") },
                             onSetupEmby = { setupSource("emby") },
+                            onSetupDlna = { setupSource("dlna") },
                             onSetupTvheadend = { setupSource("tvheadend") },
                             onSetupIptv = { setupSource("iptv") },
                             onUseYouTubeWithoutLogin = {

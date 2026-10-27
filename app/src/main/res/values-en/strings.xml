@@ -523,7 +523,7 @@
     <string name="settings_library_title">Library</string>
     <string name="settings_advanced_title">Advanced</string>
     <string name="settings_advanced_developer_pointer">Developer options moved</string>
-    <string name="settings_advanced_developer_pointer_body">The Spotify client ID is under Media sources &amp; accounts › Spotify › Spotify account.</string>
+    <string name="settings_advanced_developer_pointer_body">The Spotify client ID is under Streaming › Spotify › Spotify account.</string>
     <string name="settings_advanced_open_spotify_developer">Open Spotify › Spotify account</string>
     <string name="settings_tvh_title">TVHeadend</string>
     <string name="settings_tvh_enable">Enable TVHeadend</string>
@@ -915,7 +915,7 @@
     <string name="spotify_visual_spectrum">Spectrum</string>
     <string name="player_stop">Stop</string>
     <string name="player_exit_fullscreen">Minimize (keep playing)</string>
-    <string name="spotify_auth_client_id_missing">A Spotify client ID is needed to sign in. Create your own (see the Spotify guide in the README) and enter it under Media sources &amp; accounts › Spotify › Spotify account in Settings.</string>
+    <string name="spotify_auth_client_id_missing">A Spotify client ID is needed to sign in. Create your own (see the Spotify guide in the README) and enter it under Streaming › Spotify › Spotify account in Settings.</string>
     <string name="spotify_auth_cancelled">Spotify sign-in was cancelled: %1$s</string>
     <string name="spotify_auth_state_mismatch">Spotify OAuth state does not match.</string>
     <string name="spotify_auth_code_missing">Spotify did not return an authorization code.</string>
@@ -1004,7 +1004,7 @@
     <string name="tvh_test_vpn">The WireGuard tunnel for TVHeadend failed: %1$s</string>
     <string name="tvh_test_permission">Access to the local network is not allowed (Android permission).</string>
     <string name="tvh_test_other">Test failed: %1$s</string>
-    <string name="settings_spotify_client_missing_build">A Spotify client ID is required to sign in. Create your own (see the Spotify guide in the README) and enter it under Media sources &amp; accounts › Spotify › Spotify account.</string>
+    <string name="settings_spotify_client_missing_build">A Spotify client ID is required to sign in. Create your own (see the Spotify guide in the README) and enter it under Streaming › Spotify › Spotify account.</string>
     <string name="settings_spotify_client_override_active">Your own Spotify client ID is in use.</string>
     <string name="settings_spotify_client_override_hint">Required to sign in, free at developer.spotify.com.</string>
     <string name="settings_submenu_items">Submenu items</string>
@@ -1314,9 +1314,13 @@
     <string name="player_sleep_input_summary">After %1$d min without input</string>
     <string name="player_sleep_input_hint">Any key press restarts it.</string>
     <string name="player_sleep_action_hint">Stops playback, not the TV.</string>
-    <string name="settings_area_start">Interface &amp; controls</string>
-    <string name="settings_area_systems">Media sources &amp; accounts</string>
-    <string name="settings_area_playback">Playback</string>
+    <string name="settings_area_start">Appearance</string>
+    <string name="settings_area_home">Home screen</string>
+    <string name="settings_area_systems">Media servers</string>
+    <string name="settings_area_television">Television</string>
+    <string name="settings_area_streaming">Streaming</string>
+    <string name="settings_area_picture">Picture &amp; sound</string>
+    <string name="settings_area_playback">Player</string>
     <string name="settings_area_app">App &amp; data</string>
     <string name="settings_page_home_hint">Home rows, recently watched channels and row order</string>
     <string name="settings_page_media_selection_hint">What happens when a media card is selected</string>
@@ -1358,6 +1362,8 @@
     <string name="settings_source_guest">Available without sign-in</string>
     <string name="settings_source_check">Check sign-in when opened</string>
     <string name="settings_add_system">Add service</string>
+    <string name="settings_add_system_hint">Choose a system that is not set up yet.</string>
+    <string name="settings_add_system_empty">Every system is already set up.</string>
     <string name="settings_actions_immediate">Changes are saved immediately. Addresses, ports and sign-in data are saved when you leave the page.</string>
     <string name="settings_defaults_hint">Applies from the next playback.</string>
     <string name="settings_audio_shared">The TV, HDMI and headphones profiles apply to every player and show only the options that fit.</string>

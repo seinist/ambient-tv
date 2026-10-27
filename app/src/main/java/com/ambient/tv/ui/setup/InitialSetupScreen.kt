@@ -37,6 +37,7 @@ fun InitialSetupScreen(
     onSetupPlex: () -> Unit,
     onSetupJellyfin: () -> Unit,
     onSetupEmby: () -> Unit,
+    onSetupDlna: () -> Unit,
     onSetupTvheadend: () -> Unit,
     onSetupIptv: () -> Unit,
     onUseYouTubeWithoutLogin: () -> Unit,
@@ -90,7 +91,7 @@ fun InitialSetupScreen(
                 selected = true, fillWidth = true)
             BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val columns = when { maxWidth >= 800.dp -> 3; maxWidth >= 500.dp -> 2; else -> 1 }
-                val systems = listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.TRAILERS, MediaSystem.FILES)
+                val systems = MediaSystem.addOrder
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     systems.chunked(columns).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -101,11 +102,11 @@ fun InitialSetupScreen(
                                         MediaSystem.PLEX -> onSetupPlex()
                                         MediaSystem.JELLYFIN -> onSetupJellyfin()
                                         MediaSystem.EMBY -> onSetupEmby()
+                                        MediaSystem.DLNA -> onSetupDlna()
                                         MediaSystem.TVHEADEND -> onSetupTvheadend()
                                         MediaSystem.IPTV -> onSetupIptv()
                                         MediaSystem.YOUTUBE -> youtubeStep = true
                                         MediaSystem.SPOTIFY -> onSetupSpotify()
-                                        MediaSystem.DLNA -> onOpenSettings()
                                         MediaSystem.TRAILERS -> onSetupTrailers()
                                         MediaSystem.FILES -> onUseFiles()
                                     }

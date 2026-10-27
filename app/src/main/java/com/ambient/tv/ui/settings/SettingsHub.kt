@@ -98,6 +98,10 @@ internal fun SettingsHub(
     var returnToSearch by rememberSaveable { mutableStateOf(false) }
     var lastPage by rememberSaveable { mutableStateOf(initialPage) }
     var areaMenu by rememberSaveable { mutableStateOf(false) }
+    var addingSystems by rememberSaveable { mutableStateOf(false) }
+    var returnToAdd by rememberSaveable { mutableStateOf(false) }
+    var addOriginAreaName by rememberSaveable { mutableStateOf<String?>(null) }
+    var returningFromAdd by remember { mutableStateOf(false) }
     var pendingExit by remember { mutableStateOf<(() -> Unit)?>(null) }
     OperationFeedbackScope(viewModel.feedback, "settings")
     OperationFeedbackScope(viewModel.feedback, viewModel.feedbackScope(page), pendingExit == null)
@@ -110,6 +114,7 @@ internal fun SettingsHub(
     DisposableEffect(companionVm) { onDispose { companionVm.manager.settingsDirty = false; companionVm.manager.saveSettingsBeforeTransfer = null } }
     val areaFocus = remember { SettingsArea.entries.associateWith { FocusRequester() } }
     val pageFocus = remember { SettingsCategory.entries.associateWith { FocusRequester() } }
+    val addRowFocus = remember { FocusRequester() }
     val searchFocus = remember { FocusRequester() }
     val searchButtonFocus = remember { FocusRequester() }
     val focusedRect = remember { FocusedRectProbe() }
@@ -136,7 +141,11 @@ internal fun SettingsHub(
         if (showAreaTabs) areaTabsState.animateScrollToItem(area.ordinal)
     }
     val fade = remember { Animatable(1f) }
-    val navigationKey = page?.name ?: if (search) "search" else "area-${area.name}"
+    val navigationKey = page?.name ?: when {
+        search -> "search"
+        addingSystems -> "add-${area.name}"
+        else -> "area-${area.name}"
+    }
     var panelHasFocus by remember { mutableStateOf(false) }
     var panelIsFocused by remember { mutableStateOf(false) }
     var settlingPageFocus by remember { mutableStateOf(initialPage != null && !handheld) }
@@ -153,6 +162,8 @@ internal fun SettingsHub(
         search = search,
         returnToSearch = returnToSearch,
         areaMenu = handheld || areaMenu,
+        addingSystems = addingSystems,
+        returnToAdd = returnToAdd,
     )
     fun applyNav(next: SettingsHubNav) {
         if (page != null && next.page == null) {
@@ -162,9 +173,12 @@ internal fun SettingsHub(
         }
         // Search was opened from its header chip; leaving it lands there again.
         if (search && !next.search && next.page == null) returningFromSearch = true
+        if (addingSystems && !next.addingSystems && next.page == null) returningFromAdd = true
         page = next.page
         search = next.search
         returnToSearch = next.returnToSearch
+        addingSystems = next.addingSystems
+        returnToAdd = next.returnToAdd
         areaMenu = next.areaMenu
         if (!next.search) query = ""
     }
@@ -181,7 +195,13 @@ internal fun SettingsHub(
             return
         }
         val next = navState().pop()
-        if (next == null) requestExit(onBack) else applyNav(next)
+        if (next == null) requestExit(onBack) else {
+            if (next.addingSystems && next.page == null) {
+                addOriginAreaName?.let { name -> runCatching { SettingsArea.valueOf(name) }.getOrNull()?.let { area = it } }
+            }
+            if (!next.addingSystems) addOriginAreaName = null
+            applyNav(next)
+        }
     }
     fun dismissExitDialog() {
         pendingExit = null
@@ -203,11 +223,30 @@ internal fun SettingsHub(
         }
         searchLandingQuery = query.takeIf { search && it.isNotBlank() }
         returnToSearch = search
+        returnToAdd = addingSystems && !search
+        if (returnToAdd && addOriginAreaName == null) addOriginAreaName = area.name
+        if (!returnToAdd) {
+            addingSystems = false
+            addOriginAreaName = null
+        }
         area = resolved.area
         settlingPageFocus = true
         page = resolved
         lastPage = resolved
         areaMenu = false
+    }
+    fun openAddCatalog() {
+        linkedPages.clear()
+        returningLink = null
+        addOriginAreaName = area.name
+        page = null
+        search = false
+        returnToSearch = false
+        addingSystems = true
+        returnToAdd = false
+        areaMenu = false
+        returningFromPage = false
+        settlingPageFocus = false
     }
     fun selectArea(target: SettingsArea) {
         linkedPages.clear()
@@ -215,6 +254,9 @@ internal fun SettingsHub(
         area = target
         search = false
         returnToSearch = false
+        addingSystems = false
+        returnToAdd = false
+        addOriginAreaName = null
         areaMenu = false
         // Always land on the area index, even with a single configured system: jumping straight
         // into that system's page (formerly SETTINGS_035) hid the list of other sources.
@@ -290,26 +332,28 @@ internal fun SettingsHub(
             if (category == SettingsCategory.SPOTIFY) append(" advanced developer client id entwickler")
         }
         if (search) settingsSearchMatches(query, haystack)
-        else category.area == area && (area != SettingsArea.SYSTEMS || systemListed(category, state))
+        else showsInAreaIndex(category, area, systemListed(category, state))
     }.sortedBy { (category, _, _) ->
-        if (!search && area == SettingsArea.NETWORK) listOf(SettingsCategory.COMPANION, SettingsCategory.RECEIVER, SettingsCategory.WIREGUARD, SettingsCategory.WAKE).indexOf(category)
-        else if (category.area == SettingsArea.SYSTEMS && sourceConfigured(category, state)) 0 else 1
+        if (search) {
+            if (category.isMediaSource() && sourceConfigured(category, state)) 0 else 1
+        } else category.ordinal
     }
     val visibleEntries = entries
-    // Systems that are not set up yet are offered as setup cards (like the initial setup) below.
-    val addableSystems = if (!search && area == SettingsArea.SYSTEMS) {
-        SettingsCategory.entries.filter { it.area == SettingsArea.SYSTEMS && !systemListed(it, state) && settingsSystem(it) != null }
-    } else emptyList()
+    // One logo catalog for every source area. Configured systems stay on their own area index.
+    val addableSystems = com.ambient.tv.ui.common.MediaSystem.addOrder.mapNotNull { system ->
+        SettingsCategory.entries.firstOrNull { settingsSystem(it) == system }
+    }.filter { !systemListed(it, state) }
+    val showsAddRow = !search && !addingSystems && area.groupsMediaSources()
 
-    // LazyColumn index of a category's row, or of the "add service" card row it sits in
-    // (list rows, optional empty hint, section title, then cards in rows of cardColumns).
+    // LazyColumn index of a category row, or of its card row on the logo catalog.
     val cardColumns = if (handheld) 1 else 2
     fun indexOfPage(category: SettingsCategory?): Int {
-        val row = visibleEntries.indexOfFirst { it.first == category }
-        if (row >= 0) return row
-        val card = addableSystems.indexOf(category)
-        if (card < 0) return -1
-        return visibleEntries.size + (if (visibleEntries.isEmpty()) 1 else 0) + 1 + card / cardColumns
+        if (addingSystems) {
+            val card = addableSystems.indexOf(category)
+            if (card < 0) return -1
+            return card / cardColumns
+        }
+        return visibleEntries.indexOfFirst { it.first == category }
     }
     // Back/Left from a page lands on the row or card it was opened from.
     suspend fun focusLastPage(): Boolean {
@@ -344,7 +388,7 @@ internal fun SettingsHub(
     }
     BackHandler { goBack() }
     // A sub-page (or the search) shows a visible Back; the Settings start page leaves with the Back key.
-    val showBack = page != null || search
+    val showBack = page != null || search || addingSystems
 
     LaunchedEffect(navigationKey, areaMenu) {
         if (handheld) return@LaunchedEffect
@@ -355,6 +399,16 @@ internal fun SettingsHub(
         when {
             areaMenu -> {
                 runCatching { areaFocus.getValue(area).requestFocus() }
+            }
+            addingSystems -> {
+                if (returningFromPage) {
+                    returningFromPage = false
+                    if (focusLastPage()) return@LaunchedEffect
+                }
+                val first = addableSystems.firstOrNull()
+                if (first == null || !runCatching { pageFocus.getValue(first).requestFocus() }.getOrDefault(false)) {
+                    runCatching { contentFocus.requestFocus() }
+                }
             }
             search -> {
                 if (returningFromPage) {
@@ -369,14 +423,22 @@ internal fun SettingsHub(
                     runCatching { areaFocus.getValue(area).requestFocus() }
                 }
             }
+            returningFromAdd -> {
+                returningFromAdd = false
+                if (showsAddRow) indexState.scrollToItem(visibleEntries.size)
+                if (!(showsAddRow && runCatching { addRowFocus.requestFocus() }.getOrDefault(false))) {
+                    runCatching { areaFocus.getValue(area).requestFocus() }
+                }
+            }
             lastPage?.area == area -> {
                 if (focusLastPage()) return@LaunchedEffect
                 runCatching { areaFocus.getValue(area).requestFocus() }
             }
             else -> {
                 indexState.scrollToItem(0)
-                val first = visibleEntries.firstOrNull()?.first ?: addableSystems.firstOrNull()
-                if (first == null || !runCatching { pageFocus.getValue(first).requestFocus() }.getOrDefault(false)) {
+                val first = visibleEntries.firstOrNull()?.first
+                val focused = first != null && runCatching { pageFocus.getValue(first).requestFocus() }.getOrDefault(false)
+                if (!focused && !(showsAddRow && runCatching { addRowFocus.requestFocus() }.getOrDefault(false))) {
                     runCatching { areaFocus.getValue(area).requestFocus() }
                 }
             }
@@ -388,7 +450,8 @@ internal fun SettingsHub(
             runCatching { searchFocus.requestFocus() }
             return
         }
-        linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false
+        linkedPages.clear(); returningLink = null; page = null; search = true; addingSystems = false
+        returnToAdd = false; addOriginAreaName = null; returningFromPage = false
     }
 
     Column(
@@ -419,8 +482,8 @@ internal fun SettingsHub(
                 if (showBack) androidx.compose.material3.IconButton(onClick = ::goBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
                 } else Icon(Icons.Filled.Settings, null, Modifier.padding(12.dp))
-                Text(page?.let { settingsCategoryTitle(it) } ?: stringResource(R.string.settings_title), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 2)
-                androidx.compose.material3.IconButton(onClick = { linkedPages.clear(); returningLink = null; page = null; search = true; returningFromPage = false }) { Icon(Icons.Default.Search, stringResource(R.string.settings_search)) }
+                Text(page?.let { settingsCategoryTitle(it) } ?: stringResource(if (addingSystems) R.string.settings_add_system else R.string.settings_title), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                androidx.compose.material3.IconButton(onClick = ::openSearch) { Icon(Icons.Default.Search, stringResource(R.string.settings_search)) }
             }
         } else {
             Row(
@@ -438,7 +501,7 @@ internal fun SettingsHub(
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
-                    Text(listOfNotNull(stringResource(area.titleRes), page?.let { settingsCategoryTitle(it) }).joinToString(" › "), style = MaterialTheme.typography.bodySmall)
+                    Text(listOfNotNull(stringResource(area.titleRes), if (addingSystems && page == null) stringResource(R.string.settings_add_system) else null, page?.let { settingsCategoryTitle(it) }).joinToString(" › "), style = MaterialTheme.typography.bodySmall)
                 }
                 if (showBack) TvChip(stringResource(R.string.back),
                     // Left from the leftmost header chip stays put.
@@ -450,7 +513,7 @@ internal fun SettingsHub(
                         !showBack && event.key == Key.DirectionLeft && event.type == KeyEventType.KeyDown
                     },
                     icon = Icons.Filled.Search, iconOnly = true) { openSearch() }
-                if (area == SettingsArea.SYSTEMS && page != SettingsCategory.NOTIFICATIONS) {
+                if (area.groupsMediaSources() && page != SettingsCategory.NOTIFICATIONS) {
                     TvChip(stringResource(R.string.notice_history), icon = Icons.Filled.Notifications, iconOnly = true) {
                         openPage(SettingsCategory.NOTIFICATIONS)
                     }
@@ -461,7 +524,7 @@ internal fun SettingsHub(
         if (pendingExit == null && state.statusMessage == null) operationFeedback?.let {
             OperationFeedbackContent(it, Modifier.fillMaxWidth())
         }
-        if (area == SettingsArea.SYSTEMS || area == SettingsArea.NETWORK) {
+        if (area.groupsMediaSources() || area == SettingsArea.NETWORK) {
             com.ambient.tv.ui.common.LocalNetworkPermissionSetting(onGranted = viewModel::refreshPageAfterPermissionGrant)
         }
         if (showAreaTabs) {
@@ -540,7 +603,7 @@ internal fun SettingsHub(
                 }
             }
             Column(Modifier.weight(1f).fillMaxHeight()
-                .then(if (showAreaTabs && !search) Modifier.pointerInput(area, swipeThreshold, layoutDirection) {
+                .then(if (showAreaTabs && !search && !addingSystems) Modifier.pointerInput(area, swipeThreshold, layoutDirection) {
                     var dragDistance = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { dragDistance = 0f },
@@ -595,7 +658,7 @@ internal fun SettingsHub(
                         onExit = {
                             when {
                                 requestedFocusDirection != FocusDirection.Left -> Unit
-                                page != null -> cancelFocusChange()
+                                page != null || addingSystems -> cancelFocusChange()
                                 else -> areaFocus.getValue(area).requestFocus()
                             }
                         }
@@ -613,7 +676,7 @@ internal fun SettingsHub(
                             return@onKeyEvent moved
                         }
                         if (event.key != Key.DirectionLeft) return@onKeyEvent false
-                        if (page == null) return@onKeyEvent false
+                        if (page == null && !addingSystems) return@onKeyEvent false
                         // On a page, Left only moves within the focused row; it never leaves the
                         // page (Back does that). onExit already blocks leaving the panel.
                         val before = focusedRect.rect()
@@ -638,31 +701,9 @@ internal fun SettingsHub(
                     val indexOverflow = indexState.canScrollForward || indexState.canScrollBackward
                     Box(Modifier.fillMaxSize()) {
                         LazyColumn(state = indexState, contentPadding = PaddingValues(0.dp).withTvFocusInsets(), modifier = panelModifier.wrapFocusDownToTop(indexState).padding(end = if (indexOverflow) 16.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(visibleEntries, key = { it.first.name }) { (category, title, hint) ->
-                                val summary = settingsPageSummary(category, state)
-                                val subtitle = listOfNotNull(summary, hint).map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n").ifBlank { null }
-                                SettingsHubRow(title, subtitle, category == lastPage && !panelHasFocus, Icons.Filled.ChevronRight,
-                                    modifier = Modifier.focusRequester(pageFocus.getValue(category)), onClick = { openPage(category) })
-                            }
-                            if (!search && area == SettingsArea.APP && onRequestAppExit != null) {
-                                item(key = "app-exit") {
-                                    SettingsHubRow(
-                                        title = stringResource(R.string.settings_exit_app_action),
-                                        subtitle = stringResource(R.string.settings_exit_app_hint),
-                                        selected = false,
-                                        icon = Icons.Filled.PowerSettingsNew,
-                                        onClick = onRequestAppExit,
-                                    )
-                                }
-                            }
-                            if (visibleEntries.isEmpty()) item { Text(stringResource(R.string.settings_search_empty)) }
-                            if (addableSystems.isNotEmpty()) {
-                                item(key = "add-systems-title") {
-                                    Text(
-                                        stringResource(R.string.settings_add_system),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
-                                    )
+                            if (addingSystems) {
+                                if (addableSystems.isEmpty()) {
+                                    item(key = "add-systems-empty") { Text(stringResource(R.string.settings_add_system_empty)) }
                                 }
                                 items(addableSystems.chunked(cardColumns), key = { row -> "add-" + row.joinToString { it.name } }) { row ->
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -675,6 +716,37 @@ internal fun SettingsHub(
                                             ) { openPage(category) }
                                         }
                                         if (row.size == 1 && !handheld) Spacer(Modifier.weight(1f))
+                                    }
+                                }
+                            } else {
+                                items(visibleEntries, key = { it.first.name }) { (category, title, hint) ->
+                                    val summary = settingsPageSummary(category, state)
+                                    val subtitle = listOfNotNull(summary, hint).map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString("\n").ifBlank { null }
+                                    SettingsHubRow(title, subtitle, category == lastPage && !panelHasFocus, Icons.Filled.ChevronRight,
+                                        modifier = Modifier.focusRequester(pageFocus.getValue(category)), onClick = { openPage(category) })
+                                }
+                                if (!search && area == SettingsArea.APP && onRequestAppExit != null) {
+                                    item(key = "app-exit") {
+                                        SettingsHubRow(
+                                            title = stringResource(R.string.settings_exit_app_action),
+                                            subtitle = stringResource(R.string.settings_exit_app_hint),
+                                            selected = false,
+                                            icon = Icons.Filled.PowerSettingsNew,
+                                            onClick = onRequestAppExit,
+                                        )
+                                    }
+                                }
+                                if (visibleEntries.isEmpty() && !showsAddRow) item { Text(stringResource(R.string.settings_search_empty)) }
+                                if (showsAddRow) {
+                                    item(key = "add-systems") {
+                                        SettingsHubRow(
+                                            title = stringResource(R.string.settings_add_system),
+                                            subtitle = stringResource(R.string.settings_add_system_hint),
+                                            selected = false,
+                                            icon = Icons.Filled.Add,
+                                            modifier = Modifier.focusRequester(addRowFocus),
+                                            onClick = ::openAddCatalog,
+                                        )
                                     }
                                 }
                             }
@@ -832,16 +904,20 @@ private fun HandheldSettingsExitSheet(
 }
 
 private fun areaIcon(area: SettingsArea): ImageVector = when (area) {
-    SettingsArea.START -> Icons.Filled.Home
+    SettingsArea.START -> Icons.Filled.Palette
+    SettingsArea.HOME -> Icons.Filled.Home
     SettingsArea.SYSTEMS -> Icons.Filled.Storage
-    SettingsArea.NETWORK -> Icons.Filled.SettingsEthernet
+    SettingsArea.TELEVISION -> Icons.Filled.LiveTv
+    SettingsArea.STREAMING -> Icons.Filled.SmartDisplay
+    SettingsArea.PICTURE -> Icons.Filled.Tune
     SettingsArea.PLAYBACK -> Icons.Filled.PlayArrow
+    SettingsArea.NETWORK -> Icons.Filled.SettingsEthernet
     SettingsArea.APP -> Icons.Filled.Info
 }
 
 /**
- * Systems & accounts lists only systems that are set up and signed in; the rest are offered as
- * add-system cards. The VPN page is infrastructure, so it is always listed.
+ * A media source is listed on its area once it can serve data. Everything else, including
+ * Live TV and WireGuard, stays on its area. The logo catalog offers the sources that are not listed.
  */
 internal fun systemListed(category: SettingsCategory, state: SettingsUiState): Boolean =
     category == SettingsCategory.WIREGUARD ||
@@ -868,11 +944,20 @@ internal fun settingsCategoryTitle(category: SettingsCategory): String =
         if (LocalHandheldUi.current) R.string.companion_connect_tv else R.string.companion_pair_phone,
     ) else settingsSystem(category)?.customName ?: stringResource(category.titleRes)
 
-/** Systems & accounts entries that are enabled and actually usable (can serve data / signed in). */
-internal fun usableConfiguredSystems(state: SettingsUiState): List<SettingsCategory> =
-    SettingsCategory.entries.filter { it.area == SettingsArea.SYSTEMS && sourceConfigured(it, state) }
+internal fun SettingsCategory.isMediaSource(): Boolean = settingsSystem(this) != null
 
-/** When exactly one system qualifies, the Systems area opens that page instead of the index. */
+/** A source area hides systems that are not set up yet. Live TV and every other page stay listed. */
+internal fun showsInAreaIndex(category: SettingsCategory, area: SettingsArea, listed: Boolean): Boolean {
+    if (category.area != area) return false
+    if (!area.groupsMediaSources() || !category.isMediaSource()) return true
+    return listed
+}
+
+/** Media sources that are enabled and can actually serve data, whichever area lists them. */
+internal fun usableConfiguredSystems(state: SettingsUiState): List<SettingsCategory> =
+    SettingsCategory.entries.filter { it.isMediaSource() && sourceConfigured(it, state) }
+
+/** The one media source that can serve data, when every other source cannot. */
 internal fun singleUsableConfiguredSystem(state: SettingsUiState): SettingsCategory? =
     usableConfiguredSystems(state).singleOrNull()
 
@@ -924,7 +1009,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
     if (category == SettingsCategory.WIREGUARD) {
         return state.wireGuardSummary.ifBlank { null }
     }
-    if (category.area == SettingsArea.SYSTEMS) {
+    if (category.isMediaSource()) {
         val enabled = when (category) {
             SettingsCategory.PLEX -> state.plexEnabled
             SettingsCategory.JELLYFIN -> state.jellyfinEnabled

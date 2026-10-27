@@ -64,7 +64,7 @@ class SettingsCopyTest {
             assertTrue(localized.getValue("tvh_deinterlace_media3_hint").contains("VLC"))
             assertTrue(localized.getValue("settings_spotify_client_missing_build").contains("Spotify ›"))
             assertTrue(localized.getValue("settings_spotify_client_missing_build")
-                .contains(localized.getValue("settings_area_systems")))
+                .contains(localized.getValue("settings_area_streaming")))
         }
     }
 

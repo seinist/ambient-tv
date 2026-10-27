@@ -81,6 +81,11 @@ enum class MediaSystem(
     companion object {
         private val brands = Regex(entries.mapNotNull { it.brand }.joinToString("|") { Regex.escape(it) })
 
+        /** Logo catalog on first launch and on Settings › Add system. */
+        val addOrder: List<MediaSystem> = listOf(
+            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, SPOTIFY, TRAILERS, FILES,
+        )
+
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND
             "smarttube" -> YOUTUBE

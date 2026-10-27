@@ -8,49 +8,57 @@ internal val LocalSettingsSearchLanding = staticCompositionLocalOf<String?> { nu
 
 internal enum class SettingsArea(val titleRes: Int) {
     START(R.string.settings_area_start),
+    HOME(R.string.settings_area_home),
     SYSTEMS(R.string.settings_area_systems),
-    NETWORK(R.string.settings_area_network),
+    TELEVISION(R.string.settings_area_television),
+    STREAMING(R.string.settings_area_streaming),
+    PICTURE(R.string.settings_area_picture),
     PLAYBACK(R.string.settings_area_playback),
+    NETWORK(R.string.settings_area_network),
     APP(R.string.settings_area_app),
 }
+
+/** Medienserver, Fernsehen and Streaming list only systems that are already set up. */
+internal fun SettingsArea.groupsMediaSources(): Boolean =
+    this == SettingsArea.SYSTEMS || this == SettingsArea.TELEVISION || this == SettingsArea.STREAMING
 
 /** Declaration order is the display order within each area. */
 internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, val hintRes: Int) {
     LANGUAGE(SettingsArea.START, R.string.settings_language_title, R.string.settings_page_language_hint),
     APPEARANCE(SettingsArea.START, R.string.settings_appearance_title, R.string.settings_page_appearance_hint),
     BACKGROUND(SettingsArea.START, R.string.settings_background_page_title, R.string.settings_page_background_hint),
-    HOME(SettingsArea.START, R.string.settings_home_rows_title, R.string.settings_page_home_hint),
-    LIBRARY(SettingsArea.START, R.string.settings_library_title, R.string.settings_page_library_hint),
+    HOME(SettingsArea.HOME, R.string.settings_home_rows_title, R.string.settings_page_home_hint),
+    LIBRARY(SettingsArea.HOME, R.string.settings_library_title, R.string.settings_page_library_hint),
     /** Media-card activation behavior (formerly titled Navigation). */
-    MEDIA_SELECTION(SettingsArea.START, R.string.settings_media_selection_title, R.string.settings_page_media_selection_hint),
+    MEDIA_SELECTION(SettingsArea.HOME, R.string.settings_media_selection_title, R.string.settings_page_media_selection_hint),
     SCREENSAVER(SettingsArea.START, R.string.settings_screensaver_title, R.string.settings_page_screensaver_hint),
-    NAV_SOUNDS(SettingsArea.START, R.string.settings_nav_sounds_title, R.string.settings_nav_sounds_page_hint),
+    NAV_SOUNDS(SettingsArea.HOME, R.string.settings_nav_sounds_title, R.string.settings_nav_sounds_page_hint),
     /** Plex system page (legacy enum name NETWORK kept as fromKey alias). */
     PLEX(SettingsArea.SYSTEMS, R.string.settings_network_title, R.string.settings_page_network_hint),
     JELLYFIN(SettingsArea.SYSTEMS, R.string.settings_jellyfin_title, R.string.settings_page_jellyfin_hint),
     EMBY(SettingsArea.SYSTEMS, R.string.settings_emby_title, R.string.settings_page_emby_hint),
-    TVHEADEND(SettingsArea.SYSTEMS, R.string.settings_tvh_title, R.string.settings_page_tvheadend_hint),
+    TVHEADEND(SettingsArea.TELEVISION, R.string.settings_tvh_title, R.string.settings_page_tvheadend_hint),
     DLNA(SettingsArea.SYSTEMS, R.string.dlna_title, R.string.settings_page_dlna_hint),
     FILES(SettingsArea.SYSTEMS, R.string.files_title, R.string.settings_page_files_hint),
-    YOUTUBE(SettingsArea.SYSTEMS, R.string.settings_youtube_group, R.string.settings_page_youtube_hint),
-    SPOTIFY(SettingsArea.SYSTEMS, R.string.settings_spotify_title, R.string.settings_page_spotify_hint),
-    TRAILERS(SettingsArea.SYSTEMS, R.string.trailers_title, R.string.trailers_setup_hint),
+    YOUTUBE(SettingsArea.STREAMING, R.string.settings_youtube_group, R.string.settings_page_youtube_hint),
+    SPOTIFY(SettingsArea.STREAMING, R.string.settings_spotify_title, R.string.settings_page_spotify_hint),
+    TRAILERS(SettingsArea.STREAMING, R.string.trailers_title, R.string.trailers_setup_hint),
     /** M3U playlists with XMLTV guides; offered as a setup card until a playlist is saved. */
-    IPTV(SettingsArea.SYSTEMS, R.string.iptv_title, R.string.iptv_settings_hint),
+    IPTV(SettingsArea.TELEVISION, R.string.iptv_title, R.string.iptv_settings_hint),
     COMPANION(SettingsArea.NETWORK, R.string.settings_network_devices, R.string.settings_companion_hint),
     RECEIVER(SettingsArea.NETWORK, R.string.settings_network_receiver, R.string.renderer_settings_hint),
     /** WireGuard tunnel page (legacy enum name VPN kept as fromKey alias). */
     WIREGUARD(SettingsArea.NETWORK, R.string.settings_vpn_title, R.string.settings_page_vpn_hint),
     WAKE(SettingsArea.NETWORK, R.string.settings_network_wake, R.string.settings_network_wake_hint),
     PLAYBACK(SettingsArea.PLAYBACK, R.string.settings_player_page_title, R.string.settings_page_playback_hint),
-    LIVE_TV(SettingsArea.PLAYBACK, R.string.settings_live_tv_title, R.string.settings_page_live_tv_hint),
-    IMAGE(SettingsArea.PLAYBACK, R.string.settings_hub_image, R.string.settings_page_image_hint),
-    AUDIO(SettingsArea.PLAYBACK, R.string.settings_hub_audio, R.string.settings_page_audio_hint),
-    SUBTITLES(SettingsArea.PLAYBACK, R.string.subtitle_policy_title, R.string.settings_page_subtitles_hint),
+    LIVE_TV(SettingsArea.TELEVISION, R.string.settings_live_tv_title, R.string.settings_page_live_tv_hint),
+    IMAGE(SettingsArea.PICTURE, R.string.settings_hub_image, R.string.settings_page_image_hint),
+    AUDIO(SettingsArea.PICTURE, R.string.settings_hub_audio, R.string.settings_page_audio_hint),
+    SUBTITLES(SettingsArea.PICTURE, R.string.subtitle_policy_title, R.string.settings_page_subtitles_hint),
     /** Seek jump distance. */
     SEEK(SettingsArea.PLAYBACK, R.string.settings_seek_page_title, R.string.settings_page_seek_hint),
     NEXT_UP(SettingsArea.PLAYBACK, R.string.settings_skipping_title, R.string.settings_page_next_up_hint),
-    VISUALIZER(SettingsArea.PLAYBACK, R.string.settings_audio_visualizer, R.string.settings_page_visualizer_hint),
+    VISUALIZER(SettingsArea.PICTURE, R.string.settings_audio_visualizer, R.string.settings_page_visualizer_hint),
     PHOTOS(SettingsArea.PLAYBACK, R.string.settings_photos_title, R.string.settings_page_photos_hint),
     NOTIFICATIONS(SettingsArea.APP, R.string.notice_history, R.string.notice_history_hint),
     TRANSFER(SettingsArea.APP, R.string.settings_companion_transfer, R.string.settings_companion_transfer_hint),
@@ -112,6 +120,7 @@ internal fun settingsSearchMatches(query: String, text: String): Boolean {
 
 /**
  * Hub stack, one Left/Back each: input page → area index → area rail → global Settings.
+ * A system opened from the logo catalog returns there before the area index.
  * The item that opened the next view stays selected and takes focus again on the way back.
  *
  * Directly opened pages also return to their parent area index.
@@ -121,6 +130,8 @@ internal data class SettingsHubNav(
     val search: Boolean = false,
     val returnToSearch: Boolean = false,
     val areaMenu: Boolean = false,
+    val addingSystems: Boolean = false,
+    val returnToAdd: Boolean = false,
 ) {
     fun pop(): SettingsHubNav? = when {
         page != null -> when {
@@ -128,10 +139,14 @@ internal data class SettingsHubNav(
                 page = null,
                 search = true,
                 areaMenu = false,
+                addingSystems = false,
+                returnToAdd = false,
             )
-            else -> copy(page = null, search = false, areaMenu = false)
+            returnToAdd -> copy(page = null, search = false, areaMenu = false, addingSystems = true)
+            else -> copy(page = null, search = false, areaMenu = false, addingSystems = false, returnToAdd = false)
         }
         search -> copy(search = false, returnToSearch = false, areaMenu = false)
+        addingSystems -> copy(addingSystems = false, returnToAdd = false, areaMenu = false)
         !areaMenu -> copy(areaMenu = true)
         else -> null
     }
