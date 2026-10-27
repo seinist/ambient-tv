@@ -33,6 +33,24 @@ class Media3RavuTest {
         }
     }
 
+    @Test fun zoomTranslatesToOnePassWithBothLuts() {
+        val source = media3RavuZoomSource(mpvFile("ravu_zoom_r3"))
+        assertNotNull(source)
+        val glsl = source!!.glsl
+        assertTrue(glsl.contains("vec4 ravuZoom() {"))
+        assertTrue(glsl.contains("vec2 pos = vTexSamplingCoord * uInputSize;"))
+        for (token in listOf("HOOKED", "texture(", "ravu_zoom_lut", "hook()")) assertFalse(token, token in glsl)
+        assertFalse(Regex("""mix\([^;]*(<|>=)""").containsMatchIn(glsl))
+        assertEquals(36, Regex("""lumaAtPos\(pos \+ vec2\(""").findAll(glsl).count())
+        assertEquals(10, Regex("""lutA\(""").findAll(glsl).count())
+        assertEquals(4, Regex("""lutB\(""").findAll(glsl).count())
+        assertEquals(45 to 2592, source.lut.width to source.lut.height)
+        assertEquals(18 to 2592, source.lutAr.width to source.lutAr.height)
+        assertEquals(45 * 2592 * 4, source.lut.values.size)
+        // The Lite translator still refuses Zoom and vice versa.
+        assertNull(media3RavuZoomSource(mpvFile("ravu_lite_r3")))
+    }
+
     @Test fun lutPacksIntoSixteenBitsPerWeight() {
         val lut = media3RavuSource(mpvFile("ravu_lite_r3"))!!.lut
         val planes = media3RavuLutPlanes(lut)
