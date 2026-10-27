@@ -14,6 +14,9 @@ Current features in the compendium:
 - [Files/NAS with WebDAV, SFTP and music tags](DOCUMENTATION.md#48-files)
 - [Sidecar and online subtitles](DOCUMENTATION.md#62-subtitles)
 - [Wake-on-LAN groups](DOCUMENTATION.md#53-servers--wake-on-lan)
+- [Clock](DOCUMENTATION.md#39-clock)
+- [Recordings and timers: edit, delete, artwork](DOCUMENTATION.md#43-tvheadend)
+- [Media3 GPU filters (MPV kernels, RAVU, NIS, grain, denoise)](DOCUMENTATION.md#74-vlc-and-media3-image-options)
 
 ## Other project notes (repo root)
 

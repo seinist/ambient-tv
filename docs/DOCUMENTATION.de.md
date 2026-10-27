@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](DOCUMENTATION.md) · **Deutsch**
 
-**App:** Ambient TV (`com.ambient.tv`) · Version `1.0-beta` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 60
+**App:** Ambient TV (`com.ambient.tv`) · Version `1.0-beta` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 72
 **Lizenz:** [CC0 1.0 Universal](../LICENSE)
 
 Dieses Kompendium beschreibt, was die App heute kann: jede Einstellungsseite, die Video- und Audio-Panels im Player und die Medienquellen. Die Bezeichnungen sind die echten Oberflächentexte aus `app/src/main/res/values*/`. Standardwerte stammen aus dem Code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Geplante Funktionen stehen hier nicht.
@@ -70,7 +70,7 @@ Die Einstellungen haben fünf Bereiche. Jeder Bereich listet seine Seiten; die S
 
 | Bereich | Seiten |
 | --- | --- |
-| **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne |
+| **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne · Uhr |
 | **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
 | **Geräte & Netzwerk** | Handy & Geräte · UPnP-Receiver · WireGuard / VPN · Server & Wake-on-LAN |
 | **Wiedergabe** | Standard-Player · Untertitel · Intros, Abspann und nächste Folge · Sprungweite & Wiedergabe · Bildprofile · Audioprofile · Audio-Visualisierung · Fotos |
@@ -123,6 +123,7 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | Hochauflösende Bilder | An / Aus | Aus | Schärfere Cover und Hintergründe; mehr Netz und Speicher. |
 | Poster pro Reihe | 4–12 | 8 | Rasterdichte. |
 | Listenzeilen auf dem Bildschirm | 4–10 | 7 | Listendichte. |
+| Filterleiste | An / Aus (Ansicht-Menü) | An | Filter und Sortierung als Leiste direkt über dem Inhalt in Mediathek, Live-TV-Programmführer, Trailern und SmartTube: Jeder Filter öffnet seine Werte am Platz, zweiwertige Filter sind Schalter, Zurücksetzen erscheint nur bei aktiven Filtern. Aus verschiebt Filter und Sortierung zurück ins Ansicht-Panel. |
 
 ### 3.5 Aussehen
 
@@ -142,7 +143,7 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | Wiedergabeleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Bewegungsglättung, schwere Hochskalierer, Deinterlace mit doppelter Rate. |
 | Prüfdauer für Bildaussetzer | Automatisch, 2, 5, 6, 10, 15, 30, 60 s | Automatisch (2–6 s) | Alle | Messfenster des MPV-/VLC-Filtertests. |
 | Wiedergabe prüfen | Aktion | — | Alle | Misst die Filterlast ohne Bild. |
-| Lichtstimmung über der Startseite | Ruhig · Lichtstreifen · Bildfarbe · Tiefenbewegung · Aurora · Kinolicht · Prisma · Dämmerung · Glut · Gezeiten · Fokus | Tiefenbewegung | Alle | Bewegter Look des Startseiten-Heros. Sparsam und reduzierte Effekte zeigen „Ruhig“. |
+| Lichtstimmung über der Startseite | Ruhig · Lichtstreifen · Bildfarbe · Tiefenbewegung · Aurora · Kinolicht · Prisma · Dämmerung · Glut · Gezeiten · Fokus · Mondlicht · Nebel · Kerzenschein · Sternstaub · Lichtspiel · Farbatem | Tiefenbewegung | Alle | Bewegter Look des Startseiten-Heros. Sparsam und reduzierte Effekte zeigen „Ruhig“. |
 | Stärke der Lichtstimmung | 0–100 % | 60 % | Alle | Stärke des Effekts. |
 | Ausbreitung des Lichtscheins | Sanft · Fokussiert · Breit | Sanft | Alle | Größe des Lichts. |
 | Home-Hintergrund auf allen Ansichten | An / Aus | Aus | Alle | Startseiten-Effekt auch hinter anderen Ansichten. Im Modus Sparsam aus. |
@@ -178,8 +179,7 @@ Standardmäßig aus. Zeigt geeignetes SDR-Video auf einem HDR-Display als HDR10.
 | Animationsqualität | Sparsam · Ausgewogen · Hoch | Ausgewogen | Shader-Darstellungen (Nordlicht, Fluid, Sterne, Seide). |
 | Foto-Quelle | Album / Bibliothek oder „Zuletzt hinzugefügte Fotos (alle Bibliotheken)“ | Zuletzt hinzugefügt | Darstellung „Fotos“. |
 | Uhr anzeigen | An / Aus | An | OLED zeigt eine kleine, gedimmte, wandernde Uhr. |
-| Datum anzeigen | An / Aus | An | Uhr an. |
-| 24-Stunden-Format | An / Aus | An | Uhr an. |
+| Datum anzeigen | An / Aus | An | Uhr an. Zeitformat und Datumsstil folgen der [Uhr](#39-uhr). |
 | Medien-Artwork verwenden | An / Aus | An | Darstellung „Medien“. Nutzt in dieser Sitzung bereits angezeigte Bilder. |
 | Artwork-Wechsel | Sekunden (10–300) | 30 s | Darstellung „Medien“ mit Artwork. |
 | Helligkeit | Prozent (20–100) | 70 % | Dimmt nur den Bildschirmschoner. |
@@ -192,6 +192,26 @@ Standardmäßig aus. Zeigt geeignetes SDR-Video auf einem HDR-Display als HDR10.
 | Menütöne | An / Aus | Aus | Alle | Leise Klicks bei Fokus und Aktivierung. Während der Wiedergabe stumm. Am TV bei Oberflächenleistung Sparsam stumm. Handys nutzen die Medienlautstärke. |
 | Lautstärke Menütöne | Regler 0–100 % | 30 % | Alle | Lautstärke der Klicks. |
 | Sound-Editor | Je Ereignis: Fokuswechsel, Bestätigen / Öffnen, Zurück / Schließen, Einschalten, Ausschalten, Wert ändern, Erfolgsmeldung, Fehlermeldung | Eingebautes Set | Alle | Vorlagen (Warm, Soft Glass, Deep Ambient, Weicher Sinus, Sanfte Glocke, Klangpolster, Minimal, Holzklang, Kristall, Sonar, Schwebend, Tape-Echo) oder Eigener Klang: Tonhöhe, Tonlänge, Anschwellen, Ausklingen, Wärme / Höhendämpfung, Verstimmung, Hall (Hallanteil, Raumgröße, Nachhallzeit), Echo (Echoanteil, Echoabstand, Echowiederholung), Ereignislautstärke. Export / Import als Datei. |
+
+### 3.9 Uhr
+
+Uhrzeit und Datum in den Seiten-Kopfzeilen (oben rechts, TV), schwebend über dem Startseiten-Hero und im Player. Ein gemeinsamer Takt springt zur vollen Minute bzw. Sekunde und folgt Zeit- und Zeitzonenwechseln sofort; die Player-Uhr läuft auch bei offenem OSD weiter. Die Seite hat eine Live-Vorschau.
+
+| Einstellung | Optionen / Werte | Standard | Beschreibung |
+| --- | --- | --- | --- |
+| Anzeigen | Aus · Nur Startseite · Überall (Kopfzeilen) · Überall + Player | Überall + Player | Wo die Uhr erscheint. |
+| Format | 24 Stunden · 12 Stunden (AM/PM) · Wie System | 24 Stunden | Gilt auch für den Bildschirmschoner. |
+| Sekunden | An / Aus | Aus | Aktualisiert jede Sekunde; kostet auf langsamen Fernsehern etwas Leistung. |
+| Datum | Aus · Kurz (Di., 27. Okt.) · Lang (Dienstag, 27. Oktober) · Numerisch (27.10.) | Kurz | Gilt auch für den Bildschirmschoner. |
+| Datum neben der Uhr | An / Aus | Aus | Eine Zeile statt Datum unter der Uhrzeit. |
+| Größe | Klein · Mittel · Groß | Mittel | |
+| Schrift | Wie Oberfläche · Leicht · Kräftig · Monospace | Wie Oberfläche | |
+| Farbe | Weiß · Akzentfarbe · Gedimmt | Weiß | |
+| Deckkraft | 40–100 % | 92 % | |
+| Schatten | Aus · Weich · Kräftig | Weich | |
+| Endzeit im Player | An / Aus | An | Zeigt „Endet um …“ neben der Restzeit. |
+
+Die Uhr-Einstellungen sind Teil der Einstellungssicherung; ältere Sicherungen übernehmen ihren bisherigen 24-Stunden-Schalter.
 
 ---
 
@@ -244,10 +264,14 @@ Beide Seiten haben dieselben Einstellungen.
 | Verbindung testen | Aktion | — | — | |
 | Untermenü-Einträge | Live · Programm · Aufnahmen · Timer | Alle | — | |
 | Live-TV auf der Startseite anzeigen | An / Aus | An | — | |
-| TVHeadend-Player | Automatisch · Media3 · VLC · MPV | Wie der globale Player, bis geändert | — | Standard-Renderer für Live-TV und Aufnahmen; auch im Player wechselbar. |
+| TVHeadend-Player | Media3 · VLC · MPV | Wie der globale Player, bis geändert | — | Standard-Renderer für Live-TV und Aufnahmen; auch im Player wechselbar. |
 | Deinterlacing | Aus · Automatisch · An | Aus | VLC, MPV | Media3 zeigt nur einen Hinweis. |
 | Verfahren | Siehe [7.5](#75-deinterlacing) | Automatisch | VLC, MPV | Für VLC und MPV getrennt gespeichert. |
 | Live-TV · Audio und Video nach Breite | Editor | — | Alle | Eigene Audio-/Video-Presets für Live-Sender je Quellbreite (geöffnet über *Standard-Player*). |
+
+**Aufnahmen und Timer** (TVHeadend, Jellyfin, Emby): Jede Zeile hat daneben eigene Buttons **Info**, **Bearbeiten** und **Löschen**; der Detaildialog bietet dasselbe. Löschen einer Aufnahme und Abbrechen eines Timers fragen nach (Fokus zuerst auf Zurück). Fehlgeschlagene Aufnahmen werden gelöscht, nicht abgebrochen. **Bearbeiten** setzt Vor- und Nachlauf; bei TVHeadend außerdem Priorität und bei Serien-Timern Aktiv/Pausiert (TVHeadend: 0 Minuten heißt Vorlauf des DVR-Profils). Plex-Timer sind nicht bearbeitbar.
+
+**Bilder:** Zeilen und Dialoge zeigen das eigene Bild der Aufnahme, sonst Fanart, die EPG-Sendung, aus der sie stammt, ein per exaktem Titel auf TMDb gefundenes Bild (nur mit TMDb-Schlüssel; ohne Server-Zugangsdaten geladen) und zuletzt das Senderlogo. Jellyfin/Emby nutzen zusätzlich Thumb- und Serienbilder.
 
 ### 4.4 SmartTube (YouTube)
 
@@ -361,7 +385,7 @@ Für alle Systeme gemeinsam, am Ende der Seite:
 
 | Einstellung | Optionen / Werte | Standard | Sichtbar wenn / Beschreibung |
 | --- | --- | --- | --- |
-| Standard-Player | Automatisch · Media3 · VLC · MPV | Automatisch | Standard-Player für Plex, Jellyfin, Emby und SmartTube. MPV ist gesperrt, wenn es auf dem Gerät fehlt (dann Media3). TVHeadend hat eine eigene Wahl. |
+| Standard-Player | Media3 · VLC · MPV | Media3 | Standard-Player für Plex, Jellyfin, Emby und SmartTube. Ein gespeichertes „Automatisch“ (war immer Media3) gilt als Media3. MPV ist gesperrt, wenn es auf dem Gerät fehlt (dann Media3). TVHeadend hat eine eigene Wahl. |
 | Gespeicherte Wiedergabeeinstellungen | Übersicht | — | Zeigt gespeicherte Audio-/Video-Presets je Titel und je Breite. |
 | Live-TV · Audio und Video nach Breite | Editor | — | Nur-Live-Presets je Quellbreite. |
 | Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. |
@@ -561,8 +585,12 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | VLC | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | Software-Filter. |
 | VLC | Bewegungsglättung (SVP) | Aus · Automatisch · Ausgewogen · Hohe Qualität | Aus | Siehe 7.2. |
 | Media3 | Bildverarbeitung | An / Aus | Aus | Bestätigtes SDR; nicht bei HDR, Dolby Vision oder DRM. Einschalten startet den Decoder an der Position neu. |
-| Media3 | Hochskalierung | Bilinear · Lanczos · 3 | Bilinear | Bildverarbeitung an, Hochskalierung. |
-| Media3 | Helligkeit · Kontrast · Sättigung | −20 … +20 | 0 | Bildverarbeitung an. Kein Gamma. |
+| Media3 | Hochskalierung | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV-Kernel (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Bildverarbeitung an, Hochskalierung. Bei Renderauflösung Panel/Auto rendert die Kette in der physischen HDMI-Auflösung, 1080p auf einem 4K-Panel wird also mit dem gewählten Scaler hochskaliert. MPV-Kernel folgen MPVs Definitionen (Blur, Fenster, Sigmoid-Upscaling); RAVU und NIS sind MPVs Shader, für Media3 übersetzt. Schwere Scaler fallen über 4K30-Ausgabe auf Catmull-Rom zurück. |
+| Media3 | Schärfen | Aus · Leicht · Mittel · Stark · CAS · Adaptiv | Aus | Unscharf-Maske, AMD CAS oder Adaptive Sharpen. NIS schärft selbst. |
+| Media3 | Debanding · Entrauschen · Filmkorn | Aus · Leicht · Mittel · Stark | Aus | Entrauschen läuft auf den Quellpixeln vor dem Debanding; Korn kommt nach dem Schärfen. |
+| Media3 | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | Bildverarbeitung an. |
+
+Kann die GPU die gewählten Media3-Effekte nicht ausführen (z. B. ohne highp-Präzision), startet die Wiedergabe einmal ohne sie neu, statt abzubrechen.
 
 ### 7.5 Deinterlacing
 
@@ -573,6 +601,8 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | Verfahren (VLC) | Auto · Discard · Mean · Blend · X · YADIF · Bob 2× · Linear 2× · YADIF 2× · Phosphor 2× · IVTC 3:2 | Auto | VLC | |
 
 Die Verfahren sind nach Aufwand gruppiert: automatisch, gering, ausgewogen, doppelte Bildrate, Spezialverfahren, Film. Im Modus Sparsam ersetzt die App ein leichteres Verfahren, ohne das gespeicherte zu ändern.
+
+Auf der NVIDIA SHIELD öffnet MPV Interlaced-Sender (1080i H.264, 576i MPEG-2) bei OpenGL- und Vulkan-Ausgabe einmal mit Software-Dekodierung neu: Der MediaCodec-Kopierpfad des Herstellers zeigt solche Streams schwarz oder mit nicht verwobenen Halbbildern und liefert dem automatischen Deinterlacing kein Interlace-Kennzeichen. Renderer und Filter bleiben.
 
 ### 7.6 Audio
 
@@ -722,7 +752,7 @@ Unter **App & Daten › Sicherung**:
 - **Ohne Zugangsdaten exportieren** (Standard): keine Plex-Tokens, kein TVHeadend-Passwort; Dateiquellen-Passwörter nur bei Export mit Zugangsdaten. Vor dem Speichern kann optional ein Passwort gesetzt werden (zweimal einzugeben, Anzeigen/Verbergen); leer lassen ergibt wie bisher eine unverschlüsselte JSON-Datei
 - **Mit Zugangsdaten exportieren:** nur bei Bedarf; die Datei wird mit einer Passphrase (mindestens 8 Zeichen, AES-256-GCM, PBKDF2) verschlüsselt, die beim Import abgefragt wird. Ohne Passphrase ist das Backup nicht wiederherstellbar. Die Übertragung per Companion bleibt TLS-geschützt.
 - Verschlüsselte Dateien sind ein kleiner JSON-Umschlag (`"format":"ambient-tv-encrypted-backup"`, Version 1, PBKDF2-HMAC-SHA256 mit 310 000 Iterationen, zufälliges 16-Byte-Salt und 12-Byte-IV, AES-256-GCM). Der Import erkennt unverschlüsselte und verschlüsselte Dateien automatisch und fragt nach dem Passwort; bei falschem Passwort oder beschädigter Datei erscheint ein Hinweis und der Dialog bleibt für einen neuen Versuch offen.
-- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **60**)
+- Import stellt Einstellungen und Serverprofile wieder her (Schema bis aktuell **72**)
 - IPTV-Wiedergabelisten sowie OpenSubtitles-Schlüssel und -Konto sind nur in Backups **mit Zugangsdaten** enthalten (Listen-Adressen enthalten oft das Anbieterkonto); ein Backup ohne Zugangsdaten lässt die vorhandenen auf dem Gerät unverändert. Timeshift-Größe, Timeshift-/Direktaufnahme-Schalter (ab Schema 59) und Erinnerungs-Vorlauf werden immer gesichert, geplante Erinnerungen nicht.
 - Dateiquellen und WOL werden gesichert; **lokale Ordner-Berechtigungen (SAF) sind nicht übertragbar** und müssen auf dem neuen Gerät erneut erteilt werden
 - OAuth-Sitzungen und Gerätekennungen sind nicht als „übertragbare Anmeldung“ gedacht – Konten ggf. neu anmelden

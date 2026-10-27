@@ -68,7 +68,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 
 ### 📚 Quellen
 - **Plex · Jellyfin · Emby** – Mediatheken, Home-Reihen, Suche, Titelmusik
-- **TVHeadend** – Live-TV, EPG, Aufnahmen, Timer
+- **TVHeadend** – Live-TV, EPG, Aufnahmen, Timer; Aufnahmen und Timer bearbeiten (Vor-/Nachlauf, Priorität) und löschen, Bilder aus EPG, TMDb oder Senderlogo
 - **IPTV** – M3U-Wiedergabelisten mit XMLTV-Programmführer
 - **SmartTube** – YouTube-Feeds, **SponsorBlock**
 - **Spotify** – Connect-Empfänger + native Wiedergabe (librespot)
@@ -97,7 +97,8 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 ### 🎨 Bild
 - MPV-**Scaler** + GPU-Shader-**Upscaler**: NNEDI3, RAVU, FSRCNNX, ArtCNN, Anime4K, NVIDIA NIS, AMD FSR
 - **Debanding, Schärfen, Entrauschen**, HDR-Tone-Mapping
-- Bildoptionen für **VLC** und **Media3**
+- **Media3-GPU-Filter** – MPVs Kernel (EWA Lanczos, Robidoux, Splines, …), RAVU, NVIDIA NIS, FSR, CAS/Adaptive Sharpen, Debanding, Entrauschen, Filmkorn, auf 4K-Panels in 4K gerendert
+- Bildoptionen für **VLC**
 
 </td>
 <td valign="top">
@@ -124,8 +125,10 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 ### 📱 Geräte & Extras
 - **TV- (D-Pad/Sidebar)** und **Handy-Oberfläche (Touch)** in einer APK
 - **Handy ↔ TV koppeln** – Fernbedienung, Wiedergabe senden, Konten übertragen
+- **Uhr** in den Kopfzeilen, auf der Startseite und im Player (Format, Datum, Aussehen)
+- **Lichtstimmungen** über der Startseite, **Filterleiste** über Mediatheken, Programmführer, Trailern und YouTube
 - **Leistungsmodus** Auto / Ausgewogen / Sparsam, Bildschirmschoner, Startbildschirm-Kanäle
-- **Einstellungs-Backup** (Schema 57, optional verschlüsselt) · DE/EN UI
+- **Einstellungs-Backup** (Schema 72, optional verschlüsselt) · DE/EN UI
 
 </td>
 </tr>

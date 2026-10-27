@@ -68,7 +68,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 
 ### 📚 Sources
 - **Plex · Jellyfin · Emby** — libraries, Home rows, search, theme music
-- **TVHeadend** — live TV, EPG, recordings, timers
+- **TVHeadend** — live TV, EPG, recordings, timers; edit (padding, priority) and delete recordings and timers, artwork from the guide, TMDb or the channel logo
 - **IPTV** – M3U playlists with an XMLTV programme guide
 - **SmartTube** — YouTube feeds, **SponsorBlock**
 - **Spotify** — Connect receiver + native playback (librespot)
@@ -97,7 +97,8 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 ### 🎨 Picture
 - MPV **scalers** + GPU shader **upscalers**: NNEDI3, RAVU, FSRCNNX, ArtCNN, Anime4K, NVIDIA NIS, AMD FSR
 - **Debanding, sharpening, denoise**, HDR tone mapping
-- Image options for **VLC** and **Media3**
+- **Media3 GPU filters** — MPV's kernels (EWA Lanczos, Robidoux, Splines, …), RAVU, NVIDIA NIS, FSR, CAS/Adaptive Sharpen, deband, denoise, film grain, rendered at 4K on 4K panels
+- Image options for **VLC**
 
 </td>
 <td valign="top">
@@ -124,8 +125,10 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 ### 📱 Devices & extras
 - **TV (D-pad / sidebar)** and **phone (touch)** UI in one APK
 - **Phone ↔ TV pairing** — remote, send playback, transfer accounts
+- **Clock** in page headers, on Home and in the player (format, date, look)
+- **Light moods** above Home, **filter bar** above libraries, guide, trailers and YouTube
 - **Performance modes** Auto / Balanced / Low, screensaver, home-screen channels
-- **Settings backup** (schema 60, optionally encrypted) · DE/EN UI
+- **Settings backup** (schema 72, optionally encrypted) · DE/EN UI
 
 </td>
 </tr>

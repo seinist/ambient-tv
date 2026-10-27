@@ -2,7 +2,7 @@
 
 **Languages:** **English** · [Deutsch](DOCUMENTATION.de.md)
 
-**App:** Ambient TV (`com.ambient.tv`) · version `1.0-beta` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 60
+**App:** Ambient TV (`com.ambient.tv`) · version `1.0-beta` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 72
 **License:** [CC0 1.0 Universal](../LICENSE)
 
 This compendium lists what the app does today: every settings page, the player's Video and Audio panels, and the media sources. Labels are the real UI texts from `app/src/main/res/values*/`. Defaults are read from the code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Nothing here is planned work.
@@ -70,7 +70,7 @@ Settings has five areas. Each area lists its pages; the settings search finds pa
 
 | Area | Pages |
 | --- | --- |
-| **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds |
+| **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock |
 | **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailers · DLNA · Files (configured systems first, then "add" entries) |
 | **Devices & network** | Phone & devices · UPnP receiver · WireGuard / VPN · Servers & Wake-on-LAN |
 | **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & playback · Picture profiles · Audio profiles · Audio visualization · Photos |
@@ -123,6 +123,7 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 | High-resolution images | On / Off | Off | Sharper covers and backdrops; more network and storage. |
 | Posters per row | 4–12 | 8 | Grid density. |
 | List rows on screen | 4–10 | 7 | List density. |
+| Filter bar | On / Off (View menu) | On | Filters and sort as a bar directly above the content in Library, Live TV guide, Trailers and SmartTube: each filter opens its values in place, two-value filters are switches, Reset appears only with active filters. Off moves filters and sort back into the View panel. |
 
 ### 3.5 Look & feel
 
@@ -142,7 +143,7 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 | Playback performance | Auto · Balanced · Maximum performance · Low | Auto | All | Motion smoothing, heavy upscalers, double-rate deinterlace. |
 | Frame drop test duration | Automatic, 2, 5, 6, 10, 15, 30, 60 s | Automatic (2–6 s) | All | Window of the MPV/VLC filter test. |
 | Check playback | Action | — | All | Measures filter load off-screen. |
-| Light effect above Home | Quiet · Light sweep · Artwork color · Depth motion · Aurora · Cinema light · Prism · Dusk · Ember · Tide · Focus | Depth motion | All | Moving look of the Home hero. Low mode and reduced effects show "Quiet". |
+| Light effect above Home | Quiet · Light sweep · Artwork color · Depth motion · Aurora · Cinema light · Prism · Dusk · Ember · Tide · Focus · Moonlight · Mist · Candlelight · Stardust · Projector · Color breath | Depth motion | All | Moving look of the Home hero. Low mode and reduced effects show "Quiet". |
 | Light intensity | 0–100 % | 60 % | All | Strength of the hero effect. |
 | Light spread | Soft · Focused · Wide | Soft | All | Size of the light. |
 | Home background on all screens | On / Off | Off | All | Home effect behind other screens. Off in Low mode. |
@@ -178,8 +179,7 @@ Off by default. Shows eligible SDR video as HDR10 on an HDR display. Does not cr
 | Animation quality | Economy · Balanced · High | Balanced | Shader styles (Aurora, Fluid, Starfield, Silk). |
 | Photo source | Album / library, or "Recently added photos (all libraries)" | Recently added | Style "Photos". |
 | Show clock | On / Off | On | OLED shows a small dimmed moving clock. |
-| Show date | On / Off | On | Clock on. |
-| 24-hour clock | On / Off | On | Clock on. |
+| Show date | On / Off | On | Clock on. Time format and date style follow [Clock](#39-clock). |
 | Use media artwork | On / Off | On | Style "Media". Uses artwork already shown in this session. |
 | Artwork change | Seconds (10–300) | 30 s | Style "Media" with artwork. |
 | Brightness | Percent (20–100) | 70 % | Dims only the screensaver. |
@@ -192,6 +192,26 @@ Off by default. Shows eligible SDR video as HDR10 on an HDR display. Does not cr
 | Menu sounds | On / Off | Off | All | Soft clicks on focus and activation. Silent during playback. TV menu sounds stay muted with interface performance Low. Phones use media volume. |
 | Menu sound volume | Slider 0–100 % | 30 % | All | Loudness of the clicks. |
 | Sound editor | Per event: Focus movement, Confirm / open, Back / close, Switch on, Switch off, Change value, Success notification, Error notification | Built-in set | All | Presets (Warm, Soft Glass, Deep Ambient, Soft sine, Soft bell, Ambient pad, Minimal, Wood, Crystal, Sonar, Airy, Tape echo) or Custom: pitch, tone length, attack, release, warmth, detune, reverb (amount, room, tail), echo (amount, delay, feedback), event volume. Export / import as file. |
+
+### 3.9 Clock
+
+Time and date in the page headers (top right, TV), floating above the Home hero and in the player. One shared tick jumps to the full minute or second and follows time and time-zone changes at once; the player clock keeps running while the OSD is open. The page has a live preview.
+
+| Setting | Options / values | Default | Description |
+| --- | --- | --- | --- |
+| Show | Off · Home screen only · Everywhere (headers) · Everywhere + player | Everywhere + player | Where the clock appears. |
+| Format | 24-hour · 12-hour (AM/PM) · Like the system | 24-hour | Also used by the screensaver. |
+| Seconds | On / Off | Off | Updates every second; costs a little performance on slower TVs. |
+| Date | Off · Short (Tue, Oct 27) · Long (Tuesday, October 27) · Numeric (10/27) | Short | Also used by the screensaver. |
+| Date beside the time | On / Off | Off | One line instead of the date beneath the time. |
+| Size | Small · Medium · Large | Medium | |
+| Font | Like the interface · Light · Bold · Monospace | Like the interface | |
+| Color | White · Accent color · Dimmed | White | |
+| Opacity | 40–100 % | 92 % | |
+| Shadow | Off · Soft · Strong | Soft | |
+| End time in the player | On / Off | On | Shows "Ends at …" next to the remaining time. |
+
+The clock settings are part of the settings backup; older backups take over their former 24-hour switch.
 
 ---
 
@@ -244,10 +264,14 @@ Both pages have the same controls.
 | Test connection | Action | — | — | |
 | Submenu items | Live · Guide · Recordings · Timers | All | — | |
 | Show Live TV on the home screen | On / Off | On | — | |
-| TVHeadend player | Automatic · Media3 · VLC · MPV | Same as the global player until changed | — | Default renderer for live TV and recordings; can also be changed in the player. |
+| TVHeadend player | Media3 · VLC · MPV | Same as the global player until changed | — | Default renderer for live TV and recordings; can also be changed in the player. |
 | Deinterlacing | Off · Automatic · On | Off | VLC, MPV | Media3 shows a hint only. |
 | Method | See [7.5](#75-deinterlacing) | Automatic | VLC, MPV | Separate saved method for VLC and for MPV. |
 | Live TV · Audio and video by width | Editor | — | All | Separate audio/video presets for live channels per source width (opened from *Default player*). |
+
+**Recordings and timers** (TVHeadend, Jellyfin, Emby): every row has its own **Info**, **Edit** and **Delete** buttons next to it; the detail dialog offers the same. Deleting a recording or cancelling a timer asks for confirmation (Back is focused first). Failed recordings are deleted, not cancelled. **Edit** sets padding before/after the programme; on TVHeadend also the priority and, for series timers, Active/Paused (TVHeadend: 0 minutes means the DVR profile's padding). Plex timers cannot be edited.
+
+**Artwork:** rows and dialogs show the recording's own image, else its fanart, the guide programme it came from, art found by exact title on TMDb (only with a TMDb key; loaded without server credentials) and last the channel logo. Jellyfin/Emby also use thumb and series images.
 
 ### 4.4 SmartTube (YouTube)
 
@@ -361,7 +385,7 @@ For all systems together, at the end of the page:
 
 | Setting | Options / values | Default | Shown when / Description |
 | --- | --- | --- | --- |
-| Default player | Automatic · Media3 · VLC · MPV | Automatic | Default player for Plex, Jellyfin, Emby and SmartTube. MPV is disabled when unavailable on the device (Media3 is then used). TVHeadend has its own choice. |
+| Default player | Media3 · VLC · MPV | Media3 | Default player for Plex, Jellyfin, Emby and SmartTube. A stored "Automatic" (always Media3) reads as Media3. MPV is disabled when unavailable on the device (Media3 is then used). TVHeadend has its own choice. |
 | Saved playback settings | Overview | — | Shows saved per-title and per-width audio/video presets. |
 | Live TV · Audio and video by width | Editor | — | Live-only presets per source width. |
 | Automatic display switching | Off · Always · On start / stop · On start | On start / stop | Shown when the display reports more than one mode. |
@@ -561,8 +585,12 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | VLC | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | Software filters. |
 | VLC | Motion smoothing (SVP) | Off · Automatic · Balanced · High quality | Off | See 7.2. |
 | Media3 | Image processing | On / Off | Off | Confirmed SDR; not HDR, Dolby Vision or DRM. Turning on restarts the decoder at the position. |
-| Media3 | Upscaling | Bilinear · Lanczos · 3 | Bilinear | Image processing on, upscaling. |
-| Media3 | Brightness · Contrast · Saturation | −20 … +20 | 0 | Image processing on. No gamma. |
+| Media3 | Upscaling | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV kernels (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Image processing on, upscaling. With render resolution Panel/Auto the chain renders at the physical HDMI resolution, so 1080p on a 4K panel is upscaled by the chosen scaler. MPV kernels follow MPV's definitions (blur, windows, sigmoid upscaling); RAVU and NIS are MPV's shaders translated for Media3. Heavy scalers above 4K30 output fall back to Catmull-Rom. |
+| Media3 | Sharpening | Off · Light · Medium · Strong · CAS · Adaptive | Off | Unsharp mask, AMD CAS or Adaptive Sharpen. NIS brings its own sharpening. |
+| Media3 | Deband · Denoise · Film grain | Off · Light · Medium · Strong | Off | Denoise runs on the source pixels before deband; grain is added after sharpening. |
+| Media3 | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | Image processing on. |
+
+If the GPU cannot run the chosen Media3 effects (e.g. no highp fragment precision), playback restarts once without them instead of failing.
 
 ### 7.5 Deinterlacing
 
@@ -573,6 +601,8 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | Method (VLC) | Auto · Discard · Mean · Blend · X · YADIF · Bob 2× · Linear 2× · YADIF 2× · Phosphor 2× · IVTC 3:2 | Auto | VLC | |
 
 Methods are grouped by load: automatic, low, balanced, double frame rate, special, film. Low performance mode substitutes a lighter method without changing the saved one.
+
+On NVIDIA SHIELD, interlaced broadcast (1080i H.264, 576i MPEG-2) reopens once with software decoding on MPV's OpenGL and Vulkan outputs: the vendor MediaCodec copy path shows such streams black or with unwoven fields and gives automatic deinterlacing no interlace flag. Renderer and filters stay.
 
 ### 7.6 Audio
 
@@ -724,7 +754,7 @@ Under **App & data › Backup**:
 - **Export without credentials** (default): no Plex tokens, no TVHeadend password; file-source passwords only when exporting with credentials. Before saving, an optional passphrase can be set (entered twice, show/hide toggle); leave it empty for a plain JSON file as before
 - **Export with credentials:** only when needed; the file is encrypted with a passphrase (at least 8 characters, AES-256-GCM, PBKDF2) that import asks for. Without the passphrase the backup cannot be restored. Companion transfers stay TLS-protected.
 - Encrypted files are a small JSON envelope (`"format":"ambient-tv-encrypted-backup"`, version 1, PBKDF2-HMAC-SHA256 with 310 000 iterations, random 16-byte salt and 12-byte IV, AES-256-GCM). Import detects plain vs. encrypted files automatically and asks for the passphrase; a wrong passphrase or a damaged file shows an error and the dialog stays open for another try.
-- Import restores settings and server profiles (schema up to current **60**)
+- Import restores settings and server profiles (schema up to current **72**)
 - IPTV playlists and the OpenSubtitles key and account are only part of backups **with credentials** (playlist addresses often carry the provider account); a backup without credentials leaves the device's own unchanged. Timeshift size, timeshift/direct-recording switches (since schema 59) and reminder lead time are always backed up, scheduled reminders are not.
 - File sources and WOL are backed up; **local folder permissions (SAF) are not portable** and must be granted again on a new device
 - OAuth sessions and device IDs are not meant as a “portable login” — re-sign in accounts if needed
