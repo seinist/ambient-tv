@@ -55,11 +55,12 @@ class SettingsCopyTest {
     @Test fun guidanceNamesCurrentPlayerOptions() {
         for (locale in listOf("values", "values-en", "values-de")) {
             val localized = strings(locale)
+            // Short, jargon-free hints: name the players to switch to, not their render backends.
             for (key in listOf("player_mpv_gpu_filters_direct_hint", "tvh_deinterlace_media3_hint")) {
-                assertTrue("$locale/$key", localized.getValue(key).contains("OpenGL"))
-                assertTrue("$locale/$key", localized.getValue(key).contains("Vulkan"))
-                assertTrue("$locale/$key", localized.getValue(key).contains("MPV"))
+                assertFalse("$locale/$key", localized.getValue(key).contains("OpenGL"))
+                assertFalse("$locale/$key", localized.getValue(key).contains("Vulkan"))
             }
+            assertTrue(localized.getValue("tvh_deinterlace_media3_hint").contains("MPV"))
             assertTrue(localized.getValue("tvh_deinterlace_media3_hint").contains("VLC"))
             assertTrue(localized.getValue("settings_spotify_client_missing_build").contains("Spotify ›"))
             assertTrue(localized.getValue("settings_spotify_client_missing_build")

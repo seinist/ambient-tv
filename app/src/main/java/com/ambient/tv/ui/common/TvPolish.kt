@@ -1358,6 +1358,11 @@ fun Modifier.tvModalFocus(
         return if (target != null) runCatching { target.requestFocus() }.getOrDefault(false)
         else actions?.requestFocus(view) ?: false
     }
+    fun focusUpExit(): Boolean {
+        val target = footerFocus ?: actionFocus
+        return if (target != null) runCatching { target.requestFocus() }.getOrDefault(false)
+        else actions?.requestUpFocus(view) ?: false
+    }
     fun moveInside(direction: FocusDirection): Boolean {
         blockExit = true
         changingFocus = true
@@ -1477,7 +1482,7 @@ fun Modifier.tvModalFocus(
                             return@launch
                         }
                     }
-                    if (allowUpExit && direction == FocusDirection.Up && focusActions()) return@launch
+                    if (allowUpExit && direction == FocusDirection.Up && focusUpExit()) return@launch
                     if (!wrapVerticalFocus || held) return@launch
                     if (allowUpExit && direction == FocusDirection.Up && footerFocus == null && actionFocus == null &&
                         focusManager.moveFocus(FocusDirection.Up)) {
