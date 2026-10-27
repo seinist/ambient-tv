@@ -66,6 +66,10 @@ data class LiveTvRecording(
     val broadcastEventId: String? = null,
     val sourceId: String = "",
     val canDelete: Boolean = true,
+    /** Timer padding and priority where the server reports them (null: not editable there). */
+    val paddingBeforeMinutes: Int? = null,
+    val paddingAfterMinutes: Int? = null,
+    val priority: Int? = null,
 )
 
 @kotlinx.serialization.Serializable
@@ -81,7 +85,23 @@ data class LiveTvSeriesTimer(
     val title: String?,
     val channelName: String?,
     val enabled: Boolean = true,
+    val imageUrl: String? = null,
+    val paddingBeforeMinutes: Int? = null,
+    val paddingAfterMinutes: Int? = null,
+    val priority: Int? = null,
+    /** Whether the server can switch the rule off without deleting it (TVHeadend autorecs). */
+    val canDisable: Boolean = false,
 )
+
+/** New settings for a timer or series timer; null fields stay as they are on the server. */
+data class LiveTvTimerEdit(
+    val paddingBeforeMinutes: Int? = null,
+    val paddingAfterMinutes: Int? = null,
+    val priority: Int? = null,
+    val enabled: Boolean? = null,
+) {
+    val isEmpty: Boolean get() = paddingBeforeMinutes == null && paddingAfterMinutes == null && priority == null && enabled == null
+}
 
 @kotlinx.serialization.Serializable
 data class LiveTvDashboard(
@@ -136,6 +156,8 @@ data class LiveTvCapabilities(
     val manageTimers: Boolean = false,
     val seriesTimers: Boolean = false,
     val deleteRecordings: Boolean = false,
+    /** Timers and series timers can be edited (padding, priority, enabled). */
+    val editTimers: Boolean = false,
 )
 
 /** Owned by PlaybackService, including while the user browses another screen. */

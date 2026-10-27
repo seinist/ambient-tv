@@ -15,7 +15,7 @@ class TvheadendLiveTvRepository(
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities {
         checkSource()
         delegate.serverInfo(force)
-        return LiveTvCapabilities(true, true, true, true, true, true, true)
+        return LiveTvCapabilities(true, true, true, true, true, true, true, editTimers = true)
     }
     override suspend fun channels(force: Boolean): List<LiveTvChannel> {
         checkSource(); return delegate.channels(force).map { it.copy(sourceId = source.id) }
@@ -47,6 +47,8 @@ class TvheadendLiveTvRepository(
     override suspend fun cancelRecording(uuid: String): Result<Unit> { checkSource(); return delegate.cancelRecording(uuid) }
     override suspend fun deleteRecording(uuid: String): Result<Unit> { checkSource(); return delegate.deleteRecording(uuid) }
     override suspend fun deleteAutoRecording(uuid: String): Result<Unit> { checkSource(); return delegate.deleteAutoRecording(uuid) }
+    override suspend fun updateTimer(uuid: String, edit: LiveTvTimerEdit): Result<Unit> { checkSource(); return delegate.updateTimer(uuid, edit) }
+    override suspend fun updateSeriesTimer(uuid: String, edit: LiveTvTimerEdit): Result<Unit> { checkSource(); return delegate.updateAutoRecording(uuid, edit) }
     override suspend fun liveStream(channel: LiveTvChannel, profileOverride: String?): LiveTvPlaybackSource { checkSource(); return delegate.liveStream(channel, profileOverride) }
     override suspend fun recordingStream(entry: LiveTvRecording): LiveTvPlaybackSource { checkSource(); return delegate.recordingStream(entry) }
     override suspend fun streamProfiles(force: Boolean): List<LiveTvStreamProfile> { checkSource(); return delegate.streamProfiles(force) }

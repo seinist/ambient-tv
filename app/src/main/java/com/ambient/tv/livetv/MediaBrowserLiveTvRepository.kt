@@ -38,7 +38,7 @@ internal class MediaBrowserLiveTvRepository(
             val channels = http.request("LiveTv/Channels", userQuery + mapOf("Limit" to "1", "EnableTotalRecordCount" to "true"))
             val available = channels.number("TotalRecordCount")?.let { it > 0 } ?: channels.objects("Items").isNotEmpty()
             val management = policy?.flag("EnableLiveTvManagement") == true
-            LiveTvCapabilities(available, available, available, available, management, available, management)
+            LiveTvCapabilities(available, available, available, available, management, available, management, editTimers = management)
         } catch (e: LiveTvHttpException) {
             if (e.status in setOf(403, 404)) LiveTvCapabilities() else throw e
         }
@@ -63,6 +63,15 @@ internal class MediaBrowserLiveTvRepository(
         if (tag == null) return null
         return http.url("Items/${segment(id)}/Images/$type", mapOf("tag" to tag, "maxWidth" to "1280")).toString()
     }
+    /** The item's own art, else the series' (programmes and timers often only carry the parent's). */
+    private fun artwork(item: JsonObject): String? = image(item) ?: image(item, "Thumb") ?:
+        listOf("ParentThumbItemId" to "ParentThumbImageTag", "ParentPrimaryImageItemId" to "ParentPrimaryImageTag",
+            "SeriesId" to "SeriesPrimaryImageTag").firstNotNullOfOrNull { (idKey, tagKey) ->
+            val id = item.text(idKey) ?: return@firstNotNullOfOrNull null
+            val tag = item.text(tagKey) ?: return@firstNotNullOfOrNull null
+            val type = if (tagKey == "ParentThumbImageTag") "Thumb" else "Primary"
+            http.url("Items/${segment(id)}/Images/$type", mapOf("tag" to tag, "maxWidth" to "1280")).toString()
+        }
     override suspend fun channels(force: Boolean): List<LiveTvChannel> = cached("channels", 300_000, force) {
         items("LiveTv/Channels", mapOf("AddCurrentProgram" to "true", "Fields" to "CurrentProgram,ChannelInfo", "SortBy" to "ChannelNumber,SortName")).mapNotNull { item ->
             val id = item.text("Id") ?: return@mapNotNull null
@@ -76,7 +85,7 @@ internal class MediaBrowserLiveTvRepository(
         return LiveTvProgramme(id, channel, item.text("ChannelName").orEmpty(), item.text("Name").orEmpty(),
             subtitle = item.text("EpisodeTitle"), description = item.text("Overview"),
             startEpochSeconds = item.epoch("StartDate") ?: return null, stopEpochSeconds = item.epoch("EndDate") ?: return null,
-            imageUrl = image(item), seriesLink = item.text("SeriesId") ?: id.takeIf { item.flag("IsSeries") == true },
+            imageUrl = artwork(item), seriesLink = item.text("SeriesId") ?: id.takeIf { item.flag("IsSeries") == true },
             dvrUuid = item.text("TimerId"), sourceId = source.id)
     }
     override suspend fun epgEvents(startEpochSeconds: Long, windowHours: Int, force: Boolean) = guide(null, startEpochSeconds, windowHours, force)
@@ -98,9 +107,12 @@ internal class MediaBrowserLiveTvRepository(
             subtitle = info.text("EpisodeTitle"), description = item.text("Overview") ?: info.text("Overview"),
             startEpochSeconds = start, stopEpochSeconds = item.epoch("EndDate") ?: start + (item.number("RunTimeTicks") ?: 0L) / 10_000_000,
             status = item.text("Status"), scheduleStatus = if (timer) "scheduled" else "completed",
-            url = null, imageUrl = image(info), fanartUrl = image(info, "Backdrop"), fileSizeBytes = item.number("Size"),
+            url = null, imageUrl = artwork(item) ?: artwork(info), fanartUrl = image(item, "Backdrop") ?: image(info, "Backdrop"),
+            fileSizeBytes = item.number("Size"),
             playPositionSeconds = item.obj("UserData").number("PlaybackPositionTicks")?.div(10_000_000),
-            broadcastEventId = item.text("ProgramId"), sourceId = source.id, canDelete = item.flag("CanDelete") != false)
+            broadcastEventId = item.text("ProgramId"), sourceId = source.id, canDelete = item.flag("CanDelete") != false,
+            paddingBeforeMinutes = if (timer) item.number("PrePaddingSeconds")?.div(60)?.toInt() else null,
+            paddingAfterMinutes = if (timer) item.number("PostPaddingSeconds")?.div(60)?.toInt() else null)
     }
     override suspend fun finishedRecordings(force: Boolean): List<LiveTvRecording> = cached("recordings", 20_000, force) {
         items("LiveTv/Recordings", mapOf("Fields" to "Overview,CanDelete", "IsInProgress" to "false")).mapNotNull { recording(it, false) }
@@ -111,7 +123,9 @@ internal class MediaBrowserLiveTvRepository(
     override suspend fun autoRecordings(force: Boolean): List<LiveTvSeriesTimer> = cached("series", 30_000, force) {
         http.request("LiveTv/SeriesTimers", userQuery).objects("Items").mapNotNull {
             val id = it.text("Id") ?: return@mapNotNull null
-            LiveTvSeriesTimer(id, it.text("Name").orEmpty(), it.text("Name"), it.text("ChannelName"))
+            LiveTvSeriesTimer(id, it.text("Name").orEmpty(), it.text("Name"), it.text("ChannelName"), imageUrl = artwork(it),
+                paddingBeforeMinutes = it.number("PrePaddingSeconds")?.div(60)?.toInt(),
+                paddingAfterMinutes = it.number("PostPaddingSeconds")?.div(60)?.toInt())
         }
     }
     private suspend fun schedule(id: String, series: Boolean): Result<Unit> = suspendResult {
@@ -135,6 +149,14 @@ internal class MediaBrowserLiveTvRepository(
     override suspend fun cancelRecording(uuid: String) = delete("LiveTv/Timers/${segment(uuid)}")
     override suspend fun deleteRecording(uuid: String) = delete("LiveTv/Recordings/${segment(uuid)}")
     override suspend fun deleteAutoRecording(uuid: String) = delete("LiveTv/SeriesTimers/${segment(uuid)}")
+    /** The servers replace the whole timer: read it, change the padding, send it back. */
+    private suspend fun update(path: String, edit: LiveTvTimerEdit): Result<Unit> = suspendResult {
+        check(capabilities().manageTimers) { "Recording management is not permitted for this user." }
+        http.request(path, method = "POST", body = mediaBrowserTimerUpdate(http.request(path), edit))
+        invalidateAll()
+    }
+    override suspend fun updateTimer(uuid: String, edit: LiveTvTimerEdit) = update("LiveTv/Timers/${segment(uuid)}", edit)
+    override suspend fun updateSeriesTimer(uuid: String, edit: LiveTvTimerEdit) = update("LiveTv/SeriesTimers/${segment(uuid)}", edit)
     override suspend fun liveStream(channel: LiveTvChannel, profileOverride: String?) = playback(channel.uuid, channel.name, true, 0)
     override suspend fun recordingStream(entry: LiveTvRecording) = playback(entry.uuid, entry.title, false, (entry.playPositionSeconds ?: 0) * 1000)
 
@@ -207,3 +229,9 @@ internal class BrowserSession(
         Unit
     }
 }
+
+/** A Jellyfin/Emby timer with new padding; the servers keep padding in seconds. */
+internal fun mediaBrowserTimerUpdate(timer: JsonObject, edit: LiveTvTimerEdit): JsonObject = JsonObject(timer + buildMap {
+    edit.paddingBeforeMinutes?.let { put("PrePaddingSeconds", JsonPrimitive(it.coerceAtLeast(0) * 60)) }
+    edit.paddingAfterMinutes?.let { put("PostPaddingSeconds", JsonPrimitive(it.coerceAtLeast(0) * 60)) }
+})

@@ -31,6 +31,11 @@ import kotlinx.coroutines.launch
 
 enum class TvheadendTab { LIVE, GUIDE, RECORDINGS, TIMERS }
 
+sealed interface LiveTvEditTarget {
+    data class Timer(val entry: TvhDvrEntry) : LiveTvEditTarget
+    data class Series(val entry: TvhAutoRec) : LiveTvEditTarget
+}
+
 data class TvheadendUiState(
     val configured: Boolean = false,
     val offline: Boolean = false,
@@ -46,6 +51,8 @@ data class TvheadendUiState(
     val dashboard: TvhDashboard? = null,
     val selectedEvent: TvhEpgEvent? = null,
     val selectedRecording: TvhDvrEntry? = null,
+    /** Timer or series timer whose settings dialog is open. */
+    val editing: LiveTvEditTarget? = null,
     val actionInProgress: Boolean = false,
     val actionFeedback: OperationFeedback? = null,
     val error: OperationFeedback? = null,
@@ -63,6 +70,7 @@ class TvheadendViewModel @Inject constructor(
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
     private val tvheadend: TvheadendRepository,
     private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
+    private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
 ) : ViewModel() {
     val reminders = reminderStore.reminders.also { reminderStore.refresh() }
 
@@ -149,7 +157,7 @@ class TvheadendViewModel @Inject constructor(
         load(force = false)
     }
 
-    fun selectTab(tab: TvheadendTab) = _uiState.update { it.copy(tab = tab, selectedEvent = null, selectedRecording = null, actionFeedback = null) }
+    fun selectTab(tab: TvheadendTab) = _uiState.update { it.copy(tab = tab, selectedEvent = null, selectedRecording = null, editing = null, actionFeedback = null) }
     fun setGuideOptions(options: GuideOptions) {
         preferences.setGuideOptions(repository.source.id, options)
         _uiState.update { it.copy(guideOptions = options) }
@@ -157,6 +165,41 @@ class TvheadendViewModel @Inject constructor(
 
     fun selectEvent(event: TvhEpgEvent?) = _uiState.update { it.copy(selectedEvent = event, selectedRecording = null, actionFeedback = null) }
     fun selectRecording(entry: TvhDvrEntry?) = _uiState.update { it.copy(selectedRecording = entry, selectedEvent = null, actionFeedback = null) }
+    fun edit(target: LiveTvEditTarget?) {
+        if (target != null && (!_uiState.value.capabilities.editTimers || uiState.value.offline)) return
+        _uiState.update { it.copy(editing = target, actionFeedback = null) }
+    }
+
+    /**
+     * Art found on TMDb by title, for recordings, timers and programmes whose server and guide
+     * have none (DVB EPG data rarely carries images). Keyed by [liveTvArtKey].
+     */
+    private val _titleArt = MutableStateFlow<Map<String, String>>(emptyMap())
+    val titleArt: StateFlow<Map<String, String>> = _titleArt
+    private val titleArtRequested = mutableSetOf<String>()
+
+    /** Look up art for these titles once each; missing results simply leave the fallback. */
+    fun requestTitleArt(titles: Collection<String>) {
+        if (!tmdb.configured) return
+        val wanted = titles.map(::liveTvArtKey).filter { it.length >= 2 && titleArtRequested.add(it) }
+        if (wanted.isEmpty()) return
+        val originals = titles.associateBy(::liveTvArtKey)
+        val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
+        viewModelScope.launch {
+            for (key in wanted) {
+                val url = tmdb.artworkForTitle(originals[key] ?: key, language).getOrNull() ?: continue
+                _titleArt.update { it + (key to url) }
+            }
+        }
+    }
+
+    private fun requestMissingArt(dashboard: LiveTvDashboard) {
+        val recordings = (dashboard.recordings + dashboard.failedRecordings + dashboard.upcoming)
+            .filter { liveTvRecordingArt(it, dashboard.events, emptyList()) == null }.map { it.title }
+        val series = dashboard.autoRecs.filter { liveTvSeriesArt(it, dashboard.events, emptyList()) == null }
+            .map { it.title?.takeIf(String::isNotBlank) ?: it.name }
+        requestTitleArt((recordings + series).distinct().take(MAX_TITLE_ART_LOOKUPS))
+    }
 
     private var refreshJob: Job? = null
 
@@ -212,6 +255,7 @@ class TvheadendViewModel @Inject constructor(
                         delivery = if (force && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
                     )) ?: return@launch
                     val cachedOnly = repository.servingCachedData
+                    requestMissingArt(dashboard)
                     _uiState.update { it.copy(configured = true, offline = cachedOnly, canWake = cachedOnly && canWake(), loading = false, refreshing = false,
                         dashboard = dashboard,
                         selectedRecording = it.selectedRecording?.let { selected ->
@@ -261,6 +305,20 @@ class TvheadendViewModel @Inject constructor(
             removeRecordingId = entry.uuid) { repository.deleteRecording(entry.uuid) }
     }
 
+    fun updateTimer(entry: TvhDvrEntry, edit: LiveTvTimerEdit) {
+        if (!_uiState.value.capabilities.editTimers) return
+        recordingAction("updateTimer:${entry.uuid}", "edit", entry.title, R.string.tvh_timer_updated, closeEditor = true) {
+            repository.updateTimer(entry.uuid, edit)
+        }
+    }
+
+    fun updateSeriesTimer(entry: TvhAutoRec, edit: LiveTvTimerEdit) {
+        if (!_uiState.value.capabilities.editTimers) return
+        recordingAction("updateSeries:${entry.uuid}", "edit", entry.name, R.string.tvh_timer_updated, closeEditor = true) {
+            repository.updateSeriesTimer(entry.uuid, edit)
+        }
+    }
+
     fun deleteAutoRec(entry: TvhAutoRec) {
         if (!_uiState.value.capabilities.manageTimers) return
         recordingAction("deleteAutoRec:${entry.uuid}", "timers", repository.source.name, R.string.tvh_series_timer_deleted,
@@ -274,6 +332,7 @@ class TvheadendViewModel @Inject constructor(
         successMessage: Int,
         removeRecordingId: String? = null,
         removeAutoRecId: String? = null,
+        closeEditor: Boolean = false,
         action: suspend () -> Result<Unit>,
     ) {
         // Offline (cached data): record, timer and delete need the server.
@@ -308,6 +367,7 @@ class TvheadendViewModel @Inject constructor(
                         autoRecs = dashboard.autoRecs.filterNot { it.uuid == removeAutoRecId },
                     ) },
                     selectedRecording = state.selectedRecording?.takeUnless { it.uuid == removeRecordingId },
+                    editing = state.editing.takeUnless { closeEditor },
                     actionFeedback = null,
                 )
             }
@@ -328,3 +388,5 @@ class TvheadendViewModel @Inject constructor(
     fun timerFor(event: TvhEpgEvent): TvhDvrEntry? = _uiState.value.dashboard?.upcoming
         ?.let { findProgrammeRecording(event, it) }
 }
+
+private const val MAX_TITLE_ART_LOOKUPS = 60

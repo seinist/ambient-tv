@@ -235,6 +235,13 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
         path?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w1280$it" }
     }
 
+    /** Art for a TV programme title (EPG data rarely has images); null without an exact title match. */
+    suspend fun artworkForTitle(title: String, language: String): Result<String?> = suspendResult {
+        if (!configured) return@suspendResult null
+        val candidates = search(title, language, language.substringAfter('-', "DE")).getOrThrow().map { it.title }
+        matchProgrammeTitle(candidates, title)?.imageUrl
+    }
+
     private fun tmdbType(item: MediaItem): String? = when (item.type) { "movie" -> "movie"; "show" -> "tv"; else -> null }
 
     /** The TMDb id: from the item's tmdb:// guid, its imdb:// guid, or a title/year search. */

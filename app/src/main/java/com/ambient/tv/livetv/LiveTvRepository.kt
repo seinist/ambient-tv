@@ -28,6 +28,8 @@ interface LiveTvRepository {
     suspend fun cancelRecording(uuid: String): Result<Unit> = Result.failure(UnsupportedOperationException())
     suspend fun deleteRecording(uuid: String): Result<Unit> = Result.failure(UnsupportedOperationException())
     suspend fun deleteAutoRecording(uuid: String): Result<Unit> = Result.failure(UnsupportedOperationException())
+    suspend fun updateTimer(uuid: String, edit: LiveTvTimerEdit): Result<Unit> = Result.failure(UnsupportedOperationException())
+    suspend fun updateSeriesTimer(uuid: String, edit: LiveTvTimerEdit): Result<Unit> = Result.failure(UnsupportedOperationException())
     suspend fun liveStream(channel: LiveTvChannel, profileOverride: String? = null): LiveTvPlaybackSource
     suspend fun recordingStream(entry: LiveTvRecording): LiveTvPlaybackSource
     suspend fun streamProfiles(force: Boolean = false): List<LiveTvStreamProfile> = emptyList()
