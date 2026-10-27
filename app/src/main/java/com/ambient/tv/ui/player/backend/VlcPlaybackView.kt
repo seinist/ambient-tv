@@ -1809,7 +1809,7 @@ fun rememberVlcPlaybackController(
     val resolution = remember(metadata?.route, metadata?.sourceWidth, metadata?.sourceHeight) { com.ambient.tv.ui.player.ResolutionVideoProfileStore.load(context, metadata) }
     val videoOutputMode = BackgroundPlaybackSession.videoSettings(metadata,
         com.ambient.tv.ui.player.PlayerVideoSettings.from(preferences).withResolution(resolution).withTitle(title)).vlcOutput
-    val nativeHdr = nativeHdrSurfacePreferred(metadata?.handheldHdrStandard, HdrSupport.displayStandards(context))
+    val nativeHdr = nativeHdrSurfacePreferred(metadata?.handheldHdrStandard, HdrSupport.displayStandards(context), metadata?.hdrBaseLayer)
     val key = listOf(url, startPositionMs, headers, initialAudioPassthrough, networkCache, videoOutputMode, audioSlaveUrl, nativeHdr, metadata?.handheldHdrStandard)
     val controller = remember(metadata?.route, key) {
         runCatching {

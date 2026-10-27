@@ -76,6 +76,8 @@ data class PlaybackMetadata(
     val timelineSeekMs: Long? = null,
     /** Declared direct/direct-stream range, used only by handheld UI-HDR when a backend cannot expose it. */
     val handheldHdrStandard: HdrStandard? = null,
+    /** HDR10/HLG base layer of a Dolby Vision source, so a non-DV display still gets HDR. */
+    val hdrBaseLayer: HdrStandard? = null,
     val companionMedia: com.ambient.tv.companion.CompanionMedia? = null,
     val parentMediaIds: List<String> = emptyList(),
     val companionNext: NextUpCandidate? = null,
