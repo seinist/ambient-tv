@@ -346,7 +346,7 @@ class SettingsViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
-            wireGuardRoute.status.collect { status -> _uiState.update { it.copy(wireGuardStatus = status) } }
+            wireGuardRoute.status.collect { status -> _uiState.update { it.copy(wireGuard = it.wireGuard.copy(status = status)) } }
         }
     }
 
@@ -540,7 +540,6 @@ class SettingsViewModel @Inject constructor(
         screensaverModeKey = appPreferences.screensaverModeKey,
         screensaverShowClock = appPreferences.screensaverShowClock,
         screensaverShowDate = appPreferences.screensaverShowDate,
-        screensaverUse24HourClock = appPreferences.screensaverUse24HourClock,
         clock = appPreferences.clockSettings,
         screensaverUseArtwork = appPreferences.screensaverUseArtwork,
         screensaverArtworkIntervalSeconds = appPreferences.screensaverArtworkIntervalSeconds,
@@ -1672,7 +1671,7 @@ class SettingsViewModel @Inject constructor(
                     _uiState.update {
                         it.copy(
                             wireGuardSummary = wireGuardSummary(parsed.profile),
-                            wireGuardTestMessage = null,
+                            wireGuard = it.wireGuard.copy(testMessage = null),
                             wireGuardPlexEnabled = appPreferences.wireGuardPlexEnabled,
                             wireGuardJellyfinEnabled = appPreferences.wireGuardJellyfinEnabled,
                             wireGuardEmbyEnabled = appPreferences.wireGuardEmbyEnabled,
@@ -1704,18 +1703,18 @@ class SettingsViewModel @Inject constructor(
     fun wireGuardInUse(): Boolean = wireGuardRoute.anySystemEnabled()
 
     fun testWireGuard() {
-        if (_uiState.value.wireGuardTesting) return
+        if (_uiState.value.wireGuard.testing) return
         val ticket = beginFeedback("vpn:test")
-        _uiState.update { it.copy(wireGuardTesting = true, wireGuardTestMessage = null) }
+        _uiState.update { it.copy(wireGuard = it.wireGuard.copy(testing = true, testMessage = null)) }
         viewModelScope.launch {
             try {
                 val result = suspendResult { wireGuardRoute.testConnection().getOrThrow() }
-                _uiState.update { it.copy(wireGuardTestOk = result.isSuccess) }
+                _uiState.update { it.copy(wireGuard = it.wireGuard.copy(testOk = result.isSuccess)) }
                 finishFeedback(ticket, SettingsCategory.WIREGUARD,
                     if (result.isSuccess) R.string.wg_test_ok else R.string.notice_vpn_failed,
                     result.isSuccess, subject = "WireGuard", error = result.exceptionOrNull(),
                     delivery = FeedbackDelivery.NOTIFICATION)
-            } finally { _uiState.update { it.copy(wireGuardTesting = false) } }
+            } finally { _uiState.update { it.copy(wireGuard = it.wireGuard.copy(testing = false)) } }
         }
     }
 
@@ -1746,7 +1745,7 @@ class SettingsViewModel @Inject constructor(
                             wireGuardJellyfinEnabled = false,
                             wireGuardEmbyEnabled = false,
                             wireGuardTvheadendEnabled = false,
-                            wireGuardTestMessage = null,
+                            wireGuard = it.wireGuard.copy(testMessage = null),
                             statusMessage = null,
                         )
                     }
@@ -2218,7 +2217,6 @@ class SettingsViewModel @Inject constructor(
     fun onScreensaverModeChanged(value: String) = _uiState.update { it.copy(screensaverModeKey = value) }
     fun onScreensaverShowClockChanged(value: Boolean) = _uiState.update { it.copy(screensaverShowClock = value) }
     fun onScreensaverShowDateChanged(value: Boolean) = _uiState.update { it.copy(screensaverShowDate = value) }
-    fun onScreensaver24HourClockChanged(value: Boolean) = _uiState.update { it.copy(screensaverUse24HourClock = value) }
     fun onClockChanged(change: (com.ambient.tv.data.local.ClockSettings) -> com.ambient.tv.data.local.ClockSettings) =
         _uiState.update { it.copy(clock = change(it.clock).normalized()) }
     fun onScreensaverUseArtworkChanged(value: Boolean) = _uiState.update { it.copy(screensaverUseArtwork = value) }

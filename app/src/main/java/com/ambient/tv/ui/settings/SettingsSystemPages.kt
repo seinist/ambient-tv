@@ -903,7 +903,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) viewModel.startWireGuard() else viewModel.onWireGuardConsentDenied()
     }
-    val status = when (val route = uiState.wireGuardStatus) {
+    val status = when (val route = uiState.wireGuard.status) {
         WireGuardRouteState.Idle -> stringResource(R.string.wg_status_idle)
         WireGuardRouteState.Connecting -> stringResource(R.string.wg_status_connecting)
         WireGuardRouteState.Up -> stringResource(R.string.wg_status_up)
@@ -947,18 +947,18 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                 }
             } else {
                 TvActionButton(
-                    text = stringResource(if (uiState.wireGuardTesting) R.string.wg_testing else R.string.wg_test),
+                    text = stringResource(if (uiState.wireGuard.testing) R.string.wg_testing else R.string.wg_test),
                     // A handshake test only: no VPN consent, no tunnel.
                     onClick = viewModel::testWireGuard,
-                    loading = uiState.wireGuardTesting,
+                    loading = uiState.wireGuard.testing,
                     modifier = Modifier.focusRequester(testFocus),
                     fillWidth = true,
                 )
-                uiState.wireGuardTestMessage?.let { message ->
+                uiState.wireGuard.testMessage?.let { message ->
                     Text(
                         message,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (uiState.wireGuardTestOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        color = if (uiState.wireGuard.testOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     )
                 }
                 DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -969,12 +969,12 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                             if (intent != null) consent.launch(intent) else viewModel.startWireGuard()
                         },
                         enabled = viewModel.wireGuardInUse() &&
-                            (uiState.wireGuardStatus is WireGuardRouteState.Idle || uiState.wireGuardStatus is WireGuardRouteState.Failed),
+                            (uiState.wireGuard.status is WireGuardRouteState.Idle || uiState.wireGuard.status is WireGuardRouteState.Failed),
                         modifier = Modifier.weight(1f),
                         fillWidth = true,
                     )
                     TvActionButton(text = stringResource(R.string.wg_disconnect), onClick = viewModel::stopWireGuard,
-                        enabled = uiState.wireGuardStatus is WireGuardRouteState.Up || uiState.wireGuardStatus is WireGuardRouteState.Connecting,
+                        enabled = uiState.wireGuard.status is WireGuardRouteState.Up || uiState.wireGuard.status is WireGuardRouteState.Connecting,
                         modifier = Modifier.weight(1f), fillWidth = true)
                     TvActionButton(text = stringResource(R.string.wg_remove), onClick = { confirmRemove = true }, modifier = Modifier.weight(1f), fillWidth = true)
                 }
