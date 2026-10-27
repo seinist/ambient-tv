@@ -68,7 +68,7 @@ internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCAL
     MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
 
 /** Output pixels per second a heavy scaler may produce: 4K at 30 fps (twice the filter budget). */
-internal const val MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE = 2 * MEDIA3_FILTER_MAX_PIXEL_RATE
+internal const val MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE = 2L * 1920L * 1088L * 60L
 
 /** Whether a heavy scaler may produce [width]x[height] at [fps]; unknown frame rates count as 30. */
 internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float): Boolean {
