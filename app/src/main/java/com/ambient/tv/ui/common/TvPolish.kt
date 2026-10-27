@@ -429,6 +429,8 @@ fun ArtworkImage(
     /** Crop backdrops around detected faces instead of [alignment] (see rememberArtworkFocusAlignment). */
     focusCrop: Boolean = false,
     fallbackIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    /** False for full-screen backdrops: no grey pulse while loading, no title card on failure. */
+    placeholder: Boolean = true,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -496,9 +498,9 @@ fun ArtworkImage(
                     }
                 },
             )
-            if (loading) PulsingArtworkPlaceholder()
+            if (loading && placeholder) PulsingArtworkPlaceholder()
         }
-        if (!hasModel || failed) {
+        if (placeholder && (!hasModel || failed)) {
             if (fallbackIcon == null) ArtworkFallback(fallbackText) else Box(
                 Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,

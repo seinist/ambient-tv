@@ -390,6 +390,7 @@ private fun DetailContent(
             title = item.title,
             contentScale = ContentScale.Crop,
             focusCrop = true,
+            placeholder = false,
             modifier = Modifier.fillMaxSize(),
         )
         Box(
@@ -799,7 +800,7 @@ private fun DetailHero(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { if (it.hasFocus) onHeroFocused() }
-            .padding(start = screenGutter(), end = screenGutter(), top = 18.dp, bottom = 22.dp),
+            .padding(start = screenGutter(), end = screenGutter(), top = 18.dp, bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.Top,
     ) {

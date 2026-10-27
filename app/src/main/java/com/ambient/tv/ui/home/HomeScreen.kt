@@ -250,11 +250,9 @@ fun HomeScreen(
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        // On a TV the loaded overview carries its actions on the hero's title line (system badge,
-        // focused title, actions), like a library page's header; the header row is only for
-        // phones and while nothing is loaded yet.
-        val overviewActionsInHero = systemOverview && !LocalHandheldUi.current && uiState is HomeUiState.Loaded
-        if (systemOverview && !overviewActionsInHero) {
+        // Like a library page: the header row stays put while loading and loaded, the hero sits
+        // under it. Swapping it for the hero's title line on load flashed a strip at the top.
+        if (systemOverview) {
             SystemOverviewHeader(
                 system = when {
                     jellyfinOnly -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
@@ -295,16 +293,6 @@ fun HomeScreen(
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
                         entranceProgress = entranceProgressProvider,
                         externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
-                        heroTitleActions = if (overviewActionsInHero) ({
-                            OverviewActions(
-                                onOpenHome = {
-                                    viewModel.captureFocusForReturn()
-                                    onOpenAppHome()
-                                },
-                                onOpenOptions = { showOverviewOptions = true },
-                                optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
-                            )
-                        }) else null,
                     )
                 }
                 is HomeUiState.Offline -> Centered {
@@ -552,7 +540,7 @@ internal fun LibraryContent(
     // Rows always move behind the pinned hero. Full mode uses a true alpha mask; reduced mode
     // gets the same visual handoff from the hero's cheap opaque-to-transparent overlay.
     val maskRows = performance.allowRowFadeSaveLayer
-    Box(modifier = Modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // Snapshot of rowListState.isScrollInProgress for the hero/backdrop collectors, which
         // must not read composition state (BrowseWorkBudget.scrolling is not observable).
         val rowsScrolling = externalBackdropScrolling ?: remember { MutableStateFlow(false) }
@@ -587,7 +575,8 @@ internal fun LibraryContent(
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
         fun contentListIndex(index: Int): Int = state.rowKeys.indexOf(state.rows.getOrNull(index)?.id).coerceAtLeast(0)
-        val heroHeight = homeHeroHeight()
+        // Under the overview's header the hero takes the library pages' share of the rest.
+        val heroHeight = if (externalBackdropScrolling != null) maxHeight * 0.42f else homeHeroHeight()
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
         val rowPark = homeRowParkOffset(heroHeight)
@@ -762,6 +751,7 @@ internal fun LibraryContent(
             entranceProgress = entranceProgress,
             drawAmbient = false,
             rowsScrolling = rowsScrolling,
+            height = heroHeight,
             titleActions = heroTitleActions,
             modifier = Modifier
                 .align(Alignment.TopCenter)
