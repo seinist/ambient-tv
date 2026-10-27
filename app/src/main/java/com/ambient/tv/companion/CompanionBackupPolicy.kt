@@ -56,17 +56,17 @@ internal object CompanionBackupPolicy {
         "fileSources", "dlnaServers", "smbPasswords", "sshKeys", "plexEnabled", "jellyfinEnabled", "embyEnabled", "filesEnabled",
         "tvheadendEnabled", "tvheadendHost", "tvheadendPort", "tvheadendUseHttps", "tvheadendUsername", "tvheadendPassword",
         "tvheadendStreamProfile", "tvheadendMacAddress", "tvheadendAutoWakeEnabled", "tmdbApiKey",
+        "activeServerId", "activeJellyfinServerId", "activeEmbyServerId", "youtubeEnabled", "spotifyEnabled",
         "smartTubeAccounts", "spotifyAccount", "spotifyClientId", "wireGuardProfile", "wireGuardPrivateKey", "wireGuardPresharedKey",
         "iptvSources", "openSubtitlesApiKey", "openSubtitlesUsername", "openSubtitlesPassword")
     /** Every backup field the companion knows about; a new field must be added to one of the sets. */
     internal val classifiedFields: Set<String> get() = portable + hardware + accounts + deviceOnly
     /**
      * Fields that are not synced through the companion today (unchanged behaviour, now explicit):
-     * per-device server picks, hidden sections/home rows, WireGuard toggles, Spotify device data,
+     * hidden sections/home rows, WireGuard toggles, Spotify device data,
      * search history and hardware probes. Moving one into a synced set is a product decision.
      */
     private val deviceOnly = setOf(
-        "activeServerId", "activeJellyfinServerId", "activeEmbyServerId", "youtubeEnabled", "spotifyEnabled",
         "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
         "jellyfinHiddenSectionKeys", "embyHiddenSectionKeys", "localNetworkOnly", "wolRetryCount", "svpAvailable",
         "plexAudioPassthroughEnabled", "tvheadendAudioPassthroughEnabled", "screensaverPhotoAlbumKey",
@@ -163,6 +163,8 @@ internal object CompanionBackupPolicy {
         if (mode == "preferences") return JsonObject(result).toString()
         val smb = current.getValue("smbPasswords").jsonObject.toMutableMap()
         val ssh = (current["sshKeys"] as? JsonObject).orEmpty().toMutableMap()
+        // Sender ID -> ID on the receiver, so the sender's active server can be resolved after the merge.
+        val mappedIds = mutableMapOf<String, MutableMap<String, String>>()
         for (field in listOf("servers", "jellyfinServers", "embyServers", "fileSources", "dlnaServers")) {
             val nested = field in setOf("servers", "jellyfinServers", "embyServers")
             val values = current.list(field).toMutableList()
@@ -173,9 +175,9 @@ internal object CompanionBackupPolicy {
                 if (field == "fileSources" && profile.text("kind") == "local") continue
                 val index = values.indexOfFirst { existing -> identity(if (nested) existing.getValue("profile").jsonObject else existing, field) == identity(profile, field) }
                 val previous = values.getOrNull(index)
-                if (previous != null && !overwrite) continue
                 val oldProfile = previous?.let { if (nested) it.getValue("profile").jsonObject else it }
                 val sourceId = profile.text("id")
+                if (previous != null && !overwrite) { mappedIds.getOrPut(field) { mutableMapOf() }[sourceId] = oldProfile!!.text("id"); continue }
                 // A single malformed entry is skipped instead of aborting the whole merge.
                 if (sourceId.isBlank() || sourceId.length > 256) continue
                 if (index < 0 && values.size >= limit) continue
@@ -193,6 +195,7 @@ internal object CompanionBackupPolicy {
                     }
                 }) else newProfile
                 if (index < 0) values += merged else values[index] = merged
+                mappedIds.getOrPut(field) { mutableMapOf() }[sourceId] = id
                 if (field == "fileSources") incoming.getValue("smbPasswords").jsonObject[sourceId]?.let { smb[id] = it }
                 if (field == "fileSources") (incoming["sshKeys"] as? JsonObject)?.get(sourceId)?.let { ssh[id] = it }
             }
@@ -202,8 +205,16 @@ internal object CompanionBackupPolicy {
         result["sshKeys"] = JsonObject(ssh)
         for ((field, enabled) in listOf("servers" to "plexEnabled", "jellyfinServers" to "jellyfinEnabled", "embyServers" to "embyEnabled", "fileSources" to "filesEnabled")) {
             if (result.getValue(field).jsonArray.size > current.list(field).size) result[enabled] = JsonPrimitive(true)
+            // A system the sender uses with transferred accounts is switched on here too (never off).
+            if (incoming[enabled]?.jsonPrimitive?.booleanOrNull == true && incoming.list(field).isNotEmpty()) result[enabled] = JsonPrimitive(true)
         }
-        // Keep the receiver's active selections. Its normal selector can activate newly added accounts.
+        // The receiver keeps a valid active selection; without one it adopts the sender's (fresh setup).
+        for ((field, active) in listOf("servers" to "activeServerId", "jellyfinServers" to "activeJellyfinServerId", "embyServers" to "activeEmbyServerId")) {
+            val ids = result.getValue(field).jsonArray.map { it.jsonObject.getValue("profile").jsonObject.text("id") }
+            if (current.text(active) in ids) continue
+            mappedIds[field]?.get(incoming.text(active))?.let { result[active] = JsonPrimitive(it) }
+        }
+        if (incoming["youtubeEnabled"]?.jsonPrimitive?.booleanOrNull == true) result["youtubeEnabled"] = JsonPrimitive(true)
         val sourceTvh = incoming.text("tvheadendHost")
         if (sourceTvh.isNotBlank() && (current.text("tvheadendHost").isBlank() || overwrite)) {
             val sameHost = normalizedHost(incoming.text("tvheadendHost")) == normalizedHost(current.text("tvheadendHost"))
