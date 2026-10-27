@@ -27,6 +27,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     LANGUAGE(SettingsArea.START, R.string.settings_language_title, R.string.settings_page_language_hint),
     APPEARANCE(SettingsArea.START, R.string.settings_appearance_title, R.string.settings_page_appearance_hint),
     BACKGROUND(SettingsArea.START, R.string.settings_background_page_title, R.string.settings_page_background_hint),
+    CLOCK(SettingsArea.START, R.string.settings_clock_title, R.string.settings_page_clock_hint),
     HOME(SettingsArea.HOME, R.string.settings_home_rows_title, R.string.settings_page_home_hint),
     LIBRARY(SettingsArea.HOME, R.string.settings_library_title, R.string.settings_page_library_hint),
     /** Media-card activation behavior (formerly titled Navigation). */

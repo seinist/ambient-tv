@@ -663,14 +663,6 @@ fun SettingsScreen(
                                         onCheckedChange = viewModel::onScreensaverShowDateChanged,
                                     )
                                 }
-                                item {
-                                    TvSettingRow(
-                                        title = stringResource(R.string.settings_screensaver_24h),
-                                        body = stringResource(R.string.settings_screensaver_24h_hint),
-                                        checked = uiState.screensaverUse24HourClock,
-                                        onCheckedChange = viewModel::onScreensaver24HourClockChanged,
-                                    )
-                                }
                             }
                             if (uiState.screensaverModeKey == "media") {
                                 item {
@@ -1029,6 +1021,8 @@ fun SettingsScreen(
                                 }
                             }
                         }
+
+                        SettingsCategory.CLOCK -> clockSettingsItems(uiState.clock, viewModel::onClockChanged)
 
                         SettingsCategory.SUBTITLES -> {
                             item {

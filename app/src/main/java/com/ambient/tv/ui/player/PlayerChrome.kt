@@ -65,14 +65,16 @@ fun BoxScope.ReferencePlayerClock(
     modifier: Modifier = Modifier,
     liveLabel: String? = null,
 ) {
-    val now = java.time.LocalTime.now()
-    val formatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+    val clock = com.ambient.tv.ui.common.LocalClockSettings.current
+    if (!clock.inPlayer && liveLabel.isNullOrBlank()) return
+    val now by com.ambient.tv.ui.common.rememberWallClock(clock.seconds)
+    val formatter = com.ambient.tv.ui.common.rememberTimeFormatter(seconds = clock.seconds)
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(now.format(formatter), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+        if (clock.inPlayer) Text(now.format(formatter), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Medium)
         if (!liveLabel.isNullOrBlank()) {
             Text(
                 liveLabel,

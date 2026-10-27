@@ -796,7 +796,7 @@ private data class ScreensaverPreview(
     val modeKey: String,
     val showClock: Boolean,
     val showDate: Boolean,
-    val use24HourClock: Boolean,
+    val clock: com.ambient.tv.data.local.ClockSettings,
     val useArtwork: Boolean,
     val artworkIntervalSeconds: Int,
     val dimPercent: Int,
@@ -827,6 +827,8 @@ private fun AmbientTvApp(
     onUiLanguageSaved: () -> Unit,
     onCompanionSettingsApplied: suspend () -> Unit,
 ) {
+    val clockSettings by remember(appPreferences) { appPreferences.observeClockSettings() }
+        .collectAsState(initial = appPreferences.clockSettings)
     val homeBackground by remember(appPreferences) { appPreferences.observeHomeBackground() }
         .collectAsState(initial = com.ambient.tv.data.local.HomeBackgroundSettings())
     val homeBackgroundArtwork = remember { kotlinx.coroutines.flow.MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>(null) }
@@ -1129,7 +1131,6 @@ private fun AmbientTvApp(
     val screensaverModeKey = appPreferences.screensaverModeKey
     val screensaverShowClock = appPreferences.screensaverShowClock
     val screensaverShowDate = appPreferences.screensaverShowDate
-    val screensaverUse24HourClock = appPreferences.screensaverUse24HourClock
     val screensaverUseArtwork = appPreferences.screensaverUseArtwork
     val screensaverArtworkIntervalSeconds = appPreferences.screensaverArtworkIntervalSeconds
     val screensaverDimPercent = appPreferences.screensaverDimPercent
@@ -1598,6 +1599,7 @@ private fun AmbientTvApp(
                 com.ambient.tv.ui.common.LocalHomeBackgroundVisible provides showHomeBackground,
                 com.ambient.tv.ui.common.LocalHomeBackgroundArtwork provides homeBackgroundArtwork,
                 com.ambient.tv.ui.common.LocalFocusArtworkBackdrop provides homeBackground.focusArtwork,
+                com.ambient.tv.ui.common.LocalClockSettings provides clockSettings,
                 LocalPersistentPlaybackVideoHost provides persistentVideoHost,
                 LocalVisibleBackgroundVideo provides showVisibleBackgroundVideo,
                 LocalSidebarContentReadyReporter provides reportSidebarContentReady,
@@ -2505,7 +2507,7 @@ private fun AmbientTvApp(
                     modeKey = preview?.modeKey ?: screensaverModeKey,
                     showClock = preview?.showClock ?: screensaverShowClock,
                     showDate = preview?.showDate ?: screensaverShowDate,
-                    use24HourClock = preview?.use24HourClock ?: screensaverUse24HourClock,
+                    clock = preview?.clock ?: clockSettings,
                     useArtwork = preview?.useArtwork ?: screensaverUseArtwork,
                     artworkIntervalSeconds = preview?.artworkIntervalSeconds ?: screensaverArtworkIntervalSeconds,
                     dimPercent = preview?.dimPercent ?: screensaverDimPercent,
@@ -2541,7 +2543,7 @@ private fun SettingsUiState.toScreensaverPreview() = ScreensaverPreview(
     modeKey = screensaverModeKey,
     showClock = screensaverShowClock,
     showDate = screensaverShowDate,
-    use24HourClock = screensaverUse24HourClock,
+    clock = clock,
     useArtwork = screensaverUseArtwork,
     artworkIntervalSeconds = screensaverArtworkIntervalSeconds,
     dimPercent = screensaverDimPercent,

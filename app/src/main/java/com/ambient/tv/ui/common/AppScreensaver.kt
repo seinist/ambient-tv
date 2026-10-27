@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.PI
@@ -68,7 +67,8 @@ fun AppScreensaver(
     modeKey: String,
     showClock: Boolean,
     showDate: Boolean,
-    use24HourClock: Boolean,
+    /** Format and date style come from the shared clock; the screensaver keeps its own size and switches. */
+    clock: com.ambient.tv.data.local.ClockSettings,
     useArtwork: Boolean,
     artworkIntervalSeconds: Int,
     dimPercent: Int,
@@ -107,24 +107,22 @@ fun AppScreensaver(
                     ?: AmbientBackground(brightness)
             }
         }
-        if (showClock) ScreensaverClock(showDate, use24HourClock, modeKey == "oled", brightness)
+        if (showClock) ScreensaverClock(showDate, clock, modeKey == "oled", brightness)
     }
 }
 
 @Composable
-private fun ScreensaverClock(showDate: Boolean, use24HourClock: Boolean, oled: Boolean, brightness: Float) {
+private fun ScreensaverClock(showDate: Boolean, clock: com.ambient.tv.data.local.ClockSettings, oled: Boolean, brightness: Float) {
+    val use24HourClock = rememberUse24Hour(clock)
     // Only the minute display needs recomposition. Background motion uses its own draw clock.
-    val now by produceState(LocalDateTime.now()) {
-        while (true) {
-            delay(60_000L - System.currentTimeMillis() % 60_000L)
-            value = LocalDateTime.now()
-        }
-    }
+    val now by rememberWallClock()
     val locale = LocalConfiguration.current.locales[0] ?: Locale.ROOT
     val timeFormatter = remember(locale, use24HourClock) {
         DateTimeFormatter.ofPattern(if (use24HourClock) "HH:mm" else "h:mm", locale)
     }
-    val dateFormatter = remember(locale) { DateTimeFormatter.ofPattern("EEEE · d. MMMM", locale) }
+    // Its own switch hides the date; with the shared date off it falls back to the long form.
+    val dateFormatter = rememberDateFormatter(clock.date.takeUnless { it == com.ambient.tv.data.local.ClockSettings.DATE_OFF }
+        ?: com.ambient.tv.data.local.ClockSettings.DATE_LONG)!!
     val periodFormatter = remember(locale) { DateTimeFormatter.ofPattern("a", locale) }
     val timeText = remember(now, timeFormatter) { now.format(timeFormatter) }
     val dateText = remember(now.toLocalDate(), dateFormatter) { now.format(dateFormatter) }

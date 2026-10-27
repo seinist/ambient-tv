@@ -541,6 +541,7 @@ class SettingsViewModel @Inject constructor(
         screensaverShowClock = appPreferences.screensaverShowClock,
         screensaverShowDate = appPreferences.screensaverShowDate,
         screensaverUse24HourClock = appPreferences.screensaverUse24HourClock,
+        clock = appPreferences.clockSettings,
         screensaverUseArtwork = appPreferences.screensaverUseArtwork,
         screensaverArtworkIntervalSeconds = appPreferences.screensaverArtworkIntervalSeconds,
         screensaverDimPercent = appPreferences.screensaverDimPercent,
@@ -2218,6 +2219,8 @@ class SettingsViewModel @Inject constructor(
     fun onScreensaverShowClockChanged(value: Boolean) = _uiState.update { it.copy(screensaverShowClock = value) }
     fun onScreensaverShowDateChanged(value: Boolean) = _uiState.update { it.copy(screensaverShowDate = value) }
     fun onScreensaver24HourClockChanged(value: Boolean) = _uiState.update { it.copy(screensaverUse24HourClock = value) }
+    fun onClockChanged(change: (com.ambient.tv.data.local.ClockSettings) -> com.ambient.tv.data.local.ClockSettings) =
+        _uiState.update { it.copy(clock = change(it.clock).normalized()) }
     fun onScreensaverUseArtworkChanged(value: Boolean) = _uiState.update { it.copy(screensaverUseArtwork = value) }
     fun onScreensaverArtworkIntervalChanged(value: Int) = _uiState.update { it.copy(screensaverArtworkIntervalSeconds = value.coerceIn(10, 300)) }
     fun onScreensaverQualityChanged(value: String) = _uiState.update { it.copy(screensaverQualityKey = value) }
@@ -2633,7 +2636,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.screensaverModeKey = state.screensaverModeKey
         appPreferences.screensaverShowClock = state.screensaverShowClock
         appPreferences.screensaverShowDate = state.screensaverShowDate
-        appPreferences.screensaverUse24HourClock = state.screensaverUse24HourClock
+        appPreferences.screensaverUse24HourClock = state.clock.format != com.ambient.tv.data.local.ClockSettings.FORMAT_12
+        appPreferences.clockSettings = state.clock
         appPreferences.screensaverUseArtwork = state.screensaverUseArtwork
         appPreferences.screensaverArtworkIntervalSeconds = state.screensaverArtworkIntervalSeconds
         appPreferences.screensaverDimPercent = state.screensaverDimPercent

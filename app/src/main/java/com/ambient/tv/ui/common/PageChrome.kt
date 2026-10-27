@@ -248,6 +248,7 @@ fun PageHeader(
         // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
         if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
         else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+        if (!handheld && LocalClockSettings.current.inHeader) HeaderClock()
     }
 }
 

@@ -309,6 +309,12 @@ fun HomeScreen(
             com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, viewModel.browseProviders, Modifier.align(Alignment.BottomEnd).padding(12.dp))
         }
     }
+        // The app home has no header row: the clock floats where the library pages put it.
+        if (!systemOverview && !LocalHandheldUi.current && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+            com.ambient.tv.ui.common.HeaderClock(
+                Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = screenGutter()).zIndex(2f),
+            )
+        }
         if (showOverviewOptions) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
             Box(Modifier.align(Alignment.TopEnd)) {
@@ -753,6 +759,7 @@ internal fun LibraryContent(
             rowsScrolling = rowsScrolling,
             height = heroHeight,
             titleActions = heroTitleActions,
+            clockCorner = externalBackdropScrolling == null,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1186,6 +1193,8 @@ internal fun HomeHero(
     focusTravel: () -> Float = { 0.42f },
     /** Page actions on the right of the title line (system overview), outside the metadata crossfade. */
     titleActions: (@Composable RowScope.() -> Unit)? = null,
+    /** The hero sits at the screen top under the floating [HomeClock]: the logo stays clear of it. */
+    clockCorner: Boolean = false,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -1239,7 +1248,13 @@ internal fun HomeHero(
             contentScale = ContentScale.Fit,
             modifier = Modifier.align(Alignment.CenterEnd)
                 .padding(end = horizontalPadding, bottom = HomeHeroFadeTail)
-                .width(artworkWidth).height(deviceDp(160.dp, 120.dp)),
+                .width(artworkWidth).height(
+                    if (clockCorner && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+                        // Still centred on the metadata, so only the height shrinks to stay under the clock.
+                        val reserve = homeClockReserve(com.ambient.tv.ui.common.LocalClockSettings.current)
+                        (heroHeight - HomeHeroFadeTail - reserve * 2).coerceIn(48.dp, deviceDp(160.dp, 120.dp))
+                    } else deviceDp(160.dp, 120.dp),
+                ),
         )
         Box(
             modifier = Modifier
@@ -1564,6 +1579,16 @@ private val HomeHeroMinHeight = 190.dp
 
 // Rows sit this far up into the hero's fade tail, leaving room below the focused row's labels.
 internal val HomeRowsLift = 30.dp
+
+// Top of the screen the floating home clock covers, its padding included.
+private fun homeClockReserve(clock: com.ambient.tv.data.local.ClockSettings): Dp {
+    val twoLines = !clock.dateBeside && clock.date != com.ambient.tv.data.local.ClockSettings.DATE_OFF
+    return when (clock.size) {
+        com.ambient.tv.data.local.ClockSettings.SIZE_SMALL -> if (twoLines) 64.dp else 52.dp
+        com.ambient.tv.data.local.ClockSettings.SIZE_LARGE -> if (twoLines) 88.dp else 70.dp
+        else -> if (twoLines) 72.dp else 58.dp
+    }
+}
 
 // Keep the metadata/logo above the ambient surface's transparent lower edge.
 private val HomeHeroFadeTail = 24.dp

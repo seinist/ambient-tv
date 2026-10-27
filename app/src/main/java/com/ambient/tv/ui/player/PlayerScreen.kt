@@ -1007,7 +1007,7 @@ internal fun TvPlayerSeekBar(
     onTogglePlayback: () -> Unit = { BackgroundPlaybackSession.toggle() },
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
-    showEndTime: Boolean = true,
+    showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
 ) {
     val seekable = interactive && durationMs > 0L
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
@@ -1228,8 +1228,9 @@ internal fun TvPlayerSeekBar(
                 color = Color.White.copy(alpha = 0.82f),
                 fontSize = 13.sp,
             )
+            val endFormatter = com.ambient.tv.ui.common.rememberTimeFormatter()
             val endsAt = if (showEndTime && durationMs > 0L) {
-                java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+                java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(endFormatter)
             } else null
             Text(
                 endsAt?.let { "−${formatDuration(remaining)} · ${stringResource(R.string.player_ends_at, it)}" } ?: "−${formatDuration(remaining)}",

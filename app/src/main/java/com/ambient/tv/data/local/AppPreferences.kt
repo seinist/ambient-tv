@@ -1330,6 +1330,23 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_SCREENSAVER_SHOW_DATE, true)
         set(value) = prefs.edit { putBoolean(KEY_SCREENSAVER_SHOW_DATE, value) }
 
+    /** Before [clockSettings] existed only the screensaver had a clock; its 24-hour choice seeds the new format. */
+    var clockSettings: ClockSettings
+        get() = prefs.getString(KEY_CLOCK_SETTINGS, null)
+            ?.let { raw -> runCatching { clockJson.decodeFromString(ClockSettings.serializer(), raw).normalized() }.getOrNull() }
+            ?: ClockSettings(format = if (screensaverUse24HourClock) ClockSettings.FORMAT_24 else ClockSettings.FORMAT_12)
+        set(value) = prefs.edit { putString(KEY_CLOCK_SETTINGS, clockJson.encodeToString(ClockSettings.serializer(), value.normalized())) }
+
+    fun observeClockSettings(): kotlinx.coroutines.flow.Flow<ClockSettings> =
+        kotlinx.coroutines.flow.callbackFlow {
+            val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == null || key == KEY_CLOCK_SETTINGS) trySend(clockSettings)
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            trySend(clockSettings)
+            awaitClose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+
     var screensaverUse24HourClock: Boolean
         get() = prefs.getBoolean(KEY_SCREENSAVER_24H_CLOCK, true)
         set(value) = prefs.edit { putBoolean(KEY_SCREENSAVER_24H_CLOCK, value) }
@@ -2211,6 +2228,8 @@ class AppPreferences @Inject constructor(
         const val KEY_SCREENSAVER_SHOW_CLOCK = "screensaver_show_clock"
         const val KEY_SCREENSAVER_SHOW_DATE = "screensaver_show_date"
         const val KEY_SCREENSAVER_24H_CLOCK = "screensaver_24h_clock"
+        const val KEY_CLOCK_SETTINGS = "clock_settings"
+        private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         const val KEY_SCREENSAVER_USE_ARTWORK = "screensaver_use_artwork"
         const val KEY_SCREENSAVER_ARTWORK_INTERVAL_SECONDS = "screensaver_artwork_interval_seconds"
         const val KEY_YOUTUBE_FEEDS_CHANNELS_OFFERED = "youtube_feed_channels_offered"
