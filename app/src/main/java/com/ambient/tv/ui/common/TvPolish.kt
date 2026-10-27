@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -636,12 +637,16 @@ fun StatePanel(
     onSecondaryAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    FeedbackContent(
-        title = title, body = body, phase = null, modifier = modifier, layout = FeedbackLayout.PAGE,
-        actionLabel = actionLabel, onAction = onAction,
-        secondaryActionLabel = secondaryActionLabel, onSecondaryAction = onSecondaryAction,
-        requestActionFocus = onAction != null && actionLabel != null,
-    )
+    // Callers often hand in fillMaxSize/fillMaxWidth for placement; the panel itself only takes
+    // the width its text needs and wraps long text at a readable line length.
+    Box(modifier, contentAlignment = Alignment.Center) {
+        FeedbackContent(
+            title = title, body = body, phase = null, modifier = Modifier.widthIn(max = 620.dp), layout = FeedbackLayout.PAGE,
+            actionLabel = actionLabel, onAction = onAction,
+            secondaryActionLabel = secondaryActionLabel, onSecondaryAction = onSecondaryAction,
+            requestActionFocus = onAction != null && actionLabel != null,
+        )
+    }
 }
 
 /**

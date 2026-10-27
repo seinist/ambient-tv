@@ -113,7 +113,7 @@ internal fun FeedbackContent(
                 FeedbackPhase.WARNING -> Icons.Default.WarningAmber
                 FeedbackPhase.INFO -> Icons.Default.Info
             }, contentDescription = null, tint = statusColor, modifier = Modifier.size(if (page) 28.dp else 24.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f, fill = !page), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(title, style = if (page) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall,
                     color = colors.onSurface)
                 body?.takeIf(String::isNotBlank)?.let {
