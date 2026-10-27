@@ -437,6 +437,9 @@ dependencies {
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.effect)
     implementation(libs.androidx.media3.datasource.okhttp)
+    // SmartTube network engine "Cronet": the Play Services provider, no bundled native library.
+    implementation(libs.androidx.media3.datasource.cronet)
+    implementation(libs.play.services.cronet)
     implementation(libs.androidx.media3.session)
 
     implementation(libs.retrofit.core)

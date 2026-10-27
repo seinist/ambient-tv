@@ -50,7 +50,7 @@ internal object CompanionBackupPolicy {
         "titleVideoSettings", "scopedVideoSettings",
         "audioSettings", "mpvImageOptions", "vlcImageOptions", "media3ImageOptions", "mpvScalingFilterKey",
         "mpvDebandEnabled", "vlcScalingFilterKey", "tvheadendDeinterlaceModeKey", "tvheadendDeinterlaceFilterKey",
-        "tvheadendMpvDeinterlaceFilterKey", "youtubeMaxVideoHeight", "youtubeVideoPreset", "liveTimeshiftMb", "liveTimeshiftEnabled",
+        "tvheadendMpvDeinterlaceFilterKey", "youtubeMaxVideoHeight", "youtubeVideoPreset", "youtubeNetworkEngine", "youtubeBufferKey", "liveTimeshiftMb", "liveTimeshiftEnabled",
     )
     private val accounts = setOf("schemaVersion", "exportedAtEpochMs", "servers", "jellyfinServers", "embyServers",
         "fileSources", "dlnaServers", "smbPasswords", "sshKeys", "plexEnabled", "jellyfinEnabled", "embyEnabled", "filesEnabled",

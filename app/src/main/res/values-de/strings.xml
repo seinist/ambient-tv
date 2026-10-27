@@ -843,6 +843,14 @@
     <string name="settings_youtube_max_resolution_display">Display (empfohlen)</string>
     <string name="settings_youtube_max_resolution_display_hint">Nie höher als der Fernseher.</string>
     <string name="settings_youtube_quality_hint">Qualität wählst du im Player.</string>
+    <string name="settings_youtube_network_engine">Netzwerk-Engine</string>
+    <string name="settings_youtube_network_engine_default">Android (eingebaut)</string>
+    <string name="settings_youtube_network_engine_hint">Gilt für den Media3-Player. Cronet braucht Google-Play-Dienste, sonst wird OkHttp genutzt. Bei Rucklern oder hängendem Laden eine andere Engine probieren.</string>
+    <string name="settings_youtube_buffer">Puffergröße</string>
+    <string name="settings_youtube_buffer_low">Klein (30 s)</string>
+    <string name="settings_youtube_buffer_medium">Mittel (50 s)</string>
+    <string name="settings_youtube_buffer_high">Groß (3 min)</string>
+    <string name="settings_youtube_buffer_hint">Mehr Puffer überbrückt instabile Verbindungen, braucht aber mehr Speicher und lädt länger voraus.</string>
     <string name="settings_spotify_enable">Spotify aktivieren</string>
     <string name="settings_spotify_enable_hint">Spotify als eigenständiges System und Connect-Empfänger anzeigen.</string>
     <string name="settings_spotify_client_id">Spotify-Client-ID</string>

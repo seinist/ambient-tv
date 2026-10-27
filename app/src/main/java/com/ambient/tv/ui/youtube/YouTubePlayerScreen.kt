@@ -432,6 +432,7 @@ fun YouTubePlayerScreen(
                     } else YouTubeMedia3Playback(
                     media3, resumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight,
                     prefs.mediaAudioPassthroughEnabled,
+                    com.ambient.tv.ui.player.Media3StreamTuning(prefs.youtubeNetworkEngine, prefs.youtubeBufferKey),
                     onBack, onCompleted, ::switchRenderer, formatChanged,
                     streams = streamPanel,
                     // Media3 plays a single-language stream (muxed or HLS): VLC/MPV open the chosen language.
@@ -605,6 +606,7 @@ private fun YouTubeMedia3Playback(
     presetKey: String,
     maxVideoHeight: Int,
     audioPassthroughEnabled: Boolean,
+    streamTuning: com.ambient.tv.ui.player.Media3StreamTuning,
     onBack: () -> Unit,
     onCompleted: () -> Unit,
     onRenderer: (String, Long, Boolean) -> Unit,
@@ -661,6 +663,7 @@ private fun YouTubeMedia3Playback(
                 maxVideoFrameRate = target.fps,
                 preferOriginalAudio = true,
                 centerYouTubeCaptions = true,
+                streamTuning = streamTuning,
                 streamUrlRenewer = { expired ->
                     val host = android.net.Uri.parse(expired).host.orEmpty()
                     if (host == "googlevideo.com" || host.endsWith(".googlevideo.com"))

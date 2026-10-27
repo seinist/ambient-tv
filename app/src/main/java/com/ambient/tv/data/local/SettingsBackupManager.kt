@@ -137,6 +137,9 @@ data class SettingsBackup(
     val youtubeStartFeedKey: String? = null,
     val youtubeMaxVideoHeight: Int = 0,
     val youtubeVideoPreset: String = "auto",
+    /** Null in backups made before these settings existed: the device keeps its own. */
+    val youtubeNetworkEngine: String? = null,
+    val youtubeBufferKey: String? = null,
     val screensaverEnabled: Boolean = true,
     val screensaverTimeoutMinutes: Int = 10,
     val screensaverModeKey: String = "ambient",
@@ -433,6 +436,8 @@ class SettingsBackupManager @Inject constructor(
             youtubeStartFeedKey = preferences.youtubeStartFeedKey,
             youtubeMaxVideoHeight = preferences.youtubeMaxVideoHeight,
             youtubeVideoPreset = preferences.youtubeVideoPreset,
+            youtubeNetworkEngine = preferences.youtubeNetworkEngine,
+            youtubeBufferKey = preferences.youtubeBufferKey,
             screensaverEnabled = preferences.screensaverEnabled,
             screensaverTimeoutMinutes = preferences.screensaverTimeoutMinutes,
             screensaverModeKey = preferences.screensaverModeKey,
@@ -787,6 +792,8 @@ class SettingsBackupManager @Inject constructor(
         // YouTube video preset since schema 66; older backups do not carry it, so their
         // default ("auto") must not replace the preset chosen on this device.
         if (backup.schemaVersion >= 66) preferences.youtubeVideoPreset = backup.youtubeVideoPreset
+        backup.youtubeNetworkEngine?.let { preferences.youtubeNetworkEngine = it }
+        backup.youtubeBufferKey?.let { preferences.youtubeBufferKey = it }
         preferences.screensaverEnabled = backup.screensaverEnabled
         preferences.screensaverTimeoutMinutes = backup.screensaverTimeoutMinutes
         preferences.screensaverModeKey = backup.screensaverModeKey

@@ -841,6 +841,14 @@
     <string name="settings_youtube_max_resolution_display">Display (recommended)</string>
     <string name="settings_youtube_max_resolution_display_hint">Never above the TV resolution.</string>
     <string name="settings_youtube_quality_hint">Choose quality in the player.</string>
+    <string name="settings_youtube_network_engine">Network engine</string>
+    <string name="settings_youtube_network_engine_default">Android (built-in)</string>
+    <string name="settings_youtube_network_engine_hint">Applies to the Media3 player. Cronet needs Google Play services, otherwise OkHttp is used. Try another engine if videos stutter or stop loading.</string>
+    <string name="settings_youtube_buffer">Buffer size</string>
+    <string name="settings_youtube_buffer_low">Low (30 s)</string>
+    <string name="settings_youtube_buffer_medium">Medium (50 s)</string>
+    <string name="settings_youtube_buffer_high">High (3 min)</string>
+    <string name="settings_youtube_buffer_hint">More buffer bridges unstable connections but uses more memory and loads longer ahead.</string>
     <string name="settings_spotify_enable">Enable Spotify</string>
     <string name="settings_spotify_enable_hint">Show Spotify as an independent system and Spotify Connect receiver.</string>
     <string name="settings_spotify_client_id">Spotify client ID</string>

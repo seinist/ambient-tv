@@ -530,6 +530,8 @@ class SettingsViewModel @Inject constructor(
         youtubeStartFeedKey = appPreferences.youtubeStartFeedKey,
         youtubeMaxVideoHeight = appPreferences.youtubeMaxVideoHeight,
         youtubeVideoPreset = appPreferences.youtubeVideoPreset,
+        youtubeNetworkEngine = appPreferences.youtubeNetworkEngine,
+        youtubeBufferKey = appPreferences.youtubeBufferKey,
         plexHiddenSectionKeys = appPreferences.plexHiddenSectionKeys,
         sidebarSettingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,
         systemHomeHiddenRows = appPreferences.systemHomeHiddenRows,
@@ -2211,6 +2213,12 @@ class SettingsViewModel @Inject constructor(
     fun onYoutubeVideoPresetChanged(key: String) = _uiState.update {
         it.copy(youtubeVideoPreset = key.takeIf { k -> com.ambient.tv.youtube.youtubeVideoPreset(k) != null } ?: com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO)
     }
+    fun onYoutubeNetworkEngineChanged(key: String) = _uiState.update {
+        it.copy(youtubeNetworkEngine = key.takeIf { k -> k in com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES } ?: com.ambient.tv.ui.player.MEDIA3_NETWORK_OKHTTP)
+    }
+    fun onYoutubeBufferChanged(key: String) = _uiState.update {
+        it.copy(youtubeBufferKey = key.takeIf { k -> k in com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS } ?: "medium")
+    }
     fun onYoutubeMaxVideoHeightChanged(value: Int) = _uiState.update { it.copy(youtubeMaxVideoHeight = value.takeIf { v -> v in setOf(0, 720, 1080, 1440, 2160) } ?: 0) }
 
     fun onScreensaverEnabledChanged(value: Boolean) = _uiState.update { it.copy(screensaverEnabled = value) }
@@ -2627,6 +2635,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.youtubeStartFeedKey = state.youtubeStartFeedKey
         appPreferences.youtubeMaxVideoHeight = state.youtubeMaxVideoHeight
         appPreferences.youtubeVideoPreset = state.youtubeVideoPreset
+        appPreferences.youtubeNetworkEngine = state.youtubeNetworkEngine
+        appPreferences.youtubeBufferKey = state.youtubeBufferKey
         appPreferences.screensaverEnabled = state.screensaverEnabled
         appPreferences.screensaverTimeoutMinutes = state.screensaverTimeoutMinutes
         appPreferences.screensaverModeKey = state.screensaverModeKey
