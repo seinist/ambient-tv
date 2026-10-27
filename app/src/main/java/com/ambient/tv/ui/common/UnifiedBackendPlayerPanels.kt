@@ -227,7 +227,7 @@ fun UnifiedBackendPlayerPanel(
                     icon = Icons.Filled.ViewWeek,
                     title = stringResource(R.string.osd_buttons),
                     value = stringResource(R.string.osd_buttons_summary,
-                        offered.count { "${player.name}/${it.name}" !in hidden }, offered.size),
+                        offered.count { com.ambient.tv.ui.player.osdButtonVisible(it, player, hidden) }, offered.size),
                     onClick = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
                 )
             }

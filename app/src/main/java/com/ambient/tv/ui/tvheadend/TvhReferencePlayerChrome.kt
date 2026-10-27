@@ -332,6 +332,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                     PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), onOpenRenderer, selected = rendererSelected, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                 }
                 PlayerSleepTimerButton(onOpenSleep, selected = sleepSelected)
+                com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
                 PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), onOpenSettings, selected = settingsSelected)
             },
         )

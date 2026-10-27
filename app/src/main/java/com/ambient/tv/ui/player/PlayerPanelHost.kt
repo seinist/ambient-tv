@@ -165,6 +165,11 @@ internal fun PersistentPlayerOverlays() {
 @Composable
 private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.tv.ui.common.PlayerPanelNavigation?) {
     val panel = navigation?.panel ?: UnifiedPlayerPanel.NONE
+    val session = model.audioSession
+    DisposableEffect(session) {
+        activeDiagnosticsSession = session
+        onDispose { if (activeDiagnosticsSession === session) activeDiagnosticsSession = null }
+    }
     CompositionLocalProvider(LocalProjectMBrowser provides model.projectMBrowser) {
         PlayerPanelVisibility(panel) { displayedPanel ->
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = model.scrimAlpha)))
@@ -335,6 +340,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { model.onPanelChange(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                     }
                     PlayerSleepTimerButton({ model.onPanelChange(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
+                    com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
                     PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { model.onPanelChange(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)
                 },
             )

@@ -26,6 +26,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.outlined.Bedtime as BedtimeOutlined
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -570,6 +572,26 @@ fun PlayerSleepTimerButton(onClick: () -> Unit, selected: Boolean) {
         onClick,
         selected = selected,
         osd = com.ambient.tv.ui.player.OsdButton.SLEEP,
+    )
+}
+
+/** Stats-for-Nerds and FPS overlay toggles; opt-in OSD buttons, only with a playback session. */
+@Composable
+fun PlayerDiagnosticsButtons() {
+    val session = com.ambient.tv.ui.player.activeDiagnosticsSession ?: return
+    PlayerIconButton(
+        Icons.Filled.Info,
+        stringResource(R.string.player_stats_for_nerds),
+        { session.performanceHint = !session.performanceHint },
+        selected = session.performanceHint,
+        osd = com.ambient.tv.ui.player.OsdButton.STATS,
+    )
+    PlayerIconButton(
+        Icons.Filled.Speed,
+        stringResource(R.string.player_fps_overlay),
+        { session.showFpsOverlay = !session.showFpsOverlay },
+        selected = session.showFpsOverlay,
+        osd = com.ambient.tv.ui.player.OsdButton.FPS,
     )
 }
 

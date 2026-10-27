@@ -42,24 +42,33 @@ private val osdHiddenState = mutableStateOf<Set<String>?>(null)
 /** Player whose action bar is on screen; each keeps its own hidden OSD buttons. */
 enum class OsdPlayer(val buttons: List<OsdButton>) {
     MEDIA(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.AUDIO,
-        OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP)),
+        OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.STATS, OsdButton.FPS)),
     YOUTUBE(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
-        OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP)),
+        OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP, OsdButton.STATS,
+        OsdButton.FPS)),
     LIVE_TV(listOf(OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
-        OsdButton.CHAPTERS, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP)),
+        OsdButton.CHAPTERS, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP,
+        OsdButton.STATS, OsdButton.FPS)),
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
 }
 
-/** Action-bar buttons that can be hidden. Play/pause and the settings gear always stay. */
-enum class OsdButton(@StringRes val label: Int) {
+/**
+ * Action-bar buttons that can be hidden. Play/pause and the settings gear always stay.
+ * [optIn] buttons start hidden; the viewer switches them on under OSD buttons.
+ */
+enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
     SEEK(R.string.osd_button_seek), STOP(R.string.player_stop), NEXT(R.string.osd_button_next),
     ZAP(R.string.osd_button_zap), RECORD(R.string.tvh_record), GO_LIVE(R.string.timeshift_go_live),
     EXIT(R.string.osd_button_exit), CHAPTERS(R.string.player_chapters), CHANNEL(R.string.youtube_channel_open),
     SUBSCRIBE(R.string.youtube_subscribe), AUDIO(R.string.player_audio), SUBTITLES(R.string.player_subtitles),
     VIDEO(R.string.player_video), VISUALIZER(R.string.player_visualizer), SLEEP(R.string.player_sleep_timer),
     SHUFFLE(R.string.spotify_shuffle), REPEAT(R.string.osd_button_repeat), VOLUME(R.string.osd_button_volume),
+    STATS(R.string.player_stats_for_nerds, optIn = true), FPS(R.string.player_fps_overlay, optIn = true),
 }
+
+/** Diagnostics of the playback whose panels are composed; the STATS/FPS buttons toggle it. */
+var activeDiagnosticsSession by mutableStateOf<AudioSession?>(null)
 
 /** Set by the action bar for its buttons; null (mini player, panels) shows every button. */
 val LocalOsdPlayer = staticCompositionLocalOf<OsdPlayer?> { null }
@@ -98,13 +107,21 @@ fun osdHiddenButtons(): Set<String> {
     return state.value.orEmpty()
 }
 
+/** Stored entry that flips the default: hides a normal button, shows an opt-in one ("+" prefix). */
+private fun osdKey(player: OsdPlayer, button: OsdButton) =
+    (if (button.optIn) "+" else "") + "${player.name}/${button.name}"
+
+fun osdButtonVisible(button: OsdButton, player: OsdPlayer, hidden: Set<String>): Boolean =
+    (osdKey(player, button) in hidden) == button.optIn
+
 @Composable
 fun osdButtonVisible(button: OsdButton, player: OsdPlayer? = LocalOsdPlayer.current): Boolean =
-    player == null || "${player.name}/${button.name}" !in osdHiddenButtons()
+    player == null && !button.optIn || player != null && osdButtonVisible(button, player, osdHiddenButtons())
 
 fun setOsdButtonVisible(preferences: AppPreferences, player: OsdPlayer, button: OsdButton, visible: Boolean) {
-    val key = "${player.name}/${button.name}"
-    val hidden = (osdHiddenState.value ?: preferences.osdHiddenButtons).let { if (visible) it - key else it + key }
+    val key = osdKey(player, button)
+    val stored = visible == button.optIn
+    val hidden = (osdHiddenState.value ?: preferences.osdHiddenButtons).let { if (stored) it + key else it - key }
     osdHiddenState.value = hidden
     preferences.osdHiddenButtons = hidden
 }
