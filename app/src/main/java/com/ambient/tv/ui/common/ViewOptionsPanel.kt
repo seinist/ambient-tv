@@ -67,6 +67,7 @@ fun ViewOptionsPanel(
     onClose: () -> Unit, modifier: Modifier = Modifier,
     showDensity: Boolean = true,
     hint: String = stringResource(R.string.library_options_hint),
+    title: String = stringResource(R.string.library_options),
     sorts: List<PanelOption> = emptyList(), selectedSort: String = "", onSort: (String) -> Unit = {},
     sortOrders: List<PanelOption> = emptyList(), selectedSortOrder: String = "", onSortOrder: (String) -> Unit = {},
     filters: List<PanelOption> = emptyList(), selectedFilter: String = "", onFilter: (String) -> Unit = {},
@@ -74,10 +75,10 @@ fun ViewOptionsPanel(
     filtersActive: Boolean = false, onResetFilters: (() -> Unit)? = null,
     extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
-    RightSidePanel(stringResource(R.string.library_options), onClose, modifier,
+    RightSidePanel(title, onClose, modifier,
         subtitle = hint, closeInsteadOfBack = true,
         requestHeaderFocus = true) {
-        RightPanelSectionTitle(stringResource(R.string.library_view))
+        if (views.isNotEmpty()) RightPanelSectionTitle(stringResource(R.string.library_view))
         // The panel focuses its first tile on open; hand that first focus to the selected layout.
         val selectedFocus = remember { FocusRequester() }
         val selectedIntoView = remember { BringIntoViewRequester() }
@@ -101,7 +102,7 @@ fun ViewOptionsPanel(
             }
         }
         // Inset so the focus-scaled tiles stay inside the panel body's clip bounds.
-        BoxWithConstraints(
+        if (views.isNotEmpty()) BoxWithConstraints(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
                 .onFocusChanged { if (it.hasFocus && initialFocusPending) redirectInitialFocus = true },
         ) {
@@ -152,6 +153,14 @@ fun ViewOptionsPanel(
             }
         }
         extraContent()
+        val filterBar = LocalFilterBarSetting.current
+        if (sorts.isNotEmpty() || filters.isNotEmpty() || filterGroups.isNotEmpty()) {
+            RightPanelDivider()
+            RightPanelChoice(stringResource(R.string.library_filter_bar), filterBar.shown, { filterBar.set(!filterBar.shown) },
+                Modifier.fillMaxWidth(), subtitle = stringResource(R.string.library_filter_bar_hint))
+        }
+        // The visible bar owns sort and filters; the panel takes them back only when it is hidden.
+        if (filterBar.shown) return@RightSidePanel
         if (sorts.isNotEmpty()) {
             RightPanelDivider()
             RightPanelSectionTitle(stringResource(R.string.library_sort))

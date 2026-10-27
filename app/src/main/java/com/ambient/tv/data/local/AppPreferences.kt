@@ -33,6 +33,10 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean("youtube_tv_link_enabled", value) }
 
     /** Diagnostic log for release builds (Settings → Diagnostics); off by default, device-local. */
+    var filterBarShown: Boolean
+        get() = prefs.getBoolean("filter_bar_shown", true)
+        set(value) = prefs.edit { putBoolean("filter_bar_shown", value) }
+
     var diagnosticLogEnabled: Boolean
         get() = prefs.getBoolean("diagnostic_log_enabled", false)
         set(value) = prefs.edit { putBoolean("diagnostic_log_enabled", value) }

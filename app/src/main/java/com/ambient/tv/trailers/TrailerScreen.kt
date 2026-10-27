@@ -230,13 +230,38 @@ internal fun TrailerCatalogContent(
     ReportSidebarContentReady(!state.loadingInitial)
     BackHandler(enabled = showViewOptions) { showViewOptions = false }
     BackHandler(enabled = !showViewOptions) { optionsOpened = false; onBack() }
+    val filterModel = FilterBarModel(
+        groups = listOf(PanelOptionGroup("filter", stringResource(R.string.library_filter),
+            TrailerFilter.entries.map { PanelOption(it.name, trailerFilterLabel(it)) }, filter.name)),
+        onSelect = { _, key -> TrailerFilter.valueOf(key).let { value -> filter = value; preferences.setSectionFilter(stateKey, value.name) } },
+        sorts = TrailerSort.entries.map { PanelOption(it.name, stringResource(when (it) {
+            TrailerSort.DEFAULT -> R.string.trailers_sort_default
+            TrailerSort.TITLE -> R.string.library_sort_title
+            TrailerSort.DATE -> R.string.trailers_sort_date
+        })) }, selectedSort = sort.name,
+        onSort = { TrailerSort.valueOf(it).let { value ->
+            val descending = value == TrailerSort.DATE
+            sort = value
+            sortDescending = descending
+            preferences.setSectionSort(stateKey, value.name)
+            preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
+        } },
+        sortOrders = trailerSortOrders(sort),
+        selectedSortOrder = if (sortDescending) "DESCENDING" else "ASCENDING",
+        onSortOrder = { key ->
+            sortDescending = key == "DESCENDING"
+            preferences.setSectionSortOrder(stateKey, key)
+        },
+        onReset = { filter = TrailerFilter.ALL; preferences.setSectionFilter(stateKey, TrailerFilter.ALL.name) },
+    )
+    val filterBarShown = configured && enabled && LocalFilterBarSetting.current.shown
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = 28.dp)) {
             PageHeader(actions = {
                 TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
                 if (configured && enabled) ViewOptionsChip(
-                    activeCount = if (filter == TrailerFilter.ALL) 0 else 1,
+                    activeCount = if (filterBarShown) 0 else filterModel.activeCount,
                     onClick = { optionsOpened = true; showViewOptions = true },
                     modifier = Modifier.focusRequester(optionsFocus),
                 )
@@ -248,15 +273,9 @@ internal fun TrailerCatalogContent(
                     })
                 }
             }
-            if (filter != TrailerFilter.ALL) {
-                ActiveFilterChips(
-                    listOf(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter), trailerFilterLabel(filter))),
-                    onClick = { optionsOpened = true; showViewOptions = true },
-                    focusRequester = filterFocus,
-                )
-            }
+            if (filterBarShown) FilterBar(filterModel, Modifier.padding(bottom = 8.dp), focusRequester = filterFocus)
             Box(
-                Modifier.fillMaxWidth().weight(1f).then(if (filter == TrailerFilter.ALL) Modifier else Modifier.focusProperties {
+                Modifier.fillMaxWidth().weight(1f).then(if (!filterBarShown) Modifier else Modifier.focusProperties {
                     onExit = {
                         if (requestedFocusDirection == FocusDirection.Up) {
                             cancelFocusChange()
@@ -318,27 +337,10 @@ internal fun TrailerCatalogContent(
             onGridColumns = { value -> preferences.libraryGridColumns = value; gridColumns = preferences.libraryGridColumns },
             onListRows = { value -> preferences.libraryListRows = value; listRows = preferences.libraryListRows },
             onClose = { showViewOptions = false }, modifier = Modifier.align(Alignment.CenterEnd),
-            sorts = TrailerSort.entries.map { PanelOption(it.name, stringResource(when (it) {
-                TrailerSort.DEFAULT -> R.string.trailers_sort_default
-                TrailerSort.TITLE -> R.string.library_sort_title
-                TrailerSort.DATE -> R.string.trailers_sort_date
-            })) }, selectedSort = sort.name,
-            onSort = { TrailerSort.valueOf(it).let { value ->
-                val descending = value == TrailerSort.DATE
-                sort = value
-                sortDescending = descending
-                preferences.setSectionSort(stateKey, value.name)
-                preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
-            } },
-            sortOrders = trailerSortOrders(sort),
-            selectedSortOrder = if (sortDescending) "DESCENDING" else "ASCENDING",
-            onSortOrder = { key ->
-                val descending = key == "DESCENDING"
-                sortDescending = descending
-                preferences.setSectionSortOrder(stateKey, key)
-            },
-            filters = TrailerFilter.entries.map { PanelOption(it.name, trailerFilterLabel(it)) }, selectedFilter = filter.name,
-            onFilter = { TrailerFilter.valueOf(it).let { value -> filter = value; preferences.setSectionFilter(stateKey, value.name) } },
+            sorts = filterModel.sorts, selectedSort = filterModel.selectedSort, onSort = filterModel.onSort,
+            sortOrders = filterModel.sortOrders, selectedSortOrder = filterModel.selectedSortOrder, onSortOrder = filterModel.onSortOrder,
+            filterGroups = filterModel.groups, onFilterGroup = filterModel.onSelect,
+            filtersActive = filterModel.activeCount > 0, onResetFilters = filterModel.onReset,
         )
     }
 }

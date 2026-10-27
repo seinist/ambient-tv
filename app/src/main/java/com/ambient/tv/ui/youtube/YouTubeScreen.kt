@@ -167,6 +167,8 @@ import kotlinx.coroutines.delay
     LaunchedEffect(state.rows) { ScreensaverArtworkRegistry.offerAll(state.rows.flatMap { it.items }.take(24).map { it.imageUrl }) }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val filterFocus = remember { FocusRequester() }
+    val filterModel = youtubeFilterModel(state, viewModel)
+    val filterBarShown = com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
     Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
         Header(
             focusChain = focusChain,
@@ -179,7 +181,7 @@ import kotlinx.coroutines.delay
             searchFieldModifier=Modifier.focusRequester(searchFieldFocusRequester).onPreviewKeyEvent { event ->
                 val target=when(event.key) {
                     Key.DirectionUp->focusChain.contentUp
-                    Key.DirectionDown-> if (state.filter != YouTubeFilter.ALL) filterFocus else contentItemFocusRequester
+                    Key.DirectionDown-> if (filterBarShown) filterFocus else contentItemFocusRequester
                     Key.DirectionRight->searchCloseFocusRequester
                     else->null
                 }
@@ -201,13 +203,14 @@ import kotlinx.coroutines.delay
                 viewOptionsOpened=true
                 showViewOptions=true
             },
+            filterModel = filterModel.takeIf { filterBarShown },
             filterFocus = filterFocus,
             filterUp = if (searchVisible) searchFieldFocusRequester else focusChain.contentUp,
         )
         // Up from the feed: active filters, then the search field, then the feed chips, then the header actions.
         Box(Modifier.fillMaxSize().pageContentUp(focusChain) {
             when {
-                state.filter != YouTubeFilter.ALL -> filterFocus
+                filterBarShown -> filterFocus
                 searchVisible -> searchFieldFocusRequester
                 else -> focusChain.contentUp
             }
@@ -245,9 +248,7 @@ import kotlinx.coroutines.delay
         if (showViewOptions) Box(Modifier.align(Alignment.TopEnd)) {
             YouTubeViewOptionsPanel(
                 state = state,
-                onSelectSort = viewModel::selectSort,
-                onSelectSortDescending = viewModel::selectSortDescending,
-                onSelectFilter = viewModel::selectFilter,
+                filterModel = filterModel,
                 onSelectView = viewModel::selectViewMode,
                 onSetGridColumns = viewModel::setGridColumns,
                 onSetListRows = viewModel::setListRows,
@@ -295,6 +296,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     onOpenSearch:()->Unit,
     onCloseSearch:()->Unit,
     onOpenViewOptions:()->Unit,
+    filterModel: com.ambient.tv.ui.common.FilterBarModel?,
     filterFocus: FocusRequester,
     filterUp: FocusRequester,
 ) = Column(Modifier.fillMaxWidth().padding(screenGutter(), 24.dp, screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
@@ -305,7 +307,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
             TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed, icon=Icons.Filled.Subscriptions, onClick=vm::toggleSubscription)
         }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
-        ViewOptionsChip(if (state.filter == YouTubeFilter.ALL) 0 else 1, onOpenViewOptions, viewOptionsModifier)
+        ViewOptionsChip(if (filterModel != null || state.filter == YouTubeFilter.ALL) 0 else 1, onOpenViewOptions, viewOptionsModifier)
     }) {
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
         else YouTubeChannelTitle(channel)
@@ -324,15 +326,20 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         }
     }
     state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=vm::refresh, loading=state.loading); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
-    if (state.filter != YouTubeFilter.ALL) {
-        ActiveFilterChips(
-            listOf(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter), filterLabel(state.filter))),
-            onOpenViewOptions,
-            focusRequester = filterFocus,
-            up = filterUp,
-        )
-    }
+    if (filterModel != null) com.ambient.tv.ui.common.FilterBar(filterModel, focusRequester = filterFocus, up = filterUp)
 }
+
+@Composable private fun youtubeFilterModel(state: YouTubeUiState, vm: YouTubeViewModel) = com.ambient.tv.ui.common.FilterBarModel(
+    groups = listOf(com.ambient.tv.ui.common.PanelOptionGroup("filter", stringResource(R.string.library_filter),
+        YouTubeFilter.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, filterLabel(it)) }, state.filter.name)),
+    onSelect = { _, key -> vm.selectFilter(YouTubeFilter.valueOf(key)) },
+    sorts = YouTubeSort.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, sortLabel(it)) },
+    selectedSort = state.sort.name, onSort = { vm.selectSort(YouTubeSort.valueOf(it)) },
+    sortOrders = youtubeSortOrders(state.sort),
+    selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
+    onSortOrder = { vm.selectSortDescending(it == "DESCENDING") },
+    onReset = { vm.selectFilter(YouTubeFilter.ALL) },
+)
 
 /** Channel page title: round avatar and channel name in place of the system title. */
 @Composable
@@ -378,9 +385,7 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable private fun YouTubeViewOptionsPanel(
     state: YouTubeUiState,
-    onSelectSort: (YouTubeSort) -> Unit,
-    onSelectSortDescending: (Boolean) -> Unit,
-    onSelectFilter: (YouTubeFilter) -> Unit,
+    filterModel: com.ambient.tv.ui.common.FilterBarModel,
     onSelectView: (YouTubeViewMode) -> Unit,
     onSetGridColumns: (Int) -> Unit,
     onSetListRows: (Int) -> Unit,
@@ -393,13 +398,10 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
         gridColumns = state.gridColumns, listRows = state.listRows,
         onGridColumns = onSetGridColumns, onListRows = onSetListRows, onClose = onClose,
         showDensity = state.viewMode != YouTubeViewMode.CINEMATIC,
-        sorts = YouTubeSort.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, sortLabel(it)) },
-        selectedSort = state.sort.name, onSort = { onSelectSort(YouTubeSort.valueOf(it)) },
-        sortOrders = youtubeSortOrders(state.sort),
-        selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
-        onSortOrder = { onSelectSortDescending(it == "DESCENDING") },
-        filters = YouTubeFilter.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, filterLabel(it)) },
-        selectedFilter = state.filter.name, onFilter = { onSelectFilter(YouTubeFilter.valueOf(it)) },
+        sorts = filterModel.sorts, selectedSort = filterModel.selectedSort, onSort = filterModel.onSort,
+        sortOrders = filterModel.sortOrders, selectedSortOrder = filterModel.selectedSortOrder, onSortOrder = filterModel.onSortOrder,
+        filterGroups = filterModel.groups, onFilterGroup = filterModel.onSelect,
+        filtersActive = filterModel.activeCount > 0, onResetFilters = filterModel.onReset,
         extraContent = {
             RightPanelDivider()
             RightPanelSectionTitle(

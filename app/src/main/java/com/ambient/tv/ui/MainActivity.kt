@@ -664,11 +664,16 @@ open class MainActivity : ComponentActivity() {
                     com.ambient.tv.ui.performance.PerformanceMode.fromKey(playbackPerformanceModeKey),
                 )
             }
+            var filterBarShown by remember { mutableStateOf(appPreferences.filterBarShown) }
+            val filterBarSetting = remember(filterBarShown) {
+                com.ambient.tv.ui.common.FilterBarSetting(filterBarShown) { appPreferences.filterBarShown = it; filterBarShown = it }
+            }
             CompositionLocalProvider(
                 com.ambient.tv.ui.display.LocalUiHdrState provides uiHdrState,
                 com.ambient.tv.ui.mobile.LocalHandheldUi provides (!com.ambient.tv.ui.mobile.isTelevision(this@MainActivity) && this@MainActivity is com.ambient.tv.ui.mobile.HandheldActivity),
                 com.ambient.tv.ui.performance.LocalPerformanceProfile provides performanceProfile,
                 com.ambient.tv.ui.sound.LocalUiSoundPlayer provides uiSoundPlayer,
+                com.ambient.tv.ui.common.LocalFilterBarSetting provides filterBarSetting,
             ) {
             AmbientTvTheme(
                 uiScale = uiScale,

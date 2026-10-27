@@ -141,7 +141,7 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.FullscreenSpinner
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.sanitizeUiErrorMessage
-import com.ambient.tv.ui.common.ActiveFilterChips
+import com.ambient.tv.ui.common.FilterBar
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
@@ -370,7 +370,7 @@ internal fun SectionContent(
         }.focusGroup()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
             val filterFocus = remember { FocusRequester() }
-            val filtersActive = state.page == SectionPage.LIBRARY && !state.libraryFilters.isDefault
+            val filterBarShown = state.page != SectionPage.RECOMMENDATIONS && com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
             SectionHeader(
                 focusState,
                 onPage,
@@ -384,6 +384,10 @@ internal fun SectionContent(
                 optionsModifier = Modifier.focusRequester(optionsFocusRequester),
                 filterFocus = filterFocus,
                 filterUp = focusChain.chips,
+                onSetSort = onSetSort,
+                onSetSortOrder = onSetSortOrder,
+                onSetFilterGroup = onSetFilterGroup,
+                onResetFilters = onResetFilters,
             )
             // Cinematic has no scrollable grid for the bar to jump in.
             val showAlphabetBar = state.page == SectionPage.LIBRARY &&
@@ -397,7 +401,7 @@ internal fun SectionContent(
                     .fillMaxWidth()
                     .focusRequester(contentAreaFocus)
                     .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
-                    .pageContentUp(focusChain) { if (filtersActive) filterFocus else focusChain.contentUp }
+                    .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.contentUp }
                     .focusGroup()
                     .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
             ) {
@@ -486,17 +490,23 @@ private fun SectionHeader(
     optionsModifier: Modifier = Modifier,
     filterFocus: FocusRequester? = null,
     filterUp: FocusRequester? = null,
+    onSetSort: (SectionSort) -> Unit = {},
+    onSetSortOrder: (SectionSortOrder) -> Unit = {},
+    onSetFilterGroup: (String, String) -> Unit = { _, _ -> },
+    onResetFilters: () -> Unit = {},
 ) {
     @Composable fun PageChip(label: String, page: SectionPage, icon: androidx.compose.ui.graphics.vector.ImageVector) {
         val selected = state.page == page
         TvChip(label, selected, modifier = if (selected) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon = icon) { onPage(page) }
     }
-    val activeFilters = if (state.page == SectionPage.LIBRARY) activeFilterLabels(state) else emptyList()
     Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
-            ViewOptionsChip(activeFilters.size, onOpenOptions, optionsModifier)
+            ViewOptionsChip(
+                if (com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown || state.page != SectionPage.LIBRARY) 0 else state.libraryFilters.activeCount,
+                onOpenOptions, optionsModifier,
+            )
         }) {
             com.ambient.tv.ui.common.SystemPageTitle(system, title = state.title)
             val context = buildList {
@@ -507,7 +517,6 @@ private fun SectionHeader(
                         SectionPage.COLLECTIONS -> stringResource(R.string.collection_item_count, state.collections.size)
                     },
                 )
-                if (state.page != SectionPage.RECOMMENDATIONS) add(sortSummary(state.sort, state.sortOrder))
             }
             Text(
                 text = context.joinToString("  ·  "),
@@ -520,7 +529,18 @@ private fun SectionHeader(
             item { PageChip(stringResource(R.string.library_tab_library), SectionPage.LIBRARY, Icons.Filled.VideoLibrary) }
             item { PageChip(stringResource(R.string.library_tab_collections), SectionPage.COLLECTIONS, Icons.Filled.CollectionsBookmark) }
         }
-        ActiveFilterChips(activeFilters, onOpenOptions, Modifier.padding(top = 12.dp), filterFocus, filterUp)
+        if (state.page != SectionPage.RECOMMENDATIONS && com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown) FilterBar(
+            groups = if (state.page == SectionPage.LIBRARY) libraryFilterGroups(state) else emptyList(),
+            onSelect = onSetFilterGroup,
+            modifier = Modifier.padding(top = 10.dp),
+            sorts = SectionSort.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, sortLabel(it)) },
+            selectedSort = state.sort.name, onSort = { onSetSort(SectionSort.valueOf(it)) },
+            sortOrders = sortOrderOptions(state.sort),
+            selectedSortOrder = state.sortOrder.name, onSortOrder = { onSetSortOrder(SectionSortOrder.valueOf(it)) },
+            onReset = onResetFilters.takeIf { state.page == SectionPage.LIBRARY },
+            focusRequester = filterFocus,
+            up = filterUp,
+        )
     }
 }
 
@@ -613,11 +633,6 @@ private fun SectionOptionsPanel(
     )
 }
 
-@Composable private fun sortSummary(sort: SectionSort, order: SectionSortOrder): String {
-    val label = sortLabel(sort)
-    return if (order == defaultSortOrder(sort)) label else "$label · ${sortOrderLabel(sort, order)}"
-}
-
 @Composable private fun filterLabel(filter: SectionFilter) = stringResource(when (filter) {
     SectionFilter.ALL -> R.string.library_filter_all
     SectionFilter.UNWATCHED -> R.string.library_filter_unwatched
@@ -634,18 +649,6 @@ private fun SectionOptionsPanel(
 })
 
 @Composable private fun decadeLabel(decade: Int) = stringResource(R.string.library_filter_decade_value, decade)
-
-@Composable private fun activeFilterLabels(state: SectionUiState.Loaded): List<String> = buildList {
-    if (state.filter != SectionFilter.ALL) {
-        add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter), filterLabel(state.filter)))
-    }
-    if (state.qualityFilter != SectionQualityFilter.ALL) {
-        add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_quality), qualityLabel(state.qualityFilter)))
-    }
-    state.genreFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_genre), it)) }
-    state.decadeFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_decade), decadeLabel(it))) }
-    state.contentRatingFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_content_rating), it)) }
-}
 
 @Composable private fun libraryFilterGroups(state: SectionUiState.Loaded): List<com.ambient.tv.ui.common.PanelOptionGroup> {
     val all = stringResource(R.string.library_filter_all)

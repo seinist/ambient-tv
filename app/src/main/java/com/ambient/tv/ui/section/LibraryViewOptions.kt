@@ -35,6 +35,10 @@ data class LibraryFilters(
             genre == null &&
             decade == null &&
             contentRating == null
+
+    val activeCount: Int
+        get() = listOf(watch != SectionFilter.ALL, quality != SectionQualityFilter.ALL,
+            genre != null, decade != null, contentRating != null).count { it }
 }
 
 data class LibraryFilterFacets(

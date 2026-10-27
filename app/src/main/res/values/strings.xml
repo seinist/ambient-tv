@@ -356,6 +356,8 @@
     <string name="library_sort_shortest">Shortest</string>
     <string name="library_filter">Filter</string>
     <string name="library_filter_reset">Reset filters</string>
+    <string name="library_filter_bar">Filter bar</string>
+    <string name="library_filter_bar_hint">Show filters and sort above the content</string>
     <string name="library_filter_quality">Quality</string>
     <string name="library_filter_genre">Genre</string>
     <string name="library_filter_decade">Decade</string>

@@ -80,8 +80,6 @@ internal fun LiveTvChannelBrowser(
     val visibleChannels = remember(channels, eventsByChannel, options) { guideChannels(channels, eventsByChannel, now, options) }
     val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
     val positionKey = if (channelList) "channels" else "guide"
-    val optionsLabel = stringResource(if (channelList) R.string.channel_options else R.string.guide_options)
-    val activeFilters = guideActiveFilterLabels(options)
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
@@ -96,13 +94,10 @@ internal fun LiveTvChannelBrowser(
     val rowFocus = remember(visibleChannels) { visibleChannels.associate { it.uuid to FocusRequester() } }
     val alphabetFocus = remember { FocusRequester() }
     val contentFocus = remember { FocusRequester() }
-    val optionsFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     val handheld = LocalHandheldUi.current
     val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
     var jumpJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var showOptions by remember { mutableStateOf(false) }
-    var optionsOpened by remember { mutableStateOf(false) }
     var pendingAlphabet by remember { mutableStateOf(false) }
     var alphabetTarget by remember(options, visibleChannels) { mutableStateOf<String?>(null) }
     val letters = remember(visibleChannels) { visibleChannels.map { guideIndexLetter(it.name) }.distinct() }
@@ -176,6 +171,11 @@ internal fun LiveTvChannelBrowser(
             pendingAlphabet = false
         }
     }
+    val filterModel = guideFilterModel(options, tags, onOptions)
+    val filterBarShown = LocalFilterBarSetting.current.shown
+    val optionsFocus = remember { FocusRequester() }
+    var showOptions by remember { mutableStateOf(false) }
+    var optionsOpened by remember { mutableStateOf(false) }
     LaunchedEffect(showOptions) {
         if (!showOptions && optionsOpened) {
             withFrameNanos { }
@@ -186,17 +186,20 @@ internal fun LiveTvChannelBrowser(
     BackHandler(showOptions) { showOptions = false }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup()) {
-            DeviceActionRow(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TvChip(if (activeFilters.isEmpty()) optionsLabel else stringResource(R.string.guide_options_filtered, optionsLabel, activeFilters.size), selected = options.filtersActive,
-                    modifier = Modifier.focusRequester(optionsFocus)
-                        .then(if (visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier), onClick = { optionsOpened = true; showOptions = true })
+            val trailing: @Composable RowScope.() -> Unit = {
+                ViewOptionsChip(if (filterBarShown) 0 else filterModel.activeCount, { optionsOpened = true; showOptions = true },
+                    Modifier.focusRequester(optionsFocus)
+                        .then(if (!filterBarShown && visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                 if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet, onClick = {
                     pendingAlphabet = true
                     if (options.sort != GuideSort.NAME) onOptions(options.copy(sort = GuideSort.NAME, descending = false))
                 })
                 Text(stringResource(R.string.guide_count, visibleChannels.size), style = MaterialTheme.typography.bodySmall)
             }
-            GuideActiveFilters(activeFilters, onClick = { optionsOpened = true; showOptions = true })
+            if (filterBarShown) FilterBar(filterModel, Modifier.padding(bottom = 8.dp),
+                focusRequester = if (visibleChannels.isEmpty()) firstContentFocusRequester else null, trailing = trailing)
+            else Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically, content = trailing)
             if (visibleChannels.isEmpty()) {
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
@@ -284,7 +287,9 @@ internal fun LiveTvChannelBrowser(
         }
         if (showOptions) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
-            Box(Modifier.align(Alignment.TopEnd)) { GuideOptionsPanel(options, tags, onOptions, title = optionsLabel) { showOptions = false } }
+            Box(Modifier.align(Alignment.TopEnd)) {
+                FilterOptionsPanel(stringResource(if (channelList) R.string.channel_options else R.string.guide_options), filterModel, { showOptions = false })
+            }
         }
     }
 }
