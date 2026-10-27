@@ -113,6 +113,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.HomeHeroStyle
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.acceleratedDpadNavigation
@@ -264,23 +265,28 @@ fun HomeScreen(
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
                 // Connection progress is presented by the global, non-focusable notification host.
                 HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows()
-                is HomeUiState.Loaded -> LibraryContent(
-                    state = state,
-                    heroContent = viewModel.heroContent,
-                    homeHeroStyleKey = homeHeroStyleKey,
-                    homeHeroIntensityPercent = homeHeroIntensityPercent,
-                    homeHeroSpreadKey = homeHeroSpreadKey,
-                    focusSnapshot = focusSnapshot,
-                    onItemClick = openItem,
-                    onItemFocused = viewModel::onItemFocused,
-                    onOpenSettings = openSettings,
-                    onWatchLiveChannel = watchLiveChannel,
-                    onLiveTvFocused = viewModel::onLiveTvFocused,
-                    onShortcutFocused = viewModel::onShortcutFocused,
-                    onOpenHomeContent = openHomeContent,
-                    tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
-                    entranceProgress = entranceProgressProvider,
-                )
+                is HomeUiState.Loaded -> SoftViewChange(
+                    if (systemOverview) overviewViewMode else Unit,
+                    Modifier.fillMaxSize(),
+                ) {
+                    LibraryContent(
+                        state = state,
+                        heroContent = viewModel.heroContent,
+                        homeHeroStyleKey = homeHeroStyleKey,
+                        homeHeroIntensityPercent = homeHeroIntensityPercent,
+                        homeHeroSpreadKey = homeHeroSpreadKey,
+                        focusSnapshot = focusSnapshot,
+                        onItemClick = openItem,
+                        onItemFocused = viewModel::onItemFocused,
+                        onOpenSettings = openSettings,
+                        onWatchLiveChannel = watchLiveChannel,
+                        onLiveTvFocused = viewModel::onLiveTvFocused,
+                        onShortcutFocused = viewModel::onShortcutFocused,
+                        onOpenHomeContent = openHomeContent,
+                        tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
+                        entranceProgress = entranceProgressProvider,
+                    )
+                }
                 is HomeUiState.Offline -> Centered {
                     ServerOfflineContent(state.serverName, viewModel::retry, onOpenSettings)
                 }

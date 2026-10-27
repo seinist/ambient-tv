@@ -277,6 +277,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
                 val columns = GridCells.Fixed(columnCount)
                 val pulse = if (state.loading && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
+                SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = columns,
                     state = contentGrid,
@@ -322,6 +323,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             }
                         }
                     }
+                }
                 }
                 if (nodes.isEmpty()) state.error?.let {
                     OperationFeedbackContent(it, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,

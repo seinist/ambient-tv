@@ -209,17 +209,19 @@ import kotlinx.coroutines.delay
                 state.loading -> Loading(state.gridColumns)
                 state.error != null -> Message(state.error!!)
                 visibleRows.none { it.items.isNotEmpty() } -> Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
-                else -> Content(
-                    rows = visibleRows,
-                    mode = state.viewMode,
-                    gridColumns = state.gridColumns,
-                    listRows = state.listRows,
-                    click = onVideoClick,
-                    initialFocusRequester = contentItemFocusRequester,
-                    focusTarget = contentFocusTarget,
-                    onItemFocused = { rowId, videoId -> viewModel.onItemFocused(state.feed, rowId, videoId) },
-                    loadingRows = state.loadingRows,
-                )
+                else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                    Content(
+                        rows = visibleRows,
+                        mode = state.viewMode,
+                        gridColumns = state.gridColumns,
+                        listRows = state.listRows,
+                        click = onVideoClick,
+                        initialFocusRequester = contentItemFocusRequester,
+                        focusTarget = contentFocusTarget,
+                        onItemFocused = { rowId, videoId -> viewModel.onItemFocused(state.feed, rowId, videoId) },
+                        loadingRows = state.loadingRows,
+                    )
+                }
             }
         }
     }

@@ -234,7 +234,7 @@ internal fun TrailerCatalogContent(
                 }
             }
             Box(Modifier.fillMaxWidth().weight(1f)) {
-                when {
+                SoftViewChange(viewMode, Modifier.fillMaxSize()) { when {
                     !configured || !enabled -> TrailerSetupRequired(onOpenSettings)
                     state.loadingInitial -> LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         val skeletonCount = if (viewMode == TrailerViewMode.POSTER) gridColumns else landscapeGridColumns(gridColumns)
@@ -260,6 +260,7 @@ internal fun TrailerCatalogContent(
                     else -> TrailerGrid(visibleEntries, viewMode, gridColumns, focusedKey,
                         { entry -> focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
                         onOpenTitle, state, { scope.launch { loadPage(feed, state.page + 1, false) } })
+                }
                 }
             }
         }

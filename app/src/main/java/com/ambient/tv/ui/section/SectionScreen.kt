@@ -37,6 +37,7 @@ import com.ambient.tv.ui.home.HomeHero
 import com.ambient.tv.ui.home.HomeRowsLift
 import com.ambient.tv.ui.home.fadeRowsBehindHomeHero
 import com.ambient.tv.ui.home.toHomeHeroContent
+import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.zIndex
@@ -408,7 +409,8 @@ internal fun SectionContent(
                 ) {
                     // The alphabet bar already shows the position; a scrollbar would sit under it.
                     CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar) {
-                        key(contentEntryGeneration) { when (state.page) {
+                        key(contentEntryGeneration) {
+                            SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
                             SectionPage.RECOMMENDATIONS -> RecommendationsPage(
                                 focusState,
                                 onItemClick,
@@ -436,6 +438,7 @@ internal fun SectionContent(
                                 }
                             }
                         } }
+                        }
                     }
                 }
                 if (showAlphabetBar) {

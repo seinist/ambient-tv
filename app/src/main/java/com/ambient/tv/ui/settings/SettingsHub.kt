@@ -21,6 +21,7 @@ import com.ambient.tv.ui.mobile.settingsUsesSideIndex
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,7 +45,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import com.ambient.tv.ui.common.viewChangeMotion
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -140,7 +144,8 @@ internal fun SettingsHub(
     LaunchedEffect(area, showAreaTabs) {
         if (showAreaTabs) areaTabsState.animateScrollToItem(area.ordinal)
     }
-    val fade = remember { Animatable(1f) }
+    val viewFade = viewChangeMotion(LocalPerformanceProfile.current.reducedEffects)
+    val fade = remember { Animatable(viewFade.startAlpha) }
     val navigationKey = page?.name ?: when {
         search -> "search"
         addingSystems -> "add-${area.name}"
@@ -286,8 +291,10 @@ internal fun SettingsHub(
     LaunchedEffect(page) { viewModel.onPageOpened(page) }
     DisposableEffect(viewModel) { onDispose { viewModel.onPageOpened(null) } }
     LaunchedEffect(navigationKey) {
-        fade.snapTo(0.72f)
-        fade.animateTo(1f, tween(150))
+        // One page only. Sparsam cuts; otherwise the incoming view eases in. A second page
+        // composed underneath would double the settings list for the whole fade.
+        fade.snapTo(viewFade.startAlpha)
+        if (viewFade.animate) fade.animateTo(1f, tween(viewFade.durationMillis, easing = FastOutSlowInEasing))
     }
     val hdrControlFacts = rememberHdrControlFacts(state.uiHdrModeKey)
     val showSdrToHdr = com.ambient.tv.ui.display.sdrToHdrSwitchVisible(hdrControlFacts)
@@ -634,7 +641,11 @@ internal fun SettingsHub(
                     Spacer(Modifier.height(12.dp))
                 }
                 val panelModifier = Modifier.fillMaxSize()
-                    .graphicsLayer { alpha = fade.value }
+                    .graphicsLayer {
+                        // Fade the rows themselves. An offscreen buffer of the whole panel is unnecessary.
+                        compositingStrategy = CompositingStrategy.ModulateAlpha
+                        alpha = fade.value
+                    }
                     .focusRequester(contentFocus)
                     .onFocusChanged { state ->
                         panelHasFocus = state.hasFocus
@@ -752,7 +763,10 @@ internal fun SettingsHub(
                             }
                         }
                         if (indexOverflow) {
-                            OverlayLazyScrollbar(indexState, Modifier.align(Alignment.CenterEnd).fillMaxHeight().graphicsLayer { alpha = fade.value }, contentFocus = contentFocus, actionsFocus = searchButtonFocus)
+                            OverlayLazyScrollbar(indexState, Modifier.align(Alignment.CenterEnd).fillMaxHeight().graphicsLayer {
+                                compositingStrategy = CompositingStrategy.ModulateAlpha
+                                alpha = fade.value
+                            }, contentFocus = contentFocus, actionsFocus = searchButtonFocus)
                         }
                     }
                 } else {

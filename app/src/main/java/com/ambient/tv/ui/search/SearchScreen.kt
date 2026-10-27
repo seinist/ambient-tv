@@ -63,6 +63,7 @@ import com.ambient.tv.spotify.SpotifyEntityType
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhDvrEntry
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
+import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.ContentRatingBadge
@@ -184,32 +185,33 @@ fun SearchScreen(
                             )
                         }
                     }
-                    uiState.viewMode == SearchViewMode.ROWS -> SearchRows(
-                        uiState,
-                        uiState.focusedRatingKey,
-                        uiState.restoreResultFocus,
-                        uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                        onItemClick,
-                        onYouTubeClick,
-                        onSpotifyClick,
-                        onTvheadendChannelClick,
-                        onTvheadendProgramClick,
-                        onTvheadendRecordingClick,
-                        viewModel::onItemFocused,
-                    )
-                    else -> SearchList(
-                        uiState,
-                        uiState.focusedRatingKey,
-                        uiState.restoreResultFocus,
-                        uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                        onItemClick,
-                        onYouTubeClick,
-                        onSpotifyClick,
-                        onTvheadendChannelClick,
-                        onTvheadendProgramClick,
-                        onTvheadendRecordingClick,
-                        viewModel::onItemFocused,
-                    )
+                    else -> SoftViewChange(uiState.viewMode, Modifier.fillMaxSize()) {
+                        if (uiState.viewMode == SearchViewMode.ROWS) SearchRows(
+                            uiState,
+                            uiState.focusedRatingKey,
+                            uiState.restoreResultFocus,
+                            uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                            onItemClick,
+                            onYouTubeClick,
+                            onSpotifyClick,
+                            onTvheadendChannelClick,
+                            onTvheadendProgramClick,
+                            onTvheadendRecordingClick,
+                            viewModel::onItemFocused,
+                        ) else SearchList(
+                            uiState,
+                            uiState.focusedRatingKey,
+                            uiState.restoreResultFocus,
+                            uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                            onItemClick,
+                            onYouTubeClick,
+                            onSpotifyClick,
+                            onTvheadendChannelClick,
+                            onTvheadendProgramClick,
+                            onTvheadendRecordingClick,
+                            viewModel::onItemFocused,
+                        )
+                    }
                 }
             }
         }

@@ -52,6 +52,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.ContentRatingBadge
@@ -117,8 +118,10 @@ fun FilteredBrowseScreen(
                 if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
                 } else Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
-                    if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
-                    else BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+                    SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
+                        if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+                        else BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+                    }
                 }
             }
         }
