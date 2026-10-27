@@ -23,6 +23,14 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Stable
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -225,20 +233,91 @@ private fun Modifier.downAction(onDown: (() -> Unit)?): Modifier =
 fun PageHeader(
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
+    focusChain: PageFocusChain? = null,
     title: @Composable ColumnScope.() -> Unit,
 ) {
     val handheld = LocalHandheldUi.current
-    val actionFocus = remember { FocusRequester() }
+    val ownActionFocus = remember { FocusRequester() }
+    val actionFocus = focusChain?.actions ?: ownActionFocus
     RegisterScrollListActions(actionFocus)
     DeviceActionRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
         Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
         // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
-        if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
-        else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+        if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
+        else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
     }
 }
 
+/**
+ * Fixed D-pad Up chain of a page top: content → chip row (its selected chip) → header actions,
+ * and Down back the same way. Geometric search alone sent Up from the right side of a grid
+ * straight to the right-aligned header actions, past the left-aligned chips.
+ */
+@Stable
+class PageFocusChain {
+    val actions = FocusRequester()
+    val chips = FocusRequester()
+    /** Fallback of the chip row's restorer: the selected chip carries it. */
+    val selectedChip = FocusRequester()
+    internal var hasChips = false
+    /** Where Up from the content goes: the chip row when the page shows one, else the actions. */
+    val contentUp: FocusRequester get() = if (hasChips) chips else actions
+}
+
+@Composable
+fun rememberPageFocusChain(): PageFocusChain = remember { PageFocusChain() }
+
+private fun Modifier.downTo(chain: PageFocusChain?): Modifier =
+    if (chain == null) this else onPreviewKeyEvent { event ->
+        if (event.key != Key.DirectionDown || !chain.hasChips) false else {
+            if (event.type == KeyEventType.KeyDown) runCatching { chain.chips.requestFocus() }
+            true
+        }
+    }
+
+/** Up out of the content lands on [PageFocusChain.contentUp] instead of whatever lies straight above. */
+fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester = { chain.contentUp }): Modifier =
+    focusProperties {
+        onExit = {
+            if (requestedFocusDirection == FocusDirection.Up) {
+                cancelFocusChange()
+                runCatching { target().requestFocus() }
+            }
+        }
+    }
+
+/**
+ * Tab/filter chips under a [PageHeader]. Entering the row lands on the chip focused last (the
+ * selected one at first, marked with [PageFocusChain.selectedChip]); Up leaves for the actions.
+ */
+@Composable
+fun PageChipRow(
+    chain: PageFocusChain,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    content: LazyListScope.() -> Unit,
+) {
+    DisposableEffect(chain) {
+        chain.hasChips = true
+        onDispose { chain.hasChips = false }
+    }
+    LazyRow(
+        modifier = modifier
+            .focusRequester(chain.chips)
+            .focusRestorer(chain.selectedChip)
+            .onPreviewKeyEvent { event ->
+                if (event.key != Key.DirectionUp) false else {
+                    if (event.type == KeyEventType.KeyDown) runCatching { chain.actions.requestFocus() }
+                    true
+                }
+            }
+            .focusGroup(),
+        contentPadding = contentPadding,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        content = content,
+    )
+}
 
 @Composable
 fun SettingsSectionHeader(

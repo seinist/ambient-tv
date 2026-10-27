@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusProperties
+import com.ambient.tv.ui.common.pageContentUp
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
@@ -165,17 +166,19 @@ import kotlinx.coroutines.delay
     }
     LaunchedEffect(initialFeedKey) { initialFeedKey?.let(viewModel::selectFeedKey) }
     LaunchedEffect(state.rows) { ScreensaverArtworkRegistry.offerAll(state.rows.flatMap { it.items }.take(24).map { it.imageUrl }) }
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
         Header(
+            focusChain = focusChain,
             state,
             viewModel,
             onSelectFeed=onSelectFeed ?: viewModel::selectFeed,
-            showSearch=showSearch||state.query.isNotBlank(),
+            showSearch=searchVisible,
             viewOptionsModifier=Modifier.focusRequester(viewOptionsFocusRequester),
             searchActionModifier=Modifier.focusRequester(searchActionFocusRequester),
             searchFieldModifier=Modifier.focusRequester(searchFieldFocusRequester).onPreviewKeyEvent { event ->
                 val target=when(event.key) {
-                    Key.DirectionUp->searchActionFocusRequester
+                    Key.DirectionUp->focusChain.contentUp
                     Key.DirectionDown->contentItemFocusRequester
                     Key.DirectionRight->searchCloseFocusRequester
                     else->null
@@ -199,7 +202,8 @@ import kotlinx.coroutines.delay
                 showViewOptions=true
             },
         )
-        Box(Modifier.fillMaxSize()) {
+        // Up from the feed: search field when open, then the feed chips, then the header actions.
+        Box(Modifier.fillMaxSize().pageContentUp(focusChain) { if (searchVisible) searchFieldFocusRequester else focusChain.contentUp }.focusGroup()) {
             when {
                 !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing))
                 state.loading -> Loading(state.gridColumns)
@@ -260,6 +264,7 @@ import kotlinx.coroutines.delay
 private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
 
 @Composable private fun Header(
+    focusChain:com.ambient.tv.ui.common.PageFocusChain,
     state:YouTubeUiState,
     vm:YouTubeViewModel,
     onSelectFeed:(YouTubeFeed)->Unit,
@@ -273,7 +278,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     onOpenViewOptions:()->Unit,
 ) = Column(Modifier.fillMaxWidth().padding(screenGutter(), 24.dp, screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
     val channel = state.channel
-    PageHeader(actions={
+    PageHeader(focusChain=focusChain, actions={
         if (channel == null) YouTubeAccountButton(state, vm::requestSignIn, vm::signOut)
         else if (state.signedIn) channel.subscribed?.let { subscribed ->
             TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed, icon=Icons.Filled.Subscriptions, onClick=vm::toggleSubscription)
@@ -284,7 +289,10 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
         else YouTubeChannelTitle(channel)
     }
-    if (channel == null) LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)) { items(state.visibleFeeds, key={it.key}) { feed -> TvChip(feedLabel(feed), state.feed==feed && state.query.isBlank(), icon=feedIcon(feed)) { onSelectFeed(feed) } } }
+    if (channel == null) com.ambient.tv.ui.common.PageChipRow(focusChain) { items(state.visibleFeeds, key={it.key}) { feed ->
+        val selected = state.feed==feed && state.query.isBlank()
+        TvChip(feedLabel(feed), selected, modifier=if (state.feed==feed) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon=feedIcon(feed)) { onSelectFeed(feed) }
+    } }
     if (showSearch) {
         DeviceActionRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
             TvTextField(state.query,vm::onQueryChanged,

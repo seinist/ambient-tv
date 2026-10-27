@@ -347,11 +347,14 @@ private fun TvheadendHeader(
     onTab: (TvheadendTab) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    PageHeader(actions = {
-        TvChip(stringResource(R.string.tvh_live), selected = state.tab == TvheadendTab.LIVE, modifier = Modifier.focusRequester(tabFocusRequesters.getValue(TvheadendTab.LIVE)), icon = Icons.Filled.Tv, iconOnly = true, onClick = { onTab(TvheadendTab.LIVE) })
-        if (state.capabilities.guide) TvChip(stringResource(R.string.tvh_guide), selected = state.tab == TvheadendTab.GUIDE, modifier = Modifier.focusRequester(tabFocusRequesters.getValue(TvheadendTab.GUIDE)), icon = Icons.Filled.Schedule, iconOnly = true, onClick = { onTab(TvheadendTab.GUIDE) })
-        if (state.capabilities.recordings) TvChip(stringResource(R.string.tvh_recordings), selected = state.tab == TvheadendTab.RECORDINGS, modifier = Modifier.focusRequester(tabFocusRequesters.getValue(TvheadendTab.RECORDINGS)), icon = Icons.Filled.FiberManualRecord, iconOnly = true, onClick = { onTab(TvheadendTab.RECORDINGS) })
-        if (state.capabilities.timers) TvChip(stringResource(R.string.tvh_timers), selected = state.tab == TvheadendTab.TIMERS, modifier = Modifier.focusRequester(tabFocusRequesters.getValue(TvheadendTab.TIMERS)), icon = Icons.Filled.Timer, iconOnly = true, onClick = { onTab(TvheadendTab.TIMERS) })
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    @Composable fun Tab(tab: TvheadendTab, label: Int, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+        val requester = tabFocusRequesters.getValue(tab)
+        TvChip(stringResource(label), selected = state.tab == tab, modifier = Modifier.focusRequester(requester).then(if (state.tab == tab) Modifier.focusRequester(focusChain.selectedChip) else Modifier), icon = icon, onClick = { onTab(tab) })
+    }
+    // The tabs sit in a chip row under the title like every other provider page; Reload stays a header action.
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    PageHeader(focusChain = focusChain, actions = {
         TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, loading = state.loading || state.refreshing, iconOnly = true, onClick = onRefresh)
     }) {
         val tabTitle = stringResource(
@@ -372,6 +375,13 @@ private fun TvheadendHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+    com.ambient.tv.ui.common.PageChipRow(focusChain) {
+        item { Tab(TvheadendTab.LIVE, R.string.tvh_live, Icons.Filled.Tv) }
+        if (state.capabilities.guide) item { Tab(TvheadendTab.GUIDE, R.string.tvh_guide, Icons.Filled.Schedule) }
+        if (state.capabilities.recordings) item { Tab(TvheadendTab.RECORDINGS, R.string.tvh_recordings, Icons.Filled.FiberManualRecord) }
+        if (state.capabilities.timers) item { Tab(TvheadendTab.TIMERS, R.string.tvh_timers, Icons.Filled.Timer) }
+    }
     }
 }
 

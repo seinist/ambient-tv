@@ -136,6 +136,8 @@ import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.PageChipRow
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.rememberUhdScale
@@ -345,9 +347,11 @@ internal fun SectionContent(
                 }
             }
         }.focusGroup()) {
+            val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
             SectionHeader(
                 focusState,
                 onPage,
+                focusChain = focusChain,
                 system = system,
                 onOpenOverview = { onOpenOverview(system) },
                 onOpenOptions = {
@@ -368,6 +372,7 @@ internal fun SectionContent(
                     .fillMaxWidth()
                     .focusRequester(contentAreaFocus)
                     .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
+                    .pageContentUp(focusChain)
                     .focusGroup()
                     .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
             ) {
@@ -449,10 +454,15 @@ private fun SectionHeader(
     onOpenOptions: () -> Unit,
     onOpenOverview: () -> Unit,
     system: com.ambient.tv.ui.common.MediaSystem,
+    focusChain: com.ambient.tv.ui.common.PageFocusChain,
     optionsModifier: Modifier = Modifier,
 ) {
+    @Composable fun PageChip(label: String, page: SectionPage, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+        val selected = state.page == page
+        TvChip(label, selected, modifier = if (selected) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon = icon) { onPage(page) }
+    }
     Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
-        PageHeader(actions = {
+        PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
             TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
@@ -475,14 +485,10 @@ private fun SectionHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item { TvChip(stringResource(R.string.library_tab_recommendations), state.page == SectionPage.RECOMMENDATIONS, icon = Icons.Filled.Recommend) { onPage(SectionPage.RECOMMENDATIONS) } }
-            item { TvChip(stringResource(R.string.library_tab_library), state.page == SectionPage.LIBRARY, icon = Icons.Filled.VideoLibrary) { onPage(SectionPage.LIBRARY) } }
-            item { TvChip(stringResource(R.string.library_tab_collections), state.page == SectionPage.COLLECTIONS, icon = Icons.Filled.CollectionsBookmark) { onPage(SectionPage.COLLECTIONS) } }
+        PageChipRow(focusChain, Modifier.fillMaxWidth().padding(top = 12.dp), PaddingValues(horizontal = 2.dp)) {
+            item { PageChip(stringResource(R.string.library_tab_recommendations), SectionPage.RECOMMENDATIONS, Icons.Filled.Recommend) }
+            item { PageChip(stringResource(R.string.library_tab_library), SectionPage.LIBRARY, Icons.Filled.VideoLibrary) }
+            item { PageChip(stringResource(R.string.library_tab_collections), SectionPage.COLLECTIONS, Icons.Filled.CollectionsBookmark) }
         }
     }
 }
