@@ -47,6 +47,8 @@ class Media3RavuTest {
         assertEquals(45 to 2592, source.lut.width to source.lut.height)
         assertEquals(18 to 2592, source.lutAr.width to source.lutAr.height)
         assertEquals(45 * 2592 * 4, source.lut.values.size)
+        // The texture-size check that falls back to Lite r3 uses the real LUT height.
+        assertEquals(MEDIA3_RAVU_ZOOM_LUT_ROWS, source.lut.height)
         // The Lite translator still refuses Zoom and vice versa.
         assertNull(media3RavuZoomSource(mpvFile("ravu_lite_r3")))
     }

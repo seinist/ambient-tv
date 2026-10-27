@@ -723,6 +723,8 @@ private fun YouTubeMedia3Playback(
                     // The outgoing listener survives until Compose disposes the screen. A
                     // surface/decoder teardown failure must not redirect the replacement engine.
                     if ((BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player !== player) return
+                    // A failing image effect chain continues without effects instead of an error.
+                    if (com.ambient.tv.ui.player.Media3ImageProcessing.recoverFromEffectFailure(player, e)) return
                     android.util.Log.e(
                         "AmbientYouTube",
                         "Media3 ${e.errorCodeName} uri=${playback.uri.take(160)} cause=${e.cause?.javaClass?.simpleName}:${e.cause?.message}".withoutUrlQueries(),

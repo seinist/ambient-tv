@@ -421,6 +421,8 @@ private fun PlayerContent(
             override fun onPlayerError(error: PlaybackException) {
                 val active = BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle
                 if (active?.player !== exoPlayer || !viewModel.acceptsPlaybackEvents("media3")) return
+                // A failing image effect chain continues without effects instead of a fallback.
+                if (Media3ImageProcessing.recoverFromEffectFailure(exoPlayer, error)) return
                 Timber.e(error, "Playback error")
                 val rejectedConversion = generateSequence<Throwable>(error) { it.cause }
                     .filterIsInstance<androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException>()

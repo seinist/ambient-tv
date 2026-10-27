@@ -32,10 +32,13 @@ internal fun media3EffectPlan(
     debandAllowed: Boolean = true,
     /** False above [media3FilterBudgetAllows] for the sharpened size: no unsharp/CAS/RCAS pass. */
     sharpenAllowed: Boolean = true,
+    /** False above [media3HeavyScalerBudgetAllows] for the output: heavy scalers run as Catmull-Rom. */
+    heavyScaleAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
+        ?.let { if (!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) "catmull_rom" else it }
     return buildList {
         // Denoise reads the source like deband and shares its budget.
         if (o.denoise != "off" && debandAllowed) add(Media3Stage.Denoise(o.denoise))
@@ -55,6 +58,23 @@ internal fun media3EffectPlan(
         if (o.saturation != 0) add(Media3Stage.Saturation(o.saturation))
         if (o.gamma != 0) add(Media3Stage.Gamma(o.gamma))
     }
+}
+
+/**
+ * Scalers that read many texels per output pixel (NVScaler, RAVU, EWA and the wide orthogonal
+ * kernels): several times the work of the cubic or FSR pass.
+ */
+internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCALERS +
+    MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
+
+/** Output pixels per second a heavy scaler may produce: 4K at 30 fps (twice the filter budget). */
+internal const val MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE = 2 * MEDIA3_FILTER_MAX_PIXEL_RATE
+
+/** Whether a heavy scaler may produce [width]x[height] at [fps]; unknown frame rates count as 30. */
+internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float): Boolean {
+    if (width <= 0 || height <= 0) return true
+    val rate = if (fps.isFinite() && fps > 0f) fps else 30f
+    return width.toLong() * height * rate <= MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE
 }
 
 /** Pixels per second the multi-tap deband/sharpen shaders may process: Full HD at 60 fps. */

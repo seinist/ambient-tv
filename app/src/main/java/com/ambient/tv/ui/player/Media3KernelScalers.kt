@@ -23,6 +23,11 @@ import kotlin.math.sqrt
  * kernels run as two separable passes (horizontal, then vertical), polar (EWA) kernels as one
  * radial pass over every texel inside the radius. Weights are normalized per output pixel.
  * Upscaling only (Media3 plans scalers only then), so the kernels are never stretched.
+ *
+ * Like MPV's defaults (sigmoid-upscaling=yes, center 0.75, slope 6.5) the samples are linearized
+ * (BT.1886, gamma 2.4) and sigmoidized before scaling and converted back after it, which keeps
+ * the ringing of sharp kernels from turning into bright halos. Between the separable passes the
+ * picture stays in sigmoid space, on a half-float target where the GPU offers one.
  */
 
 /**
@@ -156,6 +161,7 @@ internal class Media3KernelEffect(
         media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
+        media3RequireFragmentHighp("MPV scaler $key")
         if (key == "oversample") return Media3OversampleShaderProgram(useHdr, outputWidth, outputHeight)
         val kernel = MEDIA3_KERNELS[key] ?: throw VideoFrameProcessingException("Unknown scaler $key")
         return Media3KernelShaderProgram(useHdr, kernel, outputWidth, outputHeight)
@@ -180,8 +186,7 @@ private class Media3KernelShaderProgram(
     private var inputHeight = 1
     private var fitWidth = 1
     private var fitHeight = 1
-    private var midTexture = -1
-    private var midFbo = -1
+    private var mid: Media3Intermediate? = null
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         releaseIntermediate()
@@ -190,36 +195,33 @@ private class Media3KernelShaderProgram(
         val (width, height) = media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
         fitWidth = width
         fitHeight = height
-        if (!kernel.polar) {
-            try {
-                // Horizontal pass result: output width, source height.
-                midTexture = GlUtil.createTexture(fitWidth, inputHeight, useHighPrecision)
-                midFbo = GlUtil.createFboForTexture(midTexture)
-            } catch (e: GlUtil.GlException) {
-                throw VideoFrameProcessingException(e)
-            }
-        }
+        // Horizontal pass result: output width, source height.
+        if (!kernel.polar) mid = media3Intermediate(fitWidth, inputHeight, useHighPrecision)
         return Size(width, height)
     }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
-            if (kernel.polar) {
-                pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 1f))
+            val mid = mid
+            if (kernel.polar || mid == null) {
+                pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 1f), pre = true, post = true)
                 return
             }
             val outputFbo = IntArray(1).also { android.opengl.GLES20.glGetIntegerv(android.opengl.GLES20.GL_FRAMEBUFFER_BINDING, it, 0) }[0]
-            GlUtil.focusFramebufferUsingCurrentContext(midFbo, fitWidth, inputHeight)
-            pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 0f))
+            GlUtil.focusFramebufferUsingCurrentContext(mid.fbo, fitWidth, inputHeight)
+            pass(inputTexId, inputWidth, inputHeight, floatArrayOf(1f, 0f), pre = true, post = false)
             GlUtil.focusFramebufferUsingCurrentContext(outputFbo, fitWidth, fitHeight)
-            pass(midTexture, fitWidth, inputHeight, floatArrayOf(0f, 1f))
+            pass(mid.texture, fitWidth, inputHeight, floatArrayOf(0f, 1f), pre = false, post = true)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
         }
     }
 
-    /** One pass reading [texture] of [width]x[height]; [direction] (1,0)/(0,1) separable, (1,1) polar. */
-    private fun pass(texture: Int, width: Int, height: Int, direction: FloatArray) {
+    /**
+     * One pass reading [texture] of [width]x[height]; [direction] (1,0)/(0,1) separable, (1,1)
+     * polar. [pre] converts samples into sigmoid space, [post] converts the result back.
+     */
+    private fun pass(texture: Int, width: Int, height: Int, direction: FloatArray, pre: Boolean, post: Boolean) {
         // Taps sit on texel centers, so the image's own filtering does not change them.
         program.use()
         program.setSamplerTexIdUniform("uTexSampler", texture, 0)
@@ -227,6 +229,7 @@ private class Media3KernelShaderProgram(
         program.setFloatsUniformIfPresent("uInputSize", floatArrayOf(width.toFloat(), height.toFloat()))
         program.setFloatsUniformIfPresent("uDir", direction)
         program.setFloatsUniformIfPresent("uLutValue", floatArrayOf(planes.min, planes.range))
+        program.setFloatsUniformIfPresent("uSigmoid", floatArrayOf(if (pre) 1f else 0f, if (post) 1f else 0f))
         media3DrawQuad(program)
     }
 
@@ -242,10 +245,8 @@ private class Media3KernelShaderProgram(
     }
 
     private fun releaseIntermediate() {
-        if (midFbo != -1) GlUtil.deleteFbo(midFbo)
-        if (midTexture != -1) GlUtil.deleteTexture(midTexture)
-        midFbo = -1
-        midTexture = -1
+        mid?.release()
+        mid = null
     }
 }
 
@@ -296,7 +297,22 @@ uniform sampler2D uLut;
 uniform vec2 uInputSize;
 uniform vec2 uDir;
 uniform vec2 uLutValue;
+uniform vec2 uSigmoid;
 varying vec2 vTexSamplingCoord;
+// MPV's sigmoid-upscaling (center 0.75, slope 6.5) in BT.1886 linear light.
+const float kSigCenter = 0.75;
+const float kSigSlope = 6.5;
+const float kSigOffset = 0.0075772413;
+const float kSigScale = 0.8279063;
+vec3 toSigmoid(vec3 c) {
+  vec3 l = pow(clamp(c, 0.0, 1.0), vec3(2.4));
+  return kSigCenter - log(1.0 / (l * kSigScale + kSigOffset) - 1.0) / kSigSlope;
+}
+vec3 fromSigmoid(vec3 c) {
+  vec3 l = (1.0 / (1.0 + exp(kSigSlope * (kSigCenter - clamp(c, 0.0, 1.0)))) - kSigOffset) / kSigScale;
+  return pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.4));
+}
+vec3 finishColor(vec3 c) { return uSigmoid.y > 0.5 ? fromSigmoid(c) : clamp(c, 0.0, 1.0); }
 """
 
 /** Shader for [kernel], with its radius and tap loop baked in like MPV's generated code. */
@@ -313,7 +329,10 @@ float weight(float d) {
   // 16-bit value from two bytes; factors below 1 keep mediump in range.
   return (q.r * (65280.0 / 65535.0) + q.g * (255.0 / 65535.0)) * uLutValue.y + uLutValue.x;
 }
-vec3 texel(vec2 t) { return texture2D(uTexSampler, (t + 0.5) / uInputSize).rgb; }
+vec3 texel(vec2 t) {
+  vec3 c = texture2D(uTexSampler, (t + 0.5) / uInputSize).rgb;
+  return uSigmoid.x > 0.5 ? toSigmoid(c) : c;
+}
 """
     val main = if (kernel.polar) """
 void main() {
@@ -333,7 +352,7 @@ void main() {
     }
   }
   vec3 color = wsum > 1e-6 ? sum / wsum : texel(floor(src + 0.5));
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(finishColor(color), 1.0);
 }
 """ else """
 void main() {
@@ -351,7 +370,7 @@ void main() {
     wsum += w;
   }
   vec3 color = abs(wsum) > 1e-6 ? sum / wsum : texel(across + uDir * floor(along + 0.5));
-  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(finishColor(color), 1.0);
 }
 """
     return KERNEL_HEADER + weight + main

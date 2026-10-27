@@ -105,6 +105,7 @@ internal class Media3NisEffect(private val outputWidth: Int, private val outputH
         media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
+        media3RequireFragmentHighp("NIS")
         val coefficients = nisCoefficients(context)
             ?: throw VideoFrameProcessingException("NIS filter banks unavailable")
         return Media3NisShaderProgram(useHdr, coefficients, outputWidth, outputHeight)

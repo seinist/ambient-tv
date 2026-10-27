@@ -544,6 +544,8 @@ private fun TvheadendPlaybackSurface(
                 // cannot flip the UI to CHANNEL_UNAVAILABLE during an Auto→VLC hand-off.
                 val active = BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle
                 if (active?.player !== player) return
+                // A failing image effect chain continues without effects instead of a fallback.
+                if (com.ambient.tv.ui.player.Media3ImageProcessing.recoverFromEffectFailure(player, error)) return
                 com.ambient.tv.diagnostics.DiagnosticLog.error("playback", "TVHeadend Media3 ${error.errorCodeName}", error)
                 val renderer = (error as? ExoPlaybackException)?.rendererName.orEmpty()
                 val reason = listOf(renderer, error.message.orEmpty()).filter { it.isNotBlank() }.joinToString(": ")

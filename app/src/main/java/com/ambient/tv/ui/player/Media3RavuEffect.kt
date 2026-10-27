@@ -33,6 +33,9 @@ internal class Media3RavuSource(val step1: String, val lutWidth: Int, val lutHei
 /** RAVU-Lite only runs from about 1.41x on, like MPV's `//!WHEN`; below that it is plain bilinear. */
 internal const val MEDIA3_RAVU_MIN_SCALE = 1.0 / 0.707106
 
+/** Height of RAVU-Zoom r3's LUT textures. */
+internal const val MEDIA3_RAVU_ZOOM_LUT_ROWS = 2592
+
 /** The MPV catalog keys Media3 offers as upscalers. */
 internal val MEDIA3_RAVU_SCALERS = listOf("ravu_lite_r2", "ravu_lite_r3", "ravu_lite_r4", "ravu_zoom_r3")
 
@@ -167,7 +170,11 @@ internal class Media3RavuEffect(
         media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
-        return when (val source = ravuSource(context, scaler)) {
+        media3RequireFragmentHighp("RAVU")
+        // RAVU-Zoom's LUTs are 2592 texels tall; older GPUs stop at 2048. Lite r3 is the same
+        // network family with a 288-row LUT.
+        val key = if (scaler.startsWith("ravu_zoom") && media3MaxTextureSize() < MEDIA3_RAVU_ZOOM_LUT_ROWS) "ravu_lite_r3" else scaler
+        return when (val source = ravuSource(context, key)) {
             is Media3RavuSource -> Media3RavuShaderProgram(useHdr, source, outputWidth, outputHeight)
             is Media3RavuZoomSource -> Media3RavuZoomShaderProgram(useHdr, source, outputWidth, outputHeight)
             else -> throw VideoFrameProcessingException("RAVU shader $scaler unavailable")
@@ -191,26 +198,20 @@ private class Media3RavuShaderProgram(
     private var inputWidth = 1
     private var inputHeight = 1
     private var ravuActive = false
-    private var intTexture = -1
-    private var intFbo = -1
-    private var lumaTexture = -1
-    private var lumaFbo = -1
+    private var fitWidth = 1
+    private var intermediate: Media3Intermediate? = null
+    private var luma: Media3Intermediate? = null
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         releaseIntermediates()
         this.inputWidth = inputWidth
         this.inputHeight = inputHeight
         val (width, height) = media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
+        fitWidth = width
         ravuActive = minOf(width.toDouble() / inputWidth, height.toDouble() / inputHeight) >= MEDIA3_RAVU_MIN_SCALE
         if (ravuActive) {
-            try {
-                intTexture = GlUtil.createTexture(inputWidth, inputHeight, useHighPrecision)
-                intFbo = GlUtil.createFboForTexture(intTexture)
-                lumaTexture = GlUtil.createTexture(inputWidth * 2, inputHeight * 2, useHighPrecision)
-                lumaFbo = GlUtil.createFboForTexture(lumaTexture)
-            } catch (e: GlUtil.GlException) {
-                throw VideoFrameProcessingException(e)
-            }
+            intermediate = media3Intermediate(inputWidth, inputHeight, useHighPrecision)
+            luma = media3Intermediate(inputWidth * 2, inputHeight * 2, useHighPrecision)
         }
         return Size(width, height)
     }
@@ -221,9 +222,11 @@ private class Media3RavuShaderProgram(
             val viewport = IntArray(4).also { GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, it, 0) }
             val inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
             media3LinearFilter(inputTexId)
-            if (ravuActive) {
+            val intermediate = intermediate
+            val luma = luma
+            if (ravuActive && intermediate != null && luma != null) {
                 // Pass 1: four 2x luma values per source pixel.
-                GlUtil.focusFramebufferUsingCurrentContext(intFbo, inputWidth, inputHeight)
+                GlUtil.focusFramebufferUsingCurrentContext(intermediate.fbo, inputWidth, inputHeight)
                 step1.use()
                 step1.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
                 step1.setSamplerTexIdUniform("uLutHigh", lutHigh, 1)
@@ -233,20 +236,23 @@ private class Media3RavuShaderProgram(
                 step1.setFloatsUniformIfPresent("uLutRange", floatArrayOf(planes.range))
                 media3DrawQuad(step1)
                 // Pass 2: each 2x pixel takes its quarter of the source pixel.
-                GlUtil.focusFramebufferUsingCurrentContext(lumaFbo, inputWidth * 2, inputHeight * 2)
+                GlUtil.focusFramebufferUsingCurrentContext(luma.fbo, inputWidth * 2, inputHeight * 2)
                 step2.use()
-                step2.setSamplerTexIdUniform("uTexSampler", intTexture, 0)
+                step2.setSamplerTexIdUniform("uTexSampler", intermediate.texture, 0)
                 step2.setFloatsUniformIfPresent("uInputSize", inputSize)
                 media3DrawQuad(step2)
-                media3LinearFilter(lumaTexture)
+                media3LinearFilter(luma.texture)
             }
             // Pass 3: bilinear RGB fitted to the output, plus the RAVU luma change.
             GlUtil.focusFramebufferUsingCurrentContext(outputFbo, viewport[2], viewport[3])
             fit.use()
             fit.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
-            fit.setSamplerTexIdUniform("uLuma", if (ravuActive) lumaTexture else inputTexId, 1)
+            fit.setSamplerTexIdUniform("uLuma", luma?.texture?.takeIf { ravuActive } ?: inputTexId, 1)
             fit.setFloatsUniformIfPresent("uInputSize", inputSize)
             fit.setFloatsUniformIfPresent("uRavu", floatArrayOf(if (ravuActive) 1f else 0f))
+            // 2x grid texels per output pixel: above 1 the 2x luma is downscaled (MPV: dscale).
+            fit.setFloatsUniformIfPresent("uLumaSize", floatArrayOf(inputWidth * 2f, inputHeight * 2f))
+            fit.setFloatsUniformIfPresent("uDownscale", floatArrayOf(maxOf(1f, inputWidth * 2f / fitWidth)))
             media3DrawQuad(fit)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
@@ -268,11 +274,10 @@ private class Media3RavuShaderProgram(
     }
 
     private fun releaseIntermediates() {
-        if (intFbo != -1) GlUtil.deleteFbo(intFbo)
-        if (intTexture != -1) GlUtil.deleteTexture(intTexture)
-        if (lumaFbo != -1) GlUtil.deleteFbo(lumaFbo)
-        if (lumaTexture != -1) GlUtil.deleteTexture(lumaTexture)
-        intFbo = -1; intTexture = -1; lumaFbo = -1; lumaTexture = -1
+        intermediate?.release()
+        luma?.release()
+        intermediate = null
+        luma = null
     }
 
 }
@@ -417,12 +422,34 @@ void main() {
 }
 """
 
+// Between 1.41x and 2x the 2x luma is larger than the output: like MPV's default dscale
+// (Hermite, widened by the downscale factor) instead of a plain bilinear tap.
 private const val RAVU_FIT = """
 uniform sampler2D uLuma;
 uniform float uRavu;
+uniform vec2 uLumaSize;
+uniform float uDownscale;
+float hermite(float x) { x = min(abs(x), 1.0); return (2.0 * x - 3.0) * x * x + 1.0; }
+float downscaledLuma() {
+  vec2 src = vTexSamplingCoord * uLumaSize - 0.5;
+  vec2 base = floor(src);
+  vec2 f = src - base;
+  float sum = 0.0;
+  float wsum = 0.0;
+  for (int y = -1; y <= 2; y++) {
+    for (int x = -1; x <= 2; x++) {
+      vec2 o = vec2(float(x), float(y));
+      vec2 d = (o - f) / uDownscale;
+      float w = hermite(d.x) * hermite(d.y);
+      sum += texture2D(uLuma, (base + o + 0.5) / uLumaSize).r * w;
+      wsum += w;
+    }
+  }
+  return sum / max(wsum, 1e-6);
+}
 void main() {
   vec3 base = texture2D(uTexSampler, vTexSamplingCoord).rgb;
-  float y = texture2D(uLuma, vTexSamplingCoord).r;
+  float y = uDownscale > 1.001 ? downscaledLuma() : texture2D(uLuma, vTexSamplingCoord).r;
   vec3 color = base + uRavu * (y - lumaOf(base));
   gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

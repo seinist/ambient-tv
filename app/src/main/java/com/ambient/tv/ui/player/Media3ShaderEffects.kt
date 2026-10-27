@@ -243,7 +243,13 @@ private const val DEBAND = """
 uniform float uRange;
 uniform float uThreshold;
 uniform float uGrain;
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+#else
+// mediump (fp16): the sin hash collapses to a fixed pattern; interleaved gradient noise on a
+// 64-pixel tile keeps every product small enough to stay random.
+float rand(vec2 p) { p = mod(p, 64.0); return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+#endif
 void main() {
   vec2 uv = vTexSamplingCoord;
   vec2 px = 1.0 / uInputSize;
@@ -459,6 +465,7 @@ void main() {
 private const val FILM_GRAIN = """
 uniform float uIntensity;
 uniform float uSeed;
+#ifdef GL_FRAGMENT_PRECISION_HIGH
 float grainHash(vec2 p) {
   vec3 q = fract(vec3(p.xyx) * 0.1031);
   q += dot(q, q.yzx + 33.33);
@@ -467,6 +474,15 @@ float grainHash(vec2 p) {
 float grainNoise(vec2 p) {
   return grainHash(p + uSeed * 113.0) + grainHash(p * 1.37 + uSeed * 71.0) - 1.0;
 }
+#else
+// mediump (fp16): large hash inputs lose every fractional bit and the grain freezes into a
+// pattern. Interleaved gradient noise on a 64-pixel tile, shifted per frame, stays small.
+float grainHash(vec2 p) { p = mod(p, 64.0); return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
+float grainNoise(vec2 p) {
+  vec2 shift = floor(mod(vec2(uSeed, uSeed * 0.37), 64.0));
+  return grainHash(p + shift) + grainHash(p.yx + shift.yx + 17.0) - 1.0;
+}
+#endif
 void main() {
   vec2 p = floor(vTexSamplingCoord * uInputSize);
   float g = 4.0 * grainNoise(p);
