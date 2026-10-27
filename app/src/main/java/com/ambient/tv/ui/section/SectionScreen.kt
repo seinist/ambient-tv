@@ -333,7 +333,17 @@ internal fun SectionContent(
         }
     }
 
+    // The recommendation rows' hero drives a full-screen backdrop like Home's, behind header and
+    // tabs too, and hands the item to the shared background so its ambient light takes its colour.
+    val recommendationHero = remember { MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>(null) }
+    val heroBackdrop = !LocalHandheldUi.current && state.page == SectionPage.RECOMMENDATIONS &&
+        recommendationViewMode(state.viewMode).let { it == SectionViewMode.POSTER || it == SectionViewMode.LANDSCAPE }
+    val sharedBackgroundArtwork = com.ambient.tv.ui.common.LocalHomeBackgroundArtwork.current
+    LaunchedEffect(heroBackdrop, sharedBackgroundArtwork) {
+        if (heroBackdrop) recommendationHero.collect { hero -> if (hero != null) sharedBackgroundArtwork?.value = hero }
+    }
     Box(Modifier.fillMaxSize()) {
+        if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
         Column(Modifier.fillMaxSize().focusProperties {
             onEnter = {
                 // D-pad entry (e.g. Right out of the sidebar) restores like the sidebar handoff; plain
@@ -398,6 +408,7 @@ internal fun SectionContent(
                                 focusState,
                                 onItemClick,
                                 { rowId, item -> markInitialFocusHandled(); onRecommendationItemFocused(rowId, item) },
+                                recommendationHero,
                             )
                             SectionPage.LIBRARY -> {
                                 if (state.items.isEmpty()) EmptyLibrary() else when (state.viewMode) {
@@ -681,10 +692,11 @@ private fun RecommendationsPage(
     state: SectionUiState.Loaded,
     onItemClick: (String) -> Unit,
     onRecommendationItemFocused: (String, MediaItem) -> Unit,
+    heroContent: MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>,
 ) {
     if (state.recommendationRows.isEmpty()) { EmptyLibrary(); return }
     when (recommendationViewMode(state.viewMode)) {
-        SectionViewMode.POSTER, SectionViewMode.LANDSCAPE -> RecommendationRowsPage(state, onItemClick, onRecommendationItemFocused)
+        SectionViewMode.POSTER, SectionViewMode.LANDSCAPE -> RecommendationRowsPage(state, onItemClick, onRecommendationItemFocused, heroContent)
         SectionViewMode.LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = false)
         SectionViewMode.INFO_LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = true)
         SectionViewMode.POSTER_LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = false, poster = true)
@@ -703,6 +715,7 @@ private fun RecommendationRowsPage(
     state: SectionUiState.Loaded,
     onItemClick: (String) -> Unit,
     onRecommendationItemFocused: (String, MediaItem) -> Unit,
+    heroContent: MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>,
 ) {
     val tileStyle = if (recommendationViewMode(state.viewMode) == SectionViewMode.POSTER) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE
     val initialFocusKey = remember { state.focusedRatingKey }
@@ -726,11 +739,12 @@ private fun RecommendationRowsPage(
     val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
     // On TV the focused item gets the Home hero above the rows, so the rows rest in the lower
     // part of the page like Plex's recommendations. The hero only swaps text, never the rows.
-    val heroContent = remember(state.recommendationRows) {
+    remember(state.recommendationRows) {
         val initial = state.recommendationRows.firstNotNullOfOrNull { row ->
             row.items.firstOrNull { item -> initialFocusKey != null && initialFocusKey in item.allRatingKeys }
         } ?: state.recommendationRows.firstOrNull()?.items?.firstOrNull()
-        MutableStateFlow(initial?.toHomeHeroContent())
+        // Set during composition so the hero has its item on the first frame.
+        heroContent.value = initial?.toHomeHeroContent()
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val heroHeight = maxHeight * 0.42f

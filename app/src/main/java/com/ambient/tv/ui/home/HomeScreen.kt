@@ -262,7 +262,7 @@ fun HomeScreen(
 
 /** Focus previews have their own state/draw layer, so their crossfade never invalidates rows. */
 @Composable
-private fun HomeFocusBackdrop(heroContent: StateFlow<HomeHeroContent?>, rowsScrolling: StateFlow<Boolean>) {
+internal fun HomeFocusBackdrop(heroContent: StateFlow<HomeHeroContent?>, rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling) {
     if (com.ambient.tv.ui.player.LocalVisibleBackgroundVideo.current || !com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) return
     var displayed by remember(heroContent) { mutableStateOf(heroContent.value) }
     LaunchedEffect(heroContent) {
