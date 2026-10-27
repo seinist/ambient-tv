@@ -44,9 +44,9 @@ internal fun Modifier.fancyHeroAmbient(
         Brush.verticalGradient(
             listOf(
                 Color.Transparent,
-                tint.copy(alpha = 0.08f * strength),
-                tint.copy(alpha = 0.26f * strength),
-                tint.copy(alpha = 0.10f * strength),
+                tint.copy(alpha = 0.04f * strength),
+                tint.copy(alpha = 0.14f * strength),
+                tint.copy(alpha = 0.05f * strength),
                 Color.Transparent,
             ),
             startY = -height * 0.28f * spread,
@@ -56,15 +56,15 @@ internal fun Modifier.fancyHeroAmbient(
     val ribbon = Path()
     val beamWidth = width * 0.14f * spread
     val beam = Brush.horizontalGradient(
-        listOf(Color.Transparent, warm.copy(alpha = 0.22f * strength), Color.Transparent),
+        listOf(Color.Transparent, warm.copy(alpha = 0.12f * strength), Color.Transparent),
         startX = -beamWidth, endX = beamWidth,
     )
     val prismWidth = width * 0.13f * spread
     val prismWide = Brush.horizontalGradient(
         listOf(
             Color.Transparent,
-            cool.copy(alpha = 0.07f * strength),
-            color.copy(alpha = 0.10f * strength),
+            cool.copy(alpha = 0.05f * strength),
+            color.copy(alpha = 0.07f * strength),
             Color.Transparent,
         ),
         startX = -prismWidth * 2.1f, endX = prismWidth * 2.1f,
@@ -72,39 +72,39 @@ internal fun Modifier.fancyHeroAmbient(
     val prismCore = Brush.horizontalGradient(
         listOf(
             Color.Transparent,
-            Color.White.copy(alpha = 0.20f * strength),
-            color.copy(alpha = 0.28f * strength),
+            Color.White.copy(alpha = 0.10f * strength),
+            color.copy(alpha = 0.16f * strength),
             Color.Transparent,
         ),
         startX = -prismWidth * 0.42f, endX = prismWidth * 0.42f,
     )
     val wash = Brush.radialGradient(
-        listOf(color.copy(alpha = 0.12f * strength), Color.Transparent),
+        listOf(color.copy(alpha = 0.08f * strength), Color.Transparent),
         center = Offset(width * 0.72f, height * 0.15f), radius = width * 0.65f * spread,
     )
     val duskRadius = width * 0.72f * spread
     val duskWarm = Brush.radialGradient(
-        listOf(warm.copy(alpha = 0.22f * strength), warm.copy(alpha = 0.08f * strength), Color.Transparent),
+        listOf(warm.copy(alpha = 0.15f * strength), warm.copy(alpha = 0.05f * strength), Color.Transparent),
         center = Offset.Zero, radius = duskRadius,
     )
     val duskCool = Brush.radialGradient(
-        listOf(cool.copy(alpha = 0.18f * strength), cool.copy(alpha = 0.06f * strength), Color.Transparent),
+        listOf(cool.copy(alpha = 0.12f * strength), cool.copy(alpha = 0.04f * strength), Color.Transparent),
         center = Offset.Zero, radius = duskRadius * 0.92f,
     )
     val tideHalf = height * 0.22f * spread
     val tide = Brush.verticalGradient(
         listOf(
             Color.Transparent,
-            color.copy(alpha = 0.05f * strength),
-            color.copy(alpha = 0.16f * strength),
-            lerp(color, secondary, 0.35f).copy(alpha = 0.07f * strength),
+            color.copy(alpha = 0.04f * strength),
+            color.copy(alpha = 0.11f * strength),
+            lerp(color, secondary, 0.35f).copy(alpha = 0.05f * strength),
             Color.Transparent,
         ),
         startY = -tideHalf, endY = tideHalf,
     )
     val focusRadius = width * 0.46f * spread
     val focusBrush = Brush.radialGradient(
-        listOf(color.copy(alpha = 0.24f * strength), color.copy(alpha = 0.08f * strength), Color.Transparent),
+        listOf(color.copy(alpha = 0.15f * strength), color.copy(alpha = 0.05f * strength), Color.Transparent),
         center = Offset.Zero, radius = focusRadius,
     )
     onDrawBehind {
@@ -116,7 +116,7 @@ internal fun Modifier.fancyHeroAmbient(
                 HomeHeroStyle.AURORA -> repeat(4) { index ->
                     val dir = if (index == 3) -1f else 1f
                     val wave = sin((t * 2f + index * 0.55f) * PI).toFloat()
-                    val bend = dir * height * (0.12f + wave * 0.18f * motionStrength)
+                    val bend = dir * height * (0.12f + wave * 0.10f * motionStrength)
                     val centerY = height * (0.10f + index * 0.16f)
                     val thickness = height * 0.24f * spread
                     ribbon.reset()
@@ -137,15 +137,15 @@ internal fun Modifier.fancyHeroAmbient(
                         }
                     }
                     // Fixed seeds keep particles stable across focus/metadata updates.
-                    val dots = if (motionStrength < 0.5f) 8 else 16
+                    val dots = if (motionStrength < 0.5f) 6 else 10
                     repeat(dots) { index ->
                         val seed = index * 0.618034f
                         val x = width * ((seed % 1f) + sin((t * 2f + index) * PI).toFloat() * 0.02f * motionStrength)
                         val y = height * (((index * 0.381966f) % 1f) * 0.8f + (t - 0.5f) * 0.10f * motionStrength)
                         val twinkle = 0.5f + 0.5f * sin((t * 2f + seed) * PI).toFloat()
                         val radius = (14f + index % 4 * 6f) * density * spread.coerceAtMost(1.15f)
-                        drawCircle(warm.copy(alpha = 0.05f * strength * twinkle), radius * 2.2f, Offset(x, y))
-                        drawCircle(warm.copy(alpha = (0.08f + twinkle * 0.10f) * strength), radius, Offset(x, y))
+                        drawCircle(warm.copy(alpha = 0.03f * strength * twinkle), radius * 2.2f, Offset(x, y))
+                        drawCircle(warm.copy(alpha = (0.05f + twinkle * 0.06f) * strength), radius, Offset(x, y))
                     }
                 }
                 HomeHeroStyle.PRISM -> {
@@ -154,8 +154,8 @@ internal fun Modifier.fancyHeroAmbient(
                             drawRect(brush, Offset(-halfWidth, -height), Size(halfWidth * 2f, height * 3f), alpha = opacity)
                         }
                     }
-                    sweep(t, 0.55f, prismWidth * 2.1f, prismWide)
-                    sweep((t + 0.04f).coerceAtMost(1f), 0.9f, prismWidth * 0.42f, prismCore)
+                    sweep(t, 0.45f, prismWidth * 2.1f, prismWide)
+                    sweep((t + 0.04f).coerceAtMost(1f), 0.7f, prismWidth * 0.42f, prismCore)
                     val opening = reveal()
                     if (opening < 1f) sweep(opening, sin(opening * PI).toFloat().coerceIn(0f, 1f), prismWidth * 0.42f, prismCore)
                 }
@@ -178,7 +178,7 @@ internal fun Modifier.fancyHeroAmbient(
                     }
                 }
                 HomeHeroStyle.EMBER -> {
-                    val dots = if (motionStrength < 0.5f) 10 else 16
+                    val dots = if (motionStrength < 0.5f) 6 else 10
                     repeat(dots) { index ->
                         val seed = index * 0.618034f
                         val rise = ((seed * 0.37f) + t) % 1f
@@ -188,8 +188,8 @@ internal fun Modifier.fancyHeroAmbient(
                         val twinkle = 0.65f + 0.35f * sin((t * 2f + seed) * PI).toFloat()
                         val radius = (16f + index % 5 * 5f) * density * spread.coerceAtMost(1.15f)
                         val alpha = life * twinkle * strength
-                        drawCircle(color.copy(alpha = 0.05f * alpha), radius * 2.3f, Offset(x, y))
-                        drawCircle(warm.copy(alpha = 0.16f * alpha), radius, Offset(x, y))
+                        drawCircle(color.copy(alpha = 0.03f * alpha), radius * 2.3f, Offset(x, y))
+                        drawCircle(warm.copy(alpha = 0.10f * alpha), radius, Offset(x, y))
                     }
                 }
                 HomeHeroStyle.TIDE -> {
