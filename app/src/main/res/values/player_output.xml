@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="player_output_restart">Applies to this playback. Switching briefly restarts video and keeps the position and pause state.</string>
-    <string name="player_output_restart_live">Applies to this channel. Switching briefly restarts playback at the live point.</string>
-    <string name="player_output_hdr_direct">Native HDR uses the direct Android video surface. GPU filters and Vulkan output are paused for this video.</string>
+    <string name="player_output_restart">Switching briefly restarts the video.</string>
+    <string name="player_output_restart_live">Switching briefly restarts the channel.</string>
+    <string name="player_output_hdr_direct">HDR goes straight to the TV. Filters are off.</string>
     <string name="settings_mpv_hdr_gpu">HDR via GPU</string>
-    <string name="settings_mpv_hdr_gpu_hint">Plays HDR10 through the GPU output, so picture filters and scaling stay active. Off: HDR goes straight to the TV without filters.</string>
-    <string name="player_output_hdr_gpu_active">HDR via GPU is active. Your TV’s HDR indicator shows whether HDR is on.</string>
-    <string name="player_output_hdr_gpu_output_direct">HDR via GPU: output “Direct” is selected, HDR goes straight to the TV.</string>
+    <string name="settings_mpv_hdr_gpu_hint">HDR runs through the graphics so picture filters stay on. Off: HDR goes straight to the TV.</string>
+    <string name="player_output_hdr_gpu_active">HDR through the graphics. The TV indicator shows it.</string>
+    <string name="player_output_hdr_gpu_output_direct">Direct is selected. HDR goes to the TV.</string>
     <string name="player_output_hdr_gpu_dolby_vision">Dolby Vision always goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_not_hdr10">This video is not HDR10 and plays normally.</string>
     <string name="player_output_hdr_gpu_swapchain">GPU path not available, HDR goes straight to the TV.</string>
-    <string name="player_output_hdr_gpu_reduced">HDR via GPU: off in Low performance mode, HDR goes straight to the TV.</string>
+    <string name="player_output_hdr_gpu_reduced">In low-power mode, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_not_confirmed">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_vulkan_fallback">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_opengl_fallback">GPU path not available, HDR goes straight to the TV.</string>
@@ -19,12 +19,12 @@
     <string name="player_output_hdr_gpu_display_waiting">The TV has not switched to HDR yet.</string>
     <string name="player_output_hdr_gpu_display_not_switched">GPU path not available, HDR goes straight to the TV.</string>
     <string name="player_output_hdr_gpu_overload">GPU path not available, HDR goes straight to the TV.</string>
-    <string name="image_mpv_hdr_passthrough">HDR output through the GPU: sharpening, deband and the RAVU Lite / FSR upscalers apply. Film grain is off here; denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
-    <string name="player_output_hdr_gpu_no_effects">HDR via GPU: no HDR-safe shader or deband is selected, HDR goes straight to the TV.</string>
-    <string name="settings_mpv_hdr_gpu_direct_hint">The default output “Direct” stays in place for SDR; HDR10 uses the GPU route as long as a shader or deband is selected. Choosing “Direct” in the player or a title profile keeps HDR direct.</string>
-    <string name="image_mpv_hdr_shader_hint">HDR: only HDR-safe shaders (sharpening, RAVU Lite / FSR luma, deband) apply; chroma and SSim shaders are skipped.</string>
+    <string name="image_mpv_hdr_passthrough">With HDR, sharpening, deband and some scalers apply.</string>
+    <string name="player_output_hdr_gpu_no_effects">Without matching filters, HDR goes straight to the TV.</string>
+    <string name="settings_mpv_hdr_gpu_direct_hint">HDR runs through the graphics once a filter is selected. Direct in the player sends HDR to the TV.</string>
+    <string name="image_mpv_hdr_shader_hint">With HDR, only sharpening, deband and some scalers apply.</string>
     <string name="player_output_hdr_gpu_surface_unverifiable">GPU path not available, HDR goes straight to the TV.</string>
-    <string name="settings_mpv_zero_copy_locked">Zero-copy is locked: an earlier playback failed with it on this device, MPV uses copy-back. The lock lasts until the next app update.</string>
-    <string name="settings_mpv_zero_copy_reset">Reset zero-copy lock</string>
-    <string name="settings_mpv_zero_copy_reset_done">Zero-copy will be tried again on the next playback.</string>
+    <string name="settings_mpv_zero_copy_locked">An earlier playback failed with this. MPV uses the safer picture path until the app is updated.</string>
+    <string name="settings_mpv_zero_copy_reset">Clear the lock</string>
+    <string name="settings_mpv_zero_copy_reset_done">The faster picture path is tried again on the next playback.</string>
 </resources>

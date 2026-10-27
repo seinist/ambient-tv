@@ -16,4 +16,11 @@ class IntroAnimationTest {
         IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 1500..4000) }
         assertEquals(0, IntroAnimation.durationMs(IntroAnimation.OFF))
     }
+
+    @Test fun wordAndHorizonStaySelectable() {
+        assertEquals(IntroAnimation.WORD, IntroAnimation.normalize(IntroAnimation.WORD))
+        assertEquals(IntroAnimation.HORIZON, IntroAnimation.normalize(IntroAnimation.HORIZON))
+        assertEquals(true, IntroAnimation.WORD in IntroAnimation.keys)
+        assertEquals(true, IntroAnimation.HORIZON in IntroAnimation.keys)
+    }
 }

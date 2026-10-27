@@ -47,7 +47,6 @@ internal fun DeinterlaceMethodChoice(backend: String, key: String, onSelected: (
         "ivtc" -> R.string.deint_hint_ivtc
         else -> R.string.deint_hint_x
     }))
-    ImageHint(stringResource(if (backend == "mpv") R.string.deint_path_mpv else R.string.deint_path_vlc))
     val effective = effectiveDeinterlaceFilter(selected, LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
     if (effective != selected) ImageHint(stringResource(R.string.deint_low_override,
         methods.firstOrNull { it.key == effective }?.label ?: effective))

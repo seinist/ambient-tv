@@ -33,7 +33,7 @@
     <string name="svp_search_standard">Standard</string>
     <string name="svp_backend">SVP-Backend für Bildsynthese</string>
     <string name="svp_threads">SVP-CPU-Threads</string>
-    <string name="svp_advanced_hint">Änderungen wirken während der Wiedergabe; VLC kann das Video kurz neu öffnen. Feinere Analyse benötigt mehr CPU-Zeit. Vulkan beschleunigt nur die Bildsynthese und fällt ohne Vulkan auf die CPU zurück. Der Überlastungsschutz bleibt aktiv.</string>
+    <string name="svp_advanced_hint">Wirkt sofort. VLC öffnet das Video kurz neu.</string>
     <string name="svp_reset">SVP-Einstellungen zurücksetzen</string>
     <string name="svp_unavailable">Nicht verfügbar: %1$s</string>
     <string name="svp_inactive">Inaktiv: %1$s</string>

@@ -138,10 +138,11 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | SDR-Video zu HDR | An / Aus | Aus | Alle | Siehe [3.5.1](#351-sdr-video-zu-hdr). Wirkt nur mit HDR-Oberfläche „Automatisch“. |
 | Oberflächenleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Animationen, Schimmer, schwere Flächen. Siehe [§8](#8-leistungsmodi). |
 | Oberfläche prüfen | Aktion | — | Alle | Misst die Zeichenlast und schlägt einen Modus vor. |
+| Start-Animation | Aus · Einschalten · Ambient-Glühen · Signalsuche · Lichtstreif · Sendewellen · Wortzug · Horizont | Ambient-Glühen | Alle | Einmal beim Kaltstart, in den Akzentfarben. Während ein Server aufwacht, atmet das Licht weiter. Jede Taste fährt fort. Sparsam zeigt das stehende Zeichen. |
 | Wiedergabeleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Bewegungsglättung, schwere Hochskalierer, Deinterlace mit doppelter Rate. |
 | Prüfdauer für Bildaussetzer | Automatisch, 2, 5, 6, 10, 15, 30, 60 s | Automatisch (2–6 s) | Alle | Messfenster des MPV-/VLC-Filtertests. |
 | Wiedergabe prüfen | Aktion | — | Alle | Misst die Filterlast ohne Bild. |
-| Lichtstimmung über der Startseite | Ruhig · Lichtstreifen · Bildfarbe · Tiefenbewegung · Aurora · Kinolicht · Prisma | Tiefenbewegung | Alle | Bewegter Look des Startseiten-Heros. Sparsam und reduzierte Effekte zeigen „Ruhig“. |
+| Lichtstimmung über der Startseite | Ruhig · Lichtstreifen · Bildfarbe · Tiefenbewegung · Aurora · Kinolicht · Prisma · Dämmerung · Glut · Gezeiten · Fokus | Tiefenbewegung | Alle | Bewegter Look des Startseiten-Heros. Sparsam und reduzierte Effekte zeigen „Ruhig“. |
 | Stärke der Lichtstimmung | 0–100 % | 60 % | Alle | Stärke des Effekts. |
 | Ausbreitung des Lichtscheins | Sanft · Fokussiert · Breit | Sanft | Alle | Größe des Lichts. |
 | Home-Hintergrund auf allen Ansichten | An / Aus | Aus | Alle | Startseiten-Effekt auch hinter anderen Ansichten. Im Modus Sparsam aus. |

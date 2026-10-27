@@ -58,6 +58,9 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     /** Tile last focused in [rowKey], for a recreated row's initial scroll position. */
     fun rememberedItem(rowKey: Any): Any? = memory[rowKey]
 
+    /** Next entry of [rowKey] starts at its first tile. */
+    fun forget(rowKey: Any) { memory.remove(rowKey) }
+
     internal fun nextRow(rowOrder: List<Any>, down: Boolean): Any? {
         val index = rowOrder.indexOf(focusedRow ?: return null).takeIf { it >= 0 } ?: return null
         return rowOrder.getOrNull(if (down) index + 1 else index - 1)

@@ -10,6 +10,10 @@ object HomeHeroStyle {
     const val AURORA = "aurora"
     const val CINEMA = "cinema"
     const val PRISM = "prism"
+    const val DUSK = "dusk"
+    const val EMBER = "ember"
+    const val TIDE = "tide"
+    const val FOCUS = "focus"
     const val DEFAULT = DEPTH
     const val DEFAULT_INTENSITY = 60
     const val SOFT = "soft"
@@ -27,11 +31,27 @@ object HomeHeroStyle {
         else -> 1f
     }
 
-    val keys = setOf(STATIC, SWEEP, ARTWORK_COLOR, DEPTH, AURORA, CINEMA, PRISM)
+    val keys = setOf(STATIC, SWEEP, ARTWORK_COLOR, DEPTH, AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS)
 
-    fun isFancy(key: String) = key == AURORA || key == CINEMA || key == PRISM
+    private val fancy = setOf(AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS)
+
+    fun isFancy(key: String) = key in fancy
     fun isAnimated(key: String) = key == SWEEP || key == DEPTH || isFancy(key)
     fun samplesArtwork(key: String) = key == ARTWORK_COLOR || isFancy(key)
+
+    /** One-way length of the ambient loop. The clock eases out and back, so a full cycle is twice this. */
+    fun ambientPeriodMs(key: String): Int = when (normalize(key)) {
+        SWEEP -> 26_000
+        DEPTH -> 24_000
+        AURORA -> 32_000
+        CINEMA -> 30_000
+        PRISM -> 28_000
+        DUSK -> 36_000
+        EMBER -> 34_000
+        TIDE -> 30_000
+        FOCUS -> 26_000
+        else -> 24_000
+    }
 
     fun normalize(key: String?): String = key?.takeIf { it in keys } ?: DEFAULT
 

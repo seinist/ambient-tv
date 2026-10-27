@@ -98,6 +98,7 @@
     <string name="home_connection_problem">Verbindung nicht möglich</string>
     <string name="home_connection_error_details">Details: %1$s</string>
     <string name="home_continue_watching">Weiterschauen</string>
+    <string name="home_live_channels">Sender</string>
     <string name="detail_load_failed">Details konnten nicht geladen werden</string>
     <string name="detail_children_failed">Staffeln oder Episoden konnten nicht geladen werden.</string>
     <string name="detail_children_empty">Es sind keine Staffeln oder Episoden verfügbar.</string>
@@ -448,7 +449,7 @@
     <string name="settings_home_hero_spread_focused">Fokussiert</string>
     <string name="settings_home_hero_spread_wide">Breit</string>
     <string name="settings_playback_overview">Gespeicherte Wiedergabeeinstellungen</string>
-    <string name="settings_playback_overview_hint">Deine gespeicherten Einstellungen.</string>
+    <string name="settings_playback_overview_hint">Player, Bild, Ton und Untertitel, wie sie gerade gespeichert sind.</string>
     <string name="settings_saved_profiles">Gespeicherte Profile verwalten</string>
     <string name="saved_profiles_title">Gespeicherte Profile</string>
     <string name="saved_profiles_hint">Einstellungen für ein Video gehen vor Staffel, Serie und Sammlung.</string>
@@ -524,7 +525,7 @@
     <string name="settings_network_title">Plex</string>
     <string name="settings_library_title">Mediathek</string>
     <string name="settings_advanced_title">Erweitert</string>
-    <string name="settings_advanced_developer_pointer">Entwickleroptionen verschoben</string>
+    <string name="settings_advanced_developer_pointer">Spotify-Client-ID</string>
     <string name="settings_advanced_developer_pointer_body">Die Spotify-Client-ID liegt unter Streaming › Spotify › Spotify-Konto.</string>
     <string name="settings_advanced_open_spotify_developer">Zu Spotify › Spotify-Konto</string>
     <string name="settings_tvh_title">TVHeadend</string>
@@ -614,7 +615,7 @@
     <string name="settings_display_adjustment_start_stop">Bei Start und Ende</string>
     <string name="settings_display_adjustment_start">Bei Start</string>
     <string name="settings_display_modes_allowed">Erlaubte Bildschirmmodi</string>
-    <string name="settings_display_modes_allowed_hint">Leer = alle Modi erlaubt.</string>
+    <string name="settings_display_modes_allowed_hint">Leer lässt alle Bildmodi zu.</string>
     <string name="settings_display_modes_all">Alle unterstützten Modi</string>
     <string name="settings_display_mode_system">Systemvorgabe</string>
     <string name="settings_display_allow_double">Doppelte Bildrate, wenn die native fehlt (24→48, 25→50, 30→60 Hz)</string>
@@ -622,7 +623,7 @@
     <string name="settings_display_sync_playback">An Display synchronisieren</string>
     <string name="settings_display_sync_playback_hint">Ruckelfreies Bild. Nur mit MPV.</string>
     <string name="settings_display_switch_pause">Pause bei Moduswechsel</string>
-    <string name="settings_display_switch_pause_hint">Wartet, bis das Bild steht</string>
+    <string name="settings_display_switch_pause_hint">Wartet, bis das Bild steht, bevor der Modus wechselt.</string>
     <string name="settings_display_switch_pause_off">Aus</string>
     <string name="settings_display_switch_pause_seconds">%1$s s</string>
     <string name="settings_display_switch_pause_recommended">%1$s · AV-Receiver</string>
@@ -662,14 +663,14 @@
     <string name="player_video_mode_fit">Einpassen</string>
     <string name="player_scaling_mode">Bildanpassung</string>
     <string name="player_stretch">Strecken</string>
-    <string name="player_stretch_hint">Gewähltes Seitenverhältnis vollständig füllen, auch wenn das Bild dabei verzerrt wird</string>
+    <string name="player_stretch_hint">Füllt das Bild, auch wenn es verzerrt.</string>
     <string name="player_aspect_ratio">Seitenverhältnis</string>
     <string name="player_aspect_auto">Auto</string>
     <string name="player_sleep_timer">Sleep-Timer</string>
     <string name="player_sleep_after_time">Beenden nach</string>
     <string name="player_sleep_behavior">Bei Pause oder Wiedergabeende</string>
     <string name="player_sleep_end_item">Am Ende des aktuellen Titels</string>
-    <string name="player_sleep_end_item_hint">Wiedergabe nach dem aktuellen Film oder der aktuellen Episode beenden</string>
+    <string name="player_sleep_end_item_hint">Stoppt nach diesem Film oder dieser Folge.</string>
     <string name="player_sleep_pause_hint">Zählt nur, solange nichts läuft.</string>
     <string name="player_sleep_off">Aus</string>
     <string name="player_sleep_off_hint">Aktiven Sleep-Timer deaktivieren</string>
@@ -832,8 +833,8 @@
     <string name="spotify_empty">Keine Spotify-Inhalte gefunden.</string>
     <string name="spotify_native_missing">Spotify-Wiedergabe ist in dieser App-Version nicht verfügbar.</string>
     <string name="spotify_play">Abspielen</string>
-    <string name="spotify_web_authorized">Web API: %1$s</string>
-    <string name="spotify_web_unauthorized">Web API: nicht angemeldet</string>
+    <string name="spotify_web_authorized">Angemeldet: %1$s</string>
+    <string name="spotify_web_unauthorized">Nicht angemeldet</string>
     <string name="spotify_connect_connected">Connect: verbunden</string>
     <string name="spotify_connect_hint">Connect: wähle diesen TV in Spotify auf einem zweiten Gerät aus</string>
     <string name="spotify_connect_wait">Warte auf Spotify Connect …</string>
@@ -847,7 +848,7 @@
     <string name="spotify_visual">Visual: %1$s</string>
     <string name="settings_tvh_playback_backend">TVHeadend-Player</string>
     <string name="settings_tvh_playback_backend_hint">Player für Live-TV und Aufnahmen.</string>
-    <string name="settings_passthrough_visualizer_hint">Nicht bei direkter Tonausgabe.</string>
+    <string name="settings_passthrough_visualizer_hint">Bei direkter Tonausgabe aus.</string>
     <string name="settings_spotify_web_title">Spotify-Konto</string>
     <string name="settings_spotify_web_subtitle">Mit Spotify anmelden, um deine Bibliothek und Playlists zu verwenden.</string>
     <string name="settings_spotify_redirect">Die Weiterleitungsadresse ist fest eingebaut und muss in der Spotify-App genauso eingetragen sein.</string>
@@ -867,14 +868,16 @@
     <string name="settings_youtube_max_resolution_display">Display (empfohlen)</string>
     <string name="settings_youtube_max_resolution_display_hint">Nie höher als der Fernseher.</string>
     <string name="settings_youtube_quality_hint">Qualität wählst du im Player.</string>
-    <string name="settings_youtube_network_engine">Netzwerk-Engine</string>
+    <string name="settings_youtube_network_engine">Verbindung</string>
     <string name="settings_youtube_network_engine_default">Android (eingebaut)</string>
-    <string name="settings_youtube_network_engine_hint">Gilt für den Media3-Player. Cronet braucht Google-Play-Dienste, sonst wird OkHttp genutzt. Bei Rucklern oder hängendem Laden eine andere Engine probieren.</string>
+    <string name="settings_youtube_network_engine_play">Play-Dienste</string>
+    <string name="settings_youtube_network_engine_classic">Klassisch</string>
+    <string name="settings_youtube_network_engine_hint">Bei Rucklern oder hängendem Laden eine andere Verbindung probieren. Play-Dienste braucht die Google-Play-Dienste.</string>
     <string name="settings_youtube_buffer">Puffergröße</string>
     <string name="settings_youtube_buffer_low">Klein (30 s)</string>
     <string name="settings_youtube_buffer_medium">Mittel (50 s)</string>
     <string name="settings_youtube_buffer_high">Groß (3 min)</string>
-    <string name="settings_youtube_buffer_hint">Mehr Puffer überbrückt instabile Verbindungen, braucht aber mehr Speicher und lädt länger voraus.</string>
+    <string name="settings_youtube_buffer_hint">Mehr Puffer hilft bei unsicherem Netz und lädt länger voraus.</string>
     <string name="settings_spotify_enable">Spotify aktivieren</string>
     <string name="settings_spotify_enable_hint">Spotify als eigenständiges System und Connect-Empfänger anzeigen.</string>
     <string name="settings_spotify_client_id">Spotify-Client-ID</string>
@@ -922,9 +925,9 @@
     <string name="spotify_auth_cancelled">Spotify-Anmeldung abgebrochen: %1$s</string>
     <string name="spotify_auth_state_mismatch">Spotify OAuth-State stimmt nicht überein.</string>
     <string name="spotify_auth_code_missing">Spotify hat keinen Authorization Code geliefert.</string>
-    <string name="spotify_auth_verifier_missing">Spotify PKCE-Verifier fehlt. Starte die Anmeldung erneut.</string>
+    <string name="spotify_auth_verifier_missing">Anmeldung unvollständig. Bitte erneut starten.</string>
     <string name="spotify_auth_failed">Spotify-Anmeldung fehlgeschlagen.</string>
-    <string name="spotify_auth_not_signed_in">Spotify Web API ist nicht angemeldet.</string>
+    <string name="spotify_auth_not_signed_in">Nicht angemeldet.</string>
     <string name="spotify_auth_refresh_failed">Spotify Access Token konnte nicht erneuert werden.</string>
     <string name="spotify_auth_exchange_failed">Spotify Token Exchange fehlgeschlagen (%1$d): %2$s</string>
     <string name="spotify_auth_token_refresh_failed">Spotify Token Refresh fehlgeschlagen (%1$d): %2$s</string>
@@ -940,7 +943,7 @@
     <string name="spotify_volume_failed">Spotify-Lautstärke konnte nicht geändert werden.</string>
     <string name="spotify_shuffle_failed">Spotify-Zufallswiedergabe konnte nicht geändert werden.</string>
     <string name="spotify_repeat_failed">Spotify-Wiederholung konnte nicht geändert werden.</string>
-    <string name="spotify_device_not_visible">Spotify Connect-Gerät „%1$s“ ist noch nicht in der Web API sichtbar. Wähle diesen TV einmal in Spotify aus und versuche es erneut.</string>
+    <string name="spotify_device_not_visible">„%1$s“ ist in Spotify noch nicht sichtbar. Wähle diesen Fernseher dort einmal aus.</string>
     <string name="youtube_feed_not_supported">Der Bereich „%1$s“ ist derzeit nicht verfügbar.</string>
     <string name="youtube_signin_failed">SmartTube-Anmeldung fehlgeschlagen.</string>
     <string name="youtube_signin_start_failed">Die SmartTube-Anmeldung konnte nicht gestartet werden. Bitte versuche es erneut.</string>
@@ -1154,8 +1157,8 @@
     <string name="image_tonemap_hint">Wie HDR ohne HDR-Fernseher aussieht.</string>
     <string name="image_mpv_shader_hint">Bessere Skalierung braucht mehr Leistung. Anime4K für Zeichentrick.</string>
     <string name="image_mpv_filter_hint">Niedrig anfangen. Hohe Stufen können ruckeln.</string>
-    <string name="image_sdr_only">Diese Bildanpassungen sind nur für SDR-Videos verfügbar.</string>
-    <string name="image_mpv_hdr_limited">HDR-Quelle (Tone-Mapping auf SDR): Schärfen, Filmkorn, Deband sowie die Skalierer RAVU Lite / FSR wirken. Entrauschen, Deblock, SSimSuperRes, Bildanpassungen und die übrigen Shader brauchen SDR.</string>
+    <string name="image_sdr_only">Nur bei normalem SDR-Video.</string>
+    <string name="image_mpv_hdr_limited">Bei HDR wirken nur Schärfen, Debanding und einzelne Skalierer.</string>
     <string name="image_scaler_shader_hdr">GPU-Shader · HDR (experimentell)</string>
     <string name="image_vlc_scaler_bypassed">Die Android-Surface umgeht diesen Scaler.</string>
     <string name="hdr_plays_through_media3">HDR läuft über Media3.</string>
@@ -1169,12 +1172,12 @@
     <string name="image_vlc_cpu_hint">Startet die Wiedergabe neu. Kann ruckeln.</string>
     <string name="image_media3_hint">Schärfe und Bildanpassung.</string>
     <string name="image_media3_filter_hint">Mit „Leicht“ anfangen. Stark verstärkt Rauschen.</string>
-    <string name="image_media3_device_bypass">Media3-Bildeffekte werden auf dieser Shield ausgesetzt, um schwarzes Video und Hänger zu vermeiden. Gespeicherte Einstellungen bleiben erhalten.</string>
+    <string name="image_media3_device_bypass">Bildeffekte sind hier aus, damit das Video nicht hängen bleibt.</string>
     <string name="image_filters_sparsam_hint">Im Sparmodus aus.</string>
     <string name="image_mpv_sparsam_defaults_hint">Schonende Voreinstellungen. Eigene Werte gelten trotzdem.</string>
     <string name="image_media3_waiting">Effekte warten auf eine ungeschützte SDR-Videospur.</string>
     <string name="image_media3_active">SDR-Effekte eingeschaltet</string>
-    <string name="image_media3_filters_over_budget">Bei diesem Video (größer als Full HD mit 60 Bildern pro Sekunde) sind Schärfung und Farbbandglättung aus, damit es flüssig läuft.</string>
+    <string name="image_media3_filters_over_budget">Schärfen und Debanding sind bei diesem Video aus.</string>
     <string name="image_vlc_fallback">Softwarefilter konnten nicht aktiviert werden. Die Wiedergabe wird ohne sie fortgesetzt.</string>
     <string name="audio_profile">Audio-Profil</string>
     <string name="audio_profile_auto">Automatisch (aktuelle Ausgabe)</string>
@@ -1187,14 +1190,14 @@
     <string name="audio_equalizer">Equalizer</string>
     <string name="audio_track_preferences">Spurvorlieben</string>
     <string name="audio_prefer_bitstream">Passthrough erzwingen</string>
-    <string name="audio_output_hint">Automatisch: Dolby/DTS direkt an TV oder Verstärker, wenn unterstützt. Nur PCM: Ton wird hier umgewandelt. Erzwingen: immer direkt, z. B. für Verstärker hinter dem TV.</string>
+    <string name="audio_output_hint">Automatisch sendet Dolby und DTS direkt, wenn der Anschluss sie kann.</string>
     <string name="audio_delay">Audioverzögerung</string>
     <string name="audio_reset_delay">Auf 0 ms setzen</string>
-    <string name="audio_delay_hint">Positiv: Ton später. Negativ: Ton früher. Bereich: −2000 bis +2000 ms.</string>
+    <string name="audio_delay_hint">Plus: Ton später. Minus: früher.</string>
     <string name="audio_codec">Bitstream-Format</string>
     <string name="audio_codec_allowed">Passthrough erlauben</string>
     <string name="audio_vlc_output_hint">Nutzt die oben gewählten Formate.</string>
-    <string name="audio_requires_pcm">Effekte pausieren bei Passthrough und DTS-Kern und wirken bei PCM und lokalem AC3.</string>
+    <string name="audio_requires_pcm">Effekte sind bei direkter Ausgabe aus.</string>
     <string name="audio_channels">Kanal-Ausgabe</string>
     <string name="audio_left">Links auf beiden Lautsprechern</string>
     <string name="audio_right">Rechts auf beiden Lautsprechern</string>
@@ -1519,7 +1522,7 @@
     <string name="settings_screensaver_photo_recent">Zuletzt hinzugefügte Fotos (alle Bibliotheken)</string>
     <string name="settings_home_source_photos_recent">Fotos: Kürzlich hinzugefügt</string>
     <string name="settings_system_name">Anzeigename</string>
-    <string name="settings_system_name_hint">Ersetzt „%1$s“ überall. Leer = Standard.</string>
+    <string name="settings_system_name_hint">Ersetzt „%1$s“ überall. Leer lässt den Namen unverändert.</string>
     <string name="settings_system_name_label">Name (Standard: %1$s)</string>
     <string name="spotify_qr_title">Mit dem Handy anmelden</string>
     <string name="spotify_qr_steps">1. QR-Code mit der Handy-Kamera scannen.\n2. Bei Spotify anmelden und den Zugriff bestätigen.\n3. Die Anmeldung wird automatisch an dieses Gerät übertragen.</string>
@@ -1640,7 +1643,7 @@
     <string name="audio_delay_title_scope">Gilt für diesen Titel; die Vorgabe stellst du unter Einstellungen › Audio ein.</string>
     <string name="subtitle_delay">Untertitel-Verzögerung</string>
     <string name="subtitle_delay_reset">Zurücksetzen</string>
-    <string name="subtitle_delay_hint">Positiv: Untertitel später. Negativ: früher. Wird für diesen Titel gemerkt.</string>
+    <string name="subtitle_delay_hint">Plus: Untertitel später. Minus: früher.</string>
     <string name="settings_launcher_rows">Auf dem Startbildschirm zeigen</string>
     <string name="settings_launcher_rows_hint">Weiterschauen und Neuheiten auf dem TV-Startbildschirm.</string>
     <string name="launcher_channel_recent">Kürzlich hinzugefügt</string>
@@ -1828,7 +1831,7 @@
     <string name="iptv_delete">Löschen</string>
     <string name="iptv_delete_title">„%1$s“ löschen?</string>
     <string name="timeshift_title">Timeshift</string>
-    <string name="timeshift_hint">Puffert Live-TV auf diesem Gerät</string>
+    <string name="timeshift_hint">Puffert Live-TV auf diesem Gerät.</string>
     <string name="timeshift_off">Aus</string>
     <string name="timeshift_storage_hint">1 GB ≈ 30–60 Min. HD</string>
     <string name="timeshift_behind">−%1$s</string>
@@ -1903,10 +1906,10 @@
     <string name="image_svp_needs_maximum">Zwischenbildberechnung (SVP) braucht die Wiedergabe-Leistung „Maximale Leistung“ oder Auto auf einem nicht schwachen Gerät.</string>
     <string name="image_sparsam_switch_balanced">Wiedergabe-Leistung auf Ausgewogen</string>
     <string name="image_sparsam_switch_maximum">Wiedergabe-Leistung auf Maximal</string>
-    <string name="image_sparsam_locked_row">%1$s: Standardwert %2$s läuft auf diesem Gerät günstig. Wähle einen anderen Wert, um ihn zu nutzen.</string>
+    <string name="image_sparsam_locked_row">%1$s bleibt bei %2$s. Ein anderer Wert gilt sofort.</string>
     <string name="image_upscaler_not_needed_native">Hochskalierung: nicht nötig – das Video wird bei dieser Ausgabeauflösung 1:1 gezeigt.</string>
     <string name="image_upscaler_not_needed_downscale">Hochskalierung: nicht nötig – das Video ist größer als die Ausgabe und wird herunterskaliert.</string>
-    <string name="player_output_sparsam_gpu">Leistungsmodus Sparsam ist aktiv: Auch diese GPU-Ausgabe skaliert bilinear, ohne Shader, Debanding oder SVP. Stelle die Wiedergabe-Leistung auf Ausgewogen oder Maximal, um sie zu nutzen.</string>
+    <string name="player_output_sparsam_gpu">Sparsam: einfache Skalierung, ohne Filter und Zwischenbilder.</string>
     <string name="sdr_reference_white">SDR-Helligkeit (Referenzweiß)</string>
     <string name="sdr_reference_white_auto">Auto (203 nits)</string>
     <string name="sdr_reference_white_custom">Eigene</string>
@@ -1934,7 +1937,7 @@
     <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
     <string name="renderer_sdr_curve_bt1886">BT.1886</string>
     <string name="renderer_sdr_curve_hint">Helligkeit dunkler Bereiche. Automatisch passt meist.</string>
-    <string name="renderer_sdr_curve_auto_legacy">Auto erkennt den HDR-Modus des Fernsehers erst ab Android 14; darunter Gamma 2.2 manuell wählen, falls das Bild ausgewaschen wirkt.</string>
+    <string name="renderer_sdr_curve_auto_legacy">Automatisch erkennt den HDR-Modus erst ab Android 14. Darunter bei blassem Bild Gamma 2.2 wählen.</string>
     <string name="player_nerd_render_resolution">Renderauflösung</string>
     <string name="player_nerd_sdr_curve">SDR-Kurve / Surface</string>
     <string name="settings_gpu_output_link">Videoausgabe und GPU: Bildprofile</string>

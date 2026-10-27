@@ -1,28 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="deint_hint_mcdeint">Sehr hohe CPU-Last. Bewegungskompensierte 2×-Entflechtung mit Snow als internem Hilfsalgorithmus (keine Ausgabe-Kodierung). TFF: oberes Halbbild zuerst; BFF: unteres zuerst. Feste Reihenfolge, immer aktiv; nur bei passendem Zeilensprungmaterial verwenden. Für Live-TV möglicherweise zu langsam.</string>
+    <string name="deint_hint_mcdeint">Sehr hohe Last und feste Halbbildreihenfolge. Für Live-TV oft zu langsam.</string>
     <string name="deint_group_auto">Automatisch · Aufwand variabel</string>
     <string name="deint_group_light">Geringer Aufwand · einfaches Bild</string>
     <string name="deint_group_balanced">Ausgewogen · mittlerer Aufwand</string>
     <string name="deint_group_double">Flüssigere Bewegung · doppelte Bildrate</string>
     <string name="deint_group_expert">Spezialverfahren · Hinweise beachten</string>
-    <string name="deint_group_film">Film · inverse Telecine</string>
-    <string name="deint_hint_auto">Das Backend wählt das Verfahren. Aufwand und Bildrate hängen von dieser Wahl ab; Hardware-Deinterlacing ist damit nicht garantiert.</string>
-    <string name="deint_hint_discard">Sehr geringer Aufwand. Verwirft ein Halbbild; weniger vertikale Details und Bewegungsauflösung.</string>
-    <string name="deint_hint_mean">Sehr geringer Aufwand. Mittelt Halbbildzeilen; weniger vertikale Details und Bewegungsauflösung.</string>
-    <string name="deint_hint_blend">Geringer Aufwand. Mischt Halbbilder; bewegte Objekte können Doppelkonturen zeigen.</string>
-    <string name="deint_hint_bob">Einfacher Algorithmus, doppelte Ausgabebildrate (50i → 50p). Flüssige Bewegung; feine Linien können flimmern.</string>
-    <string name="deint_hint_balanced">Mittlere CPU-Last. Bewegungsabhängige Entflechtung bei ursprünglicher Vollbildrate (50i → 25p).</string>
-    <string name="deint_hint_double">Höhere CPU-Last. Bewegungsabhängige Entflechtung beider Halbbilder (50i → 50p); hilfreich bei Sport.</string>
-    <string name="deint_hint_w3fdif">Mittlere CPU-Last. Interpolation aus drei Halbbildern. Die 2×-Variante erhält beide Bewegungsphasen und erhöht den Rechenaufwand.</string>
-    <string name="deint_hint_estdif">Hohe CPU-Last. Kantenorientierte Interpolation; 2× verdoppelt die Ausgabebilder. Auf dem eigenen Gerät prüfen.</string>
-    <string name="deint_hint_nnedi">Sehr hohe CPU-Last, auch mit Vulkan-Ausgabe. Neuronale Interpolation (16 Neuronen); 2× ist aufwändiger. Für HD-Live-TV möglicherweise zu langsam. Eigenständig gegenüber dem NNEDI3-Upscaler.</string>
-    <string name="deint_hint_kernel">Älterer CPU-Filter mit mittlerem Aufwand und fester Halbbildreihenfolge. Bei ruckelnder Bewegung ungeeignet. BWDIF erkennt die Reihenfolge automatisch.</string>
-    <string name="deint_hint_phosphor">Mittlerer Aufwand, doppelte Bildrate. Simuliert das Nachleuchten eines Röhrenbildschirms; kann Bewegungsspuren erzeugen. Bei ungeeigneten Pixelformaten kann VLC das Verfahren ersetzen.</string>
-    <string name="deint_hint_ivtc">Nur Film mit 3:2-Pulldown (29,97 → 23,976 fps), kein gewöhnliches 50i-/60i-Livevideo. Mittlerer bis hoher Aufwand. Falsche Anwendung verursacht Ruckeln.</string>
-    <string name="deint_hint_x">Geringer bis mittlerer Aufwand. Räumliche VLC-Interpolation; bei ungeeigneten Pixelformaten kann VLC das Verfahren ersetzen.</string>
-    <string name="deint_path_mpv">CPU-Filter benötigen lesbare Bilder (Copy-back), auch bei Vulkan-Ausgabe. Hardware-Decodierung kann aktiv bleiben. Lastangaben variieren mit Gerät und Auflösung.</string>
-    <string name="deint_path_vlc">Die VLC-Filterauswahl steuert keinen SoC-Hardware-Deinterlacer. Decoder, Pixelformat und Ausgabe bestimmen den nutzbaren Pfad. Lastangaben sind geräteabhängig.</string>
-    <string name="deint_low_override">Im Leistungsmodus Sparsam wird derzeit %1$s verwendet. Das gewählte Verfahren bleibt gespeichert.</string>
-    <string name="deint_failure">Das gewählte Deinterlacing-Verfahren konnte nicht angewendet werden. Auto oder ein anderes Verfahren versuchen.</string>
+    <string name="deint_group_film">Film · nur Kinomaterial</string>
+    <string name="deint_hint_auto">Der Player wählt das Verfahren. Hardware-Entflechtung ist damit nicht sicher.</string>
+    <string name="deint_hint_discard">Sehr leicht. Ein Halbbild fällt weg, weniger Details in der Höhe.</string>
+    <string name="deint_hint_mean">Sehr leicht. Die Zeilen werden gemittelt, weniger Details in der Höhe.</string>
+    <string name="deint_hint_blend">Leicht. Bewegte Objekte können Doppelkonturen zeigen.</string>
+    <string name="deint_hint_bob">Flüssige Bewegung, feine Linien können flimmern.</string>
+    <string name="deint_hint_balanced">Mittlere Last, ruhiges Bild.</string>
+    <string name="deint_hint_double">Mehr Last, flüssiger, gut für Sport.</string>
+    <string name="deint_hint_w3fdif">Mittlere Last. Die doppelte Variante ist flüssiger und schwerer.</string>
+    <string name="deint_hint_estdif">Hohe Last. Auf dem eigenen Gerät prüfen.</string>
+    <string name="deint_hint_nnedi">Sehr hohe Last. Für HD-Live-TV oft zu langsam.</string>
+    <string name="deint_hint_kernel">Feste Halbbildreihenfolge. Bei Ruckeln ein anderes Verfahren wählen.</string>
+    <string name="deint_hint_phosphor">Kann Bewegungsspuren erzeugen.</string>
+    <string name="deint_hint_ivtc">Nur für Kinofilm mit 3:2-Pulldown, nicht für normales Live-TV.</string>
+    <string name="deint_hint_x">Leicht bis mittel. Kann bei manchen Bildern ersetzt werden.</string>
+    <string name="deint_low_override">Sparsam nutzt gerade %1$s. Deine Wahl bleibt gespeichert.</string>
+    <string name="deint_failure">Das Verfahren ging nicht. Probiere Automatisch oder ein anderes.</string>
 </resources>

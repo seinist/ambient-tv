@@ -6,7 +6,7 @@
     <string name="settings_network_wake">Server &amp; Wake-on-LAN</string>
     <string name="settings_network_wake_hint">MAC-Adressen und Aufwecken; die Profilauswahl wechselt den aktiven Server.</string>
     <string name="settings_wol_retries">Wake-on-LAN-Wiederholungen</string>
-    <string name="settings_wol_retries_hint">Antwortet ein Server nach Ablauf der Wartezeit nicht, wird er mit neuen Paketen erneut geweckt und noch einmal gewartet. Gilt für alle Server, Dateiquellen und DLNA; die kurze Prüfung beim Zurückkehren in die App wird nie wiederholt.</string>
+    <string name="settings_wol_retries_hint">Antwortet der Server nicht, wird er noch einmal geweckt. Die kurze Prüfung beim Zurückkehren wird nicht wiederholt.</string>
     <string name="settings_wol_retries_off">Aus</string>
     <string name="settings_wol_retries_value">%1$d×</string>
     <string name="settings_network_link">Netzwerkeinstellungen</string>
@@ -16,7 +16,7 @@
     <string name="settings_network_receiver_name">Sichtbarer Name im Netzwerk</string>
     <string name="settings_network_receiver_running">Receiver läuft. Apps in deinem Netzwerk können dieses Gerät finden.</string>
     <string name="settings_network_receiver_stopped">Receiver läuft nicht. Aktiviere ihn und erlaube den lokalen Netzwerkzugriff, um Medien zu empfangen.</string>
-    <string name="settings_network_dlna_hint">Im Netzwerk gefundene DLNA-Server. Mit Wake-on-LAN wird ein schlafender Server vor dem Durchsuchen geweckt, wenn automatisches Aufwecken an ist.</string>
+    <string name="settings_network_dlna_hint">Gefundene DLNA-Server. Ein schlafender Server wird geweckt, wenn Aufwecken an ist.</string>
     <string name="settings_network_receiving">Aktuelle Zuspielung: %1$s</string>
     <string name="settings_network_receiver_save_hint">Receiver-Schalter wirken sofort. Den Gerätenamen mit Speichern unter dem Eingabefeld übernehmen.</string>
     <string name="settings_wake_group_services">Dienste: %1$s</string>

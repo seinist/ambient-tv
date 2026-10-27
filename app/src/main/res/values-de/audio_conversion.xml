@@ -7,5 +7,5 @@
     <string name="audio_badge_server">Server</string>
     <string name="audio_route_confirmed">Ausgang bestätigt: %1$s</string>
     <string name="audio_route_unconfirmed">Nicht bestätigt: %1$s</string>
-    <string name="audio_route_none">Der aktuelle Ausgang bestätigt kein Bitstream-Format; der Ton wird als PCM ausgegeben.</string>
+    <string name="audio_route_none">Der Anschluss nimmt kein Direktformat an. Der Ton wird umgewandelt.</string>
 </resources>

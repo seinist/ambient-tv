@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="channel_profile_auto">Audio and picture settings are saved automatically for this channel on this server.</string>
+    <string name="channel_profile_auto">Remembered for this channel.</string>
     <string name="channel_renderer_default">Global default: %1$s</string>
     <string name="channel_renderer_saved">Saved for this channel: %1$s</string>
     <string name="channel_renderer_live_preset">Live TV preset: %1$s</string>

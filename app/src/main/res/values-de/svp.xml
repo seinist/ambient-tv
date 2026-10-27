@@ -1,7 +1,6 @@
 <resources>
     <string name="settings_performance_maximum">Maximale Leistung</string>
-    <string name="image_svp_locked">SVP ist ausgeschaltet. Verfügbar in „Maximale Leistung“ oder in Auto auf nicht schwachen Geräten; die gespeicherte Auswahl bleibt erhalten.</string>
-    <string name="image_svp_hint">Fügt Zwischenbilder für flüssigere Bewegung ein. Nur MPV (Vulkan- oder OpenGL-Ausgabe) und VLC, nur progressives 8-Bit-SDR.</string>
+    <string name="image_svp_locked">Aus im Sparmodus. Die Auswahl bleibt gespeichert.</string>
     <string name="settings_svp_available">Bewegungsglättung (SVP) verfügbar</string>
-    <string name="settings_svp_available_hint">Aus blendet SVP im Player aus; bei An muss SVP im Panel eingeschaltet werden. Benötigt „Maximale Leistung“ oder Auto auf einem nicht schwachen Gerät.</string>
+    <string name="settings_svp_available_hint">Aus blendet sie im Player aus. An braucht noch den Schalter im Player und genug Leistung.</string>
 </resources>

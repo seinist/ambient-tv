@@ -10,5 +10,5 @@
     <string name="audio_unsupported">Nicht unterstützter Ton</string>
     <string name="audio_unsupported_ac3">Dolby Digital (AC3)</string>
     <string name="audio_unsupported_server">Medienserver</string>
-    <string name="audio_unsupported_hint">Für Ton, den der Ausgang nicht direkt abspielen kann. Automatisch: wird in diesem Gerät dekodiert; bei DTS-HD wird wenn möglich der DTS-Kern gesendet. Dolby Digital (AC3): Mehrkanalton wird als AC3 5.1 gesendet, wenn PCM nur Stereo erlaubt; Atmos-Höhenkanäle entfallen. Nur PCM: immer als PCM dekodieren. Medienserver: Plex, Emby oder Jellyfin wandeln den Ton um; andere Quellen wandeln in diesem Gerät um. Aus: keine zusätzliche Umwandlung.</string>
+    <string name="audio_unsupported_hint">Für Ton, den der Anschluss nicht direkt abspielen kann.</string>
 </resources>

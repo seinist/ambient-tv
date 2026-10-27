@@ -1703,7 +1703,7 @@ private fun CastSection(
                     scale = noSurfaceScale(),
                     border = noSurfaceBorder(),
                     modifier = Modifier.width(112.dp).focusRequester(requester)
-                        .activateOnTvKey(enabled = member.id != null) { member.id?.let { onBrowseActor(it, member.name) } }
+                        .activateOnTvKey(enabled = member.id != null, onClick = { member.id?.let { onBrowseActor(it, member.name) } })
                         .onFocusChanged {
                             isFocused = it.isFocused
                             if (it.isFocused) onFocused(focusKey)

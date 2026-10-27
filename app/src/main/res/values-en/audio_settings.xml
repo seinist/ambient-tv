@@ -10,5 +10,5 @@
     <string name="audio_unsupported">Unsupported audio</string>
     <string name="audio_unsupported_ac3">Dolby Digital (AC3)</string>
     <string name="audio_unsupported_server">Media server</string>
-    <string name="audio_unsupported_hint">For audio the output cannot play directly. Automatic: decoded on this device; for DTS-HD the DTS core is sent when possible. Dolby Digital (AC3): multichannel audio is sent as AC3 5.1 when PCM allows only stereo; Atmos height channels are lost. PCM only: always decode to PCM. Media server: Plex, Emby or Jellyfin convert the audio; other sources convert on this device. Off: no extra conversion.</string>
+    <string name="audio_unsupported_hint">For sound the output cannot play directly.</string>
 </resources>

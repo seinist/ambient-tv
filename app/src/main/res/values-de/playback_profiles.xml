@@ -5,13 +5,13 @@
     <string name="playback_profile_loaded">Gespeicherte Audio-/Videokonfiguration geladen</string>
     <string name="playback_profile_failed">Konfiguration konnte nicht angewendet oder gespeichert werden</string>
     <string name="playback_profile_unavailable">Verfügbar, sobald die Wiedergabe bereit ist</string>
-    <string name="playback_profile_title_unavailable">Änderungen für Live-TV, Trailer und geteilte Links gelten nur während dieser Wiedergabe. Gemeinsame Vorgaben können ausdrücklich gespeichert werden.</string>
+    <string name="playback_profile_title_unavailable">Gilt nur für diese Wiedergabe.</string>
     <string name="playback_profile_resolution_unavailable">Breitenpreset nicht verfügbar: Quellbreite noch unbekannt oder Trailer</string>
     <string name="playback_profile_saved_all">Audio-/Videokonfiguration für alle Videos gespeichert</string>
     <string name="playback_profile_resolution_scope">Quellbreite: %1$s. * steht für beliebige Höhe. Gilt auch für leicht abweichende Breiten (±3 %%, z. B. 1916 statt 1920) ohne eigenes Preset und für Live-TV, solange dort kein eigenes Preset dieser Breite gespeichert ist.</string>
     <string name="playback_profile_summary">Audio, Video und Renderer</string>
-    <string name="playback_profile_includes">Änderungen an Audio, Renderer, Videoausgabe, Decoder, Bild und Filtern werden automatisch für das aktuelle Video gemerkt. Mit den Speicheraktionen werden sie als gemeinsame Vorgaben übernommen.</string>
-    <string name="playback_profile_auto_title">Änderungen werden automatisch für dieses Video gespeichert.</string>
+    <string name="playback_profile_includes">Ton, Bild und Filter werden für dieses Video gemerkt.</string>
+    <string name="playback_profile_auto_title">Wird für dieses Video gemerkt.</string>
     <string name="playback_scope_episode">Nur diese Folge</string>
     <string name="playback_scope_movie">Nur diesen Film</string>
     <string name="playback_scope_title">Nur dieses Video</string>
@@ -33,7 +33,7 @@
     <string name="playback_scope_remember_here">Hier merken</string>
     <string name="playback_scope_remembering">Merkt hier</string>
     <string name="playback_profile_section_cascade">Reihenfolge</string>
-    <string name="playback_profile_cascade_hint">Von oben nach unten: Für jede Einstellung gilt die erste Ebene, die einen Wert gespeichert hat.</string>
+    <string name="playback_profile_cascade_hint">Oben gewinnt: die erste Ebene mit einem Wert.</string>
     <string name="playback_profile_supplies">Liefert gerade: %1$s</string>
     <string name="playback_profile_global_plain">Wiedergabeeinstellungen</string>
 </resources>

@@ -98,6 +98,7 @@
     <string name="home_connection_problem">Unable to connect</string>
     <string name="home_connection_error_details">Details: %1$s</string>
     <string name="home_continue_watching">Continue Watching</string>
+    <string name="home_live_channels">Channels</string>
     <string name="detail_load_failed">Could not load details</string>
     <string name="detail_children_failed">Could not load seasons or episodes.</string>
     <string name="detail_children_empty">No seasons or episodes are available.</string>
@@ -451,7 +452,7 @@
     <string name="settings_home_hero_spread_focused">Focused</string>
     <string name="settings_home_hero_spread_wide">Wide</string>
     <string name="settings_playback_overview">Saved playback settings</string>
-    <string name="settings_playback_overview_hint">Your saved settings.</string>
+    <string name="settings_playback_overview_hint">Player, picture, sound and subtitles as they are saved.</string>
     <string name="settings_saved_profiles">Manage saved profiles</string>
     <string name="saved_profiles_title">Saved profiles</string>
     <string name="saved_profiles_hint">Per-video settings win over season, show and collection.</string>
@@ -524,7 +525,7 @@
     <string name="settings_network_title">Plex</string>
     <string name="settings_library_title">Library</string>
     <string name="settings_advanced_title">Advanced</string>
-    <string name="settings_advanced_developer_pointer">Developer options moved</string>
+    <string name="settings_advanced_developer_pointer">Spotify client ID</string>
     <string name="settings_advanced_developer_pointer_body">The Spotify client ID is under Streaming › Spotify › Spotify account.</string>
     <string name="settings_advanced_open_spotify_developer">Open Spotify › Spotify account</string>
     <string name="settings_tvh_title">TVHeadend</string>
@@ -614,7 +615,7 @@
     <string name="settings_display_adjustment_start_stop">On start / stop</string>
     <string name="settings_display_adjustment_start">On start</string>
     <string name="settings_display_modes_allowed">Allowed display modes</string>
-    <string name="settings_display_modes_allowed_hint">Empty = all modes allowed.</string>
+    <string name="settings_display_modes_allowed_hint">Empty allows every display mode.</string>
     <string name="settings_display_modes_all">All supported modes</string>
     <string name="settings_display_mode_system">System default</string>
     <string name="settings_display_allow_double">Double refresh rate when the native one is missing (24→48, 25→50, 30→60 Hz)</string>
@@ -622,7 +623,7 @@
     <string name="settings_display_sync_playback">Sync playback to display</string>
     <string name="settings_display_sync_playback_hint">Smoother picture. MPV only.</string>
     <string name="settings_display_switch_pause">Pause on display switch</string>
-    <string name="settings_display_switch_pause_hint">Waits for the picture</string>
+    <string name="settings_display_switch_pause_hint">Waits until the picture is steady before the mode changes.</string>
     <string name="settings_display_switch_pause_off">Off</string>
     <string name="settings_display_switch_pause_seconds">%1$s s</string>
     <string name="settings_display_switch_pause_recommended">%1$s · AV receiver</string>
@@ -662,14 +663,14 @@
     <string name="player_video_mode_fit">Fit</string>
     <string name="player_scaling_mode">Picture fit</string>
     <string name="player_stretch">Stretch</string>
-    <string name="player_stretch_hint">Fill the selected aspect ratio completely, even if the image is distorted</string>
+    <string name="player_stretch_hint">Fills the picture, even if it is stretched.</string>
     <string name="player_aspect_ratio">Aspect ratio</string>
     <string name="player_aspect_auto">Auto</string>
     <string name="player_sleep_timer">Sleep timer</string>
     <string name="player_sleep_after_time">Stop after</string>
     <string name="player_sleep_behavior">When playback is paused or ends</string>
     <string name="player_sleep_end_item">At the end of this item</string>
-    <string name="player_sleep_end_item_hint">Stop playback when the current movie or episode ends</string>
+    <string name="player_sleep_end_item_hint">Stops after this movie or episode.</string>
     <string name="player_sleep_pause_hint">Counts only while nothing plays.</string>
     <string name="player_sleep_off">Off</string>
     <string name="player_sleep_off_hint">Disable the active sleep timer</string>
@@ -832,8 +833,8 @@
     <string name="spotify_empty">No Spotify content found.</string>
     <string name="spotify_native_missing">Spotify playback is unavailable in this app version.</string>
     <string name="spotify_play">Play</string>
-    <string name="spotify_web_authorized">Web API: %1$s</string>
-    <string name="spotify_web_unauthorized">Web API: not signed in</string>
+    <string name="spotify_web_authorized">Signed in: %1$s</string>
+    <string name="spotify_web_unauthorized">Not signed in</string>
     <string name="spotify_connect_connected">Connect: connected</string>
     <string name="spotify_connect_hint">Connect: select this TV in Spotify on another device</string>
     <string name="spotify_connect_wait">Waiting for Spotify Connect…</string>
@@ -847,7 +848,7 @@
     <string name="spotify_visual">Visual: %1$s</string>
     <string name="settings_tvh_playback_backend">TVHeadend player</string>
     <string name="settings_tvh_playback_backend_hint">Player for live TV and recordings.</string>
-    <string name="settings_passthrough_visualizer_hint">Not with direct audio output.</string>
+    <string name="settings_passthrough_visualizer_hint">Off during direct audio output.</string>
     <string name="settings_spotify_web_title">Spotify account</string>
     <string name="settings_spotify_web_subtitle">Sign in to Spotify to access your library and playlists.</string>
     <string name="settings_spotify_redirect">The return address is built in and must be entered the same way in the Spotify app.</string>
@@ -867,14 +868,16 @@
     <string name="settings_youtube_max_resolution_display">Display (recommended)</string>
     <string name="settings_youtube_max_resolution_display_hint">Never above the TV resolution.</string>
     <string name="settings_youtube_quality_hint">Choose quality in the player.</string>
-    <string name="settings_youtube_network_engine">Network engine</string>
+    <string name="settings_youtube_network_engine">Connection</string>
     <string name="settings_youtube_network_engine_default">Android (built-in)</string>
-    <string name="settings_youtube_network_engine_hint">Applies to the Media3 player. Cronet needs Google Play services, otherwise OkHttp is used. Try another engine if videos stutter or stop loading.</string>
+    <string name="settings_youtube_network_engine_play">Play services</string>
+    <string name="settings_youtube_network_engine_classic">Classic</string>
+    <string name="settings_youtube_network_engine_hint">If playback stutters or stops loading, try another connection. Play services needs Google Play services.</string>
     <string name="settings_youtube_buffer">Buffer size</string>
     <string name="settings_youtube_buffer_low">Low (30 s)</string>
     <string name="settings_youtube_buffer_medium">Medium (50 s)</string>
     <string name="settings_youtube_buffer_high">High (3 min)</string>
-    <string name="settings_youtube_buffer_hint">More buffer bridges unstable connections but uses more memory and loads longer ahead.</string>
+    <string name="settings_youtube_buffer_hint">More buffer helps on an unstable network and loads further ahead.</string>
     <string name="settings_spotify_enable">Enable Spotify</string>
     <string name="settings_spotify_enable_hint">Show Spotify as an independent system and Spotify Connect receiver.</string>
     <string name="settings_spotify_client_id">Spotify client ID</string>
@@ -922,9 +925,9 @@
     <string name="spotify_auth_cancelled">Spotify sign-in was cancelled: %1$s</string>
     <string name="spotify_auth_state_mismatch">Spotify OAuth state does not match.</string>
     <string name="spotify_auth_code_missing">Spotify did not return an authorization code.</string>
-    <string name="spotify_auth_verifier_missing">Spotify PKCE verifier is missing. Start sign-in again.</string>
+    <string name="spotify_auth_verifier_missing">Sign-in is incomplete. Start it again.</string>
     <string name="spotify_auth_failed">Spotify sign-in failed.</string>
-    <string name="spotify_auth_not_signed_in">Spotify Web API is not signed in.</string>
+    <string name="spotify_auth_not_signed_in">Not signed in.</string>
     <string name="spotify_auth_refresh_failed">Spotify access token could not be refreshed.</string>
     <string name="spotify_auth_exchange_failed">Spotify token exchange failed (%1$d): %2$s</string>
     <string name="spotify_auth_token_refresh_failed">Spotify token refresh failed (%1$d): %2$s</string>
@@ -940,7 +943,7 @@
     <string name="spotify_volume_failed">Spotify volume change failed.</string>
     <string name="spotify_shuffle_failed">Spotify shuffle change failed.</string>
     <string name="spotify_repeat_failed">Spotify repeat change failed.</string>
-    <string name="spotify_device_not_visible">Spotify Connect device “%1$s” is not visible in the Web API yet. Select this TV once in Spotify and try again.</string>
+    <string name="spotify_device_not_visible">“%1$s” is not visible in Spotify yet. Select this TV there once.</string>
     <string name="youtube_feed_not_supported">The “%1$s” section is currently unavailable.</string>
     <string name="youtube_signin_failed">SmartTube sign-in failed.</string>
     <string name="youtube_signin_start_failed">SmartTube sign-in could not be started. Please try again.</string>
@@ -1154,8 +1157,8 @@
     <string name="image_tonemap_hint">How HDR looks on a non-HDR TV.</string>
     <string name="image_mpv_shader_hint">Better scaling needs more power. Anime4K for animation.</string>
     <string name="image_mpv_filter_hint">Start low. High levels may stutter.</string>
-    <string name="image_sdr_only">These picture adjustments are available only for SDR video.</string>
-    <string name="image_mpv_hdr_limited">HDR source (tone-mapped to SDR): sharpening, film grain, deband and the RAVU Lite / FSR upscalers apply. Denoise, deblock, SSimSuperRes, picture adjustments and the other shaders need SDR.</string>
+    <string name="image_sdr_only">Only for ordinary SDR video.</string>
+    <string name="image_mpv_hdr_limited">With HDR, only sharpening, deband and some scalers apply.</string>
     <string name="image_scaler_shader_hdr">GPU shaders · HDR (experimental)</string>
     <string name="image_vlc_scaler_bypassed">The Android surface bypasses this scaler.</string>
     <string name="hdr_plays_through_media3">HDR plays through Media3.</string>
@@ -1169,12 +1172,12 @@
     <string name="image_vlc_cpu_hint">Restarts playback. May stutter.</string>
     <string name="image_media3_hint">Sharpness and picture tuning.</string>
     <string name="image_media3_filter_hint">Start with Light. Strong adds noise.</string>
-    <string name="image_media3_device_bypass">Media3 image effects are bypassed on this Shield to prevent black video and freezes. Saved settings are retained.</string>
+    <string name="image_media3_device_bypass">Picture effects are off here so the video does not freeze.</string>
     <string name="image_filters_sparsam_hint">Off in saver mode.</string>
     <string name="image_mpv_sparsam_defaults_hint">Light defaults. Your own values still apply.</string>
     <string name="image_media3_waiting">Effects are waiting for an unprotected SDR video track.</string>
     <string name="image_media3_active">SDR effects enabled</string>
-    <string name="image_media3_filters_over_budget">Sharpening and debanding are off for this video (larger than Full HD at 60 frames per second) so it plays smoothly.</string>
+    <string name="image_media3_filters_over_budget">Sharpening and deband are off for this video.</string>
     <string name="image_vlc_fallback">Software filters could not be enabled. Playback continues without them.</string>
     <string name="audio_profile">Audio profile</string>
     <string name="audio_profile_auto">Auto (current output)</string>
@@ -1187,14 +1190,14 @@
     <string name="audio_equalizer">Equalizer</string>
     <string name="audio_track_preferences">Track preferences</string>
     <string name="audio_prefer_bitstream">Force passthrough</string>
-    <string name="audio_output_hint">Auto: Dolby/DTS sent to TV or receiver if supported. PCM only: decoded here. Force: always sent, e.g. for a receiver behind the TV.</string>
+    <string name="audio_output_hint">Automatic sends Dolby and DTS directly when the output supports them.</string>
     <string name="audio_delay">Audio delay</string>
     <string name="audio_reset_delay">Reset to 0 ms</string>
-    <string name="audio_delay_hint">Positive: sound later. Negative: sound earlier. Range: −2000 to +2000 ms.</string>
+    <string name="audio_delay_hint">Plus: sound later. Minus: earlier.</string>
     <string name="audio_codec">Bitstream format</string>
     <string name="audio_codec_allowed">Allow passthrough</string>
     <string name="audio_vlc_output_hint">Uses the formats chosen above.</string>
-    <string name="audio_requires_pcm">Effects pause during passthrough and DTS core and apply to PCM and local AC3.</string>
+    <string name="audio_requires_pcm">Effects are off during direct output.</string>
     <string name="audio_channels">Channel output</string>
     <string name="audio_left">Left on both speakers</string>
     <string name="audio_right">Right on both speakers</string>
@@ -1519,7 +1522,7 @@
     <string name="settings_screensaver_photo_recent">Recently added photos (all libraries)</string>
     <string name="settings_home_source_photos_recent">Photos: Recently added</string>
     <string name="settings_system_name">Display name</string>
-    <string name="settings_system_name_hint">Replaces \"%1$s\" everywhere. Empty = default.</string>
+    <string name="settings_system_name_hint">Replaces %1$s everywhere. Empty keeps the original name.</string>
     <string name="settings_system_name_label">Name (default: %1$s)</string>
     <string name="spotify_qr_title">Sign in with your phone</string>
     <string name="spotify_qr_steps">1. Scan the QR code with your phone camera.\n2. Sign in to Spotify and confirm access.\n3. The sign-in is passed to this device automatically.</string>
@@ -1640,7 +1643,7 @@
     <string name="audio_delay_title_scope">Applies to this title; set the default under Settings › Audio.</string>
     <string name="subtitle_delay">Subtitle delay</string>
     <string name="subtitle_delay_reset">Reset</string>
-    <string name="subtitle_delay_hint">Positive: subtitles later. Negative: earlier. Remembered for this title.</string>
+    <string name="subtitle_delay_hint">Plus: subtitles later. Minus: earlier.</string>
     <string name="settings_launcher_rows">Show on the home screen</string>
     <string name="settings_launcher_rows_hint">Continue watching and new items on the TV home screen.</string>
     <string name="launcher_channel_recent">Recently added</string>
@@ -1828,7 +1831,7 @@
     <string name="iptv_delete">Delete</string>
     <string name="iptv_delete_title">Delete “%1$s”?</string>
     <string name="timeshift_title">Timeshift</string>
-    <string name="timeshift_hint">Buffers live TV on this device</string>
+    <string name="timeshift_hint">Buffers live TV on this device.</string>
     <string name="timeshift_off">Off</string>
     <string name="timeshift_storage_hint">1 GB ≈ 30–60 min HD</string>
     <string name="timeshift_behind">−%1$s</string>
@@ -1904,10 +1907,10 @@
     <string name="image_svp_needs_maximum">Motion interpolation (SVP) needs Maximum playback performance, or Auto on a device that is not low-end.</string>
     <string name="image_sparsam_switch_balanced">Set playback performance to Balanced</string>
     <string name="image_sparsam_switch_maximum">Set playback performance to Maximum</string>
-    <string name="image_sparsam_locked_row">%1$s: the default %2$s runs cheap on this device. Pick another value to use it.</string>
+    <string name="image_sparsam_locked_row">%1$s stays at %2$s. Another value applies at once.</string>
     <string name="image_upscaler_not_needed_native">Upscaler: not needed – the video is shown 1:1 at this output resolution.</string>
     <string name="image_upscaler_not_needed_downscale">Upscaler: not needed – the video is larger than the output and is downscaled.</string>
-    <string name="player_output_sparsam_gpu">Low performance mode is active: this GPU output still renders bilinear, without shaders, deband or SVP. Set playback performance to Balanced or Maximum to use them.</string>
+    <string name="player_output_sparsam_gpu">Low power: simple scaling, no filters or motion smoothing.</string>
     <string name="sdr_reference_white">SDR brightness (reference white)</string>
     <string name="sdr_reference_white_auto">Auto (203 nits)</string>
     <string name="sdr_reference_white_custom">Custom</string>
@@ -1935,7 +1938,7 @@
     <string name="renderer_sdr_curve_gamma22">Gamma 2.2</string>
     <string name="renderer_sdr_curve_bt1886">BT.1886</string>
     <string name="renderer_sdr_curve_hint">Brightness of dark areas. Auto usually fits.</string>
-    <string name="renderer_sdr_curve_auto_legacy">Auto detects the TV\'s HDR mode only from Android 14; on older versions choose Gamma 2.2 manually if the picture looks washed out.</string>
+    <string name="renderer_sdr_curve_auto_legacy">Auto detects the TV HDR mode only from Android 14. On older versions, choose Gamma 2.2 if the picture looks washed out.</string>
     <string name="player_nerd_render_resolution">Render resolution</string>
     <string name="player_nerd_sdr_curve">SDR curve / surface</string>
     <string name="settings_gpu_output_link">Video output and GPU: Picture profiles</string>

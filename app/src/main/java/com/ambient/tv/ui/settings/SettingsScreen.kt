@@ -2110,6 +2110,8 @@ private fun introAnimationLabel(key: String): String = when (key) {
     IntroAnimation.SIGNAL -> stringResource(R.string.settings_intro_signal)
     IntroAnimation.SHIMMER -> stringResource(R.string.settings_intro_shimmer)
     IntroAnimation.RIPPLE -> stringResource(R.string.settings_intro_ripple)
+    IntroAnimation.WORD -> stringResource(R.string.settings_intro_word)
+    IntroAnimation.HORIZON -> stringResource(R.string.settings_intro_horizon)
     else -> stringResource(R.string.settings_intro_bloom)
 }
 
@@ -2152,6 +2154,10 @@ private fun homeHeroStyleLabel(key: String): String = when (key) {
     HomeHeroStyle.AURORA -> stringResource(R.string.settings_home_hero_aurora)
     HomeHeroStyle.CINEMA -> stringResource(R.string.settings_home_hero_cinema)
     HomeHeroStyle.PRISM -> stringResource(R.string.settings_home_hero_prism)
+    HomeHeroStyle.DUSK -> stringResource(R.string.settings_home_hero_dusk)
+    HomeHeroStyle.EMBER -> stringResource(R.string.settings_home_hero_ember)
+    HomeHeroStyle.TIDE -> stringResource(R.string.settings_home_hero_tide)
+    HomeHeroStyle.FOCUS -> stringResource(R.string.settings_home_hero_focus)
     else -> stringResource(R.string.settings_home_hero_static)
 }
 

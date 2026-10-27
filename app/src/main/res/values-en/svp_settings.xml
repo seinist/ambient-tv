@@ -33,7 +33,7 @@
     <string name="svp_search_standard">Standard</string>
     <string name="svp_backend">SVP synthesis backend</string>
     <string name="svp_threads">SVP CPU threads</string>
-    <string name="svp_advanced_hint">Changes apply during playback; VLC may briefly reopen the video. Finer analysis costs more CPU time. Vulkan accelerates synthesis only and falls back to the CPU when unavailable. Overload protection stays active.</string>
+    <string name="svp_advanced_hint">Applies at once. VLC briefly reopens the video.</string>
     <string name="svp_reset">Reset SVP settings</string>
     <string name="svp_unavailable">Unavailable: %1$s</string>
     <string name="svp_inactive">Inactive: %1$s</string>

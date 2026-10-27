@@ -1,11 +1,11 @@
 <resources>
-    <string name="audio_ac3_video_constraint">Local AC3 conversion of this audio track requires MPV, but this video must stay on Media3. Use PCM or server conversion.</string>
-    <string name="audio_vlc_pcm_limit_fallback">VLC cannot limit multichannel PCM to 5.1 on this output. Stereo is used to respect the channel limit; use Media3 or MPV for 5.1.</string>
+    <string name="audio_ac3_video_constraint">This conversion needs MPV. Here, choose PCM only or the media server.</string>
+    <string name="audio_vlc_pcm_limit_fallback">VLC cannot limit this output to 5.1. Stereo keeps the limit.</string>
     <string name="audio_pcm_channels">PCM channels</string>
-    <string name="audio_pcm_channels_hint">Applies to decoded audio (PCM), not to passthrough. Automatic follows the output. 2.0 mixes down to stereo. 5.1 and 7.1 send those channels even when the output reports fewer; if it refuses, playback continues with the reported channels.</string>
+    <string name="audio_pcm_channels_hint">For converted sound only, not for direct output.</string>
     <string name="audio_channel_mix">Channel mix / downmix</string>
-    <string name="audio_ac3_no_route">AC3 transcoding unavailable: AC3 must be confirmed by the output and enabled in the codec list.</string>
-    <string name="audio_ac3_no_passthrough">AC3 conversion needs passthrough. Set audio output to Automatic or Force passthrough and the channel mix to Automatic.</string>
-    <string name="audio_ac3_multichannel_pcm">Multichannel PCM preserves surround without re-encoding. AC3 transcoding is available with a 2.0 PCM connection.</string>
+    <string name="audio_ac3_no_route">Unavailable. The output has to support the format.</string>
+    <string name="audio_ac3_no_passthrough">Needs direct output. Set audio output to Automatic.</string>
+    <string name="audio_ac3_multichannel_pcm">Multichannel sound stays as it is. Conversion applies to stereo.</string>
     <string name="audio_ac3_no_encoder">AC3 transcoding is unavailable with the installed players.</string>
 </resources>

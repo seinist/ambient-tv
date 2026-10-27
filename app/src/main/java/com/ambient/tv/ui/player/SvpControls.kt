@@ -136,7 +136,6 @@ internal fun SvpMainPage(
 ) {
     if (unavailable == SvpInactiveReason.ENGINE) {
         ImageHint(svpReasonText(unavailable, options))
-        ImageHint(stringResource(R.string.image_svp_hint))
         return
     }
     if (unavailable == SvpInactiveReason.PERFORMANCE_MODE) ImageHint(stringResource(R.string.image_svp_locked))
@@ -190,7 +189,6 @@ internal fun SvpMainPage(
         val live = rememberSvpState(mode to o, state)
         ImageHint("SVP: " + svpSummary(mode, o, live, unavailable))
     }
-    ImageHint(stringResource(R.string.image_svp_hint))
 }
 
 /** Analysis and device details; "Wie Preset" follows the selected preset. */

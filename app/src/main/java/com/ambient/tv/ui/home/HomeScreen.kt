@@ -9,6 +9,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.CompositionLocalProvider
 import com.ambient.tv.ui.common.glideToItem
@@ -26,7 +27,14 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
@@ -38,6 +46,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.border
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
@@ -56,6 +65,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -69,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -455,6 +466,17 @@ internal fun LibraryContent(
     }
 
     val performance = LocalPerformanceProfile.current
+    // Fokus eases from the hero down onto the parked row each time the row changes.
+    // On a TV the focused row stays parked; on a phone the light settles at the bottom of the hero.
+    val focusTravel = remember { Animatable(0.24f) }
+    val parkedTravel = if (LocalHandheldUi.current) 0.88f else 0.52f
+    LaunchedEffect(focusSnapshot.rowId, parkedTravel) {
+        val row = focusSnapshot.rowId
+        val target = if (row == null) 0.24f else parkedTravel
+        if (row != null && focusTravel.value > 0.40f) focusTravel.animateTo(0.32f, tween(220))
+        focusTravel.animateTo(target, tween(860, easing = FastOutSlowInEasing))
+    }
+    val travel = { focusTravel.value }
     if (LocalHandheldUi.current) {
         LazyColumn(
             allowUpExit = true,
@@ -462,7 +484,12 @@ internal fun LibraryContent(
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
         ) {
-            item("mobile-hero") { HomeHero(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, entranceProgress) }
+            item("mobile-hero") {
+                HomeHero(
+                    heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, entranceProgress,
+                    focusTravel = travel,
+                )
+            }
             items(state.rowKeys, key = { it }) { rowKey ->
                 when {
                     rowKey in state.tvRows -> {
@@ -473,6 +500,9 @@ internal fun LibraryContent(
                             imageHeaders = tvheadendImageHeaders, onWatch = onWatchLiveChannel,
                             requestInitialFocus = false,
                             onItemFocused = onLiveTvFocused,
+                            onOpenChannels = if (recent) {
+                                { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
+                            } else null,
                         )
                     }
                     rowKey.startsWith("shortcut:") -> state.shortcuts.firstOrNull { "shortcut:${it.id}" == rowKey }?.let {
@@ -495,7 +525,10 @@ internal fun LibraryContent(
         // must not read composition state (BrowseWorkBudget.scrolling is not observable).
         val rowsScrolling = remember { MutableStateFlow(false) }
         HomeFocusBackdrop(heroContent, rowsScrolling)
-        HomeHeroAmbient(heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize(), rowsScrolling)
+        HomeHeroAmbient(
+            heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize(), rowsScrolling,
+            focusTravel = travel,
+        )
         // Only restore focus/scroll once per screen entry (e.g. returning from Detail),
         // captured from the key present when this composable first entered composition.
         // Rebinding this to the live state.focusedRatingKey instead would re-fire on every
@@ -523,7 +556,11 @@ internal fun LibraryContent(
         }
         fun contentListIndex(index: Int): Int = state.rowKeys.indexOf(state.rows.getOrNull(index)?.id).coerceAtLeast(0)
         val heroHeight = homeHeroHeight()
-        val heroInsetPx = with(LocalDensity.current) { (heroHeight - HomeRowsLift).roundToPx() }
+        // Same line the first row already occupies. Later rows, including a short live row at
+        // the bottom, must be able to reach it or the hero mask cuts them in half.
+        val rowPark = homeRowParkOffset(heroHeight)
+        val rowParkPx = with(LocalDensity.current) { rowPark.roundToPx() }
+        val listViewport = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
         val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
             row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
         }
@@ -549,6 +586,9 @@ internal fun LibraryContent(
         // row's heading behind the banner.
         val rowCentering = rememberRowCenteringState(rowListState)
         val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
+        // Survives a live row leaving the lazy list, so the first entry of this visit
+        // still starts on card 0 after the row is scrolled away and back.
+        val liveRowEntry = remember { LiveRowEntry() }
         // Right from the sidebar returns to the exact tile left, not the top-left focusable
         // the plain container request would pick.
         val enterContent: () -> Boolean? = remember(columnFocus) { { columnFocus.restoreLast() } }
@@ -572,14 +612,14 @@ internal fun LibraryContent(
                 rowListState.scrollToItem(0)
             }
         }
-        LaunchedEffect(centeredRowKey, state.rowKeys, rowListState, heroInsetPx) {
+        LaunchedEffect(centeredRowKey, state.rowKeys, rowListState, rowParkPx) {
             // Row-entry events do not invalidate the whole Home composition.
             centeredRowKey.collectLatest { key ->
                 val index = state.rowKeys.indexOf(key)
                 val alreadyAtTop = index == 0 && rowListState.firstVisibleItemIndex == 0 &&
                     rowListState.firstVisibleItemScrollOffset == 0
                 if (index >= 0 && !alreadyAtTop) {
-                    rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)
+                    rowCentering.centerItem(index, alignTop = true, parkInset = rowParkPx)
                 }
             }
         }
@@ -597,7 +637,7 @@ internal fun LibraryContent(
                         scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
                         scrollToRow = { rowKey ->
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
-                            if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)
+                            if (index >= 0) rowCentering.centerItem(index, alignTop = true, parkInset = rowParkPx)
                         },
                     ) { state.rowKeys }
                     .clipToBounds()
@@ -609,8 +649,8 @@ internal fun LibraryContent(
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    top = heroHeight - HomeRowsLift + 12.dp,
-                    bottom = 36.dp,
+                    top = rowPark,
+                    bottom = homeLastRowBottomPadding(listViewport, rowPark),
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -639,9 +679,13 @@ internal fun LibraryContent(
                                 bringContextIntoView = false,
                                 columnFocus = columnFocus,
                                 rowKey = rowKey,
+                                onOpenChannels = if (recent) {
+                                    { onOpenHomeContent(homeTvShortcut(rowKey, "live")) }
+                                } else null,
                                 onOpenGuide = if (recent) null else {
-                                    { onOpenHomeContent(HomeRowDefinition(system = HomeRowDefinition.SYSTEM_TVHEADEND, contentKey = "guide")) }
+                                    { onOpenHomeContent(homeTvShortcut(rowKey, "guide")) }
                                 },
+                                entry = liveRowEntry,
                             )
                         }
                         else -> if (rowKey.startsWith("shortcut:")) {
@@ -742,21 +786,49 @@ private fun HomeLiveTvRow(
     bringContextIntoView: Boolean = true,
     columnFocus: RowColumnFocus? = null,
     rowKey: String = "",
-    /** Plex-like "TV guide" shortcut as the row's first tile; null leaves it out. */
+    /** First tile of a recently-watched row: opens the channel list. */
+    onOpenChannels: (() -> Unit)? = null,
+    /** First tile of the on-now row: opens the programme guide. Ignored when [onOpenChannels] is set. */
     onOpenGuide: (() -> Unit)? = null,
+    /** TV only. Keeps the first entry of this Home visit on card 0. */
+    entry: LiveRowEntry? = null,
 ) {
-    val horizontalScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else TvBringIntoViewSpec
+    val tv = !LocalHandheldUi.current
     val firstItemFocusRequester = remember { FocusRequester() }
+    val leadingKey = when {
+        onOpenChannels != null -> ChannelsTileKey
+        onOpenGuide != null -> GuideTileKey
+        else -> null
+    }
+    val channelKeys = remember(items) { items.map { "${it.channel.sourceId}:${it.channel.uuid}" } }
+    // A saved landing on the last card is not a choice the user made. Drop it before the
+    // row reads its start index, until they move left or right in the row.
+    if (entry != null && columnFocus != null) entry.resetUnlessChosen(rowKey, columnFocus)
+    val remembered = columnFocus?.rememberedItem(rowKey) as? String
+    val entryIndex = when {
+        entry == null || entry.chosen(rowKey) -> homeLiveRowEntryIndex(remembered, leadingKey, channelKeys)
+        else -> 0
+    }
+    // While set, a positive bring-into-view is dropped. That distance flung the row to its
+    // last card. Cleared on Left/Right, before focus moves, so the next card can scroll in.
+    val pinStart = remember(rowKey) { mutableStateOf(entry != null && !entry.chosen(rowKey)) }
+    val horizontalScrollSpec = if (!tv) LocalBringIntoViewSpec.current else remember(pinStart) {
+        object : BringIntoViewSpec {
+            @Suppress("OVERRIDE_DEPRECATION")
+            override val scrollAnimationSpec = TvBringIntoViewSpec.scrollAnimationSpec
+
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                homeLiveRowFocusScroll(
+                    if (pinStart.value) 0 else -1,
+                    TvBringIntoViewSpec.calculateScrollDistance(offset, size, containerSize),
+                )
+        }
+    }
     val rowState = com.ambient.tv.ui.common.rememberBrowseRowState(
-        initialFirstVisibleItemIndex = (columnFocus?.rememberedItem(rowKey)
-            ?.let { key -> items.indexOfFirst { "${it.channel.sourceId}:${it.channel.uuid}" == key } }
-            ?.plus(if (onOpenGuide != null) 1 else 0) ?: 0)
-            .minus(1).coerceAtLeast(0),
+        initialFirstVisibleItemIndex = (entryIndex - 1).coerceAtLeast(0),
     )
     com.ambient.tv.ui.common.RegisterRowColumnFocus(columnFocus, rowKey, rowState,
-        remember(items, onOpenGuide != null) {
-            listOfNotNull(GuideTileKey.takeIf { onOpenGuide != null }) + items.map { "${it.channel.sourceId}:${it.channel.uuid}" }
-        })
+        remember(channelKeys, leadingKey) { listOfNotNull(leadingKey) + channelKeys })
     // One clock per row moves every tile's progress bar each minute.
     val nowSeconds by androidx.compose.runtime.produceState(System.currentTimeMillis() / 1000L) {
         while (true) {
@@ -764,12 +836,32 @@ private fun HomeLiveTvRow(
             value = System.currentTimeMillis() / 1000L
         }
     }
-    LaunchedEffect(requestInitialFocus, items.map { it.channel.uuid }) {
-        if (requestInitialFocus && items.isNotEmpty()) {
-            withFrameNanos { }
-            runCatching { firstItemFocusRequester.requestFocus() }
-        }
+    var anchorPlaced by remember(rowKey) { mutableStateOf(false) }
+    var rowHasFocus by remember(rowKey) { mutableStateOf(false) }
+    LaunchedEffect(rowKey, channelKeys) {
+        if (entry == null) return@LaunchedEffect
+        snapshotFlow { Triple(rowHasFocus, anchorPlaced, rowState.firstVisibleItemIndex) }
+            .collect { (focused, placed, first) ->
+                if (!pinStart.value) return@collect
+                if (first != 0) rowState.scrollToItem(0)
+                // Focus that landed on a later card would scroll itself back to the end.
+                if (!focused || !placed) return@collect
+                withFrameNanos { }
+                if (!pinStart.value || !rowHasFocus) return@collect
+                runCatching { firstItemFocusRequester.requestFocus() }
+            }
     }
+    LaunchedEffect(requestInitialFocus, anchorPlaced, channelKeys) {
+        if (entry == null || !requestInitialFocus || !anchorPlaced || !pinStart.value) return@LaunchedEffect
+        if (items.isEmpty() && leadingKey == null) return@LaunchedEffect
+        if (rowState.firstVisibleItemIndex != 0) rowState.scrollToItem(0)
+        withFrameNanos { }
+        if (!pinStart.value) return@LaunchedEffect
+        runCatching { firstItemFocusRequester.requestFocus() }
+    }
+    val anchorModifier = Modifier
+        .focusRequester(firstItemFocusRequester)
+        .onPlaced { anchorPlaced = true }
     Column(
         Modifier
             .fillMaxWidth()
@@ -788,13 +880,51 @@ private fun HomeLiveTvRow(
                 state = rowState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = if (!tv) Modifier else Modifier
+                    .onFocusChanged { rowHasFocus = it.hasFocus }
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)
+                        ) {
+                            entry?.choose(rowKey)
+                            pinStart.value = false
+                        }
+                        false
+                    }
+                    .focusProperties {
+                        // Default search into this row picks a visible card at the far end.
+                        onEnter = {
+                            if (entry?.chosen(rowKey) != true &&
+                                runCatching { firstItemFocusRequester.requestFocus() }.getOrDefault(false)
+                            ) cancelFocusChange()
+                        }
+                    },
             ) {
-                if (onOpenGuide != null) {
+                if (onOpenChannels != null) {
+                    item(key = ChannelsTileKey) {
+                        LiveShortcutTile(
+                            label = stringResource(R.string.home_live_channels),
+                            icon = Icons.Filled.LiveTv,
+                            onClick = onOpenChannels,
+                            modifier = Modifier
+                                .rowColumnFocusTarget(columnFocus, rowKey, ChannelsTileKey)
+                                .then(anchorModifier),
+                        )
+                    }
+                } else if (onOpenGuide != null) {
                     item(key = GuideTileKey) {
-                        LiveGuideTile(onClick = onOpenGuide, modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey))
+                        LiveShortcutTile(
+                            label = stringResource(R.string.tvh_guide),
+                            icon = Icons.AutoMirrored.Filled.ViewList,
+                            onClick = onOpenGuide,
+                            modifier = Modifier
+                                .rowColumnFocusTarget(columnFocus, rowKey, GuideTileKey)
+                                .then(anchorModifier),
+                        )
                     }
                 }
                 itemsIndexed(items, key = { _, item -> "${item.channel.sourceId}:${item.channel.uuid}" }) { index, item ->
+                    val lazyIndex = index + if (leadingKey != null) 1 else 0
                     LiveChannelTile(
                         item = item,
                         nowSeconds = { nowSeconds },
@@ -802,7 +932,7 @@ private fun HomeLiveTvRow(
                         onFocused = { onItemFocused(item) },
                         modifier = Modifier
                             .rowColumnFocusTarget(columnFocus, rowKey, "${item.channel.sourceId}:${item.channel.uuid}")
-                            .then(if (index == 0) Modifier.focusRequester(firstItemFocusRequester) else Modifier),
+                            .then(if (lazyIndex == 0) anchorModifier else Modifier),
                     )
                 }
             }
@@ -811,6 +941,51 @@ private fun HomeLiveTvRow(
 }
 
 private const val GuideTileKey = "live-tv-guide"
+private const val ChannelsTileKey = "live-tv-channels"
+
+/**
+ * First entry of a live row in this Home visit. Until the user moves left or right,
+ * a restored landing on the last card is dropped so the row starts at card 0.
+ */
+internal class LiveRowEntry {
+    private val chosen = HashSet<String>()
+
+    fun chosen(rowKey: String): Boolean = rowKey in chosen
+
+    fun choose(rowKey: String) { chosen.add(rowKey) }
+
+    fun resetUnlessChosen(rowKey: String, focus: RowColumnFocus) {
+        if (rowKey !in chosen) focus.forget(rowKey)
+    }
+}
+
+/** Lazy index of the card a live row should enter on. An unknown key starts at the first card. */
+internal fun homeLiveRowEntryIndex(rememberedKey: String?, leadingKey: String?, channelKeys: List<String>): Int {
+    if (rememberedKey == null) return 0
+    if (leadingKey != null && rememberedKey == leadingKey) return 0
+    val channel = channelKeys.indexOf(rememberedKey)
+    if (channel < 0) return 0
+    return channel + if (leadingKey != null) 1 else 0
+}
+
+/**
+ * Card 0 is the start of the row. A positive distance while it is focused is the lazy row
+ * scrolling that card to the far end before it has a real position.
+ */
+internal fun homeLiveRowFocusScroll(focusedIndex: Int, distance: Float): Float =
+    if (focusedIndex == 0 && distance > 0f) 0f else distance
+
+/** Home shortcut for one live-TV row. `recent-tv:plex` keeps the system; a bare key is TVHeadend. */
+internal fun homeTvShortcut(rowKey: String, contentKey: String) = HomeRowDefinition(
+    system = rowKey.substringAfter(':', HomeRowDefinition.SYSTEM_TVHEADEND),
+    contentKey = contentKey,
+)
+
+/** Where the first Home row rests, and the padding that lets the last row reach that same line. */
+internal fun homeRowParkOffset(heroHeight: Dp): Dp = heroHeight - HomeRowsLift + 12.dp
+
+internal fun homeLastRowBottomPadding(viewport: Dp, parkOffset: Dp, minimum: Dp = 36.dp): Dp =
+    (viewport - parkOffset).coerceAtLeast(minimum)
 
 @Composable
 private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<Boolean>, Float> {
@@ -902,9 +1077,14 @@ private fun LiveChannelTile(
     }
 }
 
-/** First tile of the on-now row. Opens the programme guide. */
+/** Leading tile of a live row: same frame as the channel cards, icon and label only. */
 @Composable
-private fun LiveGuideTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun LiveShortcutTile(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val (focusState, scale) = rememberLiveTileFocus()
     val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
     val scheme = MaterialTheme.colorScheme
@@ -932,13 +1112,13 @@ private fun LiveGuideTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             androidx.tv.material3.Icon(
-                androidx.compose.material.icons.Icons.AutoMirrored.Filled.ViewList,
+                icon,
                 contentDescription = null,
                 tint = scheme.primary,
                 modifier = Modifier.size(28.dp),
             )
             Spacer(Modifier.width(10.dp))
-            Text(stringResource(R.string.tvh_guide), style = MaterialTheme.typography.titleMedium, color = scheme.onSurface, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.titleMedium, color = scheme.onSurface, maxLines = 1)
         }
     }
 }
@@ -981,6 +1161,7 @@ internal fun HomeHero(
     height: Dp? = null,
     /** False where no rows pass behind the hero, so nothing needs covering. */
     rowsBehind: Boolean = true,
+    focusTravel: () -> Float = { 0.42f },
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -1018,7 +1199,10 @@ internal fun HomeHero(
             .height(heroHeight),
     ) {
         if (drawAmbient) {
-            HomeHeroAmbient(heroContent, heroStyleKey, intensityPercent, spreadKey, Modifier.matchParentSize(), rowsScrolling)
+            HomeHeroAmbient(
+                heroContent, heroStyleKey, intensityPercent, spreadKey, Modifier.matchParentSize(), rowsScrolling,
+                focusTravel = focusTravel,
+            )
         }
         // Only reduced mode needs the veil to hide rows: full mode masks them in the row list,
         // and a veil over the tall hero would also hide the animated background behind it.
@@ -1251,6 +1435,7 @@ internal fun HomeHeroAmbient(
     spreadKey: String,
     modifier: Modifier,
     rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling,
+    focusTravel: () -> Float = { 0.42f },
 ) {
     // The visible background video is the backdrop; animated light on top only competes with it.
     if (com.ambient.tv.ui.player.LocalVisibleBackgroundVideo.current) return
@@ -1285,7 +1470,7 @@ internal fun HomeHeroAmbient(
     )
     val motionStrength = HomeHeroStyle.motionStrength(performance.mode.key, performance.reducedEffects)
     val motionPhase: () -> Float = if (HomeHeroStyle.isAnimated(effectiveStyle)) {
-        val phase = rememberIdleAmbientPhase(if (effectiveStyle == HomeHeroStyle.SWEEP) 20_000 else 18_000)
+        val phase = rememberIdleAmbientPhase(HomeHeroStyle.ambientPeriodMs(effectiveStyle))
         ({ phase.value })
     } else {
         ({ 0.5f })
@@ -1307,6 +1492,7 @@ internal fun HomeHeroAmbient(
             motionStrength = motionStrength,
             intensityScale = HomeHeroStyle.intensityScale(intensityPercent),
             radiusScale = HomeHeroStyle.radiusScale(spreadKey),
+            focusTravel = focusTravel,
         ))
         return
     }

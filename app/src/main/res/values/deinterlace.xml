@@ -1,28 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="deint_hint_mcdeint">Very high CPU load. Motion-compensated 2× deinterlacing using Snow internally (no output encoding). TFF: top field first; BFF: bottom field first. Fixed field order, always processed; only use on matching interlaced material. May be too slow for live TV.</string>
+    <string name="deint_hint_mcdeint">Very high load and a fixed field order. Often too slow for live TV.</string>
     <string name="deint_group_auto">Automatic · variable load</string>
     <string name="deint_group_light">Low load · simpler picture</string>
     <string name="deint_group_balanced">Balanced · moderate load</string>
     <string name="deint_group_double">Smoother motion · double frame rate</string>
     <string name="deint_group_expert">Special methods · read the notes</string>
-    <string name="deint_group_film">Film · inverse telecine</string>
-    <string name="deint_hint_auto">The backend chooses the method. Cost and output frame rate depend on its choice; this does not guarantee hardware deinterlacing.</string>
-    <string name="deint_hint_discard">Very low load. Discards one field; reduces vertical detail and motion resolution.</string>
-    <string name="deint_hint_mean">Very low load. Averages field lines; reduces vertical detail and motion resolution.</string>
-    <string name="deint_hint_blend">Low load. Blends fields; moving objects can show ghosting.</string>
-    <string name="deint_hint_bob">Low algorithm cost, double output frame rate (50i → 50p). Smooth motion, but fine lines may flicker.</string>
-    <string name="deint_hint_balanced">Moderate CPU load. Motion-adaptive deinterlacing at the input frame rate (50i → 25p).</string>
-    <string name="deint_hint_double">Higher CPU load. Motion-adaptive deinterlacing with both fields (50i → 50p); useful for sport.</string>
-    <string name="deint_hint_w3fdif">Moderate CPU load. Three-field interpolation. The 2× variant preserves both motion phases and increases processing load.</string>
-    <string name="deint_hint_estdif">High CPU load. Edge-directed interpolation; the 2× variant doubles output frames. Test on your device.</string>
-    <string name="deint_hint_nnedi">Very high CPU load, even with Vulkan output. Neural interpolation (16 neurons); 2× costs more. May be too slow for HD live TV. Separate from the NNEDI3 upscaler.</string>
-    <string name="deint_hint_kernel">Legacy CPU filter, moderate load. Fixed field order; unsuitable if motion judders. Prefer BWDIF for automatic field-order detection.</string>
-    <string name="deint_hint_phosphor">Moderate load, double frame rate. Simulates CRT field decay; may leave motion trails. VLC can substitute another method for unsupported pixel formats.</string>
-    <string name="deint_hint_ivtc">Film with 3:2 pulldown only (29.97 → 23.976 fps), not ordinary 50i/60i live video. Moderate to high load. Incorrect use causes judder.</string>
-    <string name="deint_hint_x">Low to moderate load. VLC spatial interpolation; limited pixel-format support can cause VLC to substitute a method.</string>
-    <string name="deint_path_mpv">CPU filters require readable frames (copy-back), including with Vulkan output. Hardware decoding may remain active. Load estimates vary with device and resolution.</string>
-    <string name="deint_path_vlc">VLC filter selection is not a SoC hardware-deinterlacing selector. Decoder, pixel format and output determine the usable path. Load estimates vary by device.</string>
-    <string name="deint_low_override">Low performance mode currently uses %1$s. Your selected method remains saved.</string>
-    <string name="deint_failure">The selected deinterlacing method could not be applied. Try Auto or another method.</string>
+    <string name="deint_group_film">Film · cinema only</string>
+    <string name="deint_hint_auto">The player picks the method. Hardware deinterlacing is not guaranteed.</string>
+    <string name="deint_hint_discard">Very light. One field is dropped, so vertical detail is lower.</string>
+    <string name="deint_hint_mean">Very light. Field lines are averaged, so vertical detail is lower.</string>
+    <string name="deint_hint_blend">Light. Moving objects can show double edges.</string>
+    <string name="deint_hint_bob">Smooth motion. Fine lines can flicker.</string>
+    <string name="deint_hint_balanced">Moderate load, steady picture.</string>
+    <string name="deint_hint_double">Heavier, smoother, useful for sport.</string>
+    <string name="deint_hint_w3fdif">Moderate load. The double-rate variant is smoother and heavier.</string>
+    <string name="deint_hint_estdif">High load. Try it on your device.</string>
+    <string name="deint_hint_nnedi">Very high load. Often too slow for HD live TV.</string>
+    <string name="deint_hint_kernel">Fixed field order. If motion judders, pick another method.</string>
+    <string name="deint_hint_phosphor">Can leave motion trails.</string>
+    <string name="deint_hint_ivtc">Film with 3:2 pulldown only, not ordinary live TV.</string>
+    <string name="deint_hint_x">Light to moderate. Some pictures may use another method.</string>
+    <string name="deint_low_override">Low power is using %1$s. Your choice stays saved.</string>
+    <string name="deint_failure">That method did not apply. Try Automatic or another one.</string>
 </resources>

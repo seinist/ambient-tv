@@ -138,10 +138,11 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 | SDR video to HDR | On / Off | Off | All | See [3.5.1](#351-sdr-video-to-hdr). Works only with HDR interface "Automatic". |
 | Interface performance | Auto · Balanced · Maximum performance · Low | Auto | All | Animations, shimmer, heavy surfaces. See [§8](#8-performance-modes). |
 | Check interface | Action | — | All | Measures UI drawing load and suggests a mode. |
+| Start animation | Off · Power on · Ambient bloom · Signal lock · Light streak · Broadcast waves · Wordmark · Horizon | Ambient bloom | All | Plays once on a cold start, in the accent colors. While a server wakes, the light keeps breathing. Any key continues. Low mode shows the still mark. |
 | Playback performance | Auto · Balanced · Maximum performance · Low | Auto | All | Motion smoothing, heavy upscalers, double-rate deinterlace. |
 | Frame drop test duration | Automatic, 2, 5, 6, 10, 15, 30, 60 s | Automatic (2–6 s) | All | Window of the MPV/VLC filter test. |
 | Check playback | Action | — | All | Measures filter load off-screen. |
-| Light effect above Home | Quiet · Light sweep · Artwork color · Depth motion · Aurora · Cinema light · Prism | Depth motion | All | Moving look of the Home hero. Low mode and reduced effects show "Quiet". |
+| Light effect above Home | Quiet · Light sweep · Artwork color · Depth motion · Aurora · Cinema light · Prism · Dusk · Ember · Tide · Focus | Depth motion | All | Moving look of the Home hero. Low mode and reduced effects show "Quiet". |
 | Light intensity | 0–100 % | 60 % | All | Strength of the hero effect. |
 | Light spread | Soft · Focused · Wide | Soft | All | Size of the light. |
 | Home background on all screens | On / Off | Off | All | Home effect behind other screens. Off in Low mode. |

@@ -3,4 +3,8 @@
     <string name="settings_home_hero_aurora">Aurora</string>
     <string name="settings_home_hero_cinema">Cinema light</string>
     <string name="settings_home_hero_prism">Prism</string>
+    <string name="settings_home_hero_dusk">Dusk</string>
+    <string name="settings_home_hero_ember">Ember</string>
+    <string name="settings_home_hero_tide">Tide</string>
+    <string name="settings_home_hero_focus">Focus</string>
 </resources>

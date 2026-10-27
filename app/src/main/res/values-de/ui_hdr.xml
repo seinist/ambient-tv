@@ -9,7 +9,7 @@
     <string name="settings_ui_hdr_default">Oberfläche: SDR</string>
     <string name="settings_ui_hdr_failed">Oberfläche: HDR nach einem Fehler deaktiviert</string>
     <string name="settings_sdr_to_hdr">SDR-Video zu HDR</string>
-    <string name="settings_sdr_to_hdr_hint">Zeigt geeignetes SDR-Video auf einem HDR10-Display als HDR; Media3 und VLC bis Full HD bei 60 fps, kein Dolby Vision.</string>
+    <string name="settings_sdr_to_hdr_hint">Zeigt passendes SDR-Video auf einem HDR-Fernseher heller. Bis Full HD, nicht bei Dolby Vision.</string>
     <string name="settings_sdr_to_hdr_off">SDR zu HDR: aus</string>
     <string name="settings_sdr_to_hdr_unavailable">SDR zu HDR: für diese Wiedergabe nicht verfügbar</string>
     <string name="settings_sdr_to_hdr_waiting">SDR zu HDR: wird vorbereitet</string>
@@ -18,7 +18,7 @@
     <string name="sdr_to_hdr_restore_failed">Videowiedergabe gestoppt, da die ursprüngliche Farbausgabe nicht wiederhergestellt werden konnte.</string>
     <string name="settings_projectm_resolution_sdr_hint">Höher ist schärfer, braucht aber deutlich mehr GPU-Leistung; „Sparsam“ begrenzt auf 720p.</string>
     <string name="settings_sdr_to_hdr_nits">SDR→HDR-Zielhelligkeit</string>
-    <string name="settings_sdr_to_hdr_nits_hint">Automatisch oder manuell 300–600 Nits. Gemeldete Display-Grenzen bleiben wirksam; die tatsächliche Helligkeit hängt vom Fernseher ab.</string>
+    <string name="settings_sdr_to_hdr_nits_hint">Automatisch, oder 300–600 Nits. Der Fernseher begrenzt die Helligkeit.</string>
     <string name="sdr_hdr_reason_android">SDR zu HDR benötigt Android 14 oder neuer.</string>
     <string name="sdr_hdr_reason_display">SDR zu HDR: Der aktuelle Display-Modus meldet keine freigegebene HDR10-Unterstützung.</string>
     <string name="sdr_hdr_reason_wide_color">SDR zu HDR: Das Display meldet keinen erweiterten Farbraum.</string>
@@ -30,7 +30,7 @@
     <string name="sdr_hdr_reason_auto">SDR zu HDR benötigt den HDR-Oberflächenmodus Automatisch.</string>
     <string name="hdr_conversion_experiment">System-HDR-Konvertierung (Experiment)</string>
     <string name="hdr_conversion_experiment_bypass">Für diese Wiedergabe umgehen</string>
-    <string name="hdr_conversion_experiment_hint">Fordert unveränderte HDR-Ausgabe für das Player-Fenster an. Bild und HDR-Anzeige am TV vergleichen. Erzwingt kein HDR; beim Verlassen wird die vorherige Einstellung wiederhergestellt.</string>
+    <string name="hdr_conversion_experiment_hint">HDR für dieses Fenster anfordern. Beim Schließen wie zuvor.</string>
     <string name="hdr_conversion_experiment_failed">Die Änderung der System-HDR-Konvertierung ist fehlgeschlagen. Siehe HDR-Diagnose.</string>
     <string name="sdr_hdr_reason_source">SDR zu HDR: Die Quelle ist HDR oder nicht als geeignetes SDR bestätigt.</string>
     <string name="sdr_hdr_reason_waiting">SDR zu HDR: Wartet auf eine verbundene Videoausgabe und erkannte Quelle.</string>

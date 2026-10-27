@@ -5,13 +5,13 @@
     <string name="playback_profile_loaded">Saved audio/video configuration loaded</string>
     <string name="playback_profile_failed">Configuration could not be applied or saved</string>
     <string name="playback_profile_unavailable">Available once playback is ready</string>
-    <string name="playback_profile_title_unavailable">Changes to live TV, trailers and shared links apply to this playback only. Shared defaults can be saved explicitly.</string>
+    <string name="playback_profile_title_unavailable">Applies only to this playback.</string>
     <string name="playback_profile_resolution_unavailable">Width preset unavailable: source width is unknown or this is a trailer</string>
     <string name="playback_profile_saved_all">Audio/video configuration saved for all videos</string>
     <string name="playback_profile_resolution_scope">Source width: %1$s. * means any height. Also applies to slightly different widths (±3 %%, e.g. 1916 instead of 1920) without their own preset, and to live TV unless it has its own preset for this width.</string>
     <string name="playback_profile_summary">Audio, video and renderer</string>
-    <string name="playback_profile_includes">Audio, renderer, video output, decoder, picture and filter changes are remembered automatically for the current video. Save actions apply them as shared defaults.</string>
-    <string name="playback_profile_auto_title">Changes are saved automatically for this video.</string>
+    <string name="playback_profile_includes">Sound, picture and filters are remembered for this video.</string>
+    <string name="playback_profile_auto_title">Remembered for this video.</string>
     <string name="playback_scope_episode">This episode only</string>
     <string name="playback_scope_movie">This movie only</string>
     <string name="playback_scope_title">This video only</string>
@@ -33,7 +33,7 @@
     <string name="playback_scope_remember_here">Remember here</string>
     <string name="playback_scope_remembering">Remembering here</string>
     <string name="playback_profile_section_cascade">Order</string>
-    <string name="playback_profile_cascade_hint">Top to bottom: each setting comes from the first layer that has a value saved.</string>
+    <string name="playback_profile_cascade_hint">The top saved value wins.</string>
     <string name="playback_profile_supplies">Currently supplies: %1$s</string>
     <string name="playback_profile_global_plain">Playback settings</string>
 </resources>

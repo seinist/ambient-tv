@@ -1,11 +1,15 @@
 package com.ambient.tv.data.local
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class HomeHeroStyleTest {
     @Test fun newStylesRemainSelectableAndRespectPowerSaving() {
-        for (style in listOf(HomeHeroStyle.AURORA, HomeHeroStyle.CINEMA, HomeHeroStyle.PRISM)) {
+        for (style in listOf(
+            HomeHeroStyle.AURORA, HomeHeroStyle.CINEMA, HomeHeroStyle.PRISM,
+            HomeHeroStyle.DUSK, HomeHeroStyle.EMBER, HomeHeroStyle.TIDE, HomeHeroStyle.FOCUS,
+        )) {
             assertEquals(style, HomeHeroStyle.normalize(style))
             assertEquals(true, style in HomeHeroStyle.keys)
             assertEquals(true, HomeHeroStyle.samplesArtwork(style))
@@ -41,5 +45,12 @@ class HomeHeroStyleTest {
         assertEquals(1f, HomeHeroStyle.radiusScale(HomeHeroStyle.SOFT), 0.0001f)
         assertEquals(0.72f, HomeHeroStyle.radiusScale(HomeHeroStyle.FOCUSED), 0.0001f)
         assertEquals(1.32f, HomeHeroStyle.radiusScale(HomeHeroStyle.WIDE), 0.0001f)
+    }
+
+    @Test fun animatedStylesUseALongLoop() {
+        assertTrue(HomeHeroStyle.ambientPeriodMs(HomeHeroStyle.DUSK) >= HomeHeroStyle.ambientPeriodMs(HomeHeroStyle.AURORA))
+        for (style in HomeHeroStyle.keys) {
+            if (HomeHeroStyle.isAnimated(style)) assertTrue(HomeHeroStyle.ambientPeriodMs(style) >= 24_000)
+        }
     }
 }
