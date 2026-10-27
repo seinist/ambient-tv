@@ -2,10 +2,6 @@ package com.ambient.tv.ui.intro
 
 import androidx.compose.animation.core.Animatable
 import android.os.SystemClock
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +12,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -46,7 +44,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -68,7 +65,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
-import kotlin.random.Random
 
 /** Settings preview: replays the given style over the whole app. */
 object IntroPreviewRequests {
@@ -118,8 +114,9 @@ private fun ease(x: Float) = FastOutSlowInEasing.transform(x)
 
 /**
  * Full-screen intro in the current accent (and playback accent when a pair is set). The app
- * composes underneath. After the animation it holds on a running wake/connect and shows that
- * card in place of the regular one; any key skips, and the app continues exactly as without it.
+ * composes underneath. The background stays flat; only the mark moves, in one looping motion for
+ * as long as the intro is up, holding on a running wake/connect with that card in place of the
+ * regular one. Any key skips, and it always leaves with a plain fade.
  */
 @Composable
 fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Modifier = Modifier) {
@@ -131,10 +128,11 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     val second = if (playback == accent) lerp(accent, Color.White, 0.45f) else playback
     val background = MaterialTheme.colorScheme.background
     val profile = LocalPerformanceProfile.current
-    // Sparsam: the finished mark without motion; reduced effects: motion without glow/noise layers.
+    // Sparsam: the finished mark without motion; reduced effects: motion without glow layers.
     val still = profile.mode == PerformanceMode.LOW
     val lite = profile.reducedEffects
-    val progress = remember { Animatable(0f) }
+    // Seconds since the intro appeared; read only in the draw phase, so the loop never recomposes.
+    val clock = remember { mutableFloatStateOf(0f) }
     val exit = remember { Animatable(1f) }
     val statusAlpha = remember { Animatable(0f) }
     val logo = remember { LogoPaths() }
@@ -150,12 +148,12 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     LaunchedEffect(style) {
         if (style == IntroAnimation.OFF) { finished(); return@LaunchedEffect }
         var skipped = false
+        val ticker = if (still) null else launch {
+            val startNanos = withFrameNanos { it }
+            while (true) withFrameNanos { clock.floatValue = (it - startNanos) / 1_000_000_000f }
+        }
         val run = launch {
-            val shownAt = SystemClock.uptimeMillis()
-            if (still) progress.snapTo(1f)
-            else progress.animateTo(1f, tween(IntroAnimation.durationMs(style), easing = LinearEasing))
-            // Short intros and Sparsam's still mark stay up long enough to read, not just flash.
-            delay(MIN_VISIBLE_MS - (SystemClock.uptimeMillis() - shownAt))
+            delay(MIN_VISIBLE_MS)
             holdWhileConnecting { holding = it }
         }
         val skipWatch = launch {
@@ -165,45 +163,38 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
         }
         run.join()
         skipWatch.cancel()
-        exit.animateTo(0f, tween(if (skipped || still) 180 else 320, easing = FastOutSlowInEasing))
+        // The loop keeps running under the fade.
+        exit.animateTo(0f, tween(if (skipped || still) 220 else 480, easing = LinearEasing))
+        ticker?.cancel()
         finished()
     }
     LaunchedEffect(holding) {
         if (holding) statusAlpha.animateTo(1f, tween(if (lite) 0 else 280))
     }
     if (style == IntroAnimation.OFF) return
-    // Read only in the draw phase, so the pulse redraws the canvas without recomposing the card.
-    val breath = if (holding && !lite) {
-        rememberInfiniteTransition(label = "introHold").animateFloat(
-            0f, 1f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath",
-        )
-    } else null
+    val cycle = IntroAnimation.durationMs(style) / 1000f
     Box(
         modifier.fillMaxSize()
-            .graphicsLayer {
-                alpha = exit.value
-                val grow = if (still) 1f else 1f + (1f - exit.value) * 0.06f
-                scaleX = grow
-                scaleY = grow
-            }
+            .graphicsLayer { alpha = exit.value }
             .pointerInput(Unit) { detectTapGestures { IntroPresentation.skip() } },
     ) {
         Canvas(Modifier.fillMaxSize()) {
             IntroDraw.lite = lite
             drawRect(background)
-            if (breath != null) {
-                drawCircle(
-                    Brush.radialGradient(listOf(accent.copy(alpha = 0.08f + 0.12f * breath.value), Color.Transparent), center, size.minDimension * 0.42f),
-                    size.minDimension * 0.42f, center,
-                )
+            val seconds = clock.floatValue
+            if (still) {
+                inLogo { drawLogo(logo, 1f, 1f, 1f, accent) }
+                return@Canvas
             }
-            val t = progress.value
+            // A short fade-in so the loop never pops in mid-motion.
+            val enter = ease(phase(seconds, 0f, 0.5f))
+            val t = (seconds % cycle) / cycle
             when (style) {
-                IntroAnimation.POWER_ON -> drawPowerOn(t, logo, accent, second)
-                IntroAnimation.SIGNAL -> drawSignal(t, logo, accent, second)
-                IntroAnimation.SHIMMER -> drawShimmer(t, logo, accent, second)
-                IntroAnimation.RIPPLE -> drawRipple(t, logo, accent, second)
-                else -> drawBloom(t, logo, accent, second)
+                IntroAnimation.POWER_ON -> drawPowerOn(t, enter, logo, accent, second)
+                IntroAnimation.SIGNAL -> drawSignal(t, enter, logo, accent, second)
+                IntroAnimation.SHIMMER -> drawShimmer(t, enter, logo, accent, second)
+                IntroAnimation.RIPPLE -> drawRipple(t, enter, logo, accent, second)
+                else -> drawBloom(t, enter, logo, accent, second)
             }
         }
         if (holding) {
@@ -242,7 +233,7 @@ private suspend fun holdWhileConnecting(onHolding: (Boolean) -> Unit) {
     }
 }
 
-private const val MIN_VISIBLE_MS = 1_800L
+private const val MIN_VISIBLE_MS = 5_000L
 private const val MAX_HOLD_MS = 3 * 60_000L
 private const val CONNECT_HOLD_MS = 6_000L
 
@@ -280,126 +271,64 @@ private fun DrawScope.drawLogo(logo: LogoPaths, frame: Float, peak: Float, stand
     stroke(logo.trimmed(logo.foot, phase(stand, 0.25f, 1f)), color, FRAME_STROKE, glow)
 }
 
-/** Tube TV switching on: a bright line, opening into the frame, then the mark and a flash. */
-private fun DrawScope.drawPowerOn(t: Float, logo: LogoPaths, accent: Color, second: Color) {
-    val line = ease(phase(t, 0f, 0.25f))
-    val open = ease(phase(t, 0.25f, 0.55f))
-    val flash = phase(t, 0.78f, 1f)
-    if (flash > 0f) {
-        drawRect(Brush.radialGradient(
-            listOf(accent.copy(alpha = 0.32f * (1f - flash)), Color.Transparent),
-            center = center,
-            radius = size.maxDimension * (0.3f + 0.5f * flash),
-        ))
-    }
-    inLogo {
-        val hot = lerp(Color.White, accent, open)
-        if (open <= 0f) {
-            val half = 18f * line
-            val path = Path().apply { moveTo(24f - half, 20f); lineTo(24f + half, 20f) }
-            stroke(path, hot, FRAME_STROKE, glow = true)
-        } else {
-            val height = 24f * open
-            val top = 20f - height / 2f
-            drawRoundRect(
-                color = second.copy(alpha = 0.18f * (1f - phase(t, 0.55f, 0.8f))),
-                topLeft = Offset(6f, top),
-                size = Size(36f, height),
-                cornerRadius = CornerRadius(4f * open),
-            )
-            if (open < 1f) {
-                drawRoundRect(hot.copy(alpha = 0.28f), Offset(6f, top), Size(36f, height), CornerRadius(4f * open), style = Stroke(FRAME_STROKE * 2.4f))
-                drawRoundRect(hot, Offset(6f, top), Size(36f, height), CornerRadius(4f * open), style = Stroke(FRAME_STROKE))
-            } else {
-                stroke(logo.frame, accent, FRAME_STROKE, glow = true)
-            }
-        }
-        stroke(logo.trimmed(logo.peak, ease(phase(t, 0.55f, 0.75f))), accent, PEAK_STROKE, glow = true)
-        stroke(logo.trimmed(logo.neck, phase(t, 0.68f, 0.74f)), accent, FRAME_STROKE, glow = true)
-        stroke(logo.trimmed(logo.foot, ease(phase(t, 0.72f, 0.85f))), accent, FRAME_STROKE, glow = true)
-    }
-}
+/** Breathing curve over one loop: 0 at the loop seam, 1 halfway. */
+private fun wave(t: Float) = (1f - cos(t * 2f * PI.toFloat())) / 2f
 
-/** Ambilight: both accents bloom and orbit while the mark draws itself on top. */
-private fun DrawScope.drawBloom(t: Float, logo: LogoPaths, accent: Color, second: Color) {
-    val grow = ease(phase(t, 0f, 0.55f))
-    val angle = (t * 0.9f + 0.1f) * PI.toFloat()
-    val orbit = size.minDimension * 0.16f
-    val radius = size.maxDimension * 0.5f * grow
-    if (radius > 1f) {
-        listOf(accent to angle, second to angle + PI.toFloat()).forEach { (color, a) ->
-            val c = Offset(center.x + cos(a) * orbit, center.y + sin(a) * orbit * 0.6f)
-            drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.34f), Color.Transparent), c, radius), radius, c)
-        }
-    }
+/** Tube TV: the mark stands lit while a bright scanline runs down inside the screen. */
+private fun DrawScope.drawPowerOn(t: Float, enter: Float, logo: LogoPaths, accent: Color, second: Color) {
     inLogo {
-        drawLogo(
-            logo,
-            frame = ease(phase(t, 0.12f, 0.6f)),
-            peak = ease(phase(t, 0.42f, 0.78f)),
-            stand = ease(phase(t, 0.62f, 0.9f)),
-            color = lerp(accent, Color.White, 0.12f * (1f - phase(t, 0.85f, 1f))),
+        drawLogo(logo, 1f, 1f, 1f, accent.copy(alpha = enter))
+        // Inside the frame (10..30 in viewport units), clipped to the screen area.
+        val y = 10f + 20f * ease(t)
+        val fade = sin(t * PI.toFloat())
+        drawRect(
+            Brush.verticalGradient(
+                listOf(Color.Transparent, lerp(second, Color.White, 0.5f).copy(alpha = 0.55f * fade * enter), Color.Transparent),
+                startY = y - 2.5f, endY = y + 2.5f,
+            ),
+            topLeft = Offset(8f, y - 2.5f), size = Size(32f, 5f),
         )
     }
 }
 
-/** Searching for a signal: noisy, jittering mark that snaps sharp with a spring. */
-private fun DrawScope.drawSignal(t: Float, logo: LogoPaths, accent: Color, second: Color) {
-    val lock = phase(t, 0.55f, 1f)
-    val random = Random((t * 30f).toInt())
-    val noise = 1f - phase(t, 0.45f, 0.6f)
-    val side = size.minDimension * 0.28f
-    if (noise > 0f) {
-        repeat(if (IntroDraw.lite) 6 else 16) {
-            val y = center.y + (random.nextFloat() - 0.5f) * side * 1.3f
-            val w = side * (0.3f + random.nextFloat() * 1.1f)
-            val x = center.x + (random.nextFloat() - 0.5f) * side - w / 2f
-            val color = if (random.nextBoolean()) accent else second
-            drawRect(color.copy(alpha = noise * (0.12f + random.nextFloat() * 0.3f)), Offset(x, y), Size(w, 1f + random.nextFloat() * side * 0.02f))
+/** Ambient glow: the mark's own glow swells and settles, like a backlight breathing. */
+private fun DrawScope.drawBloom(t: Float, enter: Float, logo: LogoPaths, accent: Color, second: Color) {
+    val b = wave(t)
+    inLogo {
+        if (!IntroDraw.lite) listOf(logo.frame to FRAME_STROKE, logo.peak to PEAK_STROKE, logo.neck to FRAME_STROKE, logo.foot to FRAME_STROKE).forEach { (path, width) ->
+            drawPath(path, lerp(accent, second, b).copy(alpha = (0.10f + 0.22f * b) * enter), style = Stroke(width * (2.2f + 2.4f * b), cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
-    }
-    val jitter = if (lock > 0f) 0f else (random.nextFloat() - 0.5f) * 6f
-    val flicker = if (lock > 0f) 1f else 0.35f + random.nextFloat() * 0.5f
-    val spring = 1f + 0.14f * sin(lock * PI.toFloat()) * (1f - lock)
-    if (jitter != 0f) inLogo(dx = jitter + 2f) { drawLogo(logo, 1f, 1f, 1f, second.copy(alpha = 0.4f * flicker), glow = false) }
-    inLogo(scale = spring, dx = jitter) { drawLogo(logo, 1f, 1f, 1f, accent.copy(alpha = flicker), glow = lock > 0f) }
-    if (lock > 0f && lock < 1f) {
-        // Scanlines settling over the locked image.
-        val lines = 24
-        repeat(lines) { i ->
-            val y = center.y - side / 2f + side * i / lines
-            drawRect(Color.Black.copy(alpha = 0.35f * (1f - lock)), Offset(center.x - side / 2f, y), Size(side, side / lines / 2f))
-        }
+        drawLogo(logo, 1f, 1f, 1f, accent.copy(alpha = enter), glow = false)
     }
 }
 
-/** A light streak sweeps the faint mark, leaving it lit in the accent behind it. */
-private fun DrawScope.drawShimmer(t: Float, logo: LogoPaths, accent: Color, second: Color) {
-    val appear = phase(t, 0f, 0.2f)
-    val pos = -0.25f + 1.5f * ease(phase(t, 0.1f, 0.8f))
-    val lit = accent
-    val dim = accent.copy(alpha = 0.16f * appear)
-    val highlight = lerp(second, Color.White, 0.55f)
-    val stops = arrayOf(
-        0f to lit,
-        (pos - 0.22f).coerceIn(0f, 1f) to lit,
-        (pos - 0.06f).coerceIn(0f, 1f) to second,
-        pos.coerceIn(0f, 1f) to highlight,
-        (pos + 0.06f).coerceIn(0f, 1f) to dim,
-        1f to dim,
-    )
-    val brush = Brush.linearGradient(*stops, start = Offset(4f, 4f), end = Offset(44f, 44f))
-    // Soft halo travelling with the streak across the screen.
-    val sweepX = size.width * (pos.coerceIn(-0.2f, 1.2f))
-    if (!IntroDraw.lite) drawRect(Brush.linearGradient(
-        listOf(Color.Transparent, second.copy(alpha = 0.10f), Color.Transparent),
-        start = Offset(sweepX - size.width * 0.25f, 0f),
-        end = Offset(sweepX + size.width * 0.25f, size.height),
-    ))
+/** Searching: the frame stands, the peak traces itself up and over again and again. */
+private fun DrawScope.drawSignal(t: Float, enter: Float, logo: LogoPaths, accent: Color, second: Color) {
     inLogo {
-        if (pos > 0f) {
-            drawPath(logo.frame, accent.copy(alpha = 0.14f * phase(pos, 0f, 1f)), style = Stroke(FRAME_STROKE * 3f, cap = StrokeCap.Round))
-        }
+        stroke(logo.frame, accent.copy(alpha = enter), FRAME_STROKE)
+        stroke(logo.neck, accent.copy(alpha = enter), FRAME_STROKE)
+        stroke(logo.foot, accent.copy(alpha = enter), FRAME_STROKE)
+        stroke(logo.peak, accent.copy(alpha = 0.18f * enter), PEAK_STROKE)
+        val draw = ease(phase(t, 0f, 0.6f))
+        val fade = 1f - phase(t, 0.75f, 1f)
+        stroke(logo.trimmed(logo.peak, draw), lerp(accent, second, 0.35f).copy(alpha = fade * enter), PEAK_STROKE, glow = true)
+    }
+}
+
+/** A light streak sweeps across the mark, again and again. */
+private fun DrawScope.drawShimmer(t: Float, enter: Float, logo: LogoPaths, accent: Color, second: Color) {
+    val pos = -0.3f + 1.6f * ease(phase(t, 0f, 0.7f))
+    val base = accent.copy(alpha = enter)
+    val highlight = lerp(second, Color.White, 0.6f).copy(alpha = enter)
+    val brush = Brush.linearGradient(
+        0f to base,
+        (pos - 0.12f).coerceIn(0f, 1f) to base,
+        pos.coerceIn(0f, 1f) to highlight,
+        (pos + 0.12f).coerceIn(0f, 1f) to base,
+        1f to base,
+        start = Offset(4f, 4f), end = Offset(44f, 44f),
+    )
+    inLogo {
         strokeBrush(logo.frame, brush, FRAME_STROKE)
         strokeBrush(logo.peak, brush, PEAK_STROKE)
         strokeBrush(logo.neck, brush, FRAME_STROKE)
@@ -407,25 +336,13 @@ private fun DrawScope.drawShimmer(t: Float, logo: LogoPaths, accent: Color, seco
     }
 }
 
-/** Broadcast waves: rings in both accents ripple out as the mark pops in. */
-private fun DrawScope.drawRipple(t: Float, logo: LogoPaths, accent: Color, second: Color) {
-    val maxRadius = size.maxDimension * 0.62f
-    repeat(3) { i ->
-        val wave = phase(t, i * 0.14f, i * 0.14f + 0.6f)
-        if (wave > 0f && wave < 1f) {
-            val color = if (i % 2 == 0) accent else second
-            drawCircle(
-                color = color.copy(alpha = 0.5f * (1f - wave)),
-                radius = maxRadius * ease(wave),
-                center = center,
-                style = Stroke(size.minDimension * 0.012f * (1f + 2f * (1f - wave))),
-            )
+/** Broadcast: an echo of the frame keeps leaving the mark and fading just around it. */
+private fun DrawScope.drawRipple(t: Float, enter: Float, logo: LogoPaths, accent: Color, second: Color) {
+    inLogo {
+        val grow = 1f + 0.35f * ease(t)
+        withTransform({ scale(grow, grow, pivot = Offset(24f, 20f)) }) {
+            drawPath(logo.frame, second.copy(alpha = 0.5f * (1f - t) * enter), style = Stroke(FRAME_STROKE / grow, cap = StrokeCap.Round, join = StrokeJoin.Round))
         }
-    }
-    val pop = phase(t, 0.28f, 0.7f)
-    if (pop <= 0f) return
-    val overshoot = 1f + 0.18f * sin(pop * PI.toFloat()) * (1f - pop)
-    inLogo(scale = (0.55f + 0.45f * ease(pop)) * overshoot) {
-        drawLogo(logo, 1f, 1f, 1f, accent.copy(alpha = ease(phase(pop, 0f, 0.5f))))
+        drawLogo(logo, 1f, 1f, 1f, accent.copy(alpha = enter))
     }
 }

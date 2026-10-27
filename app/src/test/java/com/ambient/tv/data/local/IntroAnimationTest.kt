@@ -13,7 +13,7 @@ class IntroAnimationTest {
 
     @Test
     fun everyStyleHasADurationAndOffHasNone() {
-        IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 500..1500) }
+        IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 1500..4000) }
         assertEquals(0, IntroAnimation.durationMs(IntroAnimation.OFF))
     }
 }
