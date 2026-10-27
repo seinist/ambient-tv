@@ -2003,7 +2003,7 @@ class AppPreferences @Inject constructor(
         const val KEY_SYSTEM_HOME_HIDDEN_ROWS = "system_home_hidden_rows"
         // Plex's own rows repeat much of what the other rows show, and a library has many of them.
         val DEFAULT_SYSTEM_HOME_HIDDEN_ROWS = setOf("${HomeRowDefinition.SYSTEM_PLEX}.${HomeRowDefinition.CONTENT_HUBS}")
-        const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster"
+        const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster_v2"
         val ALL_CONTINUE_DEFAULT_SYSTEMS = setOf(
             HomeRowDefinition.SYSTEM_PLEX,
             HomeRowDefinition.SYSTEM_JELLYFIN,

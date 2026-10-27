@@ -1879,17 +1879,8 @@ class SettingsViewModel @Inject constructor(
         if (!homeRowSourceAddable(system, contentKey, state)) return@update state
         // Already listed (including disabled): re-enable only via the row toggle, not the add chip.
         if (homeRowAlreadyPresent(system, contentKey, state)) return@update state
-        // Photos are mostly landscape; poster (2:3) tiles would crop them heavily.
         state.withHomeRows(
-            state.homeRows + HomeRowDefinition(
-                system = system,
-                contentKey = contentKey,
-                displayMode = if (system in setOf(HomeRowDefinition.SYSTEM_PHOTOS, HomeRowDefinition.SYSTEM_TRAILERS)) {
-                    HomeRowDefinition.DISPLAY_LANDSCAPE
-                } else {
-                    HomeRowDefinition.DISPLAY_POSTER
-                },
-            ),
+            state.homeRows + HomeRowDefinition(system = system, contentKey = contentKey),
         )
     }
     fun onSystemHomeRowChanged(system: String, rowType: String, visible: Boolean) = _uiState.update { state ->

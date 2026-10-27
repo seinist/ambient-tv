@@ -14,6 +14,8 @@ class HomeConfigurationTest {
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, migrated[0].displayMode)
         assertEquals(HomeRowDefinition.DISPLAY_LANDSCAPE, migrated[1].displayMode)
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, migrated[2].displayMode)
+        val trailers = HomeRowDefinition(system = HomeRowDefinition.SYSTEM_TRAILERS, contentKey = "popular", displayMode = HomeRowDefinition.DISPLAY_LANDSCAPE)
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, trailers.withDefaultPosterCards().displayMode)
     }
 
     @Test fun genreRowsCarryTheirGenreInTheContentKey() {

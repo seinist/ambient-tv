@@ -69,9 +69,13 @@ fun systemHomeRowTypes(system: String): List<String> = listOfNotNull(
     "libraries",
 )
 
-/** Live TV channel cards stay landscape; every other former landscape default becomes poster. */
+/** Live TV channel rows show channel logos, which only fit landscape cards. */
+val HomeRowDefinition.isLiveTvChannelRow: Boolean
+    get() = contentKey in setOf("live", "recent_channels")
+
+/** Live TV channel cards stay landscape; every other landscape row becomes poster. */
 fun HomeRowDefinition.withDefaultPosterCards(): HomeRowDefinition {
-    val liveTvCard = contentKey in setOf("live", "recent_channels") || system == HomeRowDefinition.SYSTEM_TRAILERS
+    val liveTvCard = isLiveTvChannelRow
     return if (!liveTvCard && displayMode == HomeRowDefinition.DISPLAY_LANDSCAPE) {
         copy(displayMode = HomeRowDefinition.DISPLAY_POSTER)
     } else {
