@@ -82,7 +82,7 @@ class AutomaticPlaybackProfileTest {
         assertEquals(mapOf("youtube:test" to title), prefs.titleVideoSettings)
         assertEquals(MpvImageOptions(), prefs.mpvImageOptions)
         assertEquals(AudioSettings(), prefs.audioSettings)
-        assertEquals("auto", prefs.playbackBackendKey)
+        assertEquals("media3", prefs.playbackBackendKey)
         assertEquals("direct", prefs.mpvVideoOutputModeKey)
     }
 

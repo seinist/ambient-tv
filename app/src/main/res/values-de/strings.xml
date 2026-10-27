@@ -635,7 +635,6 @@
     <string name="settings_playback_backend">Standard-Player</string>
     <string name="settings_defaults_renderer">Einstellungen anzeigen für</string>
     <string name="settings_defaults_renderer_hint">Für welchen Player die Einstellungen gelten.</string>
-    <string name="settings_defaults_renderer_auto_hint">Bearbeitet den Standard-Player.</string>
     <string name="settings_playback_backend_hint">Player für Plex, Jellyfin und SmartTube.</string>
     <string name="settings_background_page_title">Hintergrundgestaltung</string>
     <string name="settings_visible_background_video">Video hinter der Oberfläche anzeigen</string>

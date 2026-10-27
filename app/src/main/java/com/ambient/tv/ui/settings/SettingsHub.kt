@@ -1053,7 +1053,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
         })
     }
     return when (category) {
-        SettingsCategory.PLAYBACK -> if (state.playbackBackendKey == "auto") stringResource(R.string.player_automatic) else state.playbackBackendKey.uppercase()
+        SettingsCategory.PLAYBACK -> state.playbackBackendKey.uppercase()
         SettingsCategory.BACKGROUND -> null
         SettingsCategory.LIBRARY -> "${state.libraryGridColumns} × ${state.libraryListRows}"
         SettingsCategory.SEEK -> stringResource(R.string.settings_seek_jump_seconds, state.bigSeekJumpSeconds)

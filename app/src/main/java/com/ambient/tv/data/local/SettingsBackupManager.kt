@@ -107,7 +107,7 @@ data class SettingsBackup(
     val navSoundsEnabled: Boolean = false,
     val navSoundsVolume: Float = 0.3f,
     val navSoundBank: String = "",
-    val playbackBackendKey: String = "auto",
+    val playbackBackendKey: String = "media3",
     val playerTechBadgesVisible: Boolean = true,
     val osdHiddenButtons: List<String> = emptyList(),
     val tvheadendPlaybackBackendKey: String? = null,

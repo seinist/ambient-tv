@@ -12,9 +12,9 @@ class RendererSettingsPolicyTest {
         mpvOutputBuilt = true, mpvDecodeBuilt = true, vlcOutputBuilt = true,
     )
 
-    @Test fun onlyAnExplicitRendererHasRendererSpecificSettings() {
+    @Test fun autoShowsTheSettingsOfTheRendererItPlaysWith() {
         for (key in listOf("mpv", "vlc", "media3")) assertEquals(key, selectedRendererSettingsKey(key))
-        for (key in listOf("auto", "", "unknown")) assertNull(selectedRendererSettingsKey(key))
+        for (key in listOf("auto", "", "unknown")) assertEquals(PlaybackBackendResolver.resolve(key).key, selectedRendererSettingsKey(key))
     }
 
     @Test fun untouchedDeviceIsNotReportedAsUnsupportedOrSuccessful() {

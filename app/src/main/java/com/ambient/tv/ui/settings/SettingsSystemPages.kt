@@ -508,7 +508,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         subtitle = stringResource(R.string.settings_tvh_playback_backend_hint),
                     ) {
                         SettingsSelect(options = buildList {
-                            listOf("auto", "media3", "vlc", "mpv").forEach { backend ->
+                            listOf("media3", "vlc", "mpv").forEach { backend ->
                                 val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
                                 add(SettingsSelectOption(
                                     text = when (backend) {

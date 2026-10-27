@@ -14,8 +14,7 @@ import com.ambient.tv.ui.player.*
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 import com.ambient.tv.ui.player.backend.VlcNightProcessing
 
-private fun profileRendererKey(playbackBackendKey: String): String =
-    playbackBackendKey.takeIf { it in setOf("mpv", "vlc", "media3") } ?: "media3"
+private fun profileRendererKey(playbackBackendKey: String): String = selectedRendererSettingsKey(playbackBackendKey)
 
 /** Renderer output and acceleration only; picture filters are set per playback in the player's settings panel. */
 @Composable
@@ -26,9 +25,6 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ImageHint(stringResource(R.string.settings_image_filters_in_player))
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
-        if (state.playbackBackendKey == "auto") {
-            ImageHint(stringResource(R.string.settings_defaults_renderer_auto_hint))
-        }
         ImageChoice(
             R.string.settings_defaults_renderer, renderer,
             listOf("media3" to "Media3", "vlc" to "VLC", "mpv" to "MPV"),
@@ -57,9 +53,6 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
         ImageHint(stringResource(R.string.settings_defaults_hint))
         ImageHint(stringResource(R.string.settings_audio_shared))
         ImageHint(stringResource(R.string.settings_defaults_renderer_hint))
-        if (state.playbackBackendKey == "auto") {
-            ImageHint(stringResource(R.string.settings_defaults_renderer_auto_hint))
-        }
         ImageChoice(
             R.string.settings_defaults_renderer,
             renderer,

@@ -39,7 +39,7 @@ internal fun SettingsVideoAcceleration(state: SettingsUiState, model: SettingsVi
             changeHdrGpu = model::onMpvHdrGpuChanged,
             checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } },
         )
-        if (backend in setOf("mpv", "vlc")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
+        if (backend in setOf("mpv", "vlc", "media3")) GpuOutputPreferenceSettings(mpv = backend == "mpv", state, model)
         if (com.ambient.tv.ui.player.sparsamGpuOutputHeadsUp(backend == "mpv", state.mpvVideoOutputModeKey,
                 com.ambient.tv.ui.performance.LocalPerformanceProfile.current.gateExpensiveVideoVisuals)) {
             Text(
@@ -68,8 +68,8 @@ internal fun RendererVideoSettings(
     changeHdrGpu: ((Boolean) -> Unit)? = null,
 ) {
     val renderer = selectedRendererSettingsKey(backend)
-    if (renderer == null || renderer == "media3") {
-        ImageHint(stringResource(if (renderer == "media3") R.string.renderer_media3_hint else R.string.renderer_auto_hint))
+    if (renderer == "media3") {
+        ImageHint(stringResource(R.string.renderer_media3_hint))
         HdrMedia3Hint()
         return
     }
@@ -207,7 +207,7 @@ internal fun HighRefreshDoublingRow(state: SettingsUiState, model: SettingsViewM
     )
 }
 
-/** Device-wide GPU output choices: render resolution (mpv, VLC) and SDR curve (mpv), saved with Settings. */
+/** Device-wide GPU output choices: render resolution (mpv, VLC, Media3 effect chain) and SDR curve (mpv), saved with Settings. */
 @Composable
 internal fun GpuOutputPreferenceSettings(mpv: Boolean, state: SettingsUiState, model: SettingsViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

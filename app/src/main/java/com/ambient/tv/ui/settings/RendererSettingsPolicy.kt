@@ -1,11 +1,12 @@
 package com.ambient.tv.ui.settings
 
 import com.ambient.tv.R
+import com.ambient.tv.ui.player.backend.PlaybackBackendResolver
 import com.ambient.tv.ui.player.backend.VideoAccelerationCapabilities
 
-/** Auto is not a concrete renderer; never show another renderer's controls. */
-internal fun selectedRendererSettingsKey(key: String): String? =
-    key.takeIf { it in setOf("media3", "vlc", "mpv") }
+/** Auto plays with the renderer [PlaybackBackendResolver] picks, so its controls are the ones that apply. */
+internal fun selectedRendererSettingsKey(key: String): String =
+    key.takeIf { it in setOf("media3", "vlc", "mpv") } ?: PlaybackBackendResolver.resolve(key).key
 
 internal fun vulkanApiLabel(version: Long): String =
     "${(version shr 22) and 127}.${(version shr 12) and 1023}.${version and 4095}"

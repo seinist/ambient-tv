@@ -137,7 +137,7 @@ internal fun VlcImageOptions.withGlobalSvp(preferences: AppPreferences): VlcImag
 /** Reset only the global scope; width, individual-video profiles and the Tvheadend defaults stay intact. */
 internal fun resetGlobalPlaybackProfile(preferences: AppPreferences) {
     preferences.resolutionVideoProfiles = preferences.resolutionVideoProfiles - ResolutionVideoProfileStore.GLOBAL_KEY
-    preferences.playbackBackendKey = "auto"
+    preferences.playbackBackendKey = "media3"
     preferences.mpvImageOptions = MpvImageOptions()
     preferences.mpvImageExplicitChoice = false
     preferences.vlcImageOptions = VlcImageOptions()

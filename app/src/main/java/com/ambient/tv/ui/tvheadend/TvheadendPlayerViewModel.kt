@@ -56,7 +56,7 @@ sealed interface TvheadendPlayerState {
         val playingRecording: LiveTvRecording? = null,
         val artworkUrl: String? = null,
         val artworkFallbackUrls: List<String> = emptyList(),
-        val playbackBackendKey: String = "auto",
+        val playbackBackendKey: String = "media3",
         val sourceWidth: Int? = null,
         val sourceHeight: Int? = null,
         val sourceHdrStandard: com.ambient.tv.ui.player.HdrStandard? = null,

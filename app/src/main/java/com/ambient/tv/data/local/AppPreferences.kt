@@ -946,9 +946,10 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString("nav_sound_bank_v1", "").orEmpty()
         set(value) = prefs.edit { putString("nav_sound_bank_v1", if (value.isBlank()) "" else com.ambient.tv.ui.sound.NavSoundBank.decode(value).encode()) }
 
+    /** A concrete renderer; the former "auto" (always Media3) and unknown values read as Media3. */
     var playbackBackendKey: String
-        get() = prefs.getString(KEY_PLAYBACK_BACKEND, "auto").takeIf { it in PLAYBACK_BACKENDS } ?: "auto"
-        set(value) = prefs.edit { putString(KEY_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "auto") }
+        get() = prefs.getString(KEY_PLAYBACK_BACKEND, null).takeIf { it in PLAYBACK_BACKENDS } ?: "media3"
+        set(value) = prefs.edit { putString(KEY_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "media3") }
 
     /** OSD row with renderer, codec, HDR and similar stream badges. */
     var playerTechBadgesVisible: Boolean
@@ -986,7 +987,7 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString(KEY_TVH_PLAYBACK_BACKEND, null)
             .takeIf { it in PLAYBACK_BACKENDS }
             ?: playbackBackendKey
-        set(value) = prefs.edit { putString(KEY_TVH_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "auto") }
+        set(value) = prefs.edit { putString(KEY_TVH_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "media3") }
 
     var visibleBackgroundVideoPlayback: Boolean
         get() = prefs.getBoolean(KEY_VISIBLE_BACKGROUND_VIDEO_PLAYBACK, false)
@@ -2147,7 +2148,7 @@ class AppPreferences @Inject constructor(
         const val KEY_PLAYBACK_BACKEND = "playback_backend"
         const val KEY_PLAYER_TECH_BADGES_VISIBLE = "player_tech_badges_visible"
         const val KEY_TVH_PLAYBACK_BACKEND = "tvh_playback_backend"
-        val PLAYBACK_BACKENDS = setOf("auto", "media3", "vlc", "mpv")
+        val PLAYBACK_BACKENDS = setOf("media3", "vlc", "mpv")
         val LIVE_TIMESHIFT_SIZES = listOf(0, 512, 1024, 2048, 4096)
         const val KEY_VISIBLE_BACKGROUND_VIDEO_PLAYBACK = "visible_background_video_playback"
         const val KEY_MPV_VIDEO_OUTPUT_MODE = "mpv_video_output_mode"

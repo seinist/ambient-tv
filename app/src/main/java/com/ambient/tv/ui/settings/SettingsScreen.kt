@@ -797,7 +797,7 @@ fun SettingsScreen(
                                     subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
                                 ) {
                                     SettingsSelect(options = buildList {
-                                        listOf("auto", "media3", "vlc", "mpv").forEach { backend ->
+                                        listOf("media3", "vlc", "mpv").forEach { backend ->
                                             val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
                                             add(SettingsSelectOption(
                                                 text = when (backend) {

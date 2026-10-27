@@ -202,7 +202,6 @@
     <string name="renderer_mpv_output_hint">Direct shows the picture without filters; OpenGL and Vulkan allow picture processing.</string>
     <string name="renderer_vlc_output_hint">Android is the normal picture path. Vulkan is the alternative.</string>
     <string name="renderer_media3_hint">Media3 has no Vulkan output.</string>
-    <string name="renderer_auto_hint">Automatic picks a player per source; choose one above to see only its options.</string>
     <string name="renderer_test_title">Vulkan checks · selected player</string>
     <string name="renderer_device_result">GPU: %1$s · Vulkan %2$s</string>
     <string name="renderer_test_modules">Player modules</string>
