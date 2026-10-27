@@ -18,6 +18,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.basicMarquee
@@ -139,6 +145,20 @@ fun ReferencePlayerHeader(
     }
 }
 
+/**
+ * Shared by the OSD, its bottom block and the action bar: [fraction] is how far the bar has slid
+ * away (0..1), and the block above it follows it down. [closing] stows the bar before the fade.
+ */
+internal class PlayerOsdStow {
+    var fraction by mutableFloatStateOf(0f)
+    var closing by mutableStateOf(false)
+}
+
+internal val LocalPlayerOsdStow = compositionLocalOf<PlayerOsdStow?> { null }
+
+/** Action bar height plus the block spacing: the gap the stowed bar leaves behind. */
+private val StowedBarGap = 71.dp
+
 @Composable
 fun BoxScope.ReferencePlayerBottomContent(
     modifier: Modifier = Modifier,
@@ -146,6 +166,7 @@ fun BoxScope.ReferencePlayerBottomContent(
 ) {
     val playPauseFocus = remember { FocusRequester() }
     val controlFocus = LocalPlayerControlFocus.current ?: remember { PlayerControlFocus() }
+    val stow = LocalPlayerOsdStow.current
     CompositionLocalProvider(
         LocalPlayerPlayPauseFocus provides playPauseFocus,
         LocalPlayerControlFocus provides controlFocus,
@@ -155,7 +176,8 @@ fun BoxScope.ReferencePlayerBottomContent(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .then(if (LocalHandheldUi.current) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp)),
+                .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp))
+                .then(stow?.let { Modifier.graphicsLayer { translationY = it.fraction * StowedBarGap.toPx() } } ?: Modifier),
             verticalArrangement = Arrangement.spacedBy(deviceDp(13.dp, 6.dp)),
         ) {
             content()

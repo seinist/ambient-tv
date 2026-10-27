@@ -44,7 +44,8 @@ fun PlayerPanelVisibility(
     }
 }
 
-/** Keeps the chrome composed until its fade finishes, including when visibility reverses. */
+/** Keeps the chrome composed until its fade finishes, including when visibility reverses. On a
+ * dismissal the action bar slides down first and the rest fades after it. */
 @Composable
 fun PlayerOverlayVisibility(
     visible: Boolean,
@@ -62,15 +63,19 @@ fun PlayerOverlayVisibility(
         if (!show && !panelOpen) controlFocus?.resetForNextOpen()
     }
     visibility.targetState = show
+    val stow = remember { PlayerOsdStow() }
+    // A real dismissal stows the bar first; a panel takes over the screen right away.
+    val stowFirst = !show && !panelOpen
+    androidx.compose.runtime.SideEffect { stow.closing = stowFirst }
     AnimatedVisibility(
         visibleState = visibility,
         // Above the nerd stats sibling: zIndex only orders siblings, so the panel's own
         // zIndex inside this box could not lift it over the stats.
         modifier = modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX),
         enter = fadeIn(tween(180, easing = FastOutSlowInEasing)),
-        exit = fadeOut(tween(240, easing = FastOutSlowInEasing)),
+        exit = fadeOut(tween(220, delayMillis = if (stowFirst) 180 else 0, easing = FastOutSlowInEasing)),
     ) {
-        Box(
+        androidx.compose.runtime.CompositionLocalProvider(LocalPlayerOsdStow provides stow) { Box(
             Modifier.fillMaxSize()
                 // Exiting controls remain drawn but must no longer accept input.
                 .focusProperties { canFocus = show }
@@ -87,6 +92,6 @@ fun PlayerOverlayVisibility(
                     }
                 }),
             content = content,
-        )
+        ) }
     }
 }
