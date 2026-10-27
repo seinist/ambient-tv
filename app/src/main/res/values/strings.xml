@@ -2019,4 +2019,20 @@
     <string name="subtitle_look_bold">Bold</string>
     <string name="subtitle_look_position">Distance from the bottom</string>
     <string name="subtitle_look_sample">This is how your subtitles look.</string>
+    <string name="player_tools">Tools</string>
+    <string name="player_tools_summary">A-B repeat, frame step, screenshot</string>
+    <string name="player_tools_ab_on">A-B repeat on</string>
+    <string name="player_tools_ab">A-B repeat</string>
+    <string name="player_tools_set_a">Set point A</string>
+    <string name="player_tools_set_b">Set point B</string>
+    <string name="player_tools_set_a_first">Set A first</string>
+    <string name="player_tools_ab_clear">Turn A-B repeat off</string>
+    <string name="player_tools_frame">Single frame</string>
+    <string name="player_tools_frame_back">Previous frame</string>
+    <string name="player_tools_frame_forward">Next frame</string>
+    <string name="player_tools_screenshot">Screenshot</string>
+    <string name="player_tools_screenshot_save">Save screenshot</string>
+    <string name="player_tools_screenshot_where">Pictures › Ambient TV</string>
+    <string name="player_tools_screenshot_saved">Screenshot saved</string>
+    <string name="player_tools_screenshot_failed">This picture cannot be captured (protected or HDR output)</string>
 </resources>

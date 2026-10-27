@@ -2018,4 +2018,20 @@
     <string name="subtitle_look_bold">Fett</string>
     <string name="subtitle_look_position">Abstand vom unteren Rand</string>
     <string name="subtitle_look_sample">So sehen deine Untertitel aus.</string>
+    <string name="player_tools">Werkzeuge</string>
+    <string name="player_tools_summary">A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
+    <string name="player_tools_ab_on">A-B-Wiederholung an</string>
+    <string name="player_tools_ab">A-B-Wiederholung</string>
+    <string name="player_tools_set_a">Punkt A setzen</string>
+    <string name="player_tools_set_b">Punkt B setzen</string>
+    <string name="player_tools_set_a_first">Zuerst A setzen</string>
+    <string name="player_tools_ab_clear">A-B-Wiederholung aus</string>
+    <string name="player_tools_frame">Einzelbild</string>
+    <string name="player_tools_frame_back">Bild zurück</string>
+    <string name="player_tools_frame_forward">Bild vor</string>
+    <string name="player_tools_screenshot">Bildschirmfoto</string>
+    <string name="player_tools_screenshot_save">Bildschirmfoto speichern</string>
+    <string name="player_tools_screenshot_where">Bilder › Ambient TV</string>
+    <string name="player_tools_screenshot_saved">Bildschirmfoto gespeichert</string>
+    <string name="player_tools_screenshot_failed">Dieses Bild lässt sich nicht aufnehmen (geschützt oder HDR-Ausgabe)</string>
 </resources>

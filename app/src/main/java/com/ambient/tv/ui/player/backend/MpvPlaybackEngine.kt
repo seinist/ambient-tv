@@ -314,6 +314,11 @@ internal class MpvPlaybackEngine(
         if (trySetProperty("sub-delay", (clamped / 1000.0).toString())) subtitleDelayMs = clamped
     }
 
+    /** One frame forward or back; mpv pauses on its own. Backwards decodes from the previous keyframe. */
+    fun stepFrame(forward: Boolean) {
+        if (!released) optionalCommand(if (forward) "frame-step" else "frame-back-step")
+    }
+
     /** Deinterlacing remembered for this title; applied by the player content's first setDeinterlace. */
     internal fun presetDeinterlace(mode: String, filter: String) {
         deinterlaceModeKey = mode

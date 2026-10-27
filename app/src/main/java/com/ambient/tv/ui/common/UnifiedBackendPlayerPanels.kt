@@ -5,6 +5,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HighQuality
@@ -25,6 +32,8 @@ import com.ambient.tv.ui.common.projectm.rememberProjectMBrowser
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.tv.material3.MaterialTheme
 import androidx.compose.ui.Modifier
@@ -163,6 +172,14 @@ fun UnifiedBackendPlayerPanel(
                     title = stringResource(R.string.player_subtitles),
                     value = subtitleOptions.firstOrNull { it.first == selectedSubtitle }?.second ?: stringResource(R.string.player_subtitles_off),
                     onClick = { onPanelChange(UnifiedPlayerPanel.SUBTITLES) },
+                )
+            }
+            if (hasVideo) {
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Build,
+                    title = stringResource(R.string.player_tools),
+                    value = stringResource(if (com.ambient.tv.ui.player.AbRepeat.active) R.string.player_tools_ab_on else R.string.player_tools_summary),
+                    onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
             if (hasVideo) {
@@ -442,6 +459,65 @@ fun UnifiedBackendPlayerPanel(
                 )
                 Text(stringResource(R.string.subtitle_delay_hint), style = MaterialTheme.typography.bodySmall)
             }
+        }
+        UnifiedPlayerPanel.TOOLS -> UnifiedPlayerSidePanel(
+            title = stringResource(R.string.player_tools),
+            modifier = modifier,
+            onBack = back,
+        ) {
+            val handle = com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle()
+            val title = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.title
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            var savingScreenshot by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+            if (handle != null && !isLive) {
+                val ab = com.ambient.tv.ui.player.AbRepeat
+                val a = ab.pointA
+                val b = ab.pointB
+                RightPanelSectionTitle(stringResource(R.string.player_tools_ab))
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Repeat,
+                    title = stringResource(R.string.player_tools_set_a),
+                    value = a?.let(::formatPlaybackClock) ?: stringResource(R.string.player_off),
+                    onClick = { ab.setA(handle) },
+                )
+                PlayerPanelEntry(
+                    icon = Icons.Filled.RepeatOne,
+                    title = stringResource(R.string.player_tools_set_b),
+                    value = b?.let(::formatPlaybackClock) ?: stringResource(if (a == null) R.string.player_tools_set_a_first else R.string.player_off),
+                    onClick = { ab.setB(handle) },
+                )
+                if (a != null) PlayerPanelEntry(
+                    icon = Icons.Filled.Clear,
+                    title = stringResource(R.string.player_tools_ab_clear),
+                    value = "",
+                    onClick = { ab.clear() },
+                )
+                RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
+                PlayerPanelEntry(
+                    icon = Icons.Filled.ChevronLeft,
+                    title = stringResource(R.string.player_tools_frame_back),
+                    value = "",
+                    onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = false) },
+                )
+                PlayerPanelEntry(
+                    icon = Icons.Filled.ChevronRight,
+                    title = stringResource(R.string.player_tools_frame_forward),
+                    value = "",
+                    onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = true) },
+                )
+            }
+            RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
+            PlayerPanelEntry(
+                icon = Icons.Filled.PhotoCamera,
+                title = stringResource(R.string.player_tools_screenshot_save),
+                value = stringResource(R.string.player_tools_screenshot_where),
+                onClick = {
+                    if (!savingScreenshot) {
+                        savingScreenshot = true
+                        scope.launch { com.ambient.tv.ui.player.saveVideoScreenshot(context, title); savingScreenshot = false }
+                    }
+                },
+            )
         }
         UnifiedPlayerPanel.SLEEP -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.player_sleep_timer),
