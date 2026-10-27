@@ -2,11 +2,14 @@ package com.ambient.tv.ui.player.backend
 
 /**
  * NVIDIA SHIELD: MediaCodec's ByteBuffer output (hwdec=mediacodec-copy) of interlaced broadcast
- * (1080i H.264, 576i MPEG-2) can reach vo=gpu as a black picture. AImageReader is not a
- * replacement for that path: it still depends on the vendor surface producer, and its opaque
- * RGB output cannot feed LUMA/CHROMA shaders or CPU filters. Suspect broadcast sources instead
- * reopen with software decoding while retaining OpenGL rendering and the selected filters.
- * Direct output, Vulkan, other devices and progressive-only codecs keep their decoder.
+ * (1080i H.264, 576i MPEG-2) can reach vo=gpu as a black picture, and gpu-next/Vulkan (which
+ * always decodes through that copy path) as a blocky picture whose fields are never woven
+ * together. Those frames also carry no interlace flag, so automatic deinterlacing never starts.
+ * AImageReader is not a replacement: it still depends on the vendor surface producer, and its
+ * opaque RGB output cannot feed LUMA/CHROMA shaders or CPU filters. Suspect broadcast sources
+ * instead reopen with software decoding while keeping the OpenGL or Vulkan renderer and the
+ * selected filters. Direct output, Vulkan Video decoding, other devices and progressive-only
+ * codecs keep their decoder.
  */
 private val SHIELD_DEVICES = setOf("foster", "darcy", "mdarcy", "sif")
 
@@ -41,7 +44,7 @@ internal fun mpvCodecProgressiveOnly(codec: String?): Boolean {
 
 /** Scope of the vendor decoder workaround; never override explicit software or Vulkan decoding. */
 internal fun mpvShieldSoftwareEligible(shield: Boolean, plan: MpvAccelerationPlan, broadcast: Boolean): Boolean =
-    shield && broadcast && plan.output == "gpu" && !plan.vulkan && plan.decoder != "software" && plan.decoder != "vulkan"
+    shield && broadcast && plan.gpu && plan.decoder != "software" && plan.decoder != "vulkan"
 
 /**
  * MediaCodec has no trustworthy interlace flag. At 1080/1088 lines, 25/29.97 fps can mean

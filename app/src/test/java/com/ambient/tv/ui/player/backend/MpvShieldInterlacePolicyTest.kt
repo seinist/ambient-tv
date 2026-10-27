@@ -52,12 +52,16 @@ class MpvShieldInterlacePolicyTest {
         assertTrue(mpvShieldSoftwareRequired(signals()))
     }
 
-    @Test fun onlyShieldOpenGlBroadcastTakesTheWorkaround() {
+    @Test fun onlyShieldGpuBroadcastTakesTheWorkaround() {
         assertTrue(mpvShieldSoftwareEligible(true, openGl, true))
         assertFalse(mpvShieldSoftwareEligible(false, openGl, true))
         assertFalse(mpvShieldSoftwareEligible(true, openGl, false))
         assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("direct", "mediacodec"), true))
-        assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("vulkan", "mediacodec"), true))
+        // gpu-next/Vulkan decodes through the same broken MediaCodec copy path (blocky, unwoven fields).
+        assertTrue(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("vulkan", "mediacodec"), true))
+        assertFalse(mpvShieldSoftwareEligible(false, MpvAccelerationPlan("vulkan", "mediacodec"), true))
+        assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("vulkan", "vulkan"), true))
+        assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("vulkan", "software"), true))
         assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("gpu", "software"), true))
         assertFalse(mpvShieldSoftwareEligible(true, MpvAccelerationPlan("gpu", "vulkan"), true))
     }
