@@ -339,12 +339,13 @@ private fun SystemOverviewHeader(
     onOpenOptions: () -> Unit,
     optionsModifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 4.dp)) {
+    // Same lockup as the library pages: small system logo, the page title beside it, actions on that line.
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = {
             com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
             com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
         }) {
-            com.ambient.tv.ui.common.SystemPageTitle(system)
+            com.ambient.tv.ui.common.SystemPageTitle(system, title = stringResource(R.string.nav_overview))
         }
     }
 }
