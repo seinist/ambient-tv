@@ -373,7 +373,8 @@ private fun PlayerControlBarContent(
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
     val osdStow = com.ambient.tv.ui.player.LocalPlayerOsdStow.current
     val stowed = controlFocus?.seekFocused == true || osdStow?.closing == true
-    // Slides down while the seek bar holds focus and when the OSD closes; the block above follows.
+    // Slides down while the seek bar holds focus and when the OSD closes; the block above follows
+    // only for the seek bar, a closing OSD fades it in place.
     // Stays in the layout so D-pad down still finds it.
     // The OSD opening straight onto the seek bar snaps instead of visibly sliding away.
     val openedAt = remember { android.os.SystemClock.uptimeMillis() }
@@ -381,7 +382,8 @@ private fun PlayerControlBarContent(
     LaunchedEffect(stowed) {
         val target = if (stowed) 1f else 0f
         if (android.os.SystemClock.uptimeMillis() - openedAt < 300L) stow.snapTo(target)
-        else stow.animateTo(target, androidx.compose.animation.core.tween(200))
+        // Closing gets a longer, eased slide so the bar is visibly stowed before the OSD fades.
+        else stow.animateTo(target, if (osdStow?.closing == true) androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing) else androidx.compose.animation.core.tween(200))
     }
     if (osdStow != null) LaunchedEffect(osdStow) {
         androidx.compose.runtime.snapshotFlow { stow.value }.collect { osdStow.fraction = it }

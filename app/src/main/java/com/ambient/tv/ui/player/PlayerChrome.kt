@@ -177,7 +177,7 @@ fun BoxScope.ReferencePlayerBottomContent(
                 .fillMaxWidth()
                 .then(if (LocalHandheldUi.current) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                 .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp))
-                .then(stow?.let { Modifier.graphicsLayer { translationY = it.fraction * StowedBarGap.toPx() } } ?: Modifier),
+                .then(stow?.let { Modifier.graphicsLayer { translationY = if (it.closing) 0f else it.fraction * StowedBarGap.toPx() } } ?: Modifier),
             verticalArrangement = Arrangement.spacedBy(deviceDp(13.dp, 6.dp)),
         ) {
             content()
