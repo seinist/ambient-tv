@@ -149,6 +149,9 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
 
+/** Process-wide: false until the first activity of this process is created. */
+private var activityCreatedInProcess = false
+
 @AndroidEntryPoint
 open class MainActivity : ComponentActivity() {
 
@@ -553,7 +556,12 @@ open class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
+    override fun onCreate(restoredState: Bundle?) {
+        // A bundle in a fresh process means Android killed the app in the background; reopening it
+        // is a cold start for the user, so drop the saved scroll/focus/back-stack state and let
+        // every screen begin at its first item. Recreations within a live process keep their state.
+        val savedInstanceState = restoredState.takeIf { activityCreatedInProcess }
+        activityCreatedInProcess = true
         super.onCreate(savedInstanceState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
