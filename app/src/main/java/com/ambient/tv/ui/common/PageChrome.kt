@@ -239,7 +239,9 @@ fun PageHeader(
     val handheld = LocalHandheldUi.current
     val ownActionFocus = remember { FocusRequester() }
     val actionFocus = focusChain?.actions ?: ownActionFocus
-    RegisterScrollListActions(actionFocus)
+    // A list's own Up exit at its top follows the page chain (filter, chips, then these actions).
+    val chainUp = remember(focusChain) { focusChain?.let { chain -> { chain.upTarget() } } }
+    RegisterScrollListActions(actionFocus, chainUp)
     DeviceActionRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
         Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
@@ -263,6 +265,8 @@ class PageFocusChain {
     internal var hasChips = false
     /** Where Up from the content goes: the chip row when the page shows one, else the actions. */
     val contentUp: FocusRequester get() = if (hasChips) chips else actions
+    /** Up from the content as [pageContentUp] sets it (a filter field above the content first). */
+    internal var upTarget: () -> FocusRequester = { contentUp }
 }
 
 @Composable
@@ -278,7 +282,8 @@ private fun Modifier.downTo(chain: PageFocusChain?): Modifier =
 
 /** Up out of the content lands on [PageFocusChain.contentUp] instead of whatever lies straight above. */
 fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester = { chain.contentUp }): Modifier =
-    focusProperties {
+    // Lists leave their top through their own key handling, not a focus exit: they ask the chain too.
+    also { chain.upTarget = target }.focusProperties {
         onExit = {
             if (requestedFocusDirection == FocusDirection.Up) {
                 cancelFocusChange()
