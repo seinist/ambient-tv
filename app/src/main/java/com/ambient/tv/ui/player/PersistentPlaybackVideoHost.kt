@@ -107,6 +107,7 @@ fun Media3VideoSurface(
                 keepScreenOn = false
                 setBackgroundColor(android.graphics.Color.BLACK)
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
+                subtitleView?.applyAmbientSubtitleStyle()
             }
         },
         update = { view ->
@@ -160,6 +161,28 @@ fun Media3VideoTexture(
     sourceAspectRatioHint: Float? = null,
 ) = Media3VideoSurface(player, resizeMode, aspectRatio, zoom, modifier, sourceAspectRatioHint)
 
+/**
+ * The default follows the system caption style, which on most TVs means large white text on
+ * black boxes. Use white text with a dark outline, no boxes, at a moderate size instead. Cue
+ * styling (ASS/SSA colors, positions, italics) stays; only embedded font sizes are ignored since
+ * they routinely blow subtitles up.
+ */
+internal fun androidx.media3.ui.SubtitleView.applyAmbientSubtitleStyle() {
+    setApplyEmbeddedFontSizes(false)
+    setStyle(
+        androidx.media3.ui.CaptionStyleCompat(
+            android.graphics.Color.WHITE,
+            android.graphics.Color.TRANSPARENT,
+            android.graphics.Color.TRANSPARENT,
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            android.graphics.Color.BLACK,
+            android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD),
+        ),
+    )
+    setFractionalTextSize(0.045f)
+    setBottomPaddingFraction(0.06f)
+}
+
 /** PlayerView receives decoder format events independently of Compose updates. */
 internal class FormatPlayerView(context: android.content.Context) : PlayerView(context) {
     var forcedAspectRatio: Float? = null
@@ -167,4 +190,33 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
     override fun onContentAspectRatioChanged(contentFrame: AspectRatioFrameLayout?, aspectRatio: Float) {
         super.onContentAspectRatioChanged(contentFrame, forcedAspectRatio ?: aspectRatio)
     }
+
+    // Registered after PlayerView's own listener, so these box-free cues replace the ones it set.
+    private val boxlessCues = object : androidx.media3.common.Player.Listener {
+        override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+            subtitleView?.setCues(cueGroup.cues.map { it.withoutBackground() })
+        }
+    }
+
+    override fun setPlayer(player: androidx.media3.common.Player?) {
+        this.player?.removeListener(boxlessCues)
+        super.setPlayer(player)
+        player?.addListener(boxlessCues)
+        player?.let { subtitleView?.setCues(it.currentCues.cues.map { cue -> cue.withoutBackground() }) }
+    }
+}
+
+/** Keeps ASS/SSA styling but drops opaque boxes (BorderStyle=3, BackColour) behind the text. */
+private fun androidx.media3.common.text.Cue.withoutBackground(): androidx.media3.common.text.Cue {
+    val text = text
+    val builder = buildUpon().clearWindowColor()
+    if (text is android.text.Spanned) {
+        val spans = text.getSpans(0, text.length, android.text.style.BackgroundColorSpan::class.java)
+        if (spans.isNotEmpty()) {
+            val copy = android.text.SpannableString(text)
+            spans.forEach(copy::removeSpan)
+            builder.setText(copy)
+        }
+    }
+    return builder.build()
 }
