@@ -309,7 +309,8 @@ fun TvheadendScreen(
             busy = state.actionInProgress,
             message = state.actionFeedback?.takeIf { it.scope == "event:${event.eventId}" },
             onDismiss = { viewModel.selectEvent(null) },
-            onWatch = { channel?.let { watchChannel(it.uuid) } },
+            // Closed before the player opens, or it flashes up on return until selectTab clears it.
+            onWatch = { channel?.let { viewModel.selectEvent(null); watchChannel(it.uuid) } },
             onRecord = { viewModel.schedule(event, false) },
             onRecordSeries = { viewModel.schedule(event, true) },
             onCancel = { timer?.let(viewModel::cancel) },
@@ -332,7 +333,7 @@ fun TvheadendScreen(
             busy = state.actionInProgress,
             message = state.actionFeedback?.takeIf { it.scope == "recording:${entry.uuid}" },
             onDismiss = { viewModel.selectRecording(null) },
-            onPlay = { onPlayRecording(entry.uuid) },
+            onPlay = { viewModel.selectRecording(null); onPlayRecording(entry.uuid) },
             onCancel = { viewModel.cancel(entry) },
             onDelete = { viewModel.delete(entry) },
         )
