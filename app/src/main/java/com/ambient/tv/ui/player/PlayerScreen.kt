@@ -1045,6 +1045,17 @@ internal fun TvPlayerSeekBar(
     var previewVersion by remember { mutableIntStateOf(0) }
     LaunchedEffect(previewVersion) { if (pendingTarget == null) { kotlinx.coroutines.delay(1_100); lastPreview = null } }
     val displayedPosition = pointerTarget ?: pendingTarget ?: positionMs
+    // Seek feedback: the preview only accompanies a jump. It opens with the bar (a jump showed it),
+    // reopens on every further jump and closes 1.1 s after the last one; the bar itself stays.
+    var feedbackPreview by remember { mutableStateOf(!interactive) }
+    var feedbackJumps by remember { mutableIntStateOf(0) }
+    var feedbackAnchor by remember { mutableLongStateOf(positionMs) }
+    if (!interactive && kotlin.math.abs(positionMs - feedbackAnchor) > SEEK_FEEDBACK_JUMP_MS) { feedbackPreview = true; feedbackJumps++ }
+    feedbackAnchor = positionMs
+    LaunchedEffect(feedbackPreview, feedbackJumps) {
+        if (feedbackPreview) { kotlinx.coroutines.delay(1_100); feedbackPreview = false }
+    }
+    val stowing = com.ambient.tv.ui.player.LocalPlayerOsdStow.current?.closing == true
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
@@ -1144,7 +1155,7 @@ internal fun TvPlayerSeekBar(
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         timelineContext?.invoke(displayedPosition)
-        SeekPreview(if (!interactive) positionMs else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
+        SeekPreview(if (stowing) null else if (!interactive) positionMs.takeIf { feedbackPreview } else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
         if (timelineContext == null) CurrentChapterLabel(displayedPosition)
         Box(
             modifier = Modifier
@@ -1827,3 +1838,6 @@ private fun formatDuration(ms: Long): String = com.ambient.tv.ui.common.formatPl
 internal fun media3PauseOnToggle(playWhenReady: Boolean, playbackState: Int): Boolean =
     playWhenReady && playbackState != androidx.media3.common.Player.STATE_ENDED &&
         playbackState != androidx.media3.common.Player.STATE_IDLE
+
+/** A position change larger than playback can make between two updates: a jump. */
+private const val SEEK_FEEDBACK_JUMP_MS = 3_000L
