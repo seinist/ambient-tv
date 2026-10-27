@@ -74,7 +74,8 @@ class PlayerControlsAutoHideTest {
         rule.runOnIdle { navigation.close() }
         advance(4_000)
         rule.onNodeWithText("OSD").assertIsDisplayed()
-        advance(1_500)
+        // Dismissal stows the button bar first (380 ms), then fades out (220 ms).
+        advance(2_000)
         rule.onNodeWithText("OSD").assertDoesNotExist()
         rule.runOnIdle {
             assertEquals(false, controls.value)
@@ -124,7 +125,8 @@ class PlayerControlsAutoHideTest {
         rule.runOnIdle { input.intValue++ }
         advance(4_000)
         rule.onNodeWithText("OSD").assertIsDisplayed()
-        advance(1_500)
+        // Dismissal stows the button bar first (380 ms), then fades out (220 ms).
+        advance(2_000)
         rule.onNodeWithText("OSD").assertDoesNotExist()
     }
 }

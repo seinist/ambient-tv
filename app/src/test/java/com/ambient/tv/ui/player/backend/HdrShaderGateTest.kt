@@ -15,7 +15,7 @@ class HdrShaderGateTest {
     @Test fun onlyTheReviewedShadersAreHdrSafe() {
         assertEquals(
             setOf("ravu_lite_r2", "ravu_lite_r3", "ravu_lite_r4", "fsr", "adaptive", "cas", "cas_light", "cas_medium",
-                "filmgrain_light_output", "filmgrain_medium_output"),
+                "filmgrain_light_output", "filmgrain_medium_output", "filmgrain_strong_output"),
             MPV_IMAGE_SHADERS.filterValues { it.hdrSafe }.keys,
         )
         assertEquals(setOf("ravu_lite_r2", "ravu_lite_r3", "ravu_lite_r4", "fsr"), MPV_HDR_UPSCALERS)
