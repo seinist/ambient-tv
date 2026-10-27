@@ -289,13 +289,15 @@ fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester =
 
 /**
  * Tab/filter chips under a [PageHeader]. Entering the row lands on the chip focused last (the
- * selected one at first, marked with [PageFocusChain.selectedChip]); Up leaves for the actions.
+ * selected one at first, marked with [PageFocusChain.selectedChip]); Up leaves for [up].
  */
 @Composable
 fun PageChipRow(
     chain: PageFocusChain,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    /** Up from the chips; a page with a control between header and chips (a search field) passes that. */
+    up: FocusRequester = chain.actions,
     content: LazyListScope.() -> Unit,
 ) {
     DisposableEffect(chain) {
@@ -308,7 +310,7 @@ fun PageChipRow(
             .focusRestorer(chain.selectedChip)
             .onPreviewKeyEvent { event ->
                 if (event.key != Key.DirectionUp) false else {
-                    if (event.type == KeyEventType.KeyDown) runCatching { chain.actions.requestFocus() }
+                    if (event.type == KeyEventType.KeyDown) runCatching { up.requestFocus() }
                     true
                 }
             }

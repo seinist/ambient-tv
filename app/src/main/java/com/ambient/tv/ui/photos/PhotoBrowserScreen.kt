@@ -39,6 +39,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -59,6 +60,7 @@ import com.ambient.tv.data.photos.PhotoSort
 import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -127,8 +129,9 @@ fun PhotoBrowserScreen(
         }
     }
 
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     Column(Modifier.fillMaxSize().padding(tokens.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        PageHeader(actions = {
+        PageHeader(focusChain = focusChain, actions = {
             if (!state.atRoot || state.timeline) TvChip(stringResource(R.string.photos_back), modifier = Modifier.leftKeyAction { viewModel.back() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { viewModel.back() }
             TvChip(stringResource(R.string.photos_slideshow), enabled = !state.loading, icon = Icons.Filled.Slideshow, iconOnly = true) {
                 if (viewModel.prepareSlideshow()) onOpenViewer()
@@ -139,16 +142,17 @@ fun PhotoBrowserScreen(
                 style = MaterialTheme.typography.headlineMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        com.ambient.tv.ui.common.PageChipRow(focusChain) {
             // The timeline needs a date index, which only the media servers provide.
             if (state.current?.key?.let(FileKeys::owns) == false) item {
                 TvChip(
                     stringResource(if (state.timeline) R.string.photos_folders else R.string.photos_timeline),
                     selected = state.timeline, icon = Icons.Filled.CalendarMonth, onClick = viewModel::toggleTimeline,
+                    modifier = if (state.timeline) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
                 )
             }
             if (!state.timeline) PhotoSort.entries.forEach { sort ->
-                item { TvChip(stringResource(sort.label()), selected = state.sort == sort, onClick = { viewModel.setSort(sort) }) }
+                item { TvChip(stringResource(sort.label()), selected = state.sort == sort, modifier = if (state.sort == sort) Modifier.focusRequester(focusChain.selectedChip) else Modifier, onClick = { viewModel.setSort(sort) }) }
             }
         }
         when {
@@ -158,7 +162,7 @@ fun PhotoBrowserScreen(
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(220.dp),
                 state = gridState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {

@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -74,6 +75,7 @@ import com.ambient.tv.ui.common.MediaArtworkWithStreamIcons
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SkeletonRow
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.overlayLazyScrollbar
@@ -108,8 +110,10 @@ fun SearchScreen(
         BackHandler { onBack() }
     }
     Box(Modifier.fillMaxSize()) {
+        val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+        val queryFocus = remember { FocusRequester() }
         Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = 28.dp)) {
-            PageHeader(actions = {
+            PageHeader(focusChain = focusChain, actions = {
                 if (uiState.hasResults) {
                     val rows = uiState.viewMode == SearchViewMode.ROWS
                     TvChip(
@@ -129,7 +133,7 @@ fun SearchScreen(
                     value = uiState.query,
                     onValueChange = viewModel::onQueryChanged,
                     label = stringResource(R.string.search_placeholder),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f).focusRequester(queryFocus),
                 )
                 TvActionButton(
                     text = stringResource(R.string.action_search),
@@ -142,13 +146,15 @@ fun SearchScreen(
                 Text(stringResource(R.string.search_no_sources), modifier = Modifier.padding(vertical = 12.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                LazyRow(state = rememberLazyListState(),
+                // Sources are a multi-select filter: entering the row starts at "All" until a chip was focused.
+                com.ambient.tv.ui.common.PageChipRow(focusChain,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    up = queryFocus,
                 ) {
                     item(key = "all") {
                         TvChip(
+                            modifier = Modifier.focusRequester(focusChain.selectedChip),
                             text = stringResource(R.string.search_all_sources),
                             selected = uiState.selectedSources == uiState.availableSources,
                             onClick = viewModel::selectAllSources,
@@ -163,45 +169,48 @@ fun SearchScreen(
                     }
                 }
             }
-            when {
-                !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
-                uiState.hasSearched && !uiState.hasResults && !uiState.isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
-                        StatePanel(
-                            stringResource(R.string.search_no_results),
-                            if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
-                                stringResource(R.string.search_no_results_partial_error)
-                            } else stringResource(R.string.search_no_results_body),
-                        )
+            // Up from the results: source chips, then the query field (no chips: straight to the field).
+            Box(Modifier.fillMaxSize().pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }.focusGroup()) {
+                when {
+                    !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
+                    uiState.hasSearched && !uiState.hasResults && !uiState.isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
+                            StatePanel(
+                                stringResource(R.string.search_no_results),
+                                if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                    stringResource(R.string.search_no_results_partial_error)
+                                } else stringResource(R.string.search_no_results_body),
+                            )
+                        }
                     }
+                    uiState.viewMode == SearchViewMode.ROWS -> SearchRows(
+                        uiState,
+                        uiState.focusedRatingKey,
+                        uiState.restoreResultFocus,
+                        uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                        onItemClick,
+                        onYouTubeClick,
+                        onSpotifyClick,
+                        onTvheadendChannelClick,
+                        onTvheadendProgramClick,
+                        onTvheadendRecordingClick,
+                        viewModel::onItemFocused,
+                    )
+                    else -> SearchList(
+                        uiState,
+                        uiState.focusedRatingKey,
+                        uiState.restoreResultFocus,
+                        uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                        onItemClick,
+                        onYouTubeClick,
+                        onSpotifyClick,
+                        onTvheadendChannelClick,
+                        onTvheadendProgramClick,
+                        onTvheadendRecordingClick,
+                        viewModel::onItemFocused,
+                    )
                 }
-                uiState.viewMode == SearchViewMode.ROWS -> SearchRows(
-                    uiState,
-                    uiState.focusedRatingKey,
-                    uiState.restoreResultFocus,
-                    uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                    onItemClick,
-                    onYouTubeClick,
-                    onSpotifyClick,
-                    onTvheadendChannelClick,
-                    onTvheadendProgramClick,
-                    onTvheadendRecordingClick,
-                    viewModel::onItemFocused,
-                )
-                else -> SearchList(
-                    uiState,
-                    uiState.focusedRatingKey,
-                    uiState.restoreResultFocus,
-                    uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                    onItemClick,
-                    onYouTubeClick,
-                    onSpotifyClick,
-                    onTvheadendChannelClick,
-                    onTvheadendProgramClick,
-                    onTvheadendRecordingClick,
-                    viewModel::onItemFocused,
-                )
             }
         }
     }
