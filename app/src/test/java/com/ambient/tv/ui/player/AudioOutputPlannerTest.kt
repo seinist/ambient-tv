@@ -232,6 +232,11 @@ class AudioOutputPlannerTest {
         assertEquals("auto-safe", mpvAudioChannels("auto", encoded = false, upmix = false, applyDsp = true))
         assertEquals("auto-safe", mpvAudioChannels("auto", encoded = true, upmix = true, applyDsp = false))
         assertEquals("5.1", mpvAudioChannels("auto", encoded = false, upmix = true, applyDsp = true))
+        assertEquals("5.1", mpvAudioChannels("auto", false, false, true, sourceChannels = 6, routeChannels = 8))
+        assertEquals("7.1", mpvAudioChannels("auto", false, false, true, sourceChannels = 8, routeChannels = 8))
+        assertEquals("5.1", mpvAudioChannels("auto", false, false, true, sourceChannels = 8, routeChannels = 6))
+        assertEquals("5.1", mpvAudioChannels("auto", true, false, false, sourceChannels = 6, routeChannels = 6))
+        assertEquals("auto-safe", mpvAudioChannels("auto", false, false, true, sourceChannels = 2, routeChannels = 8))
         assertEquals("5.1", mpvAudioChannels("5.1", encoded = false, upmix = false, applyDsp = true))
         assertEquals("7.1", mpvAudioChannels("7.1", encoded = false, upmix = false, applyDsp = true))
         for (mode in listOf("stereo", "mono", "left", "right")) {

@@ -597,7 +597,8 @@ internal class MpvPlaybackEngine(
         if (gpuQualityMode) currentVideoSync().let { sync -> if (getPropertyString("video-sync") != sync) option("video-sync", sync) }
         option("audio-spdif", plan.spdifCodecs.joinToString(","))
         option("audio-delay", (raw.delayMs / 1000.0).toString())
-        option("audio-channels", mpvAudioChannels(plan.channels, plan.encoded, dsp.upmix && audioSession.sourceChannels == 2, plan.applyDsp))
+        option("audio-channels", mpvAudioChannels(plan.channels, plan.encoded, dsp.upmix && audioSession.sourceChannels == 2, plan.applyDsp,
+            audioSession.sourceChannels, raw.forcedChannels(audioSession.effectiveRoute.pcmChannels)))
         option("replaygain", if (!plan.applyDsp || dsp.replayGain == "off") "no" else dsp.replayGain)
         option("replaygain-clip", "no")
         if (fileReady) {

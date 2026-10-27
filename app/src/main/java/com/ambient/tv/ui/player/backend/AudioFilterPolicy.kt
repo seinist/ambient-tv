@@ -36,13 +36,18 @@ internal fun mpvAudioGraph(options: AudioOptions, sampleRate: Int = 48000, sourc
     }.joinToString(",")
 }
 
-/** The planner resolves stereo routes before this adapter. Unrestricted surround
- * keeps auto-safe; a stereo upmix keeps 5.1 so the output does not undo its filter. */
-internal fun mpvAudioChannels(planChannels: String, encoded: Boolean, upmix: Boolean, applyDsp: Boolean): String =
+/** The planner resolves stereo routes before this adapter; a stereo upmix keeps 5.1 so the
+ * output does not undo its filter. Unrestricted surround becomes the layout closest to the source
+ * within [routeChannels]: auto-safe on the audiotrack AO has no system layout and means stereo. */
+internal fun mpvAudioChannels(
+    planChannels: String, encoded: Boolean, upmix: Boolean, applyDsp: Boolean,
+    sourceChannels: Int? = null, routeChannels: Int = 2,
+): String =
     when (planChannels) {
         "5.1" -> "5.1"
         "7.1" -> "7.1"
-        "auto" -> if (!encoded && upmix && applyDsp) "5.1" else "auto-safe"
+        "auto" -> if (!encoded && upmix && applyDsp) "5.1"
+            else com.ambient.tv.ui.player.forcedPcmLayout(sourceChannels, routeChannels).takeIf { it != "auto" } ?: "auto-safe"
         else -> "stereo"
     }
 
