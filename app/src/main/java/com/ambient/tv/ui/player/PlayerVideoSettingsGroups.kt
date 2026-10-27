@@ -332,7 +332,7 @@ private fun MpvVideoGroups(
         }
         if (mpvCheapDefaultsActive()) MpvSparsamLockedRows(options, setOf(MpvSparsamField.DEBAND))
         if (visibility.deband) {
-            ImageChoice(R.string.player_deband, options.deband, imageStrengths(true)) {
+            ImageChoice(R.string.player_deband, options.deband, imageStrengths()) {
                 markMpvImageExplicitChoice(preferences)
                 change(options.copy(deband = it))
             }
@@ -696,11 +696,12 @@ private fun GroupedImageChoice(
 }
 
 @Composable
-private fun imageStrengths(strong: Boolean = false) = listOf(
+private fun imageStrengths() = listOf(
     "off" to stringResource(R.string.player_off),
     "light" to stringResource(R.string.image_light),
     "medium" to stringResource(R.string.image_medium),
-) + if (strong) listOf("strong" to stringResource(R.string.image_strong)) else emptyList()
+    "strong" to stringResource(R.string.image_strong),
+)
 
 /** Why the upscaler row is absent on a GPU VO: the fitted output needs no enlargement. */
 internal fun upscalerNotNeededHint(scale: VideoScaleRelation): Int? = when (scale) {

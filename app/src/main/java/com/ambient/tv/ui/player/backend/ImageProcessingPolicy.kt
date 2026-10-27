@@ -97,6 +97,8 @@ internal fun mpvRenderOverloaded(
 internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<String>): String? = when {
     // Built-in Light/Medium running as CAS on gpu-next.
     sharpening in setOf("light", "medium") && "cas_$sharpening" in loadedShaders -> "off"
+    // Built-in Strong running as full CAS on gpu-next.
+    sharpening == "strong" && "cas" in loadedShaders -> "off"
     // Adaptive Sharpen replaced by CAS (PQ output): the next step is off.
     sharpening == "adaptive" && "adaptive" !in loadedShaders && "cas" in loadedShaders -> "off"
     sharpening !in loadedShaders -> null
@@ -420,15 +422,16 @@ internal fun mpvImageShaderKeys(
 }
 
 /**
- * GLSL hook for the sharpening choice, or null when none is loaded. Light/Medium are mpv's
- * built-in unsharp mask on vo=gpu (a property, no hook); on gpu-next that property has no
- * effect, so they map to CAS at a matching strength.
+ * GLSL hook for the sharpening choice, or null when none is loaded. Light/Medium/Strong are
+ * mpv's built-in unsharp mask on vo=gpu (a property, no hook); on gpu-next that property has no
+ * effect, so they map to CAS at a matching strength (Strong: full CAS).
  */
 internal fun mpvSharpeningShader(sharpening: String, scaler: String, gpuNext: Boolean): String? = when {
     scaler in setOf("fsr", "nis") -> null
     sharpening in setOf("cas", "adaptive") -> sharpening
     gpuNext && sharpening == "light" -> "cas_light"
     gpuNext && sharpening == "medium" -> "cas_medium"
+    gpuNext && sharpening == "strong" -> "cas"
     else -> null
 }
 
@@ -437,6 +440,7 @@ internal fun mpvBuiltinSharpen(sharpening: String, scaler: String, processing: B
     if (!processing || gpuNext || scaler in setOf("fsr", "nis")) "0" else when (sharpening) {
         "light" -> "0.2"
         "medium" -> "0.5"
+        "strong" -> "0.8"
         else -> "0"
     }
 
@@ -446,10 +450,12 @@ internal fun mpvCpuImageFilters(options: MpvImageOptions, sdr: Boolean): Map<Str
     when (o.denoise) {
         "light" -> put("plex-denoise", "lavfi=[hqdn3d=1.5:1.5:3:3]")
         "medium" -> put("plex-denoise", "lavfi=[hqdn3d=3:2:4.5:3]")
+        "strong" -> put("plex-denoise", "lavfi=[hqdn3d=6:4.5:9:6.75]")
     }
     when (o.deblock) {
         "light" -> put("plex-deblock", "lavfi=[deblock=filter=weak:block=8]")
         "medium" -> put("plex-deblock", "lavfi=[deblock=filter=strong:block=8]")
+        "strong" -> put("plex-deblock", "lavfi=[deblock=filter=strong:block=8:alpha=0.15:beta=0.09:gamma=0.08:delta=0.08]")
     }
 }
 
@@ -481,13 +487,17 @@ internal fun vlcImageMediaOptions(options: VlcImageOptions, svpTargetFps: Double
     val filters = mutableListOf<String>()
     if (o.softwareProcessing && o.denoise != "off") {
         filters += "hqdn3d"
-        val values = if (o.denoise == "light") listOf(1.5, 1.5, 3.0, 3.0) else listOf(3.0, 2.0, 4.5, 3.0)
+        val values = when (o.denoise) {
+            "light" -> listOf(1.5, 1.5, 3.0, 3.0)
+            "strong" -> listOf(6.0, 4.5, 9.0, 6.75)
+            else -> listOf(3.0, 2.0, 4.5, 3.0)
+        }
         listOf("luma-spat", "chroma-spat", "luma-temp", "chroma-temp").zip(values).forEach { (key, value) -> add(":hqdn3d-$key=$value") }
     }
     if (o.softwareProcessing && o.deband != "off") {
         filters += "gradfun"
         add(":gradfun-radius=16")
-        add(":gradfun-strength=${if (o.deband == "light") 1.2 else 2.0}")
+        add(":gradfun-strength=${when (o.deband) { "light" -> 1.2; "strong" -> 3.0; else -> 2.0 }}")
     }
     if (o.softwareProcessing && (o.brightness != 0 || o.contrast != 0 || o.saturation != 0 || o.gamma != 0)) {
         filters += "adjust"

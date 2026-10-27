@@ -24,7 +24,6 @@ import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.sound.UiSound
 import com.ambient.tv.ui.sound.UiSoundFeedback
 import com.ambient.tv.ui.sound.uiSoundOnFocus
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -32,7 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Up/Down between rows: nearest column from live coordinates, exactly one focus tick per move. */
+/** Up/Down between rows, Plex style: remembered tile or the first one, exactly one focus tick per move. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = android.app.Application::class)
 class RowColumnFocusTest {
@@ -47,6 +46,7 @@ class RowColumnFocusTest {
     private val recorder = Recorder()
     private val start = FocusRequester()
     private val lowerScroll = ScrollState(0)
+    private val lowerTile2 = FocusRequester()
 
     /** Row "b" tiles either play their own focus sound (like MediaTile) or stay silent. */
     private fun setUp(lowerTilesSound: Boolean) {
@@ -66,6 +66,7 @@ class RowColumnFocusTest {
                         repeat(4) { i ->
                             Box(Modifier.size(100.dp).testTag("b:$i")
                                 .rowColumnFocusTarget(focus, "b", i, soundsOnFocus = lowerTilesSound)
+                                .then(if (i == 2) Modifier.focusRequester(lowerTile2) else Modifier)
                                 .then(if (lowerTilesSound) Modifier.uiSoundOnFocus(recorder) else Modifier)
                                 .focusable())
                         }
@@ -91,26 +92,29 @@ class RowColumnFocusTest {
     @Test fun selfSoundingTileGetsOneTickNotTwo() {
         setUp(lowerTilesSound = true)
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
-        rule.onNodeWithTag("b:1").assertIsFocused()
+        rule.onNodeWithTag("b:0").assertIsFocused()
         assertEquals(listOf(UiSound.FOCUS), recorder.sounds)
     }
 
     @Test fun silentTileStillGetsTheNavigationTick() {
         setUp(lowerTilesSound = false)
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
-        rule.onNodeWithTag("b:1").assertIsFocused()
+        rule.onNodeWithTag("b:0").assertIsFocused()
         assertEquals(listOf(UiSound.FOCUS), recorder.sounds)
         press(AndroidKeyEvent.KEYCODE_DPAD_UP)
         rule.onNodeWithTag("a:1").assertIsFocused()
         assertEquals(listOf(UiSound.FOCUS, UiSound.FOCUS), recorder.sounds)
     }
 
-    /** Coordinates captured at placement stay live: a row scrolled afterwards still maps to its current column. */
-    @Test fun scrolledRowUsesCurrentTilePositions() {
+    /** A row is re-entered on the tile it was left on, wherever the other row's focus stands. */
+    @Test fun rowIsReenteredOnItsRememberedTile() {
         setUp(lowerTilesSound = false)
-        val px = with(rule.density) { 100.dp.roundToPx() }
-        rule.runOnIdle { runBlocking { lowerScroll.scrollTo(px) } }
+        press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
+        rule.onNodeWithTag("b:0").assertIsFocused()
+        rule.runOnIdle { lowerTile2.requestFocus() }
         rule.waitForIdle()
+        press(AndroidKeyEvent.KEYCODE_DPAD_UP)
+        rule.onNodeWithTag("a:1").assertIsFocused()
         press(AndroidKeyEvent.KEYCODE_DPAD_DOWN)
         rule.onNodeWithTag("b:2").assertIsFocused()
     }

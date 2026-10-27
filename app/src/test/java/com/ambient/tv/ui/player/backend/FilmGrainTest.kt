@@ -10,8 +10,9 @@ class FilmGrainTest {
         assertEquals(listOf("cas", "filmgrain_light"),
             mpvImageShaderKeys(MpvImageOptions(sharpening = "cas", filmGrain = "light"), sdr = true, upscaling = false))
         assertEquals(listOf("filmgrain_medium"), mpvImageShaderKeys(MpvImageOptions(filmGrain = "medium"), sdr = true, upscaling = false))
+        assertEquals(listOf("filmgrain_strong"), mpvImageShaderKeys(MpvImageOptions(filmGrain = "strong"), sdr = true, upscaling = false))
         assertEquals(emptyList<String>(), mpvImageShaderKeys(MpvImageOptions(filmGrain = "medium"), sdr = false))
-        for (key in listOf("filmgrain_light", "filmgrain_medium")) {
+        for (key in listOf("filmgrain_light", "filmgrain_medium", "filmgrain_strong")) {
             val asset = MPV_IMAGE_SHADERS.getValue(key)
             assertFalse(asset.requiresCompute)
             assertFalse(asset.requiresGpuNext)
@@ -19,7 +20,8 @@ class FilmGrainTest {
     }
 
     @Test fun unknownValuesNormalizeOffAndReducedEffectsDisableGrain() {
-        assertEquals("off", MpvImageOptions(filmGrain = "strong").normalized().filmGrain)
+        assertEquals("off", MpvImageOptions(filmGrain = "extreme").normalized().filmGrain)
+        assertEquals("strong", MpvImageOptions(filmGrain = "strong").normalized().filmGrain)
         // A chosen grain level applies under Sparsam too; only untouched defaults run cheap.
         assertEquals("medium", effectiveMpvImageOptions(MpvImageOptions(filmGrain = "medium"), reducedEffects = true).filmGrain)
         assertEquals("off", effectiveMpvImageOptions(MpvImageOptions(), reducedEffects = true).filmGrain)
@@ -35,9 +37,10 @@ class FilmGrainTest {
 
     @Test fun grainSourcesAreFragmentOnlyWithDifferentIntensity() {
         val raw = java.io.File("src/main/res/raw").listFiles()!!.filter { it.name.startsWith("quality_filmgrain") }
-        assertEquals(2, raw.size)
+        assertEquals(3, raw.size)
         raw.forEach { assertFalse(it.readText().contains("//!COMPUTE")) }
         assertTrue(raw.single { "light" in it.name }.readText().contains("#define INTENSITY 0.03"))
         assertTrue(raw.single { "medium" in it.name }.readText().contains("#define INTENSITY 0.06"))
+        assertTrue(raw.single { "strong" in it.name }.readText().contains("#define INTENSITY 0.10"))
     }
 }

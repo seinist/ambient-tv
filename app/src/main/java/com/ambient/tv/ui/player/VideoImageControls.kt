@@ -74,9 +74,10 @@ internal fun SvpSettingsGroup(mode: String, options: SvpOptions, change: (String
 internal fun imageOnOff() = listOf("off" to stringResource(R.string.player_off), "on" to stringResource(R.string.player_on))
 
 @Composable
-private fun imageStrengths(strong: Boolean = false) = listOf(
+private fun imageStrengths() = listOf(
     "off" to stringResource(R.string.player_off), "light" to stringResource(R.string.image_light), "medium" to stringResource(R.string.image_medium),
-) + if (strong) listOf("strong" to stringResource(R.string.image_strong)) else emptyList()
+    "strong" to stringResource(R.string.image_strong),
+)
 
 
 @Composable
@@ -210,7 +211,7 @@ internal fun MpvImageOptionsEditor(
             ImageHint(stringResource(if (hdrTransfer) R.string.image_mpv_hdr_shader_hint else R.string.image_mpv_shader_hint))
         }
         "filters" -> {
-            ImageChoice(R.string.player_deband, o.deband, imageStrengths(true)) { onCheapFieldChosen(); change(o.copy(deband = it)) }
+            ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { onCheapFieldChosen(); change(o.copy(deband = it)) }
             if (o.scaler !in setOf("fsr", "nis")) {
                 GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(
                     PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),

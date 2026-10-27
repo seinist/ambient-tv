@@ -52,7 +52,7 @@ object VideoImageCatalog {
         "gaussian" to "Gaussian", "sinc" to "Sinc", "lanczos" to "Lanczos", "spline" to "Spline",
     )
     val strengths = setOf("off", "light", "medium", "strong")
-    val sharpening = setOf("off", "light", "medium", "cas", "adaptive")
+    val sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
     /**
      * Media3 GPU upscalers, defined once for the panel, settings overview and Stats for Nerds.
      * Bicubic and Catmull-Rom use mpv's B/C values; FSR brings its own RCAS sharpening.
@@ -61,9 +61,9 @@ object VideoImageCatalog {
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
         "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
     )
-    /** light/medium: unsharp mask; cas: AMD Contrast Adaptive Sharpening. */
-    val media3Sharpening = setOf("off", "light", "medium", "cas")
-    val media3Deband = setOf("off", "light", "medium")
+    /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening. */
+    val media3Sharpening = setOf("off", "light", "medium", "strong", "cas")
+    val media3Deband = strengths
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
     val svpModes = setOf("off", "light", "balanced", "quality")
 }
@@ -159,8 +159,8 @@ data class MpvImageOptions(
             downscaler = downscaler.takeIf { it in VideoImageCatalog.downscalers } ?: "mitchell",
             deband = deband.takeIf { it in VideoImageCatalog.strengths } ?: "off",
             sharpening = sharpening.takeIf { it in VideoImageCatalog.sharpening } ?: "off",
-            denoise = denoise.takeIf { it in setOf("off", "light", "medium") } ?: "off",
-            deblock = deblock.takeIf { it in setOf("off", "light", "medium") } ?: "off",
+            denoise = denoise.takeIf { it in VideoImageCatalog.strengths } ?: "off",
+            deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",
             superResolution = superResolution && safeScaler !in setOf("fsr", "nis"),
             antiring = antiring.coerceIn(0, 100), brightness = brightness.coerceIn(-20, 20),
             contrast = contrast.coerceIn(-20, 20), saturation = saturation.coerceIn(-20, 20), gamma = gamma.coerceIn(-20, 20),
@@ -168,7 +168,7 @@ data class MpvImageOptions(
             ditherDepth = ditherDepth.takeIf { it in setOf("auto", "no", "8", "10") } ?: "auto",
             svp = svp.normalized(),
             svpMode = normalizeSvpMode(svpMode),
-            filmGrain = filmGrain.takeIf { it in setOf("off", "light", "medium") } ?: "off",
+            filmGrain = filmGrain.takeIf { it in VideoImageCatalog.strengths } ?: "off",
         )
     }
 }
@@ -190,8 +190,8 @@ data class VlcImageOptions(
         svp = svp.normalized(),
         svpMode = normalizeSvpMode(svpMode),
         scaler = scaler.takeIf { it in VideoImageCatalog.vlcScalers } ?: "bilinear",
-        deband = deband.takeIf { it in setOf("off", "light", "medium") } ?: "off",
-        denoise = denoise.takeIf { it in setOf("off", "light", "medium") } ?: "off",
+        deband = deband.takeIf { it in VideoImageCatalog.strengths } ?: "off",
+        denoise = denoise.takeIf { it in VideoImageCatalog.strengths } ?: "off",
         brightness = brightness.coerceIn(-20, 20), contrast = contrast.coerceIn(-20, 20),
         saturation = saturation.coerceIn(-20, 20), gamma = gamma.coerceIn(-20, 20),
     )
