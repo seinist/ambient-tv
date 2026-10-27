@@ -57,13 +57,19 @@ private const val CAPTURE_WIDTH = 32
 internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
     val surface = AmbientVideoBackdrop.surface
     var frame by remember(surface) { mutableStateOf<ImageBitmap?>(null) }
+    var lastCapture by remember(surface) { mutableStateOf<Bitmap?>(null) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(surface, lifecycle) {
         surface ?: return@LaunchedEffect
         val handler = Handler(Looper.getMainLooper())
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
-                captureFrame(surface, handler)?.let { frame = it.asImageBitmap() }
+                captureFrame(surface, handler)?.let { captured ->
+                    // A still picture would otherwise cross-fade into itself every interval, and the
+                    // two half-transparent layers dip mid-fade: the backdrop visibly pulses.
+                    if (lastCapture?.let { looksSame(it, captured) } == true) captured.recycle()
+                    else { lastCapture = captured; frame = captured.asImageBitmap() }
+                }
                 delay(CAPTURE_INTERVAL_MS)
             }
         }
@@ -84,6 +90,22 @@ internal fun AmbientVideoBackdropLayer(modifier: Modifier = Modifier) {
             0f to Color.Black.copy(alpha = 0.35f), 0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f),
         )))
     }
+}
+
+private const val SAME_FRAME_MEAN_DIFF = 6
+
+/** True when [b] differs from [a] by less than [SAME_FRAME_MEAN_DIFF] per channel on average. */
+private fun looksSame(a: Bitmap, b: Bitmap): Boolean {
+    if (a.width != b.width || a.height != b.height) return false
+    val pa = IntArray(a.width * a.height).also { a.getPixels(it, 0, a.width, 0, 0, a.width, a.height) }
+    val pb = IntArray(pa.size).also { b.getPixels(it, 0, b.width, 0, 0, b.width, b.height) }
+    var diff = 0L
+    for (i in pa.indices) {
+        val x = pa[i]; val y = pb[i]
+        diff += kotlin.math.abs((x shr 16 and 0xFF) - (y shr 16 and 0xFF)) +
+            kotlin.math.abs((x shr 8 and 0xFF) - (y shr 8 and 0xFF)) + kotlin.math.abs((x and 0xFF) - (y and 0xFF))
+    }
+    return diff < SAME_FRAME_MEAN_DIFF * 3L * pa.size
 }
 
 /** Null when the surface has no frame yet or refuses the copy (protected content). */
