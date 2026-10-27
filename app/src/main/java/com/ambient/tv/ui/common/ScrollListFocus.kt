@@ -35,22 +35,26 @@ internal val LocalScrollListActions = staticCompositionLocalOf<ScrollListActions
 
 /** Headers register for their lifetime and window. Disposing a page removes its focus target. */
 internal class ScrollListActions {
-    private val targets = linkedMapOf<Any, Pair<View, FocusRequester>>()
-    fun register(owner: Any, view: View, requester: FocusRequester) { targets[owner] = view to requester }
+    private class Target(val view: View, val actions: FocusRequester, val up: (() -> FocusRequester)?)
+    private val targets = linkedMapOf<Any, Target>()
+    fun register(owner: Any, view: View, requester: FocusRequester, up: (() -> FocusRequester)? = null) { targets[owner] = Target(view, requester, up) }
     fun unregister(owner: Any) { targets.remove(owner) }
-    fun requestFocus(view: View): Boolean = targets.values.toList().asReversed().any { (window, focus) ->
-        window === view && runCatching { focus.requestFocus() }.getOrDefault(false)
+    fun requestFocus(view: View): Boolean = request(view) { it.actions }
+    /** Up out of the top of a page list: the page's next stage up (filter, chips), else its actions. */
+    fun requestUpFocus(view: View): Boolean = request(view) { it.up?.invoke() } || requestFocus(view)
+    private fun request(view: View, pick: (Target) -> FocusRequester?): Boolean = targets.values.toList().asReversed().any { target ->
+        target.view === view && pick(target)?.let { runCatching { it.requestFocus() }.getOrDefault(false) } == true
     }
 }
 
 @Composable
-internal fun RegisterScrollListActions(requester: FocusRequester) {
+internal fun RegisterScrollListActions(requester: FocusRequester, up: (() -> FocusRequester)? = null) {
     val actions = LocalScrollListActions.current
     val view = LocalView.current
     val owner = remember { Any() }
     val handheld = LocalHandheldUi.current
-    DisposableEffect(actions, view, requester, handheld) {
-        if (!handheld) actions?.register(owner, view, requester)
+    DisposableEffect(actions, view, requester, up, handheld) {
+        if (!handheld) actions?.register(owner, view, requester, up)
         onDispose { actions?.unregister(owner) }
     }
 }
