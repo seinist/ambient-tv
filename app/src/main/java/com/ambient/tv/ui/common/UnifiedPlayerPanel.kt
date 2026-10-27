@@ -388,18 +388,27 @@ private fun PlayerControlBarContent(
     if (osdStow != null) LaunchedEffect(osdStow) {
         androidx.compose.runtime.snapshotFlow { stow.value }.collect { osdStow.fraction = it }
     }
+    val navigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
+    Column(
+        modifier.fillMaxWidth().graphicsLayer {
+            translationY = stow.value * 72.dp.toPx()
+            alpha = 1f - stow.value
+        },
+    ) {
     Row(
-        modifier = modifier.fillMaxWidth().height(58.dp)
-            .graphicsLayer {
-                translationY = stow.value * 72.dp.toPx()
-                alpha = 1f - stow.value
-            }
+        modifier = Modifier.fillMaxWidth().height(58.dp)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
                     Key.DirectionUp -> {
                         controlFocus?.seekTarget()?.let { runCatching { it.requestFocus() } }
                         true // No seek bar: keep focus in the controls.
+                    }
+                    // Second Down below the seek bar: the chapter row.
+                    Key.DirectionDown -> {
+                        if (navigation != null && navigation.timeline.chapters.isNotEmpty()) {
+                            navigation.interact(); navigation.chaptersOpen = true; true
+                        } else false
                     }
                     Key.DirectionLeft -> wrapBarFocus(focusManager, FocusDirection.Left, FocusDirection.Right)
                     Key.DirectionRight -> wrapBarFocus(focusManager, FocusDirection.Right, FocusDirection.Left)
@@ -413,6 +422,8 @@ private fun PlayerControlBarContent(
         Spacer(Modifier.weight(1f))
         com.ambient.tv.ui.player.ChapterButton()
         rightContent()
+    }
+    com.ambient.tv.ui.player.ChapterStrip()
     }
 }
 
