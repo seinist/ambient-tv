@@ -121,7 +121,7 @@ class PlaybackAvailability @Inject constructor(
         system.removePrefix("files:").takeIf { system.startsWith("files:") }
             ?.let { id -> preferences.fileSources.firstOrNull { it.id == id } }
             ?.let { withTimeoutOrNull(12_500) { wireGuard.get().ensureForFileSource(it) } }
-        return hosts.machine(system) == null || withTimeoutOrNull(2_500) { hosts.verifySystem(system) } == true
+        return hosts.machine(system) == null || withTimeoutOrNull(3_500) { hosts.verifySystem(system) } == true
     }
 
     /** Says which system is down and, when it can be woken, starts that wake right away. */

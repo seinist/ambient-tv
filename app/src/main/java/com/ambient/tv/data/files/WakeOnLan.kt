@@ -150,7 +150,9 @@ class WakeOnLan {
         val check = hosts?.beginEndpoint("files:${source.id}", source.host, source.port)
         return runInterruptible(Dispatchers.IO) {
         try {
-            Socket().use { it.connect(InetSocketAddress(source.host, source.port), 900) }
+            // Through WireGuard a connect takes a tunnel round trip (often >900 ms): a short probe
+            // there declared a running NAS offline and started a needless wake cycle.
+            Socket().use { it.connect(InetSocketAddress(source.host, source.port), if (source.wireGuard) 3_000 else 900) }
             true
         } catch (_: java.io.IOException) {
             false
