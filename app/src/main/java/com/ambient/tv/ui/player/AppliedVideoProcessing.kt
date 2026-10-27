@@ -98,13 +98,15 @@ internal fun mpvExplicitDeinterlace(vf: String?): String? {
  *
  * VLC 4 inherits the vout filter chain from the instance, and media-only `:video-filter`
  * options are ignored. Denoise/deband/adjust and `:swscale-mode` are therefore not reported
- * as applied. The upscaler is "n/a" because libVLC does not expose the scaler in effect.
+ * as applied. libVLC does not expose the scaler in effect, so [upscaler] comes from the
+ * output path: the swscale mode when swscale runs, otherwise the surface that scales.
  */
 internal fun vlcInstanceAppliedProcessing(
     deinterlaceMode: String,
     deinterlaceFilter: String,
     svpMode: String,
     svpTargetFps: Double?,
+    upscaler: String? = null,
 ): AppliedVideoProcessing {
     val method = DeinterlaceCatalog.normalize("vlc", deinterlaceFilter)
     val deinterlacer = when (deinterlaceMode) {
@@ -128,7 +130,7 @@ internal fun vlcInstanceAppliedProcessing(
     return AppliedVideoProcessing(
         videoFilters = if (svpApplied) "svp" else "off",
         deinterlacer = deinterlacer,
-        upscaler = "n/a",
+        upscaler = upscaler ?: "n/a",
         frameInterpolation = interpolation,
     )
 }

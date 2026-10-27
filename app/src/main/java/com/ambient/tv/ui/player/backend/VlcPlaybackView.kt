@@ -1505,7 +1505,15 @@ class VlcPlaybackController(
             deinterlaceFilter = configuredDeinterlaceFilter,
             svpMode = configuredSvpMode,
             svpTargetFps = configuredSvpRate,
+            upscaler = appliedUpscaler(),
         )
+
+    private fun appliedUpscaler(): String {
+        val image = effectiveImage()
+        if (vlcSurfaceBypassesSwscale(usesAndroidSurfaceOutput, image.softwareProcessing)) return "Android Surface (hardware)"
+        val label = com.ambient.tv.data.local.VideoImageCatalog.vlcScalers[image.scaler] ?: image.scaler
+        return if (vulkanOutput) "$label · libplacebo" else "swscale · $label"
+    }
 
     fun currentDeinterlace(): String? = when (deinterlaceMode) {
         "off" -> null
