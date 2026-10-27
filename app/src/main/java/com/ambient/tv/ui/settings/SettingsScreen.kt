@@ -2106,7 +2106,6 @@ private fun accentLabel(key: String): String = when (key) {
 @Composable
 private fun introAnimationLabel(key: String): String = when (key) {
     IntroAnimation.OFF -> stringResource(R.string.settings_intro_off)
-    IntroAnimation.POWER_ON -> stringResource(R.string.settings_intro_power_on)
     IntroAnimation.HORIZON -> stringResource(R.string.settings_intro_horizon)
     else -> stringResource(R.string.settings_intro_bloom)
 }

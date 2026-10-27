@@ -3,7 +3,6 @@
     <string name="settings_intro_animation">Start animation</string>
     <string name="settings_intro_animation_hint">Once at startup, in your colors. While a server wakes, it shows the progress.</string>
     <string name="settings_intro_off">Off</string>
-    <string name="settings_intro_power_on">Power on</string>
     <string name="settings_intro_bloom">Light field</string>
     <string name="settings_intro_horizon">Daybreak</string>
     <string name="settings_intro_preview">Preview</string>

@@ -31,7 +31,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -96,11 +98,10 @@ private class LogoPaths {
 }
 
 /**
- * Glyphs of ic_brand_wordmark in its own units, baseline at y 0: the Λ stroke (48-unit viewport,
- * placed by [PEAK_X]/[PEAK_Y] at half scale) and the "mbient" fills with their x offsets.
+ * The full brand wordmark (docs/assets/wordmark.svg) in its own units, baseline at y 0: the Λ
+ * stroke, the "mbient" fills with their x offsets, and the TV badge with its cut-out label.
  */
 private class WordmarkPaths {
-    val peak = parse("M8 40L24 8L40 40")
     val letters = listOf(
         19.828f to parse("M82 0H207V271C207 377 263 431 346 431C422 431 466 385 466 290V0H591V271C591 377 648 431 730 431C806 431 850 385 850 290V0H975V306C975 467 885 540 756 540C671 540 599 506 556 450C519 511 454 540 376 540C303 540 241 515 201 467V534H82Z"),
         42.994f to parse("M378 -7C534 -7 649 101 649 267C649 433 534 540 378 540C310 540 250 517 207 469V742H82V0H201V70C243 18 305 -7 378 -7ZM364 100C274 100 205 165 205 267C205 369 274 434 364 434C454 434 522 369 522 267C522 165 454 100 364 100Z"),
@@ -109,18 +110,29 @@ private class WordmarkPaths {
         78.128f to parse("M82 0H207V270C207 377 267 431 356 431C436 431 483 385 483 290V0H608V306C608 467 513 540 385 540C307 540 242 514 201 465V534H82Z"),
         93.198f to parse("M283 -7C328 -7 373 5 403 29L368 118C349 103 324 96 298 96C250 96 224 124 224 176V434H367V534H224V652H99V534H11V434H99V173C99 55 166 -7 283 -7Z"),
     )
+    val badgeLabel = listOf(
+        0f to parse("M236 0H366V590H598V700H4V590H236Z"),
+        6.02f to parse("M301 0H429L734 700H604L369 161L136 700H-5Z"),
+    )
 }
 
 private fun parse(data: String) = PathParser().parsePathString(data).toPath()
 
-private const val PEAK_X = -2.086f
-private const val PEAK_Y = -21.375f
+/** The Λ as three points (left foot, apex, right foot) and its stroke, in wordmark units. */
+private val WORDMARK_PEAK = listOf(Offset(1.914f, -1.375f), Offset(9.914f, -17.375f), Offset(17.914f, -1.375f))
+private const val WORDMARK_PEAK_STROKE = 2.75f
+/** The same three points of the icon's peak, in its 48-unit viewport. */
+private val ICON_PEAK = listOf(Offset(15f, 28f), Offset(24f, 13f), Offset(33f, 28f))
 private const val GLYPH_SCALE = 0.022f
-/** Ink bounds of the wordmark, Λ stroke included. */
+private const val LABEL_SCALE = 0.01f
+private val BADGE_TOP_LEFT = Offset(110.526f, -16f)
+private val BADGE_SIZE = Size(25f, 18f)
+private val LABEL_ORIGIN = Offset(115.526f, -3.5f)
+/** Ink bounds of the wordmark, Λ stroke and badge included. */
 private const val WORDMARK_LEFT = 0.5f
-private const val WORDMARK_RIGHT = 102.1f
+private const val WORDMARK_RIGHT = 135.6f
 private const val WORDMARK_TOP = -18.8f
-private const val WORDMARK_BOTTOM = 0.2f
+private const val WORDMARK_BOTTOM = 2f
 
 /** Composition center as a fraction of the height: the lower third stays free for the status card. */
 private const val STAGE_Y = 0.40f
@@ -134,6 +146,7 @@ private class IntroFrame(
     val accent: Color,
     val second: Color,
     val ink: Color,
+    val cutout: Color,
     val logo: LogoPaths,
     val wordmark: WordmarkPaths,
 )
@@ -227,10 +240,9 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
                 if (seconds <= openSeconds) seconds / openSeconds
                 else ((seconds - openSeconds) % IDLE_SECONDS) / IDLE_SECONDS,
             )
-            val frame = IntroFrame(seconds, breath, accent, second, ink, logo, wordmark)
+            val frame = IntroFrame(seconds, breath, accent, second, ink, background, logo, wordmark)
             drawRect(background)
             when (style) {
-                IntroAnimation.POWER_ON -> drawPowerOn(frame)
                 IntroAnimation.HORIZON -> drawDaybreak(frame)
                 else -> drawLightField(frame)
             }
@@ -285,7 +297,7 @@ private suspend fun holdWhileConnecting(onHolding: (Boolean) -> Unit) {
     }
 }
 
-private const val MIN_VISIBLE_MS = 5_000L
+private const val MIN_VISIBLE_MS = 6_000L
 private const val MAX_HOLD_MS = 3 * 60_000L
 private const val CONNECT_HOLD_MS = 6_000L
 
@@ -340,42 +352,83 @@ private fun DrawScope.drawVignette() {
     )
 }
 
+
+private fun mix(a: Offset, b: Offset, f: Float) = a + (b - a) * f
+private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
+
 /**
- * The brand wordmark centered on [at], [width] wide. The Λ gathers first, then "mbient" follows
- * letter by letter, each rising a hair while it fades in. [start] is when the Λ begins.
+ * The full wordmark centered on [at], [width] wide, starting at [start]. With [fromIcon] the TV
+ * icon stands in the light first, then shrinks onto the A: its peak becomes the Λ while the frame
+ * dissolves. Otherwise the Λ gathers on its own. "mbient" follows letter by letter, and the TV
+ * badge switches on last: a line of light opens into the badge, then the label appears.
  */
-private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, start: Float) {
+private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, start: Float, fromIcon: Boolean) {
     val t = frame.seconds - start
     val unit = width / (WORDMARK_RIGHT - WORDMARK_LEFT)
-    val midX = (WORDMARK_LEFT + WORDMARK_RIGHT) / 2f
-    val midY = (WORDMARK_TOP + WORDMARK_BOTTOM) / 2f
-    val peak = soft(phase(t, 0f, 1.8f))
-    if (peak > 0f && !IntroDraw.lite) {
-        // Light behind the Λ, in screen units so it stays round and soft.
-        val peakCenter = Offset(at.x + (PEAK_X + 12f - midX) * unit, at.y + (PEAK_Y + 12f - midY) * unit)
-        lightPool(lerp(frame.accent, frame.second, frame.breath), peakCenter, width * 0.22f, (0.10f + 0.08f * frame.breath) * peak)
-    }
-    withTransform({
-        translate(at.x - midX * unit, at.y - midY * unit)
-        scale(unit, unit, pivot = Offset.Zero)
-    }) {
-        if (peak > 0f) {
-            val grow = 1.08f - 0.08f * peak
+    val origin = Offset(
+        at.x - (WORDMARK_LEFT + WORDMARK_RIGHT) / 2f * unit,
+        at.y - (WORDMARK_TOP + WORDMARK_BOTTOM) / 2f * unit,
+    )
+    fun mark(p: Offset) = origin + p * unit
+    val lettersFrom = if (fromIcon) 1.8f else 1.1f
+    val badgeFrom = lettersFrom + 1.1f
+    val appear = soft(phase(t, 0f, if (fromIcon) 1.1f else 1.6f))
+    val move = if (fromIcon) soft(phase(t, 1.1f, 2.3f)) else 1f
+    val peak: List<Offset>
+    val peakStroke: Float
+    if (fromIcon) {
+        // The icon's apex lands on the Λ apex; its peak points slide onto the Λ points.
+        val bigUnit = width * 0.30f / 48f
+        val bigOrigin = at - Offset(24f, 24f) * bigUnit
+        val endUnit = unit * 16f / 18f
+        val endOrigin = mark(WORDMARK_PEAK[1]) - ICON_PEAK[1] * endUnit
+        val iconUnit = mix(bigUnit, endUnit, move)
+        val iconOrigin = mix(bigOrigin, endOrigin, move)
+        peak = ICON_PEAK.indices.map { mix(iconOrigin + ICON_PEAK[it] * iconUnit, mark(WORDMARK_PEAK[it]), move) }
+        peakStroke = mix(3.6f * bigUnit, WORDMARK_PEAK_STROKE * unit, move)
+        val shell = appear * (1f - soft(phase(t, 1.5f, 2.4f)))
+        if (shell > 0f) {
+            val shellColor = lerp(frame.ink, frame.accent, 0.25f)
             withTransform({
-                translate(PEAK_X, PEAK_Y)
-                scale(0.5f, 0.5f, pivot = Offset.Zero)
-                scale(grow, grow, pivot = Offset(24f, 24f))
+                translate(iconOrigin.x, iconOrigin.y)
+                scale(iconUnit, iconUnit, pivot = Offset.Zero)
             }) {
-                drawPath(
-                    frame.wordmark.peak,
-                    frame.accent.copy(alpha = peak),
-                    style = Stroke(5.5f, cap = StrokeCap.Round, join = StrokeJoin.Round),
-                )
+                val style = Stroke(3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                drawPath(frame.logo.frame, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
+                drawPath(frame.logo.stand, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
             }
         }
+    } else {
+        val grow = 1.08f - 0.08f * appear
+        val pivot = mark(Offset(9.914f, -9.375f))
+        peak = WORDMARK_PEAK.map { pivot + (mark(it) - pivot) * grow }
+        peakStroke = WORDMARK_PEAK_STROKE * unit
+    }
+    if (appear > 0f) {
+        if (!IntroDraw.lite) {
+            val glowAt = Offset(peak[1].x, (peak[0].y + peak[1].y) / 2f)
+            val glowSize = (peak[2].x - peak[0].x) * 1.6f
+            lightPool(lerp(frame.accent, frame.second, frame.breath), glowAt, glowSize, (0.10f + 0.08f * frame.breath) * appear)
+        }
+        val path = Path().apply {
+            moveTo(peak[0].x, peak[0].y)
+            lineTo(peak[1].x, peak[1].y)
+            lineTo(peak[2].x, peak[2].y)
+        }
+        drawPath(path, frame.accent.copy(alpha = appear), style = Stroke(peakStroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+    val line = soft(phase(t, badgeFrom, badgeFrom + 0.5f))
+    if (line > 0f && !IntroDraw.lite) {
+        val badgeCenter = mark(BADGE_TOP_LEFT + Offset(BADGE_SIZE.width / 2f, BADGE_SIZE.height / 2f))
+        lightPool(lerp(frame.accent, frame.second, frame.breath), badgeCenter, BADGE_SIZE.width * unit * 1.4f, 0.12f * line, squash = 0.7f)
+    }
+    withTransform({
+        translate(origin.x, origin.y)
+        scale(unit, unit, pivot = Offset.Zero)
+    }) {
         frame.wordmark.letters.forEachIndexed { i, (x, glyph) ->
-            val from = 1.1f + 0.16f * i
-            val letter = soft(phase(t, from, from + 1.4f))
+            val from = lettersFrom + 0.12f * i
+            val letter = soft(phase(t, from, from + 1.2f))
             if (letter <= 0f) return@forEachIndexed
             withTransform({
                 translate(x, 2.4f * (1f - letter))
@@ -384,10 +437,34 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
                 drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter))
             }
         }
+        if (line > 0f) {
+            // Switches on like a screen: a bright line, opening to the full badge.
+            val open = soft(phase(t, badgeFrom + 0.3f, badgeFrom + 1.1f))
+            val height = BADGE_SIZE.height * (0.08f + 0.92f * open)
+            val middle = BADGE_TOP_LEFT.y + BADGE_SIZE.height / 2f
+            val radius = minOf(4f, height / 2f)
+            drawRoundRect(
+                lerp(frame.accent, Color.White, 0.5f * (1f - open)).copy(alpha = line),
+                topLeft = Offset(BADGE_TOP_LEFT.x, middle - height / 2f),
+                size = Size(BADGE_SIZE.width, height),
+                cornerRadius = CornerRadius(radius, radius),
+            )
+            val label = soft(phase(t, badgeFrom + 0.8f, badgeFrom + 1.6f))
+            if (label > 0f) {
+                frame.wordmark.badgeLabel.forEach { (x, glyph) ->
+                    withTransform({
+                        translate(LABEL_ORIGIN.x + x, LABEL_ORIGIN.y)
+                        scale(LABEL_SCALE, -LABEL_SCALE, pivot = Offset.Zero)
+                    }) {
+                        drawPath(glyph, frame.cutout.copy(alpha = label))
+                    }
+                }
+            }
+        }
     }
 }
 
-/** Two or three wide pools of the accents drift on long, unrelated periods; the wordmark settles into them. */
+/** Two or three wide pools of the accents drift on long, unrelated periods; the icon settles into the wordmark. */
 private fun DrawScope.drawLightField(frame: IntroFrame) {
     val t = frame.seconds
     val gather = soft(phase(t, 0f, 2.6f)) * (0.85f + 0.15f * frame.breath)
@@ -410,7 +487,7 @@ private fun DrawScope.drawLightField(frame: IntroFrame) {
             span * 0.4f, 0.10f * gather,
         )
     }
-    drawWordmark(frame, stage, size.minDimension * 0.46f, start = 0.9f)
+    drawWordmark(frame, stage, size.minDimension * 0.62f, start = 0.5f, fromIcon = true)
 }
 
 /** Light rises slowly from below the screen edge like early morning; the wordmark appears in the upper calm. */
@@ -430,46 +507,5 @@ private fun DrawScope.drawDaybreak(frame: IntroFrame) {
         ),
         blendMode = BlendMode.Plus,
     )
-    drawWordmark(frame, stageCenter(), size.minDimension * 0.46f, start = 1.4f)
-}
-
-/**
- * A thin line of light opens into a lit screen, the TV mark forms around it, and the wordmark
- * follows below. Frame and stand are drawn in the ink color, only the peak in the accent.
- */
-private fun DrawScope.drawPowerOn(frame: IntroFrame) {
-    val t = frame.seconds
-    val side = size.minDimension * 0.18f
-    val unit = side / 48f
-    val stage = stageCenter()
-    val logoCenter = Offset(stage.x, stage.y - size.minDimension * 0.07f)
-    val origin = Offset(logoCenter.x - side / 2f, logoCenter.y - side / 2f)
-    val screen = Offset(origin.x + 24f * unit, origin.y + 20f * unit)
-    val line = soft(phase(t, 0.2f, 0.9f))
-    val open = soft(phase(t, 0.7f, 2.0f))
-    val glow = 0.8f + 0.2f * frame.breath
-    // Squashed to a line, then opening to the screen's own proportions.
-    lightPool(
-        lerp(frame.second, Color.White, 0.5f * (1f - open)),
-        screen,
-        side * (0.42f + 0.18f * open),
-        (0.5f * line * (1f - open) + 0.2f * open) * glow,
-        squash = 0.04f + 0.58f * open,
-    )
-    lightPool(lerp(frame.accent, frame.second, frame.breath), screen, side * 2.4f, 0.12f * open * glow)
-    val shell = soft(phase(t, 1.1f, 2.4f))
-    val peak = soft(phase(t, 1.6f, 2.8f))
-    withTransform({
-        translate(origin.x, origin.y)
-        scale(unit, unit, pivot = Offset.Zero)
-    }) {
-        val style = Stroke(3.0f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        val shellColor = lerp(frame.ink, frame.accent, 0.25f)
-        if (shell > 0f) {
-            drawPath(frame.logo.frame, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
-            drawPath(frame.logo.stand, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
-        }
-        if (peak > 0f) drawPath(frame.logo.peak, frame.accent.copy(alpha = peak), style = Stroke(3.4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-    }
-    drawWordmark(frame, Offset(stage.x, stage.y + size.minDimension * 0.15f), size.minDimension * 0.30f, start = 2.2f)
+    drawWordmark(frame, stageCenter(), size.minDimension * 0.62f, start = 0.9f, fromIcon = false)
 }

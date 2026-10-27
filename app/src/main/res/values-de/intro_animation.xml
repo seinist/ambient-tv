@@ -3,7 +3,6 @@
     <string name="settings_intro_animation">Start-Animation</string>
     <string name="settings_intro_animation_hint">Einmal beim Start, in deinen Farben. Läuft gerade ein Aufwecken, zeigt sie den Fortschritt.</string>
     <string name="settings_intro_off">Aus</string>
-    <string name="settings_intro_power_on">Einschalten</string>
     <string name="settings_intro_bloom">Lichtfeld</string>
     <string name="settings_intro_horizon">Morgenlicht</string>
     <string name="settings_intro_preview">Vorschau</string>
