@@ -84,6 +84,13 @@ class AppPreferences @Inject constructor(
 
     init {
         SystemNameOverrides.names = systemNames
+        if (!prefs.getBoolean(KEY_SECTION_VIEWS_DEFAULT_POSTER, false)) {
+            val stored = prefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap()
+            prefs.edit {
+                withPosterSectionViews(stored).forEach { (key, value) -> if (stored[key] != value) putString(key, value) }
+                putBoolean(KEY_SECTION_VIEWS_DEFAULT_POSTER, true)
+            }
+        }
     }
 
     /** Main-menu entries that have a divider below them (menu editor). Missing key = none. */
@@ -1274,6 +1281,18 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_YOUTUBE_MAX_VIDEO_HEIGHT, 0).takeIf { it in setOf(0, 720, 1080, 1440, 2160) } ?: 0
         set(value) = prefs.edit { putInt(KEY_YOUTUBE_MAX_VIDEO_HEIGHT, value.takeIf { it in setOf(0, 720, 1080, 1440, 2160) } ?: 0) }
 
+    /** SmartTube player network engine ([com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES]); OkHttp as before. */
+    var youtubeNetworkEngine: String
+        get() = prefs.getString(KEY_YOUTUBE_NETWORK_ENGINE, null)?.takeIf { it in com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES }
+            ?: com.ambient.tv.ui.player.MEDIA3_NETWORK_OKHTTP
+        set(value) = prefs.edit { putString(KEY_YOUTUBE_NETWORK_ENGINE,
+            value.takeIf { it in com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES } ?: com.ambient.tv.ui.player.MEDIA3_NETWORK_OKHTTP) }
+
+    /** SmartTube player buffer size: low, medium (Media3 default) or high. */
+    var youtubeBufferKey: String
+        get() = prefs.getString(KEY_YOUTUBE_BUFFER, null)?.takeIf { it in com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS } ?: "medium"
+        set(value) = prefs.edit { putString(KEY_YOUTUBE_BUFFER, value.takeIf { it in com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS } ?: "medium") }
+
     /** SmartTube video format preset key ([com.ambient.tv.youtube.YOUTUBE_VIDEO_PRESETS]); "auto" = per-device default. */
     var youtubeVideoPreset: String
         get() = prefs.getString(KEY_YOUTUBE_VIDEO_PRESET, null)?.takeIf { com.ambient.tv.youtube.youtubeVideoPreset(it) != null }
@@ -1907,12 +1926,17 @@ class AppPreferences @Inject constructor(
             prefs.all.keys
                 .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") }
                 .forEach(::remove)
-            values.forEach { (key, value) ->
+            withPosterSectionViews(values).forEach { (key, value) ->
                 if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_")) {
                     putString(key, value)
                 }
             }
         }
+    }
+
+    /** Landscape page views (also from older backups or a phone) become poster; YouTube has no poster view. */
+    private fun withPosterSectionViews(values: Map<String, String>): Map<String, String> = values.mapValues { (key, value) ->
+        if (key.startsWith("section_view_") && !key.startsWith("section_view_youtube:") && value in setOf("LANDSCAPE", "ROWS")) "POSTER" else value
     }
 
     fun updateActiveServerMac(mac: String) {
@@ -1991,7 +2015,8 @@ class AppPreferences @Inject constructor(
         const val KEY_SYSTEM_HOME_HIDDEN_ROWS = "system_home_hidden_rows"
         // Plex's own rows repeat much of what the other rows show, and a library has many of them.
         val DEFAULT_SYSTEM_HOME_HIDDEN_ROWS = setOf("${HomeRowDefinition.SYSTEM_PLEX}.${HomeRowDefinition.CONTENT_HUBS}")
-        const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster"
+        const val KEY_SECTION_VIEWS_DEFAULT_POSTER = "section_views_default_poster"
+        const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster_v2"
         val ALL_CONTINUE_DEFAULT_SYSTEMS = setOf(
             HomeRowDefinition.SYSTEM_PLEX,
             HomeRowDefinition.SYSTEM_JELLYFIN,
@@ -2161,6 +2186,8 @@ class AppPreferences @Inject constructor(
         const val KEY_YOUTUBE_FEEDS = "youtube_feed_keys"
         const val KEY_YOUTUBE_MAX_VIDEO_HEIGHT = "youtube_max_video_height"
         const val KEY_YOUTUBE_VIDEO_PRESET = "youtube_video_preset"
+        const val KEY_YOUTUBE_NETWORK_ENGINE = "youtube_network_engine"
+        const val KEY_YOUTUBE_BUFFER = "youtube_buffer"
         val YOUTUBE_FEED_KEYS = setOf("home", "subscriptions", "channels", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
         val DEFAULT_YOUTUBE_FEEDS = listOf("home", "subscriptions", "channels", "history", "playlists", "shorts", "music", "news", "gaming", "live", "kids")
         const val KEY_SCREENSAVER_ENABLED = "screensaver_enabled"

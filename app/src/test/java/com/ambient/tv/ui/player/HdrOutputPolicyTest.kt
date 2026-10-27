@@ -13,6 +13,14 @@ class HdrOutputPolicyTest {
         assertFalse(nativeHdrSurfacePreferred(HdrStandard.HLG, setOf(HdrStandard.HDR10)))
         assertFalse(nativeHdrSurfacePreferred(null, setOf(HdrStandard.HDR10)))
     }
+    @Test fun plexDolbyVisionLabelKeepsTheHdrBaseLayerOnANonDvDisplay() {
+        assertEquals(HdrStandard.HDR10, dolbyVisionBaseLayer("Dolby Vision P8.1"))
+        assertEquals(HdrStandard.HLG, dolbyVisionBaseLayer("Dolby Vision P8.4"))
+        assertEquals(HdrStandard.HDR10, dolbyVisionBaseLayer("Dolby Vision P7"))
+        assertNull(dolbyVisionBaseLayer("Dolby Vision P5"))
+        assertTrue(nativeHdrSurfacePreferred(HdrStandard.DOLBY_VISION, setOf(HdrStandard.HDR10), HdrStandard.HDR10))
+        assertFalse(nativeHdrSurfacePreferred(HdrStandard.DOLBY_VISION, setOf(HdrStandard.HDR10)))
+    }
     private val hdr10Tv = setOf(HdrStandard.HDR10, HdrStandard.HLG)
 
     @Test

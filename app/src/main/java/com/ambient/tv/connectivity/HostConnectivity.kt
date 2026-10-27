@@ -32,6 +32,8 @@ class HostConnectivity internal constructor(
     private val machines: WakeMachines,
     /** True for a host routed through WireGuard while the tunnel is not up. */
     private val tunnelDown: (host: String) -> Boolean = { false },
+    /** True for a host routed through WireGuard: its probe gets a tunnel round trip of time. */
+    private val tunnelled: (host: String) -> Boolean = { false },
 ) {
     @Inject constructor(
         preferences: AppPreferences,
@@ -42,7 +44,7 @@ class HostConnectivity internal constructor(
         val route = wireGuard.get()
         route.status.value !is com.ambient.tv.vpn.WireGuardRouteState.Up &&
             route.tunnelHosts().any { it.equals(host, ignoreCase = true) }
-    })
+    }, { host -> wireGuard.get().tunnelHosts().any { it.equals(host, ignoreCase = true) } })
 
     private val store = HostHealthStore()
     val states = store.states
@@ -105,7 +107,7 @@ class HostConnectivity internal constructor(
         val reachable = coroutineScope {
             targets.distinctBy { it.host to it.port }.map { target -> async {
                 runInterruptible {
-                    try { Socket().use { it.connect(InetSocketAddress(target.host, target.port), 1500) }; true }
+                    try { Socket().use { it.connect(InetSocketAddress(target.host, target.port), if (tunnelled(target.host)) 3_000 else 1500) }; true }
                     catch (_: java.io.IOException) { false }
                 }
             } }.awaitAll().any { it }

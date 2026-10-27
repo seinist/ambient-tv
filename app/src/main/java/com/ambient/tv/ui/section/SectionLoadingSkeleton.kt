@@ -175,7 +175,7 @@ private fun SectionTitleSkeleton(modifier: Modifier = Modifier, startPadding: Dp
     }
 }
 
-private fun listRowScale(listRows: Int, uhdScale: Float) = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+private fun listRowScale(listRows: Int, uhdScale: Float) = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
 
 @Composable
 private fun LibrarySkeleton(viewMode: SectionViewMode, gridColumns: Int, listRows: Int) {
@@ -221,7 +221,7 @@ private fun TileGridSkeleton(columns: GridCells, padding: PaddingValues, horizon
         horizontalArrangement = Arrangement.spacedBy(horizontalSpacing),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         userScrollEnabled = false,
-    ) { gridItems(List(72) { it }) { SkeletonTile(style = style, showDescription = showDescription) } }
+    ) { gridItems(List(72) { it }) { SkeletonTile(style = style, showDescription = showDescription, fillCell = true) } }
 }
 
 /** One list card: artwork, title, a meta line and optional summary lines, like the real list rows. */

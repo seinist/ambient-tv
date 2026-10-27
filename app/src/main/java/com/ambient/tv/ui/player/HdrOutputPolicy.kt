@@ -15,12 +15,15 @@ internal fun dolbyVisionProfile(codecs: String?): Int? =
         else null
     }
 
-/** Base layer named in a server label such as "Dolby Vision/HDR10" or "DoVi/HLG". */
+/**
+ * Base layer named in a server label such as "Dolby Vision/HDR10" or "DoVi/HLG", or implied by
+ * Plex's profile label ("Dolby Vision P8.1" = HDR10, "P8.4" = HLG, "P7" = HDR10).
+ */
 internal fun dolbyVisionBaseLayer(dynamicRange: String?): HdrStandard? {
     val value = dynamicRange.orEmpty().lowercase()
     return when {
-        value.contains("hlg") -> HdrStandard.HLG
-        value.contains("hdr10") -> HdrStandard.HDR10
+        value.contains("hlg") || Regex("""\bp8\.4\b""").containsMatchIn(value) -> HdrStandard.HLG
+        value.contains("hdr10") || Regex("""\bp(7|8\.1)\b""").containsMatchIn(value) -> HdrStandard.HDR10
         else -> null
     }
 }
@@ -54,5 +57,5 @@ internal fun hdrOutputStandard(
 }
 
 /** A compatible HDR display should receive the original decoder surface, not an SDR GPU copy. */
-internal fun nativeHdrSurfacePreferred(source: HdrStandard?, display: Set<HdrStandard>): Boolean =
-    source != null && hdrOutputStandard(source, null, null, display) != null
+internal fun nativeHdrSurfacePreferred(source: HdrStandard?, display: Set<HdrStandard>, baseLayer: HdrStandard? = null): Boolean =
+    source != null && hdrOutputStandard(source, null, baseLayer, display) != null

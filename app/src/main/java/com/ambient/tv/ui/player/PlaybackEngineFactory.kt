@@ -103,6 +103,8 @@ object PlaybackEngineFactory {
         deferPrepare: Boolean = false,
         /** Live TV: buffer thresholds from [media3LiveBufferThresholds]. */
         liveStream: Boolean = metadata?.isLive == true,
+        /** SmartTube: network engine and buffer size from its settings; null keeps the defaults. */
+        streamTuning: Media3StreamTuning? = null,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
@@ -113,7 +115,7 @@ object PlaybackEngineFactory {
                 gatedMedia3Handle { deferPrepare ->
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
-                        deferPrepare = deferPrepare, liveStream = liveStream)
+                        deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning)
                 }
             }.player
         }
@@ -140,18 +142,23 @@ object PlaybackEngineFactory {
 
         val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
             .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-        val okHttpDataSourceFactory = OkHttpDataSource.Factory(streamClient)
+        val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
             .setDefaultRequestProperties(streamHeaders)
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(DefaultDataSource.Factory(context, okHttpDataSourceFactory))
+            .setDataSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory))
             .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
         val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
         val liveBuffer = media3LiveBufferThresholds(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
+        val tunedBuffer = streamTuning?.let { media3TunedBuffer(it.bufferKey) }
+        val targetBytes = media3TargetBufferBytes(heapMb, tunedBuffer?.heapShare ?: 4)
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setTargetBufferBytes(media3TargetBufferBytes(heapMb))
+            .setTargetBufferBytes(targetBytes)
             .apply {
-                if (liveBuffer != null) setBufferDurationsMs(
+                if (tunedBuffer != null) setBufferDurationsMs(tunedBuffer.minMs, tunedBuffer.maxMs,
+                    liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                    liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                else if (liveBuffer != null) setBufferDurationsMs(
                     androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
                     androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
                     liveBuffer.startMs, liveBuffer.rebufferMs)
@@ -160,7 +167,8 @@ object PlaybackEngineFactory {
         logPlaybackStartup("media3", "configured", started,
             "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
                 "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
-                "target_bytes=${media3TargetBufferBytes(heapMb)} max_height=$maxVideoHeight")
+                "target_bytes=$targetBytes max_height=$maxVideoHeight" +
+                (streamTuning?.let { " network=${it.networkEngine} buffer=${it.bufferKey}" } ?: ""))
 
         return ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -279,10 +287,66 @@ object PlaybackEngineFactory {
  * the heap on 1 GB sticks, so a high-bitrate remux could run the app out of memory. The target is
  * a quarter of the app heap, between 32 MB and the Media3 default.
  */
-internal fun media3TargetBufferBytes(heapMb: Int): Int {
+internal fun media3TargetBufferBytes(heapMb: Int, heapShare: Int = 4): Int {
     val default = androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_VIDEO_BUFFER_SIZE
     if (heapMb <= 0) return default
-    return (heapMb.toLong() * 1024 * 1024 / 4).coerceIn(32L * 1024 * 1024, default.toLong()).toInt()
+    return (heapMb.toLong() * 1024 * 1024 / heapShare).coerceIn(32L * 1024 * 1024, default.toLong()).toInt()
+}
+
+/** SmartTube's player options "Network engine" and "Buffer size", for one Media3 player. */
+data class Media3StreamTuning(val networkEngine: String, val bufferKey: String)
+
+const val MEDIA3_NETWORK_OKHTTP = "okhttp"
+const val MEDIA3_NETWORK_CRONET = "cronet"
+const val MEDIA3_NETWORK_DEFAULT = "default"
+val MEDIA3_NETWORK_ENGINES = listOf(MEDIA3_NETWORK_OKHTTP, MEDIA3_NETWORK_CRONET, MEDIA3_NETWORK_DEFAULT)
+val MEDIA3_BUFFER_KEYS = listOf("low", "medium", "high")
+
+/** Buffer durations per level; the byte target stays a share of the heap so High cannot run 1 GB sticks out of memory. */
+internal data class Media3TunedBuffer(val minMs: Int, val maxMs: Int, val heapShare: Int)
+
+internal fun media3TunedBuffer(key: String): Media3TunedBuffer = when (key) {
+    "low" -> Media3TunedBuffer(minMs = 15_000, maxMs = 30_000, heapShare = 6)
+    "high" -> Media3TunedBuffer(minMs = 60_000, maxMs = 180_000, heapShare = 3)
+    else -> Media3TunedBuffer(
+        androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+        androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS, heapShare = 4)
+}
+
+/**
+ * OkHttp unless SmartTube's setting picks another engine. Cronet comes from Play Services; without
+ * it playback stays on OkHttp. Renewing expired googlevideo URLs is an OkHttp interceptor, so the
+ * other engines play without it (a URL lasts hours).
+ */
+private fun media3HttpDataSourceFactory(
+    context: Context,
+    engine: String?,
+    okHttpClient: okhttp3.OkHttpClient,
+): androidx.media3.datasource.HttpDataSource.Factory {
+    val okHttp = { OkHttpDataSource.Factory(okHttpClient) }
+    return when (engine) {
+        MEDIA3_NETWORK_CRONET -> cronetEngine(context)
+            ?.let { androidx.media3.datasource.cronet.CronetDataSource.Factory(it, cronetExecutor) }
+            ?: okHttp().also { Timber.i("Cronet unavailable, using OkHttp") }
+        MEDIA3_NETWORK_DEFAULT -> androidx.media3.datasource.DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+        else -> okHttp()
+    }
+}
+
+private val cronetExecutor: java.util.concurrent.ExecutorService by lazy { java.util.concurrent.Executors.newFixedThreadPool(4) }
+
+@Volatile private var cronetEngineCache: Any? = null
+
+private fun cronetEngine(context: Context): org.chromium.net.CronetEngine? {
+    (cronetEngineCache as? org.chromium.net.CronetEngine)?.let { return it }
+    if (cronetEngineCache == false) return null
+    return synchronized(cronetExecutor) {
+        val engine = runCatching { androidx.media3.datasource.cronet.CronetUtil.buildCronetEngine(context.applicationContext) }
+            .onFailure { Timber.w(it, "Cronet engine failed") }.getOrNull()
+        cronetEngineCache = engine ?: false
+        engine
+    }
 }
 
 private fun androidx.media3.common.TrackSelectionParameters.Builder.youtubeMaxVideoSize(box: Int) = setMaxVideoSize(box, box)

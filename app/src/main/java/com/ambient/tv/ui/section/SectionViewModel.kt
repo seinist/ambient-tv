@@ -320,11 +320,10 @@ class SectionViewModel @Inject constructor(
     fun onRecommendationItemFocused(rowId: String, item: MediaItem) {
         metadataPrefetcher.detail(item.ratingKey)
         focusedRecommendationRowId = rowId
+        // Only the buffer: recommendation pages read the focused key once as a restore target, and
+        // publishing it to uiState recomposed the whole screen on every D-pad step (~50 ms on SHIELD).
+        // rebuild() picks the buffered focus up again.
         bufferFocus(item.ratingKey, rowId)
-        val current = _uiState.value as? SectionUiState.Loaded ?: return
-        if (current.focusedRatingKey != item.ratingKey || current.focusedRecommendationRowId != rowId) {
-            _uiState.value = current.copy(focusedRatingKey = item.ratingKey, focusedRecommendationRowId = rowId)
-        }
     }
 
     fun onCollectionFocused(id: String) {

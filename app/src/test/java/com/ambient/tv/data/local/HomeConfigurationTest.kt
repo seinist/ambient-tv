@@ -14,6 +14,24 @@ class HomeConfigurationTest {
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, migrated[0].displayMode)
         assertEquals(HomeRowDefinition.DISPLAY_LANDSCAPE, migrated[1].displayMode)
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, migrated[2].displayMode)
+        val trailers = HomeRowDefinition(system = HomeRowDefinition.SYSTEM_TRAILERS, contentKey = "popular", displayMode = HomeRowDefinition.DISPLAY_LANDSCAPE)
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, trailers.withDefaultPosterCards().displayMode)
+    }
+
+    @Test fun savedLandscapePageViewsBecomePosterExceptYouTube() {
+        val raw = memoryPreferences().apply {
+            edit().putString("section_view_plex:1:recommendations", "LANDSCAPE")
+                .putString("section_view_trailers:POPULAR", "LANDSCAPE")
+                .putString("section_view_plex:1:library", "LIST")
+                .putString("section_view_youtube:home", "LANDSCAPE").commit()
+        }
+        val prefs = AppPreferences(raw)
+        assertEquals("POSTER", prefs.sectionViewMode("plex:1:recommendations"))
+        assertEquals("POSTER", prefs.sectionViewMode("trailers:POPULAR"))
+        assertEquals("LIST", prefs.sectionViewMode("plex:1:library"))
+        assertEquals("LANDSCAPE", prefs.sectionViewMode("youtube:home"))
+        prefs.setSectionViewMode("plex:1:recommendations", "LANDSCAPE")
+        assertEquals("LANDSCAPE", AppPreferences(raw).sectionViewMode("plex:1:recommendations"))
     }
 
     @Test fun genreRowsCarryTheirGenreInTheContentKey() {

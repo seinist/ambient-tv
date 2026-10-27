@@ -453,9 +453,7 @@ internal fun MpvPlayerContent(
                         add(stringResource(R.string.player_nerd_sdr_curve) to
                             com.ambient.tv.ui.player.backend.mpvSdrSurfaceLabel(controller.sdrSurfaceDataSpace))
                     }
-                    if (controller.deinterlaceModeKey != "off") {
-                        add(stringResource(R.string.player_nerd_deinterlace_configured) to listOf(controller.deinterlaceModeKey, controller.deinterlaceFilterKey).filter { it.isNotBlank() && it != "auto" }.joinToString(" · ").ifBlank { controller.deinterlaceModeKey })
-                    }
+                    com.ambient.tv.ui.player.mpvDeinterlaceStat(controller.deinterlaceModeKey, controller.deinterlaceFilterKey, snapshot.activeVideoFilters, snapshot.activeDeinterlace)?.let { add(stringResource(R.string.player_nerd_deinterlace_configured) to it) }
                     snapshot.activeVideoFilters?.let { add(stringResource(R.string.player_nerd_video_filters) to it) }
                     controller.loadedImageShaders().takeIf { it.isNotEmpty() }?.let { add(stringResource(R.string.player_nerd_shaders_loaded) to it.joinToString()) }
                     add(stringResource(R.string.audio_route_output) to audioRouteSummaryText(controller.audioSession))

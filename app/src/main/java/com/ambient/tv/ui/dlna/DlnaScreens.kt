@@ -274,7 +274,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     state.viewMode == DlnaViewMode.POSTER -> state.gridColumns
                     else -> landscapeGridColumns(state.gridColumns)
                 }
-                val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f)
+                val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
                 val columns = GridCells.Fixed(columnCount)
                 val pulse = if (state.loading && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
                 LazyVerticalGrid(
@@ -288,7 +288,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                         if (state.viewMode == DlnaViewMode.LIST) {
                             items(state.listRows.coerceIn(4, 10)) { DlnaLoadingRow(pulse, rowScale) }
                         } else {
-                            items(columnCount * 3) { SkeletonTile(style = style, showDescription = false) }
+                            items(columnCount * 3) { SkeletonTile(style = style, showDescription = false, fillCell = true) }
                         }
                     } else {
                         if (nodes.isEmpty() && state.error == null) {
@@ -308,7 +308,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             } else {
                                 val media = remember(node) { node.toMediaItem() }
                                 MediaTile(media, { if (node.container) viewModel.open(node) else onPlay(node.key) }, modifier = focusModifier,
-                                    style = style, showDescription = false)
+                                    style = style, showDescription = false, fillCell = true)
                             }
                         }
                         if (state.loadingMore) {
@@ -317,7 +317,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             } else {
                                 // Full rows, including an incomplete last content row.
                                 items(columnCount * 3 - nodes.size % columnCount, span = { GridItemSpan(1) }) {
-                                    SkeletonTile(style = style, showDescription = false)
+                                    SkeletonTile(style = style, showDescription = false, fillCell = true)
                                 }
                             }
                         }

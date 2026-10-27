@@ -1160,7 +1160,7 @@ internal fun TvPlayerSeekBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (highlighted) 9.dp else 6.dp),
+                .height(if (highlighted) 7.dp else 6.dp),
         ) {
             // Offscreen so chapter gaps can be cut out of track and progress alike.
             Box(
@@ -1209,9 +1209,9 @@ internal fun TvPlayerSeekBar(
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .size(17.dp)
+                            .size(15.dp)
                             .background(com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator, CircleShape)
-                            .border(3.dp, Color.White, CircleShape),
+                            .border(2.5.dp, Color.White, CircleShape),
                     )
                 }
             }

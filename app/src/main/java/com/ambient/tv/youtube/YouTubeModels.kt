@@ -115,3 +115,12 @@ fun youtubePanelThumbnailUrls(videoId: String): List<String> = listOf(
     "https://i.ytimg.com/vi/$videoId/sddefault.jpg",
     youtubeThumbnailUrl(videoId),
 )
+
+private val CHANNEL_ID_IN_PARAMS = Regex("UC[A-Za-z0-9_-]{22}")
+
+/** Channel id embedded in browse params (URL-encoded base64 protobuf), as on subscribed-channel tabs. */
+fun youtubeChannelIdInBrowseParams(params: String): String? = runCatching {
+    val base64 = java.net.URLDecoder.decode(params, "UTF-8").replace('-', '+').replace('_', '/')
+    val bytes = java.util.Base64.getDecoder().decode(base64.padEnd((base64.length + 3) / 4 * 4, '='))
+    CHANNEL_ID_IN_PARAMS.find(String(bytes, Charsets.ISO_8859_1))?.value
+}.getOrNull()

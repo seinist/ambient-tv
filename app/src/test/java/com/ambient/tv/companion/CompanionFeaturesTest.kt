@@ -54,6 +54,21 @@ class CompanionFeaturesTest {
         assertEquals(target.activeServerId, merged.activeServerId)
     }
 
+    @Test fun freshReceiverAdoptsSendersActiveServersAndEnabledSystems() {
+        val source = SettingsBackup(exportedAtEpochMs = 2, plexEnabled = true, jellyfinEnabled = true, youtubeEnabled = true,
+            servers = listOf(ServerBackup(ServerProfile("a", "A", "a.test"), "ta"), ServerBackup(ServerProfile("b", "B", "b.test"), "tb")),
+            activeServerId = "b",
+            jellyfinServers = listOf(JellyfinServerBackup(JellyfinServerProfile("j", "JF", "jf.test", username = "u", userId = "1", authenticated = true), "tj")),
+            activeJellyfinServerId = "j")
+        val payload = decode(CompanionBackupPolicy.prepare(source, true, "accounts"))
+        val merged = decode(CompanionBackupPolicy.merge(payload, SettingsBackup(exportedAtEpochMs = 1), "accounts", false, false))
+        assertEquals("b", merged.activeServerId)
+        assertEquals("j", merged.activeJellyfinServerId)
+        assertTrue(merged.plexEnabled && merged.jellyfinEnabled && merged.youtubeEnabled)
+        // A receiver with its own valid selection keeps it.
+        assertEquals("same-id", decode(CompanionBackupPolicy.merge(payload, target, "accounts", true, false)).activeServerId)
+    }
+
     @Test fun explicitOverwritePreservesMissingCredentialsOnlyForSameEndpointAndAccount() {
         val source = target.copy(servers = listOf(ServerBackup(target.servers.single().profile.copy(id = "phone", name = "New name"))))
         val merged = decode(CompanionBackupPolicy.merge(source, target, "accounts", true, false))

@@ -61,10 +61,17 @@ import com.ambient.tv.ui.common.activateOnTvKey
 import kotlinx.coroutines.delay
 
 private val POSTER_WIDTH = 160.dp
-private val EPISODE_WIDTH = 300.dp
-private val CONTINUE_WIDTH = 300.dp
+private val EPISODE_WIDTH = 252.dp
+private val CONTINUE_WIDTH = 252.dp
 /** Nearly opaque: a poster's own bright tagline often sits right where the metadata text goes. */
 private val MetadataBannerFill = Color.Black.copy(alpha = 0.58f)
+
+/**
+ * Plex-style rows under a hero (Home, recommendations on TV): the hero already shows title,
+ * year and metadata, so tiles drop their captions and the focused poster's metadata banner.
+ * Library grids keep both.
+ */
+val LocalHeroRowTiles = androidx.compose.runtime.staticCompositionLocalOf { false }
 
 enum class MediaTileStyle { AUTO, POSTER, LANDSCAPE, EPISODE, CONTINUE }
 
@@ -90,8 +97,11 @@ fun MediaTile(
     showDescription: Boolean = true,
     /** Set for rows that contain episodes so every tile reserves the episode's extra label line. */
     reserveEpisodeLines: Boolean = false,
+    /** Grid cells: take the cell's width so fewer columns mean bigger tiles, not wider gaps. */
+    fillCell: Boolean = false,
 ) {
     val handheld = LocalHandheldUi.current
+    val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
     val uhdScale = rememberUhdScale()
     val width = when (resolvedStyle) {
@@ -143,7 +153,8 @@ fun MediaTile(
     Column(
         // Grid cells hand every item their full, often wider, width. Keep the tile at its own
         // width there so the centered labels sit under the artwork, not under the whole cell.
-        modifier = modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(width),
+        modifier = if (fillCell) modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+        else modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(width),
     ) {
         val uiSounds = LocalUiSoundPlayer.current
         val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onClick)
@@ -158,7 +169,7 @@ fun MediaTile(
             border = noSurfaceBorder(),
             shape = ClickableSurfaceDefaults.shape(shape = tileShape),
             modifier = Modifier
-                .width(width)
+                .then(if (fillCell) Modifier.fillMaxWidth() else Modifier.width(width))
                 .aspectRatio(aspectRatio)
                 .activateOnTvKey(onClick = activate)
                 .graphicsLayer {
@@ -206,7 +217,7 @@ fun MediaTile(
                 val progress = item.progressFraction?.takeIf { it > 0f && it < 1f }
 
                 // Only while focused, so unfocused posters stay clean.
-                MediaMetadataOverlay(
+                if (!heroRowTiles) MediaMetadataOverlay(
                     item = item,
                     focused = focused,
                     // The progress bar runs along the bottom edge; the text stays clear of it.
@@ -240,12 +251,14 @@ fun MediaTile(
         // Extra gap so the poster's focus-scale growth never bleeds down into its own
         // label text below (the outer Column padding only guards the top/bottom of the
         // whole tile, not this internal seam).
-        Spacer(modifier = Modifier.height(6.dp))
-        when (resolvedStyle) {
-            // A season's own episode list already sits under the series; only feed rows repeat it.
-            MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(item, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
-            MediaTileStyle.EPISODE -> EpisodeLabels(item, focused, showDescription)
-            else -> PosterLabels(item, focused, reserveEpisodeLines)
+        if (!heroRowTiles) {
+            Spacer(modifier = Modifier.height(6.dp))
+            when (resolvedStyle) {
+                // A season's own episode list already sits under the series; only feed rows repeat it.
+                MediaTileStyle.LANDSCAPE, MediaTileStyle.CONTINUE -> EpisodeLabels(item, focused, showDescription, showSeriesTitle = true, reserveEpisodeLines = reserveEpisodeLines)
+                MediaTileStyle.EPISODE -> EpisodeLabels(item, focused, showDescription)
+                else -> PosterLabels(item, focused, reserveEpisodeLines)
+            }
         }
     }
 }
@@ -471,11 +484,13 @@ fun SkeletonTile(
     showDescription: Boolean = true,
     /** False for a static placeholder (detail rows). Sparsam stays flat either way. */
     shimmer: Boolean = true,
+    /** Match [MediaTile]'s fillCell so grid placeholders have the loaded tiles' size. */
+    fillCell: Boolean = false,
 ) {
     if (shimmer && !LocalPerformanceProfile.current.reducedEffects) {
-        ShimmeringSkeletonTile(modifier, style, showDescription)
+        ShimmeringSkeletonTile(modifier, style, showDescription, fillCell)
     } else {
-        SkeletonTileContent(modifier, style, showDescription) { 0.45f }
+        SkeletonTileContent(modifier, style, showDescription, fillCell) { 0.45f }
     }
 }
 
@@ -484,11 +499,12 @@ private fun ShimmeringSkeletonTile(
     modifier: Modifier,
     style: MediaTileStyle,
     showDescription: Boolean,
+    fillCell: Boolean,
 ) {
     // One shared pulse for every placeholder on screen instead of one infinite transition per
     // tile (up to 72 while a grid loads). Read at draw time, so tiles do not recompose per frame.
     val pulse = rememberSharedPulse(SharedSkeletonPulse)
-    SkeletonTileContent(modifier, style, showDescription) { pulse.value }
+    SkeletonTileContent(modifier, style, showDescription, fillCell) { pulse.value }
 }
 
 @Composable
@@ -496,6 +512,7 @@ private fun SkeletonTileContent(
     modifier: Modifier,
     style: MediaTileStyle,
     showDescription: Boolean,
+    fillCell: Boolean,
     alpha: () -> Float,
 ) {
     val tokens = LocalUiTokens.current
@@ -517,10 +534,8 @@ private fun SkeletonTileContent(
         else -> 16f / 9f
     }
     Column(
-        modifier = modifier
-            .wrapContentWidth(Alignment.Start)
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .width(tileWidth)
+        modifier = (if (fillCell) modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+        else modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(tileWidth))
             .graphicsLayer {
                 // Animate only this placeholder, not every loaded card or its parent row.
                 this.alpha = alpha()
@@ -531,17 +546,19 @@ private fun SkeletonTileContent(
     ) {
         Box(
             Modifier
-                .width(tileWidth)
+                .then(if (fillCell) Modifier.fillMaxWidth() else Modifier.width(tileWidth))
                 .aspectRatio(tileAspect)
                 .clip(tileShape).drawBehind { drawRect(fill) },
         )
-        Box(
+        // Placeholders match the loaded tile, which has no captions under a hero.
+        val captions = !LocalHeroRowTiles.current
+        if (captions) Box(
             Modifier
                 .fillMaxWidth(0.82f)
                 .height(13.dp)
                 .clip(textShape).drawBehind { drawRect(fill, alpha = 0.88f) },
         )
-        if (showDescription) Box(
+        if (captions && showDescription) Box(
             Modifier
                 .fillMaxWidth(0.52f)
                 .height(10.dp)

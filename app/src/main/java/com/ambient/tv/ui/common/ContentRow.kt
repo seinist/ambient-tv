@@ -52,13 +52,16 @@ fun ContentRow(
     columnFocus: RowColumnFocus? = null,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    // A row recycled out of the list comes back scrolled to the tile it was left on.
     val restoreIndex = remember(row.items, restoreRatingKey) {
-        row.items.indexOfFirst { it.ratingKey == restoreRatingKey }.coerceAtLeast(0)
+        val key = restoreRatingKey ?: columnFocus?.rememberedItem(row.id)
+        row.items.indexOfFirst { it.ratingKey == key }.coerceAtLeast(0)
     }
     val rowState = rememberBrowseRowState(
         initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0),
     )
     BrowseScrollBudget(rowState)
+    RegisterRowColumnFocus(columnFocus, row.id, rowState, remember(row.items) { row.items.map { it.ratingKey } })
     var rowHadFocus by remember(row.id) { mutableStateOf(false) }
     var lastFocusedKey by remember(row.id) { mutableStateOf<String?>(null) }
     var previousKeys by remember(row.id) { mutableStateOf(row.items.map { it.ratingKey }) }

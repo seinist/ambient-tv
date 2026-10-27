@@ -1,9 +1,14 @@
 package com.ambient.tv.ui.common
 
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
@@ -12,35 +17,37 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onPlaced
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 /**
- * Up/Down between stacked horizontal rows lands on the adjacent row's visible tile whose center
- * is horizontally closest to the focused one. Compose's geometric search also weighs the
- * focused tile's scale, differing tile widths and rows still gliding into place, so the
- * target could otherwise drift a column or two to either side.
+ * Up/Down between stacked horizontal rows, Plex style: every row remembers the tile it was
+ * left on and is re-entered there; a row never entered starts at its first tile. Geometry
+ * plays no part, so differing tile widths, scale animations or a row still gliding into
+ * place cannot shift the target.
  */
-class RowColumnFocus {
+class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     private class Target(val requester: FocusRequester) {
         var coordinates: LayoutCoordinates? = null
         /** The tile plays its own focus sound (MediaTile, TvActionButton). */
         var soundsOnFocus = false
     }
 
+    /** A row able to scroll its own list, so an entry tile not composed yet can be reached. */
+    private class RowHandle(var itemKeys: () -> List<Any>, val state: LazyListState)
+
     private val rows = HashMap<Any, LinkedHashMap<Any, Target>>()
+    private val handles = HashMap<Any, RowHandle>()
+    private val memory = HashMap<Any, Any>(initialMemory)
     private var focusedRow: Any? = null
     private var focused: Target? = null
     private var lastMoveTarget: Target? = null
@@ -48,20 +55,39 @@ class RowColumnFocus {
     /** Whether the target of the last successful move is silent itself and needs the tick. */
     internal val lastMoveNeedsSound: Boolean get() = lastMoveTarget?.soundsOnFocus != true
 
-    fun move(rowOrder: List<Any>, down: Boolean): Boolean {
-        val sourceX = focusedCenterX() ?: return false
-        val index = rowOrder.indexOf(focusedRow ?: return false).takeIf { it >= 0 } ?: return false
-        val next = rowOrder.getOrNull(if (down) index + 1 else index - 1) ?: return false
-        return focusNearest(next, sourceX)
+    /** Tile last focused in [rowKey], for a recreated row's initial scroll position. */
+    fun rememberedItem(rowKey: Any): Any? = memory[rowKey]
+
+    internal fun nextRow(rowOrder: List<Any>, down: Boolean): Any? {
+        val index = rowOrder.indexOf(focusedRow ?: return null).takeIf { it >= 0 } ?: return null
+        return rowOrder.getOrNull(if (down) index + 1 else index - 1)
     }
 
-    /** Column of the focused tile when Down leaves the last row, for [focusNearest] after the wrap. */
-    fun wrapColumn(rowOrder: List<Any>, down: Boolean): Float? =
-        if (down && focusedRow != null && focusedRow == rowOrder.lastOrNull()) focusedCenterX() else null
+    internal fun isLastRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.lastOrNull()
 
-    // Unclipped center: a partly scrolled-out source still means its full tile.
-    private fun focusedCenterX(): Float? = focused?.coordinates?.takeIf { it.isAttached }
-        ?.let { it.localToRoot(Offset(it.size.width / 2f, it.size.height / 2f)).x }
+    /** Remembered tile while the row still holds it, else its first one. */
+    private fun entry(rowKey: Any): Pair<Any, Int>? {
+        val keys = handles[rowKey]?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
+        val index = memory[rowKey]?.let { keys.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+        return keys.getOrNull(index)?.let { it to index }
+    }
+
+    /** Focuses [rowKey]'s entry tile if it is composed. */
+    internal fun focusEntry(rowKey: Any): Boolean {
+        val (itemKey, _) = entry(rowKey) ?: return false
+        val target = rows[rowKey]?.get(itemKey)?.takeIf { it.coordinates?.isAttached == true } ?: return false
+        lastMoveTarget = target
+        return runCatching { target.requester.requestFocus() }.getOrDefault(false)
+    }
+
+    internal fun canScrollToEntry(rowKey: Any): Boolean = handles[rowKey] != null && entry(rowKey) != null
+
+    internal suspend fun scrollToEntry(rowKey: Any) {
+        val handle = handles[rowKey] ?: return
+        val (_, index) = entry(rowKey) ?: return
+        // One tile of context to the left, as ContentRow's own restore does.
+        handle.state.scrollToItem((index - 1).coerceAtLeast(0))
+    }
 
     /** Re-focuses the last focused tile when focus re-enters the rows (e.g. back from the sidebar). */
     fun restoreLast(): Boolean {
@@ -69,17 +95,10 @@ class RowColumnFocus {
         return runCatching { target.requester.requestFocus() }.getOrDefault(false)
     }
 
-    fun focusNearest(rowKey: Any, sourceX: Float): Boolean {
-        val target = rows[rowKey]?.values
-            ?.mapNotNull { target ->
-                val bounds = target.coordinates?.takeIf { it.isAttached }?.boundsInRoot() ?: return@mapNotNull null
-                // Tiles clipped away by their row cannot be meant.
-                if (bounds.width <= 0f || bounds.height <= 0f) null else target to abs(bounds.center.x - sourceX)
-            }
-            ?.minByOrNull { it.second }?.first
-            ?: return false
-        lastMoveTarget = target
-        return runCatching { target.requester.requestFocus() }.getOrDefault(false)
+    internal fun registerRow(rowKey: Any, state: LazyListState, itemKeys: () -> List<Any>): () -> Unit {
+        val handle = RowHandle(itemKeys, state)
+        handles[rowKey] = handle
+        return { if (handles[rowKey] === handle) handles.remove(rowKey) }
     }
 
     internal fun Modifier.target(rowKey: Any, itemKey: Any, soundsOnFocus: Boolean): Modifier = composed {
@@ -102,8 +121,35 @@ class RowColumnFocus {
                 if (it.hasFocus) {
                     focusedRow = rowKey
                     focused = target
+                    memory[rowKey] = itemKey
                 }
             }
+    }
+
+    companion object {
+        /** Keeps every row's remembered tile across Detail/Player; String keys are all screens use. */
+        val Saver: Saver<RowColumnFocus, HashMap<String, String>> = Saver(
+            save = { focus ->
+                HashMap<String, String>().apply {
+                    focus.memory.forEach { (row, item) -> if (row is String && item is String) put(row, item) }
+                }
+            },
+            restore = { RowColumnFocus(it) },
+        )
+    }
+}
+
+@Composable
+fun rememberRowColumnFocus(): RowColumnFocus = rememberSaveable(saver = RowColumnFocus.Saver) { RowColumnFocus() }
+
+/** Lets [focus] scroll this row to its remembered tile when that tile is not composed. */
+@Composable
+fun RegisterRowColumnFocus(focus: RowColumnFocus?, rowKey: Any, state: LazyListState, itemKeys: List<Any>) {
+    if (focus == null) return
+    val keys by rememberUpdatedState(itemKeys)
+    DisposableEffect(focus, rowKey, state) {
+        val unregister = focus.registerRow(rowKey, state) { keys }
+        onDispose { unregister() }
     }
 }
 
@@ -116,7 +162,7 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
- * Down from the last row wraps to the first via [scrollToTop] and keeps the column.
+ * Down from the last row wraps to the first via [scrollToTop].
  */
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
@@ -126,7 +172,17 @@ fun Modifier.rowColumnFocusNavigation(
     if (LocalHandheldUi.current) return@composed Modifier
     val uiSounds = LocalUiSoundPlayer.current
     val scope = rememberCoroutineScope()
-    var wrapJob by remember { mutableStateOf<Job?>(null) }
+    var moveJob by remember { mutableStateOf<Job?>(null) }
+    // The target row composes and settles its tiles a few frames after a scroll.
+    suspend fun focusSettled(rowKey: Any) {
+        repeat(12) {
+            withFrameNanos { }
+            if (focus.focusEntry(rowKey)) {
+                if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                return
+            }
+        }
+    }
     onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
         val down = when (event.key) {
@@ -134,25 +190,28 @@ fun Modifier.rowColumnFocusNavigation(
             Key.DirectionUp -> false
             else -> return@onPreviewKeyEvent false
         }
-        if (wrapJob?.isActive == true) return@onPreviewKeyEvent true
+        if (moveJob?.isActive == true) return@onPreviewKeyEvent true
         val order = rowOrder()
-        if (focus.move(order, down)) {
-            // Exactly one tick per move: self-sounding tiles already play it on focus.
-            if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+        val next = focus.nextRow(order, down)
+        if (next != null) {
+            if (focus.focusEntry(next)) {
+                // Exactly one tick per move: self-sounding tiles already play it on focus.
+                if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                return@onPreviewKeyEvent true
+            }
+            if (!focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
+            moveJob = scope.launch {
+                focus.scrollToEntry(next)
+                focusSettled(next)
+            }
             return@onPreviewKeyEvent true
         }
-        val column = scrollToTop?.let { focus.wrapColumn(order, down) } ?: return@onPreviewKeyEvent false
+        if (scrollToTop == null || !down || !focus.isLastRow(order)) return@onPreviewKeyEvent false
         val first = order.firstOrNull() ?: return@onPreviewKeyEvent false
-        wrapJob = scope.launch {
+        moveJob = scope.launch {
             scrollToTop()
-            // The first row composes and settles its tiles a few frames after the glide.
-            repeat(12) {
-                withFrameNanos { }
-                if (focus.focusNearest(first, column)) {
-                    if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
-                    return@launch
-                }
-            }
+            focus.scrollToEntry(first)
+            focusSettled(first)
         }
         true
     }

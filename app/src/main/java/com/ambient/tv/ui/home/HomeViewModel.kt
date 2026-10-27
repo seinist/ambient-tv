@@ -75,6 +75,34 @@ data class HomeHeroContent(
     val metadata: List<String> = emptyList(),
     val imageHeaders: Map<String, String> = emptyMap(),
     val mediaItem: MediaItem? = null,
+    /** Bold line under the title (a live programme's episode title or its channel). */
+    val subtitle: String? = null,
+    /** Summary for content without a [mediaItem], such as a live programme. */
+    val summary: String? = null,
+    val live: HomeHeroLive? = null,
+)
+
+/** Airing window of a live programme, for the hero's LIVE marker and remaining time. */
+data class HomeHeroLive(val timeLabel: String, val startEpochSeconds: Long, val stopEpochSeconds: Long)
+
+internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
+    key = "${when {
+        ratingKey.startsWith("trailer-video:") -> "trailers"
+        EmbyBackend.owns(ratingKey) -> "emby"
+        JellyfinBackend.owns(ratingKey) -> "jellyfin"
+        else -> "plex"
+    }}:$ratingKey",
+    title = title,
+    artworkUrl = artUrl,
+    thumbnailUrl = thumbUrl,
+    titleLogoUrl = logoUrl,
+    providerLabel = when {
+        ratingKey.startsWith("trailer-video:") -> "trailers"
+        EmbyBackend.owns(ratingKey) -> "Emby"
+        JellyfinBackend.owns(ratingKey) -> "Jellyfin"
+        else -> "Plex"
+    },
+    mediaItem = this,
 )
 
 data class HomeFocusSnapshot(val ratingKey: String?, val rowId: String?)
@@ -1493,25 +1521,7 @@ class HomeViewModel @Inject constructor(
 
     private fun hasEnabledRow(system: String, contentKey: String): Boolean = configuredRow(system, contentKey) != null
 
-    private fun MediaItem.toHeroContent() = HomeHeroContent(
-        key = "${when {
-            ratingKey.startsWith("trailer-video:") -> "trailers"
-            EmbyBackend.owns(ratingKey) -> "emby"
-            JellyfinBackend.owns(ratingKey) -> "jellyfin"
-            else -> "plex"
-        }}:$ratingKey",
-        title = title,
-        artworkUrl = artUrl,
-        thumbnailUrl = thumbUrl,
-        titleLogoUrl = logoUrl,
-        providerLabel = when {
-            ratingKey.startsWith("trailer-video:") -> "trailers"
-            EmbyBackend.owns(ratingKey) -> "Emby"
-            JellyfinBackend.owns(ratingKey) -> "Jellyfin"
-            else -> "Plex"
-        },
-        mediaItem = this,
-    )
+    private fun MediaItem.toHeroContent() = toHomeHeroContent()
 
     private fun HomeLiveTvItem.toHeroContent(): HomeHeroContent {
         val currentEvent = event
@@ -1523,12 +1533,18 @@ class HomeViewModel @Inject constructor(
             titleLogoUrl = channel.iconUrl,
             artworkIsLogo = currentEvent?.imageUrl == null,
             providerLabel = sourceName,
-            metadata = buildList {
-                add(channel.name)
-                currentEvent?.let { add("${formatClock(it.startEpochSeconds)}–${formatClock(it.stopEpochSeconds)}") }
-                if (currentEvent != null) add("LIVE")
-            },
+            // Without guide data the channel name is already the title.
+            metadata = if (currentEvent == null) listOf(sourceName).filter { it.isNotBlank() } else emptyList(),
             imageHeaders = imageHeaders,
+            subtitle = currentEvent?.let { it.subtitle?.takeIf { sub -> sub.isNotBlank() } ?: channel.name },
+            // DVB guide data often repeats the subtitle as the short summary; skip the echo.
+            summary = currentEvent?.let { event ->
+                listOfNotNull(event.summary, event.description)
+                    .firstOrNull { it.isNotBlank() && it.trim() != event.subtitle?.trim() }
+            },
+            live = currentEvent?.let {
+                HomeHeroLive("${formatClock(it.startEpochSeconds)}–${formatClock(it.stopEpochSeconds)}", it.startEpochSeconds, it.stopEpochSeconds)
+            },
         )
     }
 

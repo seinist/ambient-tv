@@ -27,6 +27,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -58,6 +63,8 @@ class PlaybackNavigationState {
     fun returnToControls() { focusReturnVersion++; revealControls() }
     var revealControls: () -> Unit = {}
     var chaptersOpen by mutableStateOf(false)
+    /** Seeks to an absolute timeline position; installed by [PlaybackNavigationProvider]. */
+    var onChapterSeek: (Long) -> Unit = {}
     var interactionVersion by mutableIntStateOf(0)
     val returnFocus = FocusRequester()
     fun interact() { interactionVersion++; BackgroundPlaybackSession.registerUserInteraction() }
@@ -115,21 +122,24 @@ fun PlaybackNavigationProvider(
             wasOpen = true
             while (true) { state.interact(); delay(1_000) }
         } else if (wasOpen) {
+            // Television's chapter strip places focus itself when it closes.
             state.interact()
-            if (!handheld) { delay(100); runCatching { state.returnFocus.requestFocus() } }
         }
+    }
+    state.onChapterSeek = { target ->
+        if (onSeek != null) onSeek(target)
+        else BackgroundPlaybackSession.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0))
     }
     CompositionLocalProvider(LocalPlaybackNavigation provides state.takeIf { enabled }) {
         SegmentSkipOverlay(metadata, key, state, onSeek, nextUpVisible, onPlayNext, canAutoAdvance, creditsHandledByNextUp, content)
         state.chapterNotice?.takeIf { enabled }?.let { ChapterNotice(state.timeline, it) { state.chapterNotice = null } }
-        if (state.chaptersOpen && enabled) {
+        if (state.chaptersOpen && enabled && handheld) {
             val position = snapshot.status.positionMs + metadata.timelineOffsetMs
             ChapterDialog(state.timeline, position,
                 onDismiss = { state.chaptersOpen = false },
                 onChoose = { target ->
                     state.interact()
-                    if (onSeek != null) onSeek(target)
-                    else BackgroundPlaybackSession.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0))
+                    state.onChapterSeek(target)
                     state.chaptersOpen = false
                 })
         }
@@ -175,6 +185,96 @@ fun ChapterButton() {
     PlayerIconButton(Icons.AutoMirrored.Filled.ViewList, stringResource(R.string.player_chapters),
         onClick = { navigation.interact(); navigation.chaptersOpen = true },
         modifier = Modifier.focusRequester(navigation.returnFocus), osd = OsdButton.CHAPTERS)
+}
+
+/**
+ * Television: the chapter row below the OSD action bar, opened by Down on the bar or the chapter
+ * button. Up/Back fold it back onto the chapter button; OK seeks and hands focus to the seek bar.
+ */
+@Composable
+internal fun ChapterStrip() {
+    val navigation = LocalPlaybackNavigation.current ?: return
+    val open = navigation.chaptersOpen && navigation.timeline.chapters.isNotEmpty()
+    // Retained through the fold-up so the row does not empty mid-animation.
+    var shownChapters by remember { mutableStateOf(navigation.timeline.chapters) }
+    if (open) shownChapters = navigation.timeline.chapters
+    DisposableEffect(Unit) { onDispose { navigation.chaptersOpen = false } }
+    AnimatedVisibility(
+        visible = open,
+        enter = androidx.compose.animation.expandVertically(tween(300, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + fadeIn(tween(220)),
+        exit = androidx.compose.animation.shrinkVertically(tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing)) + fadeOut(tween(200)),
+    ) {
+        val timeline = navigation.timeline
+        val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+        val offset = LocalPlaybackMetadata.current?.timelineOffsetMs ?: 0L
+        val positionMs = remember { snapshot.status.positionMs + offset }
+        val selected = shownChapters.indexOfLast { it.startMs <= positionMs }.coerceAtLeast(0)
+        val listState = rememberLazyListState(initialFirstVisibleItemIndex = (selected - 1).coerceAtLeast(0))
+        val initialFocus = remember { FocusRequester() }
+        val controlFocus = LocalPlayerControlFocus.current
+        fun fold() {
+            runCatching { navigation.returnFocus.requestFocus() }
+            navigation.chaptersOpen = false
+            navigation.interact()
+        }
+        LazyRow(
+            state = listState,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(vertical = 12.dp, horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+                when (event.key) {
+                    // Both halves of Back are taken so the back dispatcher does not also close the OSD.
+                    androidx.compose.ui.input.key.Key.Back, androidx.compose.ui.input.key.Key.Escape -> {
+                        if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) fold(); true
+                    }
+                    androidx.compose.ui.input.key.Key.DirectionUp -> {
+                        if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown) fold(); true
+                    }
+                    androidx.compose.ui.input.key.Key.DirectionDown -> true
+                    else -> { navigation.interact(); false }
+                }
+            },
+        ) {
+            itemsIndexed(shownChapters, key = { _, chapter -> chapter.startMs }) { index, chapter ->
+                var focused by remember { mutableStateOf(false) }
+                val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.05f else 1f, tween(150), label = "chapterScale")
+                val shape = RoundedCornerShape(10.dp)
+                val title = chapter.meaningfulTitle ?: stringResource(R.string.player_chapter_number, index + 1)
+                val frame = timeline.chapterFrame(chapter)
+                val choose = {
+                    navigation.interact()
+                    navigation.onChapterSeek(chapter.startMs)
+                    runCatching { controlFocus?.seekTarget()?.requestFocus() }
+                    navigation.chaptersOpen = false
+                }
+                Column(
+                    Modifier.width(200.dp)
+                        .then(if (index == selected) Modifier.focusRequester(initialFocus) else Modifier)
+                        .graphicsLayer { scaleX = scale; scaleY = scale }
+                        .onFocusChanged { focused = it.isFocused }
+                        .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
+                        .border(if (focused) 2.dp else 1.dp, when {
+                            focused -> Color.White
+                            index == selected -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
+                            else -> Color.White.copy(alpha = 0.12f)
+                        }, shape)
+                        .activateOnTvKey { choose() }.clickable(role = Role.Button) { choose() },
+                ) {
+                    if (frame != null) TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(title, color = Color.White, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodyMedium)
+                        Text(timelineTime(chapter.startMs), color = Color.White.copy(alpha = if (focused) 0.85f else 0.6f),
+                            style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+        }
+        LaunchedEffect(Unit) {
+            delay(60)
+            runCatching { initialFocus.requestFocus() }
+        }
+    }
 }
 
 @Composable
@@ -273,8 +373,13 @@ fun SeekPreview(positionMs: Long?, durationMs: Long, modifier: Modifier = Modifi
     AnimatedVisibility(
         visible = positionMs != null && (frame != null || chapter != null),
         enter = fadeIn(tween(140)),
-        exit = fadeOut(tween(180)),
-        modifier = modifier.fillMaxWidth(),
+        exit = fadeOut(tween(220)),
+        // Zero layout height, drawn upward: the card overlays the OSD above instead of pushing
+        // title and poster up, and it fades in place.
+        modifier = modifier.fillMaxWidth().layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
+            layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
+        },
     ) {
         BoxWithConstraints(Modifier.fillMaxWidth().clipToBounds()) {
             val trackPx = if (constraints.hasBoundedWidth) constraints.maxWidth.toFloat() else 0f

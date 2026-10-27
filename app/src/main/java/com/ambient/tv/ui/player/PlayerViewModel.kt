@@ -284,6 +284,7 @@ class PlayerViewModel @Inject constructor(
             timelineSeekMs = state.timelineSeekMs,
             handheldHdrStandard = if (state.runtimeHdrKnown) state.runtimeHdrStandard else if (state.playbackMode != PlaybackMode.TRANSCODE)
                 HdrSupport.sourceStandard(state.videoCodec, state.videoDynamicRange) else null,
+            hdrBaseLayer = if (state.playbackMode != PlaybackMode.TRANSCODE) dolbyVisionBaseLayer(state.videoDynamicRange) else null,
             creditsSkipMode = if (state.mediaType.equals("episode", ignoreCase = true) || state.mediaType.equals("movie", ignoreCase = true)) appPreferences.creditsSkipMode else "off",
             introSkipMode = if (state.mediaType.equals("episode", ignoreCase = true)) appPreferences.introSkipMode else "off",
             successorsLoading = state.successorsLoading,

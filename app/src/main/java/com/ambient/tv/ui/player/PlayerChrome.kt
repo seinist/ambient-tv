@@ -151,7 +151,16 @@ fun ReferencePlayerHeader(
  */
 internal class PlayerOsdStow {
     var fraction by mutableFloatStateOf(0f)
-    var closing by mutableStateOf(false)
+    private var closingState by mutableStateOf(false)
+    /** [fraction] when closing began: a block already following a stowed bar stays put instead of jumping up. */
+    var closingFraction by mutableFloatStateOf(0f)
+        private set
+    var closing: Boolean
+        get() = closingState
+        set(value) {
+            if (value && !closingState) closingFraction = fraction
+            closingState = value
+        }
 }
 
 internal val LocalPlayerOsdStow = compositionLocalOf<PlayerOsdStow?> { null }
@@ -177,7 +186,7 @@ fun BoxScope.ReferencePlayerBottomContent(
                 .fillMaxWidth()
                 .then(if (LocalHandheldUi.current) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                 .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp))
-                .then(stow?.let { Modifier.graphicsLayer { translationY = it.fraction * StowedBarGap.toPx() } } ?: Modifier),
+                .then(stow?.let { Modifier.graphicsLayer { translationY = (if (it.closing) it.closingFraction else it.fraction) * StowedBarGap.toPx() } } ?: Modifier),
             verticalArrangement = Arrangement.spacedBy(deviceDp(13.dp, 6.dp)),
         ) {
             content()

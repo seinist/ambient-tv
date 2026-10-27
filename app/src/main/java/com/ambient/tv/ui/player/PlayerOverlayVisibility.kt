@@ -45,7 +45,7 @@ fun PlayerPanelVisibility(
 }
 
 /** Keeps the chrome composed until its fade finishes, including when visibility reverses. On a
- * dismissal the action bar slides down first and the rest fades after it. */
+ * dismissal only the action bar slides down; the rest fades in place after it. */
 @Composable
 fun PlayerOverlayVisibility(
     visible: Boolean,
@@ -73,7 +73,7 @@ fun PlayerOverlayVisibility(
         // zIndex inside this box could not lift it over the stats.
         modifier = modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX),
         enter = fadeIn(tween(180, easing = FastOutSlowInEasing)),
-        exit = fadeOut(tween(220, delayMillis = if (stowFirst) 180 else 0, easing = FastOutSlowInEasing)),
+        exit = fadeOut(tween(220, delayMillis = if (stowFirst) 380 else 0, easing = FastOutSlowInEasing)),
     ) {
         androidx.compose.runtime.CompositionLocalProvider(LocalPlayerOsdStow provides stow) { Box(
             Modifier.fillMaxSize()

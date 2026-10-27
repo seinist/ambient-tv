@@ -84,6 +84,21 @@ internal fun summarizeMpvDeinterlacer(vf: String?, property: String?): String {
     }
 }
 
+/**
+ * Stats row for the configured deinterlacer: the method actually running plus the mode.
+ * mpv's builtin `deinterlace` inserts BWDIF in software; "inactive" means no filter is in the chain.
+ */
+internal fun mpvDeinterlaceStat(mode: String, filter: String, vf: String?, property: String?): String? {
+    if (mode == "off") return null
+    val active = mpvExplicitDeinterlace(vf)
+        ?: when (property?.trim()?.lowercase(Locale.US)) {
+            "yes", "auto" -> "bwdif (mpv)"
+            "no" -> "inactive"
+            else -> filter.takeIf { it.isNotBlank() && it != "auto" }
+        }
+    return listOfNotNull(active, mode).joinToString(" · ")
+}
+
 internal fun mpvExplicitDeinterlace(vf: String?): String? {
     if (vf.isNullOrBlank() || !vf.contains("plex-deint")) return null
     val graph = Regex("""@plex-deint:lavfi=\[(.*?)]""").find(vf)?.groupValues?.get(1) ?: return "on"

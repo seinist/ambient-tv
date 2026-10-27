@@ -1062,14 +1062,16 @@ class SmartTubeEngine @Inject constructor(
     }
 
     /**
-     * SmartTube's TabMediaItem (subscribed channels, TV client) leaves getChannelId unset; the
-     * channel id is the browseId of the tab's endpoint. Only real channel ids (UC...) count.
+     * SmartTube's TabMediaItem (subscribed channels, TV client) leaves getChannelId unset; its
+     * endpoint browses FEsubscriptions with base64 protobuf params that embed the channel id.
      */
     private fun tabChannelId(raw: Any): String? = runCatching {
         val field = raw.javaClass.declaredFields.firstOrNull { it.name == "tabItem" } ?: return null
         field.isAccessible = true
-        field.get(raw)?.call("getEndpoint")?.call("getBrowseEndpoint")?.callString("getBrowseId")
-    }.getOrNull()?.takeIf { it.startsWith("UC") }
+        val browse = field.get(raw)?.call("getEndpoint")?.call("getBrowseEndpoint") ?: return null
+        browse.callString("getBrowseId")?.takeIf { it.startsWith("UC") }
+            ?: browse.callString("getParams")?.let(::youtubeChannelIdInBrowseParams)
+    }.getOrNull()
 
     // --- "Watch on TV" (YouTube Lounge) ----------------------------------------------------
 

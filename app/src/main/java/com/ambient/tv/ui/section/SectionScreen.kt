@@ -33,6 +33,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import com.ambient.tv.ui.home.HomeHero
+import com.ambient.tv.ui.home.toHomeHeroContent
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -66,6 +69,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
+import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -329,7 +333,17 @@ internal fun SectionContent(
         }
     }
 
+    // The recommendation rows' hero drives a full-screen backdrop like Home's, behind header and
+    // tabs too, and hands the item to the shared background so its ambient light takes its colour.
+    val recommendationHero = remember { MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>(null) }
+    val heroBackdrop = !LocalHandheldUi.current && state.page == SectionPage.RECOMMENDATIONS &&
+        recommendationViewMode(state.viewMode).let { it == SectionViewMode.POSTER || it == SectionViewMode.LANDSCAPE }
+    val sharedBackgroundArtwork = com.ambient.tv.ui.common.LocalHomeBackgroundArtwork.current
+    LaunchedEffect(heroBackdrop, sharedBackgroundArtwork) {
+        if (heroBackdrop) recommendationHero.collect { hero -> if (hero != null) sharedBackgroundArtwork?.value = hero }
+    }
     Box(Modifier.fillMaxSize()) {
+        if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
         Column(Modifier.fillMaxSize().focusProperties {
             onEnter = {
                 // D-pad entry (e.g. Right out of the sidebar) restores like the sidebar handoff; plain
@@ -394,6 +408,7 @@ internal fun SectionContent(
                                 focusState,
                                 onItemClick,
                                 { rowId, item -> markInitialFocusHandled(); onRecommendationItemFocused(rowId, item) },
+                                recommendationHero,
                             )
                             SectionPage.LIBRARY -> {
                                 if (state.items.isEmpty()) EmptyLibrary() else when (state.viewMode) {
@@ -677,10 +692,11 @@ private fun RecommendationsPage(
     state: SectionUiState.Loaded,
     onItemClick: (String) -> Unit,
     onRecommendationItemFocused: (String, MediaItem) -> Unit,
+    heroContent: MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>,
 ) {
     if (state.recommendationRows.isEmpty()) { EmptyLibrary(); return }
     when (recommendationViewMode(state.viewMode)) {
-        SectionViewMode.POSTER, SectionViewMode.LANDSCAPE -> RecommendationRowsPage(state, onItemClick, onRecommendationItemFocused)
+        SectionViewMode.POSTER, SectionViewMode.LANDSCAPE -> RecommendationRowsPage(state, onItemClick, onRecommendationItemFocused, heroContent)
         SectionViewMode.LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = false)
         SectionViewMode.INFO_LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = true)
         SectionViewMode.POSTER_LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = false, poster = true)
@@ -699,6 +715,7 @@ private fun RecommendationRowsPage(
     state: SectionUiState.Loaded,
     onItemClick: (String) -> Unit,
     onRecommendationItemFocused: (String, MediaItem) -> Unit,
+    heroContent: MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>,
 ) {
     val tileStyle = if (recommendationViewMode(state.viewMode) == SectionViewMode.POSTER) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE
     val initialFocusKey = remember { state.focusedRatingKey }
@@ -717,25 +734,61 @@ private fun RecommendationRowsPage(
     LaunchedEffect(centeredRowIndex) {
         if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true)
     }
-    val rowScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
-    androidx.compose.runtime.CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
-        LazyColumn(
-            allowUpExit = true,
-            state = rowsState,
-            modifier = Modifier.clipToBounds(),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
-        ) {
-            itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
-                ContentRow(
-                    row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
-                    onItemClick = { onItemClick(it.ratingKey) },
-                    onItemFocused = { item ->
-                        restoreArmed = false
-                        onRecommendationItemFocused(row.id, item)
-                    },
-                    onRowFocused = { centeredRowIndex = index },
-                    restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
+    val handheld = LocalHandheldUi.current
+    val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
+    val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
+    // On TV the focused item gets the Home hero above the rows, so the rows rest in the lower
+    // part of the page like Plex's recommendations. The hero only swaps text, never the rows.
+    remember(state.recommendationRows) {
+        val initial = state.recommendationRows.firstNotNullOfOrNull { row ->
+            row.items.firstOrNull { item -> initialFocusKey != null && initialFocusKey in item.allRatingKeys }
+        } ?: state.recommendationRows.firstOrNull()?.items?.firstOrNull()
+        // Set during composition so the hero has its item on the first frame.
+        heroContent.value = initial?.toHomeHeroContent()
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val heroHeight = maxHeight * 0.42f
+        Column(Modifier.fillMaxSize()) {
+            if (!handheld) {
+                HomeHero(
+                    heroContent = heroContent,
+                    heroStyleKey = "",
+                    intensityPercent = 0,
+                    spreadKey = "",
+                    entranceProgress = { 1f },
+                    drawAmbient = false,
+                    height = heroHeight,
+                    rowsBehind = false,
                 )
+            }
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalBringIntoViewSpec provides rowScrollSpec,
+                com.ambient.tv.ui.common.LocalHeroRowTiles provides !handheld,
+            ) {
+                LazyColumn(
+                    allowUpExit = true,
+                    state = rowsState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .rowColumnFocusNavigation(columnFocus) { state.recommendationRows.map { it.id } }
+                        .clipToBounds(),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
+                ) {
+                    itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
+                        ContentRow(
+                            row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
+                            onItemClick = { onItemClick(it.ratingKey) },
+                            onItemFocused = { item ->
+                                restoreArmed = false
+                                heroContent.value = item.toHomeHeroContent()
+                                onRecommendationItemFocused(row.id, item)
+                            },
+                            onRowFocused = { centeredRowIndex = index },
+                            restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
+                            columnFocus = columnFocus,
+                        )
+                    }
+                }
             }
         }
     }
@@ -755,7 +808,7 @@ private fun RecommendationListPage(
         initialRowId?.takeIf { id -> state.recommendationRows.any { it.id == id && initialKey != null && it.items.any { item -> initialKey in item.allRatingKeys } } }
             ?: state.recommendationRows.firstOrNull { row -> initialKey != null && row.items.any { initialKey in it.allRatingKeys } }?.id
     }
-    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * rememberUhdScale()
+    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * rememberUhdScale()
     val listState = rememberLazyListState()
     LazyColumn(
         allowUpExit = true,
@@ -1220,8 +1273,8 @@ private fun CinematicHeroContent(
 }
 
 /**
- * Poster tiles in the cinematic row are compact covers without a caption: the hero already shows
- * the title, and a full poster MediaTile is too tall to leave room for the summary on a TV screen.
+ * Poster tiles in the cinematic row are covers without a caption: the hero already shows the
+ * title. On TV they match Plex's poster size; the summary gives up lines when height runs short.
  */
 @Composable
 private fun CinematicTile(
@@ -1238,7 +1291,7 @@ private fun CinematicTile(
             onClick = onClick,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
-            modifier = Modifier.width(deviceDp(100.dp, 84.dp) * rememberUhdScale()),
+            modifier = Modifier.width(deviceDp(172.dp, 84.dp) * rememberUhdScale()),
         )
     } else {
         MediaTile(
@@ -1302,6 +1355,7 @@ private fun LibraryGrid(
     ) {
         itemsIndexed(state.items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.POSTER,
@@ -1354,7 +1408,7 @@ private fun StylishMediaList(
         }
     }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
     LazyColumn(allowUpExit = true, state = listState, modifier = Modifier.overlayLazyScrollbar(listState, gutter = screenGutter(), enabled = !LocalAlphabetBarShown.current), contentPadding = PaddingValues(screenGutter(), 12.dp, screenGutter(), 36.dp), verticalArrangement = Arrangement.spacedBy(8.dp * rowScale)) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { _, item ->
             var isFocused by remember(item.ratingKey) { mutableStateOf(false) }
@@ -1423,6 +1477,7 @@ private fun PosterGrid(
     ) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.POSTER,
@@ -1470,6 +1525,7 @@ private fun LandscapeGrid(
     ) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.LANDSCAPE,
@@ -1504,7 +1560,7 @@ private fun InfoList(
     val restoreRequester = remember { FocusRequester() }
     var preview by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == initialFocusedKey } ?: items.first()) }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
 
     LaunchedEffect(Unit) { if (initialFocusedKey != null) runCatching { restoreRequester.requestFocus() } }
     LaunchedEffect(selectedLetter, items) {
@@ -1774,7 +1830,7 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
         }
     }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
     LazyColumn(allowUpExit = true, state = listState, modifier = Modifier.overlayLazyScrollbar(listState, gutter = screenGutter()), contentPadding = PaddingValues(screenGutter(), 12.dp, screenGutter(), 36.dp), verticalArrangement = Arrangement.spacedBy(8.dp * rowScale)) {
         itemsIndexed(state.collections, key = { _, it -> it.id }) { _, c ->
             val focusModifier = if (c.id == initialFocusedCollectionId) Modifier.focusRequester(restoreRequester) else Modifier

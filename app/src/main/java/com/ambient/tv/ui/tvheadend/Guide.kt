@@ -156,9 +156,9 @@ internal fun LiveTvChannelBrowser(
             withFrameNanos { }
         }
         // A programme card outside its row's view: the channel itself is the next best target.
-        if (index >= 0 && runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() == true }.getOrDefault(false)) {
-            currentOnFocusRestored()
-        }
+        if (index >= 0) runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() }
+        // Done either way: the screen holds the shell's content entry while this is pending.
+        currentOnFocusRestored()
     }
     LaunchedEffect(pendingAlphabet, showAlphabet) {
         if (pendingAlphabet && showAlphabet) {
@@ -196,7 +196,7 @@ internal fun LiveTvChannelBrowser(
                 })
                 Text(stringResource(R.string.guide_count, visibleChannels.size), style = MaterialTheme.typography.bodySmall)
             }
-            GuideActiveFilters(activeFilters)
+            GuideActiveFilters(activeFilters, onClick = { optionsOpened = true; showOptions = true })
             if (visibleChannels.isEmpty()) {
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)

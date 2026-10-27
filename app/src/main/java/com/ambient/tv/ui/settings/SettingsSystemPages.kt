@@ -786,6 +786,33 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         })
                         Text(stringResource(R.string.settings_youtube_max_resolution_display_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(stringResource(R.string.settings_youtube_quality_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // SmartTube's player options: network engine and buffer size (Media3 player).
+                        Text(stringResource(R.string.settings_youtube_network_engine), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsSelect(options = com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES.map { engine ->
+                            SettingsSelectOption(
+                                text = when (engine) {
+                                    com.ambient.tv.ui.player.MEDIA3_NETWORK_CRONET -> "Cronet"
+                                    com.ambient.tv.ui.player.MEDIA3_NETWORK_DEFAULT -> stringResource(R.string.settings_youtube_network_engine_default)
+                                    else -> "OkHttp"
+                                },
+                                selected = uiState.youtubeNetworkEngine == engine,
+                                onClick = { viewModel.onYoutubeNetworkEngineChanged(engine) },
+                            )
+                        })
+                        Text(stringResource(R.string.settings_youtube_network_engine_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_youtube_buffer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        SettingsSelect(options = com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS.map { key ->
+                            SettingsSelectOption(
+                                text = stringResource(when (key) {
+                                    "low" -> R.string.settings_youtube_buffer_low
+                                    "high" -> R.string.settings_youtube_buffer_high
+                                    else -> R.string.settings_youtube_buffer_medium
+                                }),
+                                selected = uiState.youtubeBufferKey == key,
+                                onClick = { viewModel.onYoutubeBufferChanged(key) },
+                            )
+                        })
+                        Text(stringResource(R.string.settings_youtube_buffer_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }

@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LibraryAddCheck
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.ManageSearch
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -236,7 +236,7 @@ private fun EditOverview(item: MediaItem, support: MetadataEditSupport, onBack: 
         maxWidth = 640.dp,
     ) {
         val actions = buildList {
-            if (support.match) add(Triple(R.string.item_edit_match, Icons.Filled.ManageSearch, EditPage.Match))
+            if (support.match) add(Triple(R.string.item_edit_match, Icons.AutoMirrored.Filled.ManageSearch, EditPage.Match))
             if (ArtworkKind.POSTER in support.artwork) add(Triple(R.string.item_edit_poster, Icons.Filled.Image, EditPage.Artwork(ArtworkKind.POSTER)))
             if (ArtworkKind.BACKDROP in support.artwork) add(Triple(R.string.item_edit_backdrop, Icons.Filled.Wallpaper, EditPage.Artwork(ArtworkKind.BACKDROP)))
             if (support.fields) add(Triple(R.string.item_edit_fields, Icons.Filled.Edit, EditPage.Fields))
