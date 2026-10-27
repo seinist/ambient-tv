@@ -194,9 +194,11 @@ internal fun media3StageSummary(stage: Media3Stage): String = when (stage) {
     is Media3Stage.Scale -> media3ScalerLabel(stage.scaler)
     is Media3Stage.Sharpen -> when (stage.kind) {
         "cas" -> "sharpen CAS"
+        "adaptive" -> "sharpen Adaptive Sharpen"
         "rcas" -> "sharpen RCAS (FSR)"
         else -> "sharpen ${stage.kind}"
     }
+    is Media3Stage.Grain -> "film grain ${stage.strength}"
     is Media3Stage.Brightness -> "brightness ${stage.value}"
     is Media3Stage.Contrast -> "contrast ${stage.value}"
     is Media3Stage.Saturation -> "saturation ${stage.value}"

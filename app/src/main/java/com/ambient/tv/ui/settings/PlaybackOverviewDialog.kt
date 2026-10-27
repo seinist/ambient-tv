@@ -184,7 +184,12 @@ private fun Media3Overview(o: Media3ImageOptions) {
     OverviewLine(stringResource(R.string.settings_playback_overview_enabled), yesNo(o.enabled))
     OverviewLine(stringResource(R.string.settings_playback_overview_scaler), VideoImageCatalog.media3Scalers[o.scaler] ?: o.scaler)
     OverviewLine(stringResource(R.string.settings_playback_overview_deband), strength(o.deband))
-    OverviewLine(stringResource(R.string.settings_playback_overview_sharpen), if (o.sharpening == "cas") "AMD CAS" else strength(o.sharpening))
+    OverviewLine(stringResource(R.string.settings_playback_overview_sharpen), when (o.sharpening) {
+        "cas" -> "AMD CAS"
+        "adaptive" -> "Adaptive Sharpen"
+        else -> strength(o.sharpening)
+    })
+    OverviewLine(stringResource(R.string.image_film_grain), strength(o.filmGrain))
     OverviewLine(stringResource(R.string.settings_playback_overview_picture), "${o.brightness} / ${o.contrast} / ${o.saturation} / ${o.gamma}")
 }
 

@@ -333,7 +333,12 @@ internal fun Media3FilterRows(
     if (deband) ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
     if (sharpen) {
         if (fsrSharpens) ImageHint(stringResource(R.string.image_fsr_integrated_sharpen))
-        else ImageChoice(R.string.image_sharpen, o.sharpening, imageStrengths() + ("cas" to "AMD CAS")) { change(o.copy(sharpening = it)) }
+        else GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(
+            PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),
+            PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
+        )) { change(o.copy(sharpening = it)) }
+        // Grain shares the sharpening pass's size and budget.
+        ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
     }
     ImageHint(stringResource(R.string.image_media3_filter_hint))
 }
