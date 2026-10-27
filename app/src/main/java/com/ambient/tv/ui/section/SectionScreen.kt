@@ -755,7 +755,7 @@ private fun RecommendationListPage(
         initialRowId?.takeIf { id -> state.recommendationRows.any { it.id == id && initialKey != null && it.items.any { item -> initialKey in item.allRatingKeys } } }
             ?: state.recommendationRows.firstOrNull { row -> initialKey != null && row.items.any { initialKey in it.allRatingKeys } }?.id
     }
-    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * rememberUhdScale()
+    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * rememberUhdScale()
     val listState = rememberLazyListState()
     LazyColumn(
         allowUpExit = true,
@@ -1302,6 +1302,7 @@ private fun LibraryGrid(
     ) {
         itemsIndexed(state.items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.POSTER,
@@ -1354,7 +1355,7 @@ private fun StylishMediaList(
         }
     }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
     LazyColumn(allowUpExit = true, state = listState, modifier = Modifier.overlayLazyScrollbar(listState, gutter = screenGutter(), enabled = !LocalAlphabetBarShown.current), contentPadding = PaddingValues(screenGutter(), 12.dp, screenGutter(), 36.dp), verticalArrangement = Arrangement.spacedBy(8.dp * rowScale)) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { _, item ->
             var isFocused by remember(item.ratingKey) { mutableStateOf(false) }
@@ -1423,6 +1424,7 @@ private fun PosterGrid(
     ) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.POSTER,
@@ -1470,6 +1472,7 @@ private fun LandscapeGrid(
     ) {
         itemsIndexed(items, key = { _, it -> it.ratingKey }) { index, item ->
             MediaTile(
+                fillCell = true,
                 item = item,
                 onClick = { onItemClick(item.ratingKey) },
                 style = MediaTileStyle.LANDSCAPE,
@@ -1504,7 +1507,7 @@ private fun InfoList(
     val restoreRequester = remember { FocusRequester() }
     var preview by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == initialFocusedKey } ?: items.first()) }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
 
     LaunchedEffect(Unit) { if (initialFocusedKey != null) runCatching { restoreRequester.requestFocus() } }
     LaunchedEffect(selectedLetter, items) {
@@ -1774,7 +1777,7 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
         }
     }
     val uhdScale = rememberUhdScale()
-    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f) * uhdScale
+    val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
     LazyColumn(allowUpExit = true, state = listState, modifier = Modifier.overlayLazyScrollbar(listState, gutter = screenGutter()), contentPadding = PaddingValues(screenGutter(), 12.dp, screenGutter(), 36.dp), verticalArrangement = Arrangement.spacedBy(8.dp * rowScale)) {
         itemsIndexed(state.collections, key = { _, it -> it.id }) { _, c ->
             val focusModifier = if (c.id == initialFocusedCollectionId) Modifier.focusRequester(restoreRequester) else Modifier

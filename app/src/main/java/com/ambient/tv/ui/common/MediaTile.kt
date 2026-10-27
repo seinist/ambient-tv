@@ -90,6 +90,8 @@ fun MediaTile(
     showDescription: Boolean = true,
     /** Set for rows that contain episodes so every tile reserves the episode's extra label line. */
     reserveEpisodeLines: Boolean = false,
+    /** Grid cells: take the cell's width so fewer columns mean bigger tiles, not wider gaps. */
+    fillCell: Boolean = false,
 ) {
     val handheld = LocalHandheldUi.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
@@ -143,7 +145,8 @@ fun MediaTile(
     Column(
         // Grid cells hand every item their full, often wider, width. Keep the tile at its own
         // width there so the centered labels sit under the artwork, not under the whole cell.
-        modifier = modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(width),
+        modifier = if (fillCell) modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+        else modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(width),
     ) {
         val uiSounds = LocalUiSoundPlayer.current
         val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onClick)
@@ -158,7 +161,7 @@ fun MediaTile(
             border = noSurfaceBorder(),
             shape = ClickableSurfaceDefaults.shape(shape = tileShape),
             modifier = Modifier
-                .width(width)
+                .then(if (fillCell) Modifier.fillMaxWidth() else Modifier.width(width))
                 .aspectRatio(aspectRatio)
                 .activateOnTvKey(onClick = activate)
                 .graphicsLayer {
@@ -471,11 +474,13 @@ fun SkeletonTile(
     showDescription: Boolean = true,
     /** False for a static placeholder (detail rows). Sparsam stays flat either way. */
     shimmer: Boolean = true,
+    /** Match [MediaTile]'s fillCell so grid placeholders have the loaded tiles' size. */
+    fillCell: Boolean = false,
 ) {
     if (shimmer && !LocalPerformanceProfile.current.reducedEffects) {
-        ShimmeringSkeletonTile(modifier, style, showDescription)
+        ShimmeringSkeletonTile(modifier, style, showDescription, fillCell)
     } else {
-        SkeletonTileContent(modifier, style, showDescription) { 0.45f }
+        SkeletonTileContent(modifier, style, showDescription, fillCell) { 0.45f }
     }
 }
 
@@ -484,11 +489,12 @@ private fun ShimmeringSkeletonTile(
     modifier: Modifier,
     style: MediaTileStyle,
     showDescription: Boolean,
+    fillCell: Boolean,
 ) {
     // One shared pulse for every placeholder on screen instead of one infinite transition per
     // tile (up to 72 while a grid loads). Read at draw time, so tiles do not recompose per frame.
     val pulse = rememberSharedPulse(SharedSkeletonPulse)
-    SkeletonTileContent(modifier, style, showDescription) { pulse.value }
+    SkeletonTileContent(modifier, style, showDescription, fillCell) { pulse.value }
 }
 
 @Composable
@@ -496,6 +502,7 @@ private fun SkeletonTileContent(
     modifier: Modifier,
     style: MediaTileStyle,
     showDescription: Boolean,
+    fillCell: Boolean,
     alpha: () -> Float,
 ) {
     val tokens = LocalUiTokens.current
@@ -517,10 +524,8 @@ private fun SkeletonTileContent(
         else -> 16f / 9f
     }
     Column(
-        modifier = modifier
-            .wrapContentWidth(Alignment.Start)
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .width(tileWidth)
+        modifier = (if (fillCell) modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+        else modifier.wrapContentWidth(Alignment.Start).padding(horizontal = 8.dp, vertical = 8.dp).width(tileWidth))
             .graphicsLayer {
                 // Animate only this placeholder, not every loaded card or its parent row.
                 this.alpha = alpha()
@@ -531,7 +536,7 @@ private fun SkeletonTileContent(
     ) {
         Box(
             Modifier
-                .width(tileWidth)
+                .then(if (fillCell) Modifier.fillMaxWidth() else Modifier.width(tileWidth))
                 .aspectRatio(tileAspect)
                 .clip(tileShape).drawBehind { drawRect(fill) },
         )

@@ -310,7 +310,7 @@ private fun TrailerGrid(entries: List<TrailerEntry>, mode: TrailerViewMode, colu
         items(entries, key = { it.key }) { entry ->
             MediaTile(item = entry.toMediaItem(), style = if (mode == TrailerViewMode.POSTER) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE,
                 onClick = { onOpenTitle(entry.mediaType, entry.title.id) }, onFocused = { onFocused(entry) },
-                requestInitialFocus = entry.key == entries[selectedIndex].key, showDescription = mode == TrailerViewMode.POSTER)
+                requestInitialFocus = entry.key == entries[selectedIndex].key, showDescription = mode == TrailerViewMode.POSTER, fillCell = true)
         }
         item(key = "trailer-paging", span = { GridItemSpan(maxLineSpan) }) { TrailerPagingFooter(state, onLoadMore) }
     }
@@ -319,7 +319,7 @@ private fun TrailerGrid(entries: List<TrailerEntry>, mode: TrailerViewMode, colu
 @Composable
 private fun TrailerList(entries: List<TrailerEntry>, listRows: Int, focusedKey: String?, onFocused: (TrailerEntry) -> Unit,
     onOpenTitle: (String, Int) -> Unit, state: TrailerFeedUi, onLoadMore: () -> Unit) {
-    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.35f)
+    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
     val index = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = (index - 1).coerceAtLeast(0))
     LaunchedEffect(listState, state.page, state.hasNextPage, state.loadingMore, state.nextError) {
