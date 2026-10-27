@@ -60,6 +60,8 @@ object VideoImageCatalog {
     val media3Scalers = linkedMapOf(
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
         "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
+        // MPV's RAVU-Lite shader files, translated for Media3 at runtime (Media3RavuEffect).
+        "ravu_lite_r2" to "RAVU Lite AR · r2", "ravu_lite_r3" to "RAVU Lite AR · r3", "ravu_lite_r4" to "RAVU Lite AR · r4",
     )
     /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening; adaptive: bacondither's Adaptive Sharpen. */
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
