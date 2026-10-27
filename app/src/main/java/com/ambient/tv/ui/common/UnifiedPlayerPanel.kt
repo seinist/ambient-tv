@@ -50,6 +50,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -597,6 +598,8 @@ fun PlayerIconButton(
     enabled: Boolean = true,
     /** Action-bar button the viewer can hide for the current player. */
     osd: com.ambient.tv.ui.player.OsdButton? = null,
+    /** Round image (e.g. a channel avatar) shown instead of [icon] once loaded. */
+    imageUrl: String? = null,
 ) {
     if (osd != null) {
         // Registered before the visibility check: a hidden button stays switchable in the settings.
@@ -647,6 +650,15 @@ fun PlayerIconButton(
             CircularProgressIndicator(
                 color = foreground,
                 modifier = Modifier.size(if (primary) 23.dp else 20.dp),
+            )
+        } else if (imageUrl != null) {
+            coil3.compose.SubcomposeAsyncImage(
+                model = imageUrl,
+                contentDescription = label,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                alpha = if (enabled) 1f else 0.38f,
+                modifier = Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape),
+                error = { Icon(icon, contentDescription = label, tint = foreground, modifier = Modifier.size(20.dp)) },
             )
         } else {
             Icon(

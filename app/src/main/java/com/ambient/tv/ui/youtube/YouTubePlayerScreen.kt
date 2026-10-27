@@ -1642,7 +1642,7 @@ private data class YouTubeOsdModel(
                     rightContent = {
                         PlayerExitButton(onBack)
                         channel?.let { osd ->
-                            PlayerIconButton(Icons.Filled.AccountCircle, osd.channel.title ?: stringResource(R.string.youtube_channel_open), osd.onOpen, osd = com.ambient.tv.ui.player.OsdButton.CHANNEL)
+                            PlayerIconButton(Icons.Filled.AccountCircle, osd.channel.title ?: stringResource(R.string.youtube_channel_open), osd.onOpen, osd = com.ambient.tv.ui.player.OsdButton.CHANNEL, imageUrl = osd.channel.avatarUrl)
                             // Signed out the subscription is unknown and cannot be changed.
                             osd.channel.subscribed?.let { subscribed ->
                                 PlayerIconButton(
