@@ -63,6 +63,8 @@ object VideoImageCatalog {
         // MPV's RAVU shader files, translated for Media3 at runtime (Media3RavuEffect).
         "ravu_lite_r2" to "RAVU Lite AR · r2", "ravu_lite_r3" to "RAVU Lite AR · r3", "ravu_lite_r4" to "RAVU Lite AR · r4",
         "ravu_zoom_r3" to "RAVU Zoom AR · r3",
+        // NVScaler ported from MPV's compute shader to a fragment shader (Media3NisEffect).
+        "nis" to "NVIDIA NIS · NVScaler",
     )
     /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening; adaptive: bacondither's Adaptive Sharpen. */
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")

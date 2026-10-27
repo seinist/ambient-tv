@@ -44,6 +44,8 @@ internal fun media3EffectPlan(
         when {
             !sharpenAllowed -> Unit
             scaler == "fsr" -> add(Media3Stage.Sharpen("rcas"))
+            // NVScaler sharpens inside its own pass.
+            scaler == "nis" -> Unit
             o.sharpening != "off" -> add(Media3Stage.Sharpen(o.sharpening))
         }
         // Grain runs on the same (output) size as sharpening and shares its budget.
@@ -69,9 +71,9 @@ internal fun media3FilterBudgetAllows(width: Int, height: Int, fps: Float): Bool
     return width.toLong() * height * rate <= MEDIA3_FILTER_MAX_PIXEL_RATE
 }
 
-/** True when FSR replaces the sharpening row (it would otherwise sharpen twice). */
+/** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
-    upscalerApplies && options.normalized().scaler == "fsr"
+    upscalerApplies && options.normalized().scaler in setOf("fsr", "nis")
 
 internal fun media3ScalerLabel(key: String): String = VideoImageCatalog.media3Scalers[key] ?: key
 
@@ -90,8 +92,8 @@ internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
     val fusable = previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
-        // Lanczos is Media3's own effect and RAVU ends in its own fit pass: neither takes the gamma.
-        (previous is Media3Stage.Scale && previous.scaler != "lanczos" && previous.scaler !in MEDIA3_RAVU_SCALERS)
+        // Lanczos is Media3's own effect, RAVU and NIS are their own programs: none takes the gamma.
+        (previous is Media3Stage.Scale && previous.scaler != "lanczos" && previous.scaler != "nis" && previous.scaler !in MEDIA3_RAVU_SCALERS)
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
 }

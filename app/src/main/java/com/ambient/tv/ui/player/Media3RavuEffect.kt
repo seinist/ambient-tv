@@ -182,12 +182,12 @@ private class Media3RavuShaderProgram(
     private val outputHeight: Int,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
     private val useHighPrecision = useHighPrecision
-    private val step1 = program(RAVU_HEADER + RAVU_LUT_HEADER + source.step1 + RAVU_STEP1_MAIN)
-    private val step2 = program(RAVU_HEADER + RAVU_STEP2)
-    private val fit = program(RAVU_HEADER + RAVU_FIT)
+    private val step1 = media3GlProgram(RAVU_HEADER + RAVU_LUT_HEADER + source.step1 + RAVU_STEP1_MAIN)
+    private val step2 = media3GlProgram(RAVU_HEADER + RAVU_STEP2)
+    private val fit = media3GlProgram(RAVU_HEADER + RAVU_FIT)
     private val planes = media3RavuLutPlanes(source.lut)
-    private val lutHigh = lutTexture(planes.high, source.lutWidth, source.lutHeight)
-    private val lutLow = lutTexture(planes.low, source.lutWidth, source.lutHeight)
+    private val lutHigh = media3LutTexture(planes.high, source.lutWidth, source.lutHeight)
+    private val lutLow = media3LutTexture(planes.low, source.lutWidth, source.lutHeight)
     private var inputWidth = 1
     private var inputHeight = 1
     private var ravuActive = false
@@ -220,7 +220,7 @@ private class Media3RavuShaderProgram(
             val outputFbo = IntArray(1).also { GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, it, 0) }[0]
             val viewport = IntArray(4).also { GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, it, 0) }
             val inputSize = floatArrayOf(inputWidth.toFloat(), inputHeight.toFloat())
-            linear(inputTexId)
+            media3LinearFilter(inputTexId)
             if (ravuActive) {
                 // Pass 1: four 2x luma values per source pixel.
                 GlUtil.focusFramebufferUsingCurrentContext(intFbo, inputWidth, inputHeight)
@@ -231,14 +231,14 @@ private class Media3RavuShaderProgram(
                 step1.setFloatsUniformIfPresent("uInputSize", inputSize)
                 step1.setFloatsUniformIfPresent("uLutMin", floatArrayOf(planes.min))
                 step1.setFloatsUniformIfPresent("uLutRange", floatArrayOf(planes.range))
-                draw(step1)
+                media3DrawQuad(step1)
                 // Pass 2: each 2x pixel takes its quarter of the source pixel.
                 GlUtil.focusFramebufferUsingCurrentContext(lumaFbo, inputWidth * 2, inputHeight * 2)
                 step2.use()
                 step2.setSamplerTexIdUniform("uTexSampler", intTexture, 0)
                 step2.setFloatsUniformIfPresent("uInputSize", inputSize)
-                draw(step2)
-                linear(lumaTexture)
+                media3DrawQuad(step2)
+                media3LinearFilter(lumaTexture)
             }
             // Pass 3: bilinear RGB fitted to the output, plus the RAVU luma change.
             GlUtil.focusFramebufferUsingCurrentContext(outputFbo, viewport[2], viewport[3])
@@ -247,7 +247,7 @@ private class Media3RavuShaderProgram(
             fit.setSamplerTexIdUniform("uLuma", if (ravuActive) lumaTexture else inputTexId, 1)
             fit.setFloatsUniformIfPresent("uInputSize", inputSize)
             fit.setFloatsUniformIfPresent("uRavu", floatArrayOf(if (ravuActive) 1f else 0f))
-            draw(fit)
+            media3DrawQuad(fit)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
         }
@@ -277,13 +277,13 @@ private class Media3RavuShaderProgram(
 
 }
 
-private fun draw(program: GlProgram) {
+internal fun media3DrawQuad(program: GlProgram) {
     program.bindAttributesAndUniforms()
     GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     GlUtil.checkGlError()
 }
 
-private fun program(fragment: String): GlProgram = try {
+internal fun media3GlProgram(fragment: String): GlProgram = try {
     GlProgram(RAVU_VERTEX, fragment).apply {
         setBufferAttribute("aFramePosition", GlUtil.getNormalizedCoordinateBounds(), GlUtil.HOMOGENEOUS_COORDINATE_VECTOR_SIZE)
     }
@@ -291,7 +291,7 @@ private fun program(fragment: String): GlProgram = try {
     throw VideoFrameProcessingException(e)
 }
 
-private fun linear(texture: Int) {
+internal fun media3LinearFilter(texture: Int) {
     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
     GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
     GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
@@ -301,7 +301,7 @@ private fun linear(texture: Int) {
  * RGBA8 LUT plane. NEAREST reads exact texel centers like MPV's `//!FILTER NEAREST`; LINEAR stays
  * exact across the two planes because the 16-bit decode is linear in both bytes.
  */
-private fun lutTexture(bytes: ByteArray, width: Int, height: Int, filter: Int = GLES20.GL_NEAREST): Int {
+internal fun media3LutTexture(bytes: ByteArray, width: Int, height: Int, filter: Int = GLES20.GL_NEAREST): Int {
     val id = IntArray(1).also { GLES20.glGenTextures(1, it, 0) }[0]
     GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, id)
     GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, filter)
@@ -322,14 +322,14 @@ private class Media3RavuZoomShaderProgram(
     private val outputWidth: Int,
     private val outputHeight: Int,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
-    private val zoom = program(RAVU_HEADER + RAVU_ZOOM_LUT_HEADER + source.glsl + RAVU_ZOOM_MAIN)
+    private val zoom = media3GlProgram(RAVU_HEADER + RAVU_ZOOM_LUT_HEADER + source.glsl + RAVU_ZOOM_MAIN)
     private val planesA = media3RavuLutPlanes(source.lut.values)
     private val planesB = media3RavuLutPlanes(source.lutAr.values)
     private val textures = intArrayOf(
-        lutTexture(planesA.high, source.lut.width, source.lut.height, GLES20.GL_LINEAR),
-        lutTexture(planesA.low, source.lut.width, source.lut.height, GLES20.GL_LINEAR),
-        lutTexture(planesB.high, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
-        lutTexture(planesB.low, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
+        media3LutTexture(planesA.high, source.lut.width, source.lut.height, GLES20.GL_LINEAR),
+        media3LutTexture(planesA.low, source.lut.width, source.lut.height, GLES20.GL_LINEAR),
+        media3LutTexture(planesB.high, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
+        media3LutTexture(planesB.low, source.lutAr.width, source.lutAr.height, GLES20.GL_LINEAR),
     )
     private var inputSize = floatArrayOf(1f, 1f)
 
@@ -340,7 +340,7 @@ private class Media3RavuZoomShaderProgram(
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
-            linear(inputTexId)
+            media3LinearFilter(inputTexId)
             zoom.use()
             zoom.setSamplerTexIdUniform("uTexSampler", inputTexId, 0)
             listOf("uLutAHigh", "uLutALow", "uLutBHigh", "uLutBLow").forEachIndexed { i, name ->
@@ -349,7 +349,7 @@ private class Media3RavuZoomShaderProgram(
             zoom.setFloatsUniformIfPresent("uInputSize", inputSize)
             zoom.setFloatsUniformIfPresent("uLutA", floatArrayOf(planesA.min, planesA.range))
             zoom.setFloatsUniformIfPresent("uLutB", floatArrayOf(planesB.min, planesB.range))
-            draw(zoom)
+            media3DrawQuad(zoom)
         } catch (e: GlUtil.GlException) {
             throw VideoFrameProcessingException(e, presentationTimeUs)
         }

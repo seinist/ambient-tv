@@ -336,7 +336,8 @@ internal fun Media3FilterRows(
         ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
     }
     if (sharpen) {
-        if (fsrSharpens) ImageHint(stringResource(R.string.image_fsr_integrated_sharpen))
+        if (fsrSharpens) ImageHint(stringResource(
+            if (o.scaler == "nis") R.string.image_nis_integrated_sharpen else R.string.image_fsr_integrated_sharpen))
         else GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(
             PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),
             PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
