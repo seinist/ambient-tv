@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
@@ -249,7 +250,11 @@ fun HomeScreen(
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        if (systemOverview) {
+        // On a TV the loaded overview carries its actions on the hero's title line (system badge,
+        // focused title, actions), like a library page's header; the header row is only for
+        // phones and while nothing is loaded yet.
+        val overviewActionsInHero = systemOverview && !LocalHandheldUi.current && uiState is HomeUiState.Loaded
+        if (systemOverview && !overviewActionsInHero) {
             SystemOverviewHeader(
                 system = when {
                     jellyfinOnly -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
@@ -290,6 +295,16 @@ fun HomeScreen(
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
                         entranceProgress = entranceProgressProvider,
                         externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
+                        heroTitleActions = if (overviewActionsInHero) ({
+                            OverviewActions(
+                                onOpenHome = {
+                                    viewModel.captureFocusForReturn()
+                                    onOpenAppHome()
+                                },
+                                onOpenOptions = { showOverviewOptions = true },
+                                optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
+                            )
+                        }) else null,
                     )
                 }
                 is HomeUiState.Offline -> Centered {
@@ -339,15 +354,17 @@ private fun SystemOverviewHeader(
     onOpenOptions: () -> Unit,
     optionsModifier: Modifier = Modifier,
 ) {
-    // Same lockup as the library pages: small system logo, the page title beside it, actions on that line.
     Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
-        com.ambient.tv.ui.common.PageHeader(actions = {
-            com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
-            com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
-        }) {
-            com.ambient.tv.ui.common.SystemPageTitle(system, title = stringResource(R.string.nav_overview))
+        com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
+            com.ambient.tv.ui.common.SystemPageTitle(system)
         }
     }
+}
+
+@Composable
+private fun RowScope.OverviewActions(onOpenHome: () -> Unit, onOpenOptions: () -> Unit, optionsModifier: Modifier) {
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
 }
 
 /** Focus previews have their own state/draw layer, so their crossfade never invalidates rows. */
@@ -460,6 +477,8 @@ internal fun LibraryContent(
     entranceProgress: () -> Float,
     /** Set when the caller draws the focus backdrop behind its own header; rows report scrolling to it. */
     externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
+    /** System overview: its page actions on the hero's title line instead of a header row. */
+    heroTitleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -744,6 +763,7 @@ internal fun LibraryContent(
             entranceProgress = entranceProgress,
             drawAmbient = false,
             rowsScrolling = rowsScrolling,
+            titleActions = heroTitleActions,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1175,6 +1195,8 @@ internal fun HomeHero(
     /** False where no rows pass behind the hero, so nothing needs covering. */
     rowsBehind: Boolean = true,
     focusTravel: () -> Float = { 0.42f },
+    /** Page actions on the right of the title line (system overview), outside the metadata crossfade. */
+    titleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -1245,8 +1267,10 @@ internal fun HomeHero(
                     translationX = (1f - progress) * -24.dp.toPx()
                 },
         ) {
+          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             Crossfade(
                 targetState = displayedItem,
+                modifier = Modifier.weight(1f),
                 animationSpec = tween(
                     durationMillis = if (performance.allowComplexHero) 320 else 0,
                     easing = FastOutSlowInEasing,
@@ -1403,6 +1427,8 @@ internal fun HomeHero(
                     }
                 }
             }
+            if (titleActions != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = titleActions)
+          }
         }
     }
 }
