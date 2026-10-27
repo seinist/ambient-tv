@@ -66,6 +66,7 @@ import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
+import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -718,11 +719,14 @@ private fun RecommendationRowsPage(
         if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true)
     }
     val rowScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
+    val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
     androidx.compose.runtime.CompositionLocalProvider(LocalBringIntoViewSpec provides rowScrollSpec) {
         LazyColumn(
             allowUpExit = true,
             state = rowsState,
-            modifier = Modifier.clipToBounds(),
+            modifier = Modifier
+                .rowColumnFocusNavigation(columnFocus) { state.recommendationRows.map { it.id } }
+                .clipToBounds(),
             contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
         ) {
             itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
@@ -735,6 +739,7 @@ private fun RecommendationRowsPage(
                     },
                     onRowFocused = { centeredRowIndex = index },
                     restoreRatingKey = if (restoreArmed && index == restoreRowIndex) initialFocusKey else null,
+                    columnFocus = columnFocus,
                 )
             }
         }

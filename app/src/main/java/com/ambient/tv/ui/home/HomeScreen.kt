@@ -473,7 +473,7 @@ internal fun LibraryContent(
         // a plain bring-into-view would count the hero-covered top as visible and park the
         // row's heading behind the banner.
         val rowCentering = rememberRowCenteringState(rowListState)
-        val columnFocus = remember { RowColumnFocus() }
+        val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
         // Right from the sidebar returns to the exact tile left, not the top-left focusable
         // the plain container request would pick.
         val enterContent: () -> Boolean? = remember(columnFocus) { { columnFocus.restoreLast() } }
@@ -657,6 +657,13 @@ private fun HomeLiveTvRow(
 ) {
     val horizontalScrollSpec = if (LocalHandheldUi.current) LocalBringIntoViewSpec.current else TvBringIntoViewSpec
     val firstItemFocusRequester = remember { FocusRequester() }
+    val rowState = com.ambient.tv.ui.common.rememberBrowseRowState(
+        initialFirstVisibleItemIndex = (columnFocus?.rememberedItem(rowKey)
+            ?.let { key -> items.indexOfFirst { "${it.channel.sourceId}:${it.channel.uuid}" == key } } ?: 0)
+            .minus(1).coerceAtLeast(0),
+    )
+    com.ambient.tv.ui.common.RegisterRowColumnFocus(columnFocus, rowKey, rowState,
+        remember(items) { items.map { "${it.channel.sourceId}:${it.channel.uuid}" } })
     LaunchedEffect(requestInitialFocus, items.map { it.channel.uuid }) {
         if (requestInitialFocus && items.isNotEmpty()) {
             withFrameNanos { }
@@ -678,6 +685,7 @@ private fun HomeLiveTvRow(
         }
         CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
             LazyRow(
+                state = rowState,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
