@@ -62,12 +62,21 @@ class HomeRowOrderTest {
 
     @Test fun continueWatchingPosterModeUsesPosterTiles() {
         assertEquals(MediaTileStyle.POSTER, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.CONTINUE))
-        assertEquals(MediaTileStyle.POSTER, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.CONTINUE, overviewForcedPoster = true))
+        assertEquals(MediaTileStyle.POSTER, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_POSTER))
     }
 
     @Test fun continueWatchingLandscapeKeepsContinueTiles() {
         assertEquals(MediaTileStyle.CONTINUE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LANDSCAPE, MediaTileStyle.CONTINUE))
-        assertEquals(MediaTileStyle.CONTINUE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LANDSCAPE, MediaTileStyle.CONTINUE, overviewForcedPoster = true))
+        assertEquals(MediaTileStyle.CONTINUE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LANDSCAPE, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_POSTER))
+    }
+
+    @Test fun overviewPageModeReplacesThePosterDefaultAndKeepsExplicitRows() {
+        assertEquals(MediaTileStyle.LANDSCAPE, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.POSTER, overviewPageMode = HomeRowDefinition.DISPLAY_LANDSCAPE))
+        assertEquals(MediaTileStyle.CONTINUE, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_LANDSCAPE))
+        assertEquals(MediaTileStyle.LANDSCAPE, homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_LIST))
+        assertEquals(MediaTileStyle.CONTINUE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LANDSCAPE, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_LIST))
+        assertEquals(MediaTileStyle.LANDSCAPE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LIST, MediaTileStyle.POSTER, overviewPageMode = HomeRowDefinition.DISPLAY_LANDSCAPE))
+        assertEquals(MediaTileStyle.LANDSCAPE, homeRowTileStyle(HomeRowDefinition.DISPLAY_LIST, MediaTileStyle.CONTINUE, overviewPageMode = HomeRowDefinition.DISPLAY_POSTER))
     }
 
     @Test fun legacyDuplicatesUseTheFirstEnabledDefinitionLikeTheDataLoader() {

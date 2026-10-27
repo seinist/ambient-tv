@@ -10,12 +10,14 @@ import com.ambient.tv.ui.home.HomeViewModel
 fun PlexLibraryScreen(
     onItemClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     HomeScreen(
         focusStateKey = "plex:home",
         onOpenSettings = onOpenSettings,
+        onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,
         plexOnly = true,

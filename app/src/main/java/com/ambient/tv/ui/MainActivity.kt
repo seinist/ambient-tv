@@ -1858,6 +1858,7 @@ private fun AmbientTvApp(
                                 PlexLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
                                     onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
                             }
@@ -1869,6 +1870,7 @@ private fun AmbientTvApp(
                                 JellyfinLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
                                     onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
                             }
@@ -1880,6 +1882,7 @@ private fun AmbientTvApp(
                                 EmbyLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
                                     onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
                             }

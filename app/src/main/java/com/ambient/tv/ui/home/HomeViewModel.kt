@@ -178,6 +178,9 @@ class HomeViewModel @Inject constructor(
     private var plexOnly = false
     private var jellyfinOnly = false
     private var embyOnly = false
+    private val _overviewViewMode = MutableStateFlow(HomeRowDefinition.DISPLAY_POSTER)
+    /** Poster, landscape or list for the open system overview. Unused on the app home screen. */
+    val overviewViewMode: StateFlow<String> = _overviewViewMode.asStateFlow()
     private var homeEntranceAnimationConsumed = false
     private var jellyfinCollectionJob: Job? = null
     private var embyCollectionJob: Job? = null
@@ -349,6 +352,7 @@ class HomeViewModel @Inject constructor(
         this.plexOnly = plexOnly
         this.jellyfinOnly = jellyfinOnly
         this.embyOnly = embyOnly
+        _overviewViewMode.value = systemOverviewPageMode() ?: HomeRowDefinition.DISPLAY_POSTER
         if (homeFocusStateKey != focusStateKey) {
             homeFocusStateKey = focusStateKey
             persistedHomeFocusKey = appPreferences.sectionFocus(focusStateKey)
@@ -1173,7 +1177,46 @@ class HomeViewModel @Inject constructor(
 
     // Whether there is anything to show is decided before the cross-system row is added, so an
     // offline Home (no rows) still leaves the launcher's channels alone.
-    private fun publishRows(rows: List<ContentRowData>) = publishRowsInternal(withAllContinueRow(rows), hasRows = rows.isNotEmpty())
+    private fun publishRows(rows: List<ContentRowData>) =
+        publishRowsInternal(withAllContinueRow(applyOverviewStyle(rows)), hasRows = rows.isNotEmpty())
+
+    /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
+    private fun applyOverviewStyle(rows: List<ContentRowData>): List<ContentRowData> {
+        if (systemOverviewPageMode() == null) return rows
+        return rows.map { row ->
+            val source = homeRowSource(row.id)
+            val dot = source.indexOf('.')
+            if (dot <= 0) return@map row
+            val definition = configuredRow(source.substring(0, dot), source.substring(dot + 1)) ?: return@map row
+            val default = if (source.substring(dot + 1) == "continue") MediaTileStyle.CONTINUE else MediaTileStyle.POSTER
+            val style = definition.tileStyle(default)
+            if (style == row.style) row else row.copy(style = style)
+        }
+    }
+
+    fun setOverviewViewMode(mode: String) {
+        if (systemOverviewPageMode() == null || mode !in HomeRowDefinition.DISPLAY_MODES) return
+        val system = when {
+            plexOnly -> HomeRowDefinition.SYSTEM_PLEX
+            jellyfinOnly -> HomeRowDefinition.SYSTEM_JELLYFIN
+            else -> HomeRowDefinition.SYSTEM_EMBY
+        }
+        if (mode == appPreferences.overviewViewMode(system)) return
+        appPreferences.setOverviewViewMode(system, mode)
+        _overviewViewMode.value = mode
+        (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
+    }
+
+    /** Null away from a system overview, so the app home keeps each row's own display mode. */
+    private fun systemOverviewPageMode(): String? {
+        val system = when {
+            plexOnly -> HomeRowDefinition.SYSTEM_PLEX
+            jellyfinOnly -> HomeRowDefinition.SYSTEM_JELLYFIN
+            embyOnly -> HomeRowDefinition.SYSTEM_EMBY
+            else -> return null
+        }
+        return appPreferences.overviewViewMode(system)
+    }
 
     /** The Home editor's "Continue watching · all systems" row, when enabled (not on a system's own page). */
     private fun allContinueRow(): HomeRowDefinition? =
@@ -1562,7 +1605,7 @@ class HomeViewModel @Inject constructor(
     )
 
     private fun HomeRowDefinition.tileStyle(default: MediaTileStyle = MediaTileStyle.POSTER): MediaTileStyle =
-        homeRowTileStyle(displayMode, default, overviewForcedPoster = plexOnly || jellyfinOnly || embyOnly)
+        homeRowTileStyle(displayMode, default, overviewPageMode = systemOverviewPageMode())
 
     private companion object {
         const val ALL_CONTINUE_ROW_ID = "all.continue"
@@ -1602,12 +1645,17 @@ class HomeViewModel @Inject constructor(
 internal fun homeRowTileStyle(
     displayMode: String,
     default: MediaTileStyle = MediaTileStyle.POSTER,
-    overviewForcedPoster: Boolean = false,
+    overviewPageMode: String? = null,
 ): MediaTileStyle {
-    if (overviewForcedPoster && displayMode != HomeRowDefinition.DISPLAY_LANDSCAPE && displayMode != HomeRowDefinition.DISPLAY_LIST) {
-        return MediaTileStyle.POSTER
+    // A system overview's page view replaces the poster default. A row the Home editor set to
+    // landscape or list keeps that choice.
+    val mode = when {
+        overviewPageMode == null -> displayMode
+        displayMode == HomeRowDefinition.DISPLAY_LANDSCAPE || displayMode == HomeRowDefinition.DISPLAY_LIST -> displayMode
+        overviewPageMode in HomeRowDefinition.DISPLAY_MODES -> overviewPageMode
+        else -> displayMode
     }
-    return when (displayMode) {
+    return when (mode) {
         HomeRowDefinition.DISPLAY_POSTER -> MediaTileStyle.POSTER
         HomeRowDefinition.DISPLAY_LIST -> MediaTileStyle.LANDSCAPE
         HomeRowDefinition.DISPLAY_LANDSCAPE ->

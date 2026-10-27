@@ -34,7 +34,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import com.ambient.tv.ui.home.HomeHero
+import com.ambient.tv.ui.home.HomeRowsLift
+import com.ambient.tv.ui.home.fadeRowsBehindHomeHero
 import com.ambient.tv.ui.home.toHomeHeroContent
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -737,8 +742,9 @@ private fun RecommendationRowsPage(
     val handheld = LocalHandheldUi.current
     val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
     val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
-    // On TV the focused item gets the Home hero above the rows, so the rows rest in the lower
-    // part of the page like Plex's recommendations. The hero only swaps text, never the rows.
+    // On TV the focused item gets the Home hero over the rows, so the list keeps the full height.
+    // A poster row is taller than the band under a stacked hero, and Down then never reaches
+    // the next row. The hero only swaps text, never the rows.
     remember(state.recommendationRows) {
         val initial = state.recommendationRows.firstNotNullOfOrNull { row ->
             row.items.firstOrNull { item -> initialFocusKey != null && initialFocusKey in item.allRatingKeys }
@@ -747,20 +753,10 @@ private fun RecommendationRowsPage(
         heroContent.value = initial?.toHomeHeroContent()
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val heroHeight = maxHeight * 0.42f
-        Column(Modifier.fillMaxSize()) {
-            if (!handheld) {
-                HomeHero(
-                    heroContent = heroContent,
-                    heroStyleKey = "",
-                    intensityPercent = 0,
-                    spreadKey = "",
-                    entranceProgress = { 1f },
-                    drawAmbient = false,
-                    height = heroHeight,
-                    rowsBehind = false,
-                )
-            }
+        val heroHeight = if (handheld) 0.dp else maxHeight * 0.42f
+        val heroInsetPx = with(LocalDensity.current) { (heroHeight - HomeRowsLift).roundToPx().coerceAtLeast(0) }
+        val performance = LocalPerformanceProfile.current
+        Box(Modifier.fillMaxSize()) {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalBringIntoViewSpec provides rowScrollSpec,
                 com.ambient.tv.ui.common.LocalHeroRowTiles provides !handheld,
@@ -769,10 +765,20 @@ private fun RecommendationRowsPage(
                     allowUpExit = true,
                     state = rowsState,
                     modifier = Modifier
-                        .weight(1f)
-                        .rowColumnFocusNavigation(columnFocus) { state.recommendationRows.map { it.id } }
-                        .clipToBounds(),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
+                        .fillMaxSize()
+                        .rowColumnFocusNavigation(
+                            columnFocus,
+                            scrollToRow = { rowKey ->
+                                val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
+                                if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)
+                            },
+                        ) { state.recommendationRows.map { it.id } }
+                        .clipToBounds()
+                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight)),
+                    contentPadding = PaddingValues(
+                        top = if (handheld) 8.dp else heroHeight - HomeRowsLift + 12.dp,
+                        bottom = 36.dp,
+                    ),
                 ) {
                     itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
                         ContentRow(
@@ -789,6 +795,19 @@ private fun RecommendationRowsPage(
                         )
                     }
                 }
+            }
+            if (!handheld) {
+                HomeHero(
+                    heroContent = heroContent,
+                    heroStyleKey = "",
+                    intensityPercent = 0,
+                    spreadKey = "",
+                    entranceProgress = { 1f },
+                    drawAmbient = false,
+                    height = heroHeight,
+                    rowsBehind = true,
+                    modifier = Modifier.align(Alignment.TopCenter).zIndex(1f),
+                )
             }
         }
     }

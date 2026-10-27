@@ -163,10 +163,15 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
  * Down from the last row wraps to the first via [scrollToTop].
+ *
+ * [scrollToRow] brings a row into the vertical list before its tiles are focused. A row that is
+ * only prefetched (taller than the viewport, so nothing of it is placed) has no focus target yet;
+ * scrolling the horizontal row alone would swallow Down.
  */
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
     scrollToTop: (suspend () -> Unit)? = null,
+    scrollToRow: (suspend (Any) -> Unit)? = null,
     rowOrder: () -> List<Any>,
 ): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
@@ -199,10 +204,19 @@ fun Modifier.rowColumnFocusNavigation(
                 if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
                 return@onPreviewKeyEvent true
             }
-            if (!focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
+            if (scrollToRow == null && !focus.canScrollToEntry(next)) return@onPreviewKeyEvent false
+            val rowKey = next
             moveJob = scope.launch {
-                focus.scrollToEntry(next)
-                focusSettled(next)
+                scrollToRow?.invoke(rowKey)
+                // The row's tiles compose after the vertical scroll. Wait for them before
+                // scrolling sideways to the remembered one.
+                var waited = 0
+                while (waited < 12 && !focus.canScrollToEntry(rowKey)) {
+                    withFrameNanos { }
+                    waited++
+                }
+                if (focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
+                focusSettled(rowKey)
             }
             return@onPreviewKeyEvent true
         }

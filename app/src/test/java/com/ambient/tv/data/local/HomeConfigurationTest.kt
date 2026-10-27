@@ -34,6 +34,20 @@ class HomeConfigurationTest {
         assertEquals("LANDSCAPE", AppPreferences(raw).sectionViewMode("plex:1:recommendations"))
     }
 
+    @Test fun overviewPageViewSurvivesBackupAndIsNotRewrittenToPoster() {
+        val prefs = AppPreferences(memoryPreferences())
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, prefs.overviewViewMode(HomeRowDefinition.SYSTEM_PLEX))
+        prefs.setOverviewViewMode(HomeRowDefinition.SYSTEM_PLEX, HomeRowDefinition.DISPLAY_LANDSCAPE)
+        prefs.setOverviewViewMode(HomeRowDefinition.SYSTEM_JELLYFIN, "nope")
+        val exported = prefs.portableLibraryPreferences()
+        assertEquals(HomeRowDefinition.DISPLAY_LANDSCAPE, exported["overview_view_plex"])
+        assertEquals(null, exported["overview_view_jellyfin"])
+        val restored = AppPreferences(memoryPreferences())
+        restored.restorePortableLibraryPreferences(exported)
+        assertEquals(HomeRowDefinition.DISPLAY_LANDSCAPE, restored.overviewViewMode(HomeRowDefinition.SYSTEM_PLEX))
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, restored.overviewViewMode(HomeRowDefinition.SYSTEM_EMBY))
+    }
+
     @Test fun genreRowsCarryTheirGenreInTheContentKey() {
         val row = HomeRowDefinition(system = HomeRowDefinition.SYSTEM_EMBY, contentKey = HomeRowDefinition.topGenre("Sci-Fi & Fantasy"))
         assertEquals("Sci-Fi & Fantasy", row.genre)

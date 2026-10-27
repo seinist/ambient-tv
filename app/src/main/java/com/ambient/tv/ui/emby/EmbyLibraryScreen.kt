@@ -9,12 +9,14 @@ import com.ambient.tv.ui.home.HomeViewModel
 fun EmbyLibraryScreen(
     onItemClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     HomeScreen(
         focusStateKey = "emby:home",
         onOpenSettings = onOpenSettings,
+        onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,
         embyOnly = true,

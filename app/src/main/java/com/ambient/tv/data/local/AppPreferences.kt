@@ -1592,6 +1592,16 @@ class AppPreferences @Inject constructor(
         prefs.edit { putString("section_view_$sectionKey", value) }
     }
 
+    /** Page view of a system overview (Plex, Jellyfin, Emby): poster, landscape or list. */
+    fun overviewViewMode(system: String): String =
+        prefs.getString("overview_view_$system", null)?.takeIf { it in HomeRowDefinition.DISPLAY_MODES }
+            ?: HomeRowDefinition.DISPLAY_POSTER
+
+    fun setOverviewViewMode(system: String, value: String) {
+        if (value !in HomeRowDefinition.DISPLAY_MODES) return
+        prefs.edit { putString("overview_view_$system", value) }
+    }
+
     fun recentSearches(): List<String> = prefs.getStringSet(KEY_RECENT_SEARCHES, emptySet())
         .orEmpty()
         .toList()
@@ -1917,17 +1927,17 @@ class AppPreferences @Inject constructor(
     )
 
     fun portableLibraryPreferences(): Map<String, String> = prefs.all
-        .filterKeys { key -> key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") }
+        .filterKeys { key -> key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("overview_view_") }
         .mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
         .toMap()
 
     fun restorePortableLibraryPreferences(values: Map<String, String>) {
         prefs.edit {
             prefs.all.keys
-                .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") }
+                .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") || it.startsWith("overview_view_") }
                 .forEach(::remove)
             withPosterSectionViews(values).forEach { (key, value) ->
-                if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_")) {
+                if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("overview_view_")) {
                     putString(key, value)
                 }
             }

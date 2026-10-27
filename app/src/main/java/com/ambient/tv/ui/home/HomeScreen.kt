@@ -53,7 +53,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -136,6 +139,8 @@ fun HomeScreen(
     onItemClick: (String) -> Unit,
     onWatchLiveChannel: (TvhChannel) -> Unit = {},
     onOpenHomeContent: (HomeRowDefinition) -> Unit = {},
+    /** System overview: the app home screen. Unused on the app home itself. */
+    onOpenAppHome: () -> Unit = {},
     /** Root Back: focus sidebar like Files/Section. */
     onBack: (() -> Unit)? = null,
     plexOnly: Boolean = false,
@@ -171,12 +176,17 @@ fun HomeScreen(
         else -> false
     }
     ReportSidebarContentReady(!parkInitialFocus)
+    val systemOverview = plexOnly || jellyfinOnly || embyOnly
+    var showOverviewOptions by remember { mutableStateOf(false) }
+    val overviewViewMode by viewModel.overviewViewMode.collectAsState()
+    val overviewOptionsFocus = remember { FocusRequester() }
     if (onBack != null) {
-        BackHandler {
+        BackHandler(enabled = !showOverviewOptions) {
             viewModel.captureFocusForReturn()
             onBack()
         }
     }
+    BackHandler(enabled = showOverviewOptions) { showOverviewOptions = false }
     LaunchedEffect(plexOnly, jellyfinOnly, embyOnly, focusStateKey) {
         viewModel.start(
             plexOnly = plexOnly,
@@ -220,8 +230,24 @@ fun HomeScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize()) {
-        if (!plexOnly && !jellyfinOnly && !embyOnly) com.ambient.tv.update.UpdateHomeCard()
+        if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
+        if (systemOverview) {
+            SystemOverviewHeader(
+                system = when {
+                    jellyfinOnly -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
+                    embyOnly -> com.ambient.tv.ui.common.MediaSystem.EMBY
+                    else -> com.ambient.tv.ui.common.MediaSystem.PLEX
+                },
+                onOpenHome = {
+                    viewModel.captureFocusForReturn()
+                    onOpenAppHome()
+                },
+                onOpenOptions = { showOverviewOptions = true },
+                optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
+            )
+        }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (val state = uiState) {
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
@@ -256,6 +282,48 @@ fun HomeScreen(
             }
 
             com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, viewModel.browseProviders, Modifier.align(Alignment.BottomEnd).padding(12.dp))
+        }
+    }
+        if (showOverviewOptions) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+            Box(Modifier.align(Alignment.TopEnd)) {
+                com.ambient.tv.ui.common.ViewOptionsPanel(
+                    showDensity = false,
+                    hint = stringResource(R.string.library_view),
+                    views = listOf(
+                        com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_POSTER, stringResource(R.string.settings_home_display_poster), com.ambient.tv.ui.common.ViewPreview.POSTER),
+                        com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LANDSCAPE, stringResource(R.string.settings_home_display_landscape), com.ambient.tv.ui.common.ViewPreview.LANDSCAPE),
+                        com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LIST, stringResource(R.string.settings_home_display_list), com.ambient.tv.ui.common.ViewPreview.LIST),
+                    ),
+                    selectedView = overviewViewMode,
+                    onView = viewModel::setOverviewViewMode,
+                    gridColumns = 6,
+                    listRows = 6,
+                    onGridColumns = { _ -> },
+                    onListRows = { _ -> },
+                    onClose = {
+                        showOverviewOptions = false
+                        runCatching { overviewOptionsFocus.requestFocus() }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SystemOverviewHeader(
+    system: com.ambient.tv.ui.common.MediaSystem,
+    onOpenHome: () -> Unit,
+    onOpenOptions: () -> Unit,
+    optionsModifier: Modifier = Modifier,
+) {
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 4.dp)) {
+        com.ambient.tv.ui.common.PageHeader(actions = {
+            com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
+            com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
+        }) {
+            com.ambient.tv.ui.common.SystemPageTitle(system)
         }
     }
 }
@@ -524,7 +592,14 @@ internal fun LibraryContent(
                 state = rowListState,
                 modifier = Modifier.onFocusChanged { rowsHaveFocus = it.hasFocus }.then(Modifier
                     .fillMaxSize()
-                    .rowColumnFocusNavigation(columnFocus, scrollToTop = { rowListState.glideToItem(glideWrap, 0) }) { state.rowKeys }
+                    .rowColumnFocusNavigation(
+                        columnFocus,
+                        scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
+                        scrollToRow = { rowKey ->
+                            val index = state.rowKeys.indexOfFirst { it == rowKey }
+                            if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)
+                        },
+                    ) { state.rowKeys }
                     .clipToBounds()
                     .acceleratedDpadNavigation()
                     .fadeRowsBehindHomeHero(maskRows, heroHeight)
@@ -737,10 +812,6 @@ private fun HomeLiveTvRow(
 
 private const val GuideTileKey = "live-tv-guide"
 
-/** Logo accents per channel icon, so tiles scrolling back in do not sample the logo again. */
-private val LiveLogoAccents = java.util.concurrent.ConcurrentHashMap<String, Color>()
-private val LiveTileFallbackAccent = Color(0xFF3A4C86)
-
 @Composable
 private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<Boolean>, Float> {
     val focused = remember { mutableStateOf(false) }
@@ -752,10 +823,7 @@ private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<
 @Composable
 private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.common.rememberUhdScale()
 
-/**
- * Plex-style live tile without programme artwork: the channel logo on a wash of its own colour,
- * the running programme in one line, LIVE in the corner and the airing progress along the edge.
- */
+/** Channel logo on the home surface wash, the running programme in one line, and airing progress. */
 @Composable
 private fun LiveChannelTile(
     item: HomeLiveTvItem,
@@ -769,17 +837,7 @@ private fun LiveChannelTile(
     val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(tokens.cardRadius)
     val logo = item.channel.iconUrl
-    val cached = logo?.let { LiveLogoAccents[it] }
-    val sampled = com.ambient.tv.ui.common.rememberArtworkSampledAccent(
-        model = logo,
-        enabled = logo != null && cached == null,
-        fallback = cached ?: LiveTileFallbackAccent,
-        headers = item.imageHeaders,
-    )
-    LaunchedEffect(logo, sampled) {
-        if (logo != null && cached == null && sampled != LiveTileFallbackAccent) LiveLogoAccents[logo] = sampled
-    }
-    val background = MaterialTheme.colorScheme.background
+    val scheme = MaterialTheme.colorScheme
     val event = item.event
     androidx.tv.material3.Surface(
         onClick = onClick,
@@ -801,8 +859,8 @@ private fun LiveChannelTile(
             Modifier
                 .fillMaxSize()
                 .clip(shape)
-                .background(Brush.linearGradient(listOf(sampled.copy(alpha = 0.85f), background.copy(alpha = 0.9f))))
-                .border(if (focused) 2.dp else 1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.08f), shape),
+                .background(liveTileBrush())
+                .border(if (focused) 2.dp else 1.dp, if (focused) scheme.onSurface.copy(alpha = 0.90f) else scheme.onSurface.copy(alpha = 0.08f), shape),
         ) {
             logo?.let {
                 ArtworkImage(
@@ -818,17 +876,18 @@ private fun LiveChannelTile(
                 Text(
                     text = event.title,
                     style = MaterialTheme.typography.labelMedium,
-                    color = Color.White,
+                    color = scheme.onSurface,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
-                        .background(Color.Black.copy(alpha = 0.55f))
+                        .background(scheme.background.copy(alpha = 0.72f))
                         .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp + com.ambient.tv.ui.common.PlaybackStatusBarHeight),
                 )
                 com.ambient.tv.ui.common.PlaybackStatusBar(
                     progress = ((nowSeconds() - event.startEpochSeconds).toFloat() / event.durationSeconds.coerceAtLeast(1L)).coerceIn(0f, 1f),
+                    trackColor = scheme.onSurface.copy(alpha = 0.16f),
                     modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth(),
                 )
             }
@@ -843,11 +902,12 @@ private fun LiveChannelTile(
     }
 }
 
-/** First tile of the live row, like Plex's "TV guide" card. */
+/** First tile of the on-now row. Opens the programme guide. */
 @Composable
 private fun LiveGuideTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val (focusState, scale) = rememberLiveTileFocus()
     val tokens = com.ambient.tv.ui.theme.LocalUiTokens.current
+    val scheme = MaterialTheme.colorScheme
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(tokens.cardRadius)
     androidx.tv.material3.Surface(
         onClick = onClick,
@@ -866,32 +926,44 @@ private fun LiveGuideTile(onClick: () -> Unit, modifier: Modifier = Modifier) {
             Modifier
                 .fillMaxSize()
                 .clip(shape)
-                .background(Brush.linearGradient(listOf(Color(0xFF1B3F8F), Color(0xFF4A2A7A), Color(0xFF1F6F6B))))
-                .border(if (focusState.value) 2.dp else 1.dp, if (focusState.value) Color.White else Color.White.copy(alpha = 0.08f), shape),
+                .background(liveTileBrush())
+                .border(if (focusState.value) 2.dp else 1.dp, if (focusState.value) scheme.onSurface.copy(alpha = 0.90f) else scheme.onSurface.copy(alpha = 0.08f), shape),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             androidx.tv.material3.Icon(
                 androidx.compose.material.icons.Icons.AutoMirrored.Filled.ViewList,
                 contentDescription = null,
-                tint = Color.White,
+                tint = scheme.primary,
                 modifier = Modifier.size(28.dp),
             )
             Spacer(Modifier.width(10.dp))
-            Text(stringResource(R.string.tvh_guide), style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
+            Text(stringResource(R.string.tvh_guide), style = MaterialTheme.typography.titleMedium, color = scheme.onSurface, maxLines = 1)
         }
     }
 }
 
+/** Same wash as the home surfaces: accent only tints the top, then the card falls into the background. */
+@Composable
+private fun liveTileBrush(): Brush {
+    val scheme = MaterialTheme.colorScheme
+    return Brush.linearGradient(
+        0f to scheme.primary.copy(alpha = 0.22f),
+        0.45f to scheme.surfaceVariant,
+        1f to scheme.background,
+    )
+}
+
 @Composable
 private fun LiveBadge(modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
     Text(
         text = "LIVE",
         style = MaterialTheme.typography.labelSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold),
-        color = Color.White,
+        color = scheme.onPrimary,
         maxLines = 1,
         modifier = modifier
-            .background(Color(0xFFD32F2F), androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .background(scheme.primary, androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp),
     )
 }
@@ -1277,7 +1349,7 @@ private fun homeHeroHeight(): Dp {
 private val HomeHeroMinHeight = 190.dp
 
 // Rows sit this far up into the hero's fade tail, leaving room below the focused row's labels.
-private val HomeRowsLift = 30.dp
+internal val HomeRowsLift = 30.dp
 
 // Keep the metadata/logo above the ambient surface's transparent lower edge.
 private val HomeHeroFadeTail = 24.dp

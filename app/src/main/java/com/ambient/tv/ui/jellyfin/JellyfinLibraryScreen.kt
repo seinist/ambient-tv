@@ -9,12 +9,14 @@ import com.ambient.tv.ui.home.HomeViewModel
 fun JellyfinLibraryScreen(
     onItemClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     HomeScreen(
         focusStateKey = "jellyfin:home",
         onOpenSettings = onOpenSettings,
+        onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,
         jellyfinOnly = true,
