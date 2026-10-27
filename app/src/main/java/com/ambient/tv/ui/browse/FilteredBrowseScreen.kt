@@ -59,6 +59,8 @@ import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.MediaTile
 import com.ambient.tv.ui.common.MediaArtworkWithStreamIcons
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageContentUp
+import androidx.compose.foundation.focusGroup
 import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.SkeletonTile
 import com.ambient.tv.ui.common.StatePanel
@@ -99,7 +101,9 @@ fun FilteredBrowseScreen(
                 )
             }
             is FilteredBrowseUiState.Loaded -> Column(Modifier.fillMaxSize().padding(top = screenGutter() + 44.dp)) {
+                val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
                 PageHeader(
+                    focusChain = focusChain,
                     modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
                     actions = {
                         val grid = value.viewMode == BrowseViewMode.GRID
@@ -112,10 +116,9 @@ fun FilteredBrowseScreen(
                 }
                 if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
-                } else if (value.viewMode == BrowseViewMode.GRID) {
-                    BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
-                } else {
-                    BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+                } else Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
+                    if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+                    else BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
                 }
             }
         }

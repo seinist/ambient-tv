@@ -291,6 +291,27 @@ fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester =
  * Tab/filter chips under a [PageHeader]. Entering the row lands on the chip focused last (the
  * selected one at first, marked with [PageFocusChain.selectedChip]); Up leaves for [up].
  */
+/**
+ * Makes a row of its own (a breadcrumb) the chip stage of [chain]: entered on the chip focused
+ * last, else on the one carrying [PageFocusChain.selectedChip]; Up leaves for [up].
+ */
+@Composable
+fun Modifier.pageChips(chain: PageFocusChain, up: FocusRequester = chain.actions): Modifier {
+    DisposableEffect(chain) {
+        chain.hasChips = true
+        onDispose { chain.hasChips = false }
+    }
+    return focusRequester(chain.chips)
+        .focusRestorer(chain.selectedChip)
+        .onPreviewKeyEvent { event ->
+            if (event.key != Key.DirectionUp) false else {
+                if (event.type == KeyEventType.KeyDown) runCatching { up.requestFocus() }
+                true
+            }
+        }
+        .focusGroup()
+}
+
 @Composable
 fun PageChipRow(
     chain: PageFocusChain,
@@ -300,21 +321,8 @@ fun PageChipRow(
     up: FocusRequester = chain.actions,
     content: LazyListScope.() -> Unit,
 ) {
-    DisposableEffect(chain) {
-        chain.hasChips = true
-        onDispose { chain.hasChips = false }
-    }
     LazyRow(
-        modifier = modifier
-            .focusRequester(chain.chips)
-            .focusRestorer(chain.selectedChip)
-            .onPreviewKeyEvent { event ->
-                if (event.key != Key.DirectionUp) false else {
-                    if (event.type == KeyEventType.KeyDown) runCatching { up.requestFocus() }
-                    true
-                }
-            }
-            .focusGroup(),
+        modifier = modifier.pageChips(chain, up),
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         content = content,

@@ -49,6 +49,9 @@ import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.FullscreenSpinner
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageChips
+import com.ambient.tv.ui.common.pageContentUp
+import androidx.compose.foundation.focusGroup
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.overlayLazyScrollbar
@@ -117,8 +120,9 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
         if (!runCatching { requester.requestFocus() }.getOrDefault(false)) runCatching { top.requestFocus() }
     }
     LaunchedEffect(state.editorSaved) { if (state.editorSaved > 0) editor = null }
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     Column(Modifier.fillMaxSize().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        PageHeader(actions = {
+        PageHeader(focusChain = focusChain, actions = {
             // Handhelds have system Back; the chip only shows while there is a level to go up (or a load to cancel).
             if (!handheld || canUp || state.loading) TvChip(stringResource(R.string.files_back), modifier = Modifier.focusRequester(top).leftKeyAction { if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) {
                 if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack()
@@ -141,12 +145,14 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
         FilesBreadcrumb(
             root = if (viewModel.pinnedSource) null else rootLabel,
             folders = state.folders,
+            focusChain = focusChain,
             onSelect = viewModel::breadcrumb,
         )
         if (ids.isNotEmpty()) state.error?.let { message ->
             OperationFeedbackContent(message, Modifier.fillMaxWidth())
         }
-        Box(Modifier.fillMaxWidth().weight(1f)) {
+        // Up from the list: breadcrumb (parent folder), then the header actions.
+        Box(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain).focusGroup()) {
             if (state.error != null && ids.isEmpty()) {
                 OperationFeedbackContent(state.error!!, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
@@ -300,14 +306,16 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
 
 /** Path as one quiet text line: ancestors are jump targets, the last segment is the current folder. */
 @Composable
-private fun FilesBreadcrumb(root: String?, folders: List<FolderLocation>, onSelect: (Int) -> Unit) {
+private fun FilesBreadcrumb(root: String?, folders: List<FolderLocation>, focusChain: com.ambient.tv.ui.common.PageFocusChain, onSelect: (Int) -> Unit) {
     val crumbs = listOfNotNull(root?.let { -1 to it }) + folders.mapIndexed { index, folder -> index to folder.name }
     val row = rememberLazyListState()
     // Deep paths keep the current folder in view; ancestors scroll back in with D-pad left.
     LaunchedEffect(crumbs.size) { if (crumbs.isNotEmpty()) row.scrollToItem(crumbs.lastIndex) }
-    LazyRow(state = row, modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp), verticalAlignment = Alignment.CenterVertically) {
+    // The current folder is plain text; the parent crumb is where Up from the list lands.
+    val chips = if (crumbs.size > 1) Modifier.pageChips(focusChain) else Modifier
+    LazyRow(state = row, modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp).then(chips), verticalAlignment = Alignment.CenterVertically) {
         itemsIndexed(crumbs) { position, (index, name) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(if (position == crumbs.lastIndex - 1) Modifier.focusRequester(focusChain.selectedChip) else Modifier, verticalAlignment = Alignment.CenterVertically) {
                 if (position > 0) androidx.compose.material3.Icon(
                     Icons.Default.ChevronRight, null, Modifier.size(18.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .6f),

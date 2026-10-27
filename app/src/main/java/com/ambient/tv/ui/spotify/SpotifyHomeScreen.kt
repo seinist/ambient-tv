@@ -39,6 +39,8 @@ import com.ambient.tv.spotify.SpotifyBrowseItem
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.ScreensaverArtworkRegistry
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageContentUp
+import androidx.compose.foundation.focusGroup
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -101,8 +103,9 @@ fun SpotifyHomeScreen(
             delay(32)
         }
     }
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     Column(Modifier.fillMaxSize().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        PageHeader(actions = {
+        PageHeader(focusChain = focusChain, actions = {
             TvChip(
                 text = when {
                     state.authBusy -> stringResource(R.string.action_signing_in)
@@ -135,7 +138,7 @@ fun SpotifyHomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            else -> LazyVerticalGrid(columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)), modifier = Modifier.fillMaxSize().overlayLazyGridScrollbar(gridState), state = gridState, contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            else -> LazyVerticalGrid(columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)), modifier = Modifier.fillMaxSize().overlayLazyGridScrollbar(gridState).pageContentUp(focusChain).focusGroup(), state = gridState, contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(state.items, key = { "${it.type}:${it.id}" }) { item ->
                     SpotifyTile(
                         item,

@@ -66,6 +66,8 @@ import com.ambient.tv.data.dlna.DlnaServer
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageChips
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
@@ -231,8 +233,9 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         }
     }
     Box(Modifier.fillMaxSize()) {
+        val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            PageHeader(actions = {
+            PageHeader(focusChain = focusChain, actions = {
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
                 TvChip(stringResource(R.string.library_options), icon = Icons.Filled.Tune, iconOnly = true, onClick = { showOptions = true }, modifier = Modifier.focusRequester(optionsFocus))
                 TvChip(stringResource(R.string.dlna_servers), icon = Icons.Default.Storage, iconOnly = true, onClick = onManage)
@@ -246,6 +249,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 root = stringResource(R.string.dlna_root),
                 path = state.path,
                 requestedFocusIndex = if (failedOrEmptyFolder && state.error == null && !showOptions) dlnaParentBreadcrumbIndex(state.path.size) else null,
+                focusChain = focusChain,
                 onSelect = viewModel::breadcrumb,
             )
             if (nodes.isNotEmpty()) state.error?.let {
@@ -257,7 +261,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     Modifier.fillMaxWidth(), actionLabel = stringResource(R.string.home_retry),
                     onAction = { restoreAfterRetry = true; viewModel.retryMore() }, actionLoading = state.loadingMore)
             }
-            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain).focusGroup()) {
                 val style = if (state.viewMode == DlnaViewMode.POSTER) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE
                 val scale = rememberUhdScale()
                 val handheld = LocalHandheldUi.current
@@ -372,6 +376,7 @@ private fun DlnaBreadcrumb(
     root: String,
     path: List<DlnaBrowserLocation>,
     requestedFocusIndex: Int?,
+    focusChain: com.ambient.tv.ui.common.PageFocusChain,
     onSelect: (Int) -> Unit,
 ) {
     val crumbs = listOf(-1 to root) + path.mapIndexed { index, location -> index to location.title }
@@ -392,11 +397,12 @@ private fun DlnaBreadcrumb(
     }
     LazyRow(
         state = row,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp),
+        // The current folder is plain text; the parent crumb is where Up from the grid lands.
+        modifier = Modifier.fillMaxWidth().heightIn(min = 36.dp).then(if (crumbs.size > 1) Modifier.pageChips(focusChain) else Modifier),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         itemsIndexed(crumbs) { position, (index, title) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(if (position == crumbs.lastIndex - 1) Modifier.focusRequester(focusChain.selectedChip) else Modifier, verticalAlignment = Alignment.CenterVertically) {
                 if (position > 0) androidx.compose.material3.Icon(
                     Icons.Default.ChevronRight,
                     null,
