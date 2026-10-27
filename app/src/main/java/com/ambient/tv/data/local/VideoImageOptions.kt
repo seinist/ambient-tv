@@ -60,6 +60,14 @@ object VideoImageCatalog {
     val media3Scalers = linkedMapOf(
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
         "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
+        // MPV's other built-in kernels, sampled like MPV does (Media3KernelScalers).
+        "mitchell" to "Mitchell", "hermite" to "Hermite", "robidoux" to "Robidoux",
+        "robidouxsharp" to "RobidouxSharp", "spline16" to "Spline16", "spline36" to "Spline36",
+        "spline64" to "Spline64", "sinc" to "Sinc", "ginseng" to "Ginseng", "gaussian" to "Gaussian",
+        "ewa_lanczos" to "EWA Lanczos", "ewa_lanczossharp" to "EWA LanczosSharp",
+        "ewa_lanczos4sharpest" to "EWA Lanczos4Sharpest", "ewa_lanczossoft" to "EWA LanczosSoft",
+        "ewa_robidoux" to "EWA Robidoux", "ewa_robidouxsharp" to "EWA RobidouxSharp",
+        "nearest" to "Nearest", "oversample" to "Oversample",
         // MPV's RAVU shader files, translated for Media3 at runtime (Media3RavuEffect).
         "ravu_lite_r2" to "RAVU Lite AR · r2", "ravu_lite_r3" to "RAVU Lite AR · r3", "ravu_lite_r4" to "RAVU Lite AR · r4",
         "ravu_zoom_r3" to "RAVU Zoom AR · r3",

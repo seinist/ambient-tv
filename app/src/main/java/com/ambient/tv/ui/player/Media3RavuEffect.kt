@@ -394,8 +394,9 @@ uniform float uLutMin;
 uniform float uLutRange;
 float lumaAt(vec2 texel) { return lumaOf(texture2D(uTexSampler, (texel + 0.5) / uInputSize).rgb); }
 vec4 lut(vec2 uv) {
-  vec4 q = texture2D(uLutHigh, uv) * (255.0 * 256.0) + texture2D(uLutLow, uv) * 255.0;
-  return q / 65535.0 * uLutRange + uLutMin;
+  // 16-bit value from two bytes; factors below 1 keep mediump in range.
+  vec4 q = texture2D(uLutHigh, uv) * (65280.0 / 65535.0) + texture2D(uLutLow, uv) * (255.0 / 65535.0);
+  return q * uLutRange + uLutMin;
 }
 """
 
@@ -436,12 +437,14 @@ uniform vec2 uLutA;
 uniform vec2 uLutB;
 float lumaAtPos(vec2 pos) { return lumaOf(texture2D(uTexSampler, pos / uInputSize).rgb); }
 vec4 lutA(vec2 uv) {
-  vec4 q = texture2D(uLutAHigh, uv) * (255.0 * 256.0) + texture2D(uLutALow, uv) * 255.0;
-  return q / 65535.0 * uLutA.y + uLutA.x;
+  // 16-bit value from two bytes; factors below 1 keep mediump in range.
+  vec4 q = texture2D(uLutAHigh, uv) * (65280.0 / 65535.0) + texture2D(uLutALow, uv) * (255.0 / 65535.0);
+  return q * uLutA.y + uLutA.x;
 }
 vec4 lutB(vec2 uv) {
-  vec4 q = texture2D(uLutBHigh, uv) * (255.0 * 256.0) + texture2D(uLutBLow, uv) * 255.0;
-  return q / 65535.0 * uLutB.y + uLutB.x;
+  // 16-bit value from two bytes; factors below 1 keep mediump in range.
+  vec4 q = texture2D(uLutBHigh, uv) * (65280.0 / 65535.0) + texture2D(uLutBLow, uv) * (255.0 / 65535.0);
+  return q * uLutB.y + uLutB.x;
 }
 """
 

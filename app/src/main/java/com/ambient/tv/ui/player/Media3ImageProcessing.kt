@@ -257,6 +257,7 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
         "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
         in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
         "nis" -> Media3NisEffect(outputWidth, outputHeight)
+        in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight)
         "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f, gamma = gamma)
         else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f, gamma = gamma)
     }

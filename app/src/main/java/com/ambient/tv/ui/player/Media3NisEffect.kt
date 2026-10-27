@@ -190,8 +190,9 @@ float lumaAt(vec2 texel) { return lumaOf(texture2D(uTexSampler, (texel + 0.5) / 
 // One texel of the 4x64 coefficient table: columns 0-1 coef_scaler, 2-3 coef_usm.
 vec4 coef(float column, float phase) {
   vec2 uv = vec2((column + 0.5) / 4.0, (phase + 0.5) / 64.0);
-  vec4 q = texture2D(uCoefHigh, uv) * (255.0 * 256.0) + texture2D(uCoefLow, uv) * 255.0;
-  return q / 65535.0 * uCoef.y + uCoef.x;
+  // 16-bit value from two bytes; factors below 1 keep mediump in range.
+  vec4 q = texture2D(uCoefHigh, uv) * (65280.0 / 65535.0) + texture2D(uCoefLow, uv) * (255.0 / 65535.0);
+  return q * uCoef.y + uCoef.x;
 }
 
 // GetEdgeMap on the 3x3 neighbourhood aRC (row R, column C) around one source pixel.

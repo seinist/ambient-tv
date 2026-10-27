@@ -92,8 +92,9 @@ internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
     val fusable = previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
-        // Lanczos is Media3's own effect, RAVU and NIS are their own programs: none takes the gamma.
-        (previous is Media3Stage.Scale && previous.scaler != "lanczos" && previous.scaler != "nis" && previous.scaler !in MEDIA3_RAVU_SCALERS)
+        // Only the single-pass cubic and FSR shaders take the gamma; Lanczos is Media3's own effect,
+        // the MPV kernels, RAVU and NIS are programs of their own.
+        (previous is Media3Stage.Scale && previous.scaler in setOf("bicubic", "catmull_rom", "fsr"))
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
 }
