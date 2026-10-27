@@ -2107,10 +2107,6 @@ private fun accentLabel(key: String): String = when (key) {
 private fun introAnimationLabel(key: String): String = when (key) {
     IntroAnimation.OFF -> stringResource(R.string.settings_intro_off)
     IntroAnimation.POWER_ON -> stringResource(R.string.settings_intro_power_on)
-    IntroAnimation.SIGNAL -> stringResource(R.string.settings_intro_signal)
-    IntroAnimation.SHIMMER -> stringResource(R.string.settings_intro_shimmer)
-    IntroAnimation.RIPPLE -> stringResource(R.string.settings_intro_ripple)
-    IntroAnimation.WORD -> stringResource(R.string.settings_intro_word)
     IntroAnimation.HORIZON -> stringResource(R.string.settings_intro_horizon)
     else -> stringResource(R.string.settings_intro_bloom)
 }

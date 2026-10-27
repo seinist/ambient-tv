@@ -138,7 +138,7 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | SDR-Video zu HDR | An / Aus | Aus | Alle | Siehe [3.5.1](#351-sdr-video-zu-hdr). Wirkt nur mit HDR-Oberfläche „Automatisch“. |
 | Oberflächenleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Animationen, Schimmer, schwere Flächen. Siehe [§8](#8-leistungsmodi). |
 | Oberfläche prüfen | Aktion | — | Alle | Misst die Zeichenlast und schlägt einen Modus vor. |
-| Start-Animation | Aus · Einschalten · Ambient-Glühen · Signalsuche · Lichtstreif · Sendewellen · Wortzug · Horizont | Ambient-Glühen | Alle | Einmal beim Kaltstart, in den Akzentfarben. Während ein Server aufwacht, atmet das Licht weiter. Jede Taste fährt fort. Sparsam zeigt das stehende Zeichen. |
+| Start-Animation | Aus · Lichtfeld · Morgenlicht · Einschalten | Lichtfeld | Alle | Einmal beim Kaltstart, in den Akzentfarben. Während ein Server aufwacht, atmet das Licht weiter. Jede Taste fährt fort. Sparsam zeigt die stehende Wortmarke. |
 | Wiedergabeleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Bewegungsglättung, schwere Hochskalierer, Deinterlace mit doppelter Rate. |
 | Prüfdauer für Bildaussetzer | Automatisch, 2, 5, 6, 10, 15, 30, 60 s | Automatisch (2–6 s) | Alle | Messfenster des MPV-/VLC-Filtertests. |
 | Wiedergabe prüfen | Aktion | — | Alle | Misst die Filterlast ohne Bild. |

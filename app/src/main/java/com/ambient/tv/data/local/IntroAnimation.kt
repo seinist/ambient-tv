@@ -1,33 +1,27 @@
 package com.ambient.tv.data.local
 
 /**
- * Cold-start intro drawn in the theme accents. [OFF] hands over straight from the system splash.
- * [durationMs] is the one-shot opening. The mark then holds and the light breathes until the
- * intro is dismissed. Sparsam draws the finished mark without motion.
+ * Cold-start intro drawn in the theme accents around the brand wordmark. [OFF] hands over straight
+ * from the system splash. [durationMs] is the one-shot opening. The light then breathes until the
+ * intro is dismissed. Sparsam draws the settled frame without motion.
  */
 object IntroAnimation {
     const val OFF = "off"
-    const val POWER_ON = "power_on"
+    /** Light field; the key predates the rename and stays so saved choices keep working. */
     const val BLOOM = "bloom"
-    const val SIGNAL = "signal"
-    const val SHIMMER = "shimmer"
-    const val RIPPLE = "ripple"
-    const val WORD = "word"
     const val HORIZON = "horizon"
+    const val POWER_ON = "power_on"
     const val DEFAULT = BLOOM
 
-    val keys = listOf(OFF, POWER_ON, BLOOM, SIGNAL, SHIMMER, RIPPLE, WORD, HORIZON)
+    val keys = listOf(OFF, BLOOM, HORIZON, POWER_ON)
 
+    /** Retired styles (signal, shimmer, ripple, word) fall back to the default. */
     fun normalize(key: String?): String = key?.takeIf { it in keys } ?: DEFAULT
 
     fun durationMs(key: String): Int = when (normalize(key)) {
-        POWER_ON -> 2600
-        SIGNAL -> 3000
-        SHIMMER -> 2600
-        RIPPLE -> 2400
-        WORD -> 3400
-        HORIZON -> 3200
+        HORIZON -> 4400
+        POWER_ON -> 4400
         OFF -> 0
-        else -> 2800
+        else -> 4000
     }
 }
