@@ -149,7 +149,8 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
                 .map { item -> item.takeIf { it.wideBackdropUrl == null } }
-                .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey }
+                // A new match (guid) needs a new fallback as well, not only another item.
+                .distinctUntilChanged { a, b -> a?.ratingKey == b?.ratingKey && a?.guid == b?.guid }
                 .collect { item ->
                     if (item == null) return@collect
                     val fromServer = mediaRepository.getAlternativeBackdrop(item.ratingKey).getOrNull()
@@ -431,6 +432,11 @@ class DetailViewModel @Inject constructor(
             // Also when the opened version looks unchanged: another version may have left the
             // merged title, which only the full load (duplicate resolution) shows.
             _fallbackBackdrop.value = null
+            // Seasons, recommendations and the theme belong to the old match; their caches would
+            // otherwise survive until their TTL ends.
+            mediaRepository.invalidateCaches()
+            themeMusicJob?.cancel()
+            updateLoaded { it.copy(themeMusic = null) }
             load()
             // Libraries and Home re-query once they are shown again: order (sort title) and
             // split duplicates only come from the server, not from the item cache.
