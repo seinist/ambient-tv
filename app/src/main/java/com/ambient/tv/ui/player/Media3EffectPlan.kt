@@ -32,10 +32,13 @@ internal fun media3EffectPlan(
     debandAllowed: Boolean = true,
     /** False above [media3FilterBudgetAllows] for the sharpened size: no unsharp/CAS/RCAS pass. */
     sharpenAllowed: Boolean = true,
+    /** False above [media3HeavyScalerBudgetAllows] for the output: heavy scalers run as Catmull-Rom. */
+    heavyScaleAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
+        ?.let { if (!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) "catmull_rom" else it }
     return buildList {
         // Denoise reads the source like deband and shares its budget.
         if (o.denoise != "off" && debandAllowed) add(Media3Stage.Denoise(o.denoise))
@@ -44,6 +47,8 @@ internal fun media3EffectPlan(
         when {
             !sharpenAllowed -> Unit
             scaler == "fsr" -> add(Media3Stage.Sharpen("rcas"))
+            // NVScaler sharpens inside its own pass.
+            scaler == "nis" -> Unit
             o.sharpening != "off" -> add(Media3Stage.Sharpen(o.sharpening))
         }
         // Grain runs on the same (output) size as sharpening and shares its budget.
@@ -53,6 +58,23 @@ internal fun media3EffectPlan(
         if (o.saturation != 0) add(Media3Stage.Saturation(o.saturation))
         if (o.gamma != 0) add(Media3Stage.Gamma(o.gamma))
     }
+}
+
+/**
+ * Scalers that read many texels per output pixel (NVScaler, RAVU, EWA and the wide orthogonal
+ * kernels): several times the work of the cubic or FSR pass.
+ */
+internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCALERS +
+    MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
+
+/** Output pixels per second a heavy scaler may produce: 4K at 30 fps (twice the filter budget). */
+internal const val MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE = 2L * 1920L * 1088L * 60L
+
+/** Whether a heavy scaler may produce [width]x[height] at [fps]; unknown frame rates count as 30. */
+internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float): Boolean {
+    if (width <= 0 || height <= 0) return true
+    val rate = if (fps.isFinite() && fps > 0f) fps else 30f
+    return width.toLong() * height * rate <= MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE
 }
 
 /** Pixels per second the multi-tap deband/sharpen shaders may process: Full HD at 60 fps. */
@@ -69,9 +91,9 @@ internal fun media3FilterBudgetAllows(width: Int, height: Int, fps: Float): Bool
     return width.toLong() * height * rate <= MEDIA3_FILTER_MAX_PIXEL_RATE
 }
 
-/** True when FSR replaces the sharpening row (it would otherwise sharpen twice). */
+/** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
-    upscalerApplies && options.normalized().scaler == "fsr"
+    upscalerApplies && options.normalized().scaler in setOf("fsr", "nis")
 
 internal fun media3ScalerLabel(key: String): String = VideoImageCatalog.media3Scalers[key] ?: key
 
@@ -90,7 +112,9 @@ internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
     val fusable = previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
-        (previous is Media3Stage.Scale && previous.scaler != "lanczos")
+        // Only the single-pass cubic and FSR shaders take the gamma; Lanczos is Media3's own effect,
+        // the MPV kernels, RAVU and NIS are programs of their own.
+        (previous is Media3Stage.Scale && previous.scaler in setOf("bicubic", "catmull_rom", "fsr"))
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
 }

@@ -12,6 +12,8 @@ import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.VideoFrameProcessingException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -36,6 +38,11 @@ internal fun media3ImageEffectsAllowed(format: Format?): Boolean {
     // Media3 aligned with MPV and avoids applying SDR effects to unknown HDR.
     return media3TransferIsSdr(format.colorInfo?.colorTransfer)
 }
+
+/** Whether a playback error comes from the video effect chain (shader, GPU feature, frame processor). */
+internal fun media3EffectFailure(errorCode: Int, error: Throwable?): Boolean =
+    errorCode == PlaybackException.ERROR_CODE_VIDEO_FRAME_PROCESSING_FAILED ||
+        generateSequence(error) { it.cause }.any { it is VideoFrameProcessingException }
 
 /** sRGB and gamma 2.2 are SDR transfers too; unknown/absent transfer stays fail-closed. */
 internal fun media3TransferIsSdr(transfer: Int?): Boolean =
@@ -82,12 +89,18 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         private set
     var scaleRelation by mutableStateOf(VideoScaleRelation.UNKNOWN)
         private set
-    /** Deband or sharpening is configured but skipped: the video is above the GPU budget. */
+    /** Deband, sharpening or a heavy scaler is configured but skipped: the video is above the GPU budget. */
     var filtersOverBudget by mutableStateOf(false)
         private set
     // Media3 1.4.1 retains its video sink after setVideoEffects(emptyList()). Do not describe
     // an empty chain as direct output: direct output returns with the next player instance.
     var gpuPipelineInitialized by mutableStateOf(false)
+        private set
+    /**
+     * The effect chain failed on this device (a shader that does not compile, a missing GPU
+     * feature): playback continues without effects until the settings change.
+     */
+    var effectsFailed by mutableStateOf(false)
         private set
 
     val hasConfiguredEffects: Boolean
@@ -143,6 +156,8 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         if (next != options) {
             PlaybackOutputTransition.begin(appContext)
             userChangePending = true
+            // Other settings get their own attempt.
+            effectsFailed = false
         }
         options = next
         scheduleUpdate()
@@ -175,7 +190,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         if (player.mediaItemCount == 0 || player.playbackState == Player.STATE_IDLE) return
         // Sparsam disables the GPU sink / Lanczos / brightness chain without clearing saved prefs.
         val gated = effectiveMedia3ImageOptions(options, reducedVideoEffects(appContext))
-        val enabled = gpuEffectsSupported && gated.enabled && media3ImageEffectsAllowed(format)
+        val enabled = gpuEffectsSupported && !effectsFailed && gated.enabled && media3ImageEffectsAllowed(format)
         val effective = if (enabled) gated else Media3ImageOptions()
         val signature = Triple(effective, outputWidth, outputHeight)
         // Scalers only run while the fitted picture is larger than the source: never past the display.
@@ -188,7 +203,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val fps = format?.frameRate ?: 0f
         val debandAllowed = format?.let { media3FilterBudgetAllows(it.width, it.height, fps) } ?: true
         val sharpenAllowed = if (upscaling) media3FilterBudgetAllows(outputWidth, outputHeight, fps) else debandAllowed
-        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed) else emptyList()
+        // NIS, RAVU and the EWA/wide kernels at most 4K30 output; above that they run as Catmull-Rom.
+        val heavyScaleAllowed = !upscaling || media3HeavyScalerBudgetAllows(outputWidth, outputHeight, fps)
+        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed, heavyScaleAllowed) else emptyList()
         filtersOverBudget = enabled && stages != media3EffectPlan(effective, upscaling)
         val userChange = userChangePending
         userChangePending = false
@@ -211,6 +228,25 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         effectsActive = enabled && effects.isNotEmpty()
         scalerInChain = scaler
         publishApplied()
+    }
+
+    /**
+     * A failing effect chain must not end playback: drop the effects and continue where the
+     * picture stopped. A second failure without effects is a real playback error.
+     */
+    private fun recover(error: PlaybackException): Boolean {
+        val player = playerRef.get() ?: return false
+        if (effectsFailed || !effectsActive || !media3EffectFailure(error.errorCode, error)) return false
+        com.ambient.tv.diagnostics.DiagnosticLog.error("playback",
+            "Media3 effects failed (${appliedStages.joinToString { media3StageSummary(it) }}); continuing without them", error)
+        effectsFailed = true
+        applied = Triple(Media3ImageOptions(), outputWidth, outputHeight)
+        appliedStages = emptyList()
+        restartWithEffects(player, emptyList())
+        effectsActive = false
+        scalerInChain = null
+        publishApplied()
+        return true
     }
 
     /** stop() resets the renderers outside foreground mode; setVideoEffects MUST precede prepare(). */
@@ -237,6 +273,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     companion object {
         private val instances = WeakHashMap<ExoPlayer, Media3ImageProcessing>()
         fun gpuInitialized(player: ExoPlayer): Boolean = instances[player]?.gpuPipelineInitialized == true
+        /** True when [error] came from the effect chain and playback restarted without it. */
+        fun recoverFromEffectFailure(player: ExoPlayer, error: PlaybackException): Boolean =
+            instances[player]?.recover(error) == true
         /** No processor means nothing has been applied. Does not create one. */
         fun peekApplied(player: ExoPlayer): AppliedVideoProcessing =
             instances[player]?.appliedForStats ?: media3AppliedProcessing(effectsActive = false, scaler = null, stages = emptyList())
@@ -255,6 +294,9 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
     is Media3Stage.Scale -> when (stage.scaler) {
         "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
         "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
+        in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
+        "nis" -> Media3NisEffect(outputWidth, outputHeight)
+        in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight)
         "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f, gamma = gamma)
         else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f, gamma = gamma)
     }
