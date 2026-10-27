@@ -29,6 +29,16 @@ class AudioOutputPlannerTest {
             sourceChannels = 6).pcmLimitFallback)
     }
 
+    @Test fun mpvDoesNotBitstreamToTelevisionSpeakers() {
+        val speaker = android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        val route = AudioRouteCapabilities(setOf("ac3", "eac3"), 2, true, outputTypes = listOf(speaker))
+        assertEquals(AudioOutputMode.PCM, planAudioOutput(AudioOptions(), "eac3", route, "mpv", true).mode)
+        assertEquals(AudioOutputMode.PASSTHROUGH, planAudioOutput(AudioOptions(), "eac3", route, "media3", true).mode)
+        val hdmi = route.copy(outputTypes = listOf(android.media.AudioDeviceInfo.TYPE_HDMI_ARC))
+        assertEquals(AudioOutputMode.PASSTHROUGH, planAudioOutput(AudioOptions(), "eac3", hdmi, "mpv", true).mode)
+        assertEquals(AudioOutputMode.PASSTHROUGH, planAudioOutput(AudioOptions(output = "force"), "eac3", route, "mpv", true).mode)
+    }
+
     @Test fun videoBlockedMpvDoesNotPreventMedia3NativeAc3() {
         val options = AudioOptions(output = "auto", localAc3 = true, pcmChannelLimit = 2)
         val route = AudioRouteCapabilities(setOf("ac3"), 2, false)

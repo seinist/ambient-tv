@@ -122,7 +122,11 @@ fun planAudioOutput(
     val requested = options.normalized()
     val blocked = rejectedCodecs.mapNotNull(::normalizeSourceCodec).toSet()
     val forcedRoute = route.forcedBy(requested)
-    val liveRoute = forcedRoute.copy(passthrough = forcedRoute.passthrough - blocked)
+    // MPV sends bitstreams as IEC 61937. A TV's own speakers accept Dolby only as a direct
+    // E-AC3/AC3 track (Media3), so MPV's packets stall the output: picture frozen, no sound.
+    val iecUnsupported = backend == "mpv" && !requested.forcesPassthrough() &&
+        route.outputTypes.isNotEmpty() && route.outputTypes.all { it == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+    val liveRoute = forcedRoute.copy(passthrough = if (iecUnsupported) emptySet() else forcedRoute.passthrough - blocked)
     val forcing = forcedRoute.pcmChannels > route.pcmChannels
     val permitted = requested.permitsBitstream(sourcePassthrough)
     val confirmed = AudioCatalog.codecs.filter { it in requested.allowedCodecs && it in liveRoute.passthrough }
