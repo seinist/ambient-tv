@@ -107,10 +107,14 @@ internal class Media3DebandEffect(private val strength: String, private val gamm
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         object : Media3FragmentShaderProgram(useHdr, DEBAND, media3GammaExponent(gamma)) {
             override fun setUniforms(program: GlProgram) {
-                val medium = strength == "medium"
-                program.float("uRange", if (medium) 16f else 8f)
-                program.float("uThreshold", if (medium) 0.008f else 0.004f)
-                program.float("uGrain", if (medium) 0.003f else 0.002f)
+                val (range, threshold, grain) = when (strength) {
+                    "medium" -> Triple(16f, 0.008f, 0.003f)
+                    "strong" -> Triple(24f, 0.012f, 0.004f)
+                    else -> Triple(8f, 0.004f, 0.002f)
+                }
+                program.float("uRange", range)
+                program.float("uThreshold", threshold)
+                program.float("uGrain", grain)
             }
         }
 }
@@ -160,7 +164,7 @@ internal class Media3SharpenEffect(private val kind: String, private val gamma: 
             override fun setUniforms(program: GlProgram) = program.float("uSharpnessStops", 0.2f)
         }
         else -> object : Media3FragmentShaderProgram(useHdr, UNSHARP, media3GammaExponent(gamma)) {
-            override fun setUniforms(program: GlProgram) = program.float("uAmount", if (kind == "medium") 0.8f else 0.4f)
+            override fun setUniforms(program: GlProgram) = program.float("uAmount", when (kind) { "medium" -> 0.8f; "strong" -> 1.2f; else -> 0.4f })
         }
     }
 }

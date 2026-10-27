@@ -125,6 +125,7 @@ internal val MPV_IMAGE_SHADERS = mapOf(
     "krig" to MpvShaderAsset(R.raw.quality_krig_8a4798ab, "quality_krig_8a4798ab.glsl", true),
     "filmgrain_light" to MpvShaderAsset(R.raw.quality_filmgrain_light_4aee719a, "quality_filmgrain_light_4aee719a.glsl", true),
     "filmgrain_medium" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", true),
+    "filmgrain_strong" to MpvShaderAsset(R.raw.quality_filmgrain_strong_1d0e7c75, "quality_filmgrain_strong_1d0e7c75.glsl", true),
     // Same sources hooked on OUTPUT for HDR sources: after tone mapping the grain no longer
     // depends on the PQ/HLG code values (LUMA grain in PQ would be far too strong in highlights).
     // An OUTPUT hook reads rendered RGB, so it needs no decoder copy-back. SDR keeps the LUMA
@@ -133,6 +134,8 @@ internal val MPV_IMAGE_SHADERS = mapOf(
         hdrSafe = true, outputHook = true, cacheFileName = "quality_filmgrain_light_4aee719a_output.glsl"),
     "filmgrain_medium_output" to MpvShaderAsset(R.raw.quality_filmgrain_medium_4921afc1, "quality_filmgrain_medium_4921afc1.glsl", false,
         hdrSafe = true, outputHook = true, cacheFileName = "quality_filmgrain_medium_4921afc1_output.glsl"),
+    "filmgrain_strong_output" to MpvShaderAsset(R.raw.quality_filmgrain_strong_1d0e7c75, "quality_filmgrain_strong_1d0e7c75.glsl", false,
+        hdrSafe = true, outputHook = true, cacheFileName = "quality_filmgrain_strong_1d0e7c75_output.glsl"),
     "cfl_lite" to MpvShaderAsset(R.raw.quality_cfl_lite_159c1dad, "quality_cfl_lite_159c1dad.glsl", true, requiresGpuNext = true),
     "cfl" to MpvShaderAsset(R.raw.quality_cfl_f9d12d38, "quality_cfl_f9d12d38.glsl", true, requiresGpuNext = true),
     "ssim_down" to MpvShaderAsset(R.raw.quality_ssim_down_f46f4710, "quality_ssim_down_f46f4710.glsl", false),

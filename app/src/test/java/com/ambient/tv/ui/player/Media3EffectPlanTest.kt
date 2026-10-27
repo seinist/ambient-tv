@@ -52,7 +52,7 @@ class Media3EffectPlanTest {
     @Test
     fun disabledOrUnknownValuesPlanNothingExtra() {
         assertTrue(media3EffectPlan(all.copy(enabled = false), upscaling = true).isEmpty())
-        val junk = Media3ImageOptions(enabled = true, scaler = "x", sharpening = "adaptive", deband = "strong", gamma = 99)
+        val junk = Media3ImageOptions(enabled = true, scaler = "x", sharpening = "adaptive", deband = "extreme", gamma = 99)
         assertEquals(listOf(Media3Stage.Gamma(20)), media3EffectPlan(junk, upscaling = true))
     }
 
