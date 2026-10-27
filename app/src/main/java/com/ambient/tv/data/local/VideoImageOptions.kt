@@ -210,6 +210,8 @@ data class Media3ImageOptions(
     val gamma: Int = 0,
     /** Synthetic film grain, after sharpening; older profiles read as off. */
     val filmGrain: String = "off",
+    /** Edge-preserving GPU denoise on source pixels, before deband; older profiles read as off. */
+    val denoise: String = "off",
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
@@ -219,5 +221,6 @@ data class Media3ImageOptions(
         deband = deband.takeIf { it in VideoImageCatalog.media3Deband } ?: "off",
         gamma = gamma.coerceIn(-20, 20),
         filmGrain = filmGrain.takeIf { it in VideoImageCatalog.strengths } ?: "off",
+        denoise = denoise.takeIf { it in VideoImageCatalog.strengths } ?: "off",
     )
 }

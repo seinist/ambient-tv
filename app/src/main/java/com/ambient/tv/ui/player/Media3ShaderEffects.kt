@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
 
 /*
  * Single-pass fragment shaders for Media3's SDR effect chain (deband, cubic and FSR upscaling,
- * unsharp, CAS, RCAS, Adaptive Sharpen, film grain, gamma). Inputs are gamma-encoded SDR RGB in 0..1; the chain only runs for
+ * unsharp, CAS, RCAS, Adaptive Sharpen, film grain, denoise, gamma). Inputs are gamma-encoded SDR RGB in 0..1; the chain only runs for
  * SDR tracks (see media3ImageEffectsAllowed), HDR keeps the direct decoder surface.
  */
 
@@ -104,6 +104,28 @@ private abstract class Media3FragmentShaderProgram(
 }
 
 private fun GlProgram.float(name: String, value: Float) = setFloatsUniformIfPresent(name, floatArrayOf(value))
+
+/**
+ * Bilateral denoise over a 5x5 neighbourhood without corners: neighbours count by distance and
+ * by how close their color is, so noise in flat areas averages out while edges stay.
+ */
+internal class Media3DenoiseEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
+        object : Media3FragmentShaderProgram(useHdr, DENOISE, media3GammaExponent(gamma)) {
+            override fun setUniforms(program: GlProgram) {
+                val (spatial, range) = media3DenoiseSigmas(strength)
+                program.float("uSpatial", 1f / (2f * spatial * spatial))
+                program.float("uRange", 1f / (2f * range * range))
+            }
+        }
+}
+
+/** Spatial (pixels) and range (0..1 color distance) sigmas per level. */
+internal fun media3DenoiseSigmas(strength: String): Pair<Float, Float> = when (strength) {
+    "medium" -> 1.5f to 0.05f
+    "strong" -> 2.0f to 0.08f
+    else -> 1.2f to 0.03f
+}
 
 /** Smooths 8-bit color steps in flat areas; edges above the threshold stay untouched. */
 internal class Media3DebandEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
@@ -601,5 +623,29 @@ void main() {
             - wpmean(min(sharpdiff, 0.0), softLim(min(sharpdiff, 0.0), minDist), cs.y);
   float sharpdiffLim = sat1(c0Y + sharpdiff) - c0Y;
   gl_FragColor = finish(clamp(c[0] + sharpdiffLim, 0.0, 1.0));
+}
+"""
+
+// Bilateral filter, 21 taps (5x5 without the corners). uSpatial and uRange are 1 / (2 sigma^2).
+private const val DENOISE = """
+uniform float uSpatial;
+uniform float uRange;
+void main() {
+  vec2 pos = floor(vTexSamplingCoord * uInputSize);
+  vec3 center = tap(pos);
+  vec3 sum = center;
+  float weights = 1.0;
+  for (int y = -2; y <= 2; y++) {
+    for (int x = -2; x <= 2; x++) {
+      float d2 = float(x * x + y * y);
+      if (d2 == 0.0 || d2 > 5.0) continue;
+      vec3 c = tap(pos + vec2(float(x), float(y)));
+      vec3 diff = c - center;
+      float w = exp(-d2 * uSpatial - dot(diff, diff) * (uRange / 3.0));
+      sum += c * w;
+      weights += w;
+    }
+  }
+  gl_FragColor = finish(clamp(sum / weights, 0.0, 1.0));
 }
 """
