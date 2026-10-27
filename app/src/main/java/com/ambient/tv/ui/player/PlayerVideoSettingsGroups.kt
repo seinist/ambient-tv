@@ -120,8 +120,10 @@ internal fun PlayerVideoSettingsGroups(
     val svpEntryVisible = handle != null && videoImagePreferences(context).svpAvailable
     val hdrFacts = com.ambient.tv.ui.settings.rememberHdrControlFacts(videoImagePreferences(context).uiHdrModeKey)
     val hasSdrToHdrControl = com.ambient.tv.ui.display.sdrToHdrPlaybackControlVisible(hdrFacts)
+    // Only areas with something to choose: HDR hints alone do not keep "Output" in the list.
     val hasOutputControls = rememberAvailableDisplayModes(context).size > 1 ||
-        (handle is MpvPlaybackController && handle.supportsGpuFilters) || hasOutputExtras || hasSdrToHdrControl || hdrFacts.displayHdr || videoImagePreferences(context).sdrToHdrEnabled
+        (handle is MpvPlaybackController && handle.supportsGpuFilters) || hasOutputExtras || hasSdrToHdrControl ||
+        com.ambient.tv.ui.display.LocalUiHdrState.current?.conversionExperiment?.available == true
     val available = buildList {
         if (showRenderer && onRendererSelected != null && rendererKey != null) add("renderer" to R.string.player_renderer)
         if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) || visible?.upscaler == true ||
