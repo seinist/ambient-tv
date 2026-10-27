@@ -21,17 +21,20 @@ class BackgroundPlaybackPolicyTest {
         assertEquals(BackgroundPlaybackAction.NONE, action(active = false, isLive = true, screenOn = false))
     }
 
-    @Test fun videoPausesThenStopsOnTvAndPhone() {
+    @Test fun videoPausesThenStopsOnTv() {
         assertEquals(BackgroundPlaybackAction.PAUSE_THEN_STOP, action(television = true))
-        assertEquals(BackgroundPlaybackAction.PAUSE_THEN_STOP, action(television = false))
-        // Phone screen off and TV standby: same rule for a video.
-        assertEquals(BackgroundPlaybackAction.PAUSE_THEN_STOP, action(television = false, screenOn = false))
         assertEquals(BackgroundPlaybackAction.PAUSE_THEN_STOP, action(television = true, screenOn = false))
+    }
+
+    @Test fun phoneKeepsEverythingPlayingInTheBackground() {
+        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false))
+        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, screenOn = false))
+        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, isLive = true))
+        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, isLive = true, screenOn = false))
     }
 
     @Test fun liveTvStopsAtOnce() {
         assertEquals(BackgroundPlaybackAction.STOP, action(isLive = true))
-        assertEquals(BackgroundPlaybackAction.STOP, action(isLive = true, television = false))
         assertEquals(BackgroundPlaybackAction.STOP, action(isLive = true, hasVideo = false))
         assertEquals(BackgroundPlaybackAction.STOP, action(isLive = true, screenOn = false))
     }

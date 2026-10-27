@@ -4,11 +4,11 @@ package com.ambient.tv.ui.player
 enum class BackgroundPlaybackAction {
     /** Nothing plays. */
     NONE,
-    /** Keeps playing: music and audiobooks on a phone. */
+    /** Keeps playing: everything on a phone, music on a TV with the screen on. */
     KEEP,
     /** Video: pause now, stop completely after [BACKGROUND_VIDEO_STOP_MS] unless the app returns. */
     PAUSE_THEN_STOP,
-    /** Stops completely now: live TV and timeshift, and music on a TV going to standby. */
+    /** Stops completely now: live TV and timeshift on a TV, and music on a TV going to standby. */
     STOP,
     /** The app itself opened another screen (file picker, installer, sign-in): decide later. */
     DEFER,
@@ -40,11 +40,13 @@ internal fun backgroundPlaybackAction(
     !active -> BackgroundPlaybackAction.NONE
     // A standby or screen off always ends the wait for the opened screen.
     externalFlow && screenOn -> BackgroundPlaybackAction.DEFER
+    // A phone plays on in the background: video and live TV continue as sound, like music.
+    !television -> BackgroundPlaybackAction.KEEP
     // Live TV and timeshift hold a tuner, a server stream and a growing buffer: stop at once.
     isLive -> BackgroundPlaybackAction.STOP
     hasVideo -> BackgroundPlaybackAction.PAUSE_THEN_STOP
-    // A TV in standby has nobody listening; a phone keeps music in a pocket.
-    television && !screenOn -> BackgroundPlaybackAction.STOP
+    // A TV in standby has nobody listening.
+    !screenOn -> BackgroundPlaybackAction.STOP
     else -> BackgroundPlaybackAction.KEEP
 }
 
