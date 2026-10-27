@@ -349,7 +349,7 @@ class DetailViewModel @Inject constructor(
                             .filter { it.ratingKey != item.ratingKey && it.type in RELATED_TYPES }
                             .distinctBy { it.ratingKey }
                             .take(20)
-                        ActorRow(actor.id!!, actor.name, others).takeIf { others.size >= ACTOR_ROW_MIN_ITEMS }
+                        ActorRow(actor.id, actor.name, others).takeIf { others.size >= ACTOR_ROW_MIN_ITEMS }
                     }
                 }.awaitAll().filterNotNull()
                 updateLoaded { it.copy(actorRows = rows) }
