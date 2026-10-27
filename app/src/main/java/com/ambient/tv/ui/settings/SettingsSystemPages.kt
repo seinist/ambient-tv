@@ -791,9 +791,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         SettingsSelect(options = com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES.map { engine ->
                             SettingsSelectOption(
                                 text = when (engine) {
-                                    com.ambient.tv.ui.player.MEDIA3_NETWORK_CRONET -> "Cronet"
+                                    com.ambient.tv.ui.player.MEDIA3_NETWORK_CRONET -> stringResource(R.string.settings_youtube_network_engine_play)
                                     com.ambient.tv.ui.player.MEDIA3_NETWORK_DEFAULT -> stringResource(R.string.settings_youtube_network_engine_default)
-                                    else -> "OkHttp"
+                                    else -> stringResource(R.string.settings_youtube_network_engine_classic)
                                 },
                                 selected = uiState.youtubeNetworkEngine == engine,
                                 onClick = { viewModel.onYoutubeNetworkEngineChanged(engine) },
