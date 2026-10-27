@@ -242,7 +242,11 @@ fun HomeScreen(
         }
     }
 
+    // The overview's focus backdrop runs behind its header too, like the library pages: no dark
+    // strip above the rows, the header actions sit on the artwork beside the title.
+    val overviewRowsScrolling = remember { MutableStateFlow(false) }
     Box(Modifier.fillMaxSize()) {
+    if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
         if (systemOverview) {
@@ -285,6 +289,7 @@ fun HomeScreen(
                         onOpenHomeContent = openHomeContent,
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
                         entranceProgress = entranceProgressProvider,
+                        externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
                     )
                 }
                 is HomeUiState.Offline -> Centered {
@@ -310,7 +315,6 @@ fun HomeScreen(
                     views = listOf(
                         com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_POSTER, stringResource(R.string.settings_home_display_poster), com.ambient.tv.ui.common.ViewPreview.POSTER),
                         com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LANDSCAPE, stringResource(R.string.settings_home_display_landscape), com.ambient.tv.ui.common.ViewPreview.LANDSCAPE),
-                        com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LIST, stringResource(R.string.settings_home_display_list), com.ambient.tv.ui.common.ViewPreview.LIST),
                     ),
                     selectedView = overviewViewMode,
                     onView = viewModel::setOverviewViewMode,
@@ -453,6 +457,8 @@ internal fun LibraryContent(
     onOpenHomeContent: (HomeRowDefinition) -> Unit,
     tvheadendImageHeaders: Map<String, String>,
     entranceProgress: () -> Float,
+    /** Set when the caller draws the focus backdrop behind its own header; rows report scrolling to it. */
+    externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -529,8 +535,8 @@ internal fun LibraryContent(
     Box(modifier = Modifier.fillMaxSize()) {
         // Snapshot of rowListState.isScrollInProgress for the hero/backdrop collectors, which
         // must not read composition state (BrowseWorkBudget.scrolling is not observable).
-        val rowsScrolling = remember { MutableStateFlow(false) }
-        HomeFocusBackdrop(heroContent, rowsScrolling)
+        val rowsScrolling = externalBackdropScrolling ?: remember { MutableStateFlow(false) }
+        if (externalBackdropScrolling == null) HomeFocusBackdrop(heroContent, rowsScrolling)
         HomeHeroAmbient(
             heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize(), rowsScrolling,
             focusTravel = travel,

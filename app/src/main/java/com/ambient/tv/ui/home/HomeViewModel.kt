@@ -1195,7 +1195,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun setOverviewViewMode(mode: String) {
-        if (systemOverviewPageMode() == null || mode !in HomeRowDefinition.DISPLAY_MODES) return
+        if (systemOverviewPageMode() == null || mode !in com.ambient.tv.data.local.OVERVIEW_VIEW_MODES) return
         val system = when {
             plexOnly -> HomeRowDefinition.SYSTEM_PLEX
             jellyfinOnly -> HomeRowDefinition.SYSTEM_JELLYFIN
