@@ -1027,7 +1027,9 @@ class SmartTubeEngine @Inject constructor(
 
     private fun mapItem(raw: Any?): YouTubeItem? {
         raw ?: return null
-        if (raw.callInt("getType") == MEDIA_ITEM_TYPE_CHANNEL) return mapChannelItem(raw)
+        // Subscribed-channel tabs (TV client) carry the uploads group type instead of the channel item type.
+        val type = raw.callInt("getType")
+        if (type == MEDIA_ITEM_TYPE_CHANNEL || type == MEDIA_GROUP_TYPE_CHANNEL_UPLOADS) return mapChannelItem(raw)
         val videoId = raw.callString("getVideoId")?.takeIf(String::isNotBlank) ?: return null
         return YouTubeItem(
             videoId = videoId,
@@ -1047,7 +1049,7 @@ class SmartTubeEngine @Inject constructor(
     }
 
     private fun mapChannelItem(raw: Any): YouTubeItem? {
-        val channelId = raw.callString("getChannelId")?.takeIf(String::isNotBlank) ?: return null
+        val channelId = (raw.callString("getChannelId") ?: tabChannelId(raw))?.takeIf(String::isNotBlank) ?: return null
         return YouTubeItem(
             videoId = youtubeChannelKey(channelId),
             title = raw.callString("getTitle") ?: "SmartTube",
@@ -1058,6 +1060,16 @@ class SmartTubeEngine @Inject constructor(
             hasNewContent = raw.callBool("hasNewContent") ?: false,
         )
     }
+
+    /**
+     * SmartTube's TabMediaItem (subscribed channels, TV client) leaves getChannelId unset; the
+     * channel id is the browseId of the tab's endpoint. Only real channel ids (UC...) count.
+     */
+    private fun tabChannelId(raw: Any): String? = runCatching {
+        val field = raw.javaClass.declaredFields.firstOrNull { it.name == "tabItem" } ?: return null
+        field.isAccessible = true
+        field.get(raw)?.call("getEndpoint")?.call("getBrowseEndpoint")?.callString("getBrowseId")
+    }.getOrNull()?.takeIf { it.startsWith("UC") }
 
     // --- "Watch on TV" (YouTube Lounge) ----------------------------------------------------
 
@@ -1292,3 +1304,5 @@ internal class IncompleteYouTubeFeedException(cause: Throwable? = null) : java.i
 private const val RENEW_TIMEOUT_MS = 20_000L
 /** MediaItem.TYPE_CHANNEL */
 private const val MEDIA_ITEM_TYPE_CHANNEL = 2
+/** MediaGroup.TYPE_CHANNEL_UPLOADS, set as item type on subscribed-channel tabs */
+private const val MEDIA_GROUP_TYPE_CHANNEL_UPLOADS = 12
