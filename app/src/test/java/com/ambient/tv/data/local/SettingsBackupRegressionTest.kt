@@ -25,16 +25,15 @@ class SettingsBackupRegressionTest {
         assertNull(prefs.sectionFocusRow("library"))
     }
 
-    @Test fun focusStepsAreHeldInMemoryAndWrittenTogether() {
+    @Test fun focusIsRememberedOnlyForTheSession() {
         val raw = memoryPreferences()
         val prefs = AppPreferences(raw)
         prefs.setSectionFocus("library", "item-a")
         prefs.setSectionFocus("library", "item-b")
         assertEquals("item-b", prefs.sectionFocus("library"))
         assertNull(raw.getString("section_focus_library", null))
-        prefs.flushFocusWrites()
-        assertEquals("item-b", raw.getString("section_focus_library", null))
-        assertEquals("item-b", prefs.portableLibraryPreferences()["section_focus_library"])
+        assertNull(prefs.portableLibraryPreferences()["section_focus_library"])
+        assertNull(AppPreferences(raw).sectionFocus("library"))
     }
 
     @Test fun autoDisplayPoliciesNormalizeOffForDirectWritesAndLegacyPreferences() {

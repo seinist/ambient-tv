@@ -1505,43 +1505,15 @@ class AppPreferences @Inject constructor(
     }
 
     /*
-     * Focus moves with every D-pad step. Writing the preference file each time rewrote it many
-     * times a second while scrolling, so focus values are held in memory and written together
-     * shortly after the last step (and before a library-preference export or restore).
+     * Grid focus is remembered only for this process: within a session every grid returns to its
+     * last item, after a cold start each one begins at its first item. Nothing is written to disk.
      */
-    private val focusLock = Any()
-    private val pendingFocus = HashMap<String, String?>()
-    private var focusFlushScheduled = false
-    private val focusWriter by lazy {
-        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "focus-prefs").apply { isDaemon = true }
-        }
-    }
+    private val sessionFocus = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    private fun focusValue(key: String): String? = synchronized(focusLock) {
-        if (pendingFocus.containsKey(key)) return pendingFocus[key]
-        prefs.getString(key, null)
-    }
+    private fun focusValue(key: String): String? = sessionFocus[key]
 
     private fun queueFocusWrite(values: Map<String, String?>) {
-        synchronized(focusLock) {
-            if (values.all { (key, value) -> (if (pendingFocus.containsKey(key)) pendingFocus[key] else prefs.getString(key, null)) == value }) return
-            pendingFocus.putAll(values)
-            if (focusFlushScheduled) return
-            focusFlushScheduled = true
-        }
-        focusWriter.schedule(::flushFocusWrites, FOCUS_WRITE_DELAY_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-    }
-
-    fun flushFocusWrites() {
-        val values = synchronized(focusLock) {
-            focusFlushScheduled = false
-            HashMap(pendingFocus).also { pendingFocus.clear() }
-        }
-        if (values.isEmpty()) return
-        prefs.edit {
-            values.forEach { (key, value) -> if (value == null) remove(key) else putString(key, value) }
-        }
+        values.forEach { (key, value) -> if (value == null) sessionFocus.remove(key) else sessionFocus[key] = value }
     }
 
     fun sectionSort(sectionKey: String): String? = prefs.getString("section_sort_$sectionKey", null)
@@ -1925,19 +1897,18 @@ class AppPreferences @Inject constructor(
         port = NetworkEndpoint.validPortOrDefault(profile.port, DEFAULT_PORT),
     )
 
-    fun portableLibraryPreferences(): Map<String, String> = run { flushFocusWrites(); prefs.all }
-        .filterKeys { key -> key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("section_focus_") }
+    fun portableLibraryPreferences(): Map<String, String> = prefs.all
+        .filterKeys { key -> key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") }
         .mapNotNull { (key, value) -> (value as? String)?.let { key to it } }
         .toMap()
 
     fun restorePortableLibraryPreferences(values: Map<String, String>) {
-        flushFocusWrites()
         prefs.edit {
             prefs.all.keys
                 .filter { it.startsWith("section_sort_") || it.startsWith("section_filter_") || it.startsWith("section_view_") || it.startsWith("section_page_") || it.startsWith("section_focus_") }
                 .forEach(::remove)
             values.forEach { (key, value) ->
-                if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_") || key.startsWith("section_focus_")) {
+                if (key.startsWith("section_sort_") || key.startsWith("section_filter_") || key.startsWith("section_view_") || key.startsWith("section_page_")) {
                     putString(key, value)
                 }
             }
@@ -1967,7 +1938,6 @@ class AppPreferences @Inject constructor(
     }
 
     companion object {
-        private const val FOCUS_WRITE_DELAY_MS = 750L
         const val DEFAULT_PORT = 32400
         const val KEY_PLEX_ENABLED = "plex_enabled"
         const val KEY_JELLYFIN_ENABLED = "jellyfin_enabled"

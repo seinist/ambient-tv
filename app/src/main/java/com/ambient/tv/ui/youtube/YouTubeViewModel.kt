@@ -83,8 +83,7 @@ class YouTubeViewModel @Inject constructor(
     fun focusedVideoId(feed: YouTubeFeed): String? = preferences.sectionFocus(stateKey(feed))
     fun focusedRowId(feed: YouTubeFeed): String? = preferences.sectionFocusRow(stateKey(feed))
     fun onItemFocused(feed: YouTubeFeed, rowId: String?, videoId: String) {
-        preferences.setSectionFocus(stateKey(feed), videoId)
-        preferences.setSectionFocusRow(stateKey(feed), rowId)
+        preferences.setSectionFocusSnapshot(stateKey(feed), videoId, rowId)
         scheduleRowContinuation(rowId, videoId)
     }
 
