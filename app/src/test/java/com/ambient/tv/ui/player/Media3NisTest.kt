@@ -51,7 +51,8 @@ class Media3NisTest {
         val glsl = media3NisFragmentShader(media3NisConstants())
         assertTrue(glsl.startsWith("#version 100"))
         for (token in listOf("shared ", "texelFetch", "imageStore", "barrier", "HOOKED", "[6][6]")) assertFalse(token, token in glsl)
-        assertTrue(glsl.contains("const float kSharpStrengthMin = 0.100000001"))
+        val baked = Regex("""const float kSharpStrengthMin = ([0-9.]+);""").find(glsl)!!.groupValues[1].toFloat()
+        assertEquals(0.1f, baked, 1e-6f)
         assertFalse(glsl.contains("$"))
     }
 
