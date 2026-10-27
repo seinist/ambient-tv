@@ -111,7 +111,7 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
     private var lastFrameTimeNanos = Long.MIN_VALUE
 
     @OptIn(ExperimentalFoundationApi::class)
-    suspend fun centerItem(index: Int, topInset: Int = 0, alignTop: Boolean = false, parkInset: Int = 0) {
+    suspend fun centerItem(index: Int, topInset: Int = 0, alignTop: Boolean = false) {
         if (index !in 0 until listState.layoutInfo.totalItemsCount) return
         listState.scroll {
             // Continuing only velocity still inserts a zero-progress first frame at every
@@ -124,10 +124,9 @@ class RowCenteringState internal constructor(private val listState: LazyListStat
             }
             val layout = LazyLayoutScrollScope(listState, this)
             fun remainingDistance(): Float {
-                // calculateDistanceTo adds its offset to the item's viewport position, so zero
-                // parks the row on the top edge. Home passes [parkInset] to hold a row below the
-                // hero, on the same line as the first row. Other screens leave it at zero.
-                if (alignTop) return layout.calculateDistanceTo(index, -parkInset).toFloat()
+                // Item offsets start after the top content padding, so zero parks the row where
+                // the first row rests (on Home: below the hero).
+                if (alignTop) return layout.calculateDistanceTo(index, 0).toFloat()
                 val info = listState.layoutInfo
                 val itemSize = info.visibleItemsInfo.firstOrNull { it.index == index }?.size
                     ?: info.visibleItemsInfo.firstOrNull()?.size ?: return 0f

@@ -591,7 +591,6 @@ internal fun LibraryContent(
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
         val rowPark = homeRowParkOffset(heroHeight)
-        val rowParkPx = with(LocalDensity.current) { rowPark.roundToPx() }
         val listViewport = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
         val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
             row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
@@ -644,14 +643,14 @@ internal fun LibraryContent(
                 rowListState.scrollToItem(0)
             }
         }
-        LaunchedEffect(centeredRowKey, state.rowKeys, rowListState, rowParkPx) {
+        LaunchedEffect(centeredRowKey, state.rowKeys, rowListState) {
             // Row-entry events do not invalidate the whole Home composition.
             centeredRowKey.collectLatest { key ->
                 val index = state.rowKeys.indexOf(key)
                 val alreadyAtTop = index == 0 && rowListState.firstVisibleItemIndex == 0 &&
                     rowListState.firstVisibleItemScrollOffset == 0
                 if (index >= 0 && !alreadyAtTop) {
-                    rowCentering.centerItem(index, alignTop = true, parkInset = rowParkPx)
+                    rowCentering.centerItem(index, alignTop = true)
                 }
             }
         }
@@ -669,7 +668,7 @@ internal fun LibraryContent(
                         scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
                         scrollToRow = { rowKey ->
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
-                            if (index >= 0) rowCentering.centerItem(index, alignTop = true, parkInset = rowParkPx)
+                            if (index >= 0) rowCentering.centerItem(index, alignTop = true)
                         },
                     ) { state.rowKeys }
                     .clipToBounds()
