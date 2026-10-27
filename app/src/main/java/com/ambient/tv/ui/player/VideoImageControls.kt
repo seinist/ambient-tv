@@ -330,7 +330,11 @@ internal fun Media3FilterRows(
     sharpen: Boolean = true,
     change: (Media3ImageOptions) -> Unit,
 ) {
-    if (deband) ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
+    // Denoise and deband both work on source pixels and share their budget.
+    if (deband) {
+        ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
+        ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
+    }
     if (sharpen) {
         if (fsrSharpens) ImageHint(stringResource(R.string.image_fsr_integrated_sharpen))
         else GroupedImageChoice(R.string.image_sharpen, o.sharpening, listOf(

@@ -742,7 +742,7 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
         "filters" -> mpv?.let { listOf(it.deband != m.deband, it.sharpening != m.sharpening, it.denoise != m.denoise,
             it.deblock != m.deblock, it.filmGrain != m.filmGrain, it.superResolution != m.superResolution).count { c -> c } }
             ?: vlc?.let { listOf(it.softwareProcessing != v.softwareProcessing, it.deband != v.deband, it.denoise != v.denoise).count { c -> c } }
-            ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening, it.filmGrain != d.filmGrain).count { c -> c } } ?: 0
+            ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening, it.filmGrain != d.filmGrain, it.denoise != d.denoise).count { c -> c } } ?: 0
         "motion" -> if ((mpv?.svpMode ?: vlc?.svpMode ?: "off") != "off") 1 else 0
         "color" -> mpv?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
             ?: vlc?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }

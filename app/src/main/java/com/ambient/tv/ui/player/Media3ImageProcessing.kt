@@ -250,6 +250,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
 /** GL effect for one planned stage; the built-in matrix effects merge into one pass. */
 private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int, gamma: Int = 0): Effect = when (stage) {
+    is Media3Stage.Denoise -> Media3DenoiseEffect(stage.strength, gamma)
     is Media3Stage.Deband -> Media3DebandEffect(stage.strength, gamma)
     is Media3Stage.Scale -> when (stage.scaler) {
         "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)

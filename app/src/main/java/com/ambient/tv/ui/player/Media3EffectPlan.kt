@@ -5,6 +5,8 @@ import com.ambient.tv.data.local.VideoImageCatalog
 
 /** One stage of Media3's SDR effect chain, independent of GL so the order stays testable. */
 internal sealed interface Media3Stage {
+    /** Edge-preserving (bilateral) denoise on the source, before deband smooths what is left. */
+    data class Denoise(val strength: String) : Media3Stage
     data class Deband(val strength: String) : Media3Stage
     /** Only planned while the fitted output is larger than the source; never past the display. */
     data class Scale(val scaler: String) : Media3Stage
@@ -19,7 +21,7 @@ internal sealed interface Media3Stage {
 }
 
 /**
- * Order: deband (source pixels) → scale → sharpen → grain → color. Bilinear means no scale stage: the
+ * Order: denoise, deband (source pixels) → scale → sharpen → grain → color. Bilinear means no scale stage: the
  * display path scales as with direct output. FSR includes RCAS, so the sharpening choice is not
  * stacked on top while FSR runs.
  */
@@ -35,6 +37,8 @@ internal fun media3EffectPlan(
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
     return buildList {
+        // Denoise reads the source like deband and shares its budget.
+        if (o.denoise != "off" && debandAllowed) add(Media3Stage.Denoise(o.denoise))
         if (o.deband != "off" && debandAllowed) add(Media3Stage.Deband(o.deband))
         scaler?.let { add(Media3Stage.Scale(it)) }
         when {
@@ -85,7 +89,7 @@ internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)
 internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage> {
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
-    val fusable = previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
+    val fusable = previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
         (previous is Media3Stage.Scale && previous.scaler != "lanczos")
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)

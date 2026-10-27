@@ -190,6 +190,7 @@ internal fun media3AppliedProcessing(
 
 /** English Stats-for-Nerds wording for one Media3 stage. */
 internal fun media3StageSummary(stage: Media3Stage): String = when (stage) {
+    is Media3Stage.Denoise -> "denoise ${stage.strength}"
     is Media3Stage.Deband -> "deband ${stage.strength}"
     is Media3Stage.Scale -> media3ScalerLabel(stage.scaler)
     is Media3Stage.Sharpen -> when (stage.kind) {

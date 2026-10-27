@@ -64,6 +64,7 @@ class Media3EffectPlanTest {
         assertEquals("off", old.sharpening)
         assertEquals("off", old.deband)
         assertEquals("off", old.filmGrain)
+        assertEquals("off", old.denoise)
         assertEquals(0, old.gamma)
         assertEquals(listOf(Media3Stage.Scale("lanczos"), Media3Stage.Brightness(1)), media3EffectPlan(old, upscaling = true))
     }
@@ -98,6 +99,23 @@ class Media3EffectPlanTest {
             media3FusedStages(media3EffectPlan(grain, upscaling = true)).last())
         assertEquals("sharpen Adaptive Sharpen, film grain strong",
             media3AppliedProcessing(true, null, listOf(Media3Stage.Sharpen("adaptive"), Media3Stage.Grain("strong"))).videoFilters)
+    }
+
+    @Test
+    fun denoiseRunsFirstOnTheSourceBudgetAndTakesATrailingGamma() {
+        val denoise = Media3ImageOptions(enabled = true, denoise = "medium", deband = "light", scaler = "bicubic")
+        assertEquals(listOf(Media3Stage.Denoise("medium"), Media3Stage.Deband("light"), Media3Stage.Scale("bicubic")),
+            media3EffectPlan(denoise, upscaling = true))
+        assertTrue(media3EffectPlan(denoise, upscaling = true, debandAllowed = false).none { it is Media3Stage.Denoise })
+        assertEquals(listOf(Media3FusedStage(Media3Stage.Denoise("strong"), 7)),
+            media3FusedStages(listOf(Media3Stage.Denoise("strong"), Media3Stage.Gamma(7))))
+        assertEquals("denoise medium, deband light",
+            media3AppliedProcessing(true, null, listOf(Media3Stage.Denoise("medium"), Media3Stage.Deband("light"))).videoFilters)
+        // Each level smooths more: wider spatial and range sigmas.
+        val levels = listOf("light", "medium", "strong").map(::media3DenoiseSigmas)
+        assertEquals(levels.sortedBy { it.first }, levels)
+        assertEquals(levels.sortedBy { it.second }, levels)
+        assertEquals("off", Media3ImageOptions(denoise = "x").normalized().denoise)
     }
 
     @Test

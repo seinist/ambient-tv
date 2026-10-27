@@ -183,6 +183,7 @@ private fun VlcOverview(o: VlcImageOptions) {
 private fun Media3Overview(o: Media3ImageOptions) {
     OverviewLine(stringResource(R.string.settings_playback_overview_enabled), yesNo(o.enabled))
     OverviewLine(stringResource(R.string.settings_playback_overview_scaler), VideoImageCatalog.media3Scalers[o.scaler] ?: o.scaler)
+    OverviewLine(stringResource(R.string.settings_playback_overview_denoise), strength(o.denoise))
     OverviewLine(stringResource(R.string.settings_playback_overview_deband), strength(o.deband))
     OverviewLine(stringResource(R.string.settings_playback_overview_sharpen), when (o.sharpening) {
         "cas" -> "AMD CAS"
