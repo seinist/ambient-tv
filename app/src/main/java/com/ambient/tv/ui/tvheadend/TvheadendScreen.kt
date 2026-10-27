@@ -792,42 +792,53 @@ private fun DvrRow(
     busy: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
+    var rowHasFocus by remember { mutableStateOf(false) }
     val rowShape = RoundedCornerShape(10.dp)
-    Surface(onClick = onPrimary, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape), modifier = modifier.fillMaxWidth().mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onPrimary).onFocusChanged {
-        focused = it.isFocused
-        if (it.isFocused) onFocused()
-    }) {
-        Row(
-            Modifier.fillMaxWidth()
-                .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), rowShape)
-                .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), rowShape)
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            LiveTvArtBox(art, entry.title, imageHeaders, Modifier.size(126.dp, 71.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    MetaBadge(
-                        when {
-                            com.ambient.tv.tvheadend.data.recordingWasAborted(entry.status) -> stringResource(R.string.tvh_aborted)
-                            failed -> stringResource(R.string.tvh_failed)
-                            completed -> stringResource(R.string.tvh_completed)
-                            entry.isActivelyRecording() -> stringResource(R.string.tvh_recording_active)
-                            else -> stringResource(R.string.tvh_scheduled)
-                        },
-                        emphasized = !completed || failed,
-                    )
-                    MarqueeTitle(entry.title, focused = focused, style = MaterialTheme.typography.titleMedium)
+    // The actions are siblings of the clickable part, not inside it: D-pad Right searches beside
+    // the focused surface, so buttons drawn inside its bounds could never be reached.
+    Row(
+        Modifier.fillMaxWidth()
+            .onFocusChanged { rowHasFocus = it.hasFocus }
+            .background(if (rowHasFocus) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), rowShape)
+            .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), rowShape)
+            .padding(end = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Surface(onClick = onPrimary, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape),
+            modifier = modifier.weight(1f).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onPrimary).onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                LiveTvArtBox(art, entry.title, imageHeaders, Modifier.size(126.dp, 71.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        MetaBadge(
+                            when {
+                                com.ambient.tv.tvheadend.data.recordingWasAborted(entry.status) -> stringResource(R.string.tvh_aborted)
+                                failed -> stringResource(R.string.tvh_failed)
+                                completed -> stringResource(R.string.tvh_completed)
+                                entry.isActivelyRecording() -> stringResource(R.string.tvh_recording_active)
+                                else -> stringResource(R.string.tvh_scheduled)
+                            },
+                            emphasized = !completed || failed,
+                        )
+                        MarqueeTitle(entry.title, focused = focused, style = MaterialTheme.typography.titleMedium)
+                    }
+                    if (completed) com.ambient.tv.companion.PlaybackBadge(livePlaybackIndicator("recording", entry.uuid))
+                    Text("${formatDateTime(entry.startEpochSeconds)} · ${entry.channelName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    entry.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
-                if (completed) com.ambient.tv.companion.PlaybackBadge(livePlaybackIndicator("recording", entry.uuid))
-                Text("${formatDateTime(entry.startEpochSeconds)} · ${entry.channelName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                entry.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
-            TvActionButton(text = stringResource(R.string.tvh_info), onClick = onInfo)
-            if (onEdit != null) TvActionButton(text = stringResource(R.string.tvh_edit), onClick = onEdit, enabled = !busy)
-            if (onDelete != null) TvActionButton(text = stringResource(R.string.tvh_delete), onClick = onDelete, enabled = !busy)
         }
+        TvActionButton(text = stringResource(R.string.tvh_info), onClick = onInfo)
+        if (onEdit != null) TvActionButton(text = stringResource(R.string.tvh_edit), onClick = onEdit, enabled = !busy)
+        if (onDelete != null) TvActionButton(text = stringResource(R.string.tvh_delete), onClick = onDelete, enabled = !busy)
     }
 }
 

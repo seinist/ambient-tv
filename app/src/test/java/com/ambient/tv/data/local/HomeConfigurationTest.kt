@@ -48,6 +48,16 @@ class HomeConfigurationTest {
         assertEquals(HomeRowDefinition.DISPLAY_POSTER, restored.overviewViewMode(HomeRowDefinition.SYSTEM_EMBY))
     }
 
+    @Test fun overviewHasNoListView() {
+        val raw = memoryPreferences()
+        val prefs = AppPreferences(raw)
+        prefs.setOverviewViewMode(HomeRowDefinition.SYSTEM_PLEX, HomeRowDefinition.DISPLAY_LIST)
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, prefs.overviewViewMode(HomeRowDefinition.SYSTEM_PLEX))
+        // A list stored by an older version falls back to poster.
+        raw.edit().putString("overview_view_emby", HomeRowDefinition.DISPLAY_LIST).commit()
+        assertEquals(HomeRowDefinition.DISPLAY_POSTER, AppPreferences(raw).overviewViewMode(HomeRowDefinition.SYSTEM_EMBY))
+    }
+
     @Test fun genreRowsCarryTheirGenreInTheContentKey() {
         val row = HomeRowDefinition(system = HomeRowDefinition.SYSTEM_EMBY, contentKey = HomeRowDefinition.topGenre("Sci-Fi & Fantasy"))
         assertEquals("Sci-Fi & Fantasy", row.genre)

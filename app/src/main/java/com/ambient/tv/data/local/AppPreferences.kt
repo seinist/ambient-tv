@@ -1592,13 +1592,13 @@ class AppPreferences @Inject constructor(
         prefs.edit { putString("section_view_$sectionKey", value) }
     }
 
-    /** Page view of a system overview (Plex, Jellyfin, Emby): poster, landscape or list. */
+    /** Page view of a system overview (Plex, Jellyfin, Emby): poster or landscape (a stored list falls back to poster). */
     fun overviewViewMode(system: String): String =
-        prefs.getString("overview_view_$system", null)?.takeIf { it in HomeRowDefinition.DISPLAY_MODES }
+        prefs.getString("overview_view_$system", null)?.takeIf { it in OVERVIEW_VIEW_MODES }
             ?: HomeRowDefinition.DISPLAY_POSTER
 
     fun setOverviewViewMode(system: String, value: String) {
-        if (value !in HomeRowDefinition.DISPLAY_MODES) return
+        if (value !in OVERVIEW_VIEW_MODES) return
         prefs.edit { putString("overview_view_$system", value) }
     }
 
@@ -2248,3 +2248,6 @@ internal fun storedTvheadendLoginState(stored: String?, legacyVerified: Boolean?
 /** A recorded zero-copy failure only holds for the app version (versionCode) that recorded it. */
 internal fun mpvZeroCopyLockActive(failed: Boolean, recordedVersionCode: Int, currentVersionCode: Int): Boolean =
     failed && recordedVersionCode == currentVersionCode
+
+/** The overview has no list view: its rows are artwork rows only. */
+internal val OVERVIEW_VIEW_MODES = setOf(HomeRowDefinition.DISPLAY_POSTER, HomeRowDefinition.DISPLAY_LANDSCAPE)

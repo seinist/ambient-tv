@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
@@ -242,10 +243,18 @@ fun HomeScreen(
         }
     }
 
+    // The overview's focus backdrop runs behind its header too, like the library pages: no dark
+    // strip above the rows, the header actions sit on the artwork beside the title.
+    val overviewRowsScrolling = remember { MutableStateFlow(false) }
     Box(Modifier.fillMaxSize()) {
+    if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        if (systemOverview) {
+        // On a TV the loaded overview carries its actions on the hero's title line (system badge,
+        // focused title, actions), like a library page's header; the header row is only for
+        // phones and while nothing is loaded yet.
+        val overviewActionsInHero = systemOverview && !LocalHandheldUi.current && uiState is HomeUiState.Loaded
+        if (systemOverview && !overviewActionsInHero) {
             SystemOverviewHeader(
                 system = when {
                     jellyfinOnly -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
@@ -285,6 +294,17 @@ fun HomeScreen(
                         onOpenHomeContent = openHomeContent,
                         tvheadendImageHeaders = viewModel.tvheadendImageHeaders,
                         entranceProgress = entranceProgressProvider,
+                        externalBackdropScrolling = if (systemOverview) overviewRowsScrolling else null,
+                        heroTitleActions = if (overviewActionsInHero) ({
+                            OverviewActions(
+                                onOpenHome = {
+                                    viewModel.captureFocusForReturn()
+                                    onOpenAppHome()
+                                },
+                                onOpenOptions = { showOverviewOptions = true },
+                                optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
+                            )
+                        }) else null,
                     )
                 }
                 is HomeUiState.Offline -> Centered {
@@ -310,7 +330,6 @@ fun HomeScreen(
                     views = listOf(
                         com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_POSTER, stringResource(R.string.settings_home_display_poster), com.ambient.tv.ui.common.ViewPreview.POSTER),
                         com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LANDSCAPE, stringResource(R.string.settings_home_display_landscape), com.ambient.tv.ui.common.ViewPreview.LANDSCAPE),
-                        com.ambient.tv.ui.common.ViewOption(HomeRowDefinition.DISPLAY_LIST, stringResource(R.string.settings_home_display_list), com.ambient.tv.ui.common.ViewPreview.LIST),
                     ),
                     selectedView = overviewViewMode,
                     onView = viewModel::setOverviewViewMode,
@@ -335,14 +354,17 @@ private fun SystemOverviewHeader(
     onOpenOptions: () -> Unit,
     optionsModifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 4.dp)) {
-        com.ambient.tv.ui.common.PageHeader(actions = {
-            com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
-            com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
-        }) {
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
+        com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
             com.ambient.tv.ui.common.SystemPageTitle(system)
         }
     }
+}
+
+@Composable
+private fun RowScope.OverviewActions(onOpenHome: () -> Unit, onOpenOptions: () -> Unit, optionsModifier: Modifier) {
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
 }
 
 /** Focus previews have their own state/draw layer, so their crossfade never invalidates rows. */
@@ -453,6 +475,10 @@ internal fun LibraryContent(
     onOpenHomeContent: (HomeRowDefinition) -> Unit,
     tvheadendImageHeaders: Map<String, String>,
     entranceProgress: () -> Float,
+    /** Set when the caller draws the focus backdrop behind its own header; rows report scrolling to it. */
+    externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
+    /** System overview: its page actions on the hero's title line instead of a header row. */
+    heroTitleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -529,8 +555,8 @@ internal fun LibraryContent(
     Box(modifier = Modifier.fillMaxSize()) {
         // Snapshot of rowListState.isScrollInProgress for the hero/backdrop collectors, which
         // must not read composition state (BrowseWorkBudget.scrolling is not observable).
-        val rowsScrolling = remember { MutableStateFlow(false) }
-        HomeFocusBackdrop(heroContent, rowsScrolling)
+        val rowsScrolling = externalBackdropScrolling ?: remember { MutableStateFlow(false) }
+        if (externalBackdropScrolling == null) HomeFocusBackdrop(heroContent, rowsScrolling)
         HomeHeroAmbient(
             heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, Modifier.fillMaxSize(), rowsScrolling,
             focusTravel = travel,
@@ -737,6 +763,7 @@ internal fun LibraryContent(
             entranceProgress = entranceProgress,
             drawAmbient = false,
             rowsScrolling = rowsScrolling,
+            titleActions = heroTitleActions,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1168,6 +1195,8 @@ internal fun HomeHero(
     /** False where no rows pass behind the hero, so nothing needs covering. */
     rowsBehind: Boolean = true,
     focusTravel: () -> Float = { 0.42f },
+    /** Page actions on the right of the title line (system overview), outside the metadata crossfade. */
+    titleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
     // the lazy rows are busy bringing new cards into view.
@@ -1238,8 +1267,10 @@ internal fun HomeHero(
                     translationX = (1f - progress) * -24.dp.toPx()
                 },
         ) {
+          Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
             Crossfade(
                 targetState = displayedItem,
+                modifier = Modifier.weight(1f),
                 animationSpec = tween(
                     durationMillis = if (performance.allowComplexHero) 320 else 0,
                     easing = FastOutSlowInEasing,
@@ -1396,6 +1427,8 @@ internal fun HomeHero(
                     }
                 }
             }
+            if (titleActions != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = titleActions)
+          }
         }
     }
 }
