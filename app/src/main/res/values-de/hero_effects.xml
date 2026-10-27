@@ -7,4 +7,10 @@
     <string name="settings_home_hero_ember">Glut</string>
     <string name="settings_home_hero_tide">Gezeiten</string>
     <string name="settings_home_hero_focus">Fokus</string>
+    <string name="settings_home_hero_moon">Mondlicht</string>
+    <string name="settings_home_hero_mist">Nebel</string>
+    <string name="settings_home_hero_candle">Kerzenschein</string>
+    <string name="settings_home_hero_stardust">Sternstaub</string>
+    <string name="settings_home_hero_projector">Lichtspiel</string>
+    <string name="settings_home_hero_breath">Farbatem</string>
 </resources>

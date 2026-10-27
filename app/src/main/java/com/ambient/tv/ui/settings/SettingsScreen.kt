@@ -2154,6 +2154,12 @@ private fun homeHeroStyleLabel(key: String): String = when (key) {
     HomeHeroStyle.EMBER -> stringResource(R.string.settings_home_hero_ember)
     HomeHeroStyle.TIDE -> stringResource(R.string.settings_home_hero_tide)
     HomeHeroStyle.FOCUS -> stringResource(R.string.settings_home_hero_focus)
+    HomeHeroStyle.MOON -> stringResource(R.string.settings_home_hero_moon)
+    HomeHeroStyle.MIST -> stringResource(R.string.settings_home_hero_mist)
+    HomeHeroStyle.CANDLE -> stringResource(R.string.settings_home_hero_candle)
+    HomeHeroStyle.STARDUST -> stringResource(R.string.settings_home_hero_stardust)
+    HomeHeroStyle.PROJECTOR -> stringResource(R.string.settings_home_hero_projector)
+    HomeHeroStyle.BREATH -> stringResource(R.string.settings_home_hero_breath)
     else -> stringResource(R.string.settings_home_hero_static)
 }
 

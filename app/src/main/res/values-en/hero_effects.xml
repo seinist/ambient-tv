@@ -7,4 +7,10 @@
     <string name="settings_home_hero_ember">Ember</string>
     <string name="settings_home_hero_tide">Tide</string>
     <string name="settings_home_hero_focus">Focus</string>
+    <string name="settings_home_hero_moon">Moonlight</string>
+    <string name="settings_home_hero_mist">Mist</string>
+    <string name="settings_home_hero_candle">Candlelight</string>
+    <string name="settings_home_hero_stardust">Stardust</string>
+    <string name="settings_home_hero_projector">Projector</string>
+    <string name="settings_home_hero_breath">Color breath</string>
 </resources>

@@ -41,12 +41,14 @@ internal fun Modifier.fancyHeroAmbient(
             2 -> lerp(color, secondary, 0.5f)
             else -> lerp(cool, warm, 0.35f)
         }
+        // The counter-ribbon adds depth, not area.
+        val weight = if (index == 3) 0.6f else 1f
         Brush.verticalGradient(
             listOf(
                 Color.Transparent,
-                tint.copy(alpha = 0.08f * strength),
-                tint.copy(alpha = 0.26f * strength),
-                tint.copy(alpha = 0.10f * strength),
+                tint.copy(alpha = 0.06f * strength * weight),
+                tint.copy(alpha = 0.20f * strength * weight),
+                tint.copy(alpha = 0.08f * strength * weight),
                 Color.Transparent,
             ),
             startY = -height * 0.28f * spread,
@@ -84,7 +86,7 @@ internal fun Modifier.fancyHeroAmbient(
     )
     val duskRadius = width * 0.72f * spread
     val duskWarm = Brush.radialGradient(
-        listOf(warm.copy(alpha = 0.22f * strength), warm.copy(alpha = 0.08f * strength), Color.Transparent),
+        listOf(warm.copy(alpha = 0.19f * strength), warm.copy(alpha = 0.07f * strength), Color.Transparent),
         center = Offset.Zero, radius = duskRadius,
     )
     val duskCool = Brush.radialGradient(
@@ -104,8 +106,31 @@ internal fun Modifier.fancyHeroAmbient(
     )
     val focusRadius = width * 0.46f * spread
     val focusBrush = Brush.radialGradient(
-        listOf(color.copy(alpha = 0.24f * strength), color.copy(alpha = 0.08f * strength), Color.Transparent),
+        listOf(color.copy(alpha = 0.20f * strength), color.copy(alpha = 0.07f * strength), Color.Transparent),
         center = Offset.Zero, radius = focusRadius,
+    )
+    val moonRadius = width * 0.40f * spread
+    val moonBrush = Brush.radialGradient(
+        listOf(lerp(cool, Color.White, 0.3f).copy(alpha = 0.14f * strength), cool.copy(alpha = 0.05f * strength), Color.Transparent),
+        center = Offset.Zero, radius = moonRadius,
+    )
+    val mistHalf = height * 0.16f * spread
+    val mist = List(3) { index ->
+        val tint = if (index == 1) lerp(color, cool, 0.4f) else color
+        Brush.radialGradient(
+            listOf(tint.copy(alpha = 0.08f * strength), tint.copy(alpha = 0.03f * strength), Color.Transparent),
+            center = Offset.Zero, radius = width * 0.38f * spread,
+        )
+    }
+    val candleRadius = width * 0.36f * spread
+    val candleBrush = Brush.radialGradient(
+        listOf(warm.copy(alpha = 0.16f * strength), lerp(warm, color, 0.4f).copy(alpha = 0.05f * strength), Color.Transparent),
+        center = Offset.Zero, radius = candleRadius,
+    )
+    val projectorWidth = width * 0.34f * spread
+    val projector = Brush.horizontalGradient(
+        listOf(Color.Transparent, lerp(warm, Color.White, 0.4f).copy(alpha = 0.07f * strength), Color.Transparent),
+        startX = -projectorWidth, endX = projectorWidth,
     )
     onDrawBehind {
         if (strength > 0f && width > 0f && height > 0f) clipRect {
@@ -143,8 +168,8 @@ internal fun Modifier.fancyHeroAmbient(
                         val x = width * ((seed % 1f) + sin((t * 2f + index) * PI).toFloat() * 0.02f * motionStrength)
                         val y = height * (((index * 0.381966f) % 1f) * 0.8f + (t - 0.5f) * 0.10f * motionStrength)
                         val twinkle = 0.5f + 0.5f * sin((t * 2f + seed) * PI).toFloat()
-                        val radius = (14f + index % 4 * 6f) * density * spread.coerceAtMost(1.15f)
-                        drawCircle(warm.copy(alpha = 0.05f * strength * twinkle), radius * 2.2f, Offset(x, y))
+                        val radius = (4f + index % 4 * 2f) * density * spread.coerceAtMost(1.15f)
+                        drawCircle(warm.copy(alpha = 0.03f * strength * twinkle), radius * 2.2f, Offset(x, y))
                         drawCircle(warm.copy(alpha = (0.08f + twinkle * 0.10f) * strength), radius, Offset(x, y))
                     }
                 }
@@ -154,8 +179,8 @@ internal fun Modifier.fancyHeroAmbient(
                             drawRect(brush, Offset(-halfWidth, -height), Size(halfWidth * 2f, height * 3f), alpha = opacity)
                         }
                     }
-                    sweep(t, 0.55f, prismWidth * 2.1f, prismWide)
-                    sweep((t + 0.04f).coerceAtMost(1f), 0.9f, prismWidth * 0.42f, prismCore)
+                    sweep(t, 0.4f, prismWidth * 2.1f, prismWide)
+                    sweep((t + 0.04f).coerceAtMost(1f), 0.7f, prismWidth * 0.42f, prismCore)
                     val opening = reveal()
                     if (opening < 1f) sweep(opening, sin(opening * PI).toFloat().coerceIn(0f, 1f), prismWidth * 0.42f, prismCore)
                 }
@@ -178,7 +203,7 @@ internal fun Modifier.fancyHeroAmbient(
                     }
                 }
                 HomeHeroStyle.EMBER -> {
-                    val dots = if (motionStrength < 0.5f) 10 else 16
+                    val dots = if (motionStrength < 0.5f) 8 else 12
                     repeat(dots) { index ->
                         val seed = index * 0.618034f
                         val rise = ((seed * 0.37f) + t) % 1f
@@ -186,10 +211,10 @@ internal fun Modifier.fancyHeroAmbient(
                         val y = height * (0.96f - rise * 0.82f)
                         val life = sin(rise * PI).toFloat()
                         val twinkle = 0.65f + 0.35f * sin((t * 2f + seed) * PI).toFloat()
-                        val radius = (16f + index % 5 * 5f) * density * spread.coerceAtMost(1.15f)
+                        val radius = (6f + index % 5 * 2f) * density * spread.coerceAtMost(1.15f)
                         val alpha = life * twinkle * strength
                         drawCircle(color.copy(alpha = 0.05f * alpha), radius * 2.3f, Offset(x, y))
-                        drawCircle(warm.copy(alpha = 0.16f * alpha), radius, Offset(x, y))
+                        drawCircle(warm.copy(alpha = 0.14f * alpha), radius, Offset(x, y))
                     }
                 }
                 HomeHeroStyle.TIDE -> {
@@ -198,6 +223,52 @@ internal fun Modifier.fancyHeroAmbient(
                         drawRect(tide, Offset(0f, -tideHalf), Size(width, tideHalf * 2f))
                     }
                 }
+                HomeHeroStyle.MOON -> {
+                    val angle = (t * PI).toFloat()
+                    val at = Offset(width * (0.80f - 0.10f * motionStrength * t), height * (0.18f + 0.06f * motionStrength * sin(angle)))
+                    val pulse = 0.9f + 0.1f * sin(angle * 2f)
+                    withTransform({ translate(at.x, at.y) }) {
+                        drawCircle(moonBrush, moonRadius * pulse, Offset.Zero)
+                    }
+                }
+                HomeHeroStyle.MIST -> repeat(3) { index ->
+                    val dir = if (index % 2 == 0) 1f else -1f
+                    val x = width * (0.2f + index * 0.32f + dir * (t - 0.5f) * 0.30f * motionStrength)
+                    val y = height * (0.70f + index * 0.08f)
+                    withTransform({ translate(x, y); scale(1f, mistHalf / (width * 0.38f * spread), Offset.Zero) }) {
+                        drawCircle(mist[index], width * 0.38f * spread, Offset.Zero)
+                    }
+                }
+                HomeHeroStyle.CANDLE -> {
+                    // Overlapping, unrelated frequencies read as a flame instead of a pulse.
+                    val a = (t * 2f * PI).toFloat()
+                    val flicker = 0.82f + 0.08f * sin(a * 7f) + 0.06f * sin(a * 13f + 1.3f) + 0.04f * sin(a * 23f + 0.4f)
+                    withTransform({ translate(width * 0.18f, height * 0.86f) }) {
+                        drawCircle(candleBrush, candleRadius * (0.96f + 0.04f * flicker), Offset.Zero, alpha = flicker)
+                    }
+                }
+                HomeHeroStyle.STARDUST -> {
+                    val stars = if (motionStrength < 0.5f) 14 else 26
+                    repeat(stars) { index ->
+                        val seed = index * 0.618034f
+                        val x = width * (0.04f + (seed % 1f) * 0.92f)
+                        val y = height * (0.04f + ((index * 0.381966f) % 1f) * 0.86f)
+                        val glow = 0.5f + 0.5f * sin(((t * 3f + seed * 2f) * PI)).toFloat()
+                        val radius = (1f + index % 2 * 0.8f) * density
+                        drawCircle(Color.White.copy(alpha = 0.03f * glow * strength), radius * 3f, Offset(x, y))
+                        drawCircle(lerp(warm, Color.White, 0.5f).copy(alpha = (0.06f + glow * 0.22f) * strength), radius, Offset(x, y))
+                    }
+                }
+                HomeHeroStyle.PROJECTOR -> {
+                    val a = (t * 2f * PI).toFloat()
+                    repeat(2) { index ->
+                        val level = 0.7f + 0.3f * sin(a * (2f + index) + index * 1.7f)
+                        withTransform({ translate(width * (0.62f + index * 0.14f), -height * 0.2f); rotate(14f + index * 6f, Offset.Zero) }) {
+                            drawRect(projector, Offset(-projectorWidth, 0f), Size(projectorWidth * 2f, height * 1.8f), alpha = level)
+                        }
+                    }
+                }
+                HomeHeroStyle.BREATH -> drawRect(color.copy(alpha = (0.05f + 0.07f * t) * strength))
                 HomeHeroStyle.FOCUS -> {
                     val y = height * focusTravel().coerceIn(0.08f, 0.92f)
                     val x = width * (0.62f + sin((t * 2f) * PI).toFloat() * 0.12f * motionStrength)

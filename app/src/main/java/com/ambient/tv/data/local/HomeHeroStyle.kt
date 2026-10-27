@@ -14,6 +14,12 @@ object HomeHeroStyle {
     const val EMBER = "ember"
     const val TIDE = "tide"
     const val FOCUS = "focus"
+    const val MOON = "moon"
+    const val MIST = "mist"
+    const val CANDLE = "candle"
+    const val STARDUST = "stardust"
+    const val PROJECTOR = "projector"
+    const val BREATH = "breath"
     const val DEFAULT = DEPTH
     const val DEFAULT_INTENSITY = 60
     const val SOFT = "soft"
@@ -31,9 +37,10 @@ object HomeHeroStyle {
         else -> 1f
     }
 
-    val keys = setOf(STATIC, SWEEP, ARTWORK_COLOR, DEPTH, AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS)
+    val keys = setOf(STATIC, SWEEP, ARTWORK_COLOR, DEPTH, AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS,
+        MOON, MIST, CANDLE, STARDUST, PROJECTOR, BREATH)
 
-    private val fancy = setOf(AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS)
+    private val fancy = setOf(AURORA, CINEMA, PRISM, DUSK, EMBER, TIDE, FOCUS, MOON, MIST, CANDLE, STARDUST, PROJECTOR, BREATH)
 
     fun isFancy(key: String) = key in fancy
     fun isAnimated(key: String) = key == SWEEP || key == DEPTH || isFancy(key)
@@ -50,6 +57,12 @@ object HomeHeroStyle {
         EMBER -> 34_000
         TIDE -> 30_000
         FOCUS -> 26_000
+        MOON -> 40_000
+        MIST -> 38_000
+        CANDLE -> 30_000
+        STARDUST -> 32_000
+        PROJECTOR -> 28_000
+        BREATH -> 30_000
         else -> 24_000
     }
 
