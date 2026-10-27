@@ -156,9 +156,9 @@ internal fun LiveTvChannelBrowser(
             withFrameNanos { }
         }
         // A programme card outside its row's view: the channel itself is the next best target.
-        if (index >= 0 && runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() == true }.getOrDefault(false)) {
-            currentOnFocusRestored()
-        }
+        if (index >= 0) runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() }
+        // Done either way: the screen holds the shell's content entry while this is pending.
+        currentOnFocusRestored()
     }
     LaunchedEffect(pendingAlphabet, showAlphabet) {
         if (pendingAlphabet && showAlphabet) {

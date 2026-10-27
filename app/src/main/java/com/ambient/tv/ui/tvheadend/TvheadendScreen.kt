@@ -145,6 +145,20 @@ fun TvheadendScreen(
             viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab), System.currentTimeMillis() / 1000L)
     }
     var initialContentFocusPending by remember(initialTab) { mutableStateOf(true) }
+    // Back from the player the shell enters the content right away; while Live TV or the Guide
+    // still scrolls to the watched channel that would park focus on the first item instead.
+    val holdsContentEntry = initialContentFocusPending && state.tab == initialTab && !state.loading &&
+        (state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE) && !state.dashboard?.channels.isNullOrEmpty()
+    val currentHoldsContentEntry by androidx.compose.runtime.rememberUpdatedState(holdsContentEntry)
+    val enterContent: () -> Boolean? = remember { { if (currentHoldsContentEntry) null else false } }
+    DisposableEffect(enterContent) {
+        com.ambient.tv.ui.navigation.SidebarContentEntry.enter = enterContent
+        onDispose {
+            if (com.ambient.tv.ui.navigation.SidebarContentEntry.enter === enterContent) {
+                com.ambient.tv.ui.navigation.SidebarContentEntry.enter = null
+            }
+        }
+    }
     LaunchedEffect(Unit) { viewModel.start() }
     LaunchedEffect(initialTab) {
         viewModel.selectTab(initialTab)
