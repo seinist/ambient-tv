@@ -36,3 +36,14 @@ internal fun recordingTerminationPath(scheduleStatus: String?): String =
 /** TVHeadend reports user aborts in its failed-recordings list. */
 internal fun recordingWasAborted(status: String?): Boolean =
     status?.trim().equals("Aborted by user", ignoreCase = true)
+
+/** The `node` of `api/idnode/save`: only the fields being changed, so the rest stays as it is. */
+internal fun tvhTimerNode(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): JsonObject = buildJsonObject {
+    put("uuid", uuid)
+    edit.paddingBeforeMinutes?.let { put("start_extra", it.coerceIn(0, TVH_MAX_PADDING_MINUTES)) }
+    edit.paddingAfterMinutes?.let { put("stop_extra", it.coerceIn(0, TVH_MAX_PADDING_MINUTES)) }
+    edit.priority?.let { put("pri", it) }
+    edit.enabled?.let { put("enabled", it) }
+}
+
+internal const val TVH_MAX_PADDING_MINUTES = 1440

@@ -96,6 +96,16 @@ fun rankTrailers(videos: List<TrailerVideo>, language: String, originalLanguage:
         .distinctBy { it.key }
 
 /** Title search is deliberately conservative: ambiguous remakes never silently play another film. */
+/** A programme title without a year: only exact (case-insensitive) title matches with art, most popular first. */
+fun matchProgrammeTitle(candidates: List<TrailerTitle>, title: String): TrailerTitle? {
+    val normalized = title.trim().lowercase(java.util.Locale.ROOT)
+    if (normalized.length < 2) return null
+    return candidates.filter { candidate ->
+        candidate.imageUrl != null && listOf(candidate.title, candidate.name, candidate.originalTitle, candidate.originalName)
+            .any { it.trim().lowercase(java.util.Locale.ROOT) == normalized }
+    }.maxByOrNull { it.popularity }
+}
+
 fun matchTrailerTitle(candidates: List<TrailerTitle>, title: String, year: Int?): TrailerTitle? {
     if (year == null) return null
     val normalized = title.trim().lowercase(java.util.Locale.ROOT)

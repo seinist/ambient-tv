@@ -1,6 +1,10 @@
 package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.livetv.guideChannels
+import com.ambient.tv.livetv.LiveTvArt
+import com.ambient.tv.livetv.liveTvProgrammeArt
+import com.ambient.tv.livetv.liveTvRecordingArt
+import com.ambient.tv.livetv.liveTvSeriesArt
 
 import com.ambient.tv.notifications.OperationFeedback
 import com.ambient.tv.ui.common.OperationFeedbackScope
@@ -98,6 +102,13 @@ import kotlin.math.roundToInt
 
 private val LocalTvhPlaybackSource = compositionLocalOf { "" }
 
+/** A delete or cancel waiting for its confirmation. */
+private sealed interface PendingDelete {
+    data class Recording(val entry: TvhDvrEntry) : PendingDelete
+    data class Timer(val entry: TvhDvrEntry) : PendingDelete
+    data class Series(val entry: TvhAutoRec) : PendingDelete
+}
+
 @Composable
 private fun livePlaybackIndicator(kind: String, id: String): com.ambient.tv.companion.PlaybackIndicator? {
     val scope = com.ambient.tv.companion.LocalPlaybackBrowseSources.current.live[LocalTvhPlaybackSource.current] ?: return null
@@ -118,10 +129,17 @@ fun TvheadendScreen(
     viewModel: TvheadendViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val titleArt by viewModel.titleArt.collectAsState()
+    var pendingDelete by remember { mutableStateOf<PendingDelete?>(null) }
+    val events = state.dashboard?.events.orEmpty()
+    val channels = state.dashboard?.channels.orEmpty()
+    val recordingArt: (TvhDvrEntry) -> LiveTvArt? = { liveTvRecordingArt(it, events, channels, titleArt) }
+    val seriesArt: (TvhAutoRec) -> LiveTvArt? = { liveTvSeriesArt(it, events, channels, titleArt) }
+    val canEditTimers = state.capabilities.editTimers && !state.offline
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     ReportSidebarContentReady(!state.loading)
     if (onBack != null) {
-        BackHandler(enabled = state.selectedEvent == null && state.selectedRecording == null) { onBack() }
+        BackHandler(enabled = state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
     }
     val tokens = LocalUiTokens.current
     val tabFocusRequesters = remember {
@@ -284,6 +302,10 @@ fun TvheadendScreen(
                         recordings = dashboard?.recordings.orEmpty(),
                         failedRecordings = dashboard?.failedRecordings.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
+                        art = recordingArt,
+                        canDelete = state.capabilities.deleteRecordings && !state.offline,
+                        busy = state.actionInProgress,
+                        onDelete = { pendingDelete = PendingDelete.Recording(it) },
                         onPlay = { if (state.offline) viewModel.selectRecording(it) else onPlayRecording(it.uuid) },
                         onSelect = viewModel::selectRecording,
                         firstContentFocusRequester = firstContentFocusRequester,
@@ -294,10 +316,16 @@ fun TvheadendScreen(
                         timers = dashboard?.upcoming.orEmpty(),
                         autoRecs = dashboard?.autoRecs.orEmpty(),
                         canManage = state.capabilities.manageTimers && !state.offline,
+                        canEdit = canEditTimers,
                         busy = state.actionInProgress,
                         imageHeaders = viewModel.imageHeaders,
+                        art = recordingArt,
+                        seriesArt = seriesArt,
                         onSelect = viewModel::selectRecording,
-                        onDeleteSeries = viewModel::deleteAutoRec,
+                        onEdit = { viewModel.edit(LiveTvEditTarget.Timer(it)) },
+                        onEditSeries = { viewModel.edit(LiveTvEditTarget.Series(it)) },
+                        onCancel = { pendingDelete = PendingDelete.Timer(it) },
+                        onDeleteSeries = { pendingDelete = PendingDelete.Series(it) },
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
@@ -314,9 +342,13 @@ fun TvheadendScreen(
         val channel = state.dashboard?.channels?.firstOrNull { it.uuid == event.channelUuid }
         // A running programme recorded "from now" has its own timer without the EPG link.
         val timer = state.dashboard?.upcoming?.let { findProgrammeRecording(event, it) }
+        val art = liveTvProgrammeArt(event, channels, titleArt)
+        LaunchedEffect(event.eventId) { if (event.imageUrl == null) viewModel.requestTitleArt(listOf(event.title)) }
         EventDialog(
             event = event,
             timer = timer,
+            art = art,
+            imageHeaders = viewModel.imageHeaders,
             canRecord = state.capabilities.manageTimers && !state.offline,
             canRecordSeries = state.capabilities.seriesTimers && !state.offline,
             canWatch = !state.offline && channel != null && event.isLive(System.currentTimeMillis() / 1000L),
@@ -327,7 +359,7 @@ fun TvheadendScreen(
             onWatch = { channel?.let { viewModel.selectEvent(null); watchChannel(it.uuid) } },
             onRecord = { viewModel.schedule(event, false) },
             onRecordSeries = { viewModel.schedule(event, true) },
-            onCancel = { timer?.let(viewModel::cancel) },
+            onCancel = { timer?.let { pendingDelete = PendingDelete.Timer(it) } },
             reminded = reminders.any { it.sourceId == state.source.id && it.eventId == event.eventId },
             canRemind = event.startEpochSeconds > System.currentTimeMillis() / 1000L,
             onToggleReminder = { viewModel.toggleReminder(event) },
@@ -338,18 +370,72 @@ fun TvheadendScreen(
         OperationFeedbackScope(viewModel.feedback, "recording:${entry.uuid}")
         // A recording that is still running already has a URL but is not finished yet.
         val status = entry.scheduleStatus?.lowercase()
-        val completed = status == "completed" || (!entry.url.isNullOrBlank() && !entry.isActivelyRecording() && status != "scheduled")
+        // Failed entries are finished too: they are deleted, never cancelled like a timer.
+        val failed = state.dashboard?.failedRecordings?.any { it.uuid == entry.uuid } == true
+        val completed = !failed && (status == "completed" || (!entry.url.isNullOrBlank() && !entry.isActivelyRecording() && status != "scheduled"))
+        val finished = completed || failed
+        val upcoming = state.dashboard?.upcoming?.any { it.uuid == entry.uuid } == true
         RecordingDialog(
             entry = entry,
             completed = completed,
+            finished = finished,
+            art = recordingArt(entry),
+            imageHeaders = viewModel.imageHeaders,
             canPlay = completed && !state.offline,
-            canManage = !state.offline && entry.canDelete && if (completed) state.capabilities.deleteRecordings else state.capabilities.manageTimers,
+            canManage = !state.offline && entry.canDelete && if (finished) state.capabilities.deleteRecordings else state.capabilities.manageTimers,
+            canEdit = canEditTimers && upcoming && !finished,
+            onEdit = { viewModel.edit(LiveTvEditTarget.Timer(entry)) },
             busy = state.actionInProgress,
             message = state.actionFeedback?.takeIf { it.scope == "recording:${entry.uuid}" },
             onDismiss = { viewModel.selectRecording(null) },
             onPlay = { viewModel.selectRecording(null); onPlayRecording(entry.uuid) },
-            onCancel = { viewModel.cancel(entry) },
-            onDelete = { viewModel.delete(entry) },
+            onCancel = { pendingDelete = PendingDelete.Timer(entry) },
+            onDelete = { pendingDelete = PendingDelete.Recording(entry) },
+        )
+    }
+
+    OperationFeedbackScope(viewModel.feedback, "edit", state.editing != null)
+    when (val editing = state.editing) {
+        is LiveTvEditTarget.Timer -> LiveTvTimerEditDialog(
+            title = editing.entry.title, series = false,
+            paddingBefore = editing.entry.paddingBeforeMinutes, paddingAfter = editing.entry.paddingAfterMinutes,
+            priority = editing.entry.priority, enabled = null,
+            zeroIsServerDefault = state.source.system == "tvheadend",
+            busy = state.actionInProgress, message = state.actionFeedback?.takeIf { it.scope == "edit" },
+            onSave = { edit -> if (edit.isEmpty) viewModel.edit(null) else viewModel.updateTimer(editing.entry, edit) },
+            onDismiss = { viewModel.edit(null) },
+        )
+        is LiveTvEditTarget.Series -> LiveTvTimerEditDialog(
+            title = editing.entry.name, series = true,
+            paddingBefore = editing.entry.paddingBeforeMinutes, paddingAfter = editing.entry.paddingAfterMinutes,
+            priority = editing.entry.priority, enabled = editing.entry.enabled.takeIf { editing.entry.canDisable },
+            zeroIsServerDefault = state.source.system == "tvheadend",
+            busy = state.actionInProgress, message = state.actionFeedback?.takeIf { it.scope == "edit" },
+            onSave = { edit -> if (edit.isEmpty) viewModel.edit(null) else viewModel.updateSeriesTimer(editing.entry, edit) },
+            onDismiss = { viewModel.edit(null) },
+        )
+        null -> Unit
+    }
+
+    pendingDelete?.let { pending ->
+        val (title, question, confirm) = when (pending) {
+            is PendingDelete.Recording -> Triple(pending.entry.title, R.string.tvh_confirm_delete_recording, R.string.tvh_delete_recording)
+            is PendingDelete.Timer -> Triple(pending.entry.title, R.string.tvh_confirm_cancel_timer,
+                if (pending.entry.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording)
+            is PendingDelete.Series -> Triple(pending.entry.name, R.string.tvh_confirm_delete_series_timer, R.string.tvh_delete_series_timer)
+        }
+        LiveTvConfirmDialog(
+            title = title, question = stringResource(question), confirmLabel = stringResource(confirm),
+            busy = state.actionInProgress,
+            onConfirm = {
+                pendingDelete = null
+                when (pending) {
+                    is PendingDelete.Recording -> viewModel.delete(pending.entry)
+                    is PendingDelete.Timer -> viewModel.cancel(pending.entry)
+                    is PendingDelete.Series -> viewModel.deleteAutoRec(pending.entry)
+                }
+            },
+            onDismiss = { pendingDelete = null },
         )
     }
     } // Playback source also covers the detail dialogs.
@@ -547,6 +633,10 @@ private fun RecordingList(
     recordings: List<TvhDvrEntry>,
     failedRecordings: List<TvhDvrEntry>,
     imageHeaders: Map<String, String>,
+    art: (TvhDvrEntry) -> LiveTvArt?,
+    canDelete: Boolean,
+    busy: Boolean,
+    onDelete: (TvhDvrEntry) -> Unit,
     onPlay: (TvhDvrEntry) -> Unit,
     onSelect: (TvhDvrEntry) -> Unit,
     firstContentFocusRequester: FocusRequester,
@@ -566,9 +656,11 @@ private fun RecordingList(
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
             DvrRow(
-                entry, completed = !failed, failed = failed, imageHeaders = imageHeaders,
+                entry, completed = !failed, failed = failed, art = art(entry), imageHeaders = imageHeaders,
                 onPrimary = { if (!failed) onPlay(entry) else onSelect(entry) },
                 onInfo = { onSelect(entry) },
+                onDelete = if (canDelete && entry.canDelete) ({ onDelete(entry) }) else null,
+                busy = busy,
                 onFocused = { onFocused(entry.uuid) },
                 modifier = if (entry.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
             )
@@ -581,9 +673,15 @@ private fun TimerList(
     timers: List<TvhDvrEntry>,
     autoRecs: List<TvhAutoRec>,
     canManage: Boolean,
+    canEdit: Boolean,
     busy: Boolean,
     imageHeaders: Map<String, String>,
+    art: (TvhDvrEntry) -> LiveTvArt?,
+    seriesArt: (TvhAutoRec) -> LiveTvArt?,
     onSelect: (TvhDvrEntry) -> Unit,
+    onEdit: (TvhDvrEntry) -> Unit,
+    onEditSeries: (TvhAutoRec) -> Unit,
+    onCancel: (TvhDvrEntry) -> Unit,
     onDeleteSeries: (TvhAutoRec) -> Unit,
     firstContentFocusRequester: FocusRequester,
     focusTarget: TvhFocusTarget,
@@ -602,8 +700,11 @@ private fun TimerList(
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
                 DvrRow(
-                    entry, completed = false, failed = false, imageHeaders = imageHeaders,
+                    entry, completed = false, failed = false, art = art(entry), imageHeaders = imageHeaders,
                     onPrimary = { onSelect(entry) }, onInfo = { onSelect(entry) },
+                    onEdit = if (canEdit && entry.canDelete) ({ onEdit(entry) }) else null,
+                    onDelete = if (canManage && entry.canDelete) ({ onCancel(entry) }) else null,
+                    busy = busy,
                     onFocused = { onFocused(entry.uuid) },
                     modifier = if (entry.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
                 )
@@ -621,6 +722,8 @@ private fun TimerList(
                 val id = "autorec:${entry.uuid}"
                 SeriesTimerRow(
                     entry, busy, canManage, onDeleteSeries,
+                    art = seriesArt(entry), imageHeaders = imageHeaders,
+                    onEdit = if (canEdit) ({ onEditSeries(entry) }) else null,
                     onFocused = { onFocused(id) },
                     initialFocusModifier = if (id == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
                 )
@@ -636,10 +739,13 @@ private fun SeriesTimerRow(
     canManage: Boolean,
     onDelete: (TvhAutoRec) -> Unit,
     onFocused: () -> Unit,
+    art: LiveTvArt?,
+    imageHeaders: Map<String, String>,
+    onEdit: (() -> Unit)?,
     initialFocusModifier: Modifier = Modifier,
 ) {
     // The row itself must not be a no-op focus target: keyboard/DPAD users should land
-    // directly on the actionable Delete button rather than on a dead Surface first.
+    // directly on its first action (Edit, else Delete) rather than on a dead Surface first.
     Row(
         Modifier.fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.78f), RoundedCornerShape(10.dp))
@@ -648,19 +754,24 @@ private fun SeriesTimerRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        MetaBadge(stringResource(R.string.tvh_series_timers), emphasized = entry.enabled)
+        LiveTvArtBox(art, entry.name, imageHeaders, Modifier.size(96.dp, 54.dp))
+        MetaBadge(stringResource(if (entry.enabled) R.string.tvh_series_timers else R.string.tvh_series_disabled), emphasized = entry.enabled)
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(entry.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val secondary = listOfNotNull(entry.channelName?.takeIf { it.isNotBlank() }, entry.title?.takeIf { it.isNotBlank() && it != entry.name }).joinToString(" · ")
             if (secondary.isNotBlank()) Text(secondary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        var pending by rememberPendingAction(busy)
-        if (canManage) TvActionButton(
-            text = stringResource(R.string.tvh_delete_series_timer),
-            onClick = { pending = entry.uuid; onDelete(entry) },
+        if (onEdit != null) TvActionButton(
+            text = stringResource(R.string.tvh_edit),
+            onClick = onEdit,
             enabled = !busy,
-            loading = busy && pending == entry.uuid,
             modifier = initialFocusModifier.onFocusChanged { if (it.isFocused) onFocused() },
+        )
+        if (canManage) TvActionButton(
+            text = stringResource(R.string.tvh_delete),
+            onClick = { onDelete(entry) },
+            enabled = !busy,
+            modifier = (if (onEdit == null) initialFocusModifier else Modifier).onFocusChanged { if (it.isFocused) onFocused() },
         )
     }
 }
@@ -670,11 +781,15 @@ private fun DvrRow(
     entry: TvhDvrEntry,
     completed: Boolean,
     failed: Boolean,
+    art: LiveTvArt?,
     imageHeaders: Map<String, String>,
     onPrimary: () -> Unit,
     onInfo: () -> Unit,
     onFocused: () -> Unit,
     modifier: Modifier = Modifier,
+    onEdit: (() -> Unit)? = null,
+    onDelete: (() -> Unit)? = null,
+    busy: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val rowShape = RoundedCornerShape(10.dp)
@@ -690,10 +805,7 @@ private fun DvrRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Box(Modifier.size(126.dp, 71.dp).clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f))) {
-                val art = entry.imageUrl ?: entry.fanartUrl
-                if (art != null) ArtworkImage(model = art, title = entry.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, headers = imageHeaders)
-            }
+            LiveTvArtBox(art, entry.title, imageHeaders, Modifier.size(126.dp, 71.dp))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     MetaBadge(
@@ -713,7 +825,22 @@ private fun DvrRow(
                 entry.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
             TvActionButton(text = stringResource(R.string.tvh_info), onClick = onInfo)
+            if (onEdit != null) TvActionButton(text = stringResource(R.string.tvh_edit), onClick = onEdit, enabled = !busy)
+            if (onDelete != null) TvActionButton(text = stringResource(R.string.tvh_delete), onClick = onDelete, enabled = !busy)
         }
+    }
+}
+
+/** Row art: programme images cropped, channel logos fitted on the dark plate. */
+@Composable
+private fun LiveTvArtBox(art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier) {
+    Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
+        if (art != null) ArtworkImage(
+            model = art.url, title = title,
+            modifier = if (art.logo) Modifier.fillMaxSize().padding(10.dp) else Modifier.fillMaxSize(),
+            contentScale = if (art.logo) ContentScale.Fit else ContentScale.Crop,
+            headers = art.headers(imageHeaders),
+        )
     }
 }
 
@@ -721,6 +848,8 @@ private fun DvrRow(
 private fun EventDialog(
     event: TvhEpgEvent,
     timer: TvhDvrEntry?,
+    art: LiveTvArt?,
+    imageHeaders: Map<String, String>,
     canWatch: Boolean,
     canRecord: Boolean,
     canRecordSeries: Boolean,
@@ -771,6 +900,7 @@ private fun EventDialog(
         },
     ) {
         com.ambient.tv.companion.PlaybackStatusSection(playing)
+        art?.let { LiveTvArtBox(it, event.title, imageHeaders, Modifier.fillMaxWidth().height(200.dp)) }
         event.subtitle?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.titleSmall) }
         (event.description ?: event.summary)?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         message?.let { OperationFeedbackContent(it, Modifier.fillMaxWidth()) }
@@ -781,8 +911,13 @@ private fun EventDialog(
 private fun RecordingDialog(
     entry: TvhDvrEntry,
     completed: Boolean,
+    finished: Boolean,
+    art: LiveTvArt?,
+    imageHeaders: Map<String, String>,
     canPlay: Boolean,
     canManage: Boolean,
+    canEdit: Boolean,
+    onEdit: () -> Unit,
     busy: Boolean,
     message: OperationFeedback?,
     onDismiss: () -> Unit,
@@ -817,16 +952,19 @@ private fun RecordingDialog(
             }
         },
         footer = {
-            if (completed) {
+            if (finished) {
                 if (canPlay) TvActionButton(text = stringResource(if (playing != null) R.string.playback_open else R.string.tvh_watch), onClick = { if (playing != null) openCurrent(playing) else onPlay() }, selected = true, modifier = Modifier.focusRequester(initialFocus))
-                if (canManage) TvActionButton(text = stringResource(R.string.tvh_delete_recording), onClick = onDelete, loading = busy)
-            } else if (canManage) {
-                TvActionButton(text = stringResource(if (entry.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!busy) Modifier.focusRequester(initialFocus) else Modifier)
+                if (canManage) TvActionButton(text = stringResource(R.string.tvh_delete_recording), onClick = onDelete, loading = busy, modifier = if (!canPlay && !busy) Modifier.focusRequester(initialFocus) else Modifier)
+            } else {
+                if (canEdit) TvActionButton(text = stringResource(R.string.tvh_edit), onClick = onEdit, enabled = !busy, modifier = if (!busy) Modifier.focusRequester(initialFocus) else Modifier)
+                if (canManage) TvActionButton(text = stringResource(if (entry.isActivelyRecording()) R.string.player_record_stop else R.string.tvh_cancel_recording), onClick = onCancel, loading = busy, modifier = if (!canEdit && !busy) Modifier.focusRequester(initialFocus) else Modifier)
             }
-            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if ((!completed || !canPlay) && (busy || !canManage)) Modifier.focusRequester(initialFocus) else Modifier)
+            val actionTakesFocus = (finished && canPlay) || (!busy && (canManage || (canEdit && !finished)))
+            TvActionButton(text = stringResource(R.string.back), onClick = onDismiss, modifier = if (!actionTakesFocus) Modifier.focusRequester(initialFocus) else Modifier)
         },
     ) {
         com.ambient.tv.companion.PlaybackStatusSection(playing)
+        art?.let { LiveTvArtBox(it, entry.title, imageHeaders, Modifier.fillMaxWidth().height(200.dp)) }
         entry.description?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         message?.let { OperationFeedbackContent(it, Modifier.fillMaxWidth()) }
     }

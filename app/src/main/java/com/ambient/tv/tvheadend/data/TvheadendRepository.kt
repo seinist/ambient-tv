@@ -361,6 +361,10 @@ class TvheadendRepository @Inject constructor(
                 title = obj.localizedString("title") ?: obj.string("title"),
                 channelName = obj.string("channel") ?: obj.string("channelname"),
                 enabled = obj.boolean("enabled") != false,
+                paddingBeforeMinutes = obj.numberAsInt("start_extra"),
+                paddingAfterMinutes = obj.numberAsInt("stop_extra"),
+                priority = obj.numberAsInt("pri"),
+                canDisable = true,
             )
         }.sortedBy { it.name.lowercase() }
     }
@@ -368,6 +372,28 @@ class TvheadendRepository @Inject constructor(
     suspend fun deleteAutoRecording(uuid: String): Result<Unit> = suspendResult {
         getJson("api/idnode/delete", mapOf("uuid" to uuid))
         patchCached("dvr:autorec", AUTOREC_LIST) { list -> list.filterNot { it.uuid == uuid } }
+        invalidateDvrAndEpg()
+    }
+
+    /** Padding (minutes) and priority of a DVR entry, through TVHeadend's generic idnode save. */
+    suspend fun updateTimer(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = suspendResult {
+        getJson("api/idnode/save", mapOf("node" to tvhTimerNode(uuid, edit).toString()))
+        patchCached("dvr:upcoming", RECORDING_LIST) { list -> list.map { if (it.uuid == uuid) it.copy(
+            paddingBeforeMinutes = edit.paddingBeforeMinutes ?: it.paddingBeforeMinutes,
+            paddingAfterMinutes = edit.paddingAfterMinutes ?: it.paddingAfterMinutes,
+            priority = edit.priority ?: it.priority,
+        ) else it } }
+        invalidateDvrAndEpg()
+    }
+
+    suspend fun updateAutoRecording(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = suspendResult {
+        getJson("api/idnode/save", mapOf("node" to tvhTimerNode(uuid, edit).toString()))
+        patchCached("dvr:autorec", AUTOREC_LIST) { list -> list.map { if (it.uuid == uuid) it.copy(
+            enabled = edit.enabled ?: it.enabled,
+            paddingBeforeMinutes = edit.paddingBeforeMinutes ?: it.paddingBeforeMinutes,
+            paddingAfterMinutes = edit.paddingAfterMinutes ?: it.paddingAfterMinutes,
+            priority = edit.priority ?: it.priority,
+        ) else it } }
         invalidateDvrAndEpg()
     }
 
@@ -626,6 +652,9 @@ class TvheadendRepository @Inject constructor(
             fileSizeBytes = obj.long("filesize"),
             playPositionSeconds = obj.long("playposition"),
             broadcastEventId = obj.long("broadcast")?.toString(),
+            paddingBeforeMinutes = obj.numberAsInt("start_extra"),
+            paddingAfterMinutes = obj.numberAsInt("stop_extra"),
+            priority = obj.numberAsInt("pri"),
         )
     }
 
