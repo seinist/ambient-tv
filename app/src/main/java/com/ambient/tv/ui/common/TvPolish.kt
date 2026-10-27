@@ -355,14 +355,36 @@ fun Modifier.onTvPointerScroll(
  * deliver Enter/NumpadEnter/Space in ways that do not reach ClickableSurface reliably.
  */
 fun Modifier.activateOnTvKey(enabled: Boolean = true, onClick: () -> Unit): Modifier =
+    activateOnTvKey(enabled = enabled, onClick = onClick, onLongClick = null)
+
+/** Menu, Info, or a touch long-press. OK still activates [onClick] on the first key-down. */
+fun Modifier.activateOnTvKey(
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
+): Modifier =
     this.then(Modifier.composed {
         val click by androidx.compose.runtime.rememberUpdatedState(onClick)
+        val longClick by androidx.compose.runtime.rememberUpdatedState(onLongClick)
         val inputMode = androidx.compose.ui.platform.LocalInputModeManager.current
         if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
             Modifier.focusProperties { canFocus = inputMode.inputMode != androidx.compose.ui.input.InputMode.Touch }
-                .pointerInput(enabled) { detectTapGestures(onTap = { if (enabled) click() }) }
+                .pointerInput(enabled, onLongClick) {
+                    if (onLongClick != null) {
+                        detectTapGestures(
+                            onLongPress = { if (enabled) longClick?.invoke() },
+                            onTap = { if (enabled) click() },
+                        )
+                    } else {
+                        detectTapGestures(onTap = { if (enabled) click() })
+                    }
+                }
         } else Modifier.focusOnTvPointer(enabled)
     }).onPreviewKeyEvent { event ->
+        if (onLongClick != null && (event.key == Key.Menu || event.key == Key.Info)) {
+            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0 && enabled) onLongClick.invoke()
+            return@onPreviewKeyEvent true
+        }
         val activationKey = event.key == Key.Enter ||
             event.key == Key.NumPadEnter ||
             event.key == Key.DirectionCenter ||

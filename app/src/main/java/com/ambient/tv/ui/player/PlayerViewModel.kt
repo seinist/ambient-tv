@@ -365,8 +365,27 @@ class PlayerViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<PlayerUiState>(PlayerUiState.Loading)
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+    private var lastReadyRatingKey: String? = null
+    private var lastReadyMediaType: String? = null
+
+    /**
+     * Item that was actually playing when the player closes. Next up keeps the same screen, so
+     * this follows the episode on screen, and an error after playback still remembers it.
+     */
+    fun playbackExit(): Pair<String?, String?> {
+        val ready = _uiState.value as? PlayerUiState.Ready
+        return (ready?.requestedRatingKey ?: lastReadyRatingKey) to (ready?.mediaType ?: lastReadyMediaType)
+    }
 
     init {
+        viewModelScope.launch {
+            _uiState.collect { state ->
+                if (state is PlayerUiState.Ready) {
+                    lastReadyRatingKey = state.requestedRatingKey
+                    lastReadyMediaType = state.mediaType
+                }
+            }
+        }
         viewModelScope.launch {
             var seenVpn = resumeConnectivityMonitor.vpnDropGeneration.value
             resumeConnectivityMonitor.vpnDropGeneration.collect { generation ->

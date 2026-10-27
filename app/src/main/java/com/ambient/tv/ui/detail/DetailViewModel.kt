@@ -38,6 +38,8 @@ sealed interface DetailUiState {
         val children: List<MediaItem> = emptyList(),
         val childrenLoading: Boolean = false,
         val childrenLoadFailed: Boolean = false,
+        /** Other seasons of this episode or season. Empty when the show has only one. */
+        val seasons: List<MediaItem> = emptyList(),
         val nextEpisode: MediaItem? = null,
         val similar: List<MediaItem> = emptyList(),
         val similarLoading: Boolean = false,
@@ -88,6 +90,7 @@ class DetailViewModel @Inject constructor(
             DetailUiState.Loaded(
                 item = it,
                 childrenLoading = it.type in BROWSABLE_TYPES || it.type == "episode",
+                seasons = cachedSeasonStrip(it),
                 autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
                 offline = sourceOffline(),
             )
@@ -223,6 +226,7 @@ class DetailViewModel @Inject constructor(
                     item = item, children = mediaRepository.cachedChildren(if (item.type == "episode") item.parentRatingKey ?: ratingKey else ratingKey).orEmpty(),
                     similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
                     childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
+                    seasons = cachedSeasonStrip(item),
                     autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
                     offline = sourceOffline(),
                 )
@@ -247,6 +251,7 @@ class DetailViewModel @Inject constructor(
                         item = item,
                         children = previous?.children.orEmpty(),
                         childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
+                        seasons = previous?.seasons ?: cachedSeasonStrip(item),
                         nextEpisode = previous?.nextEpisode,
                         similar = previous?.similar.orEmpty(),
                         // Reserve the recommendations row while it loads so the cast below it
@@ -281,7 +286,22 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    private fun cachedSeasonStrip(item: MediaItem): List<MediaItem> {
+        val showKey = seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey) ?: return emptyList()
+        return seasonStripItems(mediaRepository.cachedChildren(showKey).orEmpty())
+    }
+
     private suspend fun loadSecondaryContent(item: MediaItem) = coroutineScope {
+        launch {
+            val showKey = seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey)
+            if (showKey != null) {
+                val result = mediaRepository.getChildren(showKey)
+                val seasons = result.getOrNull()?.let(::seasonStripItems).orEmpty()
+                updateLoaded { current ->
+                    current.copy(seasons = if (result.isSuccess) seasons else current.seasons)
+                }
+            }
+        }
         launch {
             val childKey = when {
                 item.type in BROWSABLE_TYPES -> ratingKey

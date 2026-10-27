@@ -145,6 +145,9 @@ fun DetailScreen(
     onOpenSettings: () -> Unit,
     onPlay: (MediaItem, mediaIndex: Int, restart: Boolean) -> Unit,
     onOpenChild: (MediaItem) -> Unit,
+    onOpenEpisode: (MediaItem) -> Unit,
+    onOpenSeason: (MediaItem) -> Unit,
+    onOpenSeries: (String) -> Unit,
     onBrowseActor: (String, String) -> Unit,
     onBrowseCollection: (String, String) -> Unit,
     viewModel: DetailViewModel = hiltViewModel(),
@@ -180,6 +183,7 @@ fun DetailScreen(
                     children = state.children,
                     childrenLoading = state.childrenLoading,
                     childrenLoadFailed = state.childrenLoadFailed,
+                    seasons = state.seasons,
                     onRetryChildren = viewModel::load,
                     nextEpisode = state.nextEpisode,
                     similar = state.similar,
@@ -189,6 +193,9 @@ fun DetailScreen(
                     autoSelectDisplayVersion = state.autoSelectDisplayVersion,
                     onPlay = onPlay,
                     onOpenChild = onOpenChild,
+                    onOpenEpisode = onOpenEpisode,
+                    onOpenSeason = onOpenSeason,
+                    onOpenSeries = onOpenSeries,
                     onBack = onBack,
                     onOpenSettings = onOpenSettings,
                     onBrowseActor = onBrowseActor,
@@ -285,6 +292,7 @@ private fun DetailContent(
     children: List<MediaItem>,
     childrenLoading: Boolean,
     childrenLoadFailed: Boolean,
+    seasons: List<MediaItem>,
     onRetryChildren: () -> Unit,
     nextEpisode: MediaItem?,
     similar: List<MediaItem>,
@@ -294,6 +302,9 @@ private fun DetailContent(
     autoSelectDisplayVersion: Boolean,
     onPlay: (MediaItem, Int, Boolean) -> Unit,
     onOpenChild: (MediaItem) -> Unit,
+    onOpenEpisode: (MediaItem) -> Unit,
+    onOpenSeason: (MediaItem) -> Unit,
+    onOpenSeries: (String) -> Unit,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onBrowseActor: (String, String) -> Unit,
@@ -598,6 +609,24 @@ private fun DetailContent(
                 }
             }
 
+            if ((item.type == "season" || item.type == "episode") && seasons.isNotEmpty()) {
+                val seriesKey = seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey)
+                if (seriesKey != null) {
+                    item(key = "season-strip") {
+                        Section("season-strip") {
+                            SeasonStrip(
+                                seasons = seasons,
+                                currentSeasonKey = currentSeasonKey(item.type, item.ratingKey, item.parentRatingKey),
+                                onOpenSeries = { onOpenSeries(seriesKey) },
+                                onOpenSeason = onOpenSeason,
+                                restoreFocusKey = restoreFocusKey,
+                                onFocused = { rememberFocused(it) },
+                            )
+                        }
+                    }
+                }
+            }
+
             if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) {
                 item(key = "children") {
                     Section("children") {
@@ -609,7 +638,9 @@ private fun DetailContent(
                         } else {
                             ChildrenSection(
                                 item, children, childrenLoading, childrenLoadFailed, onRetryChildren, onOpenChild,
-                                restoreFocusKey,
+                                onPlayEpisode = { onPlay(it, 0, false) },
+                                onOpenEpisode = onOpenEpisode,
+                                restoreFocusKey = restoreFocusKey,
                             ) { rememberFocused(it) }
                         }
                     }
@@ -1159,6 +1190,61 @@ private fun CollectionItemsSection(
 }
 
 @Composable
+private fun SeasonStrip(
+    seasons: List<MediaItem>,
+    currentSeasonKey: String?,
+    onOpenSeries: () -> Unit,
+    onOpenSeason: (MediaItem) -> Unit,
+    restoreFocusKey: String?,
+    onFocused: (String) -> Unit,
+) {
+    val seriesFocus = "season-strip:series"
+    val currentIndex = seasons.indexOfFirst { currentSeasonKey != null && currentSeasonKey in it.allRatingKeys }
+    Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
+        LazyRow(
+            state = rememberDetailRowState(
+                listOf(seriesFocus) + seasons.map { "season-strip:${it.ratingKey}" },
+                restoreFocusKey,
+                defaultIndex = if (currentIndex >= 0) currentIndex + 1 else 0,
+            ),
+            contentPadding = PaddingValues(horizontal = screenGutter()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.containRowFocusExit(),
+        ) {
+            item(key = "series") {
+                val requester = remember { FocusRequester() }
+                val restore = restoreFocusKey == seriesFocus
+                TvChip(
+                    text = stringResource(R.string.detail_series),
+                    onClick = onOpenSeries,
+                    modifier = Modifier
+                        .onFocusChanged { if (it.isFocused) onFocused(seriesFocus) }
+                        .then(if (restore) Modifier.focusRequester(requester) else Modifier),
+                )
+                RestoreDetailFocus(restore, requester)
+            }
+            items(seasons, key = { it.ratingKey }) { season ->
+                val focusKey = "season-strip:${season.ratingKey}"
+                val requester = remember(focusKey) { FocusRequester() }
+                val restore = restoreFocusKey == focusKey
+                val selected = currentSeasonKey != null && currentSeasonKey in season.allRatingKeys
+                TvChip(
+                    text = season.title.ifBlank { season.index?.toString().orEmpty() },
+                    selected = selected,
+                    textMaxLines = 1,
+                    onClick = { if (!selected) onOpenSeason(season) },
+                    modifier = Modifier
+                        .onFocusChanged { if (it.isFocused) onFocused(focusKey) }
+                        .then(if (restore) Modifier.focusRequester(requester) else Modifier),
+                )
+                RestoreDetailFocus(restore, requester)
+            }
+        }
+    }
+}
+
+@Composable
 private fun ChildrenSection(
     item: MediaItem,
     children: List<MediaItem>,
@@ -1166,6 +1252,8 @@ private fun ChildrenSection(
     failed: Boolean,
     onRetry: () -> Unit,
     onOpenChild: (MediaItem) -> Unit,
+    onPlayEpisode: (MediaItem) -> Unit,
+    onOpenEpisode: (MediaItem) -> Unit,
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
@@ -1243,7 +1331,10 @@ private fun ChildrenSection(
                         item = child,
                         style = MediaTileStyle.EPISODE,
                         showDescription = false,
-                        onClick = { onOpenChild(child) },
+                        onClick = {
+                            if (detailChildPlaysDirectly(child.type)) onPlayEpisode(child) else onOpenChild(child)
+                        },
+                        onInfo = if (detailChildPlaysDirectly(child.type)) ({ onOpenEpisode(child) }) else null,
                         onFocused = { onFocused(focusKey) },
                         requestInitialFocus = restoreFocusKey == focusKey,
                     )

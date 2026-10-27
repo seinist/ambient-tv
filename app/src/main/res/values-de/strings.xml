@@ -107,6 +107,7 @@
     <string name="detail_collections">Sammlungen</string>
     <string name="detail_directors">Regie: %1$s</string>
     <string name="detail_seasons">Staffeln</string>
+    <string name="detail_series">Serie</string>
     <string name="detail_episodes">Episoden</string>
     <string name="detail_no_stream">Keine Wiedergabequelle gefunden</string>
     <string name="detail_next_episode">Nächste Episode</string>

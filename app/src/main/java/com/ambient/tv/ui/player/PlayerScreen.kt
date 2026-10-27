@@ -148,11 +148,15 @@ internal data class PlayerTrackOption(
 
 @Composable
 fun PlayerScreen(
-    onBack: () -> Unit,
+    onBack: (playedRatingKey: String?, mediaType: String?) -> Unit,
     viewModel: PlayerViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
+    val leave = {
+        val (playedRatingKey, mediaType) = viewModel.playbackExit()
+        onBack(playedRatingKey, mediaType)
+    }
 
     val onPlayNext: (String) -> Unit = { id ->
         val metadata = BackgroundPlaybackSession.snapshot.value.metadata
@@ -182,7 +186,7 @@ fun PlayerScreen(
                             TvActionButton(text = stringResource(R.string.player_try_aac), onClick = viewModel::tryAacAudioFallback)
                         }
                         TvActionButton(text = stringResource(R.string.home_retry), onClick = viewModel::retryPlayback)
-                        TvActionButton(text = stringResource(R.string.back), onClick = onBack)
+                        TvActionButton(text = stringResource(R.string.back), onClick = leave)
                     }
                 }
             }
@@ -191,7 +195,7 @@ fun PlayerScreen(
                 timelineKey = "${state.sourceRatingKey}:${state.sourceMediaIndex}",
                 timelineLoader = { viewModel.loadTimeline(state.sourceRatingKey, state.sourceMediaIndex) },
                 onTimelineSeek = viewModel::seekTimeline,
-                onStopped = onBack,
+                onStopped = leave,
                 onPlayNext = { candidate -> viewModel.playNext(candidate.mediaId) },
                 onAutoplayChanged = { enabled -> viewModel.setNextUpAutoplay(state.mediaType, enabled) },
                 onIntroSkipModeChanged = viewModel::setIntroSkipMode.takeIf { state.mediaType.equals("episode", ignoreCase = true) },
@@ -208,7 +212,7 @@ fun PlayerScreen(
                 PlayerContent(
                 state = state,
                 viewModel = viewModel,
-                onBack = onBack,
+                onBack = leave,
                 onPlayNext = onPlayNext,
             )
                 // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.

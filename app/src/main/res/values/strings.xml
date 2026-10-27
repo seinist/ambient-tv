@@ -107,6 +107,7 @@
     <string name="detail_collections">Collections</string>
     <string name="detail_directors">Director: %1$s</string>
     <string name="detail_seasons">Seasons</string>
+    <string name="detail_series">Series</string>
     <string name="detail_episodes">Episodes</string>
     <string name="detail_no_stream">No playable source found</string>
     <string name="detail_next_episode">Next episode</string>

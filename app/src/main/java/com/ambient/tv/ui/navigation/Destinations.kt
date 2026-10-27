@@ -41,7 +41,7 @@ object Destinations {
     const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}"
     const val TVH_PLAYER = "tvh_player/{kind}/{id}?sourceId={sourceId}"
     const val DETAIL = "detail/{ratingKey}?collectionId={collectionId}&collectionSort={collectionSort}"
-    const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}"
+    const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}&detailOrigin={detailOrigin}"
     const val SECTION = "section/{sectionKey}"
     const val FILTERED_BROWSE = "browse/{kind}/{filterId}/{title}"
     const val DETAIL_FILTERED_BROWSE = "detail_browse/{kind}/{filterId}/{title}"
@@ -81,6 +81,8 @@ object Destinations {
         restart: Boolean = false,
         collectionId: String? = null,
         collectionSort: String? = null,
+        /** Set when an episode was started from a detail page, so leaving the player can open that episode. */
+        detailOrigin: Boolean = false,
     ) = buildString {
         append("player/").append(Uri.encode(ratingKey))
         append("?mediaIndex=").append(mediaIndex)
@@ -89,6 +91,7 @@ object Destinations {
             append("&collectionId=").append(it)
             append("&collectionSort=").append(Uri.encode(collectionSort.orEmpty()))
         }
+        if (detailOrigin) append("&detailOrigin=true")
     }
     fun section(sectionKey: String) = "section/${Uri.encode(sectionKey)}"
     fun filteredBrowse(kind: String, filterId: String, title: String) = "browse/$kind/${Uri.encode(filterId)}/${Uri.encode(title)}"

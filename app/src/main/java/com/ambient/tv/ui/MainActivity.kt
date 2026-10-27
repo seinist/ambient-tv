@@ -91,6 +91,8 @@ import com.ambient.tv.ui.common.AppScreensaver
 import com.ambient.tv.ui.common.AppBackground
 import com.ambient.tv.ui.common.PlexRefreshBus
 import com.ambient.tv.ui.detail.DetailScreen
+import com.ambient.tv.ui.detail.episodeDetailAfterPlayback
+import com.ambient.tv.ui.detail.seriesDetailIsDirectlyUnder
 import com.ambient.tv.ui.home.HomeScreen
 import com.ambient.tv.ui.plex.PlexLibraryScreen
 import com.ambient.tv.ui.jellyfin.JellyfinLibraryScreen
@@ -2244,9 +2246,37 @@ private fun AmbientTvApp(
                                 ({ navController.navigate(Destinations.itemTrailers(it.ratingKey)) }) else null,
                             onOpenSettings = ::openSettingsPreservingContext,
                             onPlay = { item, mediaIndex, restart ->
-                                playOnSelectedTarget(Destinations.player(item.ratingKey, mediaIndex, restart, collectionId, collectionSort), title = item.title)
+                                playOnSelectedTarget(
+                                    Destinations.player(
+                                        item.ratingKey, mediaIndex, restart, collectionId, collectionSort,
+                                        detailOrigin = item.type == "episode",
+                                    ),
+                                    title = item.title,
+                                )
                             },
                             onOpenChild = { child -> handleMediaSelection(child.ratingKey, collectionId, collectionSort) },
+                            onOpenEpisode = { episode -> navigateToDetails(episode.ratingKey, collectionId, collectionSort) },
+                            onOpenSeason = { season ->
+                                // Same destination id as this page. popUpTo finds the topmost detail
+                                // only, so the series underneath stays and seasons do not stack.
+                                val destinationId = navController.currentDestination?.id
+                                navController.navigate(Destinations.detail(season.ratingKey, collectionId, collectionSort)) {
+                                    if (destinationId != null) popUpTo(destinationId) { inclusive = true }
+                                }
+                            },
+                            onOpenSeries = { seriesKey ->
+                                val previous = navController.previousBackStackEntry
+                                if (seriesDetailIsDirectlyUnder(
+                                        previous?.destination?.route,
+                                        previous?.arguments?.getString("ratingKey"),
+                                        seriesKey,
+                                    )
+                                ) {
+                                    navController.popBackStack()
+                                } else {
+                                    navigateToDetails(seriesKey, collectionId, collectionSort)
+                                }
+                            },
                             onBrowseActor = { id, name -> navController.navigate(Destinations.detailFilteredBrowse("actor", id, name)) },
                             onBrowseCollection = { id, name -> navController.navigate(Destinations.detailFilteredBrowse("collection", id, name)) },
                         )
@@ -2319,18 +2349,28 @@ private fun AmbientTvApp(
                             navArgument("restart") { type = NavType.BoolType; defaultValue = false },
                             navArgument("collectionId") { type = NavType.StringType; defaultValue = "" },
                             navArgument("collectionSort") { type = NavType.StringType; defaultValue = "" },
+                            navArgument("detailOrigin") { type = NavType.BoolType; defaultValue = false },
                         ),
                     ) { entry ->
                         val collectionId = entry.arguments?.getString("collectionId")?.takeIf { it.isNotBlank() }
                         val collectionSort = entry.arguments?.getString("collectionSort")?.takeIf { it.isNotBlank() }
                         PlayerScreen(
-                            onBack = {
-                                if (navController.currentBackStackEntry === entry) {
-                                    navController.popBackStack()
-                                    plexRefreshBus.requestRefresh()
+                            onBack = { playedRatingKey, mediaType ->
+                                if (navController.currentBackStackEntry !== entry) return@PlayerScreen
+                                val previous = navController.previousBackStackEntry
+                                val episodeDetail = episodeDetailAfterPlayback(
+                                    detailOrigin = entry.arguments?.getBoolean("detailOrigin") == true,
+                                    mediaType = mediaType,
+                                    playedRatingKey = playedRatingKey,
+                                    underneathRoute = previous?.destination?.route,
+                                    underneathRatingKey = previous?.arguments?.getString("ratingKey"),
+                                )
+                                navController.popBackStack()
+                                plexRefreshBus.requestRefresh()
+                                if (episodeDetail != null) {
+                                    navController.navigate(Destinations.detail(episodeDetail, collectionId, collectionSort))
                                 }
                             },
-
                         )
                     }
                 }

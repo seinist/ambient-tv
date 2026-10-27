@@ -99,6 +99,8 @@ fun MediaTile(
     reserveEpisodeLines: Boolean = false,
     /** Grid cells: take the cell's width so fewer columns mean bigger tiles, not wider gaps. */
     fillCell: Boolean = false,
+    /** Menu, Info, or a long press. OK and a short tap stay [onClick]. */
+    onInfo: (() -> Unit)? = null,
 ) {
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
@@ -158,6 +160,7 @@ fun MediaTile(
     ) {
         val uiSounds = LocalUiSoundPlayer.current
         val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onClick)
+        val openInfo = onInfo?.let { info -> com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = info) }
         val tileShape = RoundedCornerShape(tokens.cardRadius)
         Surface(
             onClick = activate,
@@ -171,7 +174,7 @@ fun MediaTile(
             modifier = Modifier
                 .then(if (fillCell) Modifier.fillMaxWidth() else Modifier.width(width))
                 .aspectRatio(aspectRatio)
-                .activateOnTvKey(onClick = activate)
+                .activateOnTvKey(onClick = activate, onLongClick = openInfo)
                 .graphicsLayer {
                     // Read animation state only when updating the layer, not while composing
                     // artwork, labels, metadata and playback badges on every spring frame.
