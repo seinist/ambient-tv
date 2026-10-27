@@ -4,6 +4,7 @@
     <string name="guide_options">Guide-Optionen</string>
     <string name="guide_options_hint">Sendertyp, Empfang und Gruppen kombinieren. Fehlende Angaben erscheinen als Unbekannt.</string>
     <string name="guide_sort_number">Sendernummer</string>
+    <string name="guide_sort_name">Name</string>
     <string name="guide_kind">Sendertyp</string>
     <string name="guide_tv">TV</string>
     <string name="guide_radio">Radio</string>

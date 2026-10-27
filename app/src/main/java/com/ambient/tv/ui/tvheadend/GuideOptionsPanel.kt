@@ -11,9 +11,20 @@ internal fun GuideOptionsPanel(options: GuideOptions, tags: List<String>, onChan
     RightSidePanel(title = title, onBack = onClose, closeInsteadOfBack = true,
         subtitle = stringResource(R.string.guide_options_hint)) {
         GuideSelect(stringResource(R.string.library_sort), listOf(
-            "NUMBER" to stringResource(R.string.guide_sort_number), "NAME" to stringResource(R.string.library_sort_az)), options.sort.name) {
-            onChange(options.copy(sort = GuideSort.valueOf(it)))
+            "NUMBER" to stringResource(R.string.guide_sort_number), "NAME" to stringResource(R.string.guide_sort_name)), options.sort.name) {
+            onChange(options.copy(sort = GuideSort.valueOf(it), descending = false))
         }
+        val orderTitles = if (options.sort == GuideSort.NAME) {
+            stringResource(R.string.library_sort_az) to stringResource(R.string.library_sort_za)
+        } else {
+            stringResource(R.string.library_sort_lowest) to stringResource(R.string.library_sort_highest)
+        }
+        RightPanelSectionTitle(stringResource(R.string.library_sort_order))
+        SortOrderToggle(
+            orders = sortDirectionOptions(orderTitles.first, orderTitles.second),
+            selectedKey = if (options.descending) "DESCENDING" else "ASCENDING",
+            onSelect = { onChange(options.copy(descending = it == "DESCENDING")) },
+        )
         GuideSelect(stringResource(R.string.guide_kind), listOf(
             "ALL" to stringResource(R.string.library_filter_all),
             "TV" to stringResource(R.string.guide_tv), "RADIO" to stringResource(R.string.guide_radio),
@@ -32,7 +43,7 @@ internal fun GuideOptionsPanel(options: GuideOptions, tags: List<String>, onChan
         GuideSelect(stringResource(R.string.guide_epg), listOf(
             "ALL" to stringResource(R.string.guide_all_channels), "EPG" to stringResource(R.string.guide_with_epg)),
             if (options.onlyWithEpg) "EPG" else "ALL") { onChange(options.copy(onlyWithEpg = it == "EPG")) }
-        RightPanelChoice(stringResource(R.string.library_filter_reset), false, { onChange(GuideOptions(sort = options.sort)) })
+        RightPanelChoice(stringResource(R.string.library_filter_reset), false, { onChange(GuideOptions(sort = options.sort, descending = options.descending)) })
     }
 }
 

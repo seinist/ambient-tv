@@ -24,6 +24,7 @@ sealed interface FilteredBrowseUiState {
         val items: List<MediaItem>,
         val viewMode: BrowseViewMode,
         val sort: BrowseSort,
+        val sortDescending: Boolean = false,
         val focusedRatingKey: String? = null,
     ) : FilteredBrowseUiState
     data class Error(val message: String) : FilteredBrowseUiState
@@ -74,7 +75,14 @@ class FilteredBrowseViewModel @Inject constructor(
 
     fun cycleSort() {
         val next = if (sort() == BrowseSort.TITLE) BrowseSort.YEAR else BrowseSort.TITLE
+        val descending = next == BrowseSort.YEAR
         preferences.setSectionSort(stateKey, next.name)
+        preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
+        _uiState.value = buildLoaded()
+    }
+
+    fun setSortDescending(descending: Boolean) {
+        preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
         _uiState.value = buildLoaded()
     }
 
@@ -87,12 +95,22 @@ class FilteredBrowseViewModel @Inject constructor(
     private fun viewMode() = preferences.sectionViewMode(stateKey)?.let { runCatching { BrowseViewMode.valueOf(it) }.getOrNull() } ?: BrowseViewMode.GRID
     private fun sort() = preferences.sectionSort(stateKey)?.let { runCatching { BrowseSort.valueOf(it) }.getOrNull() } ?: BrowseSort.TITLE
 
+    private fun sortDescending(sort: BrowseSort): Boolean = when (preferences.sectionSortOrder(stateKey)) {
+        "DESCENDING" -> true
+        "ASCENDING" -> false
+        else -> sort == BrowseSort.YEAR
+    }
+
     private fun buildLoaded(): FilteredBrowseUiState.Loaded {
         val sort = sort()
+        val descending = sortDescending(sort)
         val items = when (sort) {
-            BrowseSort.TITLE -> sourceItems.sortedBy { it.title.lowercase() }
-            BrowseSort.YEAR -> sourceItems.sortedWith(compareByDescending<MediaItem> { it.year ?: 0 }.thenBy { it.title.lowercase() })
+            BrowseSort.TITLE -> if (descending) sourceItems.sortedByDescending { it.title.lowercase() } else sourceItems.sortedBy { it.title.lowercase() }
+            BrowseSort.YEAR -> sourceItems.sortedWith(
+                (if (descending) compareByDescending<MediaItem> { it.year ?: 0 } else compareBy { it.year ?: Int.MAX_VALUE })
+                    .thenBy { it.title.lowercase() },
+            )
         }
-        return FilteredBrowseUiState.Loaded(title, items, viewMode(), sort, preferences.sectionFocus(stateKey))
+        return FilteredBrowseUiState.Loaded(title, items, viewMode(), sort, descending, preferences.sectionFocus(stateKey))
     }
 }

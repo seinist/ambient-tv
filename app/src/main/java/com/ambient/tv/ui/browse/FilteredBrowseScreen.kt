@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -65,7 +64,9 @@ import androidx.compose.foundation.focusGroup
 import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.SkeletonTile
 import com.ambient.tv.ui.common.StatePanel
+import com.ambient.tv.ui.common.SortOrderToggle
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.formatDuration
@@ -103,21 +104,31 @@ fun FilteredBrowseScreen(
             }
             is FilteredBrowseUiState.Loaded -> Column(Modifier.fillMaxSize().padding(top = screenGutter() + 44.dp)) {
                 val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+                val orderFocus = remember { FocusRequester() }
                 PageHeader(
                     focusChain = focusChain,
                     modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
                     actions = {
                         val grid = value.viewMode == BrowseViewMode.GRID
-                        TvChip(if (value.sort == BrowseSort.TITLE) stringResource(R.string.browse_sort_title) else stringResource(R.string.browse_sort_year), icon = Icons.Filled.SwapVert, iconOnly = true, onClick = viewModel::cycleSort)
+                        TvChip(if (value.sort == BrowseSort.TITLE) stringResource(R.string.browse_sort_title) else stringResource(R.string.browse_sort_year), onClick = viewModel::cycleSort)
                         TvChip(if (grid) stringResource(R.string.browse_view_list) else stringResource(R.string.browse_view_grid), icon = if (grid) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView, iconOnly = true, onClick = viewModel::toggleViewMode)
                     },
                 ) {
                     Text(value.title, style = MaterialTheme.typography.headlineMedium)
                     Text(stringResource(R.string.library_item_count, value.items.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                SortOrderToggle(
+                    orders = browseSortOrders(value.sort),
+                    selectedKey = if (value.sortDescending) "DESCENDING" else "ASCENDING",
+                    onSelect = { viewModel.setSortDescending(it == "DESCENDING") },
+                    modifier = Modifier.padding(horizontal = screenGutter()),
+                    showTitle = true,
+                    up = focusChain.actions,
+                    focusRequester = orderFocus,
+                )
                 if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
-                } else Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
+                } else Box(Modifier.fillMaxSize().pageContentUp(focusChain) { orderFocus }.focusGroup()) {
                     SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
                         if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
                         else BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
@@ -132,6 +143,12 @@ fun FilteredBrowseScreen(
             modifier = Modifier.align(Alignment.TopCenter),
         )
     }
+}
+
+@Composable
+private fun browseSortOrders(sort: BrowseSort) = when (sort) {
+    BrowseSort.TITLE -> sortDirectionOptions(stringResource(R.string.library_sort_az), stringResource(R.string.library_sort_za))
+    BrowseSort.YEAR -> sortDirectionOptions(stringResource(R.string.library_sort_oldest), stringResource(R.string.library_sort_newest))
 }
 
 @Composable

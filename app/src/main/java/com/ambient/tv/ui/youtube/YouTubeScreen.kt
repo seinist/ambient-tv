@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -91,8 +90,8 @@ import kotlinx.coroutines.delay
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val visibleRows = remember(state.rows, state.sort, state.filter) {
-        applyYouTubeViewOptions(state.rows, state.sort, state.filter)
+    val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
+        applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
     }
     val populatedRows = remember(visibleRows) { visibleRows.filter { it.items.isNotEmpty() } }
     // Error/unavailable states still expose stable header actions. Only the transient loading
@@ -167,6 +166,7 @@ import kotlinx.coroutines.delay
     LaunchedEffect(initialFeedKey) { initialFeedKey?.let(viewModel::selectFeedKey) }
     LaunchedEffect(state.rows) { ScreensaverArtworkRegistry.offerAll(state.rows.flatMap { it.items }.take(24).map { it.imageUrl }) }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val filterFocus = remember { FocusRequester() }
     Box(Modifier.fillMaxSize()) { Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showViewOptions) cancelFocusChange() } }.focusGroup()) {
         Header(
             focusChain = focusChain,
@@ -179,7 +179,7 @@ import kotlinx.coroutines.delay
             searchFieldModifier=Modifier.focusRequester(searchFieldFocusRequester).onPreviewKeyEvent { event ->
                 val target=when(event.key) {
                     Key.DirectionUp->focusChain.contentUp
-                    Key.DirectionDown->contentItemFocusRequester
+                    Key.DirectionDown-> if (state.filter != YouTubeFilter.ALL) filterFocus else contentItemFocusRequester
                     Key.DirectionRight->searchCloseFocusRequester
                     else->null
                 }
@@ -201,14 +201,30 @@ import kotlinx.coroutines.delay
                 viewOptionsOpened=true
                 showViewOptions=true
             },
+            filterFocus = filterFocus,
+            filterUp = if (searchVisible) searchFieldFocusRequester else focusChain.contentUp,
         )
-        // Up from the feed: search field when open, then the feed chips, then the header actions.
-        Box(Modifier.fillMaxSize().pageContentUp(focusChain) { if (searchVisible) searchFieldFocusRequester else focusChain.contentUp }.focusGroup()) {
+        // Up from the feed: active filters, then the search field, then the feed chips, then the header actions.
+        Box(Modifier.fillMaxSize().pageContentUp(focusChain) {
+            when {
+                state.filter != YouTubeFilter.ALL -> filterFocus
+                searchVisible -> searchFieldFocusRequester
+                else -> focusChain.contentUp
+            }
+        }.focusGroup()) {
             when {
                 !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing))
                 state.loading -> Loading(state.gridColumns)
                 state.error != null -> Message(state.error!!)
-                visibleRows.none { it.items.isNotEmpty() } -> Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
+                visibleRows.none { it.items.isNotEmpty() } -> if (state.filter != YouTubeFilter.ALL) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        StatePanel(
+                            title = stringResource(R.string.youtube_no_filter_matches),
+                            actionLabel = stringResource(R.string.library_filter_reset),
+                            onAction = { viewModel.selectFilter(YouTubeFilter.ALL) },
+                        )
+                    }
+                } else Message(com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_empty))
                 else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                     Content(
                         rows = visibleRows,
@@ -230,6 +246,7 @@ import kotlinx.coroutines.delay
             YouTubeViewOptionsPanel(
                 state = state,
                 onSelectSort = viewModel::selectSort,
+                onSelectSortDescending = viewModel::selectSortDescending,
                 onSelectFilter = viewModel::selectFilter,
                 onSelectView = viewModel::selectViewMode,
                 onSetGridColumns = viewModel::setGridColumns,
@@ -278,6 +295,8 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     onOpenSearch:()->Unit,
     onCloseSearch:()->Unit,
     onOpenViewOptions:()->Unit,
+    filterFocus: FocusRequester,
+    filterUp: FocusRequester,
 ) = Column(Modifier.fillMaxWidth().padding(screenGutter(), 24.dp, screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
     val channel = state.channel
     PageHeader(focusChain=focusChain, actions={
@@ -286,7 +305,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
             TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed, icon=Icons.Filled.Subscriptions, onClick=vm::toggleSubscription)
         }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
-        TvChip(stringResource(R.string.action_view),modifier=viewOptionsModifier,icon=Icons.Filled.Tune,iconOnly=true,onClick=onOpenViewOptions)
+        ViewOptionsChip(if (state.filter == YouTubeFilter.ALL) 0 else 1, onOpenViewOptions, viewOptionsModifier)
     }) {
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
         else YouTubeChannelTitle(channel)
@@ -305,6 +324,14 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         }
     }
     state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=vm::refresh, loading=state.loading); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
+    if (state.filter != YouTubeFilter.ALL) {
+        ActiveFilterChips(
+            listOf(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter), filterLabel(state.filter))),
+            onOpenViewOptions,
+            focusRequester = filterFocus,
+            up = filterUp,
+        )
+    }
 }
 
 /** Channel page title: round avatar and channel name in place of the system title. */
@@ -352,6 +379,7 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
 @Composable private fun YouTubeViewOptionsPanel(
     state: YouTubeUiState,
     onSelectSort: (YouTubeSort) -> Unit,
+    onSelectSortDescending: (Boolean) -> Unit,
     onSelectFilter: (YouTubeFilter) -> Unit,
     onSelectView: (YouTubeViewMode) -> Unit,
     onSetGridColumns: (Int) -> Unit,
@@ -367,6 +395,9 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
         showDensity = state.viewMode != YouTubeViewMode.CINEMATIC,
         sorts = YouTubeSort.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, sortLabel(it)) },
         selectedSort = state.sort.name, onSort = { onSelectSort(YouTubeSort.valueOf(it)) },
+        sortOrders = youtubeSortOrders(state.sort),
+        selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
+        onSortOrder = { onSelectSortDescending(it == "DESCENDING") },
         filters = YouTubeFilter.entries.map { com.ambient.tv.ui.common.PanelOption(it.name, filterLabel(it)) },
         selectedFilter = state.filter.name, onFilter = { onSelectFilter(YouTubeFilter.valueOf(it)) },
         extraContent = {
@@ -1051,6 +1082,12 @@ internal fun youtubeInfoSubtitle(item: YouTubeItem): String? {
 private fun duration(ms: Long): String = com.ambient.tv.ui.common.formatPlaybackClock(ms)
 @Composable private fun modeLabel(m:YouTubeViewMode)=stringResource(when(m){YouTubeViewMode.LANDSCAPE->R.string.library_view_landscape;YouTubeViewMode.LIST->R.string.library_view_list;YouTubeViewMode.INFO_LIST->R.string.library_view_info_list;YouTubeViewMode.WALL->R.string.library_view_wall;YouTubeViewMode.CINEMATIC->R.string.library_view_cinematic})
 @Composable private fun sortLabel(sort:YouTubeSort)=com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE,when(sort){YouTubeSort.DEFAULT->R.string.youtube_sort_default;YouTubeSort.TITLE->R.string.library_sort_title;YouTubeSort.DURATION->R.string.youtube_sort_duration})
+
+@Composable private fun youtubeSortOrders(sort: YouTubeSort): List<com.ambient.tv.ui.common.PanelOption> = when (sort) {
+    YouTubeSort.DEFAULT -> emptyList()
+    YouTubeSort.TITLE -> com.ambient.tv.ui.common.sortDirectionOptions(stringResource(R.string.library_sort_az), stringResource(R.string.library_sort_za))
+    YouTubeSort.DURATION -> com.ambient.tv.ui.common.sortDirectionOptions(stringResource(R.string.library_sort_shortest), stringResource(R.string.library_sort_longest))
+}
 @Composable private fun filterLabel(filter:YouTubeFilter)=stringResource(when(filter){YouTubeFilter.ALL->R.string.library_filter_all;YouTubeFilter.UNWATCHED->R.string.library_filter_unwatched;YouTubeFilter.IN_PROGRESS->R.string.library_filter_in_progress;YouTubeFilter.LIVE->R.string.youtube_filter_live;YouTubeFilter.SHORTS->R.string.youtube_filter_shorts})
 @Composable private fun feedLabel(f:YouTubeFeed)=stringResource(when(f){YouTubeFeed.HOME->R.string.nav_youtube_home;YouTubeFeed.SUBSCRIPTIONS->R.string.nav_youtube_subscriptions;YouTubeFeed.CHANNELS->R.string.nav_youtube_channels;YouTubeFeed.HISTORY->R.string.nav_youtube_history;YouTubeFeed.PLAYLISTS->R.string.nav_youtube_playlists;YouTubeFeed.SHORTS->R.string.nav_youtube_shorts;YouTubeFeed.MUSIC->R.string.nav_youtube_music;YouTubeFeed.NEWS->R.string.nav_youtube_news;YouTubeFeed.GAMING->R.string.nav_youtube_gaming;YouTubeFeed.LIVE->R.string.nav_youtube_live;YouTubeFeed.KIDS->R.string.nav_youtube_kids})
 private fun feedIcon(f:YouTubeFeed)=when(f){YouTubeFeed.HOME->Icons.Filled.Home;YouTubeFeed.SUBSCRIPTIONS->Icons.Filled.Subscriptions;YouTubeFeed.CHANNELS->Icons.Filled.AccountCircle;YouTubeFeed.HISTORY->Icons.Filled.History;YouTubeFeed.PLAYLISTS->Icons.AutoMirrored.Filled.PlaylistPlay;YouTubeFeed.SHORTS->Icons.Filled.SmartDisplay;YouTubeFeed.MUSIC->Icons.Filled.MusicNote;YouTubeFeed.NEWS->Icons.Filled.Newspaper;YouTubeFeed.GAMING->Icons.Filled.SportsEsports;YouTubeFeed.LIVE->Icons.Filled.LiveTv;YouTubeFeed.KIDS->Icons.Filled.ChildCare}

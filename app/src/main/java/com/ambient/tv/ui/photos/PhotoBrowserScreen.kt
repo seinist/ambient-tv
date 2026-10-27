@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.photos
 
+import com.ambient.tv.ui.common.SortOrderToggle
 import com.ambient.tv.ui.common.leftKeyAction
+import com.ambient.tv.ui.common.sortDirectionOptions
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -130,6 +132,7 @@ fun PhotoBrowserScreen(
     }
 
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val orderFocus = remember { FocusRequester() }
     Column(Modifier.fillMaxSize().padding(tokens.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             if (!state.atRoot || state.timeline) TvChip(stringResource(R.string.photos_back), modifier = Modifier.leftKeyAction { viewModel.back() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { viewModel.back() }
@@ -151,9 +154,34 @@ fun PhotoBrowserScreen(
                     modifier = if (state.timeline) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
                 )
             }
-            if (!state.timeline) PhotoSort.entries.forEach { sort ->
-                item { TvChip(stringResource(sort.label()), selected = state.sort == sort, modifier = if (state.sort == sort) Modifier.focusRequester(focusChain.selectedChip) else Modifier, onClick = { viewModel.setSort(sort) }) }
+            if (!state.timeline) {
+                item {
+                    TvChip(
+                        stringResource(R.string.photos_sort_date),
+                        selected = state.sort.byDate,
+                        modifier = if (state.sort.byDate) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                        onClick = { viewModel.setSortField(true) },
+                    )
+                }
+                item {
+                    TvChip(
+                        stringResource(R.string.photos_sort_name),
+                        selected = !state.sort.byDate,
+                        modifier = if (!state.sort.byDate) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                        onClick = { viewModel.setSortField(false) },
+                    )
+                }
             }
+        }
+        if (!state.timeline) {
+            SortOrderToggle(
+                orders = photoSortOrderOptions(state.sort),
+                selectedKey = if (state.sort.descending) "DESCENDING" else "ASCENDING",
+                onSelect = { viewModel.toggleSortOrder() },
+                showTitle = true,
+                up = focusChain.chips,
+                focusRequester = orderFocus,
+            )
         }
         when {
             state.loading && visible.isEmpty() -> StatePanel(stringResource(R.string.photos_loading))
@@ -162,7 +190,9 @@ fun PhotoBrowserScreen(
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(220.dp),
                 state = gridState,
-                modifier = Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
+                modifier = Modifier.fillMaxSize().pageContentUp(focusChain) {
+                    if (state.timeline) focusChain.contentUp else orderFocus
+                }.focusGroup(),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
@@ -241,15 +271,11 @@ private fun PhotoTile(entry: PhotoEntry, modifier: Modifier, onClick: () -> Unit
     }
 }
 
-object PhotoSortLabels {
-    fun PhotoSort.labelRes(): Int = label()
-}
-
-internal fun PhotoSort.label(): Int = when (this) {
-    PhotoSort.DATE_DESC -> R.string.photos_sort_date_desc
-    PhotoSort.DATE_ASC -> R.string.photos_sort_date_asc
-    PhotoSort.NAME -> R.string.photos_sort_name
-}
+@Composable
+internal fun photoSortOrderOptions(sort: PhotoSort) = sortDirectionOptions(
+    ascendingTitle = stringResource(if (sort.byDate) R.string.library_sort_oldest else R.string.library_sort_az),
+    descendingTitle = stringResource(if (sort.byDate) R.string.library_sort_newest else R.string.library_sort_za),
+)
 
 internal fun formatPhotoDate(epochMs: Long?): String? = epochMs?.let {
     java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault())

@@ -67,7 +67,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Recommend
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -142,7 +141,9 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.FullscreenSpinner
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.sanitizeUiErrorMessage
+import com.ambient.tv.ui.common.ActiveFilterChips
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.PageHeader
@@ -368,6 +369,8 @@ internal fun SectionContent(
             }
         }.focusGroup()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+            val filterFocus = remember { FocusRequester() }
+            val filtersActive = state.page == SectionPage.LIBRARY && !state.libraryFilters.isDefault
             SectionHeader(
                 focusState,
                 onPage,
@@ -379,6 +382,8 @@ internal fun SectionContent(
                     showOptions = true
                 },
                 optionsModifier = Modifier.focusRequester(optionsFocusRequester),
+                filterFocus = filterFocus,
+                filterUp = focusChain.chips,
             )
             // Cinematic has no scrollable grid for the bar to jump in.
             val showAlphabetBar = state.page == SectionPage.LIBRARY &&
@@ -392,7 +397,7 @@ internal fun SectionContent(
                     .fillMaxWidth()
                     .focusRequester(contentAreaFocus)
                     .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
-                    .pageContentUp(focusChain)
+                    .pageContentUp(focusChain) { if (filtersActive) filterFocus else focusChain.contentUp }
                     .focusGroup()
                     .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
             ) {
@@ -418,7 +423,7 @@ internal fun SectionContent(
                                 recommendationHero,
                             )
                             SectionPage.LIBRARY -> {
-                                if (state.items.isEmpty()) EmptyLibrary() else when (state.viewMode) {
+                                if (state.items.isEmpty()) EmptyLibrary(!state.libraryFilters.isDefault, onResetFilters) else when (state.viewMode) {
                                     SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {})
                                     SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter)
                                     SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {}, poster = state.viewMode == SectionViewMode.POSTER_LIST)
@@ -479,16 +484,19 @@ private fun SectionHeader(
     system: com.ambient.tv.ui.common.MediaSystem,
     focusChain: com.ambient.tv.ui.common.PageFocusChain,
     optionsModifier: Modifier = Modifier,
+    filterFocus: FocusRequester? = null,
+    filterUp: FocusRequester? = null,
 ) {
     @Composable fun PageChip(label: String, page: SectionPage, icon: androidx.compose.ui.graphics.vector.ImageVector) {
         val selected = state.page == page
         TvChip(label, selected, modifier = if (selected) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon = icon) { onPage(page) }
     }
+    val activeFilters = if (state.page == SectionPage.LIBRARY) activeFilterLabels(state) else emptyList()
     Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
-            TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
+            ViewOptionsChip(activeFilters.size, onOpenOptions, optionsModifier)
         }) {
             com.ambient.tv.ui.common.SystemPageTitle(system, title = state.title)
             val context = buildList {
@@ -500,7 +508,6 @@ private fun SectionHeader(
                     },
                 )
                 if (state.page != SectionPage.RECOMMENDATIONS) add(sortSummary(state.sort, state.sortOrder))
-                if (state.page == SectionPage.LIBRARY) addAll(activeFilterLabels(state))
             }
             Text(
                 text = context.joinToString("  ·  "),
@@ -513,6 +520,7 @@ private fun SectionHeader(
             item { PageChip(stringResource(R.string.library_tab_library), SectionPage.LIBRARY, Icons.Filled.VideoLibrary) }
             item { PageChip(stringResource(R.string.library_tab_collections), SectionPage.COLLECTIONS, Icons.Filled.CollectionsBookmark) }
         }
+        ActiveFilterChips(activeFilters, onOpenOptions, Modifier.padding(top = 12.dp), filterFocus, filterUp)
     }
 }
 
@@ -628,11 +636,15 @@ private fun SectionOptionsPanel(
 @Composable private fun decadeLabel(decade: Int) = stringResource(R.string.library_filter_decade_value, decade)
 
 @Composable private fun activeFilterLabels(state: SectionUiState.Loaded): List<String> = buildList {
-    if (state.filter != SectionFilter.ALL) add(filterLabel(state.filter))
-    if (state.qualityFilter != SectionQualityFilter.ALL) add(qualityLabel(state.qualityFilter))
-    state.genreFilter?.let(::add)
-    state.decadeFilter?.let { add(decadeLabel(it)) }
-    state.contentRatingFilter?.let(::add)
+    if (state.filter != SectionFilter.ALL) {
+        add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter), filterLabel(state.filter)))
+    }
+    if (state.qualityFilter != SectionQualityFilter.ALL) {
+        add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_quality), qualityLabel(state.qualityFilter)))
+    }
+    state.genreFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_genre), it)) }
+    state.decadeFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_decade), decadeLabel(it))) }
+    state.contentRatingFilter?.let { add(stringResource(R.string.guide_filter_value, stringResource(R.string.library_filter_content_rating), it)) }
 }
 
 @Composable private fun libraryFilterGroups(state: SectionUiState.Loaded): List<com.ambient.tv.ui.common.PanelOptionGroup> {
@@ -702,7 +714,7 @@ private fun RecommendationsPage(
     onRecommendationItemFocused: (String, MediaItem) -> Unit,
     heroContent: MutableStateFlow<com.ambient.tv.ui.home.HomeHeroContent?>,
 ) {
-    if (state.recommendationRows.isEmpty()) { EmptyLibrary(); return }
+    if (state.recommendationRows.isEmpty()) { EmptyLibrary(filtered = false, onReset = {}); return }
     when (recommendationViewMode(state.viewMode)) {
         SectionViewMode.POSTER, SectionViewMode.LANDSCAPE -> RecommendationRowsPage(state, onItemClick, onRecommendationItemFocused, heroContent)
         SectionViewMode.LIST -> RecommendationListPage(state, onItemClick, onRecommendationItemFocused, detailed = false)
@@ -1336,8 +1348,16 @@ private fun cinematicTileRowPadding() = PaddingValues(
 )
 
 @Composable
-private fun EmptyLibrary() = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-    StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+private fun EmptyLibrary(filtered: Boolean, onReset: () -> Unit) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    if (filtered) {
+        StatePanel(
+            title = stringResource(R.string.library_no_filter_matches),
+            actionLabel = stringResource(R.string.library_filter_reset),
+            onAction = onReset,
+        )
+    } else {
+        StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+    }
 }
 
 private val LocalAlphabetBarShown = compositionLocalOf { false }

@@ -9,7 +9,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
+import com.ambient.tv.data.photos.PhotoSort
+import com.ambient.tv.ui.common.SortOrderToggle
 import com.ambient.tv.ui.common.TvSettingRow
+import com.ambient.tv.ui.photos.photoSortOrderOptions
 
 @Composable
 internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
@@ -57,15 +60,25 @@ internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsV
             viewModel::onPhotoShowInfoChanged,
         )
         SettingsGroup(title = stringResource(R.string.settings_photos_sort)) {
-            SettingsSelect(options = buildList {
-                com.ambient.tv.data.photos.PhotoSort.entries.forEach { sort ->
-                    add(SettingsSelectOption(
-                        stringResource(with(com.ambient.tv.ui.photos.PhotoSortLabels) { sort.labelRes() }),
-                        selected = uiState.photoSortKey == sort.key,
-                        onClick = { viewModel.onPhotoSortChanged(sort.key) },
-                    ))
-                }
-            })
+            val sort = PhotoSort.fromKey(uiState.photoSortKey)
+            SettingsSelect(options = listOf(
+                SettingsSelectOption(
+                    stringResource(R.string.photos_sort_date),
+                    selected = sort.byDate,
+                    onClick = { if (!sort.byDate) viewModel.onPhotoSortChanged(PhotoSort.of(byDate = true, descending = true).key) },
+                ),
+                SettingsSelectOption(
+                    stringResource(R.string.photos_sort_name),
+                    selected = !sort.byDate,
+                    onClick = { if (sort.byDate) viewModel.onPhotoSortChanged(PhotoSort.of(byDate = false, descending = false).key) },
+                ),
+            ))
+            SortOrderToggle(
+                orders = photoSortOrderOptions(sort),
+                selectedKey = if (sort.descending) "DESCENDING" else "ASCENDING",
+                onSelect = { viewModel.onPhotoSortChanged(PhotoSort.of(sort.byDate, it == "DESCENDING").key) },
+                showTitle = true,
+            )
         }
     }
 }

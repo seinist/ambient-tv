@@ -343,6 +343,8 @@
     <string name="library_options_hint">Choose layout, sorting and filters.</string>
     <string name="library_sort">Sort</string>
     <string name="library_sort_order">Order</string>
+    <string name="library_sort_order_toggle">Tap to switch to %1$s</string>
+    <string name="library_no_filter_matches">No titles match these filters</string>
     <string name="library_sort_az">A–Z</string>
     <string name="library_sort_za">Z–A</string>
     <string name="library_sort_newest">Newest</string>
@@ -390,7 +392,7 @@
     <string name="library_view_poster_wall">Cover wall</string>
     <string name="library_view_poster_cinematic">Cinematic posters</string>
     <string name="youtube_sort_default">SmartTube order</string>
-    <string name="youtube_sort_duration">Duration (longest first)</string>
+    <string name="youtube_sort_duration">Duration</string>
     <string name="youtube_filter_live">Live &amp; upcoming</string>
     <string name="youtube_filter_shorts">Shorts</string>
     <string name="settings_overscan">Overscan</string>
@@ -894,6 +896,7 @@
     <string name="youtube_refresh">Refresh</string>
     <string name="youtube_engine_missing">SmartTube is unavailable in this app version.</string>
     <string name="youtube_empty">No SmartTube content found.</string>
+    <string name="youtube_no_filter_matches">No videos match these filters</string>
     <string name="player_quality">Quality</string>
     <string name="player_upscaler">Upscaling</string>
     <string name="player_deband">Smooth color bands</string>
@@ -1467,6 +1470,7 @@
     <string name="photos_timeline">Timeline</string>
     <string name="photos_folders">Folders</string>
     <string name="photos_back">Back</string>
+    <string name="photos_sort_date">Date</string>
     <string name="photos_sort_date_desc">Newest first</string>
     <string name="photos_sort_date_asc">Oldest first</string>
     <string name="photos_sort_name">Name</string>

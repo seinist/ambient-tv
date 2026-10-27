@@ -85,6 +85,18 @@ class PhotoBrowserViewModel @Inject constructor(
         _state.update { it.copy(sort = sort, entries = it.entries.sortedForDisplay(sort)) }
     }
 
+    /** Date starts at newest, name at A–Z. Staying on the same field keeps the direction. */
+    fun setSortField(byDate: Boolean) {
+        val current = _state.value.sort
+        if (current.byDate == byDate) return
+        setSort(PhotoSort.of(byDate, descending = byDate))
+    }
+
+    fun toggleSortOrder() {
+        val current = _state.value.sort
+        setSort(PhotoSort.of(current.byDate, !current.descending))
+    }
+
     fun toggleTimeline() {
         val enable = !_state.value.timeline
         if (!enable) { leaveTimeline(); return }

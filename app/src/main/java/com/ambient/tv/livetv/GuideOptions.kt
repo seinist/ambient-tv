@@ -14,6 +14,8 @@ data class GuideOptions(
     val access: LiveTvChannelAccess? = null,
     val tag: String? = null,
     val onlyWithEpg: Boolean = false,
+    /** Reverses the chosen field only. Missing channel numbers stay at the end either way. */
+    val descending: Boolean = false,
 ) {
     val filtersActive: Boolean get() = kind != null || access != null || tag != null || onlyWithEpg
 }
@@ -74,9 +76,28 @@ internal fun guideChannelRows(
         if (existing == null) rowFor[identity] = channel.uuid
         existing == null
     }
-    val sorted = when (options.sort) {
-        GuideSort.NUMBER -> rows.sortedWith(compareBy<LiveTvChannel> { it.number ?: Int.MAX_VALUE }.thenBy { guideName(it.name) }.thenBy { it.uuid })
-        GuideSort.NAME -> rows.sortedWith(compareBy<LiveTvChannel> { guideIndexLetter(it.name) }.thenBy { guideName(it.name) }.thenBy { it.number ?: Int.MAX_VALUE }.thenBy { it.uuid })
-    }
+    val sorted = sortedGuideRows(rows, options)
     return sorted to shownAs
+}
+
+/** Descending flips the sort field. Name and number ties keep their previous order. */
+private fun sortedGuideRows(rows: List<LiveTvChannel>, options: GuideOptions): List<LiveTvChannel> {
+    val name: (LiveTvChannel) -> String = { guideName(it.name) }
+    return when (options.sort) {
+        GuideSort.NUMBER -> rows.sortedWith(
+            compareBy<LiveTvChannel> { if (it.number == null) 1 else 0 }
+                .thenBy { if (options.descending) -(it.number ?: 0) else (it.number ?: 0) }
+                .thenBy(name)
+                .thenBy { it.uuid },
+        )
+        GuideSort.NAME -> {
+            val letter: (LiveTvChannel) -> Char = { guideIndexLetter(it.name) }
+            val primary = if (options.descending) {
+                compareByDescending<LiveTvChannel>(letter).thenByDescending(name)
+            } else {
+                compareBy<LiveTvChannel>(letter).thenBy(name)
+            }
+            rows.sortedWith(primary.thenBy { it.number ?: Int.MAX_VALUE }.thenBy { it.uuid })
+        }
+    }
 }

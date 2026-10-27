@@ -70,6 +70,7 @@ fun applyTrailerViewOptions(
     entries: List<TrailerEntry>,
     sort: TrailerSort,
     filter: TrailerFilter,
+    descending: Boolean = sort == TrailerSort.DATE,
 ): List<TrailerEntry> {
     val filtered = entries.mapNotNull { entry ->
         val videos = entry.videos.filter { video -> when (filter) {
@@ -82,9 +83,14 @@ fun applyTrailerViewOptions(
     }
     return when (sort) {
         TrailerSort.DEFAULT -> filtered
-        TrailerSort.TITLE -> filtered.sortedBy { it.title.displayTitle.lowercase(java.util.Locale.ROOT) }
-        TrailerSort.DATE -> filtered.sortedWith(compareByDescending<TrailerEntry> { it.title.releaseSortKey }
-            .thenBy { it.title.displayTitle.lowercase(java.util.Locale.ROOT) })
+        TrailerSort.TITLE -> {
+            val title: (TrailerEntry) -> String = { it.title.displayTitle.lowercase(java.util.Locale.ROOT) }
+            if (descending) filtered.sortedByDescending(title) else filtered.sortedBy(title)
+        }
+        TrailerSort.DATE -> filtered.sortedWith(
+            (if (descending) compareByDescending<TrailerEntry> { it.title.releaseSortKey } else compareBy { it.title.releaseSortKey })
+                .thenBy { it.title.displayTitle.lowercase(java.util.Locale.ROOT) },
+        )
     }
 }
 

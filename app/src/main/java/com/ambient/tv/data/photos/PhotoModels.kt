@@ -83,8 +83,20 @@ object PhotoFormats {
 }
 
 enum class PhotoSort(val key: String) {
-    DATE_DESC("date_desc"), DATE_ASC("date_asc"), NAME("name");
-    companion object { fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: DATE_DESC }
+    DATE_DESC("date_desc"), DATE_ASC("date_asc"), NAME("name"), NAME_DESC("name_desc");
+
+    val byDate: Boolean get() = this == DATE_DESC || this == DATE_ASC
+    val descending: Boolean get() = this == DATE_DESC || this == NAME_DESC
+
+    companion object {
+        fun fromKey(key: String?) = entries.firstOrNull { it.key == key } ?: DATE_DESC
+        fun of(byDate: Boolean, descending: Boolean): PhotoSort = when {
+            byDate && descending -> DATE_DESC
+            byDate -> DATE_ASC
+            descending -> NAME_DESC
+            else -> NAME
+        }
+    }
 }
 
 /** Folders first, then the chosen order; entries without a date fall back to their name. */
@@ -92,6 +104,7 @@ fun List<PhotoEntry>.sortedForDisplay(sort: PhotoSort): List<PhotoEntry> {
     val byName = compareBy<PhotoEntry, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
     val content = when (sort) {
         PhotoSort.NAME -> byName
+        PhotoSort.NAME_DESC -> compareByDescending<PhotoEntry, String>(String.CASE_INSENSITIVE_ORDER) { it.title }
         PhotoSort.DATE_DESC -> compareByDescending<PhotoEntry> { it.takenAt ?: it.addedAt ?: Long.MIN_VALUE }.then(byName)
         PhotoSort.DATE_ASC -> compareBy<PhotoEntry> { it.takenAt ?: it.addedAt ?: Long.MAX_VALUE }.then(byName)
     }

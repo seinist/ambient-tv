@@ -52,6 +52,7 @@ data class YouTubeUiState(
     val feed: YouTubeFeed = YouTubeFeed.HOME,
     val viewMode: YouTubeViewMode = YouTubeViewMode.LANDSCAPE,
     val sort: YouTubeSort = YouTubeSort.DEFAULT,
+    val sortDescending: Boolean = false,
     val filter: YouTubeFilter = YouTubeFilter.ALL,
     val gridColumns: Int = 8,
     val listRows: Int = 7,
@@ -125,7 +126,7 @@ class YouTubeViewModel @Inject constructor(
 
     private fun singleRowId(): String? {
         val state = _uiState.value
-        return applyYouTubeViewOptions(state.rows, state.sort, state.filter).singleOrNull()?.id
+        return applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending).singleOrNull()?.id
     }
 
     private fun scheduleRowContinuation(rowId: String?, videoId: String) {
@@ -139,7 +140,7 @@ class YouTubeViewModel @Inject constructor(
         focusLoadJob?.cancel()
         val state = _uiState.value
         val row = state.rows.firstOrNull { it.id == target } ?: return
-        val visible = applyYouTubeViewOptions(listOf(row), state.sort, state.filter).firstOrNull()?.items ?: return
+        val visible = applyYouTubeViewOptions(listOf(row), state.sort, state.filter, state.sortDescending).firstOrNull()?.items ?: return
         val index = visible.indexOfFirst { it.videoId == videoId }
         if (!paging.shouldLoadOnFocus(target, index, visible.size, grid) || target in rowLoadJobs) return
         focusLoadRowId = target
@@ -205,6 +206,11 @@ class YouTubeViewModel @Inject constructor(
         ?.let { runCatching { YouTubeViewMode.valueOf(it) }.getOrNull() } ?: YouTubeViewMode.LANDSCAPE
     private fun sort(feed: YouTubeFeed): YouTubeSort = preferences.sectionSort(stateKey(feed))
         ?.let { runCatching { YouTubeSort.valueOf(it) }.getOrNull() } ?: YouTubeSort.DEFAULT
+    private fun storedDescending(feed: YouTubeFeed, sort: YouTubeSort): Boolean = when (preferences.sectionSortOrder(stateKey(feed))) {
+        "DESCENDING" -> true
+        "ASCENDING" -> false
+        else -> sort == YouTubeSort.DURATION
+    }
     private fun filter(feed: YouTubeFeed): YouTubeFilter = preferences.sectionFilter(stateKey(feed))
         ?.let { runCatching { YouTubeFilter.valueOf(it) }.getOrNull() } ?: YouTubeFilter.ALL
     private val configuredFeeds: List<YouTubeFeed>
@@ -215,6 +221,7 @@ class YouTubeViewModel @Inject constructor(
             visibleFeeds = configuredFeeds,
             viewMode = viewMode(YouTubeFeed.HOME),
             sort = sort(YouTubeFeed.HOME),
+            sortDescending = storedDescending(YouTubeFeed.HOME, sort(YouTubeFeed.HOME)),
             filter = filter(YouTubeFeed.HOME),
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
@@ -247,10 +254,12 @@ class YouTubeViewModel @Inject constructor(
 
     fun refresh() = load(_uiState.value.feed)
     fun selectFeed(feed: YouTubeFeed) {
+        val nextSort = sort(feed)
         _uiState.value = _uiState.value.copy(
             feed = feed,
             viewMode = viewMode(feed),
-            sort = sort(feed),
+            sort = nextSort,
+            sortDescending = storedDescending(feed, nextSort),
             filter = filter(feed),
             query = "",
             signInCode = null,
@@ -266,8 +275,15 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(viewMode = mode)
     }
     fun selectSort(sort: YouTubeSort) {
-        preferences.setSectionSort(stateKey(_uiState.value.feed), sort.name)
-        _uiState.value = _uiState.value.copy(sort = sort)
+        val descending = sort == YouTubeSort.DURATION
+        val key = stateKey(_uiState.value.feed)
+        preferences.setSectionSort(key, sort.name)
+        preferences.setSectionSortOrder(key, if (descending) "DESCENDING" else "ASCENDING")
+        _uiState.value = _uiState.value.copy(sort = sort, sortDescending = descending)
+    }
+    fun selectSortDescending(descending: Boolean) {
+        preferences.setSectionSortOrder(stateKey(_uiState.value.feed), if (descending) "DESCENDING" else "ASCENDING")
+        _uiState.value = _uiState.value.copy(sortDescending = descending)
     }
     fun selectFilter(filter: YouTubeFilter) {
         preferences.setSectionFilter(stateKey(_uiState.value.feed), filter.name)
@@ -541,6 +557,7 @@ internal fun applyYouTubeViewOptions(
     rows: List<YouTubeRow>,
     sort: YouTubeSort,
     filter: YouTubeFilter,
+    descending: Boolean = sort == YouTubeSort.DURATION,
 ): List<YouTubeRow> = rows.mapNotNull { row ->
     val filtered = row.items.filter { item ->
         when (filter) {
@@ -553,8 +570,11 @@ internal fun applyYouTubeViewOptions(
     }
     val sorted = when (sort) {
         YouTubeSort.DEFAULT -> filtered
-        YouTubeSort.TITLE -> filtered.sortedBy { it.title.lowercase() }
-        YouTubeSort.DURATION -> filtered.sortedWith(compareByDescending<YouTubeItem> { it.durationMs }.thenBy { it.title.lowercase() })
+        YouTubeSort.TITLE -> if (descending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
+        YouTubeSort.DURATION -> filtered.sortedWith(
+            (if (descending) compareByDescending<YouTubeItem> { it.durationMs } else compareBy { it.durationMs })
+                .thenBy { it.title.lowercase() },
+        )
     }
     row.copy(items = sorted).takeIf { it.items.isNotEmpty() }
 }

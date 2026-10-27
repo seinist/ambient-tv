@@ -1,17 +1,15 @@
 package com.ambient.tv.ui.tvheadend
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.livetv.GuideOptions
 import com.ambient.tv.livetv.LiveTvChannelAccess
 import com.ambient.tv.livetv.LiveTvChannelKind
-import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.ActiveFilterChips
 
 @Composable
 internal fun guideActiveFilterLabels(options: GuideOptions): List<String> = buildList {
@@ -36,15 +34,7 @@ internal fun guideActiveFilterLabels(options: GuideOptions): List<String> = buil
 }
 
 /** Focusable chips sit on the D-pad path between header and channels; selecting one opens the options. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun GuideActiveFilters(labels: List<String>, onClick: () -> Unit) {
-    if (labels.isEmpty()) return
-    Column(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(stringResource(R.string.guide_active_filters), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            labels.forEach { label -> TvChip(label, selected = true, onClick = onClick) }
-        }
-    }
+    ActiveFilterChips(labels, onClick, Modifier.padding(bottom = 12.dp))
 }

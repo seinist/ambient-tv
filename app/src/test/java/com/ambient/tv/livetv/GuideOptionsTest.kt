@@ -41,6 +41,12 @@ class GuideOptionsTest {
         val timer = first.copy(eventId = "2", dvrUuid = "timer")
         assertEquals(listOf(timer, event("3", "a", start = 7600)), guideEvents(listOf(first, first, timer, event("3", "a", start = 7600)), 5000))
     }
+    @Test fun descendingReversesOnlyTheChosenField() {
+        val channels = listOf(channel("z", "ZDF", 2), channel("a", "Ärzte TV", 9), channel("3", "3sat", 1), channel("b", "BBC", 4), channel("n", "Nowhere").copy(number = null))
+        assertEquals(listOf("z", "n", "b", "a", "3"), guideChannels(channels, emptyMap(), 5000, GuideOptions(sort = GuideSort.NAME, descending = true)).map { it.uuid })
+        assertEquals(listOf("a", "b", "z", "3", "n"), guideChannels(channels, emptyMap(), 5000, GuideOptions(sort = GuideSort.NUMBER, descending = true)).map { it.uuid })
+        assertEquals(listOf("3", "z", "b", "a", "n"), guideChannels(channels, emptyMap(), 5000, GuideOptions(sort = GuideSort.NUMBER)).map { it.uuid })
+    }
     @Test fun alphabetSortAndBucketsAgree() {
         val channels = listOf(channel("z", "ZDF"), channel("a", "Ärzte TV"), channel("3", "3sat"), channel("b", "BBC"))
         assertEquals(listOf("3", "a", "b", "z"), guideChannels(channels, emptyMap(), 5000, GuideOptions(sort = GuideSort.NAME)).map { it.uuid })

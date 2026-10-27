@@ -4,6 +4,7 @@
     <string name="guide_options">Guide options</string>
     <string name="guide_options_hint">Combine channel type, reception and groups. Missing information is shown as Unknown.</string>
     <string name="guide_sort_number">Channel number</string>
+    <string name="guide_sort_name">Name</string>
     <string name="guide_kind">Channel type</string>
     <string name="guide_tv">TV</string>
     <string name="guide_radio">Radio</string>

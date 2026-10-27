@@ -192,7 +192,7 @@ internal fun LiveTvChannelBrowser(
                         .then(if (visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier), onClick = { optionsOpened = true; showOptions = true })
                 if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet, onClick = {
                     pendingAlphabet = true
-                    if (options.sort != GuideSort.NAME) onOptions(options.copy(sort = GuideSort.NAME))
+                    if (options.sort != GuideSort.NAME) onOptions(options.copy(sort = GuideSort.NAME, descending = false))
                 })
                 Text(stringResource(R.string.guide_count, visibleChannels.size), style = MaterialTheme.typography.bodySmall)
             }
@@ -201,7 +201,7 @@ internal fun LiveTvChannelBrowser(
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 } else StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
-                    onAction = { onOptions(GuideOptions(sort = options.sort)) })
+                    onAction = { onOptions(GuideOptions(sort = options.sort, descending = options.descending)) })
             } else Row(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(allowUpExit = true, state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()

@@ -108,7 +108,7 @@ fun ViewOptionsPanel(
             val columns = if (maxWidth >= 320.dp) 2 else 1
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // Right from the rightmost tile goes to the scrollbar, not to whatever control lies
-                // diagonally below (the sort order's A–Z chip); without a scrollbar, to the footer.
+                // diagonally below (the sort order button); without a scrollbar, to the footer.
                 val scrollbarFocus = LocalRightPanelScrollbarFocus.current
                 views.chunked(columns).forEach { row ->
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -158,16 +158,7 @@ fun ViewOptionsPanel(
             PanelChoices(sorts, selectedSort, onSort)
             if (sortOrders.isNotEmpty()) {
                 RightPanelSectionTitle(stringResource(R.string.library_sort_order))
-                RightPanelChoiceRow {
-                    sortOrders.forEach { option ->
-                        RightPanelChoice(
-                            option.title,
-                            selectedSortOrder == option.key,
-                            { onSortOrder(option.key) },
-                            Modifier.weight(1f),
-                        )
-                    }
-                }
+                SortOrderToggle(sortOrders, selectedSortOrder, onSortOrder)
             }
         }
         if (filters.isNotEmpty()) {
