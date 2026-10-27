@@ -1663,7 +1663,7 @@ internal fun Modifier.homeHeroAmbient(
         )
         HomeHeroStyle.DEPTH -> Brush.radialGradient(
             colors = listOf(
-                accent.copy(alpha = 0.20f * motionStrength * intensity),
+                accent.copy(alpha = 0.28f * motionStrength * intensity),
                 secondary.copy(alpha = 0.11f * motionStrength * intensity),
                 accent.copy(alpha = 0f),
             ),
@@ -1678,7 +1678,7 @@ internal fun Modifier.homeHeroAmbient(
     }
     val depthCounterGlow = if (style == HomeHeroStyle.DEPTH) Brush.radialGradient(
         colors = listOf(
-            secondary.copy(alpha = 0.11f * motionStrength * intensity),
+            secondary.copy(alpha = 0.16f * motionStrength * intensity),
             secondary.copy(alpha = 0.05f * motionStrength * intensity),
             secondary.copy(alpha = 0f),
         ),
