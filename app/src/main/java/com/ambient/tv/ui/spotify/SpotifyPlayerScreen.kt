@@ -201,7 +201,7 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                 } else {
                     Modifier.fillMaxSize().alpha(0.30f)
                 }
-                ArtworkImage(art, track.name.orEmpty(), coverMod, contentScale = ContentScale.Crop)
+                ArtworkImage(art, track.name.orEmpty(), coverMod, contentScale = ContentScale.Crop, placeholder = false)
             }
         }
         if (visualizerMode == "spectrum" || visualizerMode == "projectm") {

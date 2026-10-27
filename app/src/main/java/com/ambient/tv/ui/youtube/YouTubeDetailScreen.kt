@@ -143,7 +143,7 @@ fun YouTubeDetailScreen(
                 val current = com.ambient.tv.companion.playbackIndicator(com.ambient.tv.companion.CompanionMedia("youtube", m.videoId))
                 val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
                 Box(Modifier.fillMaxSize()) {
-                    if (!visibleBackgroundVideo) ArtworkImage(model=m.backgroundUrl ?: m.imageUrl, title=m.title, modifier=Modifier.fillMaxSize(), contentScale=ContentScale.Crop, focusCrop=true)
+                    if (!visibleBackgroundVideo) ArtworkImage(model=m.backgroundUrl ?: m.imageUrl, title=m.title, modifier=Modifier.fillMaxSize(), contentScale=ContentScale.Crop, focusCrop=true, placeholder=false)
                     Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha=.66f)))
                     // Chapters and related videos follow below the fold, as in SmartTube's details.
                     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
