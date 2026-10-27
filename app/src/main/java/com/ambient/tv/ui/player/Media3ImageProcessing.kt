@@ -258,6 +258,7 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
         else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f, gamma = gamma)
     }
     is Media3Stage.Sharpen -> Media3SharpenEffect(stage.kind, gamma)
+    is Media3Stage.Grain -> Media3FilmGrainEffect(stage.strength, gamma)
     is Media3Stage.Brightness -> Brightness(stage.value / 100f)
     is Media3Stage.Contrast -> Contrast(stage.value / 100f)
     is Media3Stage.Saturation -> HslAdjustment.Builder().adjustSaturation(stage.value.toFloat()).build()

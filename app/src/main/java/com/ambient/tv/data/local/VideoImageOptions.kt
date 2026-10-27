@@ -61,8 +61,8 @@ object VideoImageCatalog {
         "bilinear" to "Bilinear", "bicubic" to "Bicubic", "catmull_rom" to "Catmull-Rom",
         "lanczos" to "Lanczos · 3", "fsr" to "FSR · EASU + RCAS",
     )
-    /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening. */
-    val media3Sharpening = setOf("off", "light", "medium", "strong", "cas")
+    /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening; adaptive: bacondither's Adaptive Sharpen. */
+    val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
     val media3Deband = strengths
     val toneMapping = setOf("auto", "bt.2390", "reinhard", "hable", "mobius", "clip")
     val svpModes = setOf("off", "light", "balanced", "quality")
@@ -208,6 +208,8 @@ data class Media3ImageOptions(
     val sharpening: String = "off",
     val deband: String = "off",
     val gamma: Int = 0,
+    /** Synthetic film grain, after sharpening; older profiles read as off. */
+    val filmGrain: String = "off",
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
@@ -216,5 +218,6 @@ data class Media3ImageOptions(
         sharpening = sharpening.takeIf { it in VideoImageCatalog.media3Sharpening } ?: "off",
         deband = deband.takeIf { it in VideoImageCatalog.media3Deband } ?: "off",
         gamma = gamma.coerceIn(-20, 20),
+        filmGrain = filmGrain.takeIf { it in VideoImageCatalog.strengths } ?: "off",
     )
 }

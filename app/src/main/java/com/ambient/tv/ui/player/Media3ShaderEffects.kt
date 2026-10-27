@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
 
 /*
  * Single-pass fragment shaders for Media3's SDR effect chain (deband, cubic and FSR upscaling,
- * unsharp, CAS, RCAS, gamma). Inputs are gamma-encoded SDR RGB in 0..1; the chain only runs for
+ * unsharp, CAS, RCAS, Adaptive Sharpen, film grain, gamma). Inputs are gamma-encoded SDR RGB in 0..1; the chain only runs for
  * SDR tracks (see media3ImageEffectsAllowed), HDR keeps the direct decoder surface.
  */
 
@@ -66,6 +66,8 @@ private abstract class Media3FragmentShaderProgram(
         throw VideoFrameProcessingException(e)
     }
     private var inputSize = floatArrayOf(1f, 1f)
+    /** Frame being drawn, for per-frame noise. */
+    protected var presentationTimeUs = 0L
 
     open fun outputSize(inputWidth: Int, inputHeight: Int): Size = Size(inputWidth, inputHeight)
     open fun setUniforms(program: GlProgram) {}
@@ -77,6 +79,7 @@ private abstract class Media3FragmentShaderProgram(
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
         try {
+            this.presentationTimeUs = presentationTimeUs
             program.use()
             program.setSamplerTexIdUniform("uTexSampler", inputTexId, /* texUnitIndex= */ 0)
             program.setFloatsUniformIfPresent("uInputSize", inputSize)
@@ -159,6 +162,10 @@ internal class Media3SharpenEffect(private val kind: String, private val gamma: 
         "cas" -> object : Media3FragmentShaderProgram(useHdr, CAS, media3GammaExponent(gamma)) {
             override fun setUniforms(program: GlProgram) = program.float("uSharpness", 0.6f)
         }
+        // Same curve height as MPV's bundled Adaptive Sharpen; runs post-resize like there.
+        "adaptive" -> object : Media3FragmentShaderProgram(useHdr, ADAPTIVE_SHARPEN, media3GammaExponent(gamma)) {
+            override fun setUniforms(program: GlProgram) = program.float("uCurveHeight", 1f)
+        }
         "rcas" -> object : Media3FragmentShaderProgram(useHdr, RCAS, media3GammaExponent(gamma)) {
             // Same strength as the MPV FSR shader (0.2 stops below maximum).
             override fun setUniforms(program: GlProgram) = program.float("uSharpnessStops", 0.2f)
@@ -167,6 +174,34 @@ internal class Media3SharpenEffect(private val kind: String, private val gamma: 
             override fun setUniforms(program: GlProgram) = program.float("uAmount", when (kind) { "medium" -> 0.8f; "strong" -> 1.2f; else -> 0.4f })
         }
     }
+}
+
+/**
+ * Ambient TV film grain as in MPV (same noise and intensities): equal grain on R, G and B, i.e.
+ * luma grain, fresh per frame.
+ */
+internal class Media3FilmGrainEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
+        object : Media3FragmentShaderProgram(useHdr, FILM_GRAIN, media3GammaExponent(gamma)) {
+            override fun setUniforms(program: GlProgram) {
+                program.float("uIntensity", media3GrainIntensity(strength))
+                program.float("uSeed", media3GrainSeed(presentationTimeUs))
+            }
+        }
+}
+
+/** INTENSITY of MPV's quality_filmgrain_* shaders. */
+internal fun media3GrainIntensity(strength: String): Float = when (strength) {
+    "medium" -> 0.06f
+    "strong" -> 0.10f
+    else -> 0.03f
+}
+
+/** Per-frame seed in 0..1000 like MPV's `fract(random) * 1000`, stable for a repeated frame. */
+internal fun media3GrainSeed(presentationTimeUs: Long): Float {
+    var x = presentationTimeUs * -0x61c8864680b583ebL
+    x = x xor (x ushr 29)
+    return ((x ushr 11) % 1_000_000L).toFloat() / 1000f
 }
 
 /** Gamma like VLC's adjust filter: positive values brighten midtones. */
@@ -394,5 +429,177 @@ uniform float uInvGamma;
 void main() {
   vec4 c = texture2D(uTexSampler, vTexSamplingCoord);
   gl_FragColor = vec4(pow(max(c.rgb, vec3(0.0)), vec3(uInvGamma)), 1.0);
+}
+"""
+
+// Ambient TV film grain (CC0 1.0), the MPV shader on RGB: per-frame triangular noise smoothed
+// over 3x3, the same value added to all channels.
+private const val FILM_GRAIN = """
+uniform float uIntensity;
+uniform float uSeed;
+float grainHash(vec2 p) {
+  vec3 q = fract(vec3(p.xyx) * 0.1031);
+  q += dot(q, q.yzx + 33.33);
+  return fract((q.x + q.y) * q.z);
+}
+float grainNoise(vec2 p) {
+  return grainHash(p + uSeed * 113.0) + grainHash(p * 1.37 + uSeed * 71.0) - 1.0;
+}
+void main() {
+  vec2 p = floor(vTexSamplingCoord * uInputSize);
+  float g = 4.0 * grainNoise(p);
+  g += 2.0 * (grainNoise(p + vec2(1.0, 0.0)) + grainNoise(p - vec2(1.0, 0.0))
+            + grainNoise(p + vec2(0.0, 1.0)) + grainNoise(p - vec2(0.0, 1.0)));
+  g += grainNoise(p + vec2(1.0, 1.0)) + grainNoise(p - vec2(1.0, 1.0))
+     + grainNoise(p + vec2(1.0, -1.0)) + grainNoise(p - vec2(1.0, -1.0));
+  g /= 16.0;
+  vec3 color = texture2D(uTexSampler, vTexSamplingCoord).rgb + vec3(uIntensity * 2.0 * g);
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
+}
+"""
+
+// Adaptive sharpen 2021-10-17, Copyright (c) 2015-2021, bacondither. All rights reserved.
+// BSD 2-clause; full notice in res/raw/image_shader_licenses.txt. Ported from the bundled MPV
+// variant (overshoot_ctrl off, pm_p 1) to GLSL ES 1.00: arrays filled element by element, and the
+// fwidth() edge values as forward differences of the already sampled neighbours, so no
+// GL_OES_standard_derivatives is needed.
+private const val ADAPTIVE_SHARPEN = """
+uniform float uCurveHeight;
+float sat1(float x) { return clamp(x, 0.0, 1.0); }
+float ctl(vec3 c) { vec3 s = clamp(c, 0.0, 1.0); return sqrt(dot(s * s, vec3(0.2126, 0.7152, 0.0722))); }
+float dxdy(vec3 c, vec3 right, vec3 down) { return length(abs(right - c) + abs(down - c)); }
+float softLim(float v, float s) { float t = v / s; return sat1(abs(t) * (27.0 + t * t) / (27.0 + 9.0 * t * t)) * s; }
+float wpmean(float a, float b, float w) { return w * abs(a) + abs(1.0 - w) * abs(b); }
+void main() {
+  vec2 pos = floor(vTexSamplingCoord * uInputSize);
+  // [                c22               ]
+  // [           c24, c9,  c23          ]
+  // [      c21, c1,  c2,  c3, c18      ]
+  // [ c19, c10, c4,  c0,  c5, c11, c16 ]
+  // [      c20, c6,  c7,  c8, c17      ]
+  // [           c15, c12, c14          ]
+  // [                c13               ]
+  vec3 c[25];
+  c[0] = tap(pos);
+  c[1] = tap(pos + vec2(-1.0, -1.0));
+  c[2] = tap(pos + vec2(0.0, -1.0));
+  c[3] = tap(pos + vec2(1.0, -1.0));
+  c[4] = tap(pos + vec2(-1.0, 0.0));
+  c[5] = tap(pos + vec2(1.0, 0.0));
+  c[6] = tap(pos + vec2(-1.0, 1.0));
+  c[7] = tap(pos + vec2(0.0, 1.0));
+  c[8] = tap(pos + vec2(1.0, 1.0));
+  c[9] = tap(pos + vec2(0.0, -2.0));
+  c[10] = tap(pos + vec2(-2.0, 0.0));
+  c[11] = tap(pos + vec2(2.0, 0.0));
+  c[12] = tap(pos + vec2(0.0, 2.0));
+  c[13] = tap(pos + vec2(0.0, 3.0));
+  c[14] = tap(pos + vec2(1.0, 2.0));
+  c[15] = tap(pos + vec2(-1.0, 2.0));
+  c[16] = tap(pos + vec2(3.0, 0.0));
+  c[17] = tap(pos + vec2(2.0, 1.0));
+  c[18] = tap(pos + vec2(2.0, -1.0));
+  c[19] = tap(pos + vec2(-3.0, 0.0));
+  c[20] = tap(pos + vec2(-2.0, 1.0));
+  c[21] = tap(pos + vec2(-2.0, -1.0));
+  c[22] = tap(pos + vec2(0.0, -3.0));
+  c[23] = tap(pos + vec2(1.0, -2.0));
+  c[24] = tap(pos + vec2(-1.0, -2.0));
+
+  // Edge value per pixel: its right and lower neighbour (fwidth's one-pixel differences).
+  float e[13];
+  e[0] = dxdy(c[0], c[5], c[7]);
+  e[1] = dxdy(c[1], c[2], c[4]);
+  e[2] = dxdy(c[2], c[3], c[0]);
+  e[3] = dxdy(c[3], c[18], c[5]);
+  e[4] = dxdy(c[4], c[0], c[6]);
+  e[5] = dxdy(c[5], c[11], c[8]);
+  e[6] = dxdy(c[6], c[7], c[15]);
+  e[7] = dxdy(c[7], c[8], c[12]);
+  e[8] = dxdy(c[8], c[17], c[14]);
+  e[9] = dxdy(c[9], c[23], c[2]);
+  e[10] = dxdy(c[10], c[4], c[20]);
+  e[11] = dxdy(c[11], c[16], c[17]);
+  e[12] = dxdy(c[12], c[14], c[13]);
+
+  float luma[25];
+  for (int i = 0; i < 25; i++) luma[i] = ctl(c[i]);
+  float c0Y = luma[0];
+
+  // Blur, gauss 3x3
+  float blur = (2.0 * (luma[2] + luma[4] + luma[5] + luma[7]) + (luma[1] + luma[3] + luma[6] + luma[8]) + 4.0 * luma[0]) / 16.0;
+  // Contrast compression, center = 0.5
+  float cComp = sat1(0.266666681 + 0.9 * exp2(blur * blur * -7.4));
+  float edge = (1.38 * (blur - luma[0]) * (blur - luma[0])
+      + 1.15 * ((blur - luma[2]) * (blur - luma[2]) + (blur - luma[4]) * (blur - luma[4]) + (blur - luma[5]) * (blur - luma[5]) + (blur - luma[7]) * (blur - luma[7]))
+      + 0.92 * ((blur - luma[1]) * (blur - luma[1]) + (blur - luma[3]) * (blur - luma[3]) + (blur - luma[6]) * (blur - luma[6]) + (blur - luma[8]) * (blur - luma[8]))
+      + 0.23 * ((blur - luma[9]) * (blur - luma[9]) + (blur - luma[10]) * (blur - luma[10]) + (blur - luma[11]) * (blur - luma[11]) + (blur - luma[12]) * (blur - luma[12]))) * cComp;
+  vec2 cs = vec2(0.167, 0.250);
+
+  // Squared kernel weights; concave kernel above the edge threshold.
+  vec3 w1 = vec3(0.5, 1.0, 1.41421356237);
+  vec3 w2 = vec3(0.86602540378, 1.0, 0.54772255751);
+  vec3 dW = pow(mix(w1, w2, sat1(2.4 * edge - 0.82)), vec3(2.0));
+  // Lower weights for pixels in a more active area than the center: narrower overshoots.
+  float modifE0 = 3.0 * e[0] + 0.02 / 2.5;
+  float weights[12];
+  weights[0] = min(modifE0 / max(e[1], 1e-6), dW.y);
+  weights[1] = dW.x;
+  weights[2] = min(modifE0 / max(e[3], 1e-6), dW.y);
+  weights[3] = dW.x;
+  weights[4] = dW.x;
+  weights[5] = min(modifE0 / max(e[6], 1e-6), dW.y);
+  weights[6] = dW.x;
+  weights[7] = min(modifE0 / max(e[8], 1e-6), dW.y);
+  weights[8] = min(modifE0 / max(e[9], 1e-6), dW.z);
+  weights[9] = min(modifE0 / max(e[10], 1e-6), dW.z);
+  weights[10] = min(modifE0 / max(e[11], 1e-6), dW.z);
+  weights[11] = min(modifE0 / max(e[12], 1e-6), dW.z);
+  weights[0] = (max(max((weights[8] + weights[9]) / 4.0, weights[0]), 0.25) + weights[0]) / 2.0;
+  weights[2] = (max(max((weights[8] + weights[10]) / 4.0, weights[2]), 0.25) + weights[2]) / 2.0;
+  weights[5] = (max(max((weights[9] + weights[11]) / 4.0, weights[5]), 0.25) + weights[5]) / 2.0;
+  weights[7] = (max(max((weights[10] + weights[11]) / 4.0, weights[7]), 0.25) + weights[7]) / 2.0;
+
+  // Negative part of the laplace kernel and the low threshold weight.
+  float lowthrsum = 0.0;
+  float weightsum = 0.0;
+  float negLaplace = 0.0;
+  for (int pix = 0; pix < 12; pix++) {
+    float lowthr = sat1(20.0 * 4.5 * cComp * e[pix + 1] - 0.221);
+    negLaplace += luma[pix + 1] * luma[pix + 1] * weights[pix] * lowthr;
+    weightsum += weights[pix] * lowthr;
+    lowthrsum += lowthr / 12.0;
+  }
+  // Flat areas: no qualifying edge, the pixel passes unchanged (no 0/0).
+  if (weightsum <= 1e-6 || lowthrsum <= 1e-6) { gl_FragColor = finish(c[0]); return; }
+  negLaplace = sqrt(max(negLaplace / weightsum, 0.0));
+
+  float sharpenVal = uCurveHeight / (uCurveHeight * 0.5 * edge + 0.625);
+  float sharpdiff = (c0Y - negLaplace) * (lowthrsum * sharpenVal + 0.01);
+
+  // Local near min & max, partial sort.
+  float temp;
+  for (int i1 = 0; i1 < 24; i1 += 2) {
+    temp = luma[i1];
+    luma[i1] = min(luma[i1], luma[i1 + 1]);
+    luma[i1 + 1] = max(temp, luma[i1 + 1]);
+  }
+  for (int i2 = 24; i2 > 0; i2 -= 2) {
+    temp = luma[0];
+    luma[0] = min(luma[0], luma[i2]);
+    luma[i2] = max(temp, luma[i2]);
+    temp = luma[24];
+    luma[24] = max(luma[24], luma[i2 - 1]);
+    luma[i2 - 1] = min(temp, luma[i2 - 1]);
+  }
+  float minDist = min(abs(luma[24] - c0Y), abs(c0Y - luma[0]));
+  minDist = min(minDist, 0.1 * (1.0 - 0.056) + minDist * 0.056);
+  if (minDist <= 1e-6) { gl_FragColor = finish(c[0]); return; }
+
+  // Soft limited anti-ringing with tanh, wpmean to control compression slope.
+  sharpdiff = wpmean(max(sharpdiff, 0.0), softLim(max(sharpdiff, 0.0), minDist), cs.x)
+            - wpmean(min(sharpdiff, 0.0), softLim(min(sharpdiff, 0.0), minDist), cs.y);
+  float sharpdiffLim = sat1(c0Y + sharpdiff) - c0Y;
+  gl_FragColor = finish(clamp(c[0] + sharpdiffLim, 0.0, 1.0));
 }
 """

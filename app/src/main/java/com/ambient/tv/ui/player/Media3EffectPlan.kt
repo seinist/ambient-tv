@@ -8,8 +8,10 @@ internal sealed interface Media3Stage {
     data class Deband(val strength: String) : Media3Stage
     /** Only planned while the fitted output is larger than the source; never past the display. */
     data class Scale(val scaler: String) : Media3Stage
-    /** light/medium unsharp mask, cas, or rcas (FSR's own sharpening pass). */
+    /** light/medium/strong unsharp mask, cas, adaptive, or rcas (FSR's own sharpening pass). */
     data class Sharpen(val kind: String) : Media3Stage
+    /** Film grain after sharpening, so the sharpener does not amplify it. */
+    data class Grain(val strength: String) : Media3Stage
     data class Brightness(val value: Int) : Media3Stage
     data class Contrast(val value: Int) : Media3Stage
     data class Saturation(val value: Int) : Media3Stage
@@ -17,7 +19,7 @@ internal sealed interface Media3Stage {
 }
 
 /**
- * Order: deband (source pixels) → scale → sharpen → color. Bilinear means no scale stage: the
+ * Order: deband (source pixels) → scale → sharpen → grain → color. Bilinear means no scale stage: the
  * display path scales as with direct output. FSR includes RCAS, so the sharpening choice is not
  * stacked on top while FSR runs.
  */
@@ -40,6 +42,8 @@ internal fun media3EffectPlan(
             scaler == "fsr" -> add(Media3Stage.Sharpen("rcas"))
             o.sharpening != "off" -> add(Media3Stage.Sharpen(o.sharpening))
         }
+        // Grain runs on the same (output) size as sharpening and shares its budget.
+        if (o.filmGrain != "off" && sharpenAllowed) add(Media3Stage.Grain(o.filmGrain))
         if (o.brightness != 0) add(Media3Stage.Brightness(o.brightness))
         if (o.contrast != 0) add(Media3Stage.Contrast(o.contrast))
         if (o.saturation != 0) add(Media3Stage.Saturation(o.saturation))
@@ -81,7 +85,7 @@ internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)
 internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage> {
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
-    val fusable = previous is Media3Stage.Deband || previous is Media3Stage.Sharpen ||
+    val fusable = previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
         (previous is Media3Stage.Scale && previous.scaler != "lanczos")
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
