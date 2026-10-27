@@ -806,7 +806,7 @@ private fun DvrRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Surface(onClick = onPrimary, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape),
-            modifier = modifier.weight(1f).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onPrimary).onFocusChanged {
+            modifier = modifier.weight(1f).activateOnTvKey(onClick = onPrimary).onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             }) {
