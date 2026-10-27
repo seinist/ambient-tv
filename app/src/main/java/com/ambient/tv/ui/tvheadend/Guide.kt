@@ -196,7 +196,7 @@ internal fun LiveTvChannelBrowser(
                 })
                 Text(stringResource(R.string.guide_count, visibleChannels.size), style = MaterialTheme.typography.bodySmall)
             }
-            GuideActiveFilters(activeFilters)
+            GuideActiveFilters(activeFilters, onClick = { optionsOpened = true; showOptions = true })
             if (visibleChannels.isEmpty()) {
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
