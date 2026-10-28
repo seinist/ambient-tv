@@ -394,9 +394,10 @@ Für alle Systeme gemeinsam, am Ende der Seite:
 | Standard-Player | Media3 · VLC · MPV | Media3 | Standard-Player für Plex, Jellyfin, Emby und SmartTube. Ein gespeichertes „Automatisch“ (war immer Media3) gilt als Media3. MPV ist gesperrt, wenn es auf dem Gerät fehlt (dann Media3). TVHeadend hat eine eigene Wahl. |
 | Gespeicherte Wiedergabeeinstellungen | Übersicht | — | Zeigt gespeicherte Audio-/Video-Presets je Titel und je Breite. |
 | Live-TV · Audio und Video nach Breite | Editor | — | Nur-Live-Presets je Quellbreite. |
-| Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. Zwischen zwei Titeln (nächste Folge, Autoplay, Playlist, Senderwechsel) geht das Display nicht zurück in den Menü-Modus: Ein gleicher Modus bleibt, ein anderer wird direkt umgeschaltet. |
+| Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. Zwischen zwei Titeln (nächste Folge, Autoplay, Playlist, Senderwechsel) geht das Display nicht zurück in den Menü-Modus: Ein gleicher Modus bleibt, ebenso einer, der den nächsten Titel schon ruckelfrei zeigt (gleiche Auflösung, 1× oder erlaubtes 2× seiner Bildrate, z. B. 25 fps auf 50 Hz); sonst wird direkt umgeschaltet. |
 | Displaywechsel anzeigen | An / Aus | Aus | Kurze Meldung bei Wechsel von Auflösung oder Bildrate. |
 | Doppelte Bildraten erlauben (24→48, 30→60, 50→100, 60→120 Hz) | An / Aus | An | Nimmt 2×, wenn das Display den Modus anbietet, auch 100 und 120 Hz. 25 fps bleibt bei 50 Hz, wenn 50 und 100 Hz beide vorhanden sind. |
+| Doppelte Bildrate bevorzugen (30→60 Hz auch bei nativem 30-Hz-Modus) | An / Aus | An | Flüssigere Menüs während der Wiedergabe; aus nimmt zuerst die native Rate. 100/120 Hz brauchen weiter „100/120 Hz erlauben“. |
 | 3:2-Pulldown erlauben (24→60 Hz) | An / Aus | An | |
 | Bildschirmmodus | Auto · Videoauflösung + Hz · Auto · volle Displayauflösung + Hz · Systemvorgabe · feste Modi | Systemvorgabe | Ein Auto-Modus schaltet die Umschaltung (Start und Ende) ein, wenn sie aus war. |
 | Erlaubte Bildschirmmodi | Modusliste | Alle unterstützten Modi | Begrenzt die automatische Umschaltung. |

@@ -114,7 +114,7 @@ data class SettingsUiState(
     val preferredDisplayModeKey: String = "system",
     val allowDoubleRefreshRate: Boolean = true,
     val allowHighRefreshDoubling: Boolean = false,
-    val preferDoubleRefreshRate: Boolean = false,
+    val preferDoubleRefreshRate: Boolean = true,
     val gpuRenderResolutionKey: String = com.ambient.tv.data.local.AppPreferences.GPU_RENDER_AUTO,
     val mpvSdrCurveKey: String = com.ambient.tv.data.local.AppPreferences.MPV_SDR_CURVE_AUTO,
     val allowThreeTwoPulldown: Boolean = true,
