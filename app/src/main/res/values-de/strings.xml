@@ -2043,4 +2043,11 @@
     <string name="player_tools_bookmark_jump">Zum Lesezeichen springen</string>
     <string name="player_tools_bookmark_delete">Lesezeichen löschen</string>
     <string name="player_tools_bookmark_delete_all">Alle Lesezeichen dieses Titels löschen</string>
+    <string name="night_schedule_title">Nachtmodus nach Uhrzeit</string>
+    <string name="night_schedule_hint">In diesem Zeitfenster schaltet jeder Player den Nachtmodus ein (leisere Spitzen, lautere Sprache). Im Player ausgeschaltet bleibt er bis zum Ende des Fensters aus.</string>
+    <string name="night_schedule_enabled">Automatisch einschalten</string>
+    <string name="night_schedule_start">Von</string>
+    <string name="night_schedule_end">Bis</string>
+    <string name="night_schedule_dialogue">Dialoganhebung nachts</string>
+    <string name="night_schedule_dialogue_off">Aus</string>
 </resources>

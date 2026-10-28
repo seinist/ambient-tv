@@ -31,6 +31,38 @@ class AudioSession(
 
     var settings by mutableStateOf(preferences.audioSettings.copy(performanceHint = false))
         private set
+
+    /** Night mode by the clock (Settings › Audio); re-read on every tick. */
+    private var nightSchedule = preferences.nightSchedule
+    /** The night window is active for this playback (shown as night mode in the audio panel). */
+    var nightAutomatic by mutableStateOf(nightSchedule.activeAt(currentMinuteOfDay()))
+        private set
+    /** Night mode switched off by hand inside the window: stays off until the window ends. */
+    private var nightAutomaticDeclined = false
+    private var nightTicker: android.os.Handler? = null
+    private val nightTick = object : Runnable {
+        override fun run() {
+            refreshNightAutomation()
+            nightTicker?.postDelayed(this, NIGHT_TICK_MS)
+        }
+    }
+
+    /** Applies the night window when it opens or closes during playback. */
+    internal fun refreshNightAutomation(minuteOfDay: Int = currentMinuteOfDay()) {
+        nightSchedule = preferences.nightSchedule
+        val inWindow = nightSchedule.activeAt(minuteOfDay)
+        if (!inWindow) nightAutomaticDeclined = false
+        val want = inWindow && !nightAutomaticDeclined
+        if (want == nightAutomatic) return
+        val old = options
+        val before = outputPlan()
+        nightAutomatic = want
+        renderOptions = optionsForPcm()
+        val after = outputPlan()
+        if (before.copy(heavyAudio = after.heavyAudio) != after) routeChanged(before, after) else apply(old, options)
+        logPlanIfChanged()
+    }
+
     /**
      * A/V delay chosen in the player for the current title; null uses the profile's delay. Only
      * while [titleScoped]: the profile delay (Settings) stays the default for everything else.
@@ -62,6 +94,8 @@ class AudioSession(
         forcedChannelsFailed = previous.forcedChannelsFailed && sameRenderer
         localEncoderFailed = previous.localEncoderFailed
         audioOnly = audioOnly || previous.audioOnly
+        nightAutomaticDeclined = previous.nightAutomaticDeclined
+        nightAutomatic = previous.nightAutomatic
         restoreProfile(previous.settings, automatic = true)
         restoreTitleDelay(previous.titleDelayMs)
         manuallyEdited = previous.manuallyEdited
@@ -104,7 +138,9 @@ class AudioSession(
         val after = outputPlan()
         if (before != after) routeChanged(before, after)
     }
-    val options: AudioOptions get() = settings.currentForRoute(route.profile).let { o -> titleDelayMs?.let { o.copy(delayMs = it) } ?: o }
+    /** The profile with the title delay, before any night window. */
+    private val baseOptions: AudioOptions get() = settings.currentForRoute(route.profile).let { o -> titleDelayMs?.let { o.copy(delayMs = it) } ?: o }
+    val options: AudioOptions get() = baseOptions.let { o -> if (nightAutomatic) nightSchedule.applyTo(o) else o }
     /** What the player's audio editor shows: the profile with the title delay applied. */
     val displaySettings: AudioSettings get() = if (titleDelayMs == null) settings else settings.updateForRoute(options, route.profile)
     @Volatile var renderOptions: AudioOptions = options
@@ -151,6 +187,8 @@ class AudioSession(
     fun startRouteMonitoring(context: android.content.Context) {
         routeMonitor?.close()
         routeMonitor = AudioRouteMonitor(context, ::routeDevicesChanged)
+        nightTicker?.removeCallbacks(nightTick)
+        nightTicker = android.os.Handler(android.os.Looper.getMainLooper()).also { it.postDelayed(nightTick, NIGHT_TICK_MS) }
     }
 
     private var outputFallbackResets = 0
@@ -203,6 +241,8 @@ class AudioSession(
         activeLocalConversion = null
         routeMonitor?.close()
         routeMonitor = null
+        nightTicker?.removeCallbacks(nightTick)
+        nightTicker = null
         routeChanged = { _, _ -> }
         apply = { _, _ -> }
         conversionLocationChanged = { false }
@@ -278,9 +318,19 @@ class AudioSession(
     /** Returns true only when the owner accepted a stream reload. */
     var conversionLocationChanged: (AudioSession) -> Boolean = { false }
 
-    fun update(next: AudioOptions) {
+    fun update(requested: AudioOptions) {
         manuallyEdited = true
         val old = options
+        // The night window's values are not the profile's: switching night mode off declines the
+        // window for now, anything else keeps the profile's own night and dialogue values.
+        val next = if (!nightAutomatic) requested else if (!requested.night) {
+            nightAutomaticDeclined = true
+            nightAutomatic = false
+            requested.copy(dialogue = if (requested.dialogue == old.dialogue) baseOptions.dialogue else requested.dialogue)
+        } else requested.copy(
+            night = baseOptions.night,
+            dialogue = if (requested.dialogue == old.dialogue) baseOptions.dialogue else requested.dialogue,
+        )
         if (titleScoped && next.delayMs != old.delayMs) {
             titleDelayMs = next.delayMs.coerceIn(-2000, 2000)
             commit(settings.updateForRoute(next.copy(delayMs = settings.currentForRoute(route.profile).delayMs), route.profile), old)
@@ -339,3 +389,7 @@ internal const val MAX_OUTPUT_FALLBACK_RESETS = 2
 /** Whether a settled device change lifts this playback's output fallbacks (see [AudioSession.routeDevicesChanged]). */
 internal fun audioFallbackResetOnRoute(fallbackActive: Boolean, routeOffersMore: Boolean, resetsSoFar: Int): Boolean =
     fallbackActive && routeOffersMore && resetsSoFar < MAX_OUTPUT_FALLBACK_RESETS
+
+private const val NIGHT_TICK_MS = 30_000L
+
+private fun currentMinuteOfDay(): Int = java.time.LocalTime.now().let { it.hour * 60 + it.minute }

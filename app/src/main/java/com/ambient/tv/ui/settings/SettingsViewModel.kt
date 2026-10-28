@@ -542,6 +542,7 @@ class SettingsViewModel @Inject constructor(
         screensaverShowDate = appPreferences.screensaverShowDate,
         clock = appPreferences.clockSettings,
         subtitleAppearance = appPreferences.subtitleAppearance,
+        nightSchedule = appPreferences.nightSchedule,
         screensaverUseArtwork = appPreferences.screensaverUseArtwork,
         screensaverArtworkIntervalSeconds = appPreferences.screensaverArtworkIntervalSeconds,
         screensaverDimPercent = appPreferences.screensaverDimPercent,
@@ -2220,6 +2221,8 @@ class SettingsViewModel @Inject constructor(
     fun onScreensaverShowDateChanged(value: Boolean) = _uiState.update { it.copy(screensaverShowDate = value) }
     fun onSubtitleAppearanceChanged(change: (com.ambient.tv.data.local.SubtitleAppearance) -> com.ambient.tv.data.local.SubtitleAppearance) =
         _uiState.update { it.copy(subtitleAppearance = change(it.subtitleAppearance).normalized()) }
+    fun onNightScheduleChanged(change: (com.ambient.tv.data.local.NightSchedule) -> com.ambient.tv.data.local.NightSchedule) =
+        _uiState.update { it.copy(nightSchedule = change(it.nightSchedule).normalized()) }
     fun onClockChanged(change: (com.ambient.tv.data.local.ClockSettings) -> com.ambient.tv.data.local.ClockSettings) =
         _uiState.update { it.copy(clock = change(it.clock).normalized()) }
     fun onScreensaverUseArtworkChanged(value: Boolean) = _uiState.update { it.copy(screensaverUseArtwork = value) }
@@ -2640,6 +2643,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.screensaverUse24HourClock = state.clock.format != com.ambient.tv.data.local.ClockSettings.FORMAT_12
         appPreferences.clockSettings = state.clock
         appPreferences.subtitleAppearance = state.subtitleAppearance
+        appPreferences.nightSchedule = state.nightSchedule
         appPreferences.screensaverUseArtwork = state.screensaverUseArtwork
         appPreferences.screensaverArtworkIntervalSeconds = state.screensaverArtworkIntervalSeconds
         appPreferences.screensaverDimPercent = state.screensaverDimPercent

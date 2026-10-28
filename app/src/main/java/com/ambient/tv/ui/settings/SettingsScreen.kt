@@ -1334,6 +1334,7 @@ fun SettingsScreen(
                             // One global volume for Plex, Jellyfin and Emby theme music.
                             if (uiState.plexThemeMusicEnabled || uiState.jellyfinThemeMusicEnabled || uiState.embyThemeMusicEnabled) themeMusicVolumeItems(uiState, viewModel)
                             item { SettingsAudioDefaults(uiState, viewModel) }
+                            nightScheduleItems(uiState.nightSchedule, viewModel::onNightScheduleChanged)
                             item {
                                 SettingsGroup(title = stringResource(R.string.settings_audio_tracks_language)) {
                                     AudioLanguageChoice(uiState.audioLanguageKey, viewModel::onAudioLanguageChanged)

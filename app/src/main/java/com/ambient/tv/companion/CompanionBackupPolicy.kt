@@ -25,7 +25,7 @@ internal object CompanionBackupPolicy {
         "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
         "audioVisualizerModeKey", "projectmPresetIntervalSeconds", "projectmTransitionSeconds", "projectmPresetCategoryKey",
         "screensaverEnabled", "screensaverTimeoutMinutes", "screensaverModeKey", "screensaverShowClock", "screensaverShowDate",
-        "screensaverUse24HourClock", "clock", "subtitleAppearance", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
+        "screensaverUse24HourClock", "clock", "subtitleAppearance", "nightSchedule", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
         "photoIncludeSubfolders", "photoSortKey",
         "photoSlideshowIntervalSeconds", "photoTransitionKey", "photoKenBurns", "photoShuffle", "photoShowInfo",
         "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds",
@@ -160,6 +160,7 @@ internal object CompanionBackupPolicy {
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }
+                .filter { it != "nightSchedule" || source.nightSchedule != null }
                 // Profiles left out by the sender (too large) arrive empty: the TV keeps its own.
                 .filter { it !in profileKeys || !profilesOmittedIn(source) }.forEach { key -> incoming[key]?.let { result[key] = it } }
         }
