@@ -1563,7 +1563,8 @@ private fun AmbientTvApp(
                 AppBackground(Modifier.fillMaxSize())
             }
             if (videoPlaneVisible) {
-                PersistentPlaybackVideoHost(Modifier.fillMaxSize())
+                // HbbTV can show the picture in a smaller window of its menus.
+                PersistentPlaybackVideoHost(Modifier.fillMaxSize().then(com.ambient.tv.ui.player.PlaybackVideoWindow.modifier))
             }
             if (persistentVideoHost && !showVisibleBackgroundVideo && !onPlayerScreen) {
                 AppBackground(Modifier.fillMaxSize())

@@ -96,11 +96,25 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, onClose: ()
             onDispose { }
         }
         val language = remember { java.util.Locale.getDefault().isO3Language.ifBlank { "deu" } }
+        // The app stops the broadcast for its own video; closing it lets the programme go on.
+        val broadcast = remember {
+            HbbtvBroadcastControl(
+                wantsToPlay = { com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.wantsToPlay },
+                pause = com.ambient.tv.ui.player.BackgroundPlaybackSession::pause,
+                play = com.ambient.tv.ui.player.BackgroundPlaybackSession::play,
+            )
+        }
+        DisposableEffect(broadcast) {
+            onDispose {
+                broadcast.resume()
+                com.ambient.tv.ui.player.PlaybackVideoWindow.window = null
+            }
+        }
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(4_000); hint = false }
         Box(Modifier.fillMaxSize()) {
             AndroidView(
-                factory = { context -> HbbtvWebView(context, channelName.orEmpty(), language, onClose).also { it.open(app.url) } },
+                factory = { context -> HbbtvWebView(context, channelName.orEmpty(), language, broadcast, onClose).also { it.open(app.url) } },
                 modifier = Modifier.fillMaxSize(),
                 onRelease = { it.destroy() },
             )
@@ -118,7 +132,13 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, onClose: ()
  * picture shows through the transparent page. Back twice closes it, as does destroyApplication().
  */
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
-private class HbbtvWebView(context: Context, channelName: String, language: String, private val onClose: () -> Unit) : WebView(context) {
+private class HbbtvWebView(
+    context: Context,
+    channelName: String,
+    language: String,
+    private val broadcast: HbbtvBroadcastControl,
+    private val onClose: () -> Unit,
+) : WebView(context) {
     private val shim = hbbtvShim(channelName, language)
     private var lastBack = 0L
     private val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
@@ -129,6 +149,9 @@ private class HbbtvWebView(context: Context, channelName: String, language: Stri
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
+        // HbbTV pages are laid out for 1280 × 720: the injected viewport scales them to the screen.
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
         settings.userAgentString = settings.userAgentString + " " + HBBTV_USER_AGENT
         CookieManager.getInstance().setAcceptCookie(true)
         addJavascriptInterface(Bridge(), "AmbientHbbtv")
@@ -194,6 +217,12 @@ private class HbbtvWebView(context: Context, channelName: String, language: Stri
     private inner class Bridge {
         @JavascriptInterface fun close() = post { onClose() }
         @JavascriptInterface fun show() = Unit
+        /** Where the page shows video/broadcast: "left,top,width,height" fractions or "full". */
+        @JavascriptInterface fun videoWindow(value: String) = post {
+            com.ambient.tv.ui.player.PlaybackVideoWindow.window = com.ambient.tv.ui.player.parseVideoWindow(value)
+        }
+        /** video/broadcast stopped (false) or bound again (true). */
+        @JavascriptInterface fun broadcast(on: Boolean) = post { if (on) broadcast.resume() else broadcast.stop() }
     }
 
     companion object {
@@ -209,7 +238,10 @@ internal fun hbbtvDocumentType(contentType: String): Boolean {
 
 /** The shim goes first into <head> (or the start of the document), ahead of the page's own scripts. */
 internal fun injectHbbtvShim(html: String, shim: String): String {
-    val tag = "<script type=\"text/javascript\">$shim</script>"
+    // HbbTV pages assume a 1280 × 720 screen; pages with their own viewport keep it.
+    val viewport = if (Regex("<meta[^>]+name=[\"']?viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) ""
+        else "<meta name=\"viewport\" content=\"width=1280, user-scalable=no\">"
+    val tag = "$viewport<script type=\"text/javascript\">$shim</script>"
     val head = Regex("<head(\\s[^>]*)?>", RegexOption.IGNORE_CASE).find(html)
     return if (head != null) html.substring(0, head.range.last + 1) + tag + html.substring(head.range.last + 1)
     else tag + html
@@ -245,8 +277,19 @@ var channel={name:$name,ccid:'ccid:1',onid:1,tsid:1,sid:1,channelType:0,idType:1
 var app={privateData:{keyset:keyset,currentChannel:channel,getFreeMem:function(){return 0;}},show:function(){AmbientHbbtv.show();return true;},hide:function(){return true;},
 destroyApplication:function(){AmbientHbbtv.close();},createApplication:function(u){location.href=u;},activate:function(){},deactivate:function(){}};
 var P=HTMLObjectElement.prototype;P.getOwnerApplication=function(){return app;};
-P.bindToCurrentChannel=function(){return channel;};P.setFullScreen=function(){};P.setChannel=function(){};P.prevChannel=function(){};
-P.nextChannel=function(){};P.release=function(){};
+function bc(o){return /video\/broadcast/i.test((o&&o.type)||'');}
+var fullScreen=false,lastWindow='';
+function videoWindow(){var o=null,l=document.getElementsByTagName('object');for(var i=0;i<l.length;i++){if(bc(l[i])){o=l[i];break;}}
+var w='full';if(o&&!fullScreen){var st=window.getComputedStyle(o),r=o.getBoundingClientRect(),W=window.innerWidth,H=window.innerHeight;
+if(st.display!=='none'&&st.visibility!=='hidden'&&r.width>0&&r.height>0&&W>0&&H>0)w=[r.left/W,r.top/H,r.width/W,r.height/H].map(function(v){return v.toFixed(4);}).join(',');}
+if(w!==lastWindow){lastWindow=w;AmbientHbbtv.videoWindow(w);}}
+setInterval(videoWindow,400);
+P.bindToCurrentChannel=function(){if(bc(this)){AmbientHbbtv.broadcast(true);setTimeout(videoWindow,0);}return channel;};
+P.setFullScreen=function(f){if(bc(this)){fullScreen=!!f;videoWindow();}};
+P.setChannel=function(c){if(bc(this))AmbientHbbtv.broadcast(c!==null&&c!==undefined);};P.prevChannel=function(){};
+P.nextChannel=function(){};P.stop=function(){if(bc(this))AmbientHbbtv.broadcast(false);};
+P.release=function(){if(bc(this))AmbientHbbtv.broadcast(false);};
+document.addEventListener('play',function(e){var t=e.target&&e.target.tagName;if(t==='VIDEO'||t==='AUDIO')AmbientHbbtv.broadcast(false);},true);
 P.getChannelConfig=function(){return {channelList:{length:1,item:function(){return channel;},getChannel:function(){return channel;}}};};
 try{Object.defineProperty(P,'currentChannel',{get:function(){return channel;},configurable:true});}catch(e){}
 try{Object.defineProperty(P,'configuration',{get:function(){return {preferredAudioLanguage:$lang,preferredSubtitleLanguage:$lang,preferredUILanguage:$lang,countryId:'DEU'};},configurable:true});}catch(e){}
@@ -269,4 +312,29 @@ internal fun jsString(value: String): String = buildString {
         }
     }
     append('"')
+}
+
+/**
+ * Pauses the live programme while the HbbTV application plays its own video (it stops the
+ * broadcast), and resumes it when the application binds the broadcast again or closes. Only a
+ * programme this control paused is resumed: one the viewer paused stays paused.
+ */
+internal class HbbtvBroadcastControl(
+    private val wantsToPlay: () -> Boolean,
+    private val pause: () -> Unit,
+    private val play: () -> Unit,
+) {
+    private var pausedByApp = false
+
+    fun stop() {
+        if (pausedByApp || !wantsToPlay()) return
+        pausedByApp = true
+        pause()
+    }
+
+    fun resume() {
+        if (!pausedByApp) return
+        pausedByApp = false
+        play()
+    }
 }
