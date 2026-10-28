@@ -614,6 +614,14 @@ private fun PlayerContent(
         if (endOfItemSleep) return@LaunchedEffect
         exoPlayer.addMediaItem(androidx.media3.common.MediaItem.Builder().setUri(next.streamUrl).setMediaId(next.ratingKey).build())
     }
+    // Only this screen can take the next song over. Minimized, the song ends as before instead of
+    // the engine playing on under the previous song's title.
+    DisposableEffect(exoPlayer) {
+        onDispose {
+            val index = exoPlayer.currentMediaItemIndex
+            if (exoPlayer.mediaItemCount > index + 1) runCatching { exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount) }
+        }
+    }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controlsVisible, isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem, interactionVersion = controlsGeneration,
