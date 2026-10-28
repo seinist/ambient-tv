@@ -235,11 +235,25 @@ class SettingsBackupRegressionTest {
         assertEquals("1080:60:vp9", target.youtubeVideoPreset)
     }
 
+    @Test fun backBehaviourAndNetworkBufferRoundTripFromSchema73() {
+        val (source, _, exporter) = store()
+        source.playerBackMinimizes = true
+        source.networkBufferKey = "high"
+        val (target, _, importer) = store()
+        importer.importJson(exporter.exportJson())
+        assertTrue(target.playerBackMinimizes)
+        assertEquals("high", target.networkBufferKey)
+        // An older backup has neither field: the chosen values stay.
+        importer.importJson("""{"schemaVersion":72,"exportedAtEpochMs":0}""")
+        assertTrue(target.playerBackMinimizes)
+        assertEquals("high", target.networkBufferKey)
+    }
+
     @Test fun sdrReferenceWhiteRoundTripsAndOlderBackupsUseAuto() {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("72", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("73", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)

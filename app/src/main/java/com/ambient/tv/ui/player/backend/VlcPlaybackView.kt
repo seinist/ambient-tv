@@ -1017,6 +1017,10 @@ class VlcPlaybackController(
             // 1200 ms cache so the first frame is not held behind a larger buffer.
             // Media-level caching overrides LibVLC's default.
             media.addOption(":network-caching=1200")
+        } else if (!com.ambient.tv.livetv.isLiveTimeshiftUrl(playbackUrl) && !url.startsWith("file", ignoreCase = true) &&
+            !url.startsWith("/")) {
+            // Global network buffer; the timeshift loopback keeps its own caching from above.
+            media.addOption(":network-caching=${com.ambient.tv.ui.player.vlcNetworkCachingMs(videoImagePreferences(context).networkBufferKey)}")
         }
         player.media = media
         media.release()

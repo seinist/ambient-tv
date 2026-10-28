@@ -287,6 +287,8 @@ Beide Seiten haben dieselben Einstellungen.
 | Nächstes Video automatisch abspielen | An / Aus | Aus | Alle | Spielt am Ende den ersten Vorschlag. |
 | Angezeigte Bereiche | Start, Abos, Verlauf, Playlists, Shorts, Musik, News, Gaming, Live, Kids | Alle | Alle | Bereiche im Modul. |
 | Maximale Videoauflösung (Media3) | Auto, 720p, 1080p, 1440p, 2160p | Auto | Alle | Qualität und Codec wählst du im Player aus den verfügbaren Spuren. |
+| Verbindung (Media3) | Klassisch (OkHttp) · Play-Dienste (Cronet) · Android (eingebaut) | Klassisch | Alle | Netzwerk-Engine des Media3-Players. Auch im Player unter Video › Stream; ein Wechsel dort öffnet das Video an der aktuellen Stelle neu und bleibt gespeichert. |
+| Puffergröße (Media3) | Klein (30 s) · Mittel (50 s) · Groß (3 min) | Mittel | Alle | Wie im Original-Client; auch im Player unter Video › Stream. |
 | Verknüpfen mit der YouTube-App erlauben | An / Aus | Aus | TV | „Auf dem Fernseher ansehen“: Handys öffnen, pausieren, spulen und stoppen Videos hier. Danach „TV-Code anzeigen“ / „Alle Handys trennen“. |
 
 ### 4.5 Spotify
@@ -392,7 +394,7 @@ Für alle Systeme gemeinsam, am Ende der Seite:
 | Standard-Player | Media3 · VLC · MPV | Media3 | Standard-Player für Plex, Jellyfin, Emby und SmartTube. Ein gespeichertes „Automatisch“ (war immer Media3) gilt als Media3. MPV ist gesperrt, wenn es auf dem Gerät fehlt (dann Media3). TVHeadend hat eine eigene Wahl. |
 | Gespeicherte Wiedergabeeinstellungen | Übersicht | — | Zeigt gespeicherte Audio-/Video-Presets je Titel und je Breite. |
 | Live-TV · Audio und Video nach Breite | Editor | — | Nur-Live-Presets je Quellbreite. |
-| Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. |
+| Automatische Displayumschaltung | Aus · Immer · Bei Start und Ende · Bei Start | Bei Start und Ende | Sichtbar, wenn das Display mehr als einen Modus meldet. Zwischen zwei Titeln (nächste Folge, Autoplay, Playlist, Senderwechsel) geht das Display nicht zurück in den Menü-Modus: Ein gleicher Modus bleibt, ein anderer wird direkt umgeschaltet. |
 | Displaywechsel anzeigen | An / Aus | Aus | Kurze Meldung bei Wechsel von Auflösung oder Bildrate. |
 | Doppelte Bildraten erlauben (24→48, 30→60, 50→100, 60→120 Hz) | An / Aus | An | Nimmt 2×, wenn das Display den Modus anbietet, auch 100 und 120 Hz. 25 fps bleibt bei 50 Hz, wenn 50 und 100 Hz beide vorhanden sind. |
 | 3:2-Pulldown erlauben (24→60 Hz) | An / Aus | An | |
@@ -440,6 +442,8 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 | Beste Version fürs Display | An / Aus | An | Wählt die Version, deren Auflösung zum TV passt. |
 | Hoch/Runter-Sprung | 15, 30, 60, 90, 120 s | 60 s | Sprungtasten und Hoch/Runter während der Wiedergabe. |
 | Anzeigedauer der Player-Steuerung | 3, 5, 8, 15 s | 5 s | Wie lange das OSD ohne Tastendruck sichtbar bleibt (alle Player, auch nach einem Senderwechsel). |
+| Zurück im Player | Wiedergabe stoppen · Minimieren (weiterspielen) | Wiedergabe stoppen | Was Zurück bei ausgeblendetem OSD tut (alle Player). Minimieren wirkt wie der Vollbild-verlassen-Button. |
+| Netzwerk-Puffer | Klein · Mittel · Groß | Mittel | Vorausladen für Media3 (15–30 s / Standard / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB auf Geräten mit wenig RAM; nur außerhalb des Heimnetzes) und VLC (0,8 / 1,2 / 3 s). Live-Timeshift behält eigene Werte; SmartTube hat eine eigene Puffergröße. Gilt ab der nächsten Wiedergabe. |
 
 Live-TV: Nach jedem Senderwechsel erscheint das OSD mit dem neuen Sender; solange es nur deshalb offen ist, schalten Hoch/Runter weiter. Aus Live-TV oder dem Programmführer gestartet, bleibt Sender weiter/zurück in der dort gefilterten und sortierten Liste.
 
@@ -551,7 +555,9 @@ Das Panel öffnet über die Einstellungstaste im Player. Änderungen werden für
 | Sleep-Timer | Aus · 15–90 Min. · Am Ende des aktuellen Titels · nach 5–120 Min. Pause · nach 30–120 Min. ohne Eingabe | Beendet die Wiedergabe; schaltet den TV nicht aus. |
 | Werkzeuge | A-B-Wiederholung · Einzelbild zurück/vor · Lesezeichen · Bildschirmfoto · Songtexte · lückenlos | Video: A-B, Einzelbild, Lesezeichen, Bildschirmfoto. Musik: A-B, Lesezeichen, Songtexte, lückenlos. |
 
-**Werkzeuge:** *A-B-Wiederholung* spielt in jedem Player zwischen zwei Punkten in Schleife. *Einzelbild* pausiert und zeigt das vorige/nächste Bild. *Lesezeichen* werden je Titel gemerkt (bis zu 30); anspringen, einzeln oder alle löschen. *Bildschirmfoto* speichert das Bild als PNG unter Bilder/Ambient TV (nicht bei geschützten Inhalten). *Songtexte* erscheinen über dem Visualizer: synchronisierte folgen dem Lied mit hervorgehobener Zeile, andere laufen mit. Sie kommen aus Plex-Lyric-Streams oder Jellyfin; *Online suchen (LRCLIB)* ist standardmäßig aus und schickt dann Interpret, Titel, Album und Länge an lrclib.net. *Lückenlose Wiedergabe* (Standard an) reiht in Media3 den nächsten Titel ein, wenn beide direkt abgespielt werden; sonst wechseln Titel wie bisher.
+**Werkzeuge:** *A-B-Wiederholung* spielt in jedem Player zwischen zwei Punkten in Schleife. *Einzelbild* pausiert und zeigt das vorige/nächste Bild. *Lesezeichen* werden je Titel gemerkt (bis zu 30); anspringen, einzeln oder alle löschen. *Bildschirmfoto* speichert das Bild als PNG unter Bilder/Ambient TV (nicht bei geschützten Inhalten). *Songtexte* erscheinen über dem Visualizer: synchronisierte folgen dem Lied mit hervorgehobener Zeile, andere laufen mit. Sie kommen aus Plex-Lyric-Streams oder Jellyfin; *Online suchen (LRCLIB)* ist standardmäßig aus und schickt dann Interpret, Titel, Album und Länge an lrclib.net. *Lückenlose Wiedergabe* (Standard an) reiht in Media3 den nächsten Titel ein, wenn beide direkt abgespielt werden; sonst wechseln Titel wie bisher. Lesezeichen erscheinen als helle Striche in der Seekbar, neben den Kapitelmarken.
+
+**Werkzeug-Buttons:** In den Player-Einstellungen (Zahnrad) › OSD-Buttons kann jeder Player die Werkzeuge direkt in der Aktionsleiste zeigen (ab Werk aus, wie Stats für Nerds und FPS): *Bildschirmfoto*, *Lesezeichen* (setzt eins an der aktuellen Stelle), *A-B* (erster Druck A, zweiter B, dritter aus), *Einzelbild* (zurück/vor), *Songtexte* (Musik) und *Werkzeuge* (öffnet das Panel). Ein Button erscheint nur, wo sein Werkzeug passt, nie bei Live-TV. Die OSD-Button-Liste zeigt jeden Button mit seinem Icon.
 
 **Bildaussetzer-Wächter:** Solange Bildbearbeitung läuft (Shader, Filter, SVP, Media3-Effekte, CPU-Deinterlacing), misst jeder Player nach kurzer Anlaufzeit die verworfenen Frames. Über 10 % im Messfenster pausiert die Wiedergabe und fragt: *Einstellungen*, *Reduzieren und weiter* (eine leichtere Stufe für diese Sitzung: SVP, dann Schärfen, Entrauschen, Deblocking, Filmkorn, Debanding, schwerer Upscaler; VLC schaltet zuletzt die Softwarebearbeitung oder einen CPU-Deinterlacer ab) oder *Trotzdem weiterschauen* (für diesen Titel und diese Filter gemerkt). Das Frame-Drop-Overlay im Videopanel zeigt dasselbe Maß als schmalen Balken: voll und grün ohne Aussetzer, halb und rot an der Grenze des Wächters.
 
@@ -599,7 +605,7 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | VLC | Farbbänder glätten · Entrauschen · HQDN3D | Aus · Leicht · Mittel | Aus | Software-Filter. |
 | VLC | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | Software-Filter. |
 | VLC | Bewegungsglättung (SVP) | Aus · Automatisch · Ausgewogen · Hohe Qualität | Aus | Siehe 7.2. |
-| Media3 | Bildverarbeitung | An / Aus | Aus | Bestätigtes SDR; nicht bei HDR, Dolby Vision oder DRM. Einschalten startet den Decoder an der Position neu. |
+| Media3 | Bildverarbeitung | An / Aus | Aus | Bestätigtes SDR (auch H.264 und 8-Bit-HEVC/VP9/AV1 ohne Farbangaben); nicht bei HDR, Dolby Vision oder DRM. Einschalten startet den Decoder an der Position neu. |
 | Media3 | Hochskalierung | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV-Kernel (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Bildverarbeitung an, Hochskalierung. Bei Renderauflösung Panel/Auto rendert die Kette in der physischen HDMI-Auflösung, 1080p auf einem 4K-Panel wird also mit dem gewählten Scaler hochskaliert. MPV-Kernel folgen MPVs Definitionen (Blur, Fenster, Sigmoid-Upscaling); RAVU und NIS sind MPVs Shader, für Media3 übersetzt. Schwere Scaler fallen über 4K30-Ausgabe auf Catmull-Rom zurück. |
 | Media3 | Schärfen | Aus · Leicht · Mittel · Stark · CAS · Adaptiv | Aus | Unscharf-Maske, AMD CAS oder Adaptive Sharpen. NIS schärft selbst. |
 | Media3 | Debanding · Entrauschen · Filmkorn | Aus · Leicht · Mittel · Stark | Aus | Entrauschen läuft auf den Quellpixeln vor dem Debanding; Korn kommt nach dem Schärfen. |

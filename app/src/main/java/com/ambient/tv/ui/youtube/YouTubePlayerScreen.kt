@@ -245,6 +245,8 @@ fun YouTubePlayerScreen(
                 BackgroundPlaybackSession.snapshot.value.metadata?.route == route) }
             var runtimeProfileResolved by remember(route) { mutableStateOf(false) }
             var resumePosition by remember(playback.videoId) { mutableLongStateOf(playback.resumeMs) }
+            // SmartTube's network engine and buffer size; the player panel changes them in place.
+            var streamTuning by remember { mutableStateOf(com.ambient.tv.ui.player.Media3StreamTuning(prefs.youtubeNetworkEngine, prefs.youtubeBufferKey)) }
             // Watch-next may arrive late. Once this session has been handed off or its source
             // manually changed, old server progress must not overwrite its current position.
             var allowLateResume by remember(playback.videoId) { mutableStateOf(
@@ -432,8 +434,16 @@ fun YouTubePlayerScreen(
                     } else YouTubeMedia3Playback(
                     media3, resumePosition, rendererKey, prefs.bigSeekJumpSeconds, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight,
                     prefs.mediaAudioPassthroughEnabled,
-                    com.ambient.tv.ui.player.Media3StreamTuning(prefs.youtubeNetworkEngine, prefs.youtubeBufferKey),
+                    streamTuning,
                     onBack, onCompleted, ::switchRenderer, formatChanged,
+                    // Engine and buffer are fixed per player: reopen at the current position, saved as the default.
+                    onStreamTuning = { tuning, positionMs ->
+                        prefs.youtubeNetworkEngine = tuning.networkEngine
+                        prefs.youtubeBufferKey = tuning.bufferKey
+                        allowLateResume = false
+                        resumePosition = positionMs
+                        streamTuning = tuning
+                    },
                     streams = streamPanel,
                     // Media3 plays a single-language stream (muxed or HLS): VLC/MPV open the chosen language.
                     onStreamAudio = { key, positionMs ->
@@ -613,6 +623,7 @@ private fun YouTubeMedia3Playback(
     onVideoFormatChanged: (Float, Int?, Int?) -> Unit,
     streams: YouTubeStreamPanel? = null,
     onStreamAudio: ((String, Long) -> Unit)? = null,
+    onStreamTuning: ((com.ambient.tv.ui.player.Media3StreamTuning, Long) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     var controls by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
@@ -648,8 +659,8 @@ private fun YouTubeMedia3Playback(
     val target = remember(presetKey, maxVideoHeight) {
         com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(context, presetKey, maxVideoHeight)
     }
-    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled) {
-        BackgroundPlaybackSession.acquire(context, metadata, "media3", listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled)) {
+    val player = remember(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning) {
+        BackgroundPlaybackSession.acquire(context, metadata, "media3", listOf(playback.uri, playback.headers, startPositionMs, audioPassthroughEnabled, streamTuning)) {
             val appContext = context.applicationContext
             // In the release gate like every player: after MPV/VLC, YouTube opens its stream only
             // once the previous player closed ("Vorheriger Player wird beendet…" on their side).
@@ -865,12 +876,15 @@ private fun YouTubeMedia3Playback(
     val subtitleChoices = remember(tracks, context) { tracks?.let { ytTrackChoices(context, it, C.TRACK_TYPE_TEXT) }.orEmpty() }
     val vf = player.videoFormat
     val af = player.audioFormat
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
@@ -1038,7 +1052,7 @@ private fun YouTubeMedia3Playback(
                         formatNerdBitrate(nerdStats.bandwidthEstimateBitsPerSecond)?.let { add(stringResource(R.string.player_nerd_network_throughput) to it) }
                     },
                     audioSession = com.ambient.tv.ui.player.Media3AudioProcessing.session(player),
-                    hasVideoExtras = videoChoices.isNotEmpty(),
+                    hasVideoExtras = videoChoices.isNotEmpty() || onStreamTuning != null,
                     videoExtras = {
                         if (videoChoices.isNotEmpty()) com.ambient.tv.ui.common.RightPanelSectionTitle(stringResource(R.string.settings_advanced_title))
                         if (videoChoices.isNotEmpty()) PlayerDropUpSelector(
@@ -1047,6 +1061,7 @@ private fun YouTubeMedia3Playback(
                             listOf("auto" to stringResource(R.string.player_automatic)) + videoChoices.map { it.key to it.label },
                             videoChoices.firstOrNull { it.group.isTrackSelected(it.index) }?.key ?: "auto",
                         ) { key -> applyTrackChoice(player, videoChoices, key, C.TRACK_TYPE_VIDEO) }
+                        onStreamTuning?.let { change -> YouTubeStreamTuningControls(streamTuning) { change(it, player.currentPosition) } }
                     },
                 ),
                 panelNavigation = panelNavigation,
@@ -1171,12 +1186,15 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controls, snapshot.isPlaying, panelOpen, changingItem,
     ) { controls = it }
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
@@ -1429,12 +1447,15 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controls, snapshot.isPlaying, panelOpen, changingItem,
     ) { controls = it }
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
@@ -1665,6 +1686,7 @@ private data class YouTubeOsdModel(
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                         PlayerSleepTimerButton({ navigation?.open(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
                         com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
+                        com.ambient.tv.ui.common.PlayerToolButtons()
                         PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { navigation?.open(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)
                     },
                 )
@@ -1864,4 +1886,40 @@ private fun youtubeFamilyMimeType(family: String): String? = when (family) {
     "vp9" -> androidx.media3.common.MimeTypes.VIDEO_VP9
     "av1" -> androidx.media3.common.MimeTypes.VIDEO_AV1
     else -> null
+}
+
+/** SmartTube's player options "Network engine" and "Buffer size", as in its own player settings. */
+@Composable
+private fun YouTubeStreamTuningControls(
+    tuning: com.ambient.tv.ui.player.Media3StreamTuning,
+    onChange: (com.ambient.tv.ui.player.Media3StreamTuning) -> Unit,
+) {
+    val engines = com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES.map { engine ->
+        engine to stringResource(when (engine) {
+            com.ambient.tv.ui.player.MEDIA3_NETWORK_CRONET -> R.string.settings_youtube_network_engine_play
+            com.ambient.tv.ui.player.MEDIA3_NETWORK_DEFAULT -> R.string.settings_youtube_network_engine_default
+            else -> R.string.settings_youtube_network_engine_classic
+        })
+    }
+    val buffers = com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS.map { key ->
+        key to stringResource(when (key) {
+            "low" -> R.string.settings_youtube_buffer_low
+            "high" -> R.string.settings_youtube_buffer_high
+            else -> R.string.settings_youtube_buffer_medium
+        })
+    }
+    com.ambient.tv.ui.common.RightPanelSectionTitle(stringResource(R.string.player_youtube_stream))
+    PlayerDropUpSelector(
+        stringResource(R.string.settings_youtube_network_engine),
+        engines.firstOrNull { it.first == tuning.networkEngine }?.second ?: engines.first().second,
+        engines,
+        tuning.networkEngine,
+    ) { key -> if (key != tuning.networkEngine) onChange(tuning.copy(networkEngine = key)) }
+    PlayerDropUpSelector(
+        stringResource(R.string.settings_youtube_buffer),
+        buffers.firstOrNull { it.first == tuning.bufferKey }?.second ?: buffers[1].second,
+        buffers,
+        tuning.bufferKey,
+    ) { key -> if (key != tuning.bufferKey) onChange(tuning.copy(bufferKey = key)) }
+    Text(stringResource(R.string.player_youtube_stream_hint), style = MaterialTheme.typography.bodySmall)
 }

@@ -23,8 +23,21 @@ class Media3ImageProcessingPolicyTest {
 
     @Test fun missingTrackWaitsForMetadata() { assertFalse(media3ImageEffectsAllowed(null)) }
 
+    @Test fun unsignalledColorIsSdrOnlyForProfilesWithoutHdr() {
+        assertTrue(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()))
+        assertTrue(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265).setCodecs("hvc1.1.6.L120.90").build()))
+        assertFalse(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265).setCodecs("hvc1.2.4.L153.B0").build()))
+        assertFalse(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265).build()))
+        assertTrue(media3UnsignalledIsSdr(MimeTypes.VIDEO_AV1, "av01.0.08M.08"))
+        assertFalse(media3UnsignalledIsSdr(MimeTypes.VIDEO_AV1, "av01.0.08M.10"))
+        assertTrue(media3UnsignalledIsSdr(MimeTypes.VIDEO_VP9, "vp09.00.41.08"))
+        assertFalse(media3UnsignalledIsSdr(MimeTypes.VIDEO_VP9, "vp09.02.41.10"))
+        // Signalled HDR is never overridden by the codec.
+        assertFalse(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264)
+            .setColorInfo(ColorInfo.Builder().setColorTransfer(C.COLOR_TRANSFER_HLG).build()).build()))
+    }
+
     @Test fun onlyExplicitSdrColorIsAccepted() {
-        assertFalse(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H264).build()))
         assertTrue(media3ImageEffectsAllowed(Format.Builder().setSampleMimeType(MimeTypes.VIDEO_H265)
             .setColorInfo(ColorInfo.Builder().setColorTransfer(C.COLOR_TRANSFER_SDR).build()).build()))
     }

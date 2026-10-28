@@ -374,8 +374,9 @@ private fun PlayerContent(
     // INTENTIONAL: remote Back with OSD hidden stops playback.
     // PlayerExitButton ("Minimize (keep playing)") pops and keeps background playback —
     // do not unify these behaviors; Stop remains the explicit stop control in the OSD.
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        if (backLeavesPlaybackRunning(audioOnlyHint, handheldUi)) onBack() else BackgroundPlaybackSession.stop()
+        if (backLeavesPlaybackRunning(audioOnlyHint, handheldUi, backMinimizes())) onBack() else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.
@@ -1099,6 +1100,7 @@ internal fun TvPlayerSeekBar(
         if (feedbackPreview) { kotlinx.coroutines.delay(1_100); feedbackPreview = false }
     }
     val stowing = com.ambient.tv.ui.player.LocalPlayerOsdStow.current?.closing == true
+    val bookmarks = rememberPlayingBookmarks()
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
@@ -1241,6 +1243,10 @@ internal fun TvPlayerSeekBar(
                         }
                     }
                 }
+            }
+            // Outside the offscreen layer: the ticks reach a little above and below the track.
+            if (bookmarks.isNotEmpty()) androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+                drawBookmarkTicks(bookmarks, durationMs, 0f, size.height)
             }
             if (highlighted && durationMs > 0) {
                 Box(

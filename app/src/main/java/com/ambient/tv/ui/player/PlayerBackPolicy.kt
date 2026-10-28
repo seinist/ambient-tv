@@ -9,6 +9,18 @@ package com.ambient.tv.ui.player
  *
  * A handheld keeps the phone convention for audio: leaving the screen is how music goes on
  * playing there, and that platform has no exit-fullscreen chip to do it instead.
+ *
+ * [minimizeOnBack] is the viewer's own choice (Settings › Playback): Back then minimizes everything.
  */
-internal fun backLeavesPlaybackRunning(audioOnly: Boolean, handheld: Boolean): Boolean =
-    audioOnly && handheld
+internal fun backLeavesPlaybackRunning(audioOnly: Boolean, handheld: Boolean, minimizeOnBack: Boolean = false): Boolean =
+    minimizeOnBack || audioOnly && handheld
+
+/**
+ * Settings › Playback "Back in the player": read when Back is pressed, so a change applies to
+ * a player that is already open. Minimizing is what the exit-fullscreen button does.
+ */
+@androidx.compose.runtime.Composable
+internal fun rememberBackMinimizesPlayback(): () -> Boolean {
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    return androidx.compose.runtime.remember(context) { { videoImagePreferences(context).playerBackMinimizes } }
+}

@@ -527,8 +527,10 @@ internal class MpvPlaybackEngine(
         // throughput dip waits on a cold HTTP range.
         if (networkCacheEnabled) {
             setOption("cache", "yes")
-            setOption("demuxer-max-bytes", "64MiB")
-            setOption("demuxer-readahead-secs", "20")
+            val cache = com.ambient.tv.ui.player.mpvNetworkCache(videoImagePreferences(context).networkBufferKey,
+                com.ambient.tv.ui.player.lowRamDevice(context))
+            setOption("demuxer-max-bytes", cache.maxBytes)
+            setOption("demuxer-readahead-secs", cache.readaheadSecs.toString())
             com.ambient.tv.ui.player.mpvTimeshiftCacheOptions(com.ambient.tv.livetv.isLiveTimeshiftUrl(url))
                 .forEach { (name, value) -> setOption(name, value) }
         } else {

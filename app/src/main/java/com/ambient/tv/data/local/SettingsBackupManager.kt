@@ -257,6 +257,10 @@ data class SettingsBackup(
     val liveDirectRecordEnabled: Boolean = false,
     val liveTvReminderLeadMinutes: Int = 2,
     val playerOsdSeconds: Int = 5,
+    /** Since schema 73. */
+    val playerBackMinimizes: Boolean = false,
+    /** Since schema 73. */
+    val networkBufferKey: String = "medium",
 )
 
 @Serializable
@@ -543,6 +547,8 @@ class SettingsBackupManager @Inject constructor(
             liveDirectRecordEnabled = preferences.liveDirectRecordEnabled,
             liveTvReminderLeadMinutes = context?.let { com.ambient.tv.livetv.LiveTvReminderScheduler.leadMinutes(it) } ?: 2,
             playerOsdSeconds = preferences.playerOsdSeconds,
+            playerBackMinimizes = preferences.playerBackMinimizes,
+            networkBufferKey = preferences.networkBufferKey,
         )
         return json.encodeToString(backup)
     }
@@ -929,6 +935,10 @@ class SettingsBackupManager @Inject constructor(
         if (backup.wireGuardPresharedKey != null) tokenStore.wireGuardPresharedKey = backup.wireGuardPresharedKey
         else if (wireGuardProfileChanged) tokenStore.wireGuardPresharedKey = null
         if (backup.schemaVersion >= 60) preferences.playerOsdSeconds = backup.playerOsdSeconds
+        if (backup.schemaVersion >= 73) {
+            preferences.playerBackMinimizes = backup.playerBackMinimizes
+            preferences.networkBufferKey = backup.networkBufferKey
+        }
         if (backup.schemaVersion >= 59) {
             preferences.liveTimeshiftEnabled = backup.liveTimeshiftEnabled
             preferences.liveDirectRecordEnabled = backup.liveDirectRecordEnabled
@@ -947,7 +957,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 72
+        const val CURRENT_SCHEMA_VERSION = 73
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

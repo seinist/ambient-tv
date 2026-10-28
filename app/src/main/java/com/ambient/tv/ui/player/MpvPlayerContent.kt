@@ -126,8 +126,9 @@ internal fun MpvPlayerContent(
     var seekFeedbackVisible by remember(controller) { mutableStateOf(false) }
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // Back stops; only the exit-fullscreen button keeps playback in the background (TV).
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(isAudioItem, handheldUi)) onBack()
+        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(isAudioItem, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {

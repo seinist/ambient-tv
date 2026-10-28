@@ -224,8 +224,9 @@ internal fun VlcTvheadendPlaybackSurface(
     // Back hides the OSD, then stops - radio included. Only the exit-fullscreen button keeps
     // playing in the background; on a handheld, leaving an audio-only screen still does.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(snapshot.hasAudio && !snapshot.hasVideo, handheldUi)) onBack()
+        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(snapshot.hasAudio && !snapshot.hasVideo, handheldUi, backMinimizes())) onBack()
         else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {

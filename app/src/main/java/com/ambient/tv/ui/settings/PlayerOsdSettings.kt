@@ -3,6 +3,7 @@ package com.ambient.tv.ui.settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
@@ -19,6 +20,40 @@ internal fun PlayerOsdSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = a
                 text = stringResource(R.string.player_osd_duration_seconds, value),
                 selected = seconds == value,
                 onClick = { seconds = value; viewModel.preferences.playerOsdSeconds = value },
+            )
+        })
+    }
+}
+
+/** Settings › Playback: what remote Back does once the OSD is hidden; applies right away. */
+@Composable
+internal fun PlayerBackSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
+    var minimize by remember { mutableStateOf(viewModel.preferences.playerBackMinimizes) }
+    SettingsGroup(title = stringResource(R.string.player_back_title), subtitle = stringResource(R.string.player_back_hint)) {
+        SettingsSelect(options = listOf(false to R.string.player_back_stop, true to R.string.player_back_minimize).map { (value, label) ->
+            SettingsSelectOption(
+                text = stringResource(label),
+                selected = minimize == value,
+                onClick = { minimize = value; viewModel.preferences.playerBackMinimizes = value },
+            )
+        })
+    }
+}
+
+/** Settings › Playback: network buffer for Media3, MPV and VLC; applies to the next playback. */
+@Composable
+internal fun NetworkBufferSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
+    var key by remember { mutableStateOf(viewModel.preferences.networkBufferKey) }
+    SettingsGroup(title = stringResource(R.string.settings_network_buffer), subtitle = stringResource(R.string.settings_network_buffer_hint)) {
+        SettingsSelect(options = com.ambient.tv.ui.player.NETWORK_BUFFER_KEYS.map { value ->
+            SettingsSelectOption(
+                text = stringResource(when (value) {
+                    "low" -> R.string.settings_network_buffer_low
+                    "high" -> R.string.settings_network_buffer_high
+                    else -> R.string.settings_network_buffer_medium
+                }),
+                selected = key == value,
+                onClick = { key = value; viewModel.preferences.networkBufferKey = value },
             )
         })
     }

@@ -287,6 +287,8 @@ Both pages have the same controls.
 | Automatically play next video | On / Off | Off | All | Plays the first suggestion when a video ends. |
 | Visible sections | Home, Subscriptions, History, Playlists, Shorts, Music, News, Gaming, Live, Kids | All | All | Sections shown in the module. |
 | Maximum video resolution (Media3) | Auto, 720p, 1080p, 1440p, 2160p | Auto | All | Quality and codec are chosen in the player from the available tracks. |
+| Connection (Media3) | Classic (OkHttp) · Play services (Cronet) · Android (built-in) | Classic | All | Network engine of the Media3 player. Also in the player: Video › Stream; a change there reopens the video at the current position and is kept. |
+| Buffer size (Media3) | Small (30 s) · Medium (50 s) · Large (3 min) | Medium | All | Like the original client; also under Video › Stream in the player. |
 | Allow linking with the YouTube app | On / Off | Off | TV | "Watch on TV": phones open, pause, seek and stop videos here. Then "Show TV code" / "Unlink all phones". |
 
 ### 4.5 Spotify
@@ -392,7 +394,7 @@ For all systems together, at the end of the page:
 | Default player | Media3 · VLC · MPV | Media3 | Default player for Plex, Jellyfin, Emby and SmartTube. A stored "Automatic" (always Media3) reads as Media3. MPV is disabled when unavailable on the device (Media3 is then used). TVHeadend has its own choice. |
 | Saved playback settings | Overview | — | Shows saved per-title and per-width audio/video presets. |
 | Live TV · Audio and video by width | Editor | — | Live-only presets per source width. |
-| Automatic display switching | Off · Always · On start / stop · On start | On start / stop | Shown when the display reports more than one mode. |
+| Automatic display switching | Off · Always · On start / stop · On start | On start / stop | Shown when the display reports more than one mode. Between two items (next episode, autoplay, playlist, channel change) the display does not return to the menu mode: an equal mode stays, a different one switches directly. |
 | Show display changes | On / Off | Off | Short notice on resolution or refresh-rate change. |
 | Allow double refresh rates (24→48, 30→60, 50→100, 60→120 Hz) | On / Off | On | Uses 2× when the display lists that mode, including 100 and 120 Hz. 25 fps stays at 50 Hz when both 50 and 100 Hz exist. |
 | Allow 3:2 pulldown (24→60 Hz) | On / Off | On | |
@@ -440,6 +442,8 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 | Best version for this display | On / Off | On | Picks the version whose resolution fits the TV. |
 | Up/Down seek jump | 15, 30, 60, 90, 120 s | 60 s | Seek buttons and Up/Down during playback. |
 | Player controls display time | 3, 5, 8, 15 s | 5 s | How long the OSD stays without a key press (all players, also after a channel change). |
+| Back in the player | Stop playback · Minimize (keep playing) | Stop playback | What Back does once the OSD is hidden (all players). Minimize works like the exit-fullscreen button. |
+| Network buffer | Small · Medium · Large | Medium | Read-ahead for Media3 (15–30 s / default / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB on low-RAM devices; only outside the home network) and VLC (0.8 / 1.2 / 3 s). Live timeshift keeps its own values; SmartTube has its own buffer size. Applies to the next playback. |
 
 Live TV: every channel change shows the OSD with the new channel; while it is only open for that, Up/Down keep changing channels. Started from Live TV or the guide, next/previous channel stays within that view's filtered, sorted list.
 
@@ -551,7 +555,9 @@ The panel opens from the player's settings button. Changes are remembered for th
 | Sleep timer | Off · 15–90 min · At the end of this item · after 5–120 min paused · after 30–120 min without input | Stops playback; does not turn off the TV. |
 | Tools | A-B repeat · frame step back/forward · bookmarks · screenshot · lyrics · gapless | Video: A-B, frame step, bookmarks, screenshot. Music: A-B, bookmarks, lyrics, gapless. |
 
-**Tools:** *A-B repeat* loops between two points for every engine. *Frame step* pauses and shows the previous/next frame. *Bookmarks* are kept per title (up to 30); jump to one or delete one or all. *Screenshot* saves the picture on screen as PNG under Pictures/Ambient TV (not for protected content). *Lyrics* show over the visualizer: timed lyrics follow the song with the sung line highlighted, untimed ones scroll along. They come from Plex lyric streams or Jellyfin; *Search online (LRCLIB)* is off by default and then sends artist, title, album and length to lrclib.net. *Gapless playback* (default on) queues the next song in Media3 when both songs play directly; otherwise songs change as before.
+**Tools:** *A-B repeat* loops between two points for every engine. *Frame step* pauses and shows the previous/next frame. *Bookmarks* are kept per title (up to 30); jump to one or delete one or all. *Screenshot* saves the picture on screen as PNG under Pictures/Ambient TV (not for protected content). *Lyrics* show over the visualizer: timed lyrics follow the song with the sung line highlighted, untimed ones scroll along. They come from Plex lyric streams or Jellyfin; *Search online (LRCLIB)* is off by default and then sends artist, title, album and length to lrclib.net. *Gapless playback* (default on) queues the next song in Media3 when both songs play directly; otherwise songs change as before. Bookmarks show as light ticks in the seek bar, next to the chapter marks.
+
+**Tool buttons:** In the player settings (gear) › OSD buttons each player can show the tools directly in the action bar (off by default, like Stats for Nerds and FPS): *Screenshot*, *Bookmark* (sets one at the current position), *A-B* (first press A, second B, third off), *Frame step* (back/forward), *Lyrics* (music) and *Tools* (opens the panel). A button only appears where its tool applies, never for live TV. The OSD button list shows each button with its icon.
 
 **Frame drop watchdog:** While picture processing runs (shaders, filters, SVP, Media3 effects, CPU deinterlacing), every engine measures dropped frames after a short warm-up. Above 10% in the test window, playback pauses and asks: *Settings*, *Reduce and continue* (one lighter step for this session: SVP, then sharpening, denoise, deblock, grain, deband, heavy scaler; VLC finally drops software processing or a CPU deinterlacer) or *Keep watching anyway* (remembered for this title and filter set). The frame drop overlay in the video panel shows the same measure as a slim bar: full and green without drops, half and red at the watchdog threshold.
 
@@ -599,7 +605,7 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | VLC | Smooth color bands · Denoise · HQDN3D | Off · Light · Medium | Off | Software filters. |
 | VLC | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | Software filters. |
 | VLC | Motion smoothing (SVP) | Off · Automatic · Balanced · High quality | Off | See 7.2. |
-| Media3 | Image processing | On / Off | Off | Confirmed SDR; not HDR, Dolby Vision or DRM. Turning on restarts the decoder at the position. |
+| Media3 | Image processing | On / Off | Off | Confirmed SDR (also H.264 and 8-bit HEVC/VP9/AV1 without colour info); not HDR, Dolby Vision or DRM. Turning on restarts the decoder at the position. |
 | Media3 | Upscaling | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV kernels (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Image processing on, upscaling. With render resolution Panel/Auto the chain renders at the physical HDMI resolution, so 1080p on a 4K panel is upscaled by the chosen scaler. MPV kernels follow MPV's definitions (blur, windows, sigmoid upscaling); RAVU and NIS are MPV's shaders translated for Media3. Heavy scalers above 4K30 output fall back to Catmull-Rom. |
 | Media3 | Sharpening | Off · Light · Medium · Strong · CAS · Adaptive | Off | Unsharp mask, AMD CAS or Adaptive Sharpen. NIS brings its own sharpening. |
 | Media3 | Deband · Denoise · Film grain | Off · Light · Medium · Strong | Off | Denoise runs on the source pixels before deband; grain is added after sharpening. |

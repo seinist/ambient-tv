@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import com.ambient.tv.ui.common.projectm.LocalProjectMBrowser
 import com.ambient.tv.ui.common.projectm.ProjectMPresetPanel
@@ -625,7 +624,7 @@ fun UnifiedBackendPlayerPanel(
             player.offeredButtons().forEach { button ->
                 val visible = com.ambient.tv.ui.player.osdButtonVisible(button, player)
                 PlayerPanelEntry(
-                    icon = if (visible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                    icon = button.icon,
                     title = stringResource(button.label),
                     value = stringResource(if (visible) R.string.player_on else R.string.player_off),
                     onClick = { com.ambient.tv.ui.player.setOsdButtonVisible(videoImagePreferences(context), player, button, !visible) },
