@@ -77,6 +77,8 @@ interface MediaRepository {
     suspend fun getThemeMusic(ratingKey: String): Result<ThemeMusic?> = Result.success(null)
     suspend fun getNextEpisode(ratingKey: String): Result<MediaItem?>
     suspend fun getNextTrack(ratingKey: String): Result<MediaItem?>
+    /** The song's lyrics as the server has them; null when it has none or cannot tell. */
+    suspend fun getLyrics(ratingKey: String): Result<com.ambient.tv.data.lyrics.Lyrics?> = Result.success(null)
     suspend fun getNextUnwatchedEpisode(ratingKey: String): Result<MediaItem?>
     suspend fun search(sectionKeys: List<String>, query: String): Result<List<MediaItem>>
     suspend fun getItemsByActor(actorId: String): Result<List<MediaItem>>

@@ -304,6 +304,7 @@ internal fun MpvPlayerContent(
                 NativeProjectMVisualizer(projectMBrowser, 2, controlsVisible, Modifier.fillMaxSize())
             }
         }
+        if (audioOnlyContent) PlayerLyricsOverlay(state.lyricsRequest())
         PlayerBufferingSpinner(
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),

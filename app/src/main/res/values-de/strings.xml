@@ -2050,4 +2050,9 @@
     <string name="night_schedule_end">Bis</string>
     <string name="night_schedule_dialogue">Dialoganhebung nachts</string>
     <string name="night_schedule_dialogue_off">Aus</string>
+    <string name="player_tools_lyrics">Songtexte</string>
+    <string name="player_tools_lyrics_show">Songtext anzeigen</string>
+    <string name="player_tools_lyrics_online">Online suchen (LRCLIB)</string>
+    <string name="player_tools_lyrics_online_hint">Songtexte kommen vom Server (Plex, Jellyfin). Die Online-Suche schickt Interpret, Titel, Album und Länge an lrclib.net, wenn der Server keinen hat.</string>
+    <string name="player_tools_summary_audio">A-B-Wiederholung, Lesezeichen, Songtexte</string>
 </resources>

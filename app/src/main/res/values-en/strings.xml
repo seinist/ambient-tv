@@ -2165,4 +2165,9 @@
     <string name="night_schedule_end">Until</string>
     <string name="night_schedule_dialogue">Dialogue boost at night</string>
     <string name="night_schedule_dialogue_off">Off</string>
+    <string name="player_tools_lyrics">Lyrics</string>
+    <string name="player_tools_lyrics_show">Show lyrics</string>
+    <string name="player_tools_lyrics_online">Search online (LRCLIB)</string>
+    <string name="player_tools_lyrics_online_hint">Lyrics come from the server (Plex, Jellyfin). Online search sends artist, title, album and length to lrclib.net when the server has none.</string>
+    <string name="player_tools_summary_audio">A-B repeat, bookmarks, lyrics</string>
 </resources>

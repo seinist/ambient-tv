@@ -50,6 +50,10 @@ interface PlexApiService {
     ): MetadataResponse
 
     /** Local extras of a title (trailers, featurettes) stored next to the media. */
+    /** A stream's own file (lyrics); [format] `xml` asks for Plex's timed lyric lines. */
+    @GET("library/streams/{id}")
+    suspend fun getStreamFile(@Path("id") streamId: Long, @Query("format") format: String? = null): okhttp3.ResponseBody
+
     @GET("library/metadata/{id}/extras")
     suspend fun getExtras(@Path("id") ratingKey: String): MetadataResponse
 

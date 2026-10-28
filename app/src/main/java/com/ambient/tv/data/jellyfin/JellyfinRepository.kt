@@ -353,6 +353,9 @@ class JellyfinRepository @Inject constructor(
         }
     }
 
+    override suspend fun getLyrics(ratingKey: String): Result<com.ambient.tv.data.lyrics.Lyrics?> =
+        suspendResult { com.ambient.tv.data.lyrics.jellyfinLyrics(api.getLyrics(raw(ratingKey))) }
+
     override suspend fun getNextEpisode(ratingKey: String): Result<MediaItem?> = nextSibling(ratingKey, "episode")
     override suspend fun getNextTrack(ratingKey: String): Result<MediaItem?> = nextSibling(ratingKey, "track")
 

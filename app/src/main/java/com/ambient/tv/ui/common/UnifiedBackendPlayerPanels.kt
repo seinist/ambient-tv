@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkAdd
@@ -176,11 +178,15 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.SUBTITLES) },
                 )
             }
-            if (hasVideo) {
+            if (hasVideo || !isLive) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Build,
                     title = stringResource(R.string.player_tools),
-                    value = stringResource(if (com.ambient.tv.ui.player.AbRepeat.active) R.string.player_tools_ab_on else R.string.player_tools_summary),
+                    value = stringResource(when {
+                        com.ambient.tv.ui.player.AbRepeat.active -> R.string.player_tools_ab_on
+                        hasVideo -> R.string.player_tools_summary
+                        else -> R.string.player_tools_summary_audio
+                    }),
                     onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
@@ -494,14 +500,14 @@ fun UnifiedBackendPlayerPanel(
                     value = "",
                     onClick = { ab.clear() },
                 )
-                RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
-                PlayerPanelEntry(
+                if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
+                if (hasVideo) PlayerPanelEntry(
                     icon = Icons.Filled.ChevronLeft,
                     title = stringResource(R.string.player_tools_frame_back),
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = false) },
                 )
-                PlayerPanelEntry(
+                if (hasVideo) PlayerPanelEntry(
                     icon = Icons.Filled.ChevronRight,
                     title = stringResource(R.string.player_tools_frame_forward),
                     value = "",
@@ -543,8 +549,28 @@ fun UnifiedBackendPlayerPanel(
                     )
                 }
             }
-            RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
-            PlayerPanelEntry(
+            if (!hasVideo && !isLive) {
+                val revision = com.ambient.tv.ui.player.LyricsSettings.revision
+                val preferences = androidx.compose.runtime.remember { com.ambient.tv.ui.player.videoImagePreferences(context) }
+                val showLyrics = androidx.compose.runtime.remember(revision.intValue) { preferences.lyricsVisible }
+                val lyricsOnline = androidx.compose.runtime.remember(revision.intValue) { preferences.lyricsOnlineEnabled }
+                RightPanelSectionTitle(stringResource(R.string.player_tools_lyrics))
+                PlayerPanelEntry(
+                    icon = Icons.AutoMirrored.Filled.Subject,
+                    title = stringResource(R.string.player_tools_lyrics_show),
+                    value = stringResource(if (showLyrics) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.lyricsVisible = !showLyrics; revision.intValue++ },
+                )
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Public,
+                    title = stringResource(R.string.player_tools_lyrics_online),
+                    value = stringResource(if (lyricsOnline) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.lyricsOnlineEnabled = !lyricsOnline; revision.intValue++ },
+                )
+                Text(stringResource(R.string.player_tools_lyrics_online_hint), style = MaterialTheme.typography.bodySmall)
+            }
+            if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
+            if (hasVideo) PlayerPanelEntry(
                 icon = Icons.Filled.PhotoCamera,
                 title = stringResource(R.string.player_tools_screenshot_save),
                 value = stringResource(R.string.player_tools_screenshot_where),
