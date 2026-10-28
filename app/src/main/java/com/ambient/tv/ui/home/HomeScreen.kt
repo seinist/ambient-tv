@@ -251,10 +251,8 @@ fun HomeScreen(
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-        // The actions and clock stay put while loading and loaded, floating on the hero's title
-        // line: the hero starts at the screen top like the app home's.
-        if (systemOverview) {
+        val handheldHeader = LocalHandheldUi.current
+        val overviewHeader: @Composable (Modifier) -> Unit = { headerModifier ->
             SystemOverviewHeader(
                 system = when {
                     jellyfinOnly -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
@@ -267,9 +265,15 @@ fun HomeScreen(
                 },
                 onOpenOptions = { showOverviewOptions = true },
                 optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
-                modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
+                modifier = headerModifier,
             )
         }
+        // Handheld has no tall hero to float on: the header keeps its own line above the content.
+        if (systemOverview && handheldHeader) overviewHeader(Modifier)
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        // TV: the actions and clock stay put while loading and loaded, floating on the hero's
+        // title line: the hero starts at the screen top like the app home's.
+        if (systemOverview && !handheldHeader) overviewHeader(Modifier.align(Alignment.TopCenter).zIndex(2f))
             when (val state = uiState) {
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
                 // Connection progress is presented by the global, non-focusable notification host.
