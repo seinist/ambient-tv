@@ -2170,4 +2170,10 @@
     <string name="player_tools_lyrics_online">Search online (LRCLIB)</string>
     <string name="player_tools_lyrics_online_hint">Lyrics come from the server (Plex, Jellyfin). Online search sends artist, title, album and length to lrclib.net when the server has none.</string>
     <string name="player_tools_summary_audio">A-B repeat, bookmarks, lyrics</string>
+    <string name="subtitle_sync_auto">Sync automatically</string>
+    <string name="subtitle_sync_auto_value">to the server subtitle</string>
+    <string name="subtitle_sync_running">Syncing…</string>
+    <string name="subtitle_sync_done">Subtitle synced (%1$s)</string>
+    <string name="subtitle_sync_already">Subtitle is already in sync</string>
+    <string name="subtitle_sync_failed">Could not sync the subtitle automatically</string>
 </resources>

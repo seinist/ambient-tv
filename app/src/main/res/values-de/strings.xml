@@ -2055,4 +2055,10 @@
     <string name="player_tools_lyrics_online">Online suchen (LRCLIB)</string>
     <string name="player_tools_lyrics_online_hint">Songtexte kommen vom Server (Plex, Jellyfin). Die Online-Suche schickt Interpret, Titel, Album und Länge an lrclib.net, wenn der Server keinen hat.</string>
     <string name="player_tools_summary_audio">A-B-Wiederholung, Lesezeichen, Songtexte</string>
+    <string name="subtitle_sync_auto">Automatisch synchronisieren</string>
+    <string name="subtitle_sync_auto_value">an Server-Untertitel</string>
+    <string name="subtitle_sync_running">Synchronisiere…</string>
+    <string name="subtitle_sync_done">Untertitel synchronisiert (%1$s)</string>
+    <string name="subtitle_sync_already">Untertitel ist bereits synchron</string>
+    <string name="subtitle_sync_failed">Untertitel ließ sich nicht automatisch synchronisieren</string>
 </resources>

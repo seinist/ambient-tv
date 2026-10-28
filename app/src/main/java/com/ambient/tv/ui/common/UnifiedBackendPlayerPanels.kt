@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.filled.Bedtime
@@ -453,6 +454,19 @@ fun UnifiedBackendPlayerPanel(
             // OpenSubtitles.com, when a key is set and the title can be searched (movies/episodes, direct play).
             val searchInfo = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.subtitleSearch
             com.ambient.tv.ui.player.OnlineSubtitleSearchButton(searchInfo, onLoaded = back)
+            // A loaded subtitle file can be timed against a subtitle the server has for the title.
+            val playbackMetadata = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata
+            val syncTarget = com.ambient.tv.ui.player.SubtitleAutoSync.target(playbackMetadata)
+            if (syncTarget != null && com.ambient.tv.ui.player.SubtitleAutoSync.references(playbackMetadata, syncTarget).isNotEmpty()) {
+                val syncScope = androidx.compose.runtime.rememberCoroutineScope()
+                val syncing = com.ambient.tv.ui.player.SubtitleAutoSync.running
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Sync,
+                    title = stringResource(R.string.subtitle_sync_auto),
+                    value = stringResource(if (syncing) R.string.subtitle_sync_running else R.string.subtitle_sync_auto_value),
+                    onClick = { if (!syncing) syncScope.launch { com.ambient.tv.ui.player.SubtitleAutoSync.run() } },
+                )
+            }
             // MPV and VLC only; Media3 has no subtitle timing control.
             (com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.SubtitleDelayTarget)?.let { target ->
                 PlayerDropUpSelector(

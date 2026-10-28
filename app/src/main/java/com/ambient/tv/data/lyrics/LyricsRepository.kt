@@ -65,7 +65,7 @@ class LyricsRepository @Inject constructor(
         val call = Request.Builder().url(url).header("User-Agent", "AmbientTV/${BuildConfig.VERSION_NAME}").build()
         http.newCall(call).execute().use { response ->
             if (!response.isSuccessful) return@withContext null
-            val body = json.parseToJsonElement(response.body?.string().orEmpty()) as? JsonObject ?: return@withContext null
+            val body = json.parseToJsonElement(response.body.string()) as? JsonObject ?: return@withContext null
             lrclibLyrics(body)
         }
     }

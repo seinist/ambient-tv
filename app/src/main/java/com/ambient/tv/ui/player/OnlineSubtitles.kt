@@ -57,8 +57,8 @@ import kotlinx.coroutines.withContext
 object OnlineSubtitleTracks {
     private val byRoute = java.util.concurrent.ConcurrentHashMap<String, List<MediaTrack>>()
     fun forRoute(route: String): List<MediaTrack> = byRoute[route].orEmpty()
-    fun add(route: String, track: MediaTrack) {
-        byRoute.compute(route) { _, old -> (old.orEmpty().filterNot { it.externalUrl == track.externalUrl } + track).takeLast(8) }
+    fun add(route: String, track: MediaTrack, replacesUrl: String? = null) {
+        byRoute.compute(route) { _, old -> (old.orEmpty().filterNot { it.externalUrl == track.externalUrl || it.externalUrl == replacesUrl } + track).takeLast(8) }
         while (byRoute.size > 20) byRoute.keys.firstOrNull()?.let(byRoute::remove)
     }
 }
@@ -219,15 +219,25 @@ class OnlineSubtitlesViewModel @Inject constructor(
             languageCode = language, title = "OpenSubtitles · " + subtitle.release.take(60), channels = null,
             selected = true, forced = subtitle.forced, externalUrl = android.net.Uri.fromFile(file).toString(),
         )
-        OnlineSubtitleTracks.add(metadata.route, track.copy(selected = false))
-        BackgroundPlaybackSession.updateMetadata(metadata.copy(subtitleTracks = metadata.subtitleTracks.filterNot { it.externalUrl == track.externalUrl } + track))
-        BackgroundPlaybackSession.manualSubtitleSelection()
-        when (val handle = BackgroundPlaybackSession.activeHandle()) {
-            is MpvPlaybackController -> handle.selectExternalSubtitle(track)
-            is VlcPlaybackController -> handle.selectExternalSubtitle(track)
-            is Media3PlaybackHandle -> handle.addExternalSubtitle(track)
-            else -> error("No player")
-        }
+        loadExternalSubtitle(metadata, track)
+    }
+}
+
+/**
+ * Adds [track] (a local subtitle file) to the running playback and selects it; [replacesUrl]
+ * drops the track it supersedes from the list. Main thread.
+ */
+internal fun loadExternalSubtitle(metadata: PlaybackMetadata, track: MediaTrack, replacesUrl: String? = null) {
+    OnlineSubtitleTracks.add(metadata.route, track.copy(selected = false), replacesUrl)
+    BackgroundPlaybackSession.updateMetadata(metadata.copy(
+        subtitleTracks = metadata.subtitleTracks.filterNot { it.externalUrl == track.externalUrl || it.externalUrl == replacesUrl } + track,
+    ))
+    BackgroundPlaybackSession.manualSubtitleSelection()
+    when (val handle = BackgroundPlaybackSession.activeHandle()) {
+        is MpvPlaybackController -> handle.selectExternalSubtitle(track)
+        is VlcPlaybackController -> handle.selectExternalSubtitle(track)
+        is Media3PlaybackHandle -> handle.addExternalSubtitle(track)
+        else -> error("No player")
     }
 }
 
