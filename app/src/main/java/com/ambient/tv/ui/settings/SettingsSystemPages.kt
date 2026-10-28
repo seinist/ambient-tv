@@ -694,7 +694,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 com.ambient.tv.ui.common.QrCodeDialog(
                                     title = stringResource(R.string.action_sign_in),
                                     hint = stringResource(R.string.youtube_activate),
-                                    payload = com.ambient.tv.youtube.YouTubeSignInLink.qrPayload(),
+                                    payload = com.ambient.tv.youtube.YouTubeSignInLink.qrPayload(code),
                                     code = code,
                                     onDismiss = { dismissedQr = code },
                                     footer = {

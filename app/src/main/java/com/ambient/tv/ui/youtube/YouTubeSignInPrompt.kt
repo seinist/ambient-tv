@@ -62,9 +62,9 @@ fun YouTubeSignInBrowserActions(code: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TvActionButton(stringResource(R.string.youtube_sign_in_open_browser), icon = Icons.AutoMirrored.Filled.OpenInNew, onClick = {
-            // The short activation address asks for the code; keep it ready to paste.
+            // The code is prefilled via user_code; keep it ready to paste in case it is not.
             copySignInCode(context, code, toast = false)
-            if (!openInBrowser(context, YouTubeSignInLink.browserUrl())) {
+            if (!openInBrowser(context, YouTubeSignInLink.browserUrl(code))) {
                 Toast.makeText(context, R.string.youtube_sign_in_no_browser, Toast.LENGTH_LONG).show()
             }
         })

@@ -268,7 +268,7 @@ import kotlinx.coroutines.delay
                 if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) R.string.youtube_activate_handheld
                 else R.string.youtube_activate,
             ),
-            payload = YouTubeSignInLink.qrPayload(),
+            payload = YouTubeSignInLink.qrPayload(signInCode),
             code = signInCode,
             onDismiss = { dismissedSignInQr = signInCode },
             footer = {

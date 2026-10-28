@@ -5,17 +5,19 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class YouTubeSignInLinkTest {
-    @Test fun qrAndBrowserUseTheDisplayedActivationAddress() {
-        assertEquals("https://yt.be/activate", YouTubeSignInLink.qrPayload())
-        assertEquals(YouTubeSignInLink.qrPayload(), YouTubeSignInLink.browserUrl())
-        assertEquals("https://${YouTubeSignInLink.ACTIVATE_ADDRESS}", YouTubeSignInLink.browserUrl())
+    @Test fun qrAndBrowserPrefillTheCodeOnTheFullActivationPage() {
+        assertEquals("https://www.youtube.com/activate?user_code=ABC-DEF-GHI", YouTubeSignInLink.qrPayload("ABC-DEF-GHI"))
+        assertEquals(YouTubeSignInLink.qrPayload("ABC-DEF-GHI"), YouTubeSignInLink.browserUrl("ABC-DEF-GHI"))
     }
 
-    @Test fun codeIsEnteredSeparatelyAtTheShortAddress() {
-        val url = YouTubeSignInLink.qrPayload()
-        assertFalse(url.contains("user_code"))
+    @Test fun codeIsTrimmedAndEncoded() {
+        val url = YouTubeSignInLink.qrPayload(" AB CD ")
         assertFalse(url.contains(" "))
-        assertFalse(url.contains("youtube.com"))
-        assertFalse(url.contains("/qr/"))
+        assertEquals("https://www.youtube.com/activate?user_code=AB+CD", url)
+    }
+
+    @Test fun prefillIsNotSentToTheShortAddress() {
+        assertFalse(YouTubeSignInLink.qrPayload("X").contains("yt.be"))
+        assertEquals("yt.be/activate", YouTubeSignInLink.ACTIVATE_ADDRESS)
     }
 }
