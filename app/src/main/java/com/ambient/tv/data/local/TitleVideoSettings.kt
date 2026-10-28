@@ -33,6 +33,8 @@ data class TitleVideoSettings(
     val mpvOverloadContinueSignature: String? = null,
     /** Same as [mpvOverloadContinueSignature] for LibVLC's lost-picture guard. */
     val vlcOverloadContinueSignature: String? = null,
+    /** Same for the Media3 effect chain's dropped-buffer guard. */
+    val media3OverloadContinueSignature: String? = null,
     val audio: AudioSettings? = null,
     /** Compatibility with former manually saved title snapshots. No new snapshots are created. */
     val snapshot: Boolean = false,
@@ -96,7 +98,7 @@ data class TitleVideoSettings(
 
         /** Season, series and collection settings: same shape, the newest [limit] ([MAX_SCOPES]) scopes. */
         fun putScoped(all: Map<String, TitleVideoSettings>, key: String, value: TitleVideoSettings, limit: Int = MAX_SCOPES): Map<String, TitleVideoSettings> =
-            put(all, key, value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null), limit)
+            put(all, key, value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null, media3OverloadContinueSignature = null), limit)
 
         val SCOPED_PREFIXES = listOf("season:", "series:", "collection:")
         fun isScopedKey(key: String): Boolean = SCOPED_PREFIXES.any { key.startsWith(it) && key.length > it.length }

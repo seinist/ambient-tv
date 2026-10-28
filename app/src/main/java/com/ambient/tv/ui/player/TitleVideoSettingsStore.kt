@@ -221,7 +221,8 @@ internal object TitleVideoSettingsStore {
             mpvOutput = null, mpvDecoder = null, vlcOutput = null,
             mpvDeinterlaceMode = null, mpvDeinterlaceFilter = null,
             vlcDeinterlaceMode = null, vlcDeinterlaceFilter = null,
-            mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null)
+            mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null,
+            media3OverloadContinueSignature = null)
         write(preferences, metadata, layer, updated)
         endSession()
     }
@@ -237,6 +238,7 @@ internal object TitleVideoSettingsStore {
         val next = when (backend) {
             "mpv" -> current.copy(mpvOverloadContinueSignature = signature?.takeIf { it.isNotBlank() })
             "vlc" -> current.copy(vlcOverloadContinueSignature = signature?.takeIf { it.isNotBlank() })
+            "media3" -> current.copy(media3OverloadContinueSignature = signature?.takeIf { it.isNotBlank() })
             else -> return
         }
         if (next == current) return
@@ -269,6 +271,7 @@ internal object TitleVideoSettingsStore {
         fun observe(field: VideoScopeField, value: Any?, default: Any?) { observed += ObservedVideoField(field, value, default) }
         var mpvSignature: String? = null
         var vlcSignature: String? = null
+        var media3Signature: String? = null
         when (handle) {
             is MpvPlaybackController -> {
                 observe(VideoScopeFields.MPV, handle.imageOptions, profile?.mpv ?: preferences.mpvImageOptions)
@@ -286,8 +289,11 @@ internal object TitleVideoSettingsStore {
                     ?: if (live) preferences.tvheadendDeinterlaceFilterKey else "auto")
                 vlcSignature = handle.overloadContinueSignature
             }
-            is Media3PlaybackHandle -> observe(VideoScopeFields.MEDIA3, Media3ImageProcessing.get(context, handle.player).options,
-                profile?.media3 ?: preferences.media3ImageOptions)
+            is Media3PlaybackHandle -> {
+                val processing = Media3ImageProcessing.get(context, handle.player)
+                observe(VideoScopeFields.MEDIA3, processing.options, profile?.media3 ?: preferences.media3ImageOptions)
+                media3Signature = processing.overloadContinueSignature
+            }
             else -> Unit
         }
         val audio = when (handle) {
@@ -312,10 +318,13 @@ internal object TitleVideoSettingsStore {
         }
         val next = captureIntoScopes(values.map { it.second }, index, observed, full, start).toMutableList()
         // Overload signatures are title-only.
-        if (handle is MpvPlaybackController || handle is VlcPlaybackController) {
+        if (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle) {
             val title = next[0] ?: TitleVideoSettings()
-            val signed = if (handle is MpvPlaybackController) title.copy(mpvOverloadContinueSignature = mpvSignature)
-                else title.copy(vlcOverloadContinueSignature = vlcSignature)
+            val signed = when (handle) {
+                is MpvPlaybackController -> title.copy(mpvOverloadContinueSignature = mpvSignature)
+                is VlcPlaybackController -> title.copy(vlcOverloadContinueSignature = vlcSignature)
+                else -> title.copy(media3OverloadContinueSignature = media3Signature)
+            }
             next[0] = signed.takeUnless { next[0] == null && it.isEmpty }
         }
         // Polling unchanged settings must not rewrite storage or change title eviction order.

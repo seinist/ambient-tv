@@ -960,5 +960,5 @@ internal fun restorableTitleVideoSettings(all: Map<String, TitleVideoSettings>):
 /** Only season/series/collection keys; title-only fields are never restored into a scope. */
 internal fun restorableScopedVideoSettings(all: Map<String, TitleVideoSettings>): Map<String, TitleVideoSettings> =
     all.filter { (key, value) -> TitleVideoSettings.isScopedKey(key) && !value.isEmpty }
-        .mapValues { (_, value) -> value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null) }
+        .mapValues { (_, value) -> value.copy(snapshot = false, mpvOverloadContinueSignature = null, vlcOverloadContinueSignature = null, media3OverloadContinueSignature = null) }
         .entries.sortedByDescending { it.value.savedAt }.take(TitleVideoSettings.MAX_SCOPES).associate { it.key to it.value }

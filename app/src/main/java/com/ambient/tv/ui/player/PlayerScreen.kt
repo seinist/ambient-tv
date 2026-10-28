@@ -300,6 +300,7 @@ private fun PlayerContent(
     )
     LaunchedEffect(exoPlayer) { audioSession?.refreshRoute(context, state.audioCodec) }
     RestoreMedia3PlaybackProfile(exoPlayer, metadata)
+    Media3RenderOverloadDialog(exoPlayer, panelNavigation) { panelNavigation.openVideoSettings() }
     LaunchedEffect(exoPlayer, state.sourceWidth, state.sourceHeight) {
         if (state.sourceWidth != null && state.sourceHeight != null) return@LaunchedEffect
         if (audioOnlyPlaybackHint(state.sourceRatingKey, state.mediaType, state.videoCodec)) return@LaunchedEffect

@@ -23,5 +23,6 @@ internal fun RestoreMedia3PlaybackProfile(player: ExoPlayer, metadata: PlaybackM
         }
         val image = title?.media3 ?: resolution?.media3 ?: videoImagePreferences(context).media3ImageOptions
         processing.restoreAutomaticOptions(image)
+        processing.restoreOverloadContinue(title?.media3OverloadContinueSignature)
     }
 }

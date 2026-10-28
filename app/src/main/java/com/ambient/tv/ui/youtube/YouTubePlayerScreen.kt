@@ -676,6 +676,7 @@ private fun YouTubeMedia3Playback(
         }.player
     }
     com.ambient.tv.ui.player.RestoreMedia3PlaybackProfile(player, metadata)
+    com.ambient.tv.ui.player.Media3RenderOverloadDialog(player, panelNavigation) { panelNavigation.openVideoSettings() }
     com.ambient.tv.ui.player.ObserveMedia3DisplayFormat(player, onVideoFormatChanged)
     LaunchedEffect(com.ambient.tv.ui.player.Media3AudioProcessing.session(player)?.bitstreamPermitted) { speed = player.playbackParameters.speed }
     val ytAudio = com.ambient.tv.ui.player.Media3AudioProcessing.session(player)

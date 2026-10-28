@@ -407,6 +407,7 @@ private fun TvheadendPlaybackSurface(
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
     val panelNavigation = rememberPlayerPanelNavigation(player)
     var panel by panelNavigation
+    com.ambient.tv.ui.player.Media3RenderOverloadDialog(player, panelNavigation) { panelNavigation.openVideoSettings() }
     // Row key of the video panel's Player area, focused when Back leaves that area.
     val rendererEntryTitle = stringResource(R.string.player_renderer)
     val tvhAudio = com.ambient.tv.ui.player.Media3AudioProcessing.session(player)
