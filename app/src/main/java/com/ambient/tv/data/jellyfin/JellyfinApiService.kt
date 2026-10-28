@@ -74,6 +74,8 @@ interface JellyfinApiService {
     ): JellyfinItemsResponse
 
     @GET("MediaSegments/{id}") suspend fun getMediaSegments(@Path("id") id: String): JellyfinSegmentsResponse
+    /** Jellyfin 10.9+; 404 when the song has no lyrics. */
+    @GET("Audio/{id}/Lyrics") suspend fun getLyrics(@Path("id") id: String): JsonObject
 
     @GET("Items/{id}") suspend fun getItem(@Path("id") id: String, @Query("userId") userId: String): JellyfinItem
     @GET("Items/{id}/Similar") suspend fun getSimilar(@Path("id") id: String, @Query("userId") userId: String, @Query("limit") limit: Int = 20, @Query("fields") fields: String = ITEM_FIELDS): JellyfinItemsResponse

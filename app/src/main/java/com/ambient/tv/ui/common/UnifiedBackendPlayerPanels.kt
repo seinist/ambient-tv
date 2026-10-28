@@ -4,7 +4,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -174,11 +179,15 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.SUBTITLES) },
                 )
             }
-            if (hasVideo) {
+            if (hasVideo || !isLive) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Build,
                     title = stringResource(R.string.player_tools),
-                    value = stringResource(if (com.ambient.tv.ui.player.AbRepeat.active) R.string.player_tools_ab_on else R.string.player_tools_summary),
+                    value = stringResource(when {
+                        com.ambient.tv.ui.player.AbRepeat.active -> R.string.player_tools_ab_on
+                        hasVideo -> R.string.player_tools_summary
+                        else -> R.string.player_tools_summary_audio
+                    }),
                     onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
@@ -445,6 +454,19 @@ fun UnifiedBackendPlayerPanel(
             // OpenSubtitles.com, when a key is set and the title can be searched (movies/episodes, direct play).
             val searchInfo = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.subtitleSearch
             com.ambient.tv.ui.player.OnlineSubtitleSearchButton(searchInfo, onLoaded = back)
+            // A loaded subtitle file can be timed against a subtitle the server has for the title.
+            val playbackMetadata = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata
+            val syncTarget = com.ambient.tv.ui.player.SubtitleAutoSync.target(playbackMetadata)
+            if (syncTarget != null && com.ambient.tv.ui.player.SubtitleAutoSync.references(playbackMetadata, syncTarget).isNotEmpty()) {
+                val syncScope = androidx.compose.runtime.rememberCoroutineScope()
+                val syncing = com.ambient.tv.ui.player.SubtitleAutoSync.running
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Sync,
+                    title = stringResource(R.string.subtitle_sync_auto),
+                    value = stringResource(if (syncing) R.string.subtitle_sync_running else R.string.subtitle_sync_auto_value),
+                    onClick = { if (!syncing) syncScope.launch { com.ambient.tv.ui.player.SubtitleAutoSync.run() } },
+                )
+            }
             // MPV and VLC only; Media3 has no subtitle timing control.
             (com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.SubtitleDelayTarget)?.let { target ->
                 PlayerDropUpSelector(
@@ -492,22 +514,77 @@ fun UnifiedBackendPlayerPanel(
                     value = "",
                     onClick = { ab.clear() },
                 )
-                RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
-                PlayerPanelEntry(
+                if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
+                if (hasVideo) PlayerPanelEntry(
                     icon = Icons.Filled.ChevronLeft,
                     title = stringResource(R.string.player_tools_frame_back),
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = false) },
                 )
-                PlayerPanelEntry(
+                if (hasVideo) PlayerPanelEntry(
                     icon = Icons.Filled.ChevronRight,
                     title = stringResource(R.string.player_tools_frame_forward),
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = true) },
                 )
             }
-            RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
-            PlayerPanelEntry(
+            val metadata = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata
+            val bookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(metadata)
+            if (handle != null && bookmarkKey != null) {
+                val revision = com.ambient.tv.ui.player.PlaybackBookmarks.revision.intValue
+                val marks = androidx.compose.runtime.remember(bookmarkKey, revision) { com.ambient.tv.ui.player.PlaybackBookmarks.list(context, bookmarkKey) }
+                RightPanelSectionTitle(stringResource(R.string.player_tools_bookmarks))
+                PlayerPanelEntry(
+                    icon = Icons.Filled.BookmarkAdd,
+                    title = stringResource(R.string.player_tools_bookmark_add),
+                    value = formatPlaybackClock(handle.status().positionMs),
+                    onClick = { com.ambient.tv.ui.player.PlaybackBookmarks.add(context, bookmarkKey, handle.status().positionMs) },
+                )
+                marks.forEach { mark ->
+                    PlayerPanelEntry(
+                        icon = Icons.Filled.Bookmark,
+                        title = stringResource(R.string.player_tools_bookmark_jump),
+                        value = formatPlaybackClock(mark),
+                        onClick = { handle.seekTo(mark) },
+                    )
+                }
+                if (marks.isNotEmpty()) {
+                    val all = "all"
+                    PlayerDropUpSelector(
+                        icon = Icons.Filled.Clear,
+                        label = stringResource(R.string.player_tools_bookmark_delete),
+                        value = "",
+                        options = marks.map { it.toString() to formatPlaybackClock(it) } + (all to stringResource(R.string.player_tools_bookmark_delete_all)),
+                        selectedKey = "",
+                        onSelected = { key ->
+                            if (key == all) com.ambient.tv.ui.player.PlaybackBookmarks.clear(context, bookmarkKey)
+                            else key.toLongOrNull()?.let { com.ambient.tv.ui.player.PlaybackBookmarks.remove(context, bookmarkKey, it) }
+                        },
+                    )
+                }
+            }
+            if (!hasVideo && !isLive) {
+                val revision = com.ambient.tv.ui.player.LyricsSettings.revision
+                val preferences = androidx.compose.runtime.remember { com.ambient.tv.ui.player.videoImagePreferences(context) }
+                val showLyrics = androidx.compose.runtime.remember(revision.intValue) { preferences.lyricsVisible }
+                val lyricsOnline = androidx.compose.runtime.remember(revision.intValue) { preferences.lyricsOnlineEnabled }
+                RightPanelSectionTitle(stringResource(R.string.player_tools_lyrics))
+                PlayerPanelEntry(
+                    icon = Icons.AutoMirrored.Filled.Subject,
+                    title = stringResource(R.string.player_tools_lyrics_show),
+                    value = stringResource(if (showLyrics) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.lyricsVisible = !showLyrics; revision.intValue++ },
+                )
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Public,
+                    title = stringResource(R.string.player_tools_lyrics_online),
+                    value = stringResource(if (lyricsOnline) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.lyricsOnlineEnabled = !lyricsOnline; revision.intValue++ },
+                )
+                Text(stringResource(R.string.player_tools_lyrics_online_hint), style = MaterialTheme.typography.bodySmall)
+            }
+            if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
+            if (hasVideo) PlayerPanelEntry(
                 icon = Icons.Filled.PhotoCamera,
                 title = stringResource(R.string.player_tools_screenshot_save),
                 value = stringResource(R.string.player_tools_screenshot_where),

@@ -73,6 +73,7 @@ class RoutingMediaRepository @Inject constructor(
     override suspend fun getAlternativeBackdrop(ratingKey: String) = forId(ratingKey).getAlternativeBackdrop(ratingKey)
     override fun cachedSimilar(ratingKey: String) = forId(ratingKey).cachedSimilar(ratingKey)
     override suspend fun getThemeMusic(ratingKey: String) = forId(ratingKey).getThemeMusic(ratingKey)
+    override suspend fun getLyrics(ratingKey: String) = forId(ratingKey).getLyrics(ratingKey)
     override suspend fun getNextEpisode(ratingKey: String) = forId(ratingKey).getNextEpisode(ratingKey)
     override suspend fun getNextTrack(ratingKey: String) = forId(ratingKey).getNextTrack(ratingKey)
     override suspend fun getNextUnwatchedEpisode(ratingKey: String) = forId(ratingKey).getNextUnwatchedEpisode(ratingKey)

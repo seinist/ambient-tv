@@ -661,6 +661,7 @@ private fun PlayerContent(
                 )
                 state.audioVisualizerModeKey != "off" -> AudioPlaybackVisualizer(Modifier.fillMaxSize(), PlaybackEngineFactory.audioSpectrum(exoPlayer))
             }
+            PlayerLyricsOverlay(state.lyricsRequest())
         }
 
         PlayerTouchLayer(

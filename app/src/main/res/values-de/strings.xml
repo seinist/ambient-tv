@@ -2021,7 +2021,7 @@
     <string name="subtitle_look_position">Abstand vom unteren Rand</string>
     <string name="subtitle_look_sample">So sehen deine Untertitel aus.</string>
     <string name="player_tools">Werkzeuge</string>
-    <string name="player_tools_summary">A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
+    <string name="player_tools_summary">Lesezeichen, A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
     <string name="player_tools_ab_on">A-B-Wiederholung an</string>
     <string name="player_tools_ab">A-B-Wiederholung</string>
     <string name="player_tools_set_a">Punkt A setzen</string>
@@ -2038,4 +2038,27 @@
     <string name="player_tools_screenshot_failed">Dieses Bild lässt sich nicht aufnehmen (geschützt oder HDR-Ausgabe)</string>
     <string name="external_search_hint">Filme und Serien suchen</string>
     <string name="external_search_description">Filme und Serien aus Plex, Jellyfin und Emby</string>
+    <string name="player_tools_bookmarks">Lesezeichen</string>
+    <string name="player_tools_bookmark_add">Lesezeichen hier setzen</string>
+    <string name="player_tools_bookmark_jump">Zum Lesezeichen springen</string>
+    <string name="player_tools_bookmark_delete">Lesezeichen löschen</string>
+    <string name="player_tools_bookmark_delete_all">Alle Lesezeichen dieses Titels löschen</string>
+    <string name="night_schedule_title">Nachtmodus nach Uhrzeit</string>
+    <string name="night_schedule_hint">In diesem Zeitfenster schaltet jeder Player den Nachtmodus ein (leisere Spitzen, lautere Sprache). Im Player ausgeschaltet bleibt er bis zum Ende des Fensters aus.</string>
+    <string name="night_schedule_enabled">Automatisch einschalten</string>
+    <string name="night_schedule_start">Von</string>
+    <string name="night_schedule_end">Bis</string>
+    <string name="night_schedule_dialogue">Dialoganhebung nachts</string>
+    <string name="night_schedule_dialogue_off">Aus</string>
+    <string name="player_tools_lyrics">Songtexte</string>
+    <string name="player_tools_lyrics_show">Songtext anzeigen</string>
+    <string name="player_tools_lyrics_online">Online suchen (LRCLIB)</string>
+    <string name="player_tools_lyrics_online_hint">Songtexte kommen vom Server (Plex, Jellyfin). Die Online-Suche schickt Interpret, Titel, Album und Länge an lrclib.net, wenn der Server keinen hat.</string>
+    <string name="player_tools_summary_audio">A-B-Wiederholung, Lesezeichen, Songtexte</string>
+    <string name="subtitle_sync_auto">Automatisch synchronisieren</string>
+    <string name="subtitle_sync_auto_value">an Server-Untertitel</string>
+    <string name="subtitle_sync_running">Synchronisiere…</string>
+    <string name="subtitle_sync_done">Untertitel synchronisiert (%1$s)</string>
+    <string name="subtitle_sync_already">Untertitel ist bereits synchron</string>
+    <string name="subtitle_sync_failed">Untertitel ließ sich nicht automatisch synchronisieren</string>
 </resources>

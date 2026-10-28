@@ -2022,7 +2022,7 @@
     <string name="subtitle_look_position">Distance from the bottom</string>
     <string name="subtitle_look_sample">This is how your subtitles look.</string>
     <string name="player_tools">Tools</string>
-    <string name="player_tools_summary">A-B repeat, frame step, screenshot</string>
+    <string name="player_tools_summary">Bookmarks, A-B repeat, frame step, screenshot</string>
     <string name="player_tools_ab_on">A-B repeat on</string>
     <string name="player_tools_ab">A-B repeat</string>
     <string name="player_tools_set_a">Set point A</string>
@@ -2039,4 +2039,27 @@
     <string name="player_tools_screenshot_failed">This picture cannot be captured (protected or HDR output)</string>
     <string name="external_search_hint">Search movies and shows</string>
     <string name="external_search_description">Movies and shows from Plex, Jellyfin and Emby</string>
+    <string name="player_tools_bookmarks">Bookmarks</string>
+    <string name="player_tools_bookmark_add">Set bookmark here</string>
+    <string name="player_tools_bookmark_jump">Jump to bookmark</string>
+    <string name="player_tools_bookmark_delete">Delete bookmark</string>
+    <string name="player_tools_bookmark_delete_all">Delete all bookmarks of this title</string>
+    <string name="night_schedule_title">Night mode by the clock</string>
+    <string name="night_schedule_hint">Inside this window every player switches night mode on (quieter peaks, louder speech). Switching it off in the player keeps it off until the window ends.</string>
+    <string name="night_schedule_enabled">Turn on automatically</string>
+    <string name="night_schedule_start">From</string>
+    <string name="night_schedule_end">Until</string>
+    <string name="night_schedule_dialogue">Dialogue boost at night</string>
+    <string name="night_schedule_dialogue_off">Off</string>
+    <string name="player_tools_lyrics">Lyrics</string>
+    <string name="player_tools_lyrics_show">Show lyrics</string>
+    <string name="player_tools_lyrics_online">Search online (LRCLIB)</string>
+    <string name="player_tools_lyrics_online_hint">Lyrics come from the server (Plex, Jellyfin). Online search sends artist, title, album and length to lrclib.net when the server has none.</string>
+    <string name="player_tools_summary_audio">A-B repeat, bookmarks, lyrics</string>
+    <string name="subtitle_sync_auto">Sync automatically</string>
+    <string name="subtitle_sync_auto_value">to the server subtitle</string>
+    <string name="subtitle_sync_running">Syncing…</string>
+    <string name="subtitle_sync_done">Subtitle synced (%1$s)</string>
+    <string name="subtitle_sync_already">Subtitle is already in sync</string>
+    <string name="subtitle_sync_failed">Could not sync the subtitle automatically</string>
 </resources>

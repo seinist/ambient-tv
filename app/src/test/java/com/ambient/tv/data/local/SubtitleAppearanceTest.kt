@@ -26,6 +26,8 @@ class SubtitleAppearanceTest {
         assertEquals("2.5", plain["sub-outline-size"])
         assertEquals("#FFFFFFFF", plain["sub-color"])
         assertEquals("43", plain["sub-margin-y"])
+        // ASS/SSA styles are never overridden.
+        assertEquals("no", plain["sub-ass-override"])
         val boxed = SubtitleAppearance(background = SubtitleAppearance.BACKGROUND_TRANSLUCENT, color = SubtitleAppearance.COLOR_YELLOW).mpvProperties().toMap()
         assertEquals("background-box", boxed["sub-border-style"])
         assertEquals("#99000000", boxed["sub-back-color"])

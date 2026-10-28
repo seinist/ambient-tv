@@ -122,6 +122,18 @@ class PlexRepository @Inject constructor(
         }
     }
 
+    /** Plex lists lyrics (sidecar .lrc/.txt, embedded or from its agent) as a stream of type 4. */
+    override suspend fun getLyrics(ratingKey: String): Result<com.ambient.tv.data.lyrics.Lyrics?> = suspendResult {
+        val streamId = api.getMetadata(ratingKey).container.metadata.firstOrNull()?.media.orEmpty()
+            .flatMap { it.parts }.flatMap { it.streams }
+            .firstOrNull { it.streamType == PLEX_LYRICS_STREAM && it.id != null }?.id
+            ?: return@suspendResult null
+        val raw = runCatching { api.getStreamFile(streamId).use { it.string() } }.getOrNull()
+        raw?.let { com.ambient.tv.data.lyrics.parsePlexLyrics(it) }
+            ?: runCatching { api.getStreamFile(streamId, format = "xml").use { it.string() } }.getOrNull()
+                ?.let { com.ambient.tv.data.lyrics.parsePlexLyrics(it) }
+    }
+
     override suspend fun getThemeMusic(ratingKey: String): Result<ThemeMusic?> = suspendResult {
         // Prefer the already-parsed metadata theme URL; if list/preview cache omitted it,
         // fetch metadata once so Detail can still play theme music.
@@ -740,3 +752,5 @@ internal fun plexFieldUpdate(current: MetadataFields, edited: MetadataFields): M
         }
     }
 }
+
+private const val PLEX_LYRICS_STREAM = 4

@@ -280,6 +280,7 @@ internal fun VlcPlayerContent(
                 NativeProjectMVisualizer(projectMBrowser, 1, controlsVisible, Modifier.fillMaxSize())
             }
         }
+        if (audioOnlyContent) PlayerLyricsOverlay(state.lyricsRequest())
         PlayerBufferingSpinner(
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),

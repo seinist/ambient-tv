@@ -98,6 +98,8 @@ fun SubtitleAppearance.mpvProperties(): List<Pair<String, String>> {
         "sub-outline-size" to if (!box && a.edge == SubtitleAppearance.EDGE_OUTLINE) "2.5" else "0",
         "sub-shadow-offset" to if (!box && a.edge == SubtitleAppearance.EDGE_SHADOW) "2.5" else "0",
         "sub-margin-y" to (a.positionPercent * 720 / 100).toString(),
+        // ASS/SSA keep their own fonts, colours and positions.
+        "sub-ass-override" to "no",
     )
 }
 
