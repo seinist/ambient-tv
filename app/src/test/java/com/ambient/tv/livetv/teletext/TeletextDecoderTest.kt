@@ -96,6 +96,26 @@ class TeletextDecoderTest {
     private fun stream(vararg units: ByteArray): ByteArray =
         ts(0, pat) + ts(0x1000, pmt) + ts(0x101, pes(units.toList()))
 
+    private fun bytes(vararg v: Int) = ByteArray(v.size) { v[it].toByte() }
+
+    /** PMT with teletext on 0x101 and an AIT (application_signalling_descriptor) on 0x102. */
+    private val pmtWithAit = section(byteArrayOf(0x02, 0, 0, 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x00, 0xF0.toByte(), 0x00) +
+        bytes(0x06, 0xE1, 0x01, 0xF0, 0x07, 0x56, 0x05, 'd'.code, 'e'.code, 'u'.code, (1 shl 3) or 1, 0x00) +
+        bytes(0x05, 0xE1, 0x02, 0xF0, 0x05, 0x6F, 0x03, 0x00, 0x10, 0x01))
+
+    private fun aitSection(base: String, path: String, name: String, control: Int = 1): ByteArray {
+        val transportCommon = bytes(0x02, 5 + base.length, 0x00, 0x03, 0x01, base.length) + base.toByteArray() + bytes(0x00)
+        val appDescriptors = bytes(0x02, 0x03, 0x00, 0x03, 0x01) +
+            bytes(0x01, 4 + name.length, 'd'.code, 'e'.code, 'u'.code, name.length) + name.toByteArray() +
+            bytes(0x15, path.length) + path.toByteArray()
+        val app = bytes(0, 0, 0, 0x13, 0, 1, control, 0xF0 or (appDescriptors.size shr 8), appDescriptors.size and 0xFF) + appDescriptors
+        val body = bytes(0x74, 0, 0, 0x00, 0x10, 0xC1, 0, 0, 0xF0 or (transportCommon.size shr 8), transportCommon.size and 0xFF) +
+            transportCommon + bytes(0xF0 or (app.size shr 8), app.size and 0xFF) + app
+        val length = body.size - 3 + 4
+        body[1] = (0xB0 or (length shr 8)).toByte(); body[2] = length.toByte()
+        return byteArrayOf(0) + body + byteArrayOf(0, 0, 0, 0)
+    }
+
     // --- tests ---
 
     @Test fun hammingDecodesCorrectsAndRejects() {
@@ -124,7 +144,8 @@ class TeletextDecoderTest {
             header(1, 0, 1, "ARD Text 12:00"),
         ))
         assertEquals(listOf(0x100), committed)
-        val page = assertNotNull(decoder.page(0x100))
+        val page = decoder.page(0x100)
+        assertNotNull(page)
         val rows = layoutTeletextPage(page!!)
         assertEquals("GrÄn und Öl ß", rows[1].text().trimEnd())
         assertTrue(rows[0].text().contains("ARD Text 12:00"))
@@ -203,5 +224,37 @@ class TeletextDecoderTest {
         assertEquals(0x888, teletextSubtitlePage("auto", emptyList(), listOf(0x888), emptySet()))
         assertEquals(0x150, teletextSubtitlePage("150", emptyList(), emptyList(), emptySet()))
         assertNull(teletextSubtitlePage("off", announced, emptyList(), emptySet()))
+    }
+
+    @Test fun aitAcrossTwoPacketsGivesTheHbbtvApplication() {
+        val changes = mutableListOf<Int>()
+        val decoder = TeletextDecoder(onServiceChanged = { changes += 1 })
+        val longBase = "http://hbbtv.example.org/" + "a".repeat(160) + "/"
+        decoder.feed(ts(0, pat) + ts(0x1000, pmtWithAit))
+        assertTrue(decoder.pmtSeen)
+        assertEquals(0x101, decoder.teletextPid)
+        assertEquals(0x102, decoder.aitPid)
+        assertFalse(decoder.probeComplete())
+        decoder.feed(ts(0x102, aitSection(longBase, "index.html?ch=1", "ARD Startleiste")))
+        assertTrue(decoder.probeComplete())
+        assertEquals(listOf(HbbtvApplication(longBase + "index.html?ch=1", "ARD Startleiste", 1)), decoder.hbbtvApps)
+    }
+
+    @Test fun streamWithoutTeletextOrAitIsKnownAfterThePmt() {
+        val decoder = TeletextDecoder()
+        val pmtVideoOnly = section(byteArrayOf(0x02, 0, 0, 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x00, 0xF0.toByte(), 0x00) +
+            bytes(0x1B, 0xE1, 0x00, 0xF0, 0x00))
+        decoder.feed(ts(0, pat) + ts(0x1000, pmtVideoOnly))
+        assertTrue(decoder.pmtSeen)
+        assertTrue(decoder.probeComplete())
+        assertEquals(-1, decoder.teletextPid)
+        assertEquals(-1, decoder.aitPid)
+    }
+
+    @Test fun aitOfOtherApplicationTypesIsIgnored() {
+        val section = aitSection("http://x/", "a", "n")
+        section[1 + 4] = 0x01 // application_type 0x0001 (DVB-J)
+        assertNull(parseAit(section.copyOfRange(1, section.size), section.size - 1))
+        assertEquals(emptyList<HbbtvApplication>(), parseAit(aitSection("ftp://x/", "a", "n").let { it.copyOfRange(1, it.size) }, aitSection("ftp://x/", "a", "n").size - 1))
     }
 }

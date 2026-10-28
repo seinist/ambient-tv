@@ -210,7 +210,11 @@ fun TvheadendPlayerScreen(
         }
     }
     Box(Modifier.fillMaxSize().background(if (persistentVideoHost) Color.Transparent else Color.Black)
-        .onPreviewKeyEvent { viewModel.changingChannel && it.key != Key.Back && it.key != Key.MediaStop }) {
+        .onPreviewKeyEvent {
+            // TEXT and the red key open teletext / HbbTV when the channel offers them.
+            (it.type == KeyEventType.KeyDown && com.ambient.tv.ui.player.teletext.liveServiceKey(tvhContext, it.nativeKeyEvent.keyCode)) ||
+                (viewModel.changingChannel && it.key != Key.Back && it.key != Key.MediaStop)
+        }) {
         PlayerBufferingSpinner(visible = viewModel.changingChannel, modifier = Modifier.align(Alignment.Center))
         when (val current = state) {
             TvheadendPlayerState.Stopped -> LaunchedEffect(Unit) { onBack() }
@@ -346,7 +350,12 @@ fun TvheadendPlayerScreen(
                         )
                     }
                     // Teletext is decoded in the app, so it stays across renderer switches; below the OSD.
-                    if (current.source.isLive) com.ambient.tv.ui.player.teletext.LiveTeletextHost(current.source.url, current.source.headers)
+                    // TVHeadend serves a second connection from the same tuner; IPTV only via Timeshift.
+                    if (current.source.isLive) com.ambient.tv.ui.player.teletext.LiveTeletextHost(
+                        current.source.url, current.source.headers,
+                        ownConnectionAllowed = viewModel.sourceSystem == "tvheadend",
+                        channelName = current.channel?.name,
+                    )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
                     com.ambient.tv.ui.player.PersistentPlayerOverlays()
                 }

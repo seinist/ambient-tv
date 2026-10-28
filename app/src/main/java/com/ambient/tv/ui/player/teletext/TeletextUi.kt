@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -114,26 +115,44 @@ private fun subtitleLanguages(context: Context): Set<String> =
  * viewer. Placed once per live player page, above the engine surfaces.
  */
 @Composable
-fun LiveTeletextHost(url: String, headers: Map<String, String>) {
+fun LiveTeletextHost(url: String, headers: Map<String, String>, ownConnectionAllowed: Boolean, channelName: String?) {
     val context = LocalContext.current
+    // Without Timeshift a second connection is needed; IPTV providers often allow only one.
+    val readable = ownConnectionAllowed || com.ambient.tv.livetv.isLocalTimeshiftUrl(url)
     DisposableEffect(Unit) {
         TeletextUi.load(context)
         TeletextUi.hostActive = true
         onDispose {
             TeletextUi.hostActive = false
             TeletextUi.viewerOpen = false
+            HbbtvUi.close()
+            LiveTeletext.setNeeded(false)
             LiveTeletext.stop()
         }
     }
-    val needed = TeletextUi.viewerOpen || TeletextUi.probing || TeletextUi.subtitleChoice != "off"
-    LaunchedEffect(url, headers, needed) {
-        if (needed) LiveTeletext.start(url, headers) else LiveTeletext.stop()
+    // Probe every channel: teletext and HbbTV entries only appear when the stream carries them.
+    LaunchedEffect(url, headers, readable) {
+        if (readable) LiveTeletext.start(url, headers) else LiveTeletext.stop()
     }
+    val needed = TeletextUi.viewerOpen || TeletextUi.probing || TeletextUi.subtitleChoice != "off"
+    LaunchedEffect(needed) { LiveTeletext.setNeeded(needed) }
     LaunchedEffect(TeletextUi.subtitleChoice) {
         LiveTeletext.setSubtitleChoice(TeletextUi.subtitleChoice, subtitleLanguages(context))
     }
     TeletextSubtitleOverlay()
     if (TeletextUi.viewerOpen) TeletextViewer(onClose = { TeletextUi.viewerOpen = false })
+    HbbtvHost(channelName)
+}
+
+/** Teletext key (TEXT) opens teletext, the red key the channel's HbbTV application, when offered. */
+fun liveServiceKey(context: Context, keyCode: Int): Boolean {
+    if (!TeletextUi.hostActive || TeletextUi.viewerOpen || HbbtvUi.open != null) return false
+    val status = LiveTeletext.status.value
+    return when (keyCode) {
+        AndroidKeyEvent.KEYCODE_TV_TELETEXT -> status.hasTeletext.also { if (it) TeletextUi.viewerOpen = true }
+        AndroidKeyEvent.KEYCODE_PROG_RED -> (status.hbbtv != null).also { if (it) HbbtvUi.request(context, status.hbbtv!!) }
+        else -> false
+    }
 }
 
 @Composable
@@ -164,19 +183,25 @@ fun TeletextPanelEntries() {
     if (!TeletextUi.hostActive) return
     val context = LocalContext.current
     val status by LiveTeletext.status.collectAsState()
+    val navigation = LocalPlayerPanelNavigation.current
+    status.hbbtv?.let { app ->
+        PlayerPanelEntry(
+            icon = Icons.Filled.RadioButtonChecked,
+            title = stringResource(R.string.player_hbbtv),
+            value = app.name ?: android.net.Uri.parse(app.url).host.orEmpty(),
+            onClick = { navigation?.close(); HbbtvUi.request(context, app) },
+        )
+    }
+    // Shown only when the stream carries teletext.
+    if (!status.hasTeletext) return
     DisposableEffect(Unit) {
         TeletextUi.probing = true
         onDispose { TeletextUi.probing = false }
     }
-    val navigation = LocalPlayerPanelNavigation.current
     PlayerPanelEntry(
         icon = Icons.AutoMirrored.Filled.Article,
         title = stringResource(R.string.player_teletext),
-        value = stringResource(when {
-            status.noTeletext -> R.string.player_teletext_none
-            !status.hasTeletext -> R.string.player_teletext_searching
-            else -> R.string.player_teletext_open
-        }),
+        value = stringResource(R.string.player_teletext_open),
         onClick = { navigation?.close(); TeletextUi.viewerOpen = true },
     )
     val pageLabel = stringResource(R.string.player_teletext_subtitle_page)
@@ -217,6 +242,13 @@ fun TeletextPanelEntries() {
 fun TeletextOsdButtons() {
     if (!TeletextUi.hostActive) return
     val context = LocalContext.current
+    val status by LiveTeletext.status.collectAsState()
+    status.hbbtv?.let { app ->
+        PlayerIconButton(Icons.Filled.RadioButtonChecked, stringResource(R.string.player_hbbtv),
+            { HbbtvUi.request(context, app) }, osd = OsdButton.HBBTV)
+    }
+    // Only for streams with teletext; elsewhere the buttons are not offered at all.
+    if (!status.hasTeletext) return
     PlayerIconButton(Icons.AutoMirrored.Filled.Article, stringResource(R.string.player_teletext),
         { TeletextUi.viewerOpen = true }, osd = OsdButton.TELETEXT)
     PlayerIconButton(Icons.Filled.ClosedCaption, stringResource(R.string.player_teletext_subtitles),

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
@@ -80,6 +81,7 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.TOOLS -> Icons.Filled.Build
     OsdButton.TELETEXT -> Icons.AutoMirrored.Filled.Article
     OsdButton.TELETEXT_SUBTITLES -> Icons.Filled.ClosedCaption
+    OsdButton.HBBTV -> Icons.Filled.RadioButtonChecked
 }
 
 /**

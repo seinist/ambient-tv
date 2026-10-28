@@ -48,7 +48,7 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
         OsdButton.FPS) + toolButtons),
     LIVE_TV(listOf(OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
         OsdButton.CHAPTERS, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP,
-        OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES) + toolButtons),
+        OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV) + toolButtons),
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
 }
@@ -71,6 +71,7 @@ enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
     LYRICS(R.string.player_tools_lyrics, optIn = true), TOOLS(R.string.player_tools, optIn = true),
     // Live TV teletext, decoded in the app for every engine.
     TELETEXT(R.string.player_teletext, optIn = true), TELETEXT_SUBTITLES(R.string.player_teletext_subtitles, optIn = true),
+    HBBTV(R.string.player_hbbtv, optIn = true),
 }
 
 private val toolButtons = listOf(OsdButton.SCREENSHOT, OsdButton.BOOKMARK, OsdButton.AB_REPEAT, OsdButton.FRAME_STEP,

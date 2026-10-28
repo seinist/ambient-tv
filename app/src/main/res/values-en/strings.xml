@@ -2208,4 +2208,8 @@
     <string name="player_teletext_pages">Pages</string>
     <string name="player_teletext_index">Index</string>
     <string name="player_teletext_mix">Transparent</string>
+    <string name="player_hbbtv">Red button (HbbTV)</string>
+    <string name="player_hbbtv_open">Open</string>
+    <string name="player_hbbtv_consent">HbbTV services come straight from the broadcaster over the internet. The broadcaster and its providers may record usage data (such as channel, time and IP address). The feature is experimental: not every service works fully. Press Back twice to close it.</string>
+    <string name="player_hbbtv_close_hint">Press Back twice to close</string>
 </resources>

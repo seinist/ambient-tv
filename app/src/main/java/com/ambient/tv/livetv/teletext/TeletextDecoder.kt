@@ -25,9 +25,25 @@ class TeletextDecoder(
     /** Pages the PMT's teletext descriptor announces (initial page, subtitle pages and their language). */
     @Volatile var announcedPages: List<TeletextAnnouncedPage> = emptyList()
         private set
+    /** The PMT has been read: from here on [teletextPid] and [aitPid] say what the stream carries. */
+    @Volatile var pmtSeen = false
+        private set
+    /** PID of the HbbTV application information table, -1 when the channel signals no HbbTV. */
+    @Volatile var aitPid = -1
+        private set
+    /** An AIT section has been read (possibly without a usable application). */
+    @Volatile var aitSeen = false
+        private set
+    /** HbbTV applications the AIT announces, autostart first. */
+    @Volatile var hbbtvApps: List<HbbtvApplication> = emptyList()
+        private set
     /** Teletext packets decoded so far; 0 means the stream carries none (yet). */
     @Volatile var packetCount = 0L
         private set
+
+    // AIT sections can span several TS packets.
+    private var ait = ByteArray(1024)
+    private var aitLength = 0
 
     // PES
     private var pes = ByteArray(4096)
@@ -84,6 +100,7 @@ class TeletextDecoder(
             0 -> if (start) parsePat(buf, payload, end)
             pmtPid -> if (start) parsePmt(buf, payload, end)
             teletextPid -> pesData(buf, payload, end, start)
+            aitPid -> aitData(buf, payload, end, start)
         }
     }
 
@@ -117,40 +134,78 @@ class TeletextDecoder(
         val programInfo = ((buf[s + 10].u and 0x0F) shl 8) or buf[s + 11].u
         var i = s + 12 + programInfo
         val last = range.last + 1
+        var foundTeletext = -1
+        var foundAit = -1
+        val announced = mutableListOf<TeletextAnnouncedPage>()
         while (i + 5 <= last) {
             val pid = ((buf[i + 1].u and 0x1F) shl 8) or buf[i + 2].u
             val esInfo = ((buf[i + 3].u and 0x0F) shl 8) or buf[i + 4].u
             var d = i + 5
             val dEnd = minOf(d + esInfo, last)
-            val announced = mutableListOf<TeletextAnnouncedPage>()
-            var teletext = false
             while (d + 2 <= dEnd) {
                 val tag = buf[d].u
                 val len = buf[d + 1].u
-                if (tag == 0x56 || tag == 0x46) {
-                    teletext = true
-                    var e = d + 2
-                    while (e + 5 <= minOf(d + 2 + len, dEnd)) {
-                        val language = String(byteArrayOf(buf[e], buf[e + 1], buf[e + 2]), Charsets.ISO_8859_1)
-                        val type = buf[e + 3].u shr 3
-                        val magazine = (buf[e + 3].u and 7).let { if (it == 0) 8 else it }
-                        val page = (magazine shl 8) or buf[e + 4].u
-                        announced += TeletextAnnouncedPage(page, language, type)
-                        e += 5
+                when (tag) {
+                    0x56, 0x46 -> if (foundTeletext < 0) {
+                        foundTeletext = pid
+                        var e = d + 2
+                        while (e + 5 <= minOf(d + 2 + len, dEnd)) {
+                            val language = String(byteArrayOf(buf[e], buf[e + 1], buf[e + 2]), Charsets.ISO_8859_1)
+                            val type = buf[e + 3].u shr 3
+                            val magazine = (buf[e + 3].u and 7).let { if (it == 0) 8 else it }
+                            announced += TeletextAnnouncedPage((magazine shl 8) or buf[e + 4].u, language, type)
+                            e += 5
+                        }
                     }
+                    // application_signalling_descriptor: this PID carries the AIT.
+                    0x6F -> if (foundAit < 0) foundAit = pid
                 }
                 d += 2 + len
             }
-            if (teletext) {
-                if (pid != teletextPid) {
-                    teletextPid = pid
-                    pesActive = false
-                    synchronized(lock) { receiving.fill(null) }
-                }
-                if (announced != announcedPages) { announcedPages = announced; onServiceChanged() }
-                return
-            }
             i += 5 + esInfo
+        }
+        var changed = !pmtSeen
+        pmtSeen = true
+        if (foundTeletext != teletextPid) {
+            teletextPid = foundTeletext
+            pesActive = false
+            synchronized(lock) { receiving.fill(null) }
+            changed = true
+        }
+        if (announced != announcedPages) { announcedPages = announced; changed = true }
+        if (foundAit != aitPid) {
+            aitPid = foundAit
+            aitLength = 0
+            aitSeen = false
+            hbbtvApps = emptyList()
+            changed = true
+        }
+        if (changed) onServiceChanged()
+    }
+
+    private fun aitData(buf: ByteArray, payload: Int, end: Int, start: Boolean) {
+        var from = payload
+        if (start) {
+            from = payload + 1 + buf[payload].u
+            aitLength = 0
+        } else if (aitLength == 0) return
+        if (from >= end) return
+        val n = end - from
+        if (aitLength + n > ait.size) {
+            if (aitLength + n > 4096) { aitLength = 0; return }
+            ait = ait.copyOf(aitLength + n)
+        }
+        System.arraycopy(buf, from, ait, aitLength, n)
+        aitLength += n
+        if (aitLength < 3) return
+        val total = 3 + (((ait[1].u and 0x0F) shl 8) or ait[2].u)
+        if (aitLength < total) return
+        val apps = parseAit(ait, total)
+        aitLength = 0
+        if (apps != null && (!aitSeen || apps != hbbtvApps)) {
+            aitSeen = true
+            hbbtvApps = apps
+            onServiceChanged()
         }
     }
 
@@ -267,6 +322,9 @@ class TeletextDecoder(
         onPageCommitted(page)
     }
 
+    /** PMT read and, when the channel signals HbbTV, its AIT too: what the stream offers is known. */
+    fun probeComplete(): Boolean = pmtSeen && (aitPid < 0 || aitSeen)
+
     /** Received pages, displayable numbers only, ascending. */
     fun pageNumbers(): List<Int> = synchronized(lock) { pages.keys.filter(::teletextDisplayable).sorted() }
 
@@ -344,3 +402,70 @@ fun teletextDecimal(number: Int): Int =
 /** 150 → 0x150; null outside 100..899. */
 fun teletextNumber(decimal: Int): Int? =
     if (decimal !in 100..899) null else ((decimal / 100) shl 8) or (((decimal / 10) % 10) shl 4) or (decimal % 10)
+
+/**
+ * An HbbTV application from the AIT: [controlCode] 1 = autostart, 2 = present.
+ * [url] joins the HTTP transport's base URL and the initial path.
+ */
+data class HbbtvApplication(val url: String, val name: String?, val controlCode: Int)
+
+/** Applications of one AIT section ([section] starts at table_id), autostart first; null if not an HbbTV AIT. */
+internal fun parseAit(section: ByteArray, length: Int): List<HbbtvApplication>? {
+    fun u(i: Int) = section[i].toInt() and 0xFF
+    if (length < 16 || u(0) != 0x74) return null
+    val end = length - 4 // CRC
+    val applicationType = (u(3) shl 8) or u(4)
+    if (applicationType != 0x0010) return null
+    val baseByLabel = HashMap<Int, String>()
+    fun transport(d: Int, len: Int) {
+        if (len < 3) return
+        val protocol = (u(d) shl 8) or u(d + 1)
+        val label = u(d + 2)
+        if (protocol != 0x0003 || len < 4) return
+        val baseLength = u(d + 3)
+        if (4 + baseLength > len) return
+        baseByLabel[label] = String(section, d + 4, baseLength, Charsets.UTF_8)
+    }
+    val commonLength = ((u(8) and 0x0F) shl 8) or u(9)
+    var p = 10
+    while (p + 2 <= minOf(10 + commonLength, end)) {
+        val tag = u(p); val len = u(p + 1)
+        if (tag == 0x02) transport(p + 2, len)
+        p += 2 + len
+    }
+    p = 10 + commonLength
+    if (p + 2 > end) return emptyList()
+    val loopEnd = minOf(p + 2 + (((u(p) and 0x0F) shl 8) or u(p + 1)), end)
+    p += 2
+    val apps = mutableListOf<HbbtvApplication>()
+    while (p + 9 <= loopEnd) {
+        val control = u(p + 6)
+        val descriptorsEnd = minOf(p + 9 + (((u(p + 7) and 0x0F) shl 8) or u(p + 8)), loopEnd)
+        val labels = mutableListOf<Int>()
+        var name: String? = null
+        var path = ""
+        var d = p + 9
+        while (d + 2 <= descriptorsEnd) {
+            val tag = u(d); val len = u(d + 1)
+            val body = d + 2
+            if (body + len > descriptorsEnd) break
+            when (tag) {
+                0x02 -> { transport(body, len); if (len >= 3) labels += u(body + 2) }
+                0x01 -> if (len >= 4 && name == null) {
+                    val nameLength = u(body + 3)
+                    if (4 + nameLength <= len) name = String(section, body + 4, nameLength, Charsets.UTF_8).trim()
+                }
+                0x15 -> path = String(section, body, len, Charsets.UTF_8)
+            }
+            d = body + len
+        }
+        val base = labels.firstNotNullOfOrNull { baseByLabel[it] } ?: baseByLabel.values.firstOrNull()
+        if (base != null && control in 1..2) {
+            // ETS 102 809: the URL is the base followed by the initial path, as broadcast.
+            val url = base + path
+            if (url.startsWith("http://", true) || url.startsWith("https://", true)) apps += HbbtvApplication(url, name?.takeIf { it.isNotBlank() }, control)
+        }
+        p = descriptorsEnd
+    }
+    return apps.sortedBy { it.controlCode }
+}

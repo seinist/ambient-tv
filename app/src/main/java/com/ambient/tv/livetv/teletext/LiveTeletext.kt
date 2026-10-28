@@ -8,6 +8,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -17,20 +18,26 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Teletext of the live channel that is playing, decoded in the app for every player engine.
+ * Teletext and HbbTV signalling of the live channel that is playing, decoded in the app for every
+ * player engine.
  *
  * With local Timeshift the decoder reads along the bytes the player is served (no extra traffic,
  * subtitles follow a paused or rewound picture). Otherwise it opens its own connection to the
- * channel, only while the viewer or teletext subtitles need it; TVHeadend serves that from the same
- * tuner. A stream without a teletext PID is given up after [NO_TELETEXT_MS].
+ * channel: briefly at the start to read PMT and AIT (what the channel offers), then only while the
+ * viewer or teletext subtitles need pages. TVHeadend serves that from the same tuner. A stream
+ * without a PMT (not MPEG-TS) is given up after [PROBE_TIMEOUT_MS].
  */
 object LiveTeletext {
     data class Status(
         val running: Boolean = false,
+        /** PMT read (or given up): [hasTeletext] and [hbbtv] are final for this channel. */
+        val probed: Boolean = false,
         /** The PMT names a teletext stream. */
         val hasTeletext: Boolean = false,
-        /** Searched long enough: this channel carries no teletext. */
+        /** Probed: this channel carries no teletext. */
         val noTeletext: Boolean = false,
+        /** The HbbTV application the channel announces (autostart first), null without HbbTV. */
+        val hbbtv: HbbtvApplication? = null,
         val announced: List<TeletextAnnouncedPage> = emptyList(),
         val subtitlePagesSeen: List<Int> = emptyList(),
         /** Bumped when pages arrive (throttled); the viewer re-reads its page. */
@@ -43,6 +50,8 @@ object LiveTeletext {
     val status: StateFlow<Status> = mutableStatus.asStateFlow()
     private val mutableSubtitles = MutableStateFlow<List<TeletextSubtitleLine>>(emptyList())
     val subtitles: StateFlow<List<TeletextSubtitleLine>> = mutableSubtitles.asStateFlow()
+    /** Pages are needed (viewer, subtitles, page list): keep reading after the probe. */
+    private val needed = MutableStateFlow(false)
 
     private val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true).followSslRedirects(true)
@@ -79,8 +88,8 @@ object LiveTeletext {
     }
 
     /**
-     * Decodes the channel at [url] (the player's URL; a local Timeshift URL is read along).
-     * Same URL: keeps the running session.
+     * Probes the channel at [url] (the player's URL; a local Timeshift URL is read along) and keeps
+     * its pages while [setNeeded]. Same URL: keeps the running session.
      */
     @Synchronized
     fun start(url: String, headers: Map<String, String>) {
@@ -93,7 +102,7 @@ object LiveTeletext {
         resolveSubtitlePage()
         if (com.ambient.tv.livetv.isLocalTimeshiftUrl(url)) {
             tapWanted = true
-            job = scope.launch { watchForTeletext(created) }
+            job = scope.launch { probeTimeout(created) }
         } else {
             job = scope.launch { readHttp(created, url, headers) }
         }
@@ -112,6 +121,8 @@ object LiveTeletext {
         mutableSubtitles.value = emptyList()
     }
 
+    fun setNeeded(value: Boolean) { needed.value = value }
+
     fun setSubtitleChoice(choice: String, languages: Set<String>) {
         subtitleChoice = choice
         preferredLanguages = languages.map { it.lowercase() }.toSet()
@@ -128,6 +139,11 @@ object LiveTeletext {
         var backoff = 1_000L
         val started = System.currentTimeMillis()
         while (decoder === target) {
+            // Probe done and nothing needs pages: no connection until something does.
+            if (target.probeComplete() && !needed.value) {
+                needed.first { it }
+                if (decoder !== target) return
+            }
             val failure = runCatching {
                 val request = Request.Builder().url(url).apply { headers.forEach { (k, v) -> header(k, v) } }.build()
                 val current = client.newCall(request).also { call = it }
@@ -140,39 +156,49 @@ object LiveTeletext {
                         val n = input.read(buffer)
                         if (n < 0) break
                         target.feed(buffer, 0, n)
-                        if (target.teletextPid < 0 && System.currentTimeMillis() - started > NO_TELETEXT_MS) {
+                        backoff = 1_000L
+                        if (target.probeComplete() && !needed.value) break
+                        if (!target.pmtSeen && System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) {
                             giveUp(target)
                             return
                         }
-                        backoff = 1_000L
                     }
                 }
             }.exceptionOrNull()
             if (decoder !== target) return
+            if (target.probeComplete() && !needed.value) continue
+            if (!target.pmtSeen && System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) { giveUp(target); return }
             if (failure != null) Timber.w(failure, "Teletext stream ended; retry in %d ms", backoff)
             delay(backoff)
             backoff = (backoff * 2).coerceAtMost(15_000L)
         }
     }
 
-    private suspend fun watchForTeletext(target: TeletextDecoder) {
-        delay(NO_TELETEXT_MS)
-        if (decoder === target && target.teletextPid < 0) giveUp(target)
+    private suspend fun probeTimeout(target: TeletextDecoder) {
+        delay(PROBE_TIMEOUT_MS)
+        if (decoder === target && !target.pmtSeen) giveUp(target)
     }
 
+    /** No PMT in time: not an MPEG-TS stream (HLS, Matroska profile …), so no teletext and no HbbTV. */
     private fun giveUp(target: TeletextDecoder) {
         if (decoder !== target) return
-        Timber.i("Teletext: no teletext stream on this channel")
+        Timber.i("Teletext: no MPEG-TS service information on this channel")
         call?.cancel()
         tapWanted = false
-        mutableStatus.update { it.copy(noTeletext = true) }
+        mutableStatus.update { it.copy(probed = true, noTeletext = true, hasTeletext = false, hbbtv = null) }
     }
 
     private fun serviceChanged() {
         val target = decoder ?: return
         mutableStatus.update {
-            it.copy(hasTeletext = target.teletextPid >= 0, announced = target.announcedPages,
-                subtitlePagesSeen = target.subtitlePagesSeen())
+            it.copy(
+                probed = target.pmtSeen,
+                hasTeletext = target.teletextPid >= 0,
+                noTeletext = target.pmtSeen && target.teletextPid < 0,
+                hbbtv = target.hbbtvApps.firstOrNull(),
+                announced = target.announcedPages,
+                subtitlePagesSeen = target.subtitlePagesSeen(),
+            )
         }
         resolveSubtitlePage()
     }
@@ -181,9 +207,9 @@ object LiveTeletext {
         val status = mutableStatus.value
         if (page.subtitle && page.number == status.subtitlePage) mutableSubtitles.value = teletextSubtitleLines(page)
         val now = System.currentTimeMillis()
-        if (!status.hasTeletext || now - lastRevisionAt >= REVISION_INTERVAL_MS) {
+        if (now - lastRevisionAt >= REVISION_INTERVAL_MS) {
             lastRevisionAt = now
-            mutableStatus.update { it.copy(hasTeletext = true, revision = it.revision + 1) }
+            mutableStatus.update { it.copy(revision = it.revision + 1) }
         }
     }
 
@@ -196,6 +222,6 @@ object LiveTeletext {
         }
     }
 
-    private const val NO_TELETEXT_MS = 12_000L
+    private const val PROBE_TIMEOUT_MS = 12_000L
     private const val REVISION_INTERVAL_MS = 150L
 }

@@ -2093,4 +2093,8 @@
     <string name="player_teletext_pages">Seiten</string>
     <string name="player_teletext_index">Index</string>
     <string name="player_teletext_mix">Transparent</string>
+    <string name="player_hbbtv">Rote Taste (HbbTV)</string>
+    <string name="player_hbbtv_open">Öffnen</string>
+    <string name="player_hbbtv_consent">HbbTV-Angebote kommen direkt vom Sender aus dem Internet. Dabei können der Sender und seine Dienstleister Nutzungsdaten erfassen (z. B. Sender, Uhrzeit, IP-Adresse). Die Funktion ist experimentell: Nicht jedes Angebot funktioniert vollständig. Zweimal Zurück schließt es.</string>
+    <string name="player_hbbtv_close_hint">Zweimal Zurück zum Schließen</string>
 </resources>

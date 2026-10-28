@@ -1357,6 +1357,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getString(KEY_TELETEXT_SUBTITLES, null)?.takeIf { it == "off" || it == "auto" || it.toIntOrNull() in 100..899 } ?: "off"
         set(value) = prefs.edit { putString(KEY_TELETEXT_SUBTITLES, value) }
 
+    /** The HbbTV privacy notice was accepted (applications load content and tracking from the broadcaster). */
+    var hbbtvConsent: Boolean
+        get() = prefs.getBoolean(KEY_HBBTV_CONSENT, false)
+        set(value) = prefs.edit { putBoolean(KEY_HBBTV_CONSENT, value) }
+
     /** Lyrics over the music player's visualizer. */
     var lyricsVisible: Boolean
         get() = prefs.getBoolean(KEY_LYRICS_VISIBLE, true)
@@ -2291,6 +2296,7 @@ class AppPreferences @Inject constructor(
         const val KEY_PLAYER_BACK_MINIMIZES = "player_back_minimizes"
         const val KEY_NETWORK_BUFFER = "network_buffer"
         const val KEY_TELETEXT_SUBTITLES = "teletext_subtitles"
+        const val KEY_HBBTV_CONSENT = "hbbtv_consent"
         const val KEY_LYRICS_ONLINE = "lyrics_online"
         const val KEY_GAPLESS_MUSIC = "gapless_music"
         private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
