@@ -610,7 +610,8 @@ internal fun LibraryContent(
         val rowPark = homeRowParkOffset(heroHeight)
         val listViewport = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
         val density = LocalDensity.current
-        var firstRowHeight by remember { mutableStateOf<Dp?>(null) }
+        val firstRowHeightKey = "home:${state.rowKeys.firstOrNull()}:${listViewport.value}"
+        var firstRowHeight by remember(firstRowHeightKey) { mutableStateOf(HeroRowHeights[firstRowHeightKey]) }
         val bottomInsetPx = with(density) { HeroRowBottomMargin.roundToPx() }
         val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
             row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
@@ -654,7 +655,9 @@ internal fun LibraryContent(
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
         val centeredRowKey = remember { MutableStateFlow<String?>(null) }
         val activeRowKey by centeredRowKey.collectAsState()
-        val activeRowIndex = state.rowKeys.indexOf(activeRowKey).coerceAtLeast(0)
+        // Until a row takes focus, the restored row is the active one: no fade from row 0 to it.
+        val activeRowIndex = state.rowKeys.indexOf(activeRowKey).takeIf { it >= 0 }
+            ?: if (restoreArmed) contentListIndex(restoreRowIndex) else 0
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && restoreRowIndex in state.rows.indices) {
                 rowListState.scrollToItem(contentListIndex(restoreRowIndex))
@@ -698,7 +701,9 @@ internal fun LibraryContent(
                     .fadeRowsBehindHomeHero(maskRows, heroHeight)
                     .graphicsLayer {
                         val progress = entrancePhase(entranceProgress(), 0.24f, 1f)
-                        alpha = progress
+                        // Hidden for the one frame before the first row is measured (first open only;
+                        // a list restored further down never composes row 0 and shows at once).
+                        alpha = if (firstRowHeight == null && rowListState.firstVisibleItemIndex == 0) 0f else progress
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -716,7 +721,11 @@ internal fun LibraryContent(
                 }) { rowKey ->
                     val rowIndex = state.rowKeys.indexOf(rowKey)
                     Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex).then(
-                        if (rowIndex == 0) Modifier.onSizeChanged { firstRowHeight = with(density) { it.height.toDp() } } else Modifier,
+                        if (rowIndex == 0) Modifier.onSizeChanged {
+                            val height = with(density) { it.height.toDp() }
+                            firstRowHeight = height
+                            HeroRowHeights[firstRowHeightKey] = height
+                        } else Modifier,
                     )) {
                     when {
                         rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> HomeOfflineRow(
@@ -1664,6 +1673,17 @@ internal val HeroRowBottomMargin = 20.dp
  * List top padding that rests the first row on the bottom edge. Until it is measured, the old
  * park line under the hero.
  */
+/**
+ * First-row heights measured per layout. A page that rebuilds its rows (entry from the sidebar,
+ * returning from a title) rests them at once instead of jumping from the fallback line, which
+ * flickered and kept the sidebar waiting for focus.
+ */
+internal object HeroRowHeights {
+    private val heights = java.util.concurrent.ConcurrentHashMap<String, Float>()
+    operator fun get(key: String): Dp? = heights[key]?.dp
+    operator fun set(key: String, height: Dp) { if (heights.size > 64) heights.clear(); heights[key] = height.value }
+}
+
 internal fun heroRowsTopPadding(viewport: Dp, firstRowHeight: Dp?, fallback: Dp): Dp =
     firstRowHeight?.let { (viewport - HeroRowBottomMargin - it).coerceAtLeast(fallback) } ?: fallback
 
