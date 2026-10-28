@@ -226,8 +226,8 @@ data class SettingsBackup(
     val svpExplicitChoice: Boolean = false,
     /** Since schema 68: MPV scaler/deband picked deliberately, so cheap defaults do not replace it. */
     val mpvImageExplicitChoice: Boolean = false,
-    /** Since schema 71: double rate preferred over the native one. */
-    val preferDoubleRefreshRate: Boolean = false,
+    /** Since schema 71: double rate preferred over the native one (default on since schema 73). */
+    val preferDoubleRefreshRate: Boolean = true,
     /** Since schema 72. */
     val introAnimationKey: String = IntroAnimation.DEFAULT,
     val wolRetryCount: Int = com.ambient.tv.wol.WOL_RETRY_COUNT_DEFAULT,
@@ -908,7 +908,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.gpuRenderResolutionKey = if (schema66) backup.gpuRenderResolutionKey else AppPreferences.GPU_RENDER_AUTO
         preferences.mpvSdrCurveKey = if (schema66) backup.mpvSdrCurveKey else AppPreferences.MPV_SDR_CURVE_AUTO
         preferences.svpExplicitChoice = schema66 && backup.svpExplicitChoice
-        preferences.preferDoubleRefreshRate = backup.schemaVersion >= 71 && backup.preferDoubleRefreshRate
+        // Older backups have no choice: the current default (on) stays.
+        if (backup.schemaVersion >= 71) preferences.preferDoubleRefreshRate = backup.preferDoubleRefreshRate
         if (backup.schemaVersion >= 72) preferences.introAnimationKey = backup.introAnimationKey
         // "An Display synchronisieren" since schema 67; older backups restore "off".
         preferences.syncPlaybackToDisplay = backup.schemaVersion >= 67 && backup.syncPlaybackToDisplay

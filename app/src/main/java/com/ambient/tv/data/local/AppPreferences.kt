@@ -662,9 +662,9 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, true)
         set(value) = prefs.edit { putBoolean(KEY_ALLOW_THREE_TWO_PULLDOWN, value) }
 
-    /** Double rate even when the native one exists (30→60 Hz instead of 30 Hz); off keeps native first. */
+    /** Double rate even when the native one exists (30→60 Hz instead of 30 Hz); on by default, off keeps native first. */
     var preferDoubleRefreshRate: Boolean
-        get() = prefs.getBoolean(KEY_PREFER_DOUBLE_REFRESH_RATE, false)
+        get() = prefs.getBoolean(KEY_PREFER_DOUBLE_REFRESH_RATE, true)
         set(value) = prefs.edit { putBoolean(KEY_PREFER_DOUBLE_REFRESH_RATE, value) }
 
     /** 50→100 / 60→120 Hz doubling; off by default because it doubles 4K GPU/composition work. */

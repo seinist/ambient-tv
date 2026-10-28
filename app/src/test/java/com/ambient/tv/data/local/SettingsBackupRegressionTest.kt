@@ -235,6 +235,15 @@ class SettingsBackupRegressionTest {
         assertEquals("1080:60:vp9", target.youtubeVideoPreset)
     }
 
+    @Test fun doubleRefreshRateIsPreferredByDefaultAndOlderBackupsKeepIt() {
+        val (target, _, importer) = store()
+        assertTrue(target.preferDoubleRefreshRate)
+        importer.importJson("""{"schemaVersion":70,"exportedAtEpochMs":0}""")
+        assertTrue(target.preferDoubleRefreshRate)
+        importer.importJson("""{"schemaVersion":72,"exportedAtEpochMs":0,"preferDoubleRefreshRate":false}""")
+        assertFalse(target.preferDoubleRefreshRate)
+    }
+
     @Test fun backBehaviourAndNetworkBufferRoundTripFromSchema73() {
         val (source, _, exporter) = store()
         source.playerBackMinimizes = true
