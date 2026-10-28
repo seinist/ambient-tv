@@ -1665,6 +1665,7 @@ private data class YouTubeOsdModel(
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                         PlayerSleepTimerButton({ navigation?.open(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
                         com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
+                        com.ambient.tv.ui.common.PlayerToolButtons()
                         PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { navigation?.open(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)
                     },
                 )

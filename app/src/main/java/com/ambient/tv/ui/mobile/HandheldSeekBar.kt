@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.mobile
 
 import androidx.compose.foundation.Canvas
+import com.ambient.tv.ui.player.drawBookmarkTicks
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -115,6 +116,7 @@ fun HandheldSeekBar(
                 },
             contentAlignment = Alignment.CenterStart,
         ) {
+            val bookmarks = com.ambient.tv.ui.player.rememberPlayingBookmarks()
             Canvas(Modifier.fillMaxSize()) {
                 val centerY = size.height / 2f
                 val endX = size.width
@@ -126,6 +128,7 @@ fun HandheldSeekBar(
                         val x = (chapter.startMs.toDouble() / durationMs).toFloat().coerceIn(0f, 1f) * endX
                         drawLine(Color.Black.copy(alpha = 0.76f), Offset(x, centerY - trackWidth / 2), Offset(x, centerY + trackWidth / 2), 2.dp.toPx())
                     }
+                    drawBookmarkTicks(bookmarks, durationMs, centerY - trackWidth / 2, centerY + trackWidth / 2)
                     if (dragFraction != null) {
                         val radius = 8.5.dp.toPx()
                         drawCircle(Color.White, radius = radius, center = Offset(endX * fraction, centerY))
