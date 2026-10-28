@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -505,6 +507,41 @@ fun UnifiedBackendPlayerPanel(
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = true) },
                 )
+            }
+            val metadata = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata
+            val bookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(metadata)
+            if (handle != null && bookmarkKey != null) {
+                val revision = com.ambient.tv.ui.player.PlaybackBookmarks.revision.intValue
+                val marks = androidx.compose.runtime.remember(bookmarkKey, revision) { com.ambient.tv.ui.player.PlaybackBookmarks.list(context, bookmarkKey) }
+                RightPanelSectionTitle(stringResource(R.string.player_tools_bookmarks))
+                PlayerPanelEntry(
+                    icon = Icons.Filled.BookmarkAdd,
+                    title = stringResource(R.string.player_tools_bookmark_add),
+                    value = formatPlaybackClock(handle.status().positionMs),
+                    onClick = { com.ambient.tv.ui.player.PlaybackBookmarks.add(context, bookmarkKey, handle.status().positionMs) },
+                )
+                marks.forEach { mark ->
+                    PlayerPanelEntry(
+                        icon = Icons.Filled.Bookmark,
+                        title = stringResource(R.string.player_tools_bookmark_jump),
+                        value = formatPlaybackClock(mark),
+                        onClick = { handle.seekTo(mark) },
+                    )
+                }
+                if (marks.isNotEmpty()) {
+                    val all = "all"
+                    PlayerDropUpSelector(
+                        icon = Icons.Filled.Clear,
+                        label = stringResource(R.string.player_tools_bookmark_delete),
+                        value = "",
+                        options = marks.map { it.toString() to formatPlaybackClock(it) } + (all to stringResource(R.string.player_tools_bookmark_delete_all)),
+                        selectedKey = "",
+                        onSelected = { key ->
+                            if (key == all) com.ambient.tv.ui.player.PlaybackBookmarks.clear(context, bookmarkKey)
+                            else key.toLongOrNull()?.let { com.ambient.tv.ui.player.PlaybackBookmarks.remove(context, bookmarkKey, it) }
+                        },
+                    )
+                }
             }
             RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
             PlayerPanelEntry(

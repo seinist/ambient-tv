@@ -2136,7 +2136,7 @@
     <string name="subtitle_look_position">Distance from the bottom</string>
     <string name="subtitle_look_sample">This is how your subtitles look.</string>
     <string name="player_tools">Tools</string>
-    <string name="player_tools_summary">A-B repeat, frame step, screenshot</string>
+    <string name="player_tools_summary">Bookmarks, A-B repeat, frame step, screenshot</string>
     <string name="player_tools_ab_on">A-B repeat on</string>
     <string name="player_tools_ab">A-B repeat</string>
     <string name="player_tools_set_a">Set point A</string>
@@ -2153,4 +2153,9 @@
     <string name="player_tools_screenshot_failed">This picture cannot be captured (protected or HDR output)</string>
     <string name="external_search_hint">Search movies and shows</string>
     <string name="external_search_description">Movies and shows from Plex, Jellyfin and Emby</string>
+    <string name="player_tools_bookmarks">Bookmarks</string>
+    <string name="player_tools_bookmark_add">Set bookmark here</string>
+    <string name="player_tools_bookmark_jump">Jump to bookmark</string>
+    <string name="player_tools_bookmark_delete">Delete bookmark</string>
+    <string name="player_tools_bookmark_delete_all">Delete all bookmarks of this title</string>
 </resources>

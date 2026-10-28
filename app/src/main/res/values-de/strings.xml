@@ -2021,7 +2021,7 @@
     <string name="subtitle_look_position">Abstand vom unteren Rand</string>
     <string name="subtitle_look_sample">So sehen deine Untertitel aus.</string>
     <string name="player_tools">Werkzeuge</string>
-    <string name="player_tools_summary">A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
+    <string name="player_tools_summary">Lesezeichen, A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
     <string name="player_tools_ab_on">A-B-Wiederholung an</string>
     <string name="player_tools_ab">A-B-Wiederholung</string>
     <string name="player_tools_set_a">Punkt A setzen</string>
@@ -2038,4 +2038,9 @@
     <string name="player_tools_screenshot_failed">Dieses Bild lässt sich nicht aufnehmen (geschützt oder HDR-Ausgabe)</string>
     <string name="external_search_hint">Filme und Serien suchen</string>
     <string name="external_search_description">Filme und Serien aus Plex, Jellyfin und Emby</string>
+    <string name="player_tools_bookmarks">Lesezeichen</string>
+    <string name="player_tools_bookmark_add">Lesezeichen hier setzen</string>
+    <string name="player_tools_bookmark_jump">Zum Lesezeichen springen</string>
+    <string name="player_tools_bookmark_delete">Lesezeichen löschen</string>
+    <string name="player_tools_bookmark_delete_all">Alle Lesezeichen dieses Titels löschen</string>
 </resources>

@@ -1337,6 +1337,11 @@ class AppPreferences @Inject constructor(
             ?: ClockSettings(format = if (screensaverUse24HourClock) ClockSettings.FORMAT_24 else ClockSettings.FORMAT_12)
         set(value) = prefs.edit { putString(KEY_CLOCK_SETTINGS, clockJson.encodeToString(ClockSettings.serializer(), value.normalized())) }
 
+    /** Bookmarks per title (JSON, [com.ambient.tv.ui.player.PlaybackBookmarks]). */
+    var playbackBookmarksJson: String?
+        get() = prefs.getString(KEY_PLAYBACK_BOOKMARKS, null)
+        set(value) = prefs.edit { if (value == null) remove(KEY_PLAYBACK_BOOKMARKS) else putString(KEY_PLAYBACK_BOOKMARKS, value) }
+
     /** Look of text subtitles in every player; read when a player starts. */
     var subtitleAppearance: SubtitleAppearance
         get() = prefs.getString(KEY_SUBTITLE_APPEARANCE, null)
@@ -2237,6 +2242,7 @@ class AppPreferences @Inject constructor(
         const val KEY_SCREENSAVER_24H_CLOCK = "screensaver_24h_clock"
         const val KEY_CLOCK_SETTINGS = "clock_settings"
         const val KEY_SUBTITLE_APPEARANCE = "subtitle_appearance"
+        const val KEY_PLAYBACK_BOOKMARKS = "playback_bookmarks"
         private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         const val KEY_SCREENSAVER_USE_ARTWORK = "screensaver_use_artwork"
         const val KEY_SCREENSAVER_ARTWORK_INTERVAL_SECONDS = "screensaver_artwork_interval_seconds"
