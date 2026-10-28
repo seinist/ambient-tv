@@ -101,6 +101,10 @@ Every media system page also has:
 | Show on the home screen | On / Off | On | TV | Watch Next plus the channels "Continue watching" and "Recently added" on the Android TV launcher. Shown when the launcher supports it. |
 | Clear TV channel history | Action | — | All | The recent-channels row keeps up to 12 channels on this device; not in backups. |
 
+**Layout on TV:** the hero fills the upper part of the screen; one row rests on the bottom edge beneath it, the others fade out until you move to them (like Plex). Tiles in these rows scale with the screen, independent of the UI scale, so one row fills the space under the hero at 4K too. Down from the last row wraps to the first; Up from the first row reaches the page header or whatever sits above (e.g. the update notice), otherwise the last row. The same applies to library recommendation pages.
+
+**Offline servers on Home:** a server that does not answer keeps one row on Home with its name and **Wake up** (with Wake-on-LAN) or **Reconnect**; its other rows return by themselves once it answers. When only its rows were on Home, Home shows the offline page instead. A failure is reported by the connection notice only; there is no dialog.
+
 ### 3.2 When selecting media
 
 | Setting | Options / values | Default | Description |
@@ -278,7 +282,7 @@ Both pages have the same controls.
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
 | Enable SmartTube | On / Off | On | All | Module in navigation and search. |
-| Sign in to SmartTube | Device code at yt.be/activate | — | All | Phone: link copies the code. Works without sign-in as guest. |
+| Sign in to SmartTube | Device code at yt.be/activate, QR code | — | All | The QR code and the browser link open youtube.com/activate with the code already filled in; the code stays on screen for typing it at yt.be/activate. The TV shows the QR dialog here and on the YouTube page. Phone: the link also copies the code. Works without sign-in as guest. |
 | SponsorBlock | On / Off | On | All | Skips identified sponsor segments. |
 | Automatically play next video | On / Off | Off | All | Plays the first suggestion when a video ends. |
 | Visible sections | Home, Subscriptions, History, Playlists, Shorts, Music, News, Gaming, Live, Kids | All | All | Sections shown in the module. |
@@ -697,7 +701,7 @@ On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube
 
 ### 11.1a Android TV home screen
 
-Movies and episodes in progress from Plex, Jellyfin and Emby appear in the launcher's **Continue watching** row (Watch Next) and are updated when playback stops; finished titles disappear. When Home loads, the app reconciles the row with each server's continue-watching list, so titles finished or started on another device follow (only with the Continue watching row enabled and the server reachable; titles just stopped here take precedence for a minute). The app also publishes the channels **Continue watching**, **Recently added** and **Live TV** (recently watched channels, then the live row with the current programme; only from enabled Live TV rows on Home), refreshed when Home loads. The first channel with content is offered automatically, others are added through the launcher's "customize channels". While a server is offline or asleep, or live TV is still loading, the channels keep their last content. Selecting an entry first connects like Home does (VPN, reachability, Wake-on-LAN with the full wait) and then opens the title (Continue watching starts playback) or plays the channel; if the server stays unreachable, the app remains on Home with the connection notice. Channels follow the row settings: enabled rows only, their own title (when there is exactly one such row) and poster or landscape display; servers hidden as unreachable are left out. Posters are served by the app itself, so no server credentials reach the launcher. Turn it off under Settings › Home › **Show on the home screen**. The launcher decides which rows are visible; Google TV no longer shows other apps' channels.
+Movies and episodes in progress from Plex, Jellyfin and Emby appear in the launcher's **Continue watching** row (Watch Next) and are updated when playback stops; finished titles disappear. When Home loads, the app reconciles the row with each server's continue-watching list, so titles finished or started on another device follow (only with the Continue watching row enabled and the server reachable; titles just stopped here take precedence for a minute). The app also publishes the channels **Continue watching**, **Recently added** and **Live TV** (recently watched channels, then the live row with the current programme; only from enabled Live TV rows on Home), refreshed when Home loads. The first channel with content is offered automatically, others are added through the launcher's "customize channels". While a server is offline or asleep, or live TV is still loading, the channels keep their last content. Selecting an entry first connects like Home does (VPN, reachability, Wake-on-LAN with the full wait) and then opens the title (Continue watching starts playback) or plays the channel; if the server stays unreachable, the app remains on Home with the connection notice. Channels follow the row settings: enabled rows only, their own title (when there is exactly one such row) and poster or landscape display. Posters are served by the app itself, so no server credentials reach the launcher. Turn it off under Settings › Home › **Show on the home screen**. The launcher decides which rows are visible; Google TV no longer shows other apps' channels.
 
 ### 11.1b Receiving from other apps (DLNA renderer)
 

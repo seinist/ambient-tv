@@ -17,6 +17,11 @@ Current features in the compendium:
 - [Clock](DOCUMENTATION.md#39-clock)
 - [Recordings and timers: edit, delete, artwork](DOCUMENTATION.md#43-tvheadend)
 - [Media3 GPU filters (MPV kernels, RAVU, NIS, grain, denoise)](DOCUMENTATION.md#74-vlc-and-media3-image-options)
+- [Subtitle look and automatic sync](DOCUMENTATION.md#62-subtitles)
+- [Night mode by the clock](DOCUMENTATION.md#66-audio-profiles)
+- [Player tools: A-B, frame step, bookmarks, screenshots, lyrics, gapless](DOCUMENTATION.md#71-playback-settings-menu)
+- [Home layout and offline servers](DOCUMENTATION.md#31-home-rows)
+- [System and voice search](DOCUMENTATION.md#111-android-tv)
 
 ## Other project notes (repo root)
 
