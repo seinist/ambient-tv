@@ -2081,4 +2081,21 @@
     <string name="player_nerd_dsp_suspended">suspended (bitstream)</string>
     <string name="player_nerd_automatic">automatic</string>
     <string name="player_nerd_title_scope">this title</string>
+    <string name="player_teletext">Teletext</string>
+    <string name="player_teletext_open">Open</string>
+    <string name="player_teletext_searching">Looking for teletext …</string>
+    <string name="player_teletext_none">This channel has no teletext</string>
+    <string name="player_teletext_page_searching">Looking for page %1$d …</string>
+    <string name="player_teletext_subtitles">Teletext subtitles</string>
+    <string name="player_teletext_subtitles_auto">Automatic</string>
+    <string name="player_teletext_subtitles_auto_value">Automatic (page %1$d)</string>
+    <string name="player_teletext_subtitle_page">Page %1$d</string>
+    <string name="player_teletext_hearing">hard of hearing</string>
+    <string name="player_teletext_pages">Pages</string>
+    <string name="player_teletext_index">Index</string>
+    <string name="player_teletext_mix">Transparent</string>
+    <string name="player_hbbtv">Red button (HbbTV)</string>
+    <string name="player_hbbtv_open">Open</string>
+    <string name="player_hbbtv_consent">HbbTV services come straight from the broadcaster over the internet. The broadcaster and its providers may record usage data (such as channel, time and IP address). The feature is experimental: not every service works fully. Press Back twice to close it.</string>
+    <string name="player_hbbtv_close_hint">Press Back twice to close</string>
 </resources>

@@ -137,6 +137,7 @@ fun UnifiedBackendPlayerPanel(
                     onTimeshiftChanged = com.ambient.tv.ui.tvheadend.LocalLiveTimeshiftChanged.current,
                 )
             }
+            if (isLive) com.ambient.tv.ui.player.teletext.TeletextPanelEntries()
             if (showVideo && hasVideo) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Movie,

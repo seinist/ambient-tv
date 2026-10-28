@@ -2080,4 +2080,21 @@
     <string name="player_nerd_dsp_suspended">ausgesetzt (Bitstream)</string>
     <string name="player_nerd_automatic">automatisch</string>
     <string name="player_nerd_title_scope">dieser Titel</string>
+    <string name="player_teletext">Videotext</string>
+    <string name="player_teletext_open">Öffnen</string>
+    <string name="player_teletext_searching">Videotext wird gesucht …</string>
+    <string name="player_teletext_none">Dieser Sender sendet keinen Videotext</string>
+    <string name="player_teletext_page_searching">Seite %1$d wird gesucht …</string>
+    <string name="player_teletext_subtitles">Videotext-Untertitel</string>
+    <string name="player_teletext_subtitles_auto">Automatisch</string>
+    <string name="player_teletext_subtitles_auto_value">Automatisch (Tafel %1$d)</string>
+    <string name="player_teletext_subtitle_page">Tafel %1$d</string>
+    <string name="player_teletext_hearing">für Hörgeschädigte</string>
+    <string name="player_teletext_pages">Seiten</string>
+    <string name="player_teletext_index">Index</string>
+    <string name="player_teletext_mix">Transparent</string>
+    <string name="player_hbbtv">Rote Taste (HbbTV)</string>
+    <string name="player_hbbtv_open">Öffnen</string>
+    <string name="player_hbbtv_consent">HbbTV-Angebote kommen direkt vom Sender aus dem Internet. Dabei können der Sender und seine Dienstleister Nutzungsdaten erfassen (z. B. Sender, Uhrzeit, IP-Adresse). Die Funktion ist experimentell: Nicht jedes Angebot funktioniert vollständig. Zweimal Zurück schließt es.</string>
+    <string name="player_hbbtv_close_hint">Zweimal Zurück zum Schließen</string>
 </resources>
