@@ -24,6 +24,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalView
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import kotlinx.coroutines.Job
@@ -67,6 +68,8 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     }
 
     internal fun isLastRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.lastOrNull()
+
+    internal fun isFirstRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.firstOrNull()
 
     /** Remembered tile while the row still holds it, else its first one. */
     private fun entry(rowKey: Any): Pair<Any, Int>? {
@@ -165,7 +168,9 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
- * Down from the last row wraps to the first via [scrollToTop].
+ * Down from the last row wraps to the first via [scrollToTop]; Up from the first row reaches a
+ * registered page header if there is one, else wraps to the last via [scrollToBottom]. The
+ * list's own wrap would land on whichever tile geometry picks and the row would keep it.
  *
  * [scrollToRow] brings a row into the vertical list before its tiles are focused. A row that is
  * only prefetched (taller than the viewport, so nothing of it is placed) has no focus target yet;
@@ -174,11 +179,15 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 fun Modifier.rowColumnFocusNavigation(
     focus: RowColumnFocus,
     scrollToTop: (suspend () -> Unit)? = null,
+    scrollToBottom: (suspend () -> Unit)? = null,
     scrollToRow: (suspend (Any) -> Unit)? = null,
     rowOrder: () -> List<Any>,
 ): Modifier = composed {
     if (LocalHandheldUi.current) return@composed Modifier
     val uiSounds = LocalUiSoundPlayer.current
+    val scrollListActions = LocalScrollListActions.current
+    val actionFocus = LocalScrollListActionFocus.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     var moveJob by remember { mutableStateOf<Job?>(null) }
     // The target row composes and settles its tiles a few frames after a scroll.
@@ -220,6 +229,21 @@ fun Modifier.rowColumnFocusNavigation(
                 }
                 if (focus.canScrollToEntry(rowKey)) focus.scrollToEntry(rowKey)
                 focusSettled(rowKey)
+            }
+            return@onPreviewKeyEvent true
+        }
+        if (!down && scrollToBottom != null && focus.isFirstRow(order)) {
+            val exited = if (actionFocus != null) runCatching { actionFocus.requestFocus() }.getOrDefault(false)
+                else scrollListActions?.requestUpFocus(view) == true
+            if (exited) {
+                uiSounds?.playFocus()
+                return@onPreviewKeyEvent true
+            }
+            val last = order.lastOrNull() ?: return@onPreviewKeyEvent false
+            moveJob = scope.launch {
+                scrollToBottom()
+                focus.scrollToEntry(last)
+                focusSettled(last)
             }
             return@onPreviewKeyEvent true
         }

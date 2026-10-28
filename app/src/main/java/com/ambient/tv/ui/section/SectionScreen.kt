@@ -788,6 +788,7 @@ private fun RecommendationRowsPage(
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = { rowsState.glideToItem(!performance.reducedEffects, 0) },
+                            scrollToBottom = { rowsState.glideToItem(!performance.reducedEffects, state.recommendationRows.lastIndex) },
                             scrollToRow = { rowKey ->
                                 val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
                                 if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)

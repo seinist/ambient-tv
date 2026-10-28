@@ -672,6 +672,7 @@ internal fun LibraryContent(
                     .rowColumnFocusNavigation(
                         columnFocus,
                         scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
+                        scrollToBottom = { rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex) },
                         scrollToRow = { rowKey ->
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
                             if (index >= 0) rowCentering.centerItem(index, alignTop = true)
@@ -1571,8 +1572,13 @@ internal fun HomeHeroAmbient(
 private fun homeHeroHeight(): Dp {
     if (LocalHandheldUi.current) return HomeHeroMinHeight
     val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
-    return (screenHeight * 0.44f).coerceAtLeast(HomeHeroMinHeight)
+    // Rows keep their dp size, so a smaller UI scale (4K starts at 70 %) would fit more of them
+    // under a proportional hero. Keep the space below at its 100 % share: one row, like Plex.
+    return maxOf(screenHeight * 0.44f, screenHeight - HomeRowsArea).coerceAtLeast(HomeHeroMinHeight)
 }
+
+// Below the hero at 100 % scale on a 540 dp tall TV screen (56 %).
+private val HomeRowsArea = 302.dp
 
 private val HomeHeroMinHeight = 190.dp
 
