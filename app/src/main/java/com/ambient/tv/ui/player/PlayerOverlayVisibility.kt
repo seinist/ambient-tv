@@ -45,7 +45,7 @@ fun PlayerPanelVisibility(
 }
 
 /** Keeps the chrome composed until its fade finishes, including when visibility reverses. On a
- * dismissal only the action bar slides down; the rest fades in place after it. */
+ * dismissal the action bar and the block above it slide down; everything then fades. */
 @Composable
 fun PlayerOverlayVisibility(
     visible: Boolean,

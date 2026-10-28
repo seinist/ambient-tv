@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -178,6 +179,12 @@ fun BoxScope.ReferencePlayerBottomContent(
     val playPauseFocus = remember { FocusRequester() }
     val controlFocus = LocalPlayerControlFocus.current ?: remember { PlayerControlFocus() }
     val stow = LocalPlayerOsdStow.current
+    // A closing OSD slides the block down with the bar (same curve), even when it already followed a stowed bar.
+    val closeSlide = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(stow?.closing) {
+        if (stow?.closing == true) closeSlide.animateTo(1f, androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        else closeSlide.snapTo(0f)
+    }
     CompositionLocalProvider(
         LocalPlayerPlayPauseFocus provides playPauseFocus,
         LocalPlayerControlFocus provides controlFocus,
@@ -188,7 +195,7 @@ fun BoxScope.ReferencePlayerBottomContent(
                 .fillMaxWidth()
                 .then(if (LocalHandheldUi.current) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                 .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp))
-                .then(stow?.let { Modifier.graphicsLayer { translationY = (if (it.closing) it.closingFraction else it.fraction) * StowedBarGap.toPx() } } ?: Modifier),
+                .then(stow?.let { Modifier.graphicsLayer { translationY = ((if (it.closing) it.closingFraction else it.fraction) + closeSlide.value) * StowedBarGap.toPx() } } ?: Modifier),
             verticalArrangement = Arrangement.spacedBy(deviceDp(13.dp, 6.dp)),
         ) {
             content()
