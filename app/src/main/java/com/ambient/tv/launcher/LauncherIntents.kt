@@ -24,6 +24,9 @@ object LauncherIntents {
     private val SOURCE = Regex("[^\\p{Cntrl}]{0,300}")
     private val KEY = Regex("[A-Za-z0-9:_.\\-]{1,160}")
 
+    private const val SEARCH_SCHEME = "ambienttv"
+    private const val SEARCH_HOST = "title"
+
     private val pending = MutableStateFlow<String?>(null)
     /** Route waiting for the navigation host; cleared with [consumed]. */
     val requests = pending.asStateFlow()
@@ -47,13 +50,18 @@ object LauncherIntents {
                 .toUri(Intent.URI_INTENT_SCHEME),
         )
 
+    /** A system-search hit: opens the title's detail page (`ambienttv://title/<key>`). */
+    fun searchTitleUri(ratingKey: String): Uri =
+        Uri.Builder().scheme(SEARCH_SCHEME).authority(SEARCH_HOST).appendPath(ratingKey).build()
+
     fun appUri(context: Context): Uri =
         Uri.parse(Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN).toUri(Intent.URI_INTENT_SCHEME))
 
     /** A launcher row's request, validated: a media title, or a live channel of a source. */
     sealed interface Request {
         val route: String
-        data class Title(val key: String, val play: Boolean) : Request {
+        /** [fromSearch]: a system-search hit, which works without the launcher rows. */
+        data class Title(val key: String, val play: Boolean, val fromSearch: Boolean = false) : Request {
             override val route: String get() = if (play) Destinations.player(key) else Destinations.detail(key)
         }
         data class Channel(val uuid: String, val sourceId: String) : Request {
@@ -62,6 +70,11 @@ object LauncherIntents {
     }
 
     fun parse(intent: Intent?): Request? {
+        if (intent?.action == Intent.ACTION_VIEW && intent.data?.scheme == SEARCH_SCHEME && intent.data?.host == SEARCH_HOST) {
+            if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
+            val key = intent.data?.pathSegments?.singleOrNull()?.takeIf(KEY::matches) ?: return null
+            return Request.Title(key, play = false, fromSearch = true)
+        }
         if (intent?.action != ACTION_OPEN_TITLE) return null
         // Reopened from Recents after the app was gone: the old entry must not play again.
         if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null

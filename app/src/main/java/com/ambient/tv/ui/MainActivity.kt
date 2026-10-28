@@ -267,6 +267,7 @@ open class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         launcherOpener.open(intent)
+        com.ambient.tv.search.ExternalSearch.offer(intent)
         if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) companionManager.handleIntent(intent)
         else companionIntentPending = true
         if (intent.action == PlaybackService.ACTION_OPEN) {
@@ -596,7 +597,10 @@ open class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) requestNotificationPermissionOnce()
         // A launcher row (Watch Next / preview channel) opened the app on a title. After the
         // handheld hand-off, so the activity that stays connects once.
-        if (savedInstanceState == null) launcherOpener.open(intent)
+        if (savedInstanceState == null) {
+            launcherOpener.open(intent)
+            com.ambient.tv.search.ExternalSearch.offer(intent)
+        }
         if (intent?.action == PlaybackService.ACTION_OPEN) registerUserInteraction()
         // Launcher cold start only: a launcher row or playback notification goes straight to its target.
         val startIntro = if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) {
@@ -1314,6 +1318,12 @@ private fun AmbientTvApp(
             }
         }
         com.ambient.tv.launcher.LauncherIntents.consumed(route)
+    }
+    // System/voice search: open the search page; it runs and consumes the query.
+    val externalSearch by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
+    LaunchedEffect(externalSearch) {
+        if (externalSearch == null || navController.currentDestination?.route == Destinations.SEARCH) return@LaunchedEffect
+        runCatching { navController.navigate(Destinations.SEARCH) { launchSingleTop = true } }
     }
     LaunchedEffect(openPlaybackRequest) {
         if (openPlaybackRequest > 0) BackgroundPlaybackSession.snapshot.value.metadata?.route?.let {

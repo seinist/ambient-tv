@@ -2035,4 +2035,6 @@
     <string name="player_tools_screenshot_where">Pictures › Ambient TV</string>
     <string name="player_tools_screenshot_saved">Screenshot saved</string>
     <string name="player_tools_screenshot_failed">This picture cannot be captured (protected or HDR output)</string>
+    <string name="external_search_hint">Search movies and shows</string>
+    <string name="external_search_description">Movies and shows from Plex, Jellyfin and Emby</string>
 </resources>

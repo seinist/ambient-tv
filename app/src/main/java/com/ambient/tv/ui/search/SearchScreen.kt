@@ -107,6 +107,14 @@ fun SearchScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     LaunchedEffect(viewModel) { viewModel.refreshSources() }
+    // A query from the system search, voice search or the Assistant runs as typed here.
+    val externalQuery by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
+    LaunchedEffect(externalQuery) {
+        val query = externalQuery ?: return@LaunchedEffect
+        viewModel.onQueryChanged(query)
+        viewModel.submitSearch()
+        com.ambient.tv.search.ExternalSearch.consumed(query)
+    }
     if (onBack != null) {
         BackHandler { onBack() }
     }

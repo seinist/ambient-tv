@@ -2034,4 +2034,6 @@
     <string name="player_tools_screenshot_where">Bilder › Ambient TV</string>
     <string name="player_tools_screenshot_saved">Bildschirmfoto gespeichert</string>
     <string name="player_tools_screenshot_failed">Dieses Bild lässt sich nicht aufnehmen (geschützt oder HDR-Ausgabe)</string>
+    <string name="external_search_hint">Filme und Serien suchen</string>
+    <string name="external_search_description">Filme und Serien aus Plex, Jellyfin und Emby</string>
 </resources>
