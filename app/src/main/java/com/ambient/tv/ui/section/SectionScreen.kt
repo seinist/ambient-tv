@@ -39,7 +39,6 @@ import com.ambient.tv.ui.home.HomeRowsLift
 import com.ambient.tv.ui.home.fadeRowsBehindHomeHero
 import com.ambient.tv.ui.home.onlyActiveHeroRow
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.Dp
 import com.ambient.tv.ui.home.HeroRowBottomMargin
 import com.ambient.tv.ui.home.heroRowsTopPadding
 import com.ambient.tv.ui.home.toHomeHeroContent
@@ -762,7 +761,6 @@ private fun RecommendationRowsPage(
     val handheld = LocalHandheldUi.current
     // TV rests the active row on the bottom edge; handheld keeps it under the banner.
     val bottomInsetPx = if (handheld) -1 else with(LocalDensity.current) { HeroRowBottomMargin.roundToPx() }
-    var firstRowHeight by remember { mutableStateOf<Dp?>(null) }
     val density = LocalDensity.current
     LaunchedEffect(centeredRowIndex) {
         if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true, bottomInset = bottomInsetPx)
@@ -785,6 +783,8 @@ private fun RecommendationRowsPage(
         val rowsArea = maxHeight - (heroHeight - HomeRowsLift + 12.dp)
         val viewportHeight = maxHeight
         val performance = LocalPerformanceProfile.current
+        val firstRowHeightKey = "section:$tileStyle:${viewportHeight.value}"
+        var firstRowHeight by remember(firstRowHeightKey) { mutableStateOf(com.ambient.tv.ui.home.HeroRowHeights[firstRowHeightKey]) }
         Box(Modifier.fillMaxSize()) {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalBringIntoViewSpec provides rowScrollSpec,
@@ -806,7 +806,12 @@ private fun RecommendationRowsPage(
                             },
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
-                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight)),
+                        .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight))
+                        // Hidden for the one frame before the first row is measured (first open only).
+                        // (a list restored further down never composes row 0 and shows at once).
+                        .then(if (handheld) Modifier else Modifier.graphicsLayer {
+                            alpha = if (firstRowHeight == null && rowsState.firstVisibleItemIndex == 0) 0f else 1f
+                        }),
                     contentPadding = PaddingValues(
                         top = if (handheld) 8.dp else heroRowsTopPadding(viewportHeight, firstRowHeight, heroHeight - HomeRowsLift + 12.dp),
                         bottom = if (handheld) 36.dp else HeroRowBottomMargin,
@@ -814,8 +819,13 @@ private fun RecommendationRowsPage(
                 ) {
                     itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
                         ContentRow(
-                            modifier = Modifier.onlyActiveHeroRow(index, centeredRowIndex.coerceAtLeast(0)).then(
-                                if (index == 0) Modifier.onSizeChanged { size -> firstRowHeight = with(density) { size.height.toDp() } } else Modifier,
+                            // Until a row takes focus, the restored row is the active one.
+                            modifier = Modifier.onlyActiveHeroRow(index, if (centeredRowIndex >= 0) centeredRowIndex else restoreRowIndex).then(
+                                if (index == 0) Modifier.onSizeChanged { size ->
+                                    val height = with(density) { size.height.toDp() }
+                                    firstRowHeight = height
+                                    com.ambient.tv.ui.home.HeroRowHeights[firstRowHeightKey] = height
+                                } else Modifier,
                             ),
                             row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
                             onItemClick = { onItemClick(it.ratingKey) },
