@@ -566,6 +566,9 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
+        // A new launch in a process that outlived the closed app is a cold start for the user too:
+        // remembered focus (YouTube feeds, libraries, rows) begins at the first item again.
+        if (savedInstanceState == null) appPreferences.clearSessionFocus()
         companionIntentPending = savedInstanceState?.getBoolean("companion.intent.pending", false) ?: true
         if (this is com.ambient.tv.ui.mobile.HandheldActivity && com.ambient.tv.ui.mobile.isTelevision(this)) {
             startActivity(Intent(intent).setClass(this, MainActivity::class.java).apply {
