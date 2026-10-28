@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0--beta%20%28351%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0%20%28352%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0-beta` (351)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0` (352)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
 
 </p>
 
@@ -82,7 +82,9 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 ### ▶️ Playback
 - **Media3, VLC and MPV** in one shared player
 - **Live TV timeshift** — pause, seek and back to live; EPG reminders and optional TVHeadend direct recording
-- **Subtitles** — sidecar files for Files/NAS and DLNA, online search via OpenSubtitles.com (own API key)
+- **Subtitles** — sidecar files for Files/NAS and DLNA, online search via OpenSubtitles.com (own API key), **automatic sync** to the server's subtitle, your own **look** for text subtitles (ASS/SSA keep their style)
+- **Player tools** — A-B repeat, frame step, **bookmarks**, screenshots
+- **Music** — **gapless** playback (Media3), **lyrics** (Plex, Jellyfin, optional LRCLIB)
 - **Mini-player** & background playback
 - Picture settings **remembered per title**
 - **Display-mode matching**, optional **SDR → HDR10** (Android 14+)
@@ -107,6 +109,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **Audio profiles** per output (TV / HDMI-AVR / headphones)
 - **Passthrough** — AC3, E-AC3, DTS, DTS-HD, TrueHD
 - **Upmix, night mode, dialogue boost**, normalization, 10-band EQ
+- **Night mode by the clock** — every player switches it on in a time window
 - Visualizer / **projectM**
 
 </td>
@@ -124,6 +127,8 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 
 ### 📱 Devices & extras
 - **TV (D-pad / sidebar)** and **phone (touch)** UI in one APK
+- **Android TV system and voice search** finds titles from Plex, Jellyfin and Emby
+- Offline servers stay in the menu with a **wake / reconnect** page
 - **Phone ↔ TV pairing** — remote, send playback, transfer accounts
 - **Clock** in page headers, on Home and in the player (format, date, look)
 - **Light moods** above Home, **filter bar** above libraries, guide, trailers and YouTube

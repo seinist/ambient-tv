@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0--beta%20%28351%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0%20%28352%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0-beta` (351)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0` (352)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
 
 </p>
 
@@ -82,7 +82,9 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 ### ▶️ Wiedergabe
 - **Media3, VLC und MPV** in einem gemeinsamen Player
 - **Live-TV-Timeshift** — Pause, Spulen und zurück zu Live; EPG-Erinnerungen und optionale TVHeadend-Direktaufnahme
-- **Untertitel** — externe Dateien bei Dateien/NAS und DLNA, Online-Suche über OpenSubtitles.com (eigener API-Schlüssel)
+- **Untertitel** — externe Dateien bei Dateien/NAS und DLNA, Online-Suche über OpenSubtitles.com (eigener API-Schlüssel), **automatisch synchronisieren** am Server-Untertitel, eigenes **Aussehen** für Text-Untertitel (ASS/SSA behalten ihren Stil)
+- **Player-Werkzeuge** — A-B-Wiederholung, Einzelbild, **Lesezeichen**, Bildschirmfotos
+- **Musik** — **lückenlose** Wiedergabe (Media3), **Songtexte** (Plex, Jellyfin, optional LRCLIB)
 - **Miniplayer** & Hintergrundwiedergabe
 - Bildeinstellungen **pro Titel gemerkt**
 - **Anzeigemodus-Anpassung**, optional **SDR → HDR10** (Android 14+)
@@ -107,6 +109,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Audioprofile** je Ausgang (TV / HDMI-AVR / Kopfhörer)
 - **Passthrough** – AC3, E-AC3, DTS, DTS-HD, TrueHD
 - **Upmix, Nachtmodus, Dialoganhebung**, Lautstärkeausgleich, 10-Band-EQ
+- **Nachtmodus nach Uhrzeit** — jeder Player schaltet ihn im Zeitfenster ein
 - Visualizer / **projectM**
 
 </td>
@@ -124,6 +127,8 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 
 ### 📱 Geräte & Extras
 - **TV- (D-Pad/Sidebar)** und **Handy-Oberfläche (Touch)** in einer APK
+- **Android-TV-System- und Sprachsuche** findet Titel aus Plex, Jellyfin und Emby
+- Offline-Server bleiben im Menü, mit einer Seite zum **Aufwecken / Neu verbinden**
 - **Handy ↔ TV koppeln** – Fernbedienung, Wiedergabe senden, Konten übertragen
 - **Uhr** in den Kopfzeilen, auf der Startseite und im Player (Format, Datum, Aussehen)
 - **Lichtstimmungen** über der Startseite, **Filterleiste** über Mediatheken, Programmführer, Trailern und YouTube
