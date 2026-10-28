@@ -51,5 +51,3 @@ private fun TimeChoice(labelRes: Int, minute: Int, onSelected: (Int) -> Unit) {
 }
 
 internal fun nightScheduleTimes(): List<Int> = (0 until NightSchedule.MINUTES_PER_DAY step 30).toList()
-
-internal fun formatMinuteOfDay(minute: Int): String = "%02d:%02d".format(minute / 60, minute % 60)
