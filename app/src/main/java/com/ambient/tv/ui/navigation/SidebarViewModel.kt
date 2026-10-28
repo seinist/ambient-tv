@@ -63,8 +63,8 @@ data class SidebarUiState(
     val sections: List<LibrarySection> = emptyList(),
     val jellyfinSections: List<LibrarySection> = emptyList(),
     val embySections: List<LibrarySection> = emptyList(),
-    /** Media servers the user hid after confirming they are unreachable. Not deleted. */
-    val suppressedSystems: Set<String> = emptySet(),
+    /** Media servers that do not answer: listed with an offline mark, opening them offers a wake. */
+    val offlineSystems: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -167,9 +167,7 @@ class SidebarViewModel @Inject constructor(
             tvheadendRepository.servingCachedData.collect { offline -> _uiState.update { it.copy(tvheadendOffline = offline) } }
         }
         viewModelScope.launch {
-            unreachableServers.state.collect { gate ->
-                _uiState.update { it.copy(suppressedSystems = gate.hidden) }
-            }
+            unreachableServers.state.collect { gate -> _uiState.update { it.copy(offlineSystems = gate.offline) } }
         }
         viewModelScope.launch {
             fileStore.revision.collect {
@@ -236,7 +234,6 @@ class SidebarViewModel @Inject constructor(
                 dividersAfter = appPreferences.sidebarDividersAfter,
                 entryOrder = appPreferences.sidebarEntryOrder,
                 entryDividers = appPreferences.sidebarEntryDividers,
-                suppressedSystems = unreachableServers.current().hidden,
             )
         }
         unreachableServers.refresh()

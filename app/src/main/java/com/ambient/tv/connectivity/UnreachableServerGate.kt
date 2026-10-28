@@ -29,22 +29,20 @@ data class UnreachableServerGateState(
     val unreachable: Set<String> = emptySet(),
     val pending: Boolean = false,
     val canDismiss: Boolean = false,
-    val acknowledged: Set<String> = emptySet(),
     val names: List<String> = emptyList(),
-    /** "Retry" is running: the dialog shows progress instead of looking dead. */
+    /** A wake/reconnect is running: the offline page shows progress instead of looking dead. */
     val retrying: Boolean = false,
+    /**
+     * Servers shown as offline (see [nextOfflineSystems]). They stay in the menu and on Home as
+     * an offline entry that offers to wake them; nothing is hidden or deleted.
+     */
+    val offline: Set<String> = emptySet(),
     /** No unreachable system can be woken (no Wake-on-LAN): retrying only checks again. */
     val wakeUnavailable: Boolean = false,
 ) {
-    val hidden: Set<String> get() = hiddenUnreachableSystems(unreachable, acknowledged)
-    /** Unacknowledged failures whose check has finished. */
-    val prompt: Boolean get() = !pending && unreachable.any { it !in acknowledged }
 }
 
-/**
- * In-memory hide list for media servers that are not responding.
- * Saved server profiles are never removed; a server reappears when it is reachable again.
- */
+/** Which media servers are not responding, and the one way to wake and reconnect them. */
 @Singleton
 class UnreachableServerGate @Inject constructor(
     private val preferences: AppPreferences,
@@ -59,19 +57,17 @@ class UnreachableServerGate @Inject constructor(
     private val tvheadend: com.ambient.tv.server.TvheadendConnectionManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    // Keep Continue acknowledged for this app session, including checks and later outages.
-    private val acknowledged = MutableStateFlow<Set<String>>(emptySet())
     private val revision = MutableStateFlow(0)
     private val retrying = MutableStateFlow(false)
+    @Volatile private var offline = emptySet<String>()
 
     val state: StateFlow<UnreachableServerGateState> = combine(
         plex.state,
         jellyfin.state,
         emby.state,
-        acknowledged,
         combine(revision, hosts.states, resumeConnectivity.status, tvheadend.state, retrying) { _, _, resumeStatus, _, _ -> resumeStatus },
-    ) { plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus ->
-        snapshot(plexState, jellyfinState, embyState, acknowledgedIds, resumeStatus)
+    ) { plexState, jellyfinState, embyState, resumeStatus ->
+        snapshot(plexState, jellyfinState, embyState, resumeStatus)
     }.stateIn(scope, SharingStarted.Eagerly, UnreachableServerGateState())
 
     init {
@@ -97,12 +93,12 @@ class UnreachableServerGate @Inject constructor(
         scope.launch {
             while (true) {
                 delay(30_000L)
-                val hidden = current().hidden
+                val offline = current().offline
                 coroutineScope {
-                    if (MediaSystem.PLEX.key in hidden) launch { if (plex.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.JELLYFIN.key in hidden) launch { if (jellyfin.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.EMBY.key in hidden) launch { if (emby.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.TVHEADEND.key in hidden) launch { if (tvheadend.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.PLEX.key in offline) launch { if (plex.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.JELLYFIN.key in offline) launch { if (jellyfin.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.EMBY.key in offline) launch { if (emby.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.TVHEADEND.key in offline) launch { if (tvheadend.checkInBackground()) refreshBus.requestRefresh() }
                 }
             }
         }
@@ -112,26 +108,12 @@ class UnreachableServerGate @Inject constructor(
         plex.state.value,
         jellyfin.state.value,
         emby.state.value,
-        acknowledged.value,
         resumeConnectivity.status.value,
     )
 
     /** Re-read enabled systems (YouTube and the rest are not connection-state flows). */
     fun refresh() {
         revision.value = revision.value + 1
-    }
-
-    /** Hides unreachable servers only when another system is active and reachable. */
-    fun confirm() {
-        val current = current()
-        val next = acknowledgedAfterConfirm(current.acknowledged, current.toDecision())
-        if (next != acknowledged.value) {
-            if (MediaSystem.PLEX.key in current.unreachable) plex.pauseAutomaticReconnect()
-            if (MediaSystem.JELLYFIN.key in current.unreachable) jellyfin.pauseAutomaticReconnect()
-            if (MediaSystem.EMBY.key in current.unreachable) emby.pauseAutomaticReconnect()
-            if (MediaSystem.TVHEADEND.key in current.unreachable) tvheadend.pauseAutomaticReconnect()
-            acknowledged.value = next
-        }
     }
 
     private var retryJob: kotlinx.coroutines.Job? = null
@@ -141,7 +123,7 @@ class UnreachableServerGate @Inject constructor(
         retrying.value = true
         retryJob = scope.launch {
           try {
-            val failed = current().unreachable
+            val failed = current().offline
             // One active recovery per machine. Siblings only refresh their own service identity.
             coroutineScope {
                 failed.groupBy { hosts.machine(it) ?: it }.values.forEach { systems -> launch {
@@ -190,7 +172,6 @@ class UnreachableServerGate @Inject constructor(
         plexState: ServerConnectionState,
         jellyfinState: ServerConnectionState,
         embyState: ServerConnectionState,
-        acknowledgedIds: Set<String>,
         resumeStatus: ResumeConnectivityStatus,
     ): UnreachableServerGateState {
         val probes = mapOf(
@@ -204,16 +185,18 @@ class UnreachableServerGate @Inject constructor(
             UnreachableServerInput(probes, independentSystems()),
         )
         val names = decision.unreachable.map { displayName(it) }.filter { it.isNotBlank() }
+        // A short resume wake publishes WakeTimedOut before Home starts its full wake.
+        // Keep that hand-off pending so nothing is marked offline between both jobs.
+        val pending = decision.pending || resumeHoldsUnreachablePrompt(resumeStatus)
+        val offlineNow = nextOfflineSystems(offline, probes, settled = !pending).also { offline = it }
         return UnreachableServerGateState(
             unreachable = decision.unreachable,
-            // A short resume wake publishes WakeTimedOut before Home starts its full wake.
-            // Keep that hand-off pending so the global dialog cannot flash between both jobs.
-            pending = decision.pending || resumeHoldsUnreachablePrompt(resumeStatus),
+            pending = pending,
             canDismiss = decision.canDismiss,
-            acknowledged = acknowledgedIds,
             names = names,
             retrying = retrying.value,
-            wakeUnavailable = decision.unreachable.isNotEmpty() && decision.unreachable.none(::wakeConfigured),
+            offline = offlineNow,
+            wakeUnavailable = offlineNow.isNotEmpty() && offlineNow.none(::wakeConfigured),
         )
     }
 
@@ -246,9 +229,3 @@ class UnreachableServerGate @Inject constructor(
         else -> system
     }
 }
-
-private fun UnreachableServerGateState.toDecision() = UnreachableServerDecision(
-    unreachable = unreachable,
-    pending = pending,
-    canDismiss = canDismiss,
-)

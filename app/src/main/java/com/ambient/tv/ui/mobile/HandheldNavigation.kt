@@ -48,22 +48,20 @@ fun HandheldNavigationHost(
     var manageMenu by rememberSaveable { mutableStateOf(false) }
     val sidebarVm: SidebarViewModel = hiltViewModel()
     val sidebarState by sidebarVm.uiState.collectAsState()
-    // Like the television sidebar: a server hidden as unreachable stays out until it answers again.
-    val hidden = sidebarState.suppressedSystems
     val hasIptv = sidebarState.liveTvSources.any { it.source.system == "iptv" }
     val showHome = sidebarState.trailersConfigured || com.ambient.tv.ui.navigation.sidebarShowsHome(
-        plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
-        jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
-        embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
-        tvheadendConfigured = sidebarState.tvheadendEnabled && "tvheadend" !in hidden && !sidebarState.tvheadendLoginRejected,
+        plexConfigured = sidebarState.plexEnabled,
+        jellyfinConfigured = sidebarState.jellyfinEnabled,
+        embyConfigured = sidebarState.embyEnabled,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
     )
     val showSearch = sidebarShowsGlobalSearch(
-        plexConfigured = sidebarState.plexEnabled && "plex" !in hidden,
-        jellyfinConfigured = sidebarState.jellyfinEnabled && "jellyfin" !in hidden,
-        embyConfigured = sidebarState.embyEnabled && "emby" !in hidden,
-        tvheadendConfigured = sidebarState.tvheadendEnabled && "tvheadend" !in hidden && !sidebarState.tvheadendLoginRejected || hasIptv,
+        plexConfigured = sidebarState.plexEnabled,
+        jellyfinConfigured = sidebarState.jellyfinEnabled,
+        embyConfigured = sidebarState.embyEnabled,
+        tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected || hasIptv,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
     )
@@ -241,16 +239,16 @@ private fun HandheldSources(
     viewModel: SidebarViewModel = hiltViewModel(),
 ) {
     val sidebarState by viewModel.uiState.collectAsState()
-    // Servers hidden as unreachable are left out, as in the television sidebar.
-    val plex = sidebarState.plexEnabled && "plex" !in sidebarState.suppressedSystems
-    val jellyfin = sidebarState.jellyfinEnabled && "jellyfin" !in sidebarState.suppressedSystems
-    val emby = sidebarState.embyEnabled && "emby" !in sidebarState.suppressedSystems
+    // Unreachable servers stay listed, as in the television sidebar.
+    val plex = sidebarState.plexEnabled
+    val jellyfin = sidebarState.jellyfinEnabled
+    val emby = sidebarState.embyEnabled
     val youtube = sidebarState.youtubeEnabled
     val spotify = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
     val files = sidebarState.filesEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
-    val tv = sidebarState.tvheadendEnabled && "tvheadend" !in sidebarState.suppressedSystems
+    val tv = sidebarState.tvheadendEnabled
     val sections = sidebarState.sections
     val jellyfinSections = sidebarState.jellyfinSections
     val embySections = sidebarState.embySections

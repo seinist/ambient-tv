@@ -238,7 +238,6 @@ fun SectionScreen(
             )
         }
 
-        com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, listOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)), Modifier.align(Alignment.BottomEnd).padding(12.dp))
     }
 }
 

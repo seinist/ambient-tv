@@ -29,7 +29,7 @@
     <string name="unreachable_retry_success">Reachable again.</string>
     <string name="unreachable_retry_failed">%1$s is still unreachable.</string>
     <string name="unreachable_retrying">Checking …</string>
-    <string name="unreachable_no_wake_hint">Wake-on-LAN is not set up: “Retry” only checks once more. Turn the server on yourself or set up Wake-on-LAN in Settings.</string>
+    <string name="unreachable_no_wake_hint">Wake-on-LAN is not set up: “Reconnect” only checks once more. Turn the server on yourself or set up Wake-on-LAN in Settings.</string>
     <string name="tvh_unreachable_no_wake">TVHeadend is not responding. Wake-on-LAN is not set up – turn the server on and try again.</string>
     <string name="tvh_unreachable_wake_failed">TVHeadend is not responding, even after a wake attempt. Check that the server is on and on the network.</string>
     <string name="player_server_unreachable_rechecking">Server unreachable – checking again …</string>

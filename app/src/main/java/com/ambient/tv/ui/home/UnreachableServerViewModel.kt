@@ -12,6 +12,5 @@ class UnreachableServerViewModel @Inject constructor(
     private val refreshBus: PlexRefreshBus,
 ) : ViewModel() {
     val state = gate.state
-    fun confirm() = gate.confirm()
     fun retry() = gate.retry(refreshBus)
 }

@@ -4,12 +4,13 @@ import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.ui.common.MediaSystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UnreachableServerPolicyTest {
     @Test
-    fun `confirm does nothing when no other system works`() {
+    fun `nothing else usable keeps the blocking state`() {
         val decision = decideUnreachableServers(
             UnreachableServerInput(
                 probes = mapOf("plex" to ServerProbe.UNREACHABLE),
@@ -17,12 +18,10 @@ class UnreachableServerPolicyTest {
         )
         assertFalse(decision.canDismiss)
         assertEquals(setOf("plex"), decision.unreachable)
-        assertEquals(emptySet<String>(), acknowledgedAfterConfirm(emptySet(), decision))
-        assertTrue(decision.promptBlocked())
     }
 
     @Test
-    fun `confirm dismisses when another media server is reachable`() {
+    fun `another reachable media server keeps the app usable`() {
         val decision = decideUnreachableServers(
             UnreachableServerInput(
                 probes = mapOf(
@@ -32,12 +31,11 @@ class UnreachableServerPolicyTest {
             ),
         )
         assertTrue(decision.canDismiss)
-        assertEquals(setOf("plex"), acknowledgedAfterConfirm(emptySet(), decision))
-        assertEquals(setOf("plex"), hiddenUnreachableSystems(decision.unreachable, setOf("plex")))
+        assertEquals(setOf("plex"), nextOfflineSystems(emptySet(), mapOf("plex" to ServerProbe.UNREACHABLE, "jellyfin" to ServerProbe.REACHABLE), settled = true))
     }
 
     @Test
-    fun `confirm dismisses when an independent system is active`() {
+    fun `an independent system keeps the app usable`() {
         val decision = decideUnreachableServers(
             UnreachableServerInput(
                 probes = mapOf("plex" to ServerProbe.UNREACHABLE, "emby" to ServerProbe.INACTIVE),
@@ -49,7 +47,7 @@ class UnreachableServerPolicyTest {
     }
 
     @Test
-    fun `a server that is still waking does not open the dialog yet`() {
+    fun `a check still settling shows nothing offline yet`() {
         val decision = decideUnreachableServers(
             UnreachableServerInput(
                 probes = mapOf(
@@ -60,46 +58,29 @@ class UnreachableServerPolicyTest {
             ),
         )
         assertTrue(decision.pending)
-        assertFalse(decision.canDismiss)
+        assertTrue(nextOfflineSystems(emptySet(), mapOf("plex" to ServerProbe.UNREACHABLE), settled = false).isEmpty())
     }
 
     @Test
-    fun `hiding does not outlive reachability and does not imply deletion`() {
-        val hidden = hiddenUnreachableSystems(setOf("plex"), setOf("plex", "jellyfin"))
-        assertEquals(setOf("plex"), hidden)
-        assertEquals(emptySet<String>(), hiddenUnreachableSystems(emptySet(), setOf("plex")))
+    fun `an offline server stays offline through rechecks and wakes until it answers`() {
+        val offline = setOf("plex")
+        assertEquals(offline, nextOfflineSystems(offline, mapOf("plex" to ServerProbe.PENDING), settled = false))
+        assertEquals(offline, nextOfflineSystems(offline, mapOf("plex" to ServerProbe.UNREACHABLE), settled = false))
+        assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.REACHABLE), settled = true).isEmpty())
+        assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.HOST_REACHABLE), settled = true).isEmpty())
+        assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.INACTIVE), settled = true).isEmpty())
     }
 
     @Test
-    fun `continue remains acknowledged across checking recovery and subsequent failure`() {
-        val acknowledged = setOf("plex")
-        for (failed in listOf(emptySet(), setOf("plex"))) {
-            assertFalse(UnreachableServerGateState(
-                unreachable = failed, acknowledged = acknowledged, canDismiss = true,
-            ).prompt)
-        }
-    }
-
-    @Test
-    fun `library routes of a hidden server are left, playback and settings are not`() {
-        assertTrue(libraryRouteOwnedByHiddenSystem("plex", setOf("plex")))
-        assertTrue(libraryRouteOwnedByHiddenSystem("section/42", setOf("plex")))
-        assertTrue(libraryRouteOwnedByHiddenSystem("section/j:abc", setOf("jellyfin")))
-        assertFalse(libraryRouteOwnedByHiddenSystem("section/j:abc", setOf("plex")))
-        assertFalse(libraryRouteOwnedByHiddenSystem("section/e:1", setOf("plex")))
-        assertTrue(libraryRouteOwnedByHiddenSystem("emby", setOf("emby")))
-        assertFalse(libraryRouteOwnedByHiddenSystem("player/123", setOf("plex")))
-        assertFalse(libraryRouteOwnedByHiddenSystem("settings", setOf("plex")))
-        assertFalse(libraryRouteOwnedByHiddenSystem("home", setOf("plex")))
-    }
-
-    @Test
-    fun `dialog is presented only when continue can dismiss`() {
-        assertTrue(shouldPresentUnreachableDialog("home", prompt = true, canDismiss = true))
-        assertFalse(shouldPresentUnreachableDialog("home", prompt = true, canDismiss = false))
-        assertFalse(shouldPresentUnreachableDialog("settings", prompt = true, canDismiss = true))
-        assertFalse(shouldPresentUnreachableDialog("player/1", prompt = true, canDismiss = true))
-        assertFalse(shouldPresentUnreachableDialog("initial_setup", prompt = true, canDismiss = true))
+    fun `library routes name their media server`() {
+        assertEquals("plex", libraryRouteSystem("plex"))
+        assertEquals("plex", libraryRouteSystem("section/42"))
+        assertEquals("jellyfin", libraryRouteSystem("section/j:abc"))
+        assertEquals("emby", libraryRouteSystem("section/e:1"))
+        assertEquals("emby", libraryRouteSystem("emby"))
+        assertNull(libraryRouteSystem("player/123"))
+        assertNull(libraryRouteSystem("settings"))
+        assertNull(libraryRouteSystem("home"))
     }
 
     @Test
@@ -117,7 +98,7 @@ class UnreachableServerPolicyTest {
     }
 
     @Test
-    fun `resume result handoff keeps unreachable prompt pending until full wake starts`() {
+    fun `resume result handoff keeps the server out of offline until full wake starts`() {
         val timedOut = decideUnreachableServers(
             UnreachableServerInput(
                 probes = mapOf("plex" to ServerProbe.UNREACHABLE),
@@ -141,33 +122,19 @@ class UnreachableServerPolicyTest {
             pending = timedOut.pending || resumeHoldsUnreachablePrompt(completedBriefWake),
             canDismiss = timedOut.canDismiss,
         )
-        assertFalse(handoff.prompt)
+        assertTrue(handoff.pending)
+        assertTrue(nextOfflineSystems(emptySet(), mapOf("plex" to ServerProbe.UNREACHABLE), settled = !handoff.pending).isEmpty())
         assertTrue(resumeHoldsUnreachablePrompt(ResumeConnectivityStatus.Checking))
         assertFalse(resumeHoldsUnreachablePrompt(ResumeConnectivityStatus.Idle))
-
-        val fullWake = decideUnreachableServers(
-            UnreachableServerInput(
-                probes = mapOf("plex" to ServerProbe.PENDING),
-                activeIndependentSystems = setOf("youtube"),
-            ),
-        )
-        assertTrue(fullWake.pending)
-        assertFalse(UnreachableServerGateState(
-            unreachable = fullWake.unreachable,
-            pending = fullWake.pending,
-            canDismiss = fullWake.canDismiss,
-        ).prompt)
     }
 
     @Test
-    fun `offline TVHeadend is hidden after continue like a media server`() {
+    fun `offline TVHeadend counts like a media server`() {
         val tvheadend = hostAwareProbe(true, ServerConnectionState.Offline, HostHealth.OFFLINE)
         val decision = decideUnreachableServers(UnreachableServerInput(
             probes = mapOf("plex" to ServerProbe.REACHABLE, "tvheadend" to tvheadend),
         ))
         assertTrue(decision.canDismiss)
-        assertEquals(setOf("tvheadend"), hiddenUnreachableSystems(decision.unreachable, acknowledgedAfterConfirm(emptySet(), decision)))
+        assertEquals(setOf("tvheadend"), decision.unreachable)
     }
-
-    private fun UnreachableServerDecision.promptBlocked(): Boolean = !canDismiss && unreachable.isNotEmpty() && !pending
 }

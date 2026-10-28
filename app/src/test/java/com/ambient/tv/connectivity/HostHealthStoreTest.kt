@@ -42,7 +42,7 @@ class HostHealthStoreTest {
         assertEquals(HostHealth.UNKNOWN, store.current(keys[3]).health)
     }
 
-    @Test fun `returning home after playback recovery cannot show the old dialog`() {
+    @Test fun `a recovered host leaves nothing offline`() {
         store.offline(store.begin("nas"))
         fun decision() = decideUnreachableServers(UnreachableServerInput(
             mapOf("plex" to hostAwareProbe(true, ServerConnectionState.Offline, store.current("nas").health)),
@@ -50,11 +50,9 @@ class HostHealthStoreTest {
         ))
         assertTrue(decision().unreachable.isNotEmpty())
         store.online("nas")
-        val recovered = decision()
-        val gate = UnreachableServerGateState(unreachable = recovered.unreachable, canDismiss = recovered.canDismiss)
-        assertFalse(gate.prompt)
-        assertFalse(shouldPresentUnreachableDialog("home", gate.prompt, gate.canDismiss))
-        assertTrue(gate.hidden.isEmpty())
+        assertTrue(decision().unreachable.isEmpty())
+        val probe = hostAwareProbe(true, ServerConnectionState.Offline, store.current("nas").health)
+        assertTrue(nextOfflineSystems(setOf("plex"), mapOf("plex" to probe), settled = true).isEmpty())
     }
 
     @Test fun `active waking remains pending until service check finishes`() {

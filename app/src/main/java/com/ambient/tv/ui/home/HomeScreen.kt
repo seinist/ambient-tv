@@ -308,7 +308,6 @@ fun HomeScreen(
                 }
             }
 
-            com.ambient.tv.ui.common.OfflineBrowseNotice(viewModel.availability, viewModel.browseProviders, Modifier.align(Alignment.BottomEnd).padding(12.dp))
         }
     }
         // The app home has no header row: the clock floats where the library pages put it.
@@ -492,6 +491,14 @@ internal fun LibraryContent(
         return
     }
     if (state.rowKeys.isEmpty()) {
+        // The only home rows belonged to a server the user continued past: offer to reconnect
+        // instead of claiming there are no libraries while other systems still work.
+        val unreachableVm: UnreachableServerViewModel = hiltViewModel()
+        val gate by unreachableVm.state.collectAsState()
+        gate.offline.firstOrNull()?.let { system ->
+            OfflineSystemPage(system, gate, unreachableVm::retry, onOpenSettings)
+            return
+        }
         Centered {
             StatePanel(
                 title = stringResource(R.string.home_library_empty),
@@ -699,7 +706,7 @@ internal fun LibraryContent(
                 items(state.rowKeys, key = { it }, contentType = { rowKey ->
                     when {
                         rowKey in state.tvRows -> "live-tv-row"
-                        rowKey.startsWith("shortcut:") -> "shortcut-row"
+                        rowKey.startsWith("shortcut:") || rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> "shortcut-row"
                         else -> "media-row"
                     }
                 }) { rowKey ->
@@ -708,6 +715,12 @@ internal fun LibraryContent(
                         if (rowIndex == 0) Modifier.onSizeChanged { firstRowHeight = with(density) { it.height.toDp() } } else Modifier,
                     )) {
                     when {
+                        rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> HomeOfflineRow(
+                            system = rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX),
+                            columnFocus = columnFocus,
+                            rowKey = rowKey,
+                            onFocused = { restoreArmed = false; centeredRowKey.value = rowKey },
+                        )
                         rowKey in state.tvRows -> {
                             val recent = rowKey.startsWith("recent-tv")
                             HomeLiveTvRow(
@@ -787,6 +800,29 @@ internal fun LibraryContent(
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
         )
+    }
+}
+
+/** An offline server's place on Home: its name and the one action that wakes and reconnects it. */
+@Composable
+private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey: String, onFocused: () -> Unit) {
+    val vm: UnreachableServerViewModel = hiltViewModel()
+    val gate by vm.state.collectAsState()
+    val media = com.ambient.tv.ui.common.MediaSystem.fromKey(system)
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(Modifier.padding(start = screenGutter(), bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            media?.let { com.ambient.tv.ui.common.SystemLogo(it, size = 20.dp) }
+            Text(stringResource(R.string.offline_library_title, media?.let { com.ambient.tv.ui.common.systemName(it) } ?: system),
+                style = MaterialTheme.typography.titleLarge)
+        }
+        Row(Modifier.padding(horizontal = screenGutter())) {
+            TvActionButton(
+                text = offlineActionLabel(gate),
+                onClick = vm::retry,
+                loading = gate.retrying,
+                modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true).onFocusChanged { if (it.isFocused) onFocused() },
+            )
+        }
     }
 }
 

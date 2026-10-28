@@ -119,6 +119,10 @@ private val SIDEBAR_ROW_TEXT = androidx.compose.ui.text.TextStyle(fontSize = 14.
 internal data class MenuDestination(val id: String, val label: String, val icon: ImageVector, val route: String, val settingsCategory: String? = null) {
     fun isActive(activeRoute: String?) = settingsCategory == null && route == activeRoute
 }
+@Composable
+private fun offlineLabel(name: String, offline: Boolean): String =
+    if (offline) "$name · ${stringResource(R.string.offline_badge)}" else name
+
 private data class MenuSystem(
     val id: String,
     val label: String,
@@ -214,8 +218,7 @@ internal fun SidebarContent(
     val youtubeEnabled = sidebarState.youtubeEnabled
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
-    // Hidden like the media servers once the user continued past its "unreachable" dialog.
-    val tvheadendEnabled = sidebarState.tvheadendEnabled && MediaSystem.TVHEADEND.key !in sidebarState.suppressedSystems
+    val tvheadendEnabled = sidebarState.tvheadendEnabled
     val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
     val spotifyNativeAvailable = sidebarState.spotifyNativeAvailable
@@ -226,10 +229,10 @@ internal fun SidebarContent(
     val systemOrder = sidebarState.systemOrder
     val overview = stringResource(R.string.nav_overview)
     val filesEnabled = sidebarState.filesEnabled
-    val suppressedSystems = sidebarState.suppressedSystems
-    val plexShown = plexEnabled && "plex" !in suppressedSystems
-    val jellyfinShown = jellyfinEnabled && "jellyfin" !in suppressedSystems
-    val embyShown = embyEnabled && "emby" !in suppressedSystems
+    // An unreachable server stays listed; opening it offers to reconnect (MainActivity).
+    val plexShown = plexEnabled
+    val jellyfinShown = jellyfinEnabled
+    val embyShown = embyEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
     val systems = buildList {
@@ -237,11 +240,11 @@ internal fun SidebarContent(
             dlnaMenuDestinations(sidebarState)))
         if (filesEnabled) add(MenuSystem("files", systemName(MediaSystem.FILES), Icons.Filled.Folder, system = MediaSystem.FILES, entries =
             filesMenuDestinations(sidebarState)))
-        if (plexShown) add(MenuSystem("plex", systemName(MediaSystem.PLEX, "Plex"), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
+        if (plexShown) add(MenuSystem("plex", offlineLabel(systemName(MediaSystem.PLEX, "Plex"), "plex" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.PLEX, entries =
             providerMenuDestinations(sidebarState, "plex")))
-        if (jellyfinShown) add(MenuSystem("jellyfin", systemName(MediaSystem.JELLYFIN, "Jellyfin"), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
+        if (jellyfinShown) add(MenuSystem("jellyfin", offlineLabel(systemName(MediaSystem.JELLYFIN, "Jellyfin"), "jellyfin" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.JELLYFIN, entries =
             providerMenuDestinations(sidebarState, "jellyfin")))
-        if (embyShown) add(MenuSystem("emby", systemName(MediaSystem.EMBY, "Emby"), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
+        if (embyShown) add(MenuSystem("emby", offlineLabel(systemName(MediaSystem.EMBY, "Emby"), "emby" in sidebarState.offlineSystems), Icons.Filled.VideoLibrary, system = MediaSystem.EMBY, entries =
             providerMenuDestinations(sidebarState, "emby")))
         if (sidebarState.trailersConfigured) add(MenuSystem("trailers", systemName(MediaSystem.TRAILERS), Icons.Filled.Movie, system = MediaSystem.TRAILERS,
             entries = TrailerFeed.entries.map { feed ->

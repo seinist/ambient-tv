@@ -1002,25 +1002,6 @@ private fun AmbientTvApp(
         Destinations.SERVER_SELECT else rootRoute
     val currentBackStackEntry = navController.currentBackStackEntryAsState().value
     val currentRoute = currentBackStackEntry?.destination?.route ?: startDestination
-    val unreachableVm: com.ambient.tv.ui.home.UnreachableServerViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
-    val unreachableServers by unreachableVm.state.collectAsState()
-    // A failure that clears within moments (startup checks, a quick reconnect) must not flash
-    // the dialog: present it only after the same failure has held for a short while.
-    val unreachableWanted = unreachableServers.prompt && unreachableServers.canDismiss
-    var unreachableSettled by remember { mutableStateOf(false) }
-    LaunchedEffect(unreachableWanted, unreachableServers.unreachable) {
-        if (!unreachableWanted) { unreachableSettled = false; return@LaunchedEffect }
-        if (unreachableSettled) return@LaunchedEffect
-        kotlinx.coroutines.delay(UNREACHABLE_DIALOG_SETTLE_MS)
-        unreachableSettled = true
-    }
-    LaunchedEffect(unreachableServers.hidden, currentRoute) {
-        if (!com.ambient.tv.connectivity.libraryRouteOwnedByHiddenSystem(currentRoute, unreachableServers.hidden)) return@LaunchedEffect
-        // Leave a hidden server's library. Saved servers stay in Settings.
-        if (!navController.popBackStack(Destinations.HOME, inclusive = false)) {
-            navController.navigate(Destinations.HOME) { launchSingleTop = true }
-        }
-    }
     val companionRoute by rememberUpdatedState(currentRoute)
     var companionServerSwitch by remember {
         mutableStateOf<Pair<com.ambient.tv.companion.CompanionMediaMapper.ServerSwitch, com.ambient.tv.companion.CompanionMedia>?>(null)
@@ -1887,6 +1868,7 @@ private fun AmbientTvApp(
                     }
                     composable(Destinations.PLEX) {
                         RestorableSidebarContent {
+                          com.ambient.tv.ui.home.OfflineSystemGuard("plex", ::openSystemSettings) {
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("plex", Destinations.PLEX, providerNavigationViewModel, ::navigateSidebar) {
                                 PlexLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
@@ -1895,10 +1877,12 @@ private fun AmbientTvApp(
                                     onBack = ::focusSidebar,
                                 )
                             }
+                          }
                         }
                     }
                     composable(Destinations.JELLYFIN) {
                         RestorableSidebarContent {
+                          com.ambient.tv.ui.home.OfflineSystemGuard("jellyfin", ::openSystemSettings) {
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("jellyfin", Destinations.JELLYFIN, providerNavigationViewModel, ::navigateSidebar) {
                                 JellyfinLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
@@ -1907,10 +1891,12 @@ private fun AmbientTvApp(
                                     onBack = ::focusSidebar,
                                 )
                             }
+                          }
                         }
                     }
                     composable(Destinations.EMBY) {
                         RestorableSidebarContent {
+                          com.ambient.tv.ui.home.OfflineSystemGuard("emby", ::openSystemSettings) {
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("emby", Destinations.EMBY, providerNavigationViewModel, ::navigateSidebar) {
                                 EmbyLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
@@ -1919,6 +1905,7 @@ private fun AmbientTvApp(
                                     onBack = ::focusSidebar,
                                 )
                             }
+                          }
                         }
                     }
                     composable(Destinations.SEARCH) {
@@ -2224,6 +2211,7 @@ private fun AmbientTvApp(
                             else -> "plex"
                         }
                         RestorableSidebarContent {
+                          com.ambient.tv.ui.home.OfflineSystemGuard(providerSystem, ::openSystemSettings) {
                             com.ambient.tv.ui.navigation.ProviderBrowseContent(providerSystem, Destinations.section(sectionKey), providerNavigationViewModel, ::navigateSidebar) {
                                 if (photoLibrary != null) {
                                     // Photo libraries of Plex, Jellyfin and Emby keep their sidebar route.
@@ -2249,6 +2237,7 @@ private fun AmbientTvApp(
                                     )
                                 }
                             }
+                          }
                         }
                     }
                     composable(Destinations.PHOTO_VIEWER) {
@@ -2478,19 +2467,6 @@ private fun AmbientTvApp(
             }
         }
             } // HandheldNavigationHost
-            if (com.ambient.tv.connectivity.shouldPresentUnreachableDialog(
-                    currentRoute,
-                    unreachableServers.prompt && unreachableSettled && !com.ambient.tv.ui.intro.IntroPresentation.active,
-                    unreachableServers.canDismiss,
-                )
-            ) {
-                com.ambient.tv.ui.home.UnreachableServerDialog(
-                    state = unreachableServers,
-                    onConfirm = unreachableVm::confirm,
-                    onRetry = unreachableVm::retry,
-                    onOpenSettings = ::openSystemSettings,
-                )
-            }
             // Global: the timer can expire on any screen, also while only the mini-player plays.
             com.ambient.tv.ui.player.SleepTimerPromptDialog()
             com.ambient.tv.ui.player.SleepTimerWarningOverlay(touch = !com.ambient.tv.ui.mobile.isTelevision(androidx.compose.ui.platform.LocalContext.current))
@@ -2576,4 +2552,3 @@ private data class ShellPlaybackState(
     val wantsToPlay: Boolean,
 )
 
-private const val UNREACHABLE_DIALOG_SETTLE_MS = 2_000L

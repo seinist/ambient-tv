@@ -279,7 +279,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             var previousHidden = emptySet<String>()
             unreachableServers.state.collect { gate ->
-                val hidden = gate.hidden
+                val hidden = gate.offline
                 if (hidden == previousHidden) return@collect
                 val restored = previousHidden - hidden
                 previousHidden = hidden
@@ -555,7 +555,7 @@ class HomeViewModel @Inject constructor(
         if (loaded != null && !loaded.onlyTrailers()) return
         unreachableServers.refresh()
         val now = unreachableServers.current()
-        if (now.canDismiss || now.hidden.isNotEmpty()) publishRows(emptyList())
+        if (now.canDismiss || now.offline.isNotEmpty()) publishRows(emptyList())
         else if (now.pending) _uiState.value = HomeUiState.LoadingLibrary
         else _uiState.value = failure
     }
@@ -1302,8 +1302,14 @@ class HomeViewModel @Inject constructor(
             val key = (if (recent) "recent-tv" else "live-tv") + if (row.system == "tvheadend") "" else ":${row.system}"
             if (items.isEmpty()) null else key to HomeTvRow(items, row.displayTitle(context))
         }.toMap()
-        val rowKeys = orderedHomeRowKeys(if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows, rows.map { it.id },
+        val contentRowKeys = orderedHomeRowKeys(if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows, rows.map { it.id },
             shortcuts, tvRows.containsKey("live-tv"), tvRows.containsKey("recent-tv"), tvRows.keys.filter { ':' in it }.associateWith { key -> "${key.substringAfter(':')}.${if (key.startsWith("recent")) "recent_channels" else "live"}" })
+        // An offline server whose rows are on Home keeps one entry there that wakes it. With no
+        // other rows Home shows the full offline page instead.
+        val rowKeys = if (contentRowKeys.isEmpty() || plexOnly || jellyfinOnly || embyOnly) contentRowKeys
+        else contentRowKeys + unreachableServers.current().offline
+            .filter { system -> appPreferences.homeRows.any { it.enabled && it.system == system } }
+            .map { HOME_OFFLINE_ROW_PREFIX + it }
         val defaultItem = rows.firstNotNullOfOrNull { it.items.firstOrNull() }
         // Initial focus belongs to the first row on screen, which follows rowKeys (the editor
         // order), not the provider order of `rows`.
@@ -1520,13 +1526,13 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun homeRowHidden(id: String): Boolean {
-        val hidden = unreachableServers.current().hidden
+        val hidden = unreachableServers.current().offline
         if (hidden.isEmpty()) return false
         return id.substringBefore('.') in hidden
     }
 
     private fun homeSystemActive(system: String): Boolean {
-        if (system in unreachableServers.current().hidden) return false
+        if (system in unreachableServers.current().offline) return false
         return homeSystemReady(
         system,
         plexReady = plexOnly || appPreferences.isConfigured,
@@ -1665,3 +1671,6 @@ internal fun homeRowTileStyle(
 }
 
 private const val PHOTO_ROW_ID = "photos.recent"
+
+/** Home row key of an offline server's wake entry: prefix + system key. */
+const val HOME_OFFLINE_ROW_PREFIX = "offline:"

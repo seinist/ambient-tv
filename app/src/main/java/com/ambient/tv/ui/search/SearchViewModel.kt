@@ -119,7 +119,7 @@ class SearchViewModel @Inject constructor(
     private var youtubeSignedIn = false
 
     private fun availableSearchSources(): Set<SearchSource> {
-        val hidden = unreachableServers.current().hidden
+        val hidden = unreachableServers.current().offline
         return buildSet {
             if (preferences.isConfigured && "plex" !in hidden) add(SearchSource.PLEX)
             if (preferences.isJellyfinConfigured && "jellyfin" !in hidden) add(SearchSource.JELLYFIN)

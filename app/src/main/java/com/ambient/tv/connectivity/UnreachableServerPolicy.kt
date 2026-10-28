@@ -23,7 +23,7 @@ data class UnreachableServerInput(
 data class UnreachableServerDecision(
     val unreachable: Set<String> = emptySet(),
     val pending: Boolean = false,
-    /** True only when something else is already active and reachable, so Continue may close the dialog. */
+    /** True when something else is active and reachable, so the app stays usable around the offline server. */
     val canDismiss: Boolean = false,
 )
 
@@ -68,41 +68,29 @@ fun decideUnreachableServers(input: UnreachableServerInput): UnreachableServerDe
 fun resumeHoldsUnreachablePrompt(status: ResumeConnectivityStatus): Boolean =
     status == ResumeConnectivityStatus.Checking || status is ResumeConnectivityStatus.Progress
 
-/** Continue records a hide only when another system can actually take over. */
-fun acknowledgedAfterConfirm(acknowledged: Set<String>, decision: UnreachableServerDecision): Set<String> =
-    if (decision.canDismiss) acknowledged + decision.unreachable else acknowledged
-
-/** A system stays hidden only while it is still unreachable. Coming back shows it again. Nothing is deleted. */
-fun hiddenUnreachableSystems(unreachable: Set<String>, acknowledged: Set<String>): Set<String> =
-    unreachable.intersect(acknowledged)
-
-/** Library routes that belong to a hidden system. Playback and settings are left alone. */
-fun libraryRouteOwnedByHiddenSystem(route: String?, hidden: Set<String>): Boolean {
-    if (route.isNullOrBlank() || hidden.isEmpty()) return false
-    val path = route.substringBefore('?')
-    if (path == "plex") return "plex" in hidden
-    if (path == "jellyfin") return "jellyfin" in hidden
-    if (path == "emby") return "emby" in hidden
-    if (!path.startsWith("section/")) return false
-    val key = path.removePrefix("section/")
-    return when {
-        key.startsWith("j:") -> "jellyfin" in hidden
-        key.startsWith("e:") -> "emby" in hidden
-        else -> "plex" in hidden
-    }
+/**
+ * Servers shown as offline after this probe round. A server becomes offline once a settled
+ * round finds it unreachable, and stays so through rechecks and wakes (PENDING) until it
+ * answers or is turned off; otherwise each recheck would flash its half-loaded library.
+ */
+fun nextOfflineSystems(previous: Set<String>, probes: Map<String, ServerProbe>, settled: Boolean): Set<String> {
+    val kept = previous.filterTo(mutableSetOf()) { probes[it] == ServerProbe.PENDING || probes[it] == ServerProbe.UNREACHABLE }
+    if (settled) kept += probes.filterValues { it == ServerProbe.UNREACHABLE }.keys
+    return kept
 }
 
-/**
- * The confirm dialog is the dismissible path. It stays off setup, settings, and playback,
- * and it is not shown when nothing else works (that case keeps the blocking empty state).
- */
-fun shouldPresentUnreachableDialog(route: String?, prompt: Boolean, canDismiss: Boolean): Boolean {
-    if (!prompt || !canDismiss) return false
-    val path = route?.substringBefore('?').orEmpty()
-    if (path.isEmpty()) return false
-    if (path == "settings" || path == "server_select" || path.startsWith("initial_setup") || path.startsWith("setup_")) return false
-    if (path.startsWith("player/") || path.startsWith("youtube_player") || path.startsWith("tvh_player") || path.startsWith("spotify_player")) return false
-    return true
+/** Media server whose library [route] shows, or null for any other page. */
+fun libraryRouteSystem(route: String?): String? {
+    if (route.isNullOrBlank()) return null
+    val path = route.substringBefore('?')
+    if (path == "plex" || path == "jellyfin" || path == "emby") return path
+    if (!path.startsWith("section/")) return null
+    val key = path.removePrefix("section/")
+    return when {
+        key.startsWith("j:") -> "jellyfin"
+        key.startsWith("e:") -> "emby"
+        else -> "plex"
+    }
 }
 
 /** Host recovery clears stale reconnect prompts without claiming service authentication. */
