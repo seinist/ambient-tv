@@ -800,7 +800,7 @@ private fun DetailHero(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { if (it.hasFocus) onHeroFocused() }
-            .padding(start = screenGutter(), end = screenGutter(), top = 18.dp, bottom = 40.dp),
+            .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(18.dp), bottom = 40.dp),
         horizontalArrangement = Arrangement.spacedBy(28.dp),
         verticalAlignment = Alignment.Top,
     ) {

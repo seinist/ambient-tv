@@ -184,7 +184,7 @@ fun PageUtilityBar(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(start = tokens.screenPadding, end = tokens.screenPadding, top = tokens.screenPadding),
+            .padding(start = tokens.screenPadding, end = tokens.screenPadding, top = pageHeaderTop(tokens.screenPadding)),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
