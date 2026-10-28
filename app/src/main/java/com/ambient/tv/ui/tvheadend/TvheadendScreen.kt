@@ -206,7 +206,7 @@ fun TvheadendScreen(
     Box(Modifier.fillMaxSize()) {
         PageBackground(Modifier.fillMaxSize())
         Column(
-            modifier = Modifier.fillMaxSize().padding(tokens.screenPadding),
+            modifier = Modifier.fillMaxSize().padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
             verticalArrangement = Arrangement.spacedBy(tokens.itemGap * 1.5f),
         ) {
         TvheadendHeader(

@@ -121,7 +121,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     }
     LaunchedEffect(state.editorSaved) { if (state.editorSaved > 0) editor = null }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    Column(Modifier.fillMaxSize().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             // Handhelds have system Back; the chip only shows while there is a level to go up (or a load to cancel).
             if (!handheld || canUp || state.loading) TvChip(stringResource(R.string.files_back), modifier = Modifier.focusRequester(top).leftKeyAction { if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) {

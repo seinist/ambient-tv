@@ -101,7 +101,7 @@ fun DlnaManageScreen(onOpen: (String) -> Unit, onBack: () -> Unit, viewModel: Dl
             delay(32)
         }
     }
-    Column(Modifier.fillMaxSize().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         PageHeader(actions = { TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack) }) {
             SystemPageTitle(MediaSystem.DLNA)
         }
@@ -234,7 +234,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     }
     Box(Modifier.fillMaxSize()) {
         val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-        Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PageHeader(focusChain = focusChain, actions = {
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
                 TvChip(stringResource(R.string.library_options), icon = Icons.Filled.Tune, iconOnly = true, onClick = { showOptions = true }, modifier = Modifier.focusRequester(optionsFocus))

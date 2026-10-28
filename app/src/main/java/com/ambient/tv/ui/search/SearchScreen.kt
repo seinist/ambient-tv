@@ -121,7 +121,7 @@ fun SearchScreen(
     Box(Modifier.fillMaxSize()) {
         val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
         val queryFocus = remember { FocusRequester() }
-        Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = 28.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
             PageHeader(focusChain = focusChain, actions = {
                 if (uiState.hasResults) {
                     val rows = uiState.viewMode == SearchViewMode.ROWS

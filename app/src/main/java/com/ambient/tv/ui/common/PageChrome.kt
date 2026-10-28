@@ -229,6 +229,13 @@ private fun Modifier.downAction(onDown: (() -> Unit)?): Modifier =
  * actions alike, so every page header shares one size and focus look. On a phone, pass
  * [TvChip]'s iconOnly so those actions stay icon buttons; television keeps the labels.
  */
+/** Distance of a TV page header from the screen top, where the clock and Home's floating clock sit too. */
+val PageHeaderTopTv = 24.dp
+
+/** Header top for a page: the shared TV value, or the page's own [phone] spacing on handhelds. */
+@Composable
+fun pageHeaderTop(phone: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = if (LocalHandheldUi.current) phone else PageHeaderTopTv
+
 @Composable
 fun PageHeader(
     modifier: Modifier = Modifier,
@@ -248,7 +255,9 @@ fun PageHeader(
         // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
         if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
         else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
-        if (!handheld && LocalClockSettings.current.inHeader) HeaderClock()
+        // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
+        // same spot on every page, also where Home's floating clock is.
+        if (!handheld && LocalClockSettings.current.inHeader) HeaderClock(Modifier.align(Alignment.Top))
     }
 }
 

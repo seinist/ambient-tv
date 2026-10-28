@@ -299,7 +299,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     filterModel: com.ambient.tv.ui.common.FilterBarModel?,
     filterFocus: FocusRequester,
     filterUp: FocusRequester,
-) = Column(Modifier.fillMaxWidth().padding(screenGutter(), 24.dp, screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+) = Column(Modifier.fillMaxWidth().padding(screenGutter(), com.ambient.tv.ui.common.pageHeaderTop(24.dp), screenGutter(), 10.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
     val channel = state.channel
     PageHeader(focusChain=focusChain, actions={
         if (channel == null) YouTubeAccountButton(state, vm::requestSignIn, vm::signOut)

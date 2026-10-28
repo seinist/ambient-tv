@@ -133,7 +133,7 @@ fun PhotoBrowserScreen(
 
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val orderFocus = remember { FocusRequester() }
-    Column(Modifier.fillMaxSize().padding(tokens.screenPadding), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(Modifier.fillMaxSize().padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             if (!state.atRoot || state.timeline) TvChip(stringResource(R.string.photos_back), modifier = Modifier.leftKeyAction { viewModel.back() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true) { viewModel.back() }
             TvChip(stringResource(R.string.photos_slideshow), enabled = !state.loading, icon = Icons.Filled.Slideshow, iconOnly = true) {

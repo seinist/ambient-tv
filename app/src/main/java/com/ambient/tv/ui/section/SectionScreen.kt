@@ -499,7 +499,7 @@ private fun SectionHeader(
         val selected = state.page == page
         TvChip(label, selected, modifier = if (selected) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon = icon) { onPage(page) }
     }
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
