@@ -161,7 +161,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         playerRef.get()?.play()
     }
 
-    /** One lighter step for this session; the changed chain gets a fresh sample. */
+    /** One lighter step, kept like a manual change; the changed chain gets a fresh sample. */
     fun reduceAfterOverload() {
         renderOverloaded = false
         playerRef.get()?.play()
@@ -173,8 +173,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
      * over the sample window (6 s, or the configured frame-drop test) pause playback.
      */
     private fun checkRender() {
-        handler.postDelayed(renderCheck, 1_000L)
+        // A collected player ends the loop (release() is the normal way out).
         val player = playerRef.get() ?: return
+        handler.postDelayed(renderCheck, 1_000L)
         val signature = if (effectsActive) appliedStages.joinToString(" · ") { media3StageSummary(it) } else null
         if (signature != renderCheckSignature) {
             renderCheckSignature = signature

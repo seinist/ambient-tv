@@ -397,7 +397,7 @@ class VlcPlaybackController(
         play()
     }
 
-    /** One lighter step (SVP, software filters, CPU deinterlacer) for this session; the next sample re-checks. */
+    /** One lighter step (SVP, software filters, CPU deinterlacer), kept like a manual change; the next sample re-checks. */
     val canReduceAfterOverload: Boolean
         get() = vlcImageOptionsAfterOverload(imageOptions) != null ||
             vlcDeinterlaceFilterAfterOverload(deinterlaceMode, deinterlaceFilter) != null

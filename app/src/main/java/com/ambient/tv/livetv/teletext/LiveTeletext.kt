@@ -81,9 +81,15 @@ object LiveTeletext {
     fun tap(stream: Long, data: ByteArray, length: Int) {
         if (!tapWanted || stream != tapLatest) return
         val target = decoder ?: return
-        synchronized(tapLock) {
-            if (tapFed != stream) { target.discontinuity(); tapFed = stream }
-            target.feed(data, 0, length)
+        // Runs on the timeshift server thread: a decoder failure must not end the player's stream.
+        runCatching {
+            synchronized(tapLock) {
+                if (tapFed != stream) { target.discontinuity(); tapFed = stream }
+                target.feed(data, 0, length)
+            }
+        }.onFailure { error ->
+            Timber.w(error, "Teletext decoding failed; teletext stops for this channel")
+            tapWanted = false
         }
     }
 

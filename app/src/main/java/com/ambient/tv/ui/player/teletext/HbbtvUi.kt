@@ -88,8 +88,9 @@ internal fun HbbtvHost(channelName: String?) {
 
 @Composable
 private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, onClose: () -> Unit) {
+    // Back normally reaches the page (twice closes); should the page lose focus, Back closes the dialog.
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false,
-        decorFitsSystemWindows = false, dismissOnBackPress = false)) {
+        decorFitsSystemWindows = false)) {
         val view = LocalView.current
         DisposableEffect(view) {
             (view.parent as? DialogWindowProvider)?.window?.setDimAmount(0f)
@@ -148,6 +149,9 @@ private class HbbtvWebView(
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        // Broadcaster pages have no business with local files or content providers.
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
         settings.mediaPlaybackRequiresUserGesture = false
         // HbbTV pages are laid out for 1280 × 720: the injected viewport scales them to the screen.
         settings.useWideViewPort = true
@@ -219,10 +223,11 @@ private class HbbtvWebView(
         @JavascriptInterface fun show() = Unit
         /** Where the page shows video/broadcast: "left,top,width,height" fractions or "full". */
         @JavascriptInterface fun videoWindow(value: String) = post {
-            com.ambient.tv.ui.player.PlaybackVideoWindow.window = com.ambient.tv.ui.player.parseVideoWindow(value)
+            // A message still queued while the viewer closes must not shrink the video afterwards.
+            if (isAttachedToWindow) com.ambient.tv.ui.player.PlaybackVideoWindow.window = com.ambient.tv.ui.player.parseVideoWindow(value)
         }
         /** video/broadcast stopped (false) or bound again (true). */
-        @JavascriptInterface fun broadcast(on: Boolean) = post { if (on) broadcast.resume() else broadcast.stop() }
+        @JavascriptInterface fun broadcast(on: Boolean) = post { if (isAttachedToWindow) { if (on) broadcast.resume() else broadcast.stop() } }
     }
 
     companion object {
