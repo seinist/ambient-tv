@@ -768,7 +768,29 @@ internal fun SettingsHub(
                                             selected = false,
                                             icon = Icons.Filled.Add,
                                             modifier = Modifier.focusRequester(addRowFocus),
-                                            onClick = ::openAddCatalog,
+                                            onClick = {
+                                                // Park focus while this row is removed; automatic focus repair
+                                                // would otherwise select the area rail (areaMenu) and keep it there.
+                                                if (!parking) {
+                                                    parking = true
+                                                    scope.launch {
+                                                        try {
+                                                            withFrameNanos { }
+                                                            runCatching { parkFocus.requestFocus() }
+                                                            openAddCatalog()
+                                                            indexState.scrollToItem(0)
+                                                            val first = addableSystems.firstOrNull()
+                                                            var focused = first == null
+                                                            repeat(12) {
+                                                                if (focused) return@repeat
+                                                                withFrameNanos { }
+                                                                focused = runCatching { pageFocus.getValue(first!!).requestFocus() }.getOrDefault(false)
+                                                            }
+                                                            if (!focused || first == null) requestPanelContentFocus()
+                                                        } finally { parking = false }
+                                                    }
+                                                }
+                                            },
                                         )
                                     }
                                 }
