@@ -413,10 +413,17 @@ internal fun SettingsHub(
                     returningFromPage = false
                     if (focusLastPage()) return@LaunchedEffect
                 }
+                // The index list keeps the scroll position of the "Add service" row, so the first card
+                // is not composed yet one frame after the switch; scroll up and retry until it is.
+                indexState.scrollToItem(0)
                 val first = addableSystems.firstOrNull()
-                if (first == null || !runCatching { pageFocus.getValue(first).requestFocus() }.getOrDefault(false)) {
-                    runCatching { contentFocus.requestFocus() }
+                var focused = false
+                if (first != null) repeat(12) {
+                    if (focused) return@repeat
+                    withFrameNanos { }
+                    focused = runCatching { pageFocus.getValue(first).requestFocus() }.getOrDefault(false)
                 }
+                if (!focused) runCatching { contentFocus.requestFocus() }
             }
             search -> {
                 if (returningFromPage) {
