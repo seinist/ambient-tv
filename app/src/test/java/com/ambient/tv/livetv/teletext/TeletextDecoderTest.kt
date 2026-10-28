@@ -257,4 +257,20 @@ class TeletextDecoderTest {
         assertNull(parseAit(section.copyOfRange(1, section.size), section.size - 1))
         assertEquals(emptyList<HbbtvApplication>(), parseAit(aitSection("ftp://x/", "a", "n").let { it.copyOfRange(1, it.size) }, aitSection("ftp://x/", "a", "n").size - 1))
     }
+
+    @Test fun truncatedSectionsAtThePacketEndDoNotCrash() {
+        val decoder = TeletextDecoder()
+        decoder.feed(ts(0, pat))
+        // PMT whose pointer field puts a too-short section at the end of the packet.
+        val packet = ByteArray(188) { 0xFF.toByte() }
+        packet[0] = 0x47; packet[1] = 0x50; packet[2] = 0x00; packet[3] = 0x10
+        packet[4] = 180.toByte()
+        packet[185] = 0x02; packet[186] = 0xB0.toByte(); packet[187] = 0x05
+        // Fed in pieces, so the packet goes through the one-packet carry buffer.
+        packet.toList().chunked(37).forEach { decoder.feed(it.toByteArray()) }
+        assertFalse(decoder.pmtSeen)
+        // AIT whose common descriptor claims more bytes than the section has.
+        val ait = bytes(0x74, 0xB0, 0x14, 0x00, 0x10, 0xC1, 0, 0, 0xF0, 0x04, 0x02, 0xC8, 0x00, 0x03, 0xF0, 0x00, 0, 0, 0, 0, 0, 0, 0)
+        assertEquals(emptyList<HbbtvApplication>(), parseAit(ait, ait.size))
+    }
 }

@@ -130,7 +130,8 @@ class TeletextDecoder(
     private fun parsePmt(buf: ByteArray, payload: Int, end: Int) {
         val range = section(buf, payload, end) ?: return
         val s = range.first
-        if (buf[s].u != 0x02) return
+        // A truncated section must not read past the packet (the carry buffer is one packet long).
+        if (buf[s].u != 0x02 || s + 12 > range.last + 1) return
         val programInfo = ((buf[s + 10].u and 0x0F) shl 8) or buf[s + 11].u
         var i = s + 12 + programInfo
         val last = range.last + 1
@@ -430,6 +431,7 @@ internal fun parseAit(section: ByteArray, length: Int): List<HbbtvApplication>? 
     var p = 10
     while (p + 2 <= minOf(10 + commonLength, end)) {
         val tag = u(p); val len = u(p + 1)
+        if (p + 2 + len > end) break
         if (tag == 0x02) transport(p + 2, len)
         p += 2 + len
     }
