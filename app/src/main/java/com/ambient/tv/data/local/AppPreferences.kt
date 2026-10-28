@@ -1587,6 +1587,12 @@ class AppPreferences @Inject constructor(
 
     private fun focusValue(key: String): String? = sessionFocus[key]
 
+    /**
+     * A new launch of the app (no saved activity state) starts every grid at its first item, also
+     * when the process outlived the closed app (a background service kept it alive).
+     */
+    fun clearSessionFocus() = sessionFocus.clear()
+
     private fun queueFocusWrite(values: Map<String, String?>) {
         values.forEach { (key, value) -> if (value == null) sessionFocus.remove(key) else sessionFocus[key] = value }
     }
