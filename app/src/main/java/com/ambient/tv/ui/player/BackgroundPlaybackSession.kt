@@ -431,6 +431,15 @@ object BackgroundPlaybackSession {
         val finishedDuration = current.status.durationMs.takeIf { it > 0 } ?: current.metadata?.durationMs ?: 0L
         completed.addLast(current.copy(status = current.status.copy(positionMs = finishedDuration, ended = true, playing = false),
             requestedTimelinePositionMs = null))
+        // Like a normal item change: the finished title keeps its own edits, the next one starts
+        // from its stored settings, and per-item tools (A-B points) do not carry over.
+        appContext?.let { context ->
+            runCatching { TitleVideoSettingsStore.capture(context, current.metadata, handle, videoSettingsOverride) }
+        }
+        lastTitleSettingsSave = SystemClock.elapsedRealtime()
+        AudioEngineRedirectGuard.reset()
+        videoSettingsOverride = null
+        AbRepeat.clear()
         mutableVideoPresentation.value = VideoPresentation()
         SleepSession.itemChanged(sleepTarget)
         mutableSnapshot.value = current.copy(metadata = metadata, generation = ++generation, requestedTimelinePositionMs = null,

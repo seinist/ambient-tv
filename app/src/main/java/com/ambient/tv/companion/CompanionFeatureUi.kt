@@ -67,7 +67,7 @@ internal fun CompanionImportDialog(vm: CompanionViewModel) {
                 enabled = !state.backupBusy)
         },
     ) {
-        LaunchedEffect(offer?.id, restore) { withFrameNanos { }; cancelFocus.requestFocus() }
+        LaunchedEffect(offer?.id, restore) { withFrameNanos { }; runCatching { cancelFocus.requestFocus() } }
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (restore) {
                 TransferCard(stringResource(R.string.companion_overwrite_question), stringResource(R.string.companion_restore_hint))

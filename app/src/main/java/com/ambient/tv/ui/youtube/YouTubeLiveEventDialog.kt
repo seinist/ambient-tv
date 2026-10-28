@@ -29,7 +29,7 @@ internal fun YouTubeLiveEventDialog(
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         withFrameNanos { }
-        firstFocus.requestFocus()
+        runCatching { firstFocus.requestFocus() }
     }
     CompositionLocalProvider(androidx.tv.material3.LocalContentColor provides androidx.tv.material3.MaterialTheme.colorScheme.onSurface) {
         AppDialog(

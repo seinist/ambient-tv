@@ -26,6 +26,15 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
+/**
+ * Work started from the player's panels (screenshot, subtitle sync) runs here, not in the panel:
+ * Back right after the click closes the panel and must not cancel the work or its notice.
+ */
+internal object PlayerToolsWork {
+    val scope = MainScope()
+    var savingScreenshot = false
+}
+
 /** Engines that step exactly one frame themselves (MPV frame-step / frame-back-step). */
 interface FrameStepTarget {
     /** Pauses and shows the next (or previous) frame. */
@@ -120,15 +129,16 @@ internal fun abRepeatWraps(positionMs: Long, aMs: Long, bMs: Long): Boolean = bM
 internal suspend fun saveVideoScreenshot(context: Context, title: String?): Boolean {
     val surface = AmbientVideoBackdrop.surface
     val bitmap = surface?.let { captureFullFrame(it) }
-    val saved = bitmap?.let { frame ->
+    val fileName = bitmap?.let { frame ->
         withContext(Dispatchers.IO) {
-            runCatching { writeScreenshot(context, frame, title) }.getOrDefault(false).also { frame.recycle() }
+            runCatching { writeScreenshot(context, frame, title) }.getOrNull().also { frame.recycle() }
         }
-    } ?: false
+    }
+    val saved = fileName != null
     AppNotifications.post(AppNotice(
         "screenshot", if (saved) R.string.player_tools_screenshot_saved else R.string.player_tools_screenshot_failed,
         subject = title, phase = if (saved) NoticePhase.SUCCESS else NoticePhase.ERROR,
-        kind = NoticeKind.PLAYBACK, interruptPlayback = false,
+        kind = NoticeKind.PLAYBACK, args = listOfNotNull(fileName), interruptPlayback = false,
     ))
     return saved
 }
@@ -146,21 +156,28 @@ private suspend fun captureFullFrame(surface: SurfaceView): Bitmap? {
     return if (ok) bitmap else { bitmap.recycle(); null }
 }
 
-private fun writeScreenshot(context: Context, bitmap: Bitmap, title: String?): Boolean {
+/** The saved file's name, or null when nothing was written. */
+private fun writeScreenshot(context: Context, bitmap: Bitmap, title: String?): String? {
+    val fileName = screenshotFileName(title, System.currentTimeMillis())
     val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, screenshotFileName(title, System.currentTimeMillis()))
+        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
         put(MediaStore.Images.Media.MIME_TYPE, "image/png")
         put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/Ambient TV")
         put(MediaStore.Images.Media.IS_PENDING, 1)
     }
     val resolver = context.contentResolver
-    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return false
+    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
     val written = runCatching {
         resolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } == true
     }.getOrDefault(false)
-    if (!written) { resolver.delete(uri, null, null); return false }
+    if (!written) { resolver.delete(uri, null, null); return null }
     resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-    return true
+    // MediaStore may rename on a clash ("… (1).png"); report the name it kept.
+    return runCatching {
+        resolver.query(uri, arrayOf(MediaStore.Images.Media.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+    }.getOrNull() ?: fileName
 }
 
 /** `Title_2026-10-27_21-05-33.png`; characters file systems reject become underscores. */
