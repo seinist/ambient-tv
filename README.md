@@ -70,7 +70,7 @@ Ambient TV is built in spare time, out of love for a good couch evening. If it m
 - **Plex · Jellyfin · Emby** — libraries, Home rows, search, theme music
 - **TVHeadend** — live TV, EPG, recordings, timers; edit (padding, priority) and delete recordings and timers, artwork from the guide, TMDb or the channel logo
 - **IPTV** – M3U playlists with an XMLTV programme guide
-- **SmartTube** — YouTube feeds, **SponsorBlock**
+- **SmartTube** — YouTube feeds, **SponsorBlock**, sign-in by QR code
 - **Spotify** — Connect receiver + native playback (librespot)
 - **Trailers** (TMDB) · **DLNA servers** · **Photos**
 - **Files** — local/USB, **SMB 1/2/3**, **NFSv3/v4**, **WebDAV** (HTTP/HTTPS), **SFTP** (password or SSH key)

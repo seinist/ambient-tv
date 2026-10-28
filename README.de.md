@@ -70,7 +70,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Plex · Jellyfin · Emby** – Mediatheken, Home-Reihen, Suche, Titelmusik
 - **TVHeadend** – Live-TV, EPG, Aufnahmen, Timer; Aufnahmen und Timer bearbeiten (Vor-/Nachlauf, Priorität) und löschen, Bilder aus EPG, TMDb oder Senderlogo
 - **IPTV** – M3U-Wiedergabelisten mit XMLTV-Programmführer
-- **SmartTube** – YouTube-Feeds, **SponsorBlock**
+- **SmartTube** – YouTube-Feeds, **SponsorBlock**, Anmeldung per QR-Code
 - **Spotify** – Connect-Empfänger + native Wiedergabe (librespot)
 - **Trailer** (TMDB) · **DLNA-Server** · **Fotos**
 - **Dateien** – Lokal/USB, **SMB 1/2/3**, **NFSv3/v4**, **WebDAV** (HTTP/HTTPS), **SFTP** (Passwort oder SSH-Schlüssel)

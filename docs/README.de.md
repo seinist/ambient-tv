@@ -17,6 +17,11 @@ Aktuelle Funktionen im Kompendium:
 - [Uhr](DOCUMENTATION.de.md#39-uhr)
 - [Aufnahmen und Timer: bearbeiten, löschen, Bilder](DOCUMENTATION.de.md#43-tvheadend)
 - [Media3-GPU-Filter (MPV-Kernel, RAVU, NIS, Korn, Entrauschen)](DOCUMENTATION.de.md#74-bildoptionen-vlc-und-media3)
+- [Untertitel-Aussehen und automatische Synchronisierung](DOCUMENTATION.de.md#62-untertitel)
+- [Nachtmodus nach Uhrzeit](DOCUMENTATION.de.md#66-audioprofile)
+- [Player-Werkzeuge: A-B, Einzelbild, Lesezeichen, Bildschirmfotos, Songtexte, lückenlos](DOCUMENTATION.de.md#71-menü-wiedergabeeinstellungen)
+- [Startseiten-Ansicht und Offline-Server](DOCUMENTATION.de.md#31-startseiten-reihen)
+- [System- und Sprachsuche](DOCUMENTATION.de.md#111-android-tv)
 
 ## Weitere Projektnotizen (Repo-Root)
 
