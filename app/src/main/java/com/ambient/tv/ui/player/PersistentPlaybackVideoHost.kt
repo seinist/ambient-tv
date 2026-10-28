@@ -115,7 +115,8 @@ fun Media3VideoSurface(
                 keepScreenOn = false
                 setBackgroundColor(android.graphics.Color.BLACK)
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
-                subtitleView?.applyAmbientSubtitleStyle(videoImagePreferences(context).subtitleAppearance)
+                subtitleAppearance = videoImagePreferences(context).subtitleAppearance
+                subtitleView?.applyAmbientSubtitleStyle(subtitleAppearance)
             }
         },
         update = { view ->
@@ -212,7 +213,20 @@ fun Media3VideoTexture(
  */
 internal fun androidx.media3.ui.SubtitleView.applyAmbientSubtitleStyle(
     appearance: com.ambient.tv.data.local.SubtitleAppearance = com.ambient.tv.data.local.SubtitleAppearance(),
+    /** ASS/SSA: the file's sizes, colors and boxes; only a thin outline as their default edge. */
+    styledTrack: Boolean = false,
 ) {
+    if (styledTrack) {
+        setApplyEmbeddedStyles(true)
+        setApplyEmbeddedFontSizes(true)
+        setStyle(androidx.media3.ui.CaptionStyleCompat(
+            android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT,
+            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null,
+        ))
+        setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)
+        setBottomPaddingFraction(androidx.media3.ui.SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION)
+        return
+    }
     val look = appearance.normalized()
     val box = look.background != com.ambient.tv.data.local.SubtitleAppearance.BACKGROUND_NONE
     setApplyEmbeddedFontSizes(false)
@@ -243,10 +257,22 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
         super.onContentAspectRatioChanged(contentFrame, forcedAspectRatio ?: aspectRatio)
     }
 
+    /** Look of plain text subtitles; ASS/SSA tracks keep the file's own style instead. */
+    var subtitleAppearance = com.ambient.tv.data.local.SubtitleAppearance()
+    /** The selected text track carries its own styles (ASS/SSA), as MPV and VLC render them. */
+    private var styledTrack = false
+
     // Registered after PlayerView's own listener, so these box-free cues replace the ones it set.
     private val boxlessCues = object : androidx.media3.common.Player.Listener {
         override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
-            subtitleView?.setCues(cueGroup.cues.map { it.withoutBackground() })
+            subtitleView?.setCues(cueGroup.cues.map { it.styledFor(styledTrack) })
+        }
+
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            val styled = selectedTextTrackIsStyled(tracks)
+            if (styled == styledTrack) return
+            styledTrack = styled
+            subtitleView?.applyAmbientSubtitleStyle(subtitleAppearance, styledTrack = styled)
         }
     }
 
@@ -254,9 +280,28 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
         this.player?.removeListener(boxlessCues)
         super.setPlayer(player)
         player?.addListener(boxlessCues)
-        player?.let { subtitleView?.setCues(it.currentCues.cues.map { cue -> cue.withoutBackground() }) }
+        player?.let {
+            boxlessCues.onTracksChanged(it.currentTracks)
+            subtitleView?.setCues(it.currentCues.cues.map { cue -> cue.styledFor(styledTrack) })
+        }
     }
 }
+
+private fun selectedTextTrackIsStyled(tracks: androidx.media3.common.Tracks): Boolean =
+    tracks.groups.any { group ->
+        group.type == androidx.media3.common.C.TRACK_TYPE_TEXT &&
+            (0 until group.length).any { group.isTrackSelected(it) && subtitleMimeIsStyled(group.getTrackFormat(it)) }
+    }
+
+/**
+ * Media3 decodes both ASS and SSA (also Matroska's S_TEXT/ASS) as text/x-ssa. Parsed during
+ * extraction, the track becomes application/x-media3-cues and keeps that type in [codecs].
+ */
+private fun subtitleMimeIsStyled(format: androidx.media3.common.Format): Boolean =
+    format.sampleMimeType == androidx.media3.common.MimeTypes.TEXT_SSA || format.codecs == androidx.media3.common.MimeTypes.TEXT_SSA
+
+/** Styled (ASS/SSA) cues stay as the file draws them, boxes included; plain cues lose boxes. */
+private fun androidx.media3.common.text.Cue.styledFor(styledTrack: Boolean) = if (styledTrack) this else withoutBackground()
 
 /** Keeps ASS/SSA styling but drops opaque boxes (BorderStyle=3, BackColour) behind the text. */
 private fun androidx.media3.common.text.Cue.withoutBackground(): androidx.media3.common.text.Cue {
