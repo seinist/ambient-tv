@@ -133,7 +133,7 @@ private fun LibraryLoadingBody(viewMode: SectionViewMode, gridColumns: Int, list
 
 @Composable
 private fun SectionHeaderSkeleton() {
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         PageHeader(actions = {
             val actionWidth = if (LocalHandheldUi.current) 48.dp else 118.dp
             ChipSkeleton(actionWidth)

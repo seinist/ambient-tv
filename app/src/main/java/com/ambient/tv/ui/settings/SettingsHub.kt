@@ -482,7 +482,7 @@ internal fun SettingsHub(
                 }
             }
             .focusGroup()
-            .padding(screenGutter()),
+            .padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (handheld) {
@@ -525,6 +525,10 @@ internal fun SettingsHub(
                     TvChip(stringResource(R.string.notice_history), icon = Icons.Filled.Notifications, iconOnly = true) {
                         openPage(SettingsCategory.NOTIFICATIONS)
                     }
+                }
+                // Same corner as every page header (PageHeader) and Home.
+                if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader) {
+                    com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.Top))
                 }
             }
         }

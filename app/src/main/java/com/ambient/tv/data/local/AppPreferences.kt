@@ -1337,6 +1337,13 @@ class AppPreferences @Inject constructor(
             ?: ClockSettings(format = if (screensaverUse24HourClock) ClockSettings.FORMAT_24 else ClockSettings.FORMAT_12)
         set(value) = prefs.edit { putString(KEY_CLOCK_SETTINGS, clockJson.encodeToString(ClockSettings.serializer(), value.normalized())) }
 
+    /** Look of text subtitles in every player; read when a player starts. */
+    var subtitleAppearance: SubtitleAppearance
+        get() = prefs.getString(KEY_SUBTITLE_APPEARANCE, null)
+            ?.let { raw -> runCatching { clockJson.decodeFromString(SubtitleAppearance.serializer(), raw).normalized() }.getOrNull() }
+            ?: SubtitleAppearance()
+        set(value) = prefs.edit { putString(KEY_SUBTITLE_APPEARANCE, clockJson.encodeToString(SubtitleAppearance.serializer(), value.normalized())) }
+
     fun observeClockSettings(): kotlinx.coroutines.flow.Flow<ClockSettings> =
         kotlinx.coroutines.flow.callbackFlow {
             val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -2229,6 +2236,7 @@ class AppPreferences @Inject constructor(
         const val KEY_SCREENSAVER_SHOW_DATE = "screensaver_show_date"
         const val KEY_SCREENSAVER_24H_CLOCK = "screensaver_24h_clock"
         const val KEY_CLOCK_SETTINGS = "clock_settings"
+        const val KEY_SUBTITLE_APPEARANCE = "subtitle_appearance"
         private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         const val KEY_SCREENSAVER_USE_ARTWORK = "screensaver_use_artwork"
         const val KEY_SCREENSAVER_ARTWORK_INTERVAL_SECONDS = "screensaver_artwork_interval_seconds"

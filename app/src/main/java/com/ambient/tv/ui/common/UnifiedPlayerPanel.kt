@@ -85,7 +85,9 @@ enum class UnifiedPlayerPanel {
     VIDEO_SVP, VIDEO_SVP_ADVANCED,
     AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES, SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
     /** Which action-bar buttons the current player shows. */
-    OSD_BUTTONS;
+    OSD_BUTTONS,
+    /** A-B repeat, frame step and screenshot. */
+    TOOLS;
 
     val isAudio: Boolean get() = this == AUDIO || this == AUDIO_SECTION || this == AUDIO_CODECS
     val isVisualizer: Boolean get() = this == VISUALIZER || this == VISUALIZER_SETTINGS

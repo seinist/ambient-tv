@@ -21,7 +21,7 @@ class Media3PlaybackHandle(
     private val joinsReleaseGate: Boolean = false,
     /** Built with deferred prepare: the previous player still closes ([previousReleaseSettled]). */
     waitingForPreviousRelease: Boolean = false,
-) : PlaybackHandle, VideoPresentationTarget {
+) : PlaybackHandle, VideoPresentationTarget, FrameStepTarget {
     @Volatile var waitingForPreviousRelease = waitingForPreviousRelease
         private set
 
@@ -148,6 +148,13 @@ class Media3PlaybackHandle(
         player.play()
     }
     override fun pause() = player.pause()
+    /** Exact seek by one frame time of the playing video (ExoPlayer seeks exactly by default). */
+    override fun stepFrame(forward: Boolean) {
+        player.pause()
+        val fps = player.videoFormat?.frameRate?.takeIf { it > 1f } ?: (1000f / DEFAULT_FRAME_MS)
+        val duration = player.duration.takeIf { it != androidx.media3.common.C.TIME_UNSET } ?: 0L
+        seekTo(frameStepTarget(player.currentPosition, duration, forward, (1000f / fps).toLong().coerceAtLeast(1L)))
+    }
     private var outputMuteVolume: Float? = null
     override fun setOutputMuted(muted: Boolean) {
         if (muted) {

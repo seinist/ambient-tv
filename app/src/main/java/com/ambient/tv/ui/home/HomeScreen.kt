@@ -312,7 +312,7 @@ fun HomeScreen(
         // The app home has no header row: the clock floats where the library pages put it.
         if (!systemOverview && !LocalHandheldUi.current && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
             com.ambient.tv.ui.common.HeaderClock(
-                Modifier.align(Alignment.TopEnd).padding(top = 24.dp, end = screenGutter()).zIndex(2f),
+                Modifier.align(Alignment.TopEnd).padding(top = com.ambient.tv.ui.common.PageHeaderTopTv, end = screenGutter()).zIndex(2f),
             )
         }
         if (showOverviewOptions) {
@@ -348,7 +348,7 @@ private fun SystemOverviewHeader(
     onOpenOptions: () -> Unit,
     optionsModifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = 24.dp, bottom = 10.dp)) {
+    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
             com.ambient.tv.ui.common.SystemPageTitle(system)
         }

@@ -38,7 +38,7 @@ class LauncherOpener @Inject constructor(
     fun open(intent: Intent?): Boolean {
         val request = LauncherIntents.parse(intent) ?: return false
         // Switched off: rows are gone; a stale entry just opens the app.
-        if (!preferences.launcherIntegrationEnabled) return true
+        if (!preferences.launcherIntegrationEnabled && (request as? LauncherIntents.Request.Title)?.fromSearch != true) return true
         job?.cancel()
         job = scope.launch {
             // Waking a server can take minutes; whatever the user started meanwhile wins.

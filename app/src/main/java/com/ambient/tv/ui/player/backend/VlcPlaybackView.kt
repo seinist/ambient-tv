@@ -5,6 +5,7 @@ import com.ambient.tv.ui.player.withTitle
 import com.ambient.tv.ui.player.withResolution
 import com.ambient.tv.R
 import com.ambient.tv.data.local.VlcImageOptions
+import com.ambient.tv.data.local.vlcOptions
 import com.ambient.tv.ui.player.reducedVideoEffects
 import com.ambient.tv.ui.player.videoImagePreferences
 import com.ambient.tv.ui.player.performanceProfile
@@ -150,7 +151,12 @@ class VlcPlaybackController(
     private var configuredDeinterlaceFilter = if (preserveHdrSource) "auto" else effectiveDeinterlaceFilter(deinterlaceFilter, reducedVideoEffects(context))
     override val usesFrameInterpolation: Boolean
         get() = effectiveImage().svpMode != "off"
-    private fun createLibVlc() = LibVLC(
+    /** An option this LibVLC build does not know fails the whole instance: retry without the subtitle look. */
+    private fun createLibVlc(): LibVLC = runCatching { createLibVlc(subtitleLook = true) }.getOrElse { error ->
+        timber.log.Timber.w(error, "VLC rejected the subtitle look options; using its defaults")
+        createLibVlc(subtitleLook = false)
+    }
+    private fun createLibVlc(subtitleLook: Boolean) = LibVLC(
         context,
         arrayListOf(
             "--network-caching=1200",
@@ -160,6 +166,8 @@ class VlcPlaybackController(
             "--clock-jitter=0",
             if (com.ambient.tv.BuildConfig.DEBUG) "--verbose=2" else "--verbose=0",
         ).apply {
+            // Text subtitle look from Settings › Subtitles (freetype renderer, instance level).
+            if (subtitleLook) addAll(videoImagePreferences(context).subtitleAppearance.vlcOptions())
             addAll(vlcDeinterlaceOptions(configuredDeinterlaceMode, configuredDeinterlaceFilter))
             // VLC 4's vout filter chain is inherited from the instance/player,
             // not from Media options. Media-only video-filter is silently ignored.

@@ -44,7 +44,7 @@ class MpvPlaybackController(
     broadcastSource: Boolean = liveStream,
     /** gpu-next/Vulkan HDR passthrough chosen by [mpvHdrGpuDecision]. */
     val hdrGpuPassthrough: Boolean = false,
-) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget {
+) : PlaybackHandle, VideoPresentationTarget, SubtitleDelayTarget, com.ambient.tv.ui.player.FrameStepTarget {
     val audioSession = AudioSession(videoImagePreferences(context), "mpv", audioPassthroughEnabled, audioOnly = audioOnly)
     private val main = Handler(Looper.getMainLooper())
     private val thread = HandlerThread("mpv-control").apply { start() }
@@ -347,6 +347,7 @@ class MpvPlaybackController(
         pendingDeinterlace = (revision + 1) to (mode to filter)
         command("preset-deinterlace") { presetDeinterlace(mode, filter) }
     }
+    override fun stepFrame(forward: Boolean) { command("frame-step") { stepFrame(forward) } }
     override fun setSubtitleDelay(delayMs: Int) {
         pendingSubtitleDelay = (revision + 1) to delayMs
         command("subtitle-delay") { setSubtitleDelay(delayMs) }

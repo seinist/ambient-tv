@@ -257,7 +257,7 @@ internal fun TrailerCatalogContent(
     val filterBarShown = configured && enabled && LocalFilterBarSetting.current.shown
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = 28.dp)) {
+        Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
             PageHeader(actions = {
                 TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
                 if (configured && enabled) ViewOptionsChip(
@@ -478,7 +478,7 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onO
         if (!loading && (videos.isNotEmpty() || serverTrailers.isNotEmpty())) { withFrameNanos { }; runCatching { firstFocus.requestFocus() } }
     }
     ReportSidebarContentReady(!loading)
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(32.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 32.dp, end = 32.dp, bottom = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(32.dp)), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item { PageHeader(actions = {
             TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
         }) {

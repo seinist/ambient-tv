@@ -148,6 +148,8 @@ data class SettingsBackup(
     val screensaverUse24HourClock: Boolean = true,
     /** Null in backups made before the clock page existed: the 24-hour switch above still applies. */
     val clock: ClockSettings? = null,
+    /** Null in backups made before subtitle styling existed: the receiver keeps its own. */
+    val subtitleAppearance: SubtitleAppearance? = null,
     val screensaverUseArtwork: Boolean = true,
     val screensaverArtworkIntervalSeconds: Int = 30,
     val screensaverDimPercent: Int = 70,
@@ -447,6 +449,7 @@ class SettingsBackupManager @Inject constructor(
             screensaverShowDate = preferences.screensaverShowDate,
             screensaverUse24HourClock = preferences.screensaverUse24HourClock,
             clock = preferences.clockSettings,
+            subtitleAppearance = preferences.subtitleAppearance,
             screensaverUseArtwork = preferences.screensaverUseArtwork,
             screensaverArtworkIntervalSeconds = preferences.screensaverArtworkIntervalSeconds,
             screensaverDimPercent = preferences.screensaverDimPercent,
@@ -803,6 +806,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.screensaverShowClock = backup.screensaverShowClock
         preferences.screensaverShowDate = backup.screensaverShowDate
         preferences.screensaverUse24HourClock = backup.screensaverUse24HourClock
+        backup.subtitleAppearance?.let { preferences.subtitleAppearance = it }
         preferences.clockSettings = backup.clock ?: preferences.clockSettings.copy(
             format = if (backup.screensaverUse24HourClock) ClockSettings.FORMAT_24 else ClockSettings.FORMAT_12,
         )

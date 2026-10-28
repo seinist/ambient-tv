@@ -104,7 +104,7 @@ fun SpotifyHomeScreen(
         }
     }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    Column(Modifier.fillMaxSize().padding(screenGutter()), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    Column(Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         PageHeader(focusChain = focusChain, actions = {
             TvChip(
                 text = when {

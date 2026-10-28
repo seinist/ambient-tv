@@ -115,7 +115,7 @@ fun Media3VideoSurface(
                 keepScreenOn = false
                 setBackgroundColor(android.graphics.Color.BLACK)
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
-                subtitleView?.applyAmbientSubtitleStyle()
+                subtitleView?.applyAmbientSubtitleStyle(videoImagePreferences(context).subtitleAppearance)
             }
         },
         update = { view ->
@@ -206,24 +206,33 @@ fun Media3VideoTexture(
 
 /**
  * The default follows the system caption style, which on most TVs means large white text on
- * black boxes. Use white text with a dark outline, no boxes, at a moderate size instead. Cue
- * styling (ASS/SSA colors, positions, italics) stays; only embedded font sizes are ignored since
- * they routinely blow subtitles up.
+ * black boxes. The app's own [com.ambient.tv.data.local.SubtitleAppearance] (Settings ›
+ * Subtitles › Look) replaces it. Cue styling (ASS/SSA colors, positions, italics) stays; only
+ * embedded font sizes are ignored since they routinely blow subtitles up.
  */
-internal fun androidx.media3.ui.SubtitleView.applyAmbientSubtitleStyle() {
+internal fun androidx.media3.ui.SubtitleView.applyAmbientSubtitleStyle(
+    appearance: com.ambient.tv.data.local.SubtitleAppearance = com.ambient.tv.data.local.SubtitleAppearance(),
+) {
+    val look = appearance.normalized()
+    val box = look.background != com.ambient.tv.data.local.SubtitleAppearance.BACKGROUND_NONE
     setApplyEmbeddedFontSizes(false)
     setStyle(
         androidx.media3.ui.CaptionStyleCompat(
-            android.graphics.Color.WHITE,
+            look.textArgb,
+            look.backgroundArgb,
             android.graphics.Color.TRANSPARENT,
-            android.graphics.Color.TRANSPARENT,
-            androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE,
+            when {
+                box -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+                look.edge == com.ambient.tv.data.local.SubtitleAppearance.EDGE_SHADOW -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
+                look.edge == com.ambient.tv.data.local.SubtitleAppearance.EDGE_NONE -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_NONE
+                else -> androidx.media3.ui.CaptionStyleCompat.EDGE_TYPE_OUTLINE
+            },
             android.graphics.Color.BLACK,
-            android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD),
+            android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, if (look.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL),
         ),
     )
-    setFractionalTextSize(0.045f)
-    setBottomPaddingFraction(0.06f)
+    setFractionalTextSize(look.textFraction)
+    setBottomPaddingFraction(look.positionPercent / 100f)
 }
 
 /** PlayerView receives decoder format events independently of Compose updates. */
