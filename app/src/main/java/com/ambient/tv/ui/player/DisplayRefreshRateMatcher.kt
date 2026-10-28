@@ -22,6 +22,7 @@ import timber.log.Timber
 import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlin.math.abs
@@ -397,6 +398,74 @@ internal fun rememberAvailableDisplayModes(context: Context? = androidx.compose.
     return modes
 }
 
+/** Desktop mode a leaving player would restore, held while the next item of a hand-off loads. */
+internal data class DisplayModeClaim(val modeId: Int?, val modeKey: String?)
+
+/** One player's desktop mode; a hand-off can replace it with the mode an earlier player kept. */
+internal class DisplayModeOrigin(var claim: DisplayModeClaim)
+
+/**
+ * Between two items (next episode, autoplay, playlist, channel change) the player leaves and the
+ * next one mounts. Restoring the desktop mode in between switched HDMI twice, even when the next
+ * item wanted the same mode. The leaving player defers its restore here instead: the next player
+ * takes over the desktop mode and requests its own (no switch when equal, else one direct
+ * switch). Works in either order (next player first or later). Without a next player the
+ * restore runs once the hand-off has ended, or after [MAX_WAIT_MS].
+ */
+internal object DisplayModeHandoff {
+    private const val SETTLE_MS = 1_500L
+    private const val MAX_WAIT_MS = 30_000L
+    private val scope = kotlinx.coroutines.MainScope()
+    private val active = mutableListOf<DisplayModeOrigin>()
+    private var pending: Job? = null
+    private var deferred: DisplayModeClaim? = null
+
+    /** A player's starting desktop mode: one a hand-off kept, else the current mode. */
+    fun origin(activity: Activity?): DisplayModeOrigin = DisplayModeOrigin(
+        take() ?: DisplayModeClaim(DisplayRefreshRateMatcher.currentModeId(activity), DisplayRefreshRateMatcher.currentModeKey(activity)))
+
+    fun register(origin: DisplayModeOrigin) {
+        active += origin
+        // Mounted in the same frame the previous player left: its deferred mode is this one's too.
+        take()?.let { origin.claim = it }
+    }
+
+    fun unregister(origin: DisplayModeOrigin) {
+        active.remove(origin)
+    }
+
+    fun defer(activity: Activity, claim: DisplayModeClaim) {
+        // The next player is already there: hand the desktop mode over directly.
+        active.lastOrNull()?.let { next ->
+            next.claim = claim
+            Timber.i("DisplayHandoff next player keeps the current mode")
+            return
+        }
+        pending?.cancel()
+        deferred = claim
+        val window = java.lang.ref.WeakReference(activity)
+        pending = scope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(MAX_WAIT_MS) {
+                BackgroundPlaybackSession.snapshot.first { !it.replacingSource }
+                delay(SETTLE_MS)
+            }
+            if (deferred !== claim) return@launch
+            deferred = null
+            Timber.i("DisplayHandoff no next player; restoring desktop mode")
+            DisplayRefreshRateMatcher.restoreMode(window.get(), claim.modeId)
+        }
+    }
+
+    private fun take(): DisplayModeClaim? {
+        val taken = deferred ?: return null
+        deferred = null
+        pending?.cancel()
+        pending = null
+        Timber.i("DisplayHandoff next player keeps the current mode")
+        return taken
+    }
+}
+
 /** Captures the desktop mode once; fixed output selection is independent of cadence matching. */
 @Composable
 fun rememberDisplayModeRequest(
@@ -427,8 +496,8 @@ fun rememberDisplayModeRequest(
     var switchedAtStart by remember(activity, playbackKey, adjustmentKey, preferredModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown, interpolation, rendererScaling, availableModes, requiredHdrType) { mutableStateOf(false) }
     val latestPolicy by rememberUpdatedState(adjustmentKey)
     val latestPreferred by rememberUpdatedState(preferredModeKey)
-    val originalModeId = remember(activity) { DisplayRefreshRateMatcher.currentModeId(activity) }
-    val originalModeKey = remember(activity) { DisplayRefreshRateMatcher.currentModeKey(activity) }
+    // The next item of a running hand-off takes over the desktop mode the previous player kept.
+    val origin = remember(activity) { DisplayModeHandoff.origin(activity) }
     val latestPlaybackKey by rememberUpdatedState(playbackKey)
     val latestSwitchPauseMs by rememberUpdatedState(switchPauseMs)
     val holdScope = rememberCoroutineScope()
@@ -490,9 +559,16 @@ fun rememberDisplayModeRequest(
         }
     }
     DisposableEffect(activity) {
+        DisplayModeHandoff.register(origin)
         onDispose {
+            DisplayModeHandoff.unregister(origin)
             if (latestPolicy == "start_stop" || latestPolicy == "always" || (latestPolicy == "off" && latestPreferred != "system")) {
-                DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
+                // Next episode/video: keep the mode until the next player decides; Stop and minimize restore at once.
+                if (BackgroundPlaybackSession.snapshot.value.replacingSource && activity != null) {
+                    DisplayModeHandoff.defer(activity, origin.claim)
+                } else {
+                    DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
+                }
             }
         }
     }
@@ -501,7 +577,7 @@ fun rememberDisplayModeRequest(
         val fixed = metadataRoute?.let(PlaybackDisplayModeRevision::sessionFixedFor)
         if (fixed != null) {
             if (fixed == "system") {
-                DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
+                DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
                 return@LaunchedEffect
             }
             // The picked entry pins the resolution. Refresh still follows double rate and 3:2
@@ -514,7 +590,7 @@ fun rememberDisplayModeRequest(
             }
             val selected = DisplayRefreshRateMatcher.contentFrameRateMode(
                 activity, format.fps, format.width, format.height,
-                fixed, originalModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
+                fixed, origin.claim.modeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
                 preserveRefreshRate = interpolation,
                 preserveOutputResolution = rendererScaling,
                 requiredHdrType = requiredHdrType,
@@ -525,7 +601,7 @@ fun rememberDisplayModeRequest(
         // Let a running hold finish; a newer format must not request a second mode mid-resync.
         holdJob[0]?.takeIf { it.isActive }?.join()
         if (adjustmentKey == "off") {
-            if (preferredModeKey == "system") DisplayRefreshRateMatcher.restoreMode(activity, originalModeId)
+            if (preferredModeKey == "system") DisplayRefreshRateMatcher.restoreMode(activity, origin.claim.modeId)
             else switchWithPause(DisplayRefreshRateMatcher.preferredMode(activity, preferredModeKey))?.join()
         } else if (adjustmentKey == "always" || !switchedAtStart ||
             displayRateUpgradeNeeded(adjustmentKey, preferredModeKey, activity?.let(androidx.core.content.ContextCompat::getDisplayOrDefault)?.refreshRate, content?.fps)) {
@@ -541,7 +617,7 @@ fun rememberDisplayModeRequest(
             repeat(2) { attempt ->
                 val selected = DisplayRefreshRateMatcher.contentFrameRateMode(
                     activity, format.fps, format.width, format.height,
-                    preferredModeKey, originalModeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
+                    preferredModeKey, origin.claim.modeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
                     preserveRefreshRate = interpolation,
                     preserveOutputResolution = rendererScaling,
                     requiredHdrType = requiredHdrType,
