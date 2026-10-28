@@ -1337,6 +1337,11 @@ class AppPreferences @Inject constructor(
             ?: ClockSettings(format = if (screensaverUse24HourClock) ClockSettings.FORMAT_24 else ClockSettings.FORMAT_12)
         set(value) = prefs.edit { putString(KEY_CLOCK_SETTINGS, clockJson.encodeToString(ClockSettings.serializer(), value.normalized())) }
 
+    /** Songs follow each other without a gap (Media3, direct play). */
+    var gaplessMusicEnabled: Boolean
+        get() = prefs.getBoolean(KEY_GAPLESS_MUSIC, true)
+        set(value) = prefs.edit { putBoolean(KEY_GAPLESS_MUSIC, value) }
+
     /** Lyrics over the music player's visualizer. */
     var lyricsVisible: Boolean
         get() = prefs.getBoolean(KEY_LYRICS_VISIBLE, true)
@@ -2263,6 +2268,7 @@ class AppPreferences @Inject constructor(
         const val KEY_NIGHT_SCHEDULE = "night_schedule"
         const val KEY_LYRICS_VISIBLE = "lyrics_visible"
         const val KEY_LYRICS_ONLINE = "lyrics_online"
+        const val KEY_GAPLESS_MUSIC = "gapless_music"
         private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         const val KEY_SCREENSAVER_USE_ARTWORK = "screensaver_use_artwork"
         const val KEY_SCREENSAVER_ARTWORK_INTERVAL_SECONDS = "screensaver_artwork_interval_seconds"

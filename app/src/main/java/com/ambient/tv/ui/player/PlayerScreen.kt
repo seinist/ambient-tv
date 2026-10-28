@@ -235,7 +235,7 @@ private fun PlayerContent(
     val activity = remember(context) { context.findActivity() }
     val requestDisplayMode = rememberDisplayModeRequest(
         activity = activity,
-        playbackKey = "${state.streamUrl}:${state.sourceMediaIndex}",
+        playbackKey = "${state.playerStreamUrl}:${state.sourceMediaIndex}",
         adjustmentKey = viewModel.displayRefreshAdjustmentKey(),
         preferredModeKey = viewModel.preferredDisplayModeKey().also { com.ambient.tv.ui.player.PlaybackDisplayModeRevision.tick },
         whitelist = viewModel.displayModeWhitelist(),
@@ -259,11 +259,12 @@ private fun PlayerContent(
     }
 
     val metadata = LocalPlaybackMetadata.current
-    val exoPlayer = remember(state.streamUrl, state.startPositionMs, state.audioPassthroughEnabled) {
+    // Gapless music keeps the engine it started with ([PlayerUiState.Ready.playerStreamUrl]).
+    val exoPlayer = remember(state.playerStreamUrl, state.playerStartPositionMs, state.audioPassthroughEnabled) {
             PlaybackEngineFactory.create(
                 context = context,
-                streamUrl = state.streamUrl,
-                startPositionMs = state.startPositionMs,
+                streamUrl = state.playerStreamUrl,
+                startPositionMs = state.playerStartPositionMs,
                 subtitleTracks = if (state.playbackMode == PlaybackMode.DIRECT_PLAY) state.subtitleTracks else emptyList(),
                 streamHeaders = state.streamHeaders,
                 audioPassthroughEnabled = state.audioPassthroughEnabled,
@@ -567,6 +568,16 @@ private fun PlayerContent(
             override fun onPlayWhenReadyChanged(ready: Boolean, reason: Int) {
                 playWhenReady = ready
             }
+
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                // Gapless: Media3 moved on to the queued song by itself.
+                if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) return
+                val id = mediaItem?.mediaId?.takeIf { it.isNotEmpty() && it != androidx.media3.common.MediaItem.DEFAULT_MEDIA_ID } ?: return
+                if (viewModel.adoptGaplessNext(id)) {
+                    playbackEnded = false
+                    exoPlayer.currentMediaItemIndex.takeIf { it > 0 }?.let { exoPlayer.removeMediaItems(0, it) }
+                } else onPlayNext(id)
+            }
         }
         exoPlayer.addListener(listener)
         onDispose {
@@ -578,15 +589,30 @@ private fun PlayerContent(
         }
     }
 
+    // The engine can outlive its first item (gapless music): read the current item's length.
+    val latestState by androidx.compose.runtime.rememberUpdatedState(state)
     LaunchedEffect(exoPlayer, state.timelineOffsetMs) {
         while (isActive) {
-            if (state.durationMs != null && state.durationMs > 0) {
-                durationMs = state.durationMs
+            val known = latestState.durationMs
+            if (known != null && known > 0) {
+                durationMs = known
             } else if (exoPlayer.duration > 0) {
-                durationMs = exoPlayer.duration + state.timelineOffsetMs
+                durationMs = exoPlayer.duration + latestState.timelineOffsetMs
             }
             delay(POSITION_REFRESH_INTERVAL_MS)
         }
+    }
+
+    // Gapless music: the prepared next song waits in the player's queue behind the current one.
+    val gaplessNext by viewModel.gaplessNext.collectAsState()
+    val endOfItemSleep = BackgroundPlaybackSession.sleepTimer.kind == SleepTimerKind.END_OF_ITEM
+    LaunchedEffect(exoPlayer, gaplessNext, endOfItemSleep) {
+        val index = exoPlayer.currentMediaItemIndex
+        if (exoPlayer.mediaItemCount > index + 1) exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount)
+        val next = gaplessNext ?: return@LaunchedEffect
+        // "Stop after this item" must still end at the item's end.
+        if (endOfItemSleep) return@LaunchedEffect
+        exoPlayer.addMediaItem(androidx.media3.common.MediaItem.Builder().setUri(next.streamUrl).setMediaId(next.ratingKey).build())
     }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(

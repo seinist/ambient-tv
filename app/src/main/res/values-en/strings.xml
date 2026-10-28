@@ -2176,4 +2176,7 @@
     <string name="subtitle_sync_done">Subtitle synced (%1$s)</string>
     <string name="subtitle_sync_already">Subtitle is already in sync</string>
     <string name="subtitle_sync_failed">Could not sync the subtitle automatically</string>
+    <string name="player_tools_music">Music</string>
+    <string name="player_tools_gapless">Gapless playback</string>
+    <string name="player_tools_gapless_hint">Songs follow each other without a pause when Media3 plays them directly. Takes effect from the next song.</string>
 </resources>

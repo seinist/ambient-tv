@@ -109,12 +109,26 @@ sealed interface PlayerUiState {
         val serverAudioConversionCodec: String? = null,
         val playbackRoute: String? = null,
         val successorsLoading: Boolean = false,
+        /**
+         * Gapless music: the stream and start the running Media3 engine was created with. Set
+         * after the engine moved on to this item by itself, so the screen keeps that engine.
+         */
+        val engineStreamUrl: String? = null,
+        val engineStartPositionMs: Long = 0,
     ) : PlayerUiState {
         val nextVideoItem: MediaItem? get() = nextEpisode ?: nextCollectionItem
+        /** What the engine was built from: the item's own stream, or the first of a gapless chain. */
+        val playerStreamUrl: String get() = engineStreamUrl ?: streamUrl
+        val playerStartPositionMs: Long get() = if (engineStreamUrl != null) engineStartPositionMs else startPositionMs
     }
     data class Error(val message: String) : PlayerUiState
 }
 
+
+/** Gapless needs a song played directly by Media3 without a server audio conversion. */
+internal fun gaplessEligible(mediaType: String, mode: PlaybackMode, onMedia3: Boolean, serverAudioConversion: String?): Boolean =
+    (mediaType.equals("track", ignoreCase = true) || mediaType.equals("audio", ignoreCase = true)) &&
+        mode == PlaybackMode.DIRECT_PLAY && onMedia3 && serverAudioConversion == null
 
 internal fun audioOnlyPlaybackHint(sourceRatingKey: String, mediaType: String, videoCodec: String?): Boolean {
     val sourceMayHaveVideoWithoutCodecMetadata =
@@ -326,6 +340,7 @@ class PlayerViewModel @Inject constructor(
         val current = _uiState.value as? PlayerUiState.Ready ?: return
         if (nextId != current.nextAudioTrack?.ratingKey && nextId != current.nextVideoItem?.ratingKey) return
         changingItem = true
+        clearGaplessNext()
         itemTransitionToken = BackgroundPlaybackSession.beginItemTransition()
         playbackLoadJob?.cancel()
         successorsJob?.cancel()
@@ -690,7 +705,143 @@ class PlayerViewModel @Inject constructor(
                     nextAudioTrack = nextAudioTrack,
                 ) else current
             }
+            prepareGaplessNext(nextAudioTrack)
         }
+    }
+
+    /** The next song, resolved ahead so Media3 can queue it and play on without a gap. */
+    data class GaplessNext(val ratingKey: String, val streamUrl: String, internal val state: PlayerUiState.Ready, internal val item: MediaItem)
+
+    private val _gaplessNext = kotlinx.coroutines.flow.MutableStateFlow<GaplessNext?>(null)
+    val gaplessNext: kotlinx.coroutines.flow.StateFlow<GaplessNext?> = _gaplessNext
+    private var gaplessJob: Job? = null
+
+    private fun clearGaplessNext() {
+        gaplessJob?.cancel()
+        gaplessJob = null
+        _gaplessNext.value = null
+    }
+
+    /**
+     * Only the plain case is prepared: a song played directly by Media3, followed by a song from
+     * the same source that Media3 can also play directly. Anything else (server conversion,
+     * multichannel, another renderer) keeps the normal item change.
+     */
+    private fun prepareGaplessNext(next: MediaItem?) {
+        clearGaplessNext()
+        val current = _uiState.value as? PlayerUiState.Ready ?: return
+        if (next == null || !appPreferences.gaplessMusicEnabled) return
+        val onMedia3 = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(current.playbackBackendKey) ==
+            com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
+        if (!gaplessEligible(current.mediaType, current.playbackMode, onMedia3, current.serverAudioConversionCodec)) return
+        if (titleSource(next.ratingKey) != titleSource(current.requestedRatingKey)) return
+        val expected = current.requestedRatingKey
+        gaplessJob = viewModelScope.launch {
+            val item = mediaRepository.getMetadata(next.ratingKey).getOrNull() ?: return@launch
+            if (!item.type.equals("track", true) && !item.type.equals("audio", true)) return@launch
+            val versionIndex = displayVersionSelector.selectIndex(item.mediaVersions, 0)
+            val version = item.mediaVersions.getOrNull(versionIndex) ?: return@launch
+            val assessment = codecCapabilities.assess(version)
+            val audio = version.selectedAudioTrack
+            if (!assessment.audioSupported || (audio?.channels ?: 2) > 2) return@launch
+            val route = AudioPassthroughPolicy.probeCached(context)
+            if (shouldConvertAudioOnServer(appPreferences.audioSettings.currentForRoute(route.profile),
+                    audio?.codec ?: assessment.audioCodec, audio?.channels, route, assessment.audioSupported)) return@launch
+            val plan = PlaybackPlanner.directPlay(version)?.takeIf { it.mode == PlaybackMode.DIRECT_PLAY } ?: return@launch
+            currentCoroutineContext().ensureActive()
+            val now = _uiState.value as? PlayerUiState.Ready ?: return@launch
+            if (now.requestedRatingKey != expected) return@launch
+            val panelArtwork = PlaybackPanelArtworkResolver.resolve(
+                backdropUrl = item.artUrl,
+                thumbnailUrl = item.thumbUrl,
+                highQualityAssets = performanceProfileResolver.effectiveHighQualityAssets(),
+            )
+            val sourceKey = version.sourceRatingKey ?: next.ratingKey
+            val state = now.copy(
+                streamUrl = plan.url,
+                playbackReason = plan.reason,
+                title = item.title,
+                artworkUrl = item.thumbUrl,
+                posterArtUrl = item.posterArtUrl,
+                panelArtworkUrl = panelArtwork.primaryUrl,
+                panelArtworkFallbackUrls = panelArtwork.fallbackUrls,
+                mediaType = item.type,
+                parentTitle = item.parentTitle,
+                grandparentTitle = item.grandparentTitle,
+                seasonIndex = item.parentIndex,
+                episodeIndex = item.index,
+                year = item.year,
+                imdbId = null,
+                summary = item.summary,
+                tagline = item.tagline,
+                startPositionMs = 0L,
+                durationMs = item.durationMs,
+                videoCodec = version.videoCodec,
+                videoDynamicRange = version.videoDynamicRange,
+                videoBitDepth = null,
+                videoProfile = null,
+                audioCodec = assessment.audioCodec,
+                container = version.container,
+                sourceBitrateKbps = version.bitrateKbps,
+                audioTracks = version.tracks.filter { it.type == MediaTrackType.AUDIO },
+                subtitleTracks = emptyList(),
+                hardwareAudioDecoder = assessment.hardwareAudioDecoder,
+                timelineOffsetMs = 0L,
+                nextEpisode = null,
+                nextCollectionItem = null,
+                nextAudioTrack = null,
+                sourceRatingKey = sourceKey,
+                sourceMediaIndex = version.sourceMediaIndex,
+                selectedVersionIndex = versionIndex,
+                companionVersions = emptyList(),
+                timelineSeekMs = null,
+                requestedRatingKey = next.ratingKey,
+                serverAudioStreamId = null,
+                serverAudioConversionCodec = null,
+                playbackRoute = com.ambient.tv.ui.navigation.Destinations.player(next.ratingKey, 0,
+                    collectionId = collectionId, collectionSort = collectionSort),
+                successorsLoading = true,
+                engineStreamUrl = now.playerStreamUrl,
+                engineStartPositionMs = now.playerStartPositionMs,
+            )
+            _gaplessNext.value = GaplessNext(next.ratingKey, plan.url, state, item)
+        }
+    }
+
+    /**
+     * Media3 moved on to the queued song by itself: the player state follows without touching
+     * the engine. False when the song is not the prepared one (the caller then plays it normally).
+     */
+    fun adoptGaplessNext(nextRatingKey: String): Boolean {
+        val prepared = _gaplessNext.value?.takeIf { it.ratingKey == nextRatingKey } ?: return false
+        val current = _uiState.value as? PlayerUiState.Ready ?: return false
+        if (changingItem) return false
+        val fromRoute = current.playbackRoute ?: reopenRoute
+        clearGaplessNext()
+        successorsJob?.cancel()
+        timelineSeekJob?.cancel()
+        ratingKey = nextRatingKey
+        mediaIndex = 0
+        restartFromBeginning = false
+        savedStateHandle["ratingKey"] = nextRatingKey
+        savedStateHandle["mediaIndex"] = "0"
+        savedStateHandle["restart"] = false
+        forcedVersion = null
+        versionResumeMs = null
+        conversionRestart = null
+        restoreConversionSettings = false
+        audioFallbackBackends.clear()
+        serverAudioFallbackCodec = null
+        serverUnreachableRetryAttempted = false
+        videoFallbackAttempted = false
+        lastReadyForAudioRecovery = null
+        parentMediaIds = listOfNotNull(prepared.item.parentRatingKey, prepared.item.grandparentRatingKey).distinct()
+        val state = prepared.state
+        if (!BackgroundPlaybackSession.continueWithNextItem(fromRoute, metadata(state))) return false
+        _uiState.value = state
+        mediaRepository.preparePlayback(state.sourceRatingKey, state.sourceMediaIndex)
+        loadSuccessors(prepared.item)
+        return true
     }
 
     private fun routedAudioOptions(): com.ambient.tv.data.local.AudioOptions =
