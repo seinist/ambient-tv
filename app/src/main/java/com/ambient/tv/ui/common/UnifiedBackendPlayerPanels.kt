@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.automirrored.filled.Subject
@@ -582,6 +583,15 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { preferences.lyricsOnlineEnabled = !lyricsOnline; revision.intValue++ },
                 )
                 Text(stringResource(R.string.player_tools_lyrics_online_hint), style = MaterialTheme.typography.bodySmall)
+                val gapless = androidx.compose.runtime.remember(revision.intValue) { preferences.gaplessMusicEnabled }
+                RightPanelSectionTitle(stringResource(R.string.player_tools_music))
+                PlayerPanelEntry(
+                    icon = Icons.AutoMirrored.Filled.QueueMusic,
+                    title = stringResource(R.string.player_tools_gapless),
+                    value = stringResource(if (gapless) R.string.player_on else R.string.player_off),
+                    onClick = { preferences.gaplessMusicEnabled = !gapless; revision.intValue++ },
+                )
+                Text(stringResource(R.string.player_tools_gapless_hint), style = MaterialTheme.typography.bodySmall)
             }
             if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
             if (hasVideo) PlayerPanelEntry(

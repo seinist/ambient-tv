@@ -420,6 +420,24 @@ object BackgroundPlaybackSession {
 
     fun owns(candidate: PlaybackHandle) = handle === candidate
 
+    /**
+     * Gapless: the running engine already moved on to the next item by itself. The session now
+     * belongs to [metadata] with the same engine; the finished item is reported as played to its end.
+     */
+    fun continueWithNextItem(fromRoute: String, metadata: PlaybackMetadata): Boolean {
+        checkThread()
+        val current = snapshot.value
+        if (handle == null || current.replacingSource || current.metadata?.route != fromRoute) return false
+        val finishedDuration = current.status.durationMs.takeIf { it > 0 } ?: current.metadata?.durationMs ?: 0L
+        completed.addLast(current.copy(status = current.status.copy(positionMs = finishedDuration, ended = true, playing = false),
+            requestedTimelinePositionMs = null))
+        mutableVideoPresentation.value = VideoPresentation()
+        SleepSession.itemChanged(sleepTarget)
+        mutableSnapshot.value = current.copy(metadata = metadata, generation = ++generation, requestedTimelinePositionMs = null,
+            status = handle?.status() ?: current.status)
+        return true
+    }
+
     /** Keep the outgoing picture/OSD until the next request is ready, without an EOF/Stop gap. */
     fun beginItemTransition(): Long {
         checkThread()
