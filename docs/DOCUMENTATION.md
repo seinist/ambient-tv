@@ -440,6 +440,7 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 | Best version for this display | On / Off | On | Picks the version whose resolution fits the TV. |
 | Up/Down seek jump | 15, 30, 60, 90, 120 s | 60 s | Seek buttons and Up/Down during playback. |
 | Player controls display time | 3, 5, 8, 15 s | 5 s | How long the OSD stays without a key press (all players, also after a channel change). |
+| Back in the player | Stop playback · Minimize (keep playing) | Stop playback | What Back does once the OSD is hidden (all players). Minimize works like the exit-fullscreen button. |
 
 Live TV: every channel change shows the OSD with the new channel; while it is only open for that, Up/Down keep changing channels. Started from Live TV or the guide, next/previous channel stays within that view's filtered, sorted list.
 
@@ -601,7 +602,7 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | VLC | Smooth color bands · Denoise · HQDN3D | Off · Light · Medium | Off | Software filters. |
 | VLC | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | Software filters. |
 | VLC | Motion smoothing (SVP) | Off · Automatic · Balanced · High quality | Off | See 7.2. |
-| Media3 | Image processing | On / Off | Off | Confirmed SDR; not HDR, Dolby Vision or DRM. Turning on restarts the decoder at the position. |
+| Media3 | Image processing | On / Off | Off | Confirmed SDR (also H.264 and 8-bit HEVC/VP9/AV1 without colour info); not HDR, Dolby Vision or DRM. Turning on restarts the decoder at the position. |
 | Media3 | Upscaling | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV kernels (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Image processing on, upscaling. With render resolution Panel/Auto the chain renders at the physical HDMI resolution, so 1080p on a 4K panel is upscaled by the chosen scaler. MPV kernels follow MPV's definitions (blur, windows, sigmoid upscaling); RAVU and NIS are MPV's shaders translated for Media3. Heavy scalers above 4K30 output fall back to Catmull-Rom. |
 | Media3 | Sharpening | Off · Light · Medium · Strong · CAS · Adaptive | Off | Unsharp mask, AMD CAS or Adaptive Sharpen. NIS brings its own sharpening. |
 | Media3 | Deband · Denoise · Film grain | Off · Light · Medium · Strong | Off | Denoise runs on the source pixels before deband; grain is added after sharpening. |

@@ -37,9 +37,26 @@ internal fun media3ImageEffectsAllowed(format: Format?): Boolean {
     format ?: return false
     if (format.drmInitData != null || format.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION ||
         format.codecs?.split(',')?.any { it.trim().startsWith("dv", ignoreCase = true) } == true) return false
-    // Fail closed when the stream does not identify itself as SDR. This keeps
-    // Media3 aligned with MPV and avoids applying SDR effects to unknown HDR.
-    return media3TransferIsSdr(format.colorInfo?.colorTransfer)
+    // Fail closed when the stream does not identify itself as SDR, unless the codec profile
+    // cannot carry HDR without saying so (most H.264 and 8-bit encodes write no colour info).
+    val transfer = format.colorInfo?.colorTransfer?.takeIf { it != Format.NO_VALUE }
+    return media3TransferIsSdr(transfer) || transfer == null && media3UnsignalledIsSdr(format.sampleMimeType, format.codecs)
+}
+
+/**
+ * Streams without a transfer characteristic that are SDR in practice: AVC, MPEG-2/4, VC-1 and the
+ * 8-bit profiles of HEVC (Main), VP9 (profile 0) and AV1. HDR10 and HLG always signal their
+ * transfer; an unsignalled 10-bit HEVC/VP9/AV1 stream stays fail-closed.
+ */
+internal fun media3UnsignalledIsSdr(mimeType: String?, codecs: String?): Boolean {
+    val codec = codecs?.split(',')?.map { it.trim().lowercase() }?.firstOrNull { it.isNotEmpty() }.orEmpty()
+    return when (mimeType) {
+        MimeTypes.VIDEO_H264, MimeTypes.VIDEO_MPEG2, MimeTypes.VIDEO_MP4V, MimeTypes.VIDEO_VC1, MimeTypes.VIDEO_H263 -> true
+        MimeTypes.VIDEO_H265 -> codec.startsWith("hvc1.1.") || codec.startsWith("hev1.1.")
+        MimeTypes.VIDEO_VP9 -> codec.startsWith("vp09.00.")
+        MimeTypes.VIDEO_AV1 -> codec.split('.').getOrNull(3) == "08"
+        else -> false
+    }
 }
 
 /** Whether a playback error comes from the video effect chain (shader, GPU feature, frame processor). */

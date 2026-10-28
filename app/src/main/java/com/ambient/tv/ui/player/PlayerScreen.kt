@@ -374,8 +374,9 @@ private fun PlayerContent(
     // INTENTIONAL: remote Back with OSD hidden stops playback.
     // PlayerExitButton ("Minimize (keep playing)") pops and keeps background playback —
     // do not unify these behaviors; Stop remains the explicit stop control in the OSD.
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        if (backLeavesPlaybackRunning(audioOnlyHint, handheldUi)) onBack() else BackgroundPlaybackSession.stop()
+        if (backLeavesPlaybackRunning(audioOnlyHint, handheldUi, backMinimizes())) onBack() else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.

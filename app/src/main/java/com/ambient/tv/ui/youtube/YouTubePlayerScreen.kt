@@ -865,12 +865,15 @@ private fun YouTubeMedia3Playback(
     val subtitleChoices = remember(tracks, context) { tracks?.let { ytTrackChoices(context, it, C.TRACK_TYPE_TEXT) }.orEmpty() }
     val vf = player.videoFormat
     val af = player.audioFormat
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
@@ -1171,12 +1174,15 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controls, snapshot.isPlaying, panelOpen, changingItem,
     ) { controls = it }
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
@@ -1429,12 +1435,15 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controls, snapshot.isPlaying, panelOpen, changingItem,
     ) { controls = it }
-    // INTENTIONAL: Back hides OSD then stops; only the exit-fullscreen button
-    // keeps background playback. Do not change stop-on-Back to match minimize.
+    // Back hides the OSD, then stops; "Back minimizes" (Settings › Playback) leaves like the
+    // exit-fullscreen button instead.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     // Gate on !panelOpen so panel BackHandler is not order-fragile.
     BackHandler(enabled = !panelOpen) {
-        if (controls && !handheldUi) controls = false else BackgroundPlaybackSession.stop()
+        if (controls && !handheldUi) controls = false
+        else if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(false, handheldUi, backMinimizes())) onBack()
+        else BackgroundPlaybackSession.stop()
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current

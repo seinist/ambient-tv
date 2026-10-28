@@ -440,6 +440,7 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 | Beste Version fürs Display | An / Aus | An | Wählt die Version, deren Auflösung zum TV passt. |
 | Hoch/Runter-Sprung | 15, 30, 60, 90, 120 s | 60 s | Sprungtasten und Hoch/Runter während der Wiedergabe. |
 | Anzeigedauer der Player-Steuerung | 3, 5, 8, 15 s | 5 s | Wie lange das OSD ohne Tastendruck sichtbar bleibt (alle Player, auch nach einem Senderwechsel). |
+| Zurück im Player | Wiedergabe stoppen · Minimieren (weiterspielen) | Wiedergabe stoppen | Was Zurück bei ausgeblendetem OSD tut (alle Player). Minimieren wirkt wie der Vollbild-verlassen-Button. |
 
 Live-TV: Nach jedem Senderwechsel erscheint das OSD mit dem neuen Sender; solange es nur deshalb offen ist, schalten Hoch/Runter weiter. Aus Live-TV oder dem Programmführer gestartet, bleibt Sender weiter/zurück in der dort gefilterten und sortierten Liste.
 
@@ -601,7 +602,7 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | VLC | Farbbänder glätten · Entrauschen · HQDN3D | Aus · Leicht · Mittel | Aus | Software-Filter. |
 | VLC | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | Software-Filter. |
 | VLC | Bewegungsglättung (SVP) | Aus · Automatisch · Ausgewogen · Hohe Qualität | Aus | Siehe 7.2. |
-| Media3 | Bildverarbeitung | An / Aus | Aus | Bestätigtes SDR; nicht bei HDR, Dolby Vision oder DRM. Einschalten startet den Decoder an der Position neu. |
+| Media3 | Bildverarbeitung | An / Aus | Aus | Bestätigtes SDR (auch H.264 und 8-Bit-HEVC/VP9/AV1 ohne Farbangaben); nicht bei HDR, Dolby Vision oder DRM. Einschalten startet den Decoder an der Position neu. |
 | Media3 | Hochskalierung | Bilinear · Bicubic · Catmull-Rom · Lanczos 3 · FSR (EASU + RCAS) · MPV-Kernel (Mitchell, Hermite, Robidoux, RobidouxSharp, Spline16/36/64, Sinc, Ginseng, Gaussian, EWA Lanczos/Sharp/4Sharpest/Soft, EWA Robidoux/Sharp, Nearest, Oversample) · RAVU Lite r2/r3/r4 · RAVU Zoom r3 · NVIDIA NIS | Bilinear | Bildverarbeitung an, Hochskalierung. Bei Renderauflösung Panel/Auto rendert die Kette in der physischen HDMI-Auflösung, 1080p auf einem 4K-Panel wird also mit dem gewählten Scaler hochskaliert. MPV-Kernel folgen MPVs Definitionen (Blur, Fenster, Sigmoid-Upscaling); RAVU und NIS sind MPVs Shader, für Media3 übersetzt. Schwere Scaler fallen über 4K30-Ausgabe auf Catmull-Rom zurück. |
 | Media3 | Schärfen | Aus · Leicht · Mittel · Stark · CAS · Adaptiv | Aus | Unscharf-Maske, AMD CAS oder Adaptive Sharpen. NIS schärft selbst. |
 | Media3 | Debanding · Entrauschen · Filmkorn | Aus · Leicht · Mittel · Stark | Aus | Entrauschen läuft auf den Quellpixeln vor dem Debanding; Korn kommt nach dem Schärfen. |

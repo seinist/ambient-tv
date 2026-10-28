@@ -1863,6 +1863,10 @@
     <string name="live_timeshift_failed">Could not apply timeshift change. Please restart the channel.</string>
     <string name="timeshift_programme_position">Programme %1$s / %2$s · Playing %3$s</string>
     <string name="timeshift_before_programme">Playing %1$s · before current programme</string>
+    <string name="player_back_title">Back in the player</string>
+    <string name="player_back_hint">What Back does when the player controls are hidden. Minimize keeps playing in the background like the exit-fullscreen button.</string>
+    <string name="player_back_stop">Stop playback</string>
+    <string name="player_back_minimize">Minimize (keep playing)</string>
     <string name="player_osd_duration_title">Player controls display time</string>
     <string name="player_osd_duration_hint">How long controls stay visible.</string>
     <string name="player_osd_duration_seconds">%1$d seconds</string>

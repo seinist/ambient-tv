@@ -15,4 +15,12 @@ class PlayerBackPolicyTest {
         assertTrue(backLeavesPlaybackRunning(audioOnly = true, handheld = true))
         assertFalse("Video still stops", backLeavesPlaybackRunning(audioOnly = false, handheld = true))
     }
+
+    @Test fun minimizeSettingKeepsEverythingRunning() {
+        listOf(true, false).forEach { audio ->
+            listOf(true, false).forEach { handheld ->
+                assertTrue(backLeavesPlaybackRunning(audioOnly = audio, handheld = handheld, minimizeOnBack = true))
+            }
+        }
+    }
 }

@@ -1863,6 +1863,10 @@
     <string name="live_timeshift_failed">Timeshift-Änderung fehlgeschlagen. Bitte Sender erneut starten.</string>
     <string name="timeshift_programme_position">Sendung %1$s / %2$s · Wiedergabe %3$s</string>
     <string name="timeshift_before_programme">Wiedergabe %1$s · vor aktueller Sendung</string>
+    <string name="player_back_title">Zurück im Player</string>
+    <string name="player_back_hint">Was die Zurück-Taste tut, wenn die Player-Steuerung ausgeblendet ist. Minimieren spielt im Hintergrund weiter wie der Vollbild-verlassen-Button.</string>
+    <string name="player_back_stop">Wiedergabe stoppen</string>
+    <string name="player_back_minimize">Minimieren (weiterspielen)</string>
     <string name="player_osd_duration_title">Anzeigedauer der Player-Steuerung</string>
     <string name="player_osd_duration_hint">Wie lange die Steuerung sichtbar bleibt.</string>
     <string name="player_osd_duration_seconds">%1$d Sekunden</string>
