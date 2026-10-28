@@ -28,7 +28,7 @@ internal object CompanionBackupPolicy {
         "screensaverUse24HourClock", "clock", "subtitleAppearance", "nightSchedule", "screensaverUseArtwork", "screensaverArtworkIntervalSeconds", "screensaverDimPercent",
         "photoIncludeSubfolders", "photoSortKey",
         "photoSlideshowIntervalSeconds", "photoTransitionKey", "photoKenBurns", "photoShuffle", "photoShowInfo",
-        "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds", "playerBackMinimizes",
+        "liveTvReminderLeadMinutes", "liveDirectRecordEnabled", "playerOsdSeconds", "playerBackMinimizes", "networkBufferKey",
     )
     /** Fields older backups do not carry: their defaults must not overwrite the receiver's values. */
     private val sinceSchema58 = setOf("liveTvReminderLeadMinutes", "liveTimeshiftMb")
@@ -156,7 +156,7 @@ internal object CompanionBackupPolicy {
         }
         if (mode in setOf("settings", "preferences")) {
             require(overwrite) // Settings replacement is only available after explicit TV confirmation.
-            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }.filter { source.schemaVersion >= 73 || it != "playerBackMinimizes" }
+            (portable + if (deviceSettings) hardware else emptySet()).filter { source.schemaVersion >= 50 || it !in navSounds }.filter { source.schemaVersion >= 58 || it !in sinceSchema58 }.filter { source.schemaVersion >= 59 || it !in setOf("liveTimeshiftEnabled", "liveDirectRecordEnabled") }.filter { source.schemaVersion >= 60 || it != "playerOsdSeconds" }.filter { source.schemaVersion >= 61 || it != "displaySwitchPauseMs" }.filter { source.schemaVersion >= 62 || it !in sinceSchema62 }.filter { source.schemaVersion >= 63 || it != "sleepDailyStopMinute" }.filter { source.schemaVersion >= 64 || it != "mpvHdrGpuEnabled" }.filter { source.schemaVersion >= 65 || it != "sdrToHdrReferenceWhiteNits" }.filter { source.schemaVersion >= 66 || it !in sinceSchema66 }.filter { source.schemaVersion >= 67 || it != "syncPlaybackToDisplay" }.filter { source.schemaVersion >= 68 || it != "mpvImageExplicitChoice" }.filter { source.schemaVersion >= 69 || it !in sinceSchema69 }.filter { source.schemaVersion >= 71 || it != "preferDoubleRefreshRate" }.filter { source.schemaVersion >= 73 || it !in setOf("playerBackMinimizes", "networkBufferKey") }
                 // A sender from before the clock page has no clock: the receiver keeps its own.
                 .filter { it != "clock" || source.clock != null }
                 .filter { it != "subtitleAppearance" || source.subtitleAppearance != null }

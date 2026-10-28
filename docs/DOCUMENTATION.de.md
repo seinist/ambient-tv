@@ -441,6 +441,7 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 | Hoch/Runter-Sprung | 15, 30, 60, 90, 120 s | 60 s | Sprungtasten und Hoch/Runter während der Wiedergabe. |
 | Anzeigedauer der Player-Steuerung | 3, 5, 8, 15 s | 5 s | Wie lange das OSD ohne Tastendruck sichtbar bleibt (alle Player, auch nach einem Senderwechsel). |
 | Zurück im Player | Wiedergabe stoppen · Minimieren (weiterspielen) | Wiedergabe stoppen | Was Zurück bei ausgeblendetem OSD tut (alle Player). Minimieren wirkt wie der Vollbild-verlassen-Button. |
+| Netzwerk-Puffer | Klein · Mittel · Groß | Mittel | Vorausladen für Media3 (15–30 s / Standard / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB auf Geräten mit wenig RAM; nur außerhalb des Heimnetzes) und VLC (0,8 / 1,2 / 3 s). Live-Timeshift behält eigene Werte; SmartTube hat eine eigene Puffergröße. Gilt ab der nächsten Wiedergabe. |
 
 Live-TV: Nach jedem Senderwechsel erscheint das OSD mit dem neuen Sender; solange es nur deshalb offen ist, schalten Hoch/Runter weiter. Aus Live-TV oder dem Programmführer gestartet, bleibt Sender weiter/zurück in der dort gefilterten und sortierten Liste.
 

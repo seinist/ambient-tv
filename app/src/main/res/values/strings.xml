@@ -1863,6 +1863,11 @@
     <string name="live_timeshift_failed">Could not apply timeshift change. Please restart the channel.</string>
     <string name="timeshift_programme_position">Programme %1$s / %2$s · Playing %3$s</string>
     <string name="timeshift_before_programme">Playing %1$s · before current programme</string>
+    <string name="settings_network_buffer">Network buffer</string>
+    <string name="settings_network_buffer_hint">How far Media3, MPV and VLC read ahead. Large helps with streams over the internet or shaky Wi-Fi but starts a little later. MPV does not buffer in the home network. SmartTube has its own buffer size.</string>
+    <string name="settings_network_buffer_low">Small</string>
+    <string name="settings_network_buffer_medium">Medium (default)</string>
+    <string name="settings_network_buffer_high">Large</string>
     <string name="player_back_title">Back in the player</string>
     <string name="player_back_hint">What Back does when the player controls are hidden. Minimize keeps playing in the background like the exit-fullscreen button.</string>
     <string name="player_back_stop">Stop playback</string>

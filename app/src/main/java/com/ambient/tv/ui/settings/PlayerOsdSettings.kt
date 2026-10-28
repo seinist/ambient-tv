@@ -39,3 +39,22 @@ internal fun PlayerBackSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = 
         })
     }
 }
+
+/** Settings › Playback: network buffer for Media3, MPV and VLC; applies to the next playback. */
+@Composable
+internal fun NetworkBufferSettingsGroup(viewModel: LiveTvExtrasSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
+    var key by remember { mutableStateOf(viewModel.preferences.networkBufferKey) }
+    SettingsGroup(title = stringResource(R.string.settings_network_buffer), subtitle = stringResource(R.string.settings_network_buffer_hint)) {
+        SettingsSelect(options = com.ambient.tv.ui.player.NETWORK_BUFFER_KEYS.map { value ->
+            SettingsSelectOption(
+                text = stringResource(when (value) {
+                    "low" -> R.string.settings_network_buffer_low
+                    "high" -> R.string.settings_network_buffer_high
+                    else -> R.string.settings_network_buffer_medium
+                }),
+                selected = key == value,
+                onClick = { key = value; viewModel.preferences.networkBufferKey = value },
+            )
+        })
+    }
+}

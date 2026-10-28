@@ -941,6 +941,7 @@ fun SettingsScreen(
                             item { TvSettingRow(stringResource(R.string.settings_auto_display_version), stringResource(R.string.settings_auto_display_version_hint), uiState.autoSelectDisplayVersion, viewModel::onAutoSelectDisplayVersionToggled) }
                             item { PlayerOsdSettingsGroup() }
                             item { PlayerBackSettingsGroup() }
+                            item { NetworkBufferSettingsGroup() }
                         }
 
                         SettingsCategory.LIVE_TV -> {

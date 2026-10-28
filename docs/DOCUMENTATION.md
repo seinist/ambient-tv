@@ -441,6 +441,7 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 | Up/Down seek jump | 15, 30, 60, 90, 120 s | 60 s | Seek buttons and Up/Down during playback. |
 | Player controls display time | 3, 5, 8, 15 s | 5 s | How long the OSD stays without a key press (all players, also after a channel change). |
 | Back in the player | Stop playback · Minimize (keep playing) | Stop playback | What Back does once the OSD is hidden (all players). Minimize works like the exit-fullscreen button. |
+| Network buffer | Small · Medium · Large | Medium | Read-ahead for Media3 (15–30 s / default / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB on low-RAM devices; only outside the home network) and VLC (0.8 / 1.2 / 3 s). Live timeshift keeps its own values; SmartTube has its own buffer size. Applies to the next playback. |
 
 Live TV: every channel change shows the OSD with the new channel; while it is only open for that, Up/Down keep changing channels. Started from Live TV or the guide, next/previous channel stays within that view's filtered, sorted list.
 

@@ -150,7 +150,9 @@ object PlaybackEngineFactory {
 
         val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
         val liveBuffer = media3LiveBufferThresholds(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
-        val tunedBuffer = streamTuning?.let { media3TunedBuffer(it.bufferKey) }
+        // SmartTube's own buffer setting, otherwise the global network buffer ("medium" = defaults).
+        val bufferKey = streamTuning?.bufferKey ?: videoImagePreferences(context).networkBufferKey
+        val tunedBuffer = bufferKey.takeIf { streamTuning != null || it != NETWORK_BUFFER_DEFAULT }?.let(::media3TunedBuffer)
         val targetBytes = media3TargetBufferBytes(heapMb, tunedBuffer?.heapShare ?: 4)
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
             .setTargetBufferBytes(targetBytes)
@@ -168,7 +170,7 @@ object PlaybackEngineFactory {
             "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
                 "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
                 "target_bytes=$targetBytes max_height=$maxVideoHeight" +
-                (streamTuning?.let { " network=${it.networkEngine} buffer=${it.bufferKey}" } ?: ""))
+                (streamTuning?.let { " network=${it.networkEngine}" } ?: "") + " buffer=$bufferKey")
 
         return ExoPlayer.Builder(context, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
