@@ -1314,9 +1314,11 @@ internal class MpvPlaybackEngine(
             dropped, fps, bypass, nativeCostUs, sampleSeconds, qualityProbePending(), signature,
         )
         val reducedSharpening = mpvSharpeningAfterOverload(imageOptions.sharpening, loadedShaderKeys)
+        val lighterOptions = mpvImageOptionsAfterOverload(imageOptions)
         raiseRenderOverload(com.ambient.tv.ui.player.frameDropPercent(dropped, fps * sampleSeconds), when {
             "plex-svp" in activeCpuImageFilters -> ({ reduceSvpAfterOverload() })
             reducedSharpening != null -> ({ updateImageOptions(imageOptions.copy(sharpening = reducedSharpening)) })
+            lighterOptions != null -> ({ updateImageOptions(lighterOptions) })
             // Nothing lighter on the GPU path: "reduce" reopens the title on the direct surface.
             hdrPassthroughActive -> ({ failHdrPassthrough(MpvHdrGpuReason.OVERLOAD) })
             else -> null

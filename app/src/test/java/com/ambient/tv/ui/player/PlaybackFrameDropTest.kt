@@ -27,4 +27,13 @@ class PlaybackFrameDropTest {
         assertNull(frameDropWindowPercent(before, after.copy(positionMs = 10000)))
         assertNull(frameDropWindowPercent(before, after.copy(positionMs = 0)))
     }
+    @Test fun barIsHalfFullAtWatchdogThresholdAndSmoothsSpikes() {
+        assertEquals(1f, frameDropBarFill(null), 0.001f)
+        assertEquals(1f, frameDropBarFill(0.0), 0.001f)
+        assertEquals(0.5f, frameDropBarFill(FRAME_DROP_WATCHDOG_PERCENT), 0.001f)
+        assertEquals(0f, frameDropBarFill(50.0), 0.001f)
+        assertEquals(3.5, smoothFrameDrop(0.0, 10.0)!!, 0.001)
+        assertEquals(2.0, smoothFrameDrop(2.0, null)!!, 0.001)
+        assertEquals(frameDropBarColor(FRAME_DROP_WATCHDOG_PERCENT), frameDropBarColor(40.0))
+    }
 }

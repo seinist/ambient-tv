@@ -396,6 +396,23 @@ class VlcPlaybackController(
         dismissRenderOverload()
         play()
     }
+
+    /** One lighter step (SVP, software filters, CPU deinterlacer) for this session; the next sample re-checks. */
+    val canReduceAfterOverload: Boolean
+        get() = vlcImageOptionsAfterOverload(imageOptions) != null ||
+            vlcDeinterlaceFilterAfterOverload(deinterlaceMode, deinterlaceFilter) != null
+
+    fun reduceAfterOverload() {
+        renderOverloaded = false
+        val lighter = vlcImageOptionsAfterOverload(imageOptions)
+        val filter = vlcDeinterlaceFilterAfterOverload(deinterlaceMode, deinterlaceFilter)
+        // Resume first: the reopen below keeps whatever play state is wanted.
+        play()
+        when {
+            lighter != null -> updateImageOptions(lighter)
+            filter != null -> setDeinterlace(deinterlaceMode, filter)
+        }
+    }
     private val surfaceCallback = object : IVLCVout.Callback {
         override fun onSurfacesCreated(vout: IVLCVout) {
             attachedView?.let(::restoreVideoTrackWhenSurfaceIsReady)

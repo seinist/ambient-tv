@@ -145,7 +145,7 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 | Check interface | Action | — | All | Measures UI drawing load and suggests a mode. |
 | Start animation | Off · Light field · Daybreak | Light field | All | Plays once on a cold start, in the accent colors. While a server wakes, the light keeps breathing. Any key continues. Low mode shows the settled wordmark. |
 | Playback performance | Auto · Balanced · Maximum performance · Low | Auto | All | Motion smoothing, heavy upscalers, double-rate deinterlace. |
-| Frame drop test duration | Automatic, 2, 5, 6, 10, 15, 30, 60 s | Automatic (2–6 s) | All | Window of the MPV/VLC filter test. |
+| Frame drop test duration | Automatic, 2, 5, 6, 10, 15, 30, 60 s | Automatic (2–6 s) | All | Window of the filter test (MPV, VLC, Media3). |
 | Check playback | Action | — | All | Measures filter load off-screen. |
 | Light effect above Home | Quiet · Light sweep · Artwork color · Depth motion · Aurora · Cinema light · Prism · Dusk · Ember · Tide · Focus · Moonlight · Mist · Candlelight · Stardust · Projector · Color breath | Depth motion | All | Moving look of the Home hero. Low mode and reduced effects show "Quiet". |
 | Light intensity | 0–100 % | 60 % | All | Strength of the hero effect. |
@@ -552,6 +552,8 @@ The panel opens from the player's settings button. Changes are remembered for th
 | Tools | A-B repeat · frame step back/forward · bookmarks · screenshot · lyrics · gapless | Video: A-B, frame step, bookmarks, screenshot. Music: A-B, bookmarks, lyrics, gapless. |
 
 **Tools:** *A-B repeat* loops between two points for every engine. *Frame step* pauses and shows the previous/next frame. *Bookmarks* are kept per title (up to 30); jump to one or delete one or all. *Screenshot* saves the picture on screen as PNG under Pictures/Ambient TV (not for protected content). *Lyrics* show over the visualizer: timed lyrics follow the song with the sung line highlighted, untimed ones scroll along. They come from Plex lyric streams or Jellyfin; *Search online (LRCLIB)* is off by default and then sends artist, title, album and length to lrclib.net. *Gapless playback* (default on) queues the next song in Media3 when both songs play directly; otherwise songs change as before.
+
+**Frame drop watchdog:** While picture processing runs (shaders, filters, SVP, Media3 effects, CPU deinterlacing), every engine measures dropped frames after a short warm-up. Above 10% in the test window, playback pauses and asks: *Settings*, *Reduce and continue* (one lighter step for this session: SVP, then sharpening, denoise, deblock, grain, deband, heavy scaler; VLC finally drops software processing or a CPU deinterlacer) or *Keep watching anyway* (remembered for this title and filter set). The frame drop overlay in the video panel shows the same measure as a slim bar: full and green without drops, half and red at the watchdog threshold.
 
 ### 7.2 Video
 

@@ -27,6 +27,9 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.player.backend.effectiveMedia3ImageOptions
+import com.ambient.tv.ui.player.backend.media3ImageOptionsAfterOverload
+import com.ambient.tv.ui.player.backend.media3RenderOverloaded
+import com.ambient.tv.ui.player.backend.mpvRenderSampleSeconds
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 
@@ -58,6 +61,9 @@ internal fun media3GpuEffectsSupported(manufacturer: String, sdk: Int): Boolean 
  * Values hold only weak player references so the registry cannot retain released decoders.
  */
 @UnstableApi
+/** Steady seconds before the dropped-buffer baseline is taken, like MPV's normal warm-up. */
+private const val MEDIA3_RENDER_WARMUP_SECONDS = 3
+
 internal class Media3ImageProcessing private constructor(context: Context, player: ExoPlayer) {
     val gpuEffectsSupported = media3GpuEffectsSupported(Build.MANUFACTURER, Build.VERSION.SDK_INT)
     private val appContext = context.applicationContext
@@ -106,6 +112,90 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     val hasConfiguredEffects: Boolean
         get() = media3EffectPlan(options, upscaling = true).isNotEmpty()
 
+    /** Set after the effect chain drops too many output buffers; playback pauses for the dialog. */
+    var renderOverloaded by mutableStateOf(false)
+        private set
+    var overloadDropPercent: Double? = null
+        private set
+    /** Chain accepted with "keep watching anyway"; captured into the title settings on stop. */
+    var overloadContinueSignature: String? = null
+        private set
+    val canReduceAfterOverload: Boolean get() = media3ImageOptionsAfterOverload(options) != null
+    private val renderCheck = Runnable { checkRender() }
+    private var renderCheckSignature: String? = null
+    /** Chain which passed its sample, or which the user is adjusting by hand: not sampled again. */
+    private var settledSignature: String? = null
+    private var steadySeconds = 0
+    private var baselineCounters: Pair<Long, Long>? = null
+
+    fun restoreOverloadContinue(signature: String?) {
+        overloadContinueSignature = signature?.takeIf { it.isNotBlank() }
+    }
+
+    /** "Settings": the user adjusts by hand; the next chain change re-arms the check. */
+    fun dismissRenderOverload() {
+        renderOverloaded = false
+        settledSignature = renderCheckSignature
+    }
+
+    fun continueDespiteOverload() {
+        overloadContinueSignature = renderCheckSignature
+        renderOverloaded = false
+        playerRef.get()?.play()
+    }
+
+    /** One lighter step for this session; the changed chain gets a fresh sample. */
+    fun reduceAfterOverload() {
+        renderOverloaded = false
+        playerRef.get()?.play()
+        media3ImageOptionsAfterOverload(options)?.let(::updateOptions)
+    }
+
+    /**
+     * Same guard as MPV and VLC: after a short warm-up, more than 10% dropped output buffers
+     * over the sample window (6 s, or the configured frame-drop test) pause playback.
+     */
+    private fun checkRender() {
+        handler.postDelayed(renderCheck, 1_000L)
+        val player = playerRef.get() ?: return
+        val signature = if (effectsActive) appliedStages.joinToString(" · ") { media3StageSummary(it) } else null
+        if (signature != renderCheckSignature) {
+            renderCheckSignature = signature
+            steadySeconds = 0
+            baselineCounters = null
+        }
+        if (signature == null || signature == settledSignature || signature == overloadContinueSignature ||
+            renderOverloaded || !player.isPlaying || PlaybackOutputTransition.active()) {
+            steadySeconds = 0
+            baselineCounters = null
+            return
+        }
+        val counters = player.videoDecoderCounters ?: return
+        counters.ensureUpdated()
+        val dropped = counters.droppedBufferCount.toLong()
+        val rendered = counters.renderedOutputBufferCount.toLong()
+        steadySeconds++
+        if (steadySeconds == MEDIA3_RENDER_WARMUP_SECONDS) baselineCounters = dropped to rendered
+        val (startDropped, startRendered) = baselineCounters ?: return
+        val sampleSeconds = mpvRenderSampleSeconds(false, videoImagePreferences(appContext).frameDropTestSeconds)
+        if (steadySeconds < MEDIA3_RENDER_WARMUP_SECONDS + sampleSeconds.toInt()) return
+        val droppedInSample = dropped - startDropped
+        val renderedInSample = rendered - startRendered
+        steadySeconds = 0
+        baselineCounters = null
+        // Counters restart with the renderer; that sample says nothing.
+        if (droppedInSample < 0 || renderedInSample < 0) return
+        if (!media3RenderOverloaded(droppedInSample, renderedInSample)) {
+            settledSignature = signature
+            return
+        }
+        com.ambient.tv.diagnostics.DiagnosticLog.warn("playback",
+            "Media3 render overload: $droppedInSample dropped / $renderedInSample rendered in ${sampleSeconds.toInt()} s with $signature")
+        overloadDropPercent = frameDropPercent(droppedInSample, (droppedInSample + renderedInSample).toDouble())
+        player.pause()
+        renderOverloaded = true
+    }
+
     init {
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onVideoInputFormatChanged(eventTime: AnalyticsListener.EventTime, inputFormat: Format, decoderReuseEvaluation: DecoderReuseEvaluation?) {
@@ -121,6 +211,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             }
         })
         scheduleUpdate()
+        handler.postDelayed(renderCheck, 1_000L)
     }
 
     /** Compose-visible copy of the chain last handed to ExoPlayer. */

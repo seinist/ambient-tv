@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.player.backend
 
+import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.data.local.MpvImageOptions
 import com.ambient.tv.data.local.VlcImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
@@ -106,6 +107,61 @@ internal fun mpvSharpeningAfterOverload(sharpening: String, loadedShaders: List<
     sharpening == "cas" -> "off"
     else -> null
 }
+
+/**
+ * One lighter step of the MPV picture options after an overload, after SVP and sharpening.
+ * Super resolution, then the lavfi denoise/deblock filters, grain and a strong deband.
+ * Null when nothing heavy is left; scalers have their own backoff.
+ */
+internal fun mpvImageOptionsAfterOverload(options: MpvImageOptions): MpvImageOptions? {
+    val safe = options.normalized()
+    return when {
+        safe.superResolution -> safe.copy(superResolution = false)
+        safe.denoise != "off" -> safe.copy(denoise = "off")
+        safe.deblock != "off" -> safe.copy(deblock = "off")
+        safe.filmGrain != "off" -> safe.copy(filmGrain = "off")
+        safe.deband == "strong" -> safe.copy(deband = MpvImageOptions().deband)
+        else -> null
+    }
+}
+
+/** Media3 counts dropped and rendered output buffers; same 10% threshold as MPV and VLC. */
+internal fun media3RenderOverloaded(dropped: Long, rendered: Long): Boolean =
+    dropped > 0 && dropped > (dropped + rendered) * 0.1
+
+/** One lighter step of the Media3 effect chain after an overload; null when only light stages are left. */
+internal fun media3ImageOptionsAfterOverload(options: Media3ImageOptions): Media3ImageOptions? {
+    val safe = options.normalized()
+    return when {
+        safe.sharpening == "adaptive" -> safe.copy(sharpening = "cas")
+        safe.sharpening != "off" -> safe.copy(sharpening = "off")
+        safe.denoise != "off" -> safe.copy(denoise = "off")
+        safe.filmGrain != "off" -> safe.copy(filmGrain = "off")
+        safe.deband != "off" -> safe.copy(deband = "off")
+        safe.scaler !in setOf("bilinear", "bicubic") -> safe.copy(scaler = "bilinear")
+        else -> null
+    }
+}
+
+/**
+ * One lighter step of LibVLC processing after an overload: SVP first, then the
+ * software filters one by one, a costly swscale kernel, and finally software processing.
+ */
+internal fun vlcImageOptionsAfterOverload(options: VlcImageOptions): VlcImageOptions? {
+    val safe = options.normalized()
+    return when {
+        safe.svpMode != "off" -> safe.copy(svpMode = "off")
+        !safe.softwareProcessing -> null
+        safe.denoise != "off" -> safe.copy(denoise = "off")
+        safe.deband != "off" -> safe.copy(deband = "off")
+        safe.scaler !in setOf("fast_bilinear", "bilinear") -> safe.copy(scaler = "bilinear")
+        else -> safe.copy(softwareProcessing = false)
+    }
+}
+
+/** A CPU deinterlacer gives way to "auto" (MediaCodec's own) once the picture options are light. */
+internal fun vlcDeinterlaceFilterAfterOverload(mode: String, filter: String): String? =
+    "auto".takeIf { mode != "off" && filter !in setOf("auto", "discard", "mean", "blend") }
 
 /** ambientsvp bypasses after a source-second costs more than 850ms of analysis+synthesis. */
 internal const val MPV_SVP_SLOW_WINDOW_US = 850_000L

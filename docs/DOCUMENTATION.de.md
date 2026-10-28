@@ -145,7 +145,7 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | Oberfläche prüfen | Aktion | — | Alle | Misst die Zeichenlast und schlägt einen Modus vor. |
 | Start-Animation | Aus · Lichtfeld · Morgenlicht | Lichtfeld | Alle | Einmal beim Kaltstart, in den Akzentfarben. Während ein Server aufwacht, atmet das Licht weiter. Jede Taste fährt fort. Sparsam zeigt die stehende Wortmarke. |
 | Wiedergabeleistung | Auto · Ausgewogen · Maximale Leistung · Sparsam | Auto | Alle | Bewegungsglättung, schwere Hochskalierer, Deinterlace mit doppelter Rate. |
-| Prüfdauer für Bildaussetzer | Automatisch, 2, 5, 6, 10, 15, 30, 60 s | Automatisch (2–6 s) | Alle | Messfenster des MPV-/VLC-Filtertests. |
+| Prüfdauer für Bildaussetzer | Automatisch, 2, 5, 6, 10, 15, 30, 60 s | Automatisch (2–6 s) | Alle | Messfenster des Filtertests (MPV, VLC, Media3). |
 | Wiedergabe prüfen | Aktion | — | Alle | Misst die Filterlast ohne Bild. |
 | Lichtstimmung über der Startseite | Ruhig · Lichtstreifen · Bildfarbe · Tiefenbewegung · Aurora · Kinolicht · Prisma · Dämmerung · Glut · Gezeiten · Fokus · Mondlicht · Nebel · Kerzenschein · Sternstaub · Lichtspiel · Farbatem | Tiefenbewegung | Alle | Bewegter Look des Startseiten-Heros. Sparsam und reduzierte Effekte zeigen „Ruhig“. |
 | Stärke der Lichtstimmung | 0–100 % | 60 % | Alle | Stärke des Effekts. |
@@ -552,6 +552,8 @@ Das Panel öffnet über die Einstellungstaste im Player. Änderungen werden für
 | Werkzeuge | A-B-Wiederholung · Einzelbild zurück/vor · Lesezeichen · Bildschirmfoto · Songtexte · lückenlos | Video: A-B, Einzelbild, Lesezeichen, Bildschirmfoto. Musik: A-B, Lesezeichen, Songtexte, lückenlos. |
 
 **Werkzeuge:** *A-B-Wiederholung* spielt in jedem Player zwischen zwei Punkten in Schleife. *Einzelbild* pausiert und zeigt das vorige/nächste Bild. *Lesezeichen* werden je Titel gemerkt (bis zu 30); anspringen, einzeln oder alle löschen. *Bildschirmfoto* speichert das Bild als PNG unter Bilder/Ambient TV (nicht bei geschützten Inhalten). *Songtexte* erscheinen über dem Visualizer: synchronisierte folgen dem Lied mit hervorgehobener Zeile, andere laufen mit. Sie kommen aus Plex-Lyric-Streams oder Jellyfin; *Online suchen (LRCLIB)* ist standardmäßig aus und schickt dann Interpret, Titel, Album und Länge an lrclib.net. *Lückenlose Wiedergabe* (Standard an) reiht in Media3 den nächsten Titel ein, wenn beide direkt abgespielt werden; sonst wechseln Titel wie bisher.
+
+**Bildaussetzer-Wächter:** Solange Bildbearbeitung läuft (Shader, Filter, SVP, Media3-Effekte, CPU-Deinterlacing), misst jeder Player nach kurzer Anlaufzeit die verworfenen Frames. Über 10 % im Messfenster pausiert die Wiedergabe und fragt: *Einstellungen*, *Reduzieren und weiter* (eine leichtere Stufe für diese Sitzung: SVP, dann Schärfen, Entrauschen, Deblocking, Filmkorn, Debanding, schwerer Upscaler; VLC schaltet zuletzt die Softwarebearbeitung oder einen CPU-Deinterlacer ab) oder *Trotzdem weiterschauen* (für diesen Titel und diese Filter gemerkt). Das Frame-Drop-Overlay im Videopanel zeigt dasselbe Maß als schmalen Balken: voll und grün ohne Aussetzer, halb und rot an der Grenze des Wächters.
 
 ### 7.2 Video
 

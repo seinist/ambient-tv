@@ -443,7 +443,46 @@ internal fun VlcRenderOverloadDialog(
                     controller.dismissRenderOverload(); adjust()
                 })
             }
-            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_continue), ::resume)
+            if (controller.canReduceAfterOverload) {
+                com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_reduce), controller::reduceAfterOverload)
+            }
+            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_continue), ::resume, selected = true)
+        },
+    )
+}
+
+/** Media3's guard counts dropped output buffers while the GPU effect chain runs. */
+@Composable
+internal fun Media3RenderOverloadDialog(
+    player: androidx.media3.exoplayer.ExoPlayer,
+    panelNavigation: com.ambient.tv.ui.common.PlayerPanelNavigation? = null,
+    onAdjust: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val processing = remember(player) { Media3ImageProcessing.get(context, player) }
+    com.ambient.tv.ui.common.rememberDialogFocusReturn(
+        panelNavigation ?: com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current, processing.renderOverloaded)
+    if (!processing.renderOverloaded) return
+    val metadata = LocalPlaybackMetadata.current
+    fun resume() {
+        processing.continueDespiteOverload()
+        TitleVideoSettingsStore.rememberOverloadContinue(context, metadata, "media3", processing.overloadContinueSignature)
+    }
+    com.ambient.tv.ui.common.AppDialog(
+        onDismiss = ::resume,
+        title = stringResource(R.string.player_render_overload_title),
+        hint = stringResource(R.string.player_render_overload_body) + "\n\n" +
+            stringResource(R.string.player_frame_drop_sample_percent, formatFramePercent(processing.overloadDropPercent)),
+        footer = {
+            onAdjust?.let { adjust ->
+                com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_adjust), {
+                    processing.dismissRenderOverload(); adjust()
+                })
+            }
+            if (processing.canReduceAfterOverload) {
+                com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_reduce), processing::reduceAfterOverload)
+            }
+            com.ambient.tv.ui.common.TvActionButton(stringResource(R.string.player_render_overload_continue), ::resume, selected = true)
         },
     )
 }
