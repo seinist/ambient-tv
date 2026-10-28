@@ -26,4 +26,22 @@ class HbbtvHelpersTest {
         assertEquals("\"Das \\\"Erste\\\" \\u003c/script>\"", jsString("Das \"Erste\" </script>"))
         assertTrue(hbbtvShim("ARD", "deu").contains("name:\"ARD\""))
     }
+
+    @Test fun broadcastPausesOnlyARunningProgrammeAndResumesOnlyWhatItPaused() {
+        var playing = true
+        val calls = mutableListOf<String>()
+        val control = HbbtvBroadcastControl({ playing }, { calls += "pause"; playing = false }, { calls += "play"; playing = true })
+        control.stop()
+        control.stop()
+        control.resume()
+        control.resume()
+        assertEquals(listOf("pause", "play"), calls)
+        // Paused by the viewer: the application neither pauses it again nor starts it.
+        playing = false
+        calls.clear()
+        control.stop()
+        control.resume()
+        assertEquals(emptyList<String>(), calls)
+        assertTrue(hbbtvShim("ARD", "deu").contains("AmbientHbbtv.broadcast(false)"))
+    }
 }
