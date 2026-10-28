@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -10,6 +11,7 @@ import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -76,6 +78,8 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.FRAME_STEP -> Icons.Filled.ChevronRight
     OsdButton.LYRICS -> Icons.AutoMirrored.Filled.Subject
     OsdButton.TOOLS -> Icons.Filled.Build
+    OsdButton.TELETEXT -> Icons.AutoMirrored.Filled.Article
+    OsdButton.TELETEXT_SUBTITLES -> Icons.Filled.ClosedCaption
 }
 
 /**

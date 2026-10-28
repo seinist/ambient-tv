@@ -178,6 +178,8 @@ class TimeshiftBuffer private constructor(
             out.write("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray())
             out.flush()
             if (request[0] == "HEAD") return
+            // Teletext reads what the player gets, so its subtitles follow a time-shifted picture.
+            val teletextStream = com.ambient.tv.livetv.teletext.LiveTeletext.openTapStream()
             var position: Long = requested
             val chunk = ByteArray(64 * 1024)
             while (!stopped) {
@@ -197,6 +199,7 @@ class TimeshiftBuffer private constructor(
                 // The recorder may have overwritten part of what was just copied: drop it and retry.
                 if (!ringReadStillValid(position, reserved, capacity)) continue
                 out.write(chunk, 0, length)
+                com.ambient.tv.livetv.teletext.LiveTeletext.tap(teletextStream, chunk, length)
                 position += length
             }
         } catch (_: Exception) {
@@ -333,6 +336,9 @@ private val recordingTimeshiftUrl =
  * the live edge, so the players use the same live buffer settings for them.
  */
 fun isLiveTimeshiftUrl(url: String): Boolean = localTimeshiftUrl.matches(url) || recordingTimeshiftUrl.matches(url)
+
+/** Only the local [TimeshiftBuffer] loopback, whose served bytes teletext reads along. */
+fun isLocalTimeshiftUrl(url: String): Boolean = localTimeshiftUrl.matches(url)
 
 /** Owns blocking network work before and after the recording buffer is published. */
 class UpstreamOwner : java.io.Closeable {

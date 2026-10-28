@@ -1352,6 +1352,11 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_PLAYER_BACK_MINIMIZES, false)
         set(value) = prefs.edit { putBoolean(KEY_PLAYER_BACK_MINIMIZES, value) }
 
+    /** Live TV teletext subtitles: "off", "auto" or a decimal page such as "150". */
+    var teletextSubtitleChoice: String
+        get() = prefs.getString(KEY_TELETEXT_SUBTITLES, null)?.takeIf { it == "off" || it == "auto" || it.toIntOrNull() in 100..899 } ?: "off"
+        set(value) = prefs.edit { putString(KEY_TELETEXT_SUBTITLES, value) }
+
     /** Lyrics over the music player's visualizer. */
     var lyricsVisible: Boolean
         get() = prefs.getBoolean(KEY_LYRICS_VISIBLE, true)
@@ -2285,6 +2290,7 @@ class AppPreferences @Inject constructor(
         const val KEY_LYRICS_VISIBLE = "lyrics_visible"
         const val KEY_PLAYER_BACK_MINIMIZES = "player_back_minimizes"
         const val KEY_NETWORK_BUFFER = "network_buffer"
+        const val KEY_TELETEXT_SUBTITLES = "teletext_subtitles"
         const val KEY_LYRICS_ONLINE = "lyrics_online"
         const val KEY_GAPLESS_MUSIC = "gapless_music"
         private val clockJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }

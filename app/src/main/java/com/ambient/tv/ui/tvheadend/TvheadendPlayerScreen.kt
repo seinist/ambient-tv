@@ -345,6 +345,8 @@ fun TvheadendPlayerScreen(
                             onSourceHdrChanged = viewModel::applySourceHdrFromRuntime,
                         )
                     }
+                    // Teletext is decoded in the app, so it stays across renderer switches; below the OSD.
+                    if (current.source.isLive) com.ambient.tv.ui.player.teletext.LiveTeletextHost(current.source.url, current.source.headers)
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
                     com.ambient.tv.ui.player.PersistentPlayerOverlays()
                 }
