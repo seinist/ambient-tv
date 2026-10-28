@@ -73,6 +73,33 @@ private val MetadataBannerFill = Color.Black.copy(alpha = 0.58f)
  */
 val LocalHeroRowTiles = androidx.compose.runtime.staticCompositionLocalOf { false }
 
+/**
+ * Tile size factors in those rows. The hero is a share of the screen, so its tiles are too:
+ * independent of the UI scale (4K starts at 70 %), one row fills the space under it.
+ */
+data class HeroRowTileScale(val poster: Float = 1f, val landscape: Float = 1f)
+
+val LocalHeroRowTileScale = androidx.compose.runtime.staticCompositionLocalOf { HeroRowTileScale() }
+
+/**
+ * [LocalHeroRowTileScale] for this screen: posters 1 at 100 % on a 540 dp tall TV screen.
+ * [rowsArea] is the height under the hero; a page header of fixed dp leaves less of it, so each
+ * row is capped to fit there. Landscape tiles are flat and grow further to fill the same space.
+ */
+@Composable
+fun heroRowTileScale(rowsArea: Dp): HeroRowTileScale {
+    if (LocalHandheldUi.current) return HeroRowTileScale()
+    val height = with(androidx.compose.ui.platform.LocalDensity.current) {
+        androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp()
+    }
+    val poster = minOf(height / 540.dp, (rowsArea - HeroRowChrome) / (POSTER_WIDTH * 1.5f)).coerceIn(0.5f, 2f)
+    val landscape = minOf(poster * 1.25f, (rowsArea - HeroRowChrome) / (EPISODE_WIDTH * 9f / 16f)).coerceIn(0.5f, 2.5f)
+    return HeroRowTileScale(poster, landscape)
+}
+
+// Row heading, paddings, focus growth and a margin to the screen edge.
+private val HeroRowChrome = 85.dp
+
 enum class MediaTileStyle { AUTO, POSTER, LANDSCAPE, EPISODE, CONTINUE }
 
 fun resolveMediaTileStyle(style: MediaTileStyle, itemType: String, handheld: Boolean): MediaTileStyle = when (style) {
@@ -110,7 +137,11 @@ fun MediaTile(
         MediaTileStyle.POSTER -> deviceDp(POSTER_WIDTH, 132.dp)
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> deviceDp(EPISODE_WIDTH, 240.dp)
         MediaTileStyle.AUTO -> deviceDp(POSTER_WIDTH, 132.dp)
-    } * uhdScale
+    } * uhdScale * when {
+        !heroRowTiles -> 1f
+        resolvedStyle == MediaTileStyle.POSTER || resolvedStyle == MediaTileStyle.AUTO -> LocalHeroRowTileScale.current.poster
+        else -> LocalHeroRowTileScale.current.landscape
+    }
     val aspectRatio = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> 16f / 9f

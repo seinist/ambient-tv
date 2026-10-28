@@ -598,6 +598,9 @@ internal fun LibraryContent(
         // the bottom, must be able to reach it or the hero mask cuts them in half.
         val rowPark = homeRowParkOffset(heroHeight)
         val listViewport = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+        val density = LocalDensity.current
+        var firstRowHeight by remember { mutableStateOf<Dp?>(null) }
+        val bottomInsetPx = with(density) { HeroRowBottomMargin.roundToPx() }
         val focusedItemStillExists = focusSnapshot.ratingKey == null || state.rows.any { row ->
             row.items.any { item -> focusSnapshot.ratingKey in item.allRatingKeys }
         }
@@ -639,6 +642,8 @@ internal fun LibraryContent(
         }
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
         val centeredRowKey = remember { MutableStateFlow<String?>(null) }
+        val activeRowKey by centeredRowKey.collectAsState()
+        val activeRowIndex = state.rowKeys.indexOf(activeRowKey).coerceAtLeast(0)
         LaunchedEffect(restoreArmed, state.rowKeys) {
             if (restoreArmed && restoreRowIndex in state.rows.indices) {
                 rowListState.scrollToItem(contentListIndex(restoreRowIndex))
@@ -653,16 +658,15 @@ internal fun LibraryContent(
             // Row-entry events do not invalidate the whole Home composition.
             centeredRowKey.collectLatest { key ->
                 val index = state.rowKeys.indexOf(key)
-                val alreadyAtTop = index == 0 && rowListState.firstVisibleItemIndex == 0 &&
-                    rowListState.firstVisibleItemScrollOffset == 0
-                if (index >= 0 && !alreadyAtTop) {
-                    rowCentering.centerItem(index, alignTop = true)
+                if (index >= 0) {
+                    rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                 }
             }
         }
         CompositionLocalProvider(
             LocalBringIntoViewSpec provides ExplicitRowScrollSpec,
             com.ambient.tv.ui.common.LocalHeroRowTiles provides true,
+            com.ambient.tv.ui.common.LocalHeroRowTileScale provides com.ambient.tv.ui.common.heroRowTileScale(listViewport - rowPark),
         ) {
             LazyColumn(
                 allowUpExit = true,
@@ -675,7 +679,7 @@ internal fun LibraryContent(
                         scrollToBottom = { rowListState.glideToItem(glideWrap, state.rowKeys.lastIndex) },
                         scrollToRow = { rowKey ->
                             val index = state.rowKeys.indexOfFirst { it == rowKey }
-                            if (index >= 0) rowCentering.centerItem(index, alignTop = true)
+                            if (index >= 0) rowCentering.centerItem(index, bottomInset = bottomInsetPx)
                         },
                     ) { state.rowKeys }
                     .clipToBounds()
@@ -687,8 +691,8 @@ internal fun LibraryContent(
                         translationY = (1f - progress) * 28.dp.toPx()
                     }),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    top = rowPark,
-                    bottom = homeLastRowBottomPadding(listViewport, rowPark),
+                    top = heroRowsTopPadding(listViewport, firstRowHeight, rowPark),
+                    bottom = HeroRowBottomMargin,
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -699,6 +703,10 @@ internal fun LibraryContent(
                         else -> "media-row"
                     }
                 }) { rowKey ->
+                    val rowIndex = state.rowKeys.indexOf(rowKey)
+                    Box(Modifier.onlyActiveHeroRow(rowIndex, activeRowIndex).then(
+                        if (rowIndex == 0) Modifier.onSizeChanged { firstRowHeight = with(density) { it.height.toDp() } } else Modifier,
+                    )) {
                     when {
                         rowKey in state.tvRows -> {
                             val recent = rowKey.startsWith("recent-tv")
@@ -756,6 +764,7 @@ internal fun LibraryContent(
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -1039,7 +1048,8 @@ private fun rememberLiveTileFocus(): Pair<androidx.compose.runtime.MutableState<
 }
 
 @Composable
-private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.common.rememberUhdScale()
+private fun liveTileWidth(): Dp = deviceDp(252.dp, 240.dp) * com.ambient.tv.ui.common.rememberUhdScale() *
+    com.ambient.tv.ui.common.LocalHeroRowTileScale.current.landscape
 
 /** Channel logo on the home surface wash, the running programme in one line, and airing progress. */
 @Composable
@@ -1572,13 +1582,8 @@ internal fun HomeHeroAmbient(
 private fun homeHeroHeight(): Dp {
     if (LocalHandheldUi.current) return HomeHeroMinHeight
     val screenHeight = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
-    // Rows keep their dp size, so a smaller UI scale (4K starts at 70 %) would fit more of them
-    // under a proportional hero. Keep the space below at its 100 % share: one row, like Plex.
-    return maxOf(screenHeight * 0.44f, screenHeight - HomeRowsArea).coerceAtLeast(HomeHeroMinHeight)
+    return (screenHeight * 0.44f).coerceAtLeast(HomeHeroMinHeight)
 }
-
-// Below the hero at 100 % scale on a 540 dp tall TV screen (56 %).
-private val HomeRowsArea = 302.dp
 
 private val HomeHeroMinHeight = 190.dp
 
@@ -1600,6 +1605,27 @@ private val HomeHeroFadeTail = 24.dp
 
 private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
     ((progress - start) / (end - start)).coerceIn(0f, 1f)
+
+/**
+ * Plex shows one row under the hero: the active row rests on the screen's bottom edge, and the
+ * others fade out, as they would otherwise show in the gap above it or below it.
+ */
+@Composable
+internal fun Modifier.onlyActiveHeroRow(index: Int, activeIndex: Int): Modifier {
+    if (LocalHandheldUi.current) return this
+    val alpha by androidx.compose.animation.core.animateFloatAsState(if (index != activeIndex) 0f else 1f, label = "heroRowInactive")
+    return graphicsLayer { this.alpha = alpha }
+}
+
+// Between the active row's bottom and the screen edge.
+internal val HeroRowBottomMargin = 20.dp
+
+/**
+ * List top padding that rests the first row on the bottom edge. Until it is measured, the old
+ * park line under the hero.
+ */
+internal fun heroRowsTopPadding(viewport: Dp, firstRowHeight: Dp?, fallback: Dp): Dp =
+    firstRowHeight?.let { (viewport - HeroRowBottomMargin - it).coerceAtLeast(fallback) } ?: fallback
 
 @Composable
 internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean, heroHeight: Dp): Modifier {

@@ -37,6 +37,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import com.ambient.tv.ui.home.HomeHero
 import com.ambient.tv.ui.home.HomeRowsLift
 import com.ambient.tv.ui.home.fadeRowsBehindHomeHero
+import com.ambient.tv.ui.home.onlyActiveHeroRow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Dp
+import com.ambient.tv.ui.home.HeroRowBottomMargin
+import com.ambient.tv.ui.home.heroRowsTopPadding
 import com.ambient.tv.ui.home.toHomeHeroContent
 import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -755,10 +760,14 @@ private fun RecommendationRowsPage(
     val rowsState = rememberLazyListState(initialFirstVisibleItemIndex = restoreRowIndex)
     val rowCentering = rememberRowCenteringState(rowsState)
     var centeredRowIndex by remember { mutableStateOf(-1) }
-    LaunchedEffect(centeredRowIndex) {
-        if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true)
-    }
     val handheld = LocalHandheldUi.current
+    // TV rests the active row on the bottom edge; handheld keeps it under the banner.
+    val bottomInsetPx = if (handheld) -1 else with(LocalDensity.current) { HeroRowBottomMargin.roundToPx() }
+    var firstRowHeight by remember { mutableStateOf<Dp?>(null) }
+    val density = LocalDensity.current
+    LaunchedEffect(centeredRowIndex) {
+        if (centeredRowIndex >= 0) rowCentering.centerItem(centeredRowIndex, alignTop = true, bottomInset = bottomInsetPx)
+    }
     val rowScrollSpec = if (handheld) LocalBringIntoViewSpec.current else ExplicitRowScrollSpec
     val columnFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
     // On TV the focused item gets the Home hero over the rows, so the list keeps the full height.
@@ -774,11 +783,14 @@ private fun RecommendationRowsPage(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val heroHeight = if (handheld) 0.dp else maxHeight * 0.42f
         val heroInsetPx = with(LocalDensity.current) { (heroHeight - HomeRowsLift).roundToPx().coerceAtLeast(0) }
+        val rowsArea = maxHeight - (heroHeight - HomeRowsLift + 12.dp)
+        val viewportHeight = maxHeight
         val performance = LocalPerformanceProfile.current
         Box(Modifier.fillMaxSize()) {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalBringIntoViewSpec provides rowScrollSpec,
                 com.ambient.tv.ui.common.LocalHeroRowTiles provides !handheld,
+                com.ambient.tv.ui.common.LocalHeroRowTileScale provides com.ambient.tv.ui.common.heroRowTileScale(rowsArea),
             ) {
                 LazyColumn(
                     allowUpExit = true,
@@ -791,18 +803,21 @@ private fun RecommendationRowsPage(
                             scrollToBottom = { rowsState.glideToItem(!performance.reducedEffects, state.recommendationRows.lastIndex) },
                             scrollToRow = { rowKey ->
                                 val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
-                                if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)
+                                if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true, bottomInset = bottomInsetPx)
                             },
                         ) { state.recommendationRows.map { it.id } }
                         .clipToBounds()
                         .then(if (handheld) Modifier else Modifier.fadeRowsBehindHomeHero(performance.allowRowFadeSaveLayer, heroHeight)),
                     contentPadding = PaddingValues(
-                        top = if (handheld) 8.dp else heroHeight - HomeRowsLift + 12.dp,
-                        bottom = 36.dp,
+                        top = if (handheld) 8.dp else heroRowsTopPadding(viewportHeight, firstRowHeight, heroHeight - HomeRowsLift + 12.dp),
+                        bottom = if (handheld) 36.dp else HeroRowBottomMargin,
                     ),
                 ) {
                     itemsIndexed(state.recommendationRows, key = { _, row -> row.id }) { index, row ->
                         ContentRow(
+                            modifier = Modifier.onlyActiveHeroRow(index, centeredRowIndex.coerceAtLeast(0)).then(
+                                if (index == 0) Modifier.onSizeChanged { size -> firstRowHeight = with(density) { size.height.toDp() } } else Modifier,
+                            ),
                             row = ContentRowData(title = row.title, items = row.items, style = tileStyle, id = row.id, showDescription = false),
                             onItemClick = { onItemClick(it.ratingKey) },
                             onItemFocused = { item ->
