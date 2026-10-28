@@ -2,7 +2,7 @@
 
 **Languages:** **English** · [Deutsch](DOCUMENTATION.de.md)
 
-**App:** Ambient TV (`com.ambient.tv`) · version `1.0-beta` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 72
+**App:** Ambient TV (`com.ambient.tv`) · version `1.0` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 72
 **License:** [CC0 1.0 Universal](../LICENSE)
 
 This compendium lists what the app does today: every settings page, the player's Video and Audio panels, and the media sources. Labels are the real UI texts from `app/src/main/res/values*/`. Defaults are read from the code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Nothing here is planned work.
@@ -413,6 +413,10 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 
 **Subtitles next to the video file** (Files/NAS and DLNA): `.srt`, `.ass`, `.ssa` and `.vtt` files whose names start like the video are offered as subtitle tracks – in the same folder, in a `Subs`/`Subtitles` folder or in `Subs/<video name>/`. Language, “forced” and “SDH” are read from the name (e.g. `Movie.de.forced.srt`, `Movie.German.srt`, `Movie.pt-BR.vtt`). DLNA servers provide subtitles as subtitle resources or `sec:CaptionInfoEx`.
 
+**Look** (Settings › Playback › Subtitles › Look): size, colour, edge (outline, shadow, none), background, bold and position, with a preview. It applies to text subtitles (SRT, WebVTT, text tracks) in every player. ASS/SSA subtitles always keep their own fonts, colours and positions.
+
+**Sync automatically** (subtitle panel): a loaded subtitle file, e.g. from OpenSubtitles, is laid onto a text subtitle the server has for the same title. The cue timelines are matched (shift up to ±90 s and frame rates 23.976/24/25), the file is rewritten with the found timing and loaded again, so it works in Media3 too. Without a clear match nothing changes.
+
 ### 6.3 Intros, credits & next up
 
 | Setting | Options / values | Default | Description |
@@ -481,6 +485,8 @@ Audio settings are stored per output profile: **TV**, **HDMI / AVR** and **Headp
 
 Sound and EQ effects are PCM-only. They stay saved but are suspended during passthrough and DTS core, and active for PCM and local AC3.
 
+**Night mode by the clock** (Settings › Audio): in a time window (also past midnight, default 22:00–07:00) every player turns night mode on and lifts dialogue to at least the chosen level. The profile itself is not changed. Switching night mode off in the player keeps it off until the window ends. It switches live during playback and is part of backups and the companion sync.
+
 ### 6.7 Audio visualization
 
 | Setting | Options / values | Default | Shown when / Description |
@@ -539,6 +545,9 @@ The panel opens from the player's settings button. Changes are remembered for th
 | Stats for Nerds | On / Off | Session only. |
 | FPS / refresh rate / resolution | On / Off | Overlay. |
 | Sleep timer | Off · 15–90 min · At the end of this item · after 5–120 min paused · after 30–120 min without input | Stops playback; does not turn off the TV. |
+| Tools | A-B repeat · frame step back/forward · bookmarks · screenshot · lyrics · gapless | Video: A-B, frame step, bookmarks, screenshot. Music: A-B, bookmarks, lyrics, gapless. |
+
+**Tools:** *A-B repeat* loops between two points for every engine. *Frame step* pauses and shows the previous/next frame. *Bookmarks* are kept per title (up to 30); jump to one or delete one or all. *Screenshot* saves the picture on screen as PNG under Pictures/Ambient TV (not for protected content). *Lyrics* show over the visualizer: timed lyrics follow the song with the sung line highlighted, untimed ones scroll along. They come from Plex lyric streams or Jellyfin; *Search online (LRCLIB)* is off by default and then sends artist, title, album and length to lrclib.net. *Gapless playback* (default on) queues the next song in Media3 when both songs play directly; otherwise songs change as before.
 
 ### 7.2 Video
 
@@ -678,6 +687,8 @@ On first launch a setup screen offers Plex, Jellyfin, Emby, TVHeadend, SmartTube
 ### 11.1 Android TV
 
 - Sidebar with system order (configurable), Home, Search, Settings
+- Android TV system search and voice search ("search for … in Ambient TV") find movies and shows from Plex, Jellyfin and Emby; a hit connects (and wakes) the server first and opens the title. Servers known to be offline are skipped
+- An offline server stays in the menu as "… · Offline"; its overview and libraries show an offline page with Wake up / Reconnect and load by themselves once it answers
 - D-Pad: focus groups, scroll positions in settings subpages
 - Vertical wrap in panels, dialogs and long lists: past the last row focus continues at the first, past the first at the last. It only applies when nothing else is reachable that way — where something sits above the list (a header, filter chips), Up still leads there
 - Settings Back: subpage → overview/search → area → leave hub

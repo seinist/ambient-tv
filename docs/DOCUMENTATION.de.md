@@ -2,7 +2,7 @@
 
 **Sprachen:** [English](DOCUMENTATION.md) · **Deutsch**
 
-**App:** Ambient TV (`com.ambient.tv`) · Version `1.0-beta` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 72
+**App:** Ambient TV (`com.ambient.tv`) · Version `1.0` (versionCode siehe `version.properties`) · minSdk 29, target/compileSdk 37 · Backup-Schema 72
 **Lizenz:** [CC0 1.0 Universal](../LICENSE)
 
 Dieses Kompendium beschreibt, was die App heute kann: jede Einstellungsseite, die Video- und Audio-Panels im Player und die Medienquellen. Die Bezeichnungen sind die echten Oberflächentexte aus `app/src/main/res/values*/`. Standardwerte stammen aus dem Code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Geplante Funktionen stehen hier nicht.
@@ -413,6 +413,10 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 
 **Untertitel neben der Videodatei** (Dateien/NAS und DLNA): `.srt`, `.ass`, `.ssa` und `.vtt` mit gleichem Namensanfang wie das Video werden als Untertitelspuren angeboten – im selben Ordner, in einem Ordner `Subs`/`Subtitles` oder in `Subs/<Videoname>/`. Sprache, „forced“ und „SDH“ werden aus dem Namen gelesen (z. B. `Film.de.forced.srt`, `Film.German.srt`, `Film.pt-BR.vtt`). DLNA-Server liefern Untertitel über Untertitel-Ressourcen oder `sec:CaptionInfoEx`.
 
+**Aussehen** (Einstellungen › Wiedergabe › Untertitel › Aussehen): Größe, Farbe, Rand (Kontur, Schatten, keiner), Hintergrund, Fett und Position, mit Vorschau. Gilt für Text-Untertitel (SRT, WebVTT, Textspuren) in jedem Player. ASS/SSA-Untertitel behalten immer ihre eigenen Schriften, Farben und Positionen.
+
+**Automatisch synchronisieren** (Untertitel-Panel): Eine geladene Untertitel-Datei, z. B. von OpenSubtitles, wird an einen Text-Untertitel des Servers für denselben Titel angelegt. Die Zeitachsen werden abgeglichen (Versatz bis ±90 s und Bildraten 23,976/24/25), die Datei mit den gefundenen Zeiten neu geschrieben und neu geladen – damit auch in Media3. Ohne eindeutigen Treffer bleibt alles, wie es war.
+
 ### 6.3 Intros, Abspann und nächste Folge
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |
@@ -481,6 +485,8 @@ Audio-Einstellungen werden je Ausgabeprofil gespeichert: **TV**, **HDMI / AVR** 
 
 Klang- und EQ-Effekte sind reines PCM. Sie bleiben gespeichert, sind bei Passthrough und DTS-Kern ausgesetzt und bei PCM und lokalem AC3 aktiv.
 
+**Nachtmodus nach Uhrzeit** (Einstellungen › Audio): In einem Zeitfenster (auch über Mitternacht, Standard 22:00–07:00) schaltet jeder Player den Nachtmodus ein und hebt die Dialoganhebung auf mindestens die gewählte Stufe. Das Profil selbst bleibt unverändert. Im Player ausgeschaltet bleibt er bis zum Ende des Fensters aus. Wechselt live während der Wiedergabe und ist Teil von Backups und Companion-Abgleich.
+
 ### 6.7 Audio-Visualisierung
 
 | Einstellung | Optionen / Werte | Standard | Sichtbar wenn / Beschreibung |
@@ -539,6 +545,9 @@ Das Panel öffnet über die Einstellungstaste im Player. Änderungen werden für
 | Stats für Nerds | An / Aus | Nur für die Sitzung. |
 | FPS / Bildwiederholrate / Auflösung | An / Aus | Overlay. |
 | Sleep-Timer | Aus · 15–90 Min. · Am Ende des aktuellen Titels · nach 5–120 Min. Pause · nach 30–120 Min. ohne Eingabe | Beendet die Wiedergabe; schaltet den TV nicht aus. |
+| Werkzeuge | A-B-Wiederholung · Einzelbild zurück/vor · Lesezeichen · Bildschirmfoto · Songtexte · lückenlos | Video: A-B, Einzelbild, Lesezeichen, Bildschirmfoto. Musik: A-B, Lesezeichen, Songtexte, lückenlos. |
+
+**Werkzeuge:** *A-B-Wiederholung* spielt in jedem Player zwischen zwei Punkten in Schleife. *Einzelbild* pausiert und zeigt das vorige/nächste Bild. *Lesezeichen* werden je Titel gemerkt (bis zu 30); anspringen, einzeln oder alle löschen. *Bildschirmfoto* speichert das Bild als PNG unter Bilder/Ambient TV (nicht bei geschützten Inhalten). *Songtexte* erscheinen über dem Visualizer: synchronisierte folgen dem Lied mit hervorgehobener Zeile, andere laufen mit. Sie kommen aus Plex-Lyric-Streams oder Jellyfin; *Online suchen (LRCLIB)* ist standardmäßig aus und schickt dann Interpret, Titel, Album und Länge an lrclib.net. *Lückenlose Wiedergabe* (Standard an) reiht in Media3 den nächsten Titel ein, wenn beide direkt abgespielt werden; sonst wechseln Titel wie bisher.
 
 ### 7.2 Video
 
@@ -678,6 +687,8 @@ Beim ersten Start bietet ein Einrichtungsbildschirm Plex, Jellyfin, Emby, TVHead
 ### 11.1 Android TV
 
 - Sidebar mit Systemreihenfolge (einstellbar), Home, Suche, Einstellungen
+- Android-TV-Systemsuche und Sprachsuche („Suche nach … in Ambient TV“) finden Filme und Serien aus Plex, Jellyfin und Emby; ein Treffer verbindet (und weckt) zuerst den Server und öffnet den Titel. Als offline bekannte Server werden übersprungen
+- Ein offline Server bleibt als „… · Offline“ im Menü; Übersicht und Mediatheken zeigen eine Offline-Seite mit Aufwecken / Neu verbinden und laden von selbst, sobald er antwortet
 - D-Pad: Fokusgruppen, Scrollpositionen in Einstellungs-Unterseiten
 - Senkrechter Umlauf in Panels, Dialogen und langen Listen: Ab unten geht es oben weiter, ab oben unten. Der Umlauf greift nur, wenn in der Richtung sonst nichts erreichbar ist — liegt etwas über der Liste (Kopfzeile, Filterchips), führt Ab-nach-oben wie bisher dorthin
 - Einstellungen-Zurück: Unterseite → Übersicht/Suche → Bereich → Hub verlassen
