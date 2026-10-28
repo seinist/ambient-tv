@@ -287,6 +287,8 @@ Beide Seiten haben dieselben Einstellungen.
 | Nächstes Video automatisch abspielen | An / Aus | Aus | Alle | Spielt am Ende den ersten Vorschlag. |
 | Angezeigte Bereiche | Start, Abos, Verlauf, Playlists, Shorts, Musik, News, Gaming, Live, Kids | Alle | Alle | Bereiche im Modul. |
 | Maximale Videoauflösung (Media3) | Auto, 720p, 1080p, 1440p, 2160p | Auto | Alle | Qualität und Codec wählst du im Player aus den verfügbaren Spuren. |
+| Verbindung (Media3) | Klassisch (OkHttp) · Play-Dienste (Cronet) · Android (eingebaut) | Klassisch | Alle | Netzwerk-Engine des Media3-Players. Auch im Player unter Video › Stream; ein Wechsel dort öffnet das Video an der aktuellen Stelle neu und bleibt gespeichert. |
+| Puffergröße (Media3) | Klein (30 s) · Mittel (50 s) · Groß (3 min) | Mittel | Alle | Wie im Original-Client; auch im Player unter Video › Stream. |
 | Verknüpfen mit der YouTube-App erlauben | An / Aus | Aus | TV | „Auf dem Fernseher ansehen“: Handys öffnen, pausieren, spulen und stoppen Videos hier. Danach „TV-Code anzeigen“ / „Alle Handys trennen“. |
 
 ### 4.5 Spotify

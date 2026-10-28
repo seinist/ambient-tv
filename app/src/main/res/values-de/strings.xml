@@ -878,6 +878,8 @@
     <string name="settings_youtube_network_engine_play">Play-Dienste</string>
     <string name="settings_youtube_network_engine_classic">Klassisch</string>
     <string name="settings_youtube_network_engine_hint">Bei Rucklern oder hängendem Laden eine andere Verbindung probieren. Play-Dienste braucht die Google-Play-Dienste.</string>
+    <string name="player_youtube_stream">Stream</string>
+    <string name="player_youtube_stream_hint">Ein Wechsel öffnet das Video an der aktuellen Stelle neu und gilt auch für die nächsten Videos.</string>
     <string name="settings_youtube_buffer">Puffergröße</string>
     <string name="settings_youtube_buffer_low">Klein (30 s)</string>
     <string name="settings_youtube_buffer_medium">Mittel (50 s)</string>

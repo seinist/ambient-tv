@@ -878,6 +878,8 @@
     <string name="settings_youtube_network_engine_play">Play services</string>
     <string name="settings_youtube_network_engine_classic">Classic</string>
     <string name="settings_youtube_network_engine_hint">If playback stutters or stops loading, try another connection. Play services needs Google Play services.</string>
+    <string name="player_youtube_stream">Stream</string>
+    <string name="player_youtube_stream_hint">A change reopens the video at the current position and also applies to the next videos.</string>
     <string name="settings_youtube_buffer">Buffer size</string>
     <string name="settings_youtube_buffer_low">Low (30 s)</string>
     <string name="settings_youtube_buffer_medium">Medium (50 s)</string>

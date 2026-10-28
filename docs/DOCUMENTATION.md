@@ -287,6 +287,8 @@ Both pages have the same controls.
 | Automatically play next video | On / Off | Off | All | Plays the first suggestion when a video ends. |
 | Visible sections | Home, Subscriptions, History, Playlists, Shorts, Music, News, Gaming, Live, Kids | All | All | Sections shown in the module. |
 | Maximum video resolution (Media3) | Auto, 720p, 1080p, 1440p, 2160p | Auto | All | Quality and codec are chosen in the player from the available tracks. |
+| Connection (Media3) | Classic (OkHttp) · Play services (Cronet) · Android (built-in) | Classic | All | Network engine of the Media3 player. Also in the player: Video › Stream; a change there reopens the video at the current position and is kept. |
+| Buffer size (Media3) | Small (30 s) · Medium (50 s) · Large (3 min) | Medium | All | Like the original client; also under Video › Stream in the player. |
 | Allow linking with the YouTube app | On / Off | Off | TV | "Watch on TV": phones open, pause, seek and stop videos here. Then "Show TV code" / "Unlink all phones". |
 
 ### 4.5 Spotify
