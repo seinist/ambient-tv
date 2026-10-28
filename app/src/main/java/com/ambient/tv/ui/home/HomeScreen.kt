@@ -38,6 +38,7 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
@@ -250,8 +251,9 @@ fun HomeScreen(
     if (systemOverview && !LocalHandheldUi.current) HomeFocusBackdrop(viewModel.heroContent, overviewRowsScrolling)
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
-        // Like a library page: the header row stays put while loading and loaded, the hero sits
-        // under it. Swapping it for the hero's title line on load flashed a strip at the top.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+        // The actions and clock stay put while loading and loaded, floating on the hero's title
+        // line: the hero starts at the screen top like the app home's.
         if (systemOverview) {
             SystemOverviewHeader(
                 system = when {
@@ -265,9 +267,9 @@ fun HomeScreen(
                 },
                 onOpenOptions = { showOverviewOptions = true },
                 optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
+                modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
             )
         }
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (val state = uiState) {
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
                 // Connection progress is presented by the global, non-focusable notification host.
@@ -347,10 +349,12 @@ private fun SystemOverviewHeader(
     onOpenHome: () -> Unit,
     onOpenOptions: () -> Unit,
     optionsModifier: Modifier = Modifier,
+    modifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
+    Column(modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
-            com.ambient.tv.ui.common.SystemPageTitle(system)
+            // The hero's title shares this line on TV; handheld has no such hero.
+            if (LocalHandheldUi.current) com.ambient.tv.ui.common.SystemPageTitle(system)
         }
     }
 }
@@ -581,8 +585,7 @@ internal fun LibraryContent(
                 ?: state.rows.indexOfFirst { row -> initialFocusKey != null && row.items.any { initialFocusKey in it.allRatingKeys } }
         }
         fun contentListIndex(index: Int): Int = state.rowKeys.indexOf(state.rows.getOrNull(index)?.id).coerceAtLeast(0)
-        // Under the overview's header the hero takes the library pages' share of the rest.
-        val heroHeight = if (externalBackdropScrolling != null) maxHeight * 0.42f else homeHeroHeight()
+        val heroHeight = homeHeroHeight()
         // Same line the first row already occupies. Later rows, including a short live row at
         // the bottom, must be able to reach it or the hero mask cuts them in half.
         val rowPark = homeRowParkOffset(heroHeight)
@@ -759,7 +762,9 @@ internal fun LibraryContent(
             rowsScrolling = rowsScrolling,
             height = heroHeight,
             titleActions = heroTitleActions,
-            clockCorner = externalBackdropScrolling == null,
+            atScreenTop = true,
+            // The overview's floating actions and clock, or the app home's clock.
+            clockCorner = externalBackdropScrolling != null || com.ambient.tv.ui.common.LocalClockSettings.current.onHome,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .zIndex(1f),
@@ -1188,12 +1193,14 @@ internal fun HomeHero(
     drawAmbient: Boolean = true,
     rowsScrolling: StateFlow<Boolean> = RowsNeverScrolling,
     height: Dp? = null,
-    /** False where no rows pass behind the hero, so nothing needs covering. */
-    rowsBehind: Boolean = true,
     focusTravel: () -> Float = { 0.42f },
     /** Page actions on the right of the title line (system overview), outside the metadata crossfade. */
     titleActions: (@Composable RowScope.() -> Unit)? = null,
-    /** The hero sits at the screen top under the floating [HomeClock]: the logo stays clear of it. */
+    /** The hero starts at the screen top: its title line sits level with the header corner. */
+    atScreenTop: Boolean = false,
+    /** False where the page header already shows the system logo (a library page). */
+    showSystemBadge: Boolean = true,
+    /** Something floats in the top-right corner (clock, page actions): the logo stays clear of it. */
     clockCorner: Boolean = false,
 ) {
     // Collect focus in effects: transient targets must not recompose the complete hero while
@@ -1237,11 +1244,6 @@ internal fun HomeHero(
                 focusTravel = focusTravel,
             )
         }
-        // Only reduced mode needs the veil to hide rows: full mode masks them in the row list,
-        // and a veil over the tall hero would also hide the animated background behind it.
-        if (rowsBehind && !performance.allowRowFadeSaveLayer) {
-            Box(Modifier.matchParentSize().homeHeroVeil(MaterialTheme.colorScheme.background))
-        }
         HomeStaticImage(
             model = heroArtwork.titleLogoUrl,
             headers = heroArtwork.imageHeaders,
@@ -1249,7 +1251,7 @@ internal fun HomeHero(
             modifier = Modifier.align(Alignment.CenterEnd)
                 .padding(end = horizontalPadding, bottom = HomeHeroFadeTail)
                 .width(artworkWidth).height(
-                    if (clockCorner && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+                    if (clockCorner) {
                         // Still centred on the metadata, so only the height shrinks to stay under the clock.
                         val reserve = homeClockReserve(com.ambient.tv.ui.common.LocalClockSettings.current)
                         (heroHeight - HomeHeroFadeTail - reserve * 2).coerceIn(48.dp, deviceDp(160.dp, 120.dp))
@@ -1258,8 +1260,9 @@ internal fun HomeHero(
         )
         Box(
             modifier = Modifier
-                .align(Alignment.CenterStart)
+                .align(if (atScreenTop && !LocalHandheldUi.current) Alignment.TopStart else Alignment.CenterStart)
                 .padding(
+                    top = if (atScreenTop && !LocalHandheldUi.current) com.ambient.tv.ui.common.PageHeaderTopTv else 0.dp,
                     start = horizontalPadding,
                     end = horizontalPadding + if (displayedItem.titleLogoUrl.isNullOrBlank() && heroArtwork.titleLogoUrl.isNullOrBlank()) 0.dp else artworkWidth + artworkGap,
                     bottom = HomeHeroFadeTail,
@@ -1299,7 +1302,7 @@ internal fun HomeHero(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        com.ambient.tv.ui.common.MediaSystem.fromKey(heroItem.providerLabel)?.let {
+                        if (showSystemBadge) com.ambient.tv.ui.common.MediaSystem.fromKey(heroItem.providerLabel)?.let {
                             com.ambient.tv.ui.common.SystemBadge(it, showName = false)
                         }
                         // Episodes lead with the series name; the episode title moves to the context line.
@@ -1552,18 +1555,6 @@ internal fun HomeHeroAmbient(
     ))
 }
 
-private fun Modifier.homeHeroVeil(background: Color): Modifier = drawWithCache {
-    val top = background
-    val veil = Brush.verticalGradient(
-        0f to top,
-        0.55f to top,
-        0.75f to top.copy(alpha = top.alpha * 0.65f),
-        0.90f to top.copy(alpha = top.alpha * 0.20f),
-        1f to Color.Transparent,
-    )
-    onDrawBehind { drawRect(veil) }
-}
-
 /**
  * On TV the hero takes the upper part of the screen, so the first row rests in the lower half
  * like Plex's home and the freed space holds the summary. Handheld keeps the compact banner.
@@ -1599,8 +1590,11 @@ private fun entrancePhase(progress: Float, start: Float, end: Float): Float =
 @Composable
 internal fun Modifier.fadeRowsBehindHomeHero(allowSaveLayer: Boolean, heroHeight: Dp): Modifier {
     if (!allowSaveLayer) {
-        // Reduced mode avoids the saveLayer; HomeHero's foreground veil covers rows smoothly.
-        return this
+        // Reduced mode avoids the saveLayer with a hard cut where the mask would fade in. An
+        // opaque veil over the hero instead also hid the backdrop behind it as a black band.
+        return drawWithContent {
+            clipRect(top = heroHeight.toPx() * 0.96f) { this@drawWithContent.drawContent() }
+        }
     }
     val contentLayer = rememberGraphicsLayer()
     return drawWithCache {

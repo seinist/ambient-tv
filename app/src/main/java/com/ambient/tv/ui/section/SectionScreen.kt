@@ -823,7 +823,7 @@ private fun RecommendationRowsPage(
                     entranceProgress = { 1f },
                     drawAmbient = false,
                     height = heroHeight,
-                    rowsBehind = true,
+                    showSystemBadge = false,
                     modifier = Modifier.align(Alignment.TopCenter).zIndex(1f),
                 )
             }
