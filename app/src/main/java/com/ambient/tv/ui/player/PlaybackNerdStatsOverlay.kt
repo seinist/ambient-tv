@@ -519,6 +519,8 @@ fun BoxScope.PlaybackNerdStatsOverlay(
     alignment: Alignment = Alignment.TopStart,
     audioConversion: String? = null,
     audioRoute: String? = null,
+    /** What the user set for picture and sound ([rememberNerdSettingRows]), after the engine's values. */
+    settingRows: Pair<List<NerdStatsOverlayRow>, List<NerdStatsOverlayRow>> = emptyList<NerdStatsOverlayRow>() to emptyList(),
 ) {
     if (!enabled || model == null || model.isEmpty) return
     Column(
@@ -542,11 +544,11 @@ fun BoxScope.PlaybackNerdStatsOverlay(
             fontWeight = FontWeight.SemiBold,
             fontFamily = FontFamily.Monospace,
         )
-        NerdOverlaySection(stringResource(R.string.player_nerd_section_video), model.video)
+        NerdOverlaySection(stringResource(R.string.player_nerd_section_video), model.video + settingRows.first)
         NerdOverlaySection(stringResource(R.string.player_nerd_section_audio), model.audio + listOfNotNull(
             audioRoute?.let { NerdStatsOverlayRow(stringResource(R.string.audio_route_output), it) },
             audioConversion?.let { NerdStatsOverlayRow(stringResource(R.string.audio_conversion_location), it) },
-        ))
+        ) + settingRows.second)
         NerdOverlaySection(stringResource(R.string.player_nerd_section_system), model.system)
     }
 }

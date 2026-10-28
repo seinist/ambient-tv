@@ -323,6 +323,7 @@ internal fun MpvPlayerContent(
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.audioCodec),
             audioRoute = audioRouteSummaryText(controller.audioSession),
+            settingRows = if (showNerdOverlay) rememberNerdSettingRows(state, controller.audioSession, speed) else emptyList<NerdStatsOverlayRow>() to emptyList(),
             enabled = showNerdOverlay,
             model = rememberMpvNerdOverlayModel(
                 snapshot = snapshot,

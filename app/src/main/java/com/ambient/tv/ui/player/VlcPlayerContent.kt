@@ -302,6 +302,7 @@ internal fun VlcPlayerContent(
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.runtimeStats?.audioCodec),
             audioRoute = audioRouteSummaryText(controller.audioSession),
+            settingRows = if (showNerdOverlay) rememberNerdSettingRows(state, controller.audioSession, speed) else emptyList<NerdStatsOverlayRow>() to emptyList(),
             enabled = showNerdOverlay,
             model = rememberVlcNerdOverlayModel(
                 snapshot = snapshot,
