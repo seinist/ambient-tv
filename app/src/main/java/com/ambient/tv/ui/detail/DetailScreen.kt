@@ -67,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.FocusDirection
@@ -701,7 +702,11 @@ private fun DetailContent(
             }) else null,
             requestInitialFocus = !heroHasFocusTarget && !restoreFocusPending && !childFocusPending,
             leftNavigatesBack = false,
-            modifier = Modifier.align(Alignment.TopCenter),
+            // Part of the page, not a sticky bar: it scrolls away with the hero above it.
+            modifier = Modifier.align(Alignment.TopCenter).graphicsLayer {
+                translationY = if (listState.firstVisibleItemIndex == 0) -listState.firstVisibleItemScrollOffset.toFloat()
+                else -size.height
+            },
         )
 
         if (showMore) {
