@@ -351,7 +351,15 @@ private fun SystemOverviewHeader(
     optionsModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.fillMaxWidth().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
+    Column(modifier.fillMaxWidth()
+        // The header floats over the hero, so no row lies in the focus search's beam below it:
+        // Down hands focus to the rows' remembered tile directly.
+        .onPreviewKeyEvent { event ->
+            if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
+            com.ambient.tv.ui.navigation.SidebarContentEntry.enter?.invoke() == true
+        }
+        .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
             // The hero's title shares this line on TV; handheld has no such hero.
             if (LocalHandheldUi.current) com.ambient.tv.ui.common.SystemPageTitle(system)

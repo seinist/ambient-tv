@@ -2,6 +2,7 @@
 
 package com.ambient.tv.ui.section
 
+import com.ambient.tv.ui.common.glideToItem
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.common.fillWindowHeight
 
@@ -786,6 +787,7 @@ private fun RecommendationRowsPage(
                         .fillMaxSize()
                         .rowColumnFocusNavigation(
                             columnFocus,
+                            scrollToTop = { rowsState.glideToItem(!performance.reducedEffects, 0) },
                             scrollToRow = { rowKey ->
                                 val index = state.recommendationRows.indexOfFirst { it.id == rowKey }
                                 if (index >= 0) rowCentering.centerItem(index, topInset = heroInsetPx, alignTop = true)

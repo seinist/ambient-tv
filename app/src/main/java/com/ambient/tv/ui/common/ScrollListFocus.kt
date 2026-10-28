@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.common
 
+import androidx.compose.foundation.gestures.animateScrollBy
 import android.view.View
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.gestures.FlingBehavior
@@ -161,15 +162,24 @@ fun TvLazyVerticalGrid(
 }
 
 /**
- * Wrap jumps (bottom → top and back): snap to a few rows before the target, then animate the
- * rest, so the list visibly slides into place instead of cutting. Distance-independent duration.
+ * Wrap jumps (bottom → top and back): one continuous eased slide over the whole distance with a
+ * fixed duration, so the list visibly travels back instead of cutting. The pixel distance is
+ * estimated from the visible items' average size; a final [animateScrollToItem] corrects it.
  */
+private const val GLIDE_MS = 520
 private const val GLIDE_ROWS = 3
 
 internal suspend fun LazyListState.glideToItem(animate: Boolean, index: Int) {
     if (!animate) return scrollToItem(index)
-    val current = firstVisibleItemIndex
-    if (kotlin.math.abs(current - index) > GLIDE_ROWS) scrollToItem(if (index < current) index + GLIDE_ROWS else (index - GLIDE_ROWS).coerceAtLeast(0))
+    val visible = layoutInfo.visibleItemsInfo
+    if (visible.isNotEmpty()) {
+        val spacing = layoutInfo.mainAxisItemSpacing
+        val average = visible.sumOf { it.size + spacing }.toFloat() / visible.size
+        val distance = (index - firstVisibleItemIndex) * average - firstVisibleItemScrollOffset
+        if (distance != 0f) {
+            animateScrollBy(distance, androidx.compose.animation.core.tween(GLIDE_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+        }
+    }
     animateScrollToItem(index)
 }
 
