@@ -66,6 +66,8 @@ object DisplayRefreshRateMatcher {
 
     fun currentModeKey(activity: Activity?): String? = activity?.let(::getDisplayCompat)?.mode?.let(::modeKey)
 
+    fun currentMode(activity: Activity?): SupportedDisplayMode? = activity?.let(::getDisplayCompat)?.mode?.let(::choice)
+
     fun modeKey(mode: Display.Mode): String = modeKey(mode.physicalWidth, mode.physicalHeight, mode.refreshRate)
 
     fun modeKey(width: Int, height: Int, refreshRate: Float): String =
@@ -374,6 +376,28 @@ internal fun displayRateUpgradeNeeded(policy: String, preferred: String, display
         displayHz != null && displayHz.isFinite() && displayHz > 0f &&
         contentFps != null && contentFps.isFinite() && contentFps > displayHz + 1f
 
+/**
+ * Between two items the running mode stays when it already shows the next item without judder:
+ * same output resolution and a refresh of 1× or (allowed) 2× the frame rate, e.g. 25 fps on the
+ * 50 Hz the previous 50 fps (or doubled 25 fps) item used. Avoids an HDMI resync for a mode
+ * that would only differ in being the native instead of the doubled rate.
+ */
+internal fun handoffKeepsCurrentMode(
+    current: SupportedDisplayMode,
+    selected: SupportedDisplayMode,
+    fps: Float,
+    allowDoubleRate: Boolean,
+    highRateDoubling: Boolean,
+): Boolean {
+    if (current.key == selected.key) return true
+    if (current.width != selected.width || current.height != selected.height) return false
+    if (!fps.isFinite() || fps <= 0f || !current.refreshRate.isFinite()) return false
+    val multiple = kotlin.math.round(current.refreshRate / fps).toInt()
+    if (multiple !in 1..2) return false
+    if (multiple == 2 && (!allowDoubleRate || current.refreshRate > 61f && !highRateDoubling)) return false
+    return abs(current.refreshRate - fps * multiple) <= DisplayRefreshRateMatcher.EXACT_CADENCE_DIFF_HZ * multiple * 2
+}
+
 /** Start-only matching is complete only when the physical display accepted a full format. */
 internal fun displayStartRequestConfirmed(format: DisplayContentFormat, needsSize: Boolean,
     selected: SupportedDisplayMode?, actualKey: String?): Boolean =
@@ -402,7 +426,7 @@ internal fun rememberAvailableDisplayModes(context: Context? = androidx.compose.
 internal data class DisplayModeClaim(val modeId: Int?, val modeKey: String?)
 
 /** One player's desktop mode; a hand-off can replace it with the mode an earlier player kept. */
-internal class DisplayModeOrigin(var claim: DisplayModeClaim)
+internal class DisplayModeOrigin(var claim: DisplayModeClaim, var inherited: Boolean = false)
 
 /**
  * Between two items (next episode, autoplay, playlist, channel change) the player leaves and the
@@ -421,13 +445,13 @@ internal object DisplayModeHandoff {
     private var deferred: DisplayModeClaim? = null
 
     /** A player's starting desktop mode: one a hand-off kept, else the current mode. */
-    fun origin(activity: Activity?): DisplayModeOrigin = DisplayModeOrigin(
-        take() ?: DisplayModeClaim(DisplayRefreshRateMatcher.currentModeId(activity), DisplayRefreshRateMatcher.currentModeKey(activity)))
+    fun origin(activity: Activity?): DisplayModeOrigin = take()?.let { DisplayModeOrigin(it, inherited = true) }
+        ?: DisplayModeOrigin(DisplayModeClaim(DisplayRefreshRateMatcher.currentModeId(activity), DisplayRefreshRateMatcher.currentModeKey(activity)))
 
     fun register(origin: DisplayModeOrigin) {
         active += origin
         // Mounted in the same frame the previous player left: its deferred mode is this one's too.
-        take()?.let { origin.claim = it }
+        take()?.let { origin.claim = it; origin.inherited = true }
     }
 
     fun unregister(origin: DisplayModeOrigin) {
@@ -438,6 +462,7 @@ internal object DisplayModeHandoff {
         // The next player is already there: hand the desktop mode over directly.
         active.lastOrNull()?.let { next ->
             next.claim = claim
+            next.inherited = true
             Timber.i("DisplayHandoff next player keeps the current mode")
             return
         }
@@ -498,6 +523,9 @@ fun rememberDisplayModeRequest(
     val latestPreferred by rememberUpdatedState(preferredModeKey)
     // The next item of a running hand-off takes over the desktop mode the previous player kept.
     val origin = remember(activity) { DisplayModeHandoff.origin(activity) }
+    // Follow-up item: handed over from the previous player, or a new item in the same player.
+    val firstPlaybackKey = remember(activity) { playbackKey }
+    val followUpItem = origin.inherited || playbackKey != firstPlaybackKey
     val latestPlaybackKey by rememberUpdatedState(playbackKey)
     val latestSwitchPauseMs by rememberUpdatedState(switchPauseMs)
     val holdScope = rememberCoroutineScope()
@@ -612,6 +640,25 @@ fun rememberDisplayModeRequest(
             // Decoder size/FPS callbacks arrive separately; settle them before requesting HDMI.
             // A newer format cancels this effect and starts with the complete source format.
             delay(500)
+            // Next item of a hand-off: a running mode that already fits (1×/2×, same size) stays.
+            if (followUpItem) {
+                val current = DisplayRefreshRateMatcher.currentMode(activity)
+                val selected = DisplayRefreshRateMatcher.contentFrameRateMode(
+                    activity, format.fps, format.width, format.height,
+                    preferredModeKey, origin.claim.modeKey, whitelist, allowDoubleRate, allowThreeTwoPulldown,
+                    preserveRefreshRate = interpolation,
+                    preserveOutputResolution = rendererScaling,
+                    requiredHdrType = requiredHdrType,
+                )
+                if (current != null && selected != null && format.hasRate &&
+                    (whitelist.isEmpty() || current.key in whitelist) &&
+                    hdrCompatibleDisplayModes(listOf(current), requiredHdrType).isNotEmpty() &&
+                    handoffKeepsCurrentMode(current, selected, format.fps, allowDoubleRate, DisplayRefreshRateMatcher.highRateDoubling)) {
+                    Timber.i("DisplayHandoff keeps %s for %s fps (target %s)", current.key, format.fps, selected.key)
+                    switchedAtStart = true
+                    return@LaunchedEffect
+                }
+            }
             // One bounded retry covers a request issued while the window/HDMI output is settling.
             // Never clear the mode or pause/recreate the decoder to force a physical switch.
             repeat(2) { attempt ->
