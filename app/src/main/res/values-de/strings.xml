@@ -2064,4 +2064,8 @@
     <string name="player_tools_music">Musik</string>
     <string name="player_tools_gapless">Lückenlose Wiedergabe</string>
     <string name="player_tools_gapless_hint">Titel folgen ohne Pause aufeinander, wenn Media3 sie direkt abspielt. Gilt ab dem nächsten Titel.</string>
+    <string name="player_nerd_sound_processing">Klangverarbeitung</string>
+    <string name="player_nerd_dsp_suspended">ausgesetzt (Bitstream)</string>
+    <string name="player_nerd_automatic">automatisch</string>
+    <string name="player_nerd_title_scope">dieser Titel</string>
 </resources>

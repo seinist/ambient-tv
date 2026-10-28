@@ -734,6 +734,7 @@ private fun PlayerContent(
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, audioSession, exoPlayer.audioFormat?.sampleMimeType, exoPlayer.audioFormat?.channelCount),
             audioRoute = audioSession?.let { audioRouteSummaryText(it) },
+            settingRows = if (showNerdOverlay) rememberNerdSettingRows(state, audioSession, exoPlayer.playbackParameters.speed) else emptyList<NerdStatsOverlayRow>() to emptyList(),
             enabled = showNerdOverlay,
             model = rememberMedia3NerdOverlayModel(
                 player = exoPlayer,

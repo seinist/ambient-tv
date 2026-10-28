@@ -2065,4 +2065,8 @@
     <string name="player_tools_music">Music</string>
     <string name="player_tools_gapless">Gapless playback</string>
     <string name="player_tools_gapless_hint">Songs follow each other without a pause when Media3 plays them directly. Takes effect from the next song.</string>
+    <string name="player_nerd_sound_processing">Sound processing</string>
+    <string name="player_nerd_dsp_suspended">suspended (bitstream)</string>
+    <string name="player_nerd_automatic">automatic</string>
+    <string name="player_nerd_title_scope">this title</string>
 </resources>
