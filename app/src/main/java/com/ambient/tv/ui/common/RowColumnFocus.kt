@@ -14,6 +14,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -24,6 +25,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
@@ -169,7 +171,7 @@ fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
  * Down from the last row wraps to the first via [scrollToTop]; Up from the first row reaches a
- * registered page header if there is one, else wraps to the last via [scrollToBottom]. The
+ * registered page header or whatever lies above the rows, else wraps to the last via [scrollToBottom]. The
  * list's own wrap would land on whichever tile geometry picks and the row would keep it.
  *
  * [scrollToRow] brings a row into the vertical list before its tiles are focused. A row that is
@@ -188,6 +190,7 @@ fun Modifier.rowColumnFocusNavigation(
     val scrollListActions = LocalScrollListActions.current
     val actionFocus = LocalScrollListActionFocus.current
     val view = LocalView.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     var moveJob by remember { mutableStateOf<Job?>(null) }
     // The target row composes and settles its tiles a few frames after a scroll.
@@ -235,7 +238,9 @@ fun Modifier.rowColumnFocusNavigation(
         if (!down && scrollToBottom != null && focus.isFirstRow(order)) {
             val exited = if (actionFocus != null) runCatching { actionFocus.requestFocus() }.getOrDefault(false)
                 else scrollListActions?.requestUpFocus(view) == true
-            if (exited) {
+            // Anything focusable above the rows (the app home's update card) comes first; only
+            // with nothing there does Up wrap to the last row.
+            if (exited || runCatching { focusManager.moveFocus(FocusDirection.Up) }.getOrDefault(false)) {
                 uiSounds?.playFocus()
                 return@onPreviewKeyEvent true
             }
