@@ -26,6 +26,15 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
+/**
+ * Work started from the player's panels (screenshot, subtitle sync) runs here, not in the panel:
+ * Back right after the click closes the panel and must not cancel the work or its notice.
+ */
+internal object PlayerToolsWork {
+    val scope = MainScope()
+    var savingScreenshot = false
+}
+
 /** Engines that step exactly one frame themselves (MPV frame-step / frame-back-step). */
 interface FrameStepTarget {
     /** Pauses and shows the next (or previous) frame. */

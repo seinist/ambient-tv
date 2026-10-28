@@ -46,9 +46,12 @@ class LyricsRepository @Inject constructor(
         val online = preferences.lyricsOnlineEnabled
         val key = "${request.ratingKey}|$online"
         synchronized(cache) { if (cache.containsKey(key)) return cache[key] }
-        val fromServer = media.getLyrics(request.ratingKey).getOrNull()
-        val lyrics = fromServer ?: if (online) runCatching { lrclib(request) }.getOrNull() else null
-        synchronized(cache) { cache[key] = lyrics }
+        val fromServer = media.getLyrics(request.ratingKey)
+        val fromOnline = if (fromServer.getOrNull() == null && online) runCatching { lrclib(request) } else null
+        val lyrics = fromServer.getOrNull() ?: fromOnline?.getOrNull()
+        // A server or network failure is asked again next time; only an answer is remembered.
+        val answered = lyrics != null || (fromServer.isSuccess && fromOnline?.isFailure != true)
+        if (answered) synchronized(cache) { cache[key] = lyrics }
         return lyrics
     }
 
