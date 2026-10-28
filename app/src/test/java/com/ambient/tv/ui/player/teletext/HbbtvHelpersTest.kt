@@ -13,10 +13,14 @@ class HbbtvHelpersTest {
         assertFalse(hbbtvDocumentType("image/png"))
     }
 
-    @Test fun shimGoesFirstIntoHead() {
-        assertEquals("<html><head lang=\"de\"><script type=\"text/javascript\">S</script><script>app()</script></head>",
+    @Test fun shimGoesFirstIntoHeadWithA720pViewport() {
+        val viewport = "<meta name=\"viewport\" content=\"width=1280, user-scalable=no\">"
+        assertEquals("<html><head lang=\"de\">$viewport<script type=\"text/javascript\">S</script><script>app()</script></head>",
             injectHbbtvShim("<html><head lang=\"de\"><script>app()</script></head>", "S"))
-        assertEquals("<script type=\"text/javascript\">S</script><header/>", injectHbbtvShim("<header/>", "S"))
+        assertEquals("$viewport<script type=\"text/javascript\">S</script><header/>", injectHbbtvShim("<header/>", "S"))
+        // A page with its own viewport keeps it.
+        assertEquals("<head><script type=\"text/javascript\">S</script><meta name='viewport' content='width=960'></head>",
+            injectHbbtvShim("<head><meta name='viewport' content='width=960'></head>", "S"))
     }
 
     @Test fun keysAndStringsForThePage() {

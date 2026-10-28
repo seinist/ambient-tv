@@ -104,7 +104,12 @@ private fun HbbtvViewer(app: HbbtvApplication, channelName: String?, onClose: ()
                 play = com.ambient.tv.ui.player.BackgroundPlaybackSession::play,
             )
         }
-        DisposableEffect(broadcast) { onDispose { broadcast.resume() } }
+        DisposableEffect(broadcast) {
+            onDispose {
+                broadcast.resume()
+                com.ambient.tv.ui.player.PlaybackVideoWindow.window = null
+            }
+        }
         var hint by remember { mutableStateOf(true) }
         LaunchedEffect(Unit) { delay(4_000); hint = false }
         Box(Modifier.fillMaxSize()) {
@@ -144,6 +149,9 @@ private class HbbtvWebView(
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
+        // HbbTV pages are laid out for 1280 × 720: the injected viewport scales them to the screen.
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
         settings.userAgentString = settings.userAgentString + " " + HBBTV_USER_AGENT
         CookieManager.getInstance().setAcceptCookie(true)
         addJavascriptInterface(Bridge(), "AmbientHbbtv")
@@ -209,6 +217,10 @@ private class HbbtvWebView(
     private inner class Bridge {
         @JavascriptInterface fun close() = post { onClose() }
         @JavascriptInterface fun show() = Unit
+        /** Where the page shows video/broadcast: "left,top,width,height" fractions or "full". */
+        @JavascriptInterface fun videoWindow(value: String) = post {
+            com.ambient.tv.ui.player.PlaybackVideoWindow.window = com.ambient.tv.ui.player.parseVideoWindow(value)
+        }
         /** video/broadcast stopped (false) or bound again (true). */
         @JavascriptInterface fun broadcast(on: Boolean) = post { if (on) broadcast.resume() else broadcast.stop() }
     }
@@ -226,7 +238,10 @@ internal fun hbbtvDocumentType(contentType: String): Boolean {
 
 /** The shim goes first into <head> (or the start of the document), ahead of the page's own scripts. */
 internal fun injectHbbtvShim(html: String, shim: String): String {
-    val tag = "<script type=\"text/javascript\">$shim</script>"
+    // HbbTV pages assume a 1280 × 720 screen; pages with their own viewport keep it.
+    val viewport = if (Regex("<meta[^>]+name=[\"']?viewport", RegexOption.IGNORE_CASE).containsMatchIn(html)) ""
+        else "<meta name=\"viewport\" content=\"width=1280, user-scalable=no\">"
+    val tag = "$viewport<script type=\"text/javascript\">$shim</script>"
     val head = Regex("<head(\\s[^>]*)?>", RegexOption.IGNORE_CASE).find(html)
     return if (head != null) html.substring(0, head.range.last + 1) + tag + html.substring(head.range.last + 1)
     else tag + html
@@ -263,7 +278,14 @@ var app={privateData:{keyset:keyset,currentChannel:channel,getFreeMem:function()
 destroyApplication:function(){AmbientHbbtv.close();},createApplication:function(u){location.href=u;},activate:function(){},deactivate:function(){}};
 var P=HTMLObjectElement.prototype;P.getOwnerApplication=function(){return app;};
 function bc(o){return /video\/broadcast/i.test((o&&o.type)||'');}
-P.bindToCurrentChannel=function(){if(bc(this))AmbientHbbtv.broadcast(true);return channel;};P.setFullScreen=function(){};
+var fullScreen=false,lastWindow='';
+function videoWindow(){var o=null,l=document.getElementsByTagName('object');for(var i=0;i<l.length;i++){if(bc(l[i])){o=l[i];break;}}
+var w='full';if(o&&!fullScreen){var st=window.getComputedStyle(o),r=o.getBoundingClientRect(),W=window.innerWidth,H=window.innerHeight;
+if(st.display!=='none'&&st.visibility!=='hidden'&&r.width>0&&r.height>0&&W>0&&H>0)w=[r.left/W,r.top/H,r.width/W,r.height/H].map(function(v){return v.toFixed(4);}).join(',');}
+if(w!==lastWindow){lastWindow=w;AmbientHbbtv.videoWindow(w);}}
+setInterval(videoWindow,400);
+P.bindToCurrentChannel=function(){if(bc(this)){AmbientHbbtv.broadcast(true);setTimeout(videoWindow,0);}return channel;};
+P.setFullScreen=function(f){if(bc(this)){fullScreen=!!f;videoWindow();}};
 P.setChannel=function(c){if(bc(this))AmbientHbbtv.broadcast(c!==null&&c!==undefined);};P.prevChannel=function(){};
 P.nextChannel=function(){};P.stop=function(){if(bc(this))AmbientHbbtv.broadcast(false);};
 P.release=function(){if(bc(this))AmbientHbbtv.broadcast(false);};
