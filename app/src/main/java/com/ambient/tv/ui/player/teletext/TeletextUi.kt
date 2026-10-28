@@ -24,7 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
-import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.ConnectedTv
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -186,7 +186,7 @@ fun TeletextPanelEntries() {
     val navigation = LocalPlayerPanelNavigation.current
     status.hbbtv?.let { app ->
         PlayerPanelEntry(
-            icon = Icons.Filled.RadioButtonChecked,
+            icon = Icons.Filled.ConnectedTv,
             title = stringResource(R.string.player_hbbtv),
             value = app.name ?: android.net.Uri.parse(app.url).host.orEmpty(),
             onClick = { navigation?.close(); HbbtvUi.request(context, app) },
@@ -244,7 +244,7 @@ fun TeletextOsdButtons() {
     val context = LocalContext.current
     val status by LiveTeletext.status.collectAsState()
     status.hbbtv?.let { app ->
-        PlayerIconButton(Icons.Filled.RadioButtonChecked, stringResource(R.string.player_hbbtv),
+        PlayerIconButton(Icons.Filled.ConnectedTv, stringResource(R.string.player_hbbtv),
             { HbbtvUi.request(context, app) }, osd = OsdButton.HBBTV)
     }
     // Only for streams with teletext; elsewhere the buttons are not offered at all.
