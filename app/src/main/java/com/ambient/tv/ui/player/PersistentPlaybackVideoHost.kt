@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -99,11 +100,21 @@ fun Media3VideoSurface(
     val hdrHeadroom = videoSurfaceHdrHeadroom()
     val context = androidx.compose.ui.platform.LocalContext.current
     val processing = remember(player) { Media3ImageProcessing.get(context, player) }
-    // Like MPV/VLC GPU output: with the effect chain on, render at the physical HDMI mode so a
-    // 1080p source behind a 1080p TV desktop on a 4K panel is upscaled by the chosen scaler.
-    val renderAtPanel = processing.gpuEffectsSupported && processing.sdrEffectsAllowed && processing.options.enabled &&
-        gpuRenderAtPanelResolution(videoImagePreferences(context).gpuRenderResolutionKey, gpuOutput = true,
-            lowEndDevice = performanceProfile(context).lowEndDevice, userImageProcessing = true)
+    val performance = com.ambient.tv.ui.performance.LocalPerformanceProfile.current
+    LaunchedEffect(player, performance.gateExpensiveVideoVisuals) {
+        processing.updatePerformancePolicy(performance.gateExpensiveVideoVisuals)
+    }
+    // The selectable upscalers use the intended viewport even before processing is enabled.
+    // The GPU surface itself is resized only on an eligible, enabled processing path.
+    val resolutionPolicy = media3SurfaceResolutionPolicy(
+        resolutionKey = videoImagePreferences(context).gpuRenderResolutionKey,
+        lowEndDevice = performance.lowEndDevice,
+        gpuEffectsSupported = processing.gpuEffectsSupported,
+        sdrEffectsAllowed = processing.sdrEffectsAllowed,
+        processingEnabled = processing.options.enabled,
+        reducedEffects = performance.gateExpensiveVideoVisuals,
+        effectsFailed = processing.effectsFailed,
+    )
     AndroidView(
         factory = { context ->
             FormatPlayerView(context).apply {
@@ -126,7 +137,7 @@ fun Media3VideoSurface(
                 AmbientVideoBackdrop.attach(it)
                 Media3PlaybackHandle.forPlayer(player)?.attachVideoView(it)
                 it.applyUiHdrHeadroom(hdrHeadroom)
-                it.renderAtPanelResolution(renderAtPanel)
+                it.bindMedia3RenderResolution(processing, resolutionPolicy)
             }
             val effective = VideoPresentation(resizeMode, aspectRatio, zoom).normalized()
             view.forcedAspectRatio = effective.aspectRatio
@@ -149,6 +160,7 @@ fun Media3VideoSurface(
             }
         },
         onRelease = {
+            (it.videoSurfaceView as? android.view.SurfaceView)?.releaseMedia3RenderResolution()
             AmbientVideoBackdrop.detach(it.videoSurfaceView as? android.view.SurfaceView)
             Media3PlaybackHandle.forPlayer(player)?.detachVideoView(it.videoSurfaceView as? android.view.SurfaceView)
             it.player = null
@@ -157,38 +169,28 @@ fun Media3VideoSurface(
     )
 }
 
-/**
- * Fixes the SurfaceView buffer at the physical display mode while [enabled] (re-applied on
- * layout changes); otherwise the buffer follows the layout again.
- */
-private fun android.view.SurfaceView.renderAtPanelResolution(enabled: Boolean) {
-    val listener = getTag(R.id.media3_panel_render_listener) as? android.view.View.OnLayoutChangeListener
-    if (!enabled) {
-        if (listener != null) {
-            removeOnLayoutChangeListener(listener)
-            setTag(R.id.media3_panel_render_listener, null)
-            holder.setSizeFromLayout()
-        }
-        return
+private fun android.view.SurfaceView.bindMedia3RenderResolution(
+    processing: Media3ImageProcessing,
+    policy: Media3SurfaceResolutionPolicy,
+) {
+    val existing = getTag(R.id.media3_panel_render_listener) as? Media3SurfaceResolutionController
+    val controller = if (existing != null && existing.owner === processing) existing else {
+        releaseMedia3RenderResolution()
+        Media3SurfaceResolutionController(
+            view = this,
+            owner = processing,
+            onTargetChanged = { target -> processing.updateRenderTarget(this, target) },
+            onAttached = { processing.attachRenderTarget(this) },
+            onDetached = { processing.detachRenderTarget(this) },
+        ).also { setTag(R.id.media3_panel_render_listener, it) }
     }
-    fun apply() {
-        val output = display ?: return
-        val logical = android.graphics.Point().also(output::getRealSize)
-        val mode = output.mode
-        val rotated = output.rotation == android.view.Surface.ROTATION_90 || output.rotation == android.view.Surface.ROTATION_270
-        val target = physicalVideoRenderSize(width, height, logical.x, logical.y,
-            if (rotated) mode.physicalHeight else mode.physicalWidth,
-            if (rotated) mode.physicalWidth else mode.physicalHeight) ?: return
-        holder.setFixedSize(target.first, target.second)
-    }
-    if (listener == null) {
-        val added = android.view.View.OnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
-            if (r - l != or - ol || b - t != ob - ot) apply()
-        }
-        addOnLayoutChangeListener(added)
-        setTag(R.id.media3_panel_render_listener, added)
-    }
-    apply()
+    controller.update(policy)
+}
+
+private fun android.view.SurfaceView.releaseMedia3RenderResolution() {
+    val controller = getTag(R.id.media3_panel_render_listener) as? Media3SurfaceResolutionController ?: return
+    controller.release()
+    setTag(R.id.media3_panel_render_listener, null)
 }
 
 /** Native video planes must not become Compose/Android focus targets over the OSD. */

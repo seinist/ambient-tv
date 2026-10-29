@@ -55,6 +55,8 @@ class Media3PlaybackHandle(
 
     private var surfaceView: SurfaceView? = null
     private var released = false
+    override val usesRendererScaling: Boolean
+        get() = !released && Media3ImageProcessing.rendererScalingRequested(player)
     private var outputError: String? = null
     private val hdrOutput = SdrHdrSurfaceOutput(
         disconnect = { if (!released) player.clearVideoSurface() },
