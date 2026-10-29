@@ -1,23 +1,25 @@
-RadioBrowser system logo
+RadioBrowser logo assets
 ========================
 
-The RadioBrowser system mark in this repository
-(app/src/main/res/drawable/system_radio.xml and
-app/src/main/res/drawable/logo_radio_browser.xml)
-is a vectorized adaptation of the official RadioBrowser logo.
+Ambient TV uses the RadioBrowser logo for the built-in Radio system.
 
-Upstream source:
+Files:
+- app/src/main/res/drawable-nodpi/logo_radio_browser_official.png
+- app/src/main/res/drawable/system_radio.xml
+
+The colored PNG is the RadioBrowser globe-with-headphones logo. The copy used here
+comes from the GPLv3 Kodi RadioBrowser client repository:
+https://github.com/segler-alex/kodi-radio-browser/blob/master/icon.png
+
+RadioBrowser's logo is also documented by Wikimedia Commons as authored by
+RadioBrowser, sourced from the RadioBrowser web frontend, and licensed under
+GNU GPL version 3 or later:
+https://commons.wikimedia.org/wiki/File:RadioBrowser_logo.png
 https://gitlab.com/radiobrowser/radiobrowser-web-angular/-/blob/main/src/favicon.ico
 
-Reference:
-https://commons.wikimedia.org/wiki/File:RadioBrowser_logo.png
+The monochrome Android vector is a simplified small-size adaptation of that same
+globe-with-headphones mark for Ambient TV menus, Home rows, badges and headings.
 
-Author: RadioBrowser
-
-The upstream logo is published under the GNU General Public License,
-version 3 or later. The vector adaptation is modified for Ambient TV
-(system-sized monochrome and colored Android drawable variants) and is
-distributed under the same license.
-
-A full copy of GPLv3 is already included in this repository in
-SYSTEM_LOGO_TVHEADEND_LICENSE.txt and third_party_licenses/image_shaders/GPL-3.0.txt.
+These logo assets are distributed under GNU GPL version 3 or later. A full copy of
+GPLv3 is already included in this repository in SYSTEM_LOGO_TVHEADEND_LICENSE.txt
+and third_party_licenses/image_shaders/GPL-3.0.txt.
