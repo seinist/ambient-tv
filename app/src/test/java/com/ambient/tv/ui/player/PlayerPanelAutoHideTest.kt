@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -65,6 +66,8 @@ class PlayerPanelAutoHideTest {
         var keys = 0
         var dragMoves = 0
         var clicks = 0
+        var visualPanelComposed = false
+        var panelInteractive = false
     }
 
     private fun mount(): Fixture {
@@ -83,6 +86,11 @@ class PlayerPanelAutoHideTest {
                         BasicText("Engine", Modifier.focusRequester(chrome.engineFocus).focusable())
                         PlayerOverlayVisibility(chrome.visible.value) { BasicText("OSD") }
                         PlayerPanelVisibility(navigation.panel) {
+                            DisposableEffect(Unit) {
+                                fixture.visualPanelComposed = true
+                                onDispose { fixture.visualPanelComposed = false }
+                            }
+                            SideEffect { fixture.panelInteractive = LocalPlayerPanelInteractive.current }
                             key(fixture.renderer) {
                                 Column {
                                     BasicText("Action ${fixture.statsTick}", Modifier.size(200.dp, 48.dp).testTag("action")
