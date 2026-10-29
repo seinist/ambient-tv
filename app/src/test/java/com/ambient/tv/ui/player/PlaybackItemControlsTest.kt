@@ -1,13 +1,20 @@
 package com.ambient.tv.ui.player
 
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import com.ambient.tv.companion.CompanionQueuePlayback
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import java.time.Duration
@@ -45,7 +52,10 @@ class PlaybackItemControlsTest {
     private class Fixture(metadata: PlaybackMetadata, val clock: Clock) {
         val metadata = mutableStateOf(metadata)
         val changing = mutableStateOf(false)
+        val previousAvailable = mutableStateOf(false)
+        val focus = FocusRequester()
         var controls: PlaybackItemControls? = null
+        var previousCalls = 0
         val advances = mutableListOf<NextUpCandidate>()
     }
 
@@ -79,8 +89,9 @@ class PlaybackItemControlsTest {
         metadata: PlaybackMetadata = metadata(),
         clock: Clock = Clock(),
         onTimelineSeek: ((Long) -> Unit)? = null,
+        hasPrevious: Boolean = false,
     ): Fixture {
-        val fixture = Fixture(metadata, clock)
+        val fixture = Fixture(metadata, clock).apply { previousAvailable.value = hasPrevious }
         rule.runOnUiThread {
             BackgroundPlaybackSession.acquire(rule.activity, metadata, "fixture", Any()) { clock }
         }
@@ -94,10 +105,11 @@ class PlaybackItemControlsTest {
                     onStopped = {},
                     onPlayNext = fixture.advances::add,
                     onTimelineSeek = onTimelineSeek,
+                    onPlayPrevious = if (fixture.previousAvailable.value) ({ fixture.previousCalls++ }) else null,
                 ) {
                     val controls = LocalPlaybackItemControls.current
                     SideEffect { fixture.controls = controls }
-                    Box(Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().focusRequester(fixture.focus).focusable())
                 }
             }
         }
@@ -133,7 +145,8 @@ class PlaybackItemControlsTest {
             BackgroundPlaybackSession.userPause()
             ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
             val seekVersion = BackgroundPlaybackSession.externalSeekVersion
-            requireNotNull(fixture.controls?.restart).invoke()
+            assertFalse(requireNotNull(fixture.controls).hasPreviousItem)
+            requireNotNull(fixture.controls?.previous).invoke()
             assertEquals(listOf(0L), fixture.clock.seeks)
             assertEquals(seekVersion + 1, BackgroundPlaybackSession.externalSeekVersion)
             BackgroundPlaybackSession.userPlay()
@@ -160,17 +173,54 @@ class PlaybackItemControlsTest {
         val fixture = mount(clock = Clock(seekable = false))
         rule.runOnIdle {
             assertNull(fixture.controls?.restart)
+            assertNull(fixture.controls?.previous)
             assertNotNull(fixture.controls?.next)
         }
     }
 
-    @Test fun changingItemDisablesBothActionsAndTheSessionTransitionRejectsCapturedCallbacks() {
+    @Test fun realPreviousDoesNotNeedASeekableRendererAndRunsOnlyOnce() {
+        val fixture = mount(clock = Clock(seekable = false), hasPrevious = true)
+        rule.runOnIdle {
+            val controls = requireNotNull(fixture.controls)
+            assertTrue(controls.hasPreviousItem)
+            assertNull(controls.restart)
+            val previous = requireNotNull(controls.previous)
+            previous()
+            previous()
+            assertEquals(1, fixture.previousCalls)
+            assertTrue(fixture.clock.seeks.isEmpty())
+        }
+        rule.runOnIdle {
+            assertTrue(requireNotNull(fixture.controls).hasPreviousItem)
+            assertNull(fixture.controls?.previous)
+        }
+    }
+
+    @Test fun mediaPreviousUsesHistoryAndFallsBackToStartOverWhenNoneIsAvailable() {
         val fixture = mount()
+        rule.runOnIdle { fixture.focus.requestFocus() }
+        rule.onRoot().performKeyInput { pressKey(Key.MediaPrevious) }
+        rule.runOnIdle {
+            assertEquals(listOf(0L), fixture.clock.seeks)
+            assertEquals(0, fixture.previousCalls)
+            fixture.previousAvailable.value = true
+        }
+        rule.onRoot().performKeyInput { pressKey(Key.MediaPrevious) }
+        rule.runOnIdle {
+            assertEquals(listOf(0L), fixture.clock.seeks)
+            assertEquals(1, fixture.previousCalls)
+        }
+    }
+
+    @Test fun changingItemDisablesBothActionsAndTheSessionTransitionRejectsCapturedCallbacks() {
+        val fixture = mount(hasPrevious = true)
         rule.runOnIdle { fixture.changing.value = true }
         rule.runOnIdle {
             assertNotNull(fixture.controls)
             assertNull(fixture.controls?.restart)
             assertNull(fixture.controls?.next)
+            assertTrue(requireNotNull(fixture.controls).hasPreviousItem)
+            assertNull(fixture.controls?.previous)
             fixture.changing.value = false
         }
         rule.runOnIdle {
@@ -181,17 +231,20 @@ class PlaybackItemControlsTest {
             // The old OSD can still be mounted until Compose processes this session update.
             beforeTransition.restart!!.invoke()
             beforeTransition.next!!.invoke()
+            beforeTransition.previous!!.invoke()
             assertTrue(fixture.clock.seeks.isEmpty())
             assertTrue(fixture.advances.isEmpty())
+            assertEquals(0, fixture.previousCalls)
         }
         rule.runOnIdle {
             assertNull(fixture.controls?.restart)
             assertNull(fixture.controls?.next)
+            assertNull(fixture.controls?.previous)
         }
     }
 
     @Test fun outgoingRendererAndOutgoingRouteCannotControlTheReplacementSession() {
-        val fixture = mount()
+        val fixture = mount(hasPrevious = true)
         val replacement = Clock()
         val otherItem = Clock()
         rule.runOnIdle {
@@ -201,8 +254,10 @@ class PlaybackItemControlsTest {
             assertEquals(listOf(60_000L), replacement.seeks)
             oldRenderer.restart!!.invoke()
             oldRenderer.next!!.invoke()
+            oldRenderer.previous!!.invoke()
             assertEquals(listOf(60_000L), replacement.seeks)
             assertTrue(fixture.advances.isEmpty())
+            assertEquals(0, fixture.previousCalls)
         }
         rule.runOnIdle {
             val oldRoute = requireNotNull(fixture.controls)
@@ -210,26 +265,31 @@ class PlaybackItemControlsTest {
                 metadata().copy(route = "youtube/other", mediaId = "other"), "replacement", Any()) { otherItem }
             oldRoute.restart!!.invoke()
             oldRoute.next!!.invoke()
+            oldRoute.previous!!.invoke()
             assertTrue(fixture.clock.seeks.isEmpty())
             assertEquals(listOf(60_000L), replacement.seeks)
             assertTrue(otherItem.seeks.isEmpty())
             assertTrue(fixture.advances.isEmpty())
+            assertEquals(0, fixture.previousCalls)
         }
     }
 
     @Test fun newlyPendingCompanionQueueBlocksAlreadyPublishedActionsWithoutConsumingNext() {
-        val fixture = mount()
+        val fixture = mount(hasPrevious = true)
         rule.runOnIdle {
             val published = requireNotNull(fixture.controls)
             CompanionQueuePlayback.pending = true
             published.restart!!.invoke()
             published.next!!.invoke()
+            published.previous!!.invoke()
             assertTrue(fixture.clock.seeks.isEmpty())
             assertTrue(fixture.advances.isEmpty())
+            assertEquals(0, fixture.previousCalls)
         }
         rule.runOnIdle {
             assertNull(fixture.controls?.restart)
             assertNull(fixture.controls?.next)
+            assertNull(fixture.controls?.previous)
             CompanionQueuePlayback.pending = false
         }
         rule.runOnIdle {

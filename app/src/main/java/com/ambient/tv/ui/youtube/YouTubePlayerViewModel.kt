@@ -28,6 +28,8 @@ data class YouTubePlayerState(
     val successorsLoading: Boolean = false,
     /** Channel of the playing video for the OSD's channel and subscribe buttons. */
     val channel: com.ambient.tv.youtube.YouTubeChannelInfo? = null,
+    /** Previous video in this player destination's navigation, not the account's watch history. */
+    val previousVideoId: String? = null,
 )
 
 @HiltViewModel
@@ -41,6 +43,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private var foreground = true
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
     private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
+    private val playbackHistory = YouTubePlaybackHistory()
 
     init {
         load()
@@ -54,7 +57,20 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private var transitionToken: Long? = null
 
     fun playNext(nextId: String) {
-        if (isTrailer || _uiState.value.loading || nextId == videoId || _uiState.value.nextVideo?.videoId != nextId) return
+        val state = _uiState.value
+        if (isTrailer || state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
+            state.nextVideo?.videoId != nextId || !playbackHistory.requestNext(videoId, nextId)) return
+        navigateTo(nextId)
+    }
+
+    fun playPrevious(previousId: String) {
+        val state = _uiState.value
+        if (isTrailer || state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
+            state.previousVideoId != previousId || !playbackHistory.requestPrevious(videoId, previousId)) return
+        navigateTo(previousId)
+    }
+
+    private fun navigateTo(nextId: String) {
         savedResumeRequest.skip()
         transitionToken = BackgroundPlaybackSession.beginItemTransition()
         videoId = nextId
@@ -135,17 +151,27 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 }
             }
             val playback = checkNotNull(ready)
+            if (videoId != this@YouTubePlayerViewModel.videoId) return@launch
             if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return@launch
+            val revisitingVideo = playbackHistory.startsAtBeginning(videoId)
+            if (!isTrailer && !playbackHistory.loaded(YouTubeItem(
+                videoId = playback.videoId, title = playback.title, author = playback.author,
+                imageUrl = playback.imageUrl, backgroundUrl = playback.backgroundUrl,
+                durationMs = playback.durationMs, isLive = playback.isLive,
+            ))) return@launch
             transitionToken = null
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
                 eligible = !isTrailer && chapterStart == null && !reusedSession && !playback.isLive)
             _uiState.value = YouTubePlayerState(false, when {
                 isTrailer -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
+                revisitingVideo -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
                 chapterStart != null -> playback.copy(resumeMs = chapterStart, resumeResolved = true, resumeRewindSeconds = 0)
                 reusedSession -> playback.copy(resumeResolved = true, resumeRewindSeconds = 0)
                 else -> com.ambient.tv.youtube.prepareYouTubeSavedResume(playback, rewindSeconds)
             },
+                nextVideo = playbackHistory.nextVideo,
+                previousVideoId = playbackHistory.previousVideoId,
                 successorsLoading = !isTrailer)
             if (isTrailer) return@launch
             // SponsorBlock is optional; a slow/unavailable service must never hold the decoder.
@@ -171,7 +197,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     playback
                 }
                 if (current.playback?.videoId == videoId) current.copy(
-                    playback = enriched, nextVideo = nextVideo, successorsLoading = false,
+                    playback = enriched, nextVideo = playbackHistory.nextVideo ?: nextVideo, successorsLoading = false,
                     channel = channel?.let { if (signedIn) it else it.copy(subscribed = null) },
                 ) else current
             }

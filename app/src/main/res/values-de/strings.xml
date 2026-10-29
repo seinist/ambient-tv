@@ -1087,6 +1087,7 @@
     <string name="settings_next_up_overlay_hint">Vorschau vor dem Ende einblenden.</string>
     <string name="settings_next_up_advances">%1$d Wechsel</string>
     <string name="player_next_item">Nächstes Element</string>
+    <string name="player_previous_item">Vorheriges Video</string>
     <string name="settings_assets_title">Mediengrafiken</string>
     <string name="settings_high_quality_assets">Hochauflösende Bilder</string>
     <string name="settings_high_quality_assets_hint">Lädt Cover und Hintergründe schärfer und verbraucht mehr Netz und Speicher.</string>

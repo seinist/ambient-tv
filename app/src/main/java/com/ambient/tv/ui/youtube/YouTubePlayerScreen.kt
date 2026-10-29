@@ -391,6 +391,7 @@ fun YouTubePlayerScreen(
                 ),
                 onStopped = onBack,
                 onPlayNext = { candidate -> advance(candidate.mediaId) },
+                onPlayPrevious = state.previousVideoId?.let { previousId -> { viewModel.playPrevious(previousId) } },
                 onAutoplayChanged = { enabled -> prefs.youtubeAutoplayNextEnabled = enabled },
             ) {
             when (PlaybackBackendResolver.resolve(rendererKey)) {
@@ -923,7 +924,7 @@ private fun YouTubeMedia3Playback(
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.restart?.invoke()
+                    if (itemControls != null) itemControls.previous?.invoke()
                     else if (!playback.isLive) seekRelative(-position)
                 }
                 override fun next() { itemControls?.next?.invoke() }
@@ -1255,7 +1256,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.restart?.invoke()
+                    if (itemControls != null) itemControls.previous?.invoke()
                     else if (!playback.isLive) seekRelative(-displayedPosition)
                 }
                 override fun next() { itemControls?.next?.invoke() }
@@ -1540,7 +1541,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.restart?.invoke()
+                    if (itemControls != null) itemControls.previous?.invoke()
                     else if (!playback.isLive) seekRelative(-displayedPosition)
                 }
                 override fun next() { itemControls?.next?.invoke() }
@@ -1733,8 +1734,9 @@ internal data class YouTubeOsdModel(
                     player = com.ambient.tv.ui.player.OsdPlayer.YOUTUBE,
                     leftContent = {
                         itemControls?.let { actions ->
-                            PlayerIconButton(Icons.Filled.SkipPrevious, stringResource(R.string.detail_restart),
-                                { actions.restart?.invoke() }, enabled = actions.restart != null,
+                            PlayerIconButton(Icons.Filled.SkipPrevious,
+                                stringResource(if (actions.hasPreviousItem) R.string.player_previous_item else R.string.detail_restart),
+                                { actions.previous?.invoke() }, enabled = actions.previous != null,
                                 osd = com.ambient.tv.ui.player.OsdButton.NEXT)
                         }
                         val seekJumpSeconds = (BackgroundPlaybackSession.seekJumpMs(seekJumpMs) / 1000L).toInt().coerceAtLeast(1)

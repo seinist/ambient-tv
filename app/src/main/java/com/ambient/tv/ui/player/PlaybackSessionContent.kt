@@ -28,6 +28,9 @@ import kotlin.math.ceil
 internal data class PlaybackItemControls(
     val restart: (() -> Unit)? = null,
     val next: (() -> Unit)? = null,
+    /** Already resolves to start-over when the current player has no previous item. */
+    val previous: (() -> Unit)? = restart,
+    val hasPreviousItem: Boolean = false,
 )
 
 internal val LocalPlaybackItemControls = compositionLocalOf<PlaybackItemControls?> { null }
@@ -60,6 +63,7 @@ fun PlaybackSessionContent(
     onTimelineSeek: ((Long) -> Unit)? = null,
     /** A failed new engine must be reported by its screen, not mistaken for stopping the old one. */
     acquisitionKey: Any = metadata.route,
+    onPlayPrevious: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -100,6 +104,7 @@ fun PlaybackSessionContent(
     var acquired by remember(metadata.route, acquisitionKey) { mutableStateOf(false) }
     var dismissedKey by remember(metadata.route) { mutableStateOf<String?>(null) }
     var handledKey by remember(metadata.route) { mutableStateOf<String?>(null) }
+    var previousHandled by remember(metadata.route, snapshot.generation) { mutableStateOf(false) }
     // A leaving navigation destination must not render a handle replaced by the next screen.
     if (acquired && snapshot.active && snapshot.metadata?.route != metadata.route) return
     if (acquired && !snapshot.active) {
@@ -193,10 +198,27 @@ fun PlaybackSessionContent(
         chrome?.osd?.reveal()
     }
 
+    fun playPrevious() {
+        val previous = onPlayPrevious
+        if (previous == null) {
+            restart()
+            return
+        }
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (metadata.isLive || changingItem || current.replacingSource || com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+            current.metadata?.route != metadata.route || current.generation != snapshot.generation || previousHandled) return
+        previousHandled = true
+        BackgroundPlaybackSession.registerUserInteraction()
+        previous()
+    }
+
     val itemActionsReady = ownsSnapshot && !changingItem && !queuePending
+    val restartAction = if (itemActionsReady && (onTimelineSeek != null || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true)) ::restart else null
     val itemControls = if (metadata.hasVideo && !metadata.isLive && !metadata.isTrailer) PlaybackItemControls(
-        restart = if (itemActionsReady && (onTimelineSeek != null || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true)) ::restart else null,
+        restart = restartAction,
         next = if (itemActionsReady && candidate != null) ({ playNext(automatic = false) }) else null,
+        previous = if (onPlayPrevious == null) restartAction else if (itemActionsReady && !previousHandled) ::playPrevious else null,
+        hasPreviousItem = onPlayPrevious != null,
     ) else null
 
     val creditsDue = earlyCreditsEnabled && finalCredits != null && creditsRemainingMs == 0L && snapshot.status.playing
@@ -231,7 +253,7 @@ fun PlaybackSessionContent(
                     true
                 } else false
                 Key.MediaPrevious -> {
-                    restart()
+                    playPrevious()
                     true
                 }
                 else -> false

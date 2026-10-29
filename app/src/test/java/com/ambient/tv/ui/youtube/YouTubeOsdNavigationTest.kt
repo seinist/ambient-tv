@@ -52,6 +52,7 @@ class YouTubeOsdNavigationTest {
     private class Fixture {
         val chrome = PlayerChromeState().apply { osd.expand() }
         var restarts = 0
+        var previousVideos = 0
         var advances = 0
         val model = mutableStateOf(YouTubeOsdModel(
             playback = YouTubePlayback(videoId = "fixture", title = "Video", uri = "fixture://video"),
@@ -108,6 +109,7 @@ class YouTubeOsdNavigationTest {
     }
 
     private fun restartButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.detail_restart))
+    private fun previousButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_previous_item))
     private fun nextButton() = rule.onNodeWithContentDescription(rule.activity.getString(R.string.player_next_item))
 
     @Test fun navigationButtonsStayVisibleAndCallOnlyAvailableActionsForEveryRendererLabel() {
@@ -157,6 +159,41 @@ class YouTubeOsdNavigationTest {
         }
         restartButton().assertIsDisplayed()
         nextButton().assertIsDisplayed()
+    }
+
+    @Test fun historyPreviousUsesItsOwnLabelAndNeverFallsBackToRestartWhileBlocked() {
+        val fixture = mount()
+        for ((index, backend) in listOf("Media3", "VLC", "MPV").withIndex()) {
+            rule.runOnIdle {
+                fixture.model.value = fixture.model.value.copy(backend = backend, itemControls = PlaybackItemControls(
+                    restart = { fixture.restarts++ },
+                    previous = { fixture.previousVideos++ },
+                    hasPreviousItem = true,
+                ))
+            }
+            restartButton().assertDoesNotExist()
+            previousButton().assertIsDisplayed().performClick()
+            rule.runOnIdle {
+                assertEquals(index + 1, fixture.previousVideos)
+                assertEquals(0, fixture.restarts)
+            }
+        }
+
+        rule.runOnIdle {
+            fixture.model.value = fixture.model.value.copy(itemControls = PlaybackItemControls(
+                restart = { fixture.restarts++ }, previous = null, hasPreviousItem = true,
+            ))
+        }
+        previousButton().assertIsDisplayed().performClick()
+        restartButton().assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals(3, fixture.previousVideos)
+            assertEquals(0, fixture.restarts)
+            fixture.model.value = fixture.model.value.copy(itemControls = PlaybackItemControls(restart = { fixture.restarts++ }))
+        }
+        previousButton().assertDoesNotExist()
+        restartButton().assertIsDisplayed().performClick()
+        rule.runOnIdle { assertEquals(1, fixture.restarts) }
     }
 
     @Test fun contentWithoutVideoItemControlsDoesNotAdvertiseNavigationButtons() {
