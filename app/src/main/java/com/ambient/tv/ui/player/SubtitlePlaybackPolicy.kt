@@ -85,7 +85,15 @@ internal class SubtitleSessionPolicy {
         if (manual) { manualTrack = previous.subtitleCandidates(source).firstOrNull { it.selected }; restoringManual = true }
         appliedSignature = null
     }
-    fun apply(handle: PlaybackHandle, source: List<MediaTrack>, preferences: SubtitlePreferences, audioFallback: String, systemLanguage: String, allowExternal: Boolean) {
+    fun apply(
+        handle: PlaybackHandle,
+        source: List<MediaTrack>,
+        preferences: SubtitlePreferences,
+        audioFallback: String,
+        systemLanguage: String,
+        allowExternal: Boolean,
+        nativeSubtitlesSuppressed: Boolean = false,
+    ) {
         if (defaults != null && defaults != preferences) { manual = false; restoringManual = false; appliedSignature = null }
         defaults = preferences
         val selectedAudio = handle.selectedAudioLanguage()
@@ -98,6 +106,12 @@ internal class SubtitleSessionPolicy {
                 appliedSignature = null
             }
             lastKnownAudioLanguage = knownAudio
+        }
+        if (nativeSubtitlesSuppressed) {
+            // Keep preference/audio changes current without selecting a track over teletext.
+            handle.applySubtitle(null)
+            if (allowExternal) loadAllExternal(handle, source)
+            return
         }
         // Also after a manual choice: files still loading must keep appearing in the panel.
         if (manual && !restoringManual) { if (allowExternal) loadAllExternal(handle, source); return }

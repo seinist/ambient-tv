@@ -51,8 +51,13 @@ import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
 import com.ambient.tv.ui.player.offeredButtons
+import com.ambient.tv.ui.player.playbackSubtitleSelection
 import com.ambient.tv.ui.player.playerTechBadgesVisible
 import com.ambient.tv.ui.player.setPlayerTechBadgesVisible
+import com.ambient.tv.ui.player.teletextSubtitleChoice
+import com.ambient.tv.ui.player.teletext.ProbeTeletextSubtitlePages
+import com.ambient.tv.ui.player.teletext.TeletextUi
+import com.ambient.tv.ui.player.teletext.teletextSubtitleOptions
 import com.ambient.tv.ui.player.videoImagePreferences
 
 
@@ -116,6 +121,16 @@ fun UnifiedBackendPlayerPanel(
             id to com.ambient.tv.ui.player.expandAudioLanguageCodes(label, displayLocale)
         }
     }
+    val teletextOptions = if (isLive) teletextSubtitleOptions() else emptyList()
+    val subtitleSelection = playbackSubtitleSelection(
+        nativeOptions = subtitleOptions,
+        selectedNative = selectedSubtitle,
+        teletextOptions = teletextOptions,
+        teletextChoice = TeletextUi.subtitleChoice,
+        offLabel = stringResource(R.string.player_subtitles_off),
+    )
+    val subtitleSummary = subtitleSelection.options.first { it.first == subtitleSelection.selectedKey }.second
+    val teletextSelected = teletextSubtitleChoice(subtitleSelection.selectedKey) != null
     val techBadgesVisible = playerTechBadgesVisible()
     val nerdStatsVisible = audioSession?.performanceHint == true
     val fpsOverlayVisible = audioSession?.showFpsOverlay == true
@@ -172,11 +187,11 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.AUDIO) },
                 )
             }
-            if (showSubtitles) {
+            if (showSubtitles || teletextOptions.isNotEmpty()) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Subtitles,
                     title = stringResource(R.string.player_subtitles),
-                    value = subtitleOptions.firstOrNull { it.first == selectedSubtitle }?.second ?: stringResource(R.string.player_subtitles_off),
+                    value = subtitleSummary,
                     onClick = { onPanelChange(UnifiedPlayerPanel.SUBTITLES) },
                 )
             }
@@ -445,12 +460,22 @@ fun UnifiedBackendPlayerPanel(
             modifier = modifier,
             onBack = back,
         ) {
+            if (isLive) ProbeTeletextSubtitlePages()
             PlayerDropUpSelector(
                 label = stringResource(R.string.player_subtitles),
-                value = subtitleOptions.firstOrNull { it.first == selectedSubtitle }?.second ?: stringResource(R.string.player_subtitles_off),
-                options = subtitleOptions,
-                selectedKey = selectedSubtitle,
-                onSelected = { com.ambient.tv.ui.player.BackgroundPlaybackSession.manualSubtitleSelection(); onSubtitleSelected(it); back() },
+                value = subtitleSummary,
+                options = subtitleSelection.options,
+                selectedKey = subtitleSelection.selectedKey,
+                onSelected = { key ->
+                    val teletextChoice = teletextSubtitleChoice(key)
+                    if (teletextChoice != null) {
+                        TeletextUi.setSubtitleChoice(context, teletextChoice)
+                    } else {
+                        com.ambient.tv.ui.player.BackgroundPlaybackSession.manualSubtitleSelection()
+                        onSubtitleSelected(key)
+                    }
+                    back()
+                },
             )
             // OpenSubtitles.com, when a key is set and the title can be searched (movies/episodes, direct play).
             val searchInfo = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.subtitleSearch
@@ -467,8 +492,9 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { if (!syncing) com.ambient.tv.ui.player.PlayerToolsWork.scope.launch { com.ambient.tv.ui.player.SubtitleAutoSync.run() } },
                 )
             }
-            // MPV and VLC only; Media3 has no subtitle timing control.
-            (com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.SubtitleDelayTarget)?.let { target ->
+            // MPV and VLC timing applies to native tracks, not the app's teletext overlay.
+            (com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.SubtitleDelayTarget)
+                ?.takeUnless { teletextSelected }?.let { target ->
                 PlayerDropUpSelector(
                     label = stringResource(R.string.subtitle_delay),
                     value = "${target.subtitleDelayMs} ms",

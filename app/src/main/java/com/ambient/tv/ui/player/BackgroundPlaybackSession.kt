@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.core.content.ContextCompat
+import com.ambient.tv.ui.player.teletext.TeletextUi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -205,7 +206,19 @@ object BackgroundPlaybackSession {
     private var subtitlePreferences: com.ambient.tv.data.local.AppPreferences? = null
     private var lastSubtitleCheck = 0L
     private var lastTitleSettingsSave = 0L
-    fun manualSubtitleSelection() { checkThread(); subtitlePolicy.manualSelection() }
+    fun manualSubtitleSelection() {
+        checkThread()
+        subtitlePolicy.manualSelection()
+        if (TeletextUi.hostActive && snapshot.value.metadata?.isLive == true) {
+            appContext?.let { TeletextUi.clearSubtitleChoice(it) }
+        }
+    }
+
+    fun manualTeletextSubtitleSelection() {
+        checkThread()
+        subtitlePolicy.manualSelection()
+        handle?.applySubtitle(null)
+    }
     private var identity: Any? = null
     private var videoSettingsOverride by mutableStateOf<PlayerVideoSettings?>(null)
 
@@ -547,11 +560,15 @@ object BackgroundPlaybackSession {
         val now = SystemClock.elapsedRealtime()
         if (now - lastSubtitleCheck >= 1_000L) {
             lastSubtitleCheck = now
-            subtitlePreferences?.let { prefs ->
-                subtitlePolicy.apply(player, snapshot.value.metadata?.subtitleTracks.orEmpty(), prefs.subtitlePreferences,
+            val metadata = snapshot.value.metadata
+            val nativeSubtitlesSuppressed = metadata?.isLive == true && TeletextUi.subtitlesActive
+            val prefs = subtitlePreferences
+            if (prefs != null) {
+                subtitlePolicy.apply(player, metadata?.subtitleTracks.orEmpty(), prefs.subtitlePreferences,
                     prefs.playbackAudioLanguage,
-                    com.ambient.tv.data.local.LanguagePreferences.systemLanguageTag(), snapshot.value.metadata?.externalSubtitlesAllowed == true)
-            }
+                    com.ambient.tv.data.local.LanguagePreferences.systemLanguageTag(), metadata?.externalSubtitlesAllowed == true,
+                    nativeSubtitlesSuppressed = nativeSubtitlesSuppressed)
+            } else if (nativeSubtitlesSuppressed) player.applySubtitle(null)
         }
         val status = player.status()
         // Persist edits while playing/paused, not only on clean Stop. MPV exposes cached state here.

@@ -72,11 +72,12 @@ import com.ambient.tv.livetv.teletext.teletextStepPage
 import com.ambient.tv.livetv.teletext.text
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
-import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.PlayerPanelEntry
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.OsdButton
+import com.ambient.tv.ui.player.applySubtitle
 import com.ambient.tv.ui.player.videoImagePreferences
 import kotlinx.coroutines.delay
 
@@ -86,11 +87,14 @@ object TeletextUi {
     var hostActive by mutableStateOf(false)
         internal set
     var viewerOpen by mutableStateOf(false)
-    /** The settings panel lists teletext subtitle pages: decode meanwhile to find them. */
+    /** The subtitle panel lists teletext pages: decode meanwhile to find them. */
     internal var probing by mutableStateOf(false)
     /** "off", "auto" or a decimal page such as "150". */
     var subtitleChoice by mutableStateOf("off")
         private set
+    /** A stored choice only replaces native subtitles on a live channel that carries teletext. */
+    internal val subtitlesActive: Boolean
+        get() = hostActive && subtitleChoice != "off" && LiveTeletext.status.value.hasTeletext
     private var lastOnChoice = "auto"
 
     internal fun load(context: Context) {
@@ -99,6 +103,16 @@ object TeletextUi {
     }
 
     fun setSubtitleChoice(context: Context, choice: String) {
+        BackgroundPlaybackSession.manualTeletextSubtitleSelection()
+        updateSubtitleChoice(context, choice)
+    }
+
+    /** Native subtitle selection clears the overlay without selecting another native track. */
+    internal fun clearSubtitleChoice(context: Context) {
+        if (subtitleChoice != "off") updateSubtitleChoice(context, "off")
+    }
+
+    private fun updateSubtitleChoice(context: Context, choice: String) {
         subtitleChoice = choice
         if (choice != "off") lastOnChoice = choice
         videoImagePreferences(context).teletextSubtitleChoice = choice
@@ -139,6 +153,18 @@ fun LiveTeletextHost(url: String, headers: Map<String, String>, ownConnectionAll
     LaunchedEffect(TeletextUi.subtitleChoice) {
         LiveTeletext.setSubtitleChoice(TeletextUi.subtitleChoice, subtitleLanguages(context))
     }
+    val status by LiveTeletext.status.collectAsState()
+    val handle = BackgroundPlaybackSession.activeHandle()
+    val subtitlesActive = status.hasTeletext && TeletextUi.subtitleChoice != "off" &&
+        BackgroundPlaybackSession.snapshot.value.metadata?.isLive == true
+    LaunchedEffect(handle, subtitlesActive) {
+        // Restoring a choice or replacing the renderer must also disable its native subtitles.
+        // Recheck after start(): composition may still have seen the previous channel's status.
+        if (subtitlesActive && handle === BackgroundPlaybackSession.activeHandle() &&
+            BackgroundPlaybackSession.snapshot.value.metadata?.isLive == true && TeletextUi.subtitlesActive) {
+            handle?.applySubtitle(null)
+        }
+    }
     TeletextSubtitleOverlay()
     if (TeletextUi.viewerOpen) TeletextViewer(onClose = { TeletextUi.viewerOpen = false })
     HbbtvHost(channelName)
@@ -177,7 +203,7 @@ private fun TeletextSubtitleOverlay() {
     }
 }
 
-/** Settings panel rows of a live player: open teletext and choose teletext subtitles. */
+/** Settings panel rows of a live player: open teletext and the broadcaster's HbbTV application. */
 @Composable
 fun TeletextPanelEntries() {
     if (!TeletextUi.hostActive) return
@@ -194,20 +220,37 @@ fun TeletextPanelEntries() {
     }
     // Shown only when the stream carries teletext.
     if (!status.hasTeletext) return
-    DisposableEffect(Unit) {
-        TeletextUi.probing = true
-        onDispose { TeletextUi.probing = false }
-    }
     PlayerPanelEntry(
         icon = Icons.AutoMirrored.Filled.Article,
         title = stringResource(R.string.player_teletext),
         value = stringResource(R.string.player_teletext_open),
         onClick = { navigation?.close(); TeletextUi.viewerOpen = true },
     )
+}
+
+/** Continue discovering subtitle pages while the shared subtitle panel is open, even when off. */
+@Composable
+internal fun ProbeTeletextSubtitlePages() {
+    if (!TeletextUi.hostActive) return
+    val status by LiveTeletext.status.collectAsState()
+    if (!status.hasTeletext) return
+    DisposableEffect(Unit) {
+        TeletextUi.probing = true
+        onDispose { TeletextUi.probing = false }
+    }
+}
+
+/** Raw teletext choices for the shared subtitle selector; its native entry supplies "Off". */
+@Composable
+internal fun teletextSubtitleOptions(): List<Pair<String, String>> {
+    if (!TeletextUi.hostActive) return emptyList()
+    val status by LiveTeletext.status.collectAsState()
+    if (!status.hasTeletext) return emptyList()
+    val teletextLabel = stringResource(R.string.player_teletext)
     val pageLabel = stringResource(R.string.player_teletext_subtitle_page)
     val hearing = stringResource(R.string.player_teletext_hearing)
     val pages = buildList {
-        status.announced.filter { it.subtitle }.forEach { page ->
+        status.announced.filter { it.subtitle }.distinctBy { it.number }.forEach { page ->
             add(teletextDecimal(page.number).toString() to listOfNotNull(
                 pageLabel.format(teletextDecimal(page.number)),
                 page.language.uppercase().takeIf { it.isNotBlank() },
@@ -219,22 +262,16 @@ fun TeletextPanelEntries() {
             if (none { it.first == key }) add(key to pageLabel.format(teletextDecimal(number)))
         }
         val chosen = TeletextUi.subtitleChoice
-        if (chosen != "off" && chosen != "auto" && none { it.first == chosen }) add(chosen to pageLabel.format(chosen.toIntOrNull() ?: 0))
+        chosen.toIntOrNull()?.takeIf { it in 100..899 }?.let { number ->
+            if (none { it.first == chosen }) add(chosen to pageLabel.format(number))
+        }
     }
     val auto = status.subtitlePage.takeIf { TeletextUi.subtitleChoice == "auto" }
     val options = listOf(
-        "off" to stringResource(R.string.player_off),
         "auto" to (auto?.let { stringResource(R.string.player_teletext_subtitles_auto_value, teletextDecimal(it)) }
             ?: stringResource(R.string.player_teletext_subtitles_auto)),
     ) + pages
-    PlayerDropUpSelector(
-        label = stringResource(R.string.player_teletext_subtitles),
-        value = options.firstOrNull { it.first == TeletextUi.subtitleChoice }?.second ?: options.first().second,
-        options = options,
-        selectedKey = TeletextUi.subtitleChoice,
-        icon = Icons.Filled.ClosedCaption,
-        onSelected = { TeletextUi.setSubtitleChoice(context, it) },
-    )
+    return options.map { (key, label) -> key to "$teletextLabel · $label" }
 }
 
 /** Opt-in action-bar buttons of the live player: teletext and teletext subtitles. */
