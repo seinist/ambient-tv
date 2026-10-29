@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
+import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -13,7 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-enum class RadioSection { POPULAR, FAVORITES, RECENT }
+enum class RadioSection { POPULAR, GENRES, COUNTRIES, LANGUAGES, FAVORITES, RECENT }
 
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
@@ -22,6 +23,8 @@ data class RadioUiState(
     val query: String = "",
     val submittedQuery: String = "",
     val stations: List<RadioStation> = emptyList(),
+    val facets: List<RadioFacet> = emptyList(),
+    val selectedFacet: RadioFacet? = null,
     val hasMore: Boolean = false,
     val error: Boolean = false,
     val startingStationId: String? = null,
@@ -50,14 +53,59 @@ class RadioViewModel @Inject constructor(
 
     fun refresh() {
         refreshLocalState()
-        if (_state.value.section == RadioSection.POPULAR || _state.value.submittedQuery.isNotBlank()) load(reset = true)
-        else showLocalSection(_state.value.section)
+        val current = _state.value
+        when {
+            current.submittedQuery.isNotBlank() || current.selectedFacet != null || current.section == RadioSection.POPULAR -> load(reset = true)
+            current.section.isFacetSection() -> loadFacets(current.section)
+            else -> showLocalSection(current.section)
+        }
     }
 
     fun selectSection(section: RadioSection) {
-        if (_state.value.section == section && _state.value.submittedQuery.isBlank()) return
-        _state.value = _state.value.copy(section = section, query = "", submittedQuery = "", error = false)
-        if (section == RadioSection.POPULAR) load(reset = true) else showLocalSection(section)
+        val current = _state.value
+        if (current.section == section && current.submittedQuery.isBlank() && current.selectedFacet == null) return
+        _state.value = current.copy(
+            section = section,
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            facets = emptyList(),
+            selectedFacet = null,
+            hasMore = false,
+            error = false,
+        )
+        when {
+            section == RadioSection.POPULAR -> load(reset = true)
+            section.isFacetSection() -> loadFacets(section)
+            else -> showLocalSection(section)
+        }
+    }
+
+    fun selectFacet(facet: RadioFacet) {
+        if (!_state.value.section.isFacetSection()) return
+        _state.value = _state.value.copy(
+            selectedFacet = facet,
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            hasMore = false,
+            error = false,
+        )
+        load(reset = true)
+    }
+
+    fun clearFacet() {
+        val section = _state.value.section
+        if (!section.isFacetSection()) return
+        _state.value = _state.value.copy(
+            selectedFacet = null,
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            hasMore = false,
+            error = false,
+        )
+        loadFacets(section)
     }
 
     fun onQueryChanged(value: String) {
@@ -73,8 +121,12 @@ class RadioViewModel @Inject constructor(
 
     fun clearSearch() {
         _state.value = _state.value.copy(query = "", submittedQuery = "")
-        if (_state.value.section == RadioSection.POPULAR) load(reset = true)
-        else showLocalSection(_state.value.section)
+        val current = _state.value
+        when {
+            current.selectedFacet != null || current.section == RadioSection.POPULAR -> load(reset = true)
+            current.section.isFacetSection() -> loadFacets(current.section)
+            else -> showLocalSection(current.section)
+        }
     }
 
     fun toggleFavorite(station: RadioStation) {
@@ -102,15 +154,50 @@ class RadioViewModel @Inject constructor(
         val stations = when (section) {
             RadioSection.FAVORITES -> preferences.radioFavorites
             RadioSection.RECENT -> preferences.recentRadioStations
-            RadioSection.POPULAR -> return
+            else -> return
         }
         _state.value = _state.value.copy(
             loading = false,
             loadingMore = false,
             stations = stations,
+            facets = emptyList(),
+            selectedFacet = null,
             hasMore = false,
             error = false,
         )
+    }
+
+    private fun loadFacets(section: RadioSection) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _state.value = _state.value.copy(
+                loading = true,
+                loadingMore = false,
+                stations = emptyList(),
+                facets = emptyList(),
+                hasMore = false,
+                error = false,
+            )
+            runCatching {
+                when (section) {
+                    RadioSection.GENRES -> repository.genres()
+                    RadioSection.COUNTRIES -> repository.countries()
+                    RadioSection.LANGUAGES -> repository.languages()
+                    else -> emptyList()
+                }
+            }.onSuccess { facets ->
+                _state.value = _state.value.copy(
+                    loading = false,
+                    facets = facets,
+                    error = false,
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    error = true,
+                )
+            }
+        }
     }
 
     private fun load(reset: Boolean) {
@@ -125,8 +212,14 @@ class RadioViewModel @Inject constructor(
                 error = false,
             )
             runCatching {
+                val current = _state.value
+                val facet = current.selectedFacet
                 repository.search(
-                    query = _state.value.submittedQuery.takeIf(String::isNotBlank),
+                    query = current.submittedQuery.takeIf(String::isNotBlank),
+                    countryCode = facet?.value.takeIf { current.section == RadioSection.COUNTRIES },
+                    language = facet?.value.takeIf { current.section == RadioSection.LANGUAGES },
+                    tag = facet?.value.takeIf { current.section == RadioSection.GENRES },
+                    exactFilters = facet != null,
                     offset = offset,
                     limit = PAGE_SIZE,
                 )
@@ -164,6 +257,9 @@ class RadioViewModel @Inject constructor(
                 }
         }
     }
+
+    private fun RadioSection.isFacetSection(): Boolean =
+        this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
     companion object {
         private const val PAGE_SIZE = 48
