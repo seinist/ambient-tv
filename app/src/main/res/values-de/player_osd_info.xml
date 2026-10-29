@@ -8,4 +8,8 @@
     <string name="player_osd_info_codecs_summary">Codec-Leiste</string>
     <string name="player_osd_info_fps_summary">FPS</string>
     <string name="player_osd_info_stats_summary">Stats</string>
+    <string name="osd_buttons_section_picture_sound">Bild &amp; Ton</string>
+    <string name="osd_buttons_section_youtube">YouTube</string>
+    <string name="osd_button_shown">Sichtbar</string>
+    <string name="osd_button_hidden">Ausgeblendet</string>
 </resources>

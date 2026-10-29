@@ -50,11 +50,11 @@ import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelEntry
+import com.ambient.tv.ui.player.PlayerOsdButtonPanelControls
 import com.ambient.tv.ui.player.PlayerOsdInfoPanelControls
 import com.ambient.tv.ui.player.PlayerOsdInfoPanelEntry
 import com.ambient.tv.ui.player.PlayerTool
 import com.ambient.tv.ui.player.availablePlayerTools
-import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.playbackSubtitleSelection
 import com.ambient.tv.ui.player.teletextSubtitleChoice
 import com.ambient.tv.ui.player.teletext.ProbeTeletextSubtitlePages
@@ -644,17 +644,7 @@ fun UnifiedBackendPlayerPanel(
             modifier = modifier,
             onBack = back,
         ) {
-            val player = com.ambient.tv.ui.player.activeOsdPlayer ?: return@UnifiedPlayerSidePanel
-            Text(stringResource(R.string.osd_buttons_hint), style = MaterialTheme.typography.bodySmall)
-            player.offeredButtons().forEach { button ->
-                val visible = com.ambient.tv.ui.player.osdButtonVisible(button, player)
-                PlayerPanelEntry(
-                    icon = button.icon,
-                    title = stringResource(button.label),
-                    value = stringResource(if (visible) R.string.player_on else R.string.player_off),
-                    onClick = { com.ambient.tv.ui.player.setOsdButtonVisible(videoImagePreferences(context), player, button, !visible) },
-                )
-            }
+            PlayerOsdButtonPanelControls()
         }
 
         UnifiedPlayerPanel.VISUALIZER, UnifiedPlayerPanel.VISUALIZER_SETTINGS -> {

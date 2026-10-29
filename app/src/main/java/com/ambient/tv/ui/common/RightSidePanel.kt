@@ -536,6 +536,8 @@ fun RightPanelChoice(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     subtitle: String? = null,
+    /** Decorative status icon; its meaning belongs in the row text. */
+    trailingIcon: ImageVector? = null,
 ) {
     val uiSounds = LocalUiSoundPlayer.current
     val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onClick)
@@ -562,8 +564,11 @@ fun RightPanelChoice(
                 MarqueeTitle(it, focused, color = MaterialTheme.colorScheme.onSurfaceVariant, style = LocalTextStyle.current.copy(fontSize = 13.sp))
             }
         }
-        if (selected) {
-            Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+        val endIcon = trailingIcon ?: Icons.Filled.Check.takeIf { selected }
+        if (endIcon != null) {
+            Icon(endIcon, contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp))
         }
     }
 }

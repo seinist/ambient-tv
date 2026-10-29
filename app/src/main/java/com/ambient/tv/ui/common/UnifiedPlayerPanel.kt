@@ -549,6 +549,7 @@ fun PlayerPanelEntry(
     value: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    trailingIcon: ImageVector? = null,
 ) {
     val navigation = LocalPlayerPanelNavigation.current
     val originKey = "entry:$title"
@@ -556,6 +557,7 @@ fun PlayerPanelEntry(
         text = title,
         subtitle = value,
         icon = icon,
+        trailingIcon = trailingIcon,
         selected = false,
         onClick = { navigation?.fromOrigin(originKey, root = false, onClick) ?: onClick() },
         modifier = modifier
