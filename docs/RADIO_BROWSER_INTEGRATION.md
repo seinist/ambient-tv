@@ -28,8 +28,9 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 
 ### Browse and playback
 
-- Radio page with Popular, Favorites and Recently played;
-- explicit station search and server-side paging;
+- Radio page with Popular, Genres, Countries, Languages, Favorites and Recently played;
+- Countries automatically prefer the current mobile-network country, then SIM/Android region, without requesting GPS/location permission;
+- explicit station search, exact facet filters and server-side paging;
 - station artwork/name/country/codec/bitrate;
 - favorites keyed by stable station UUID;
 - recent listening history stored locally;
@@ -38,6 +39,8 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - Media3 in-stream metadata updates the active Radio session without restarting the stream;
 - stale metadata from a previous station is rejected by UUID;
 - metadata changes force MediaSession and notification refresh;
+- Radio Now Playing uses the existing PCM-driven projectM visualizer when available, with spectrum fallback;
+- projectM inherits the global audio visualizer preset/category/quality settings;
 - previous/next switches within the active Radio list from MediaSession and notification controls;
 - Radio participates in Ambient TV global search, including Radio-only installations.
 
@@ -51,7 +54,7 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 1. Optional Home rows for Radio Favorites/Recent.
 2. Android Auto browse hierarchy through the media library service.
 3. Device playback tests with representative MP3/AAC/HLS and ICY stations.
-4. Better catalog facets (country/language/tag screens) beyond direct filtering/search.
+4. Device-level projectM playback audit for Radio's dedicated Media3 now-playing screen.
 
 ## Radio Browser contract relied upon
 
