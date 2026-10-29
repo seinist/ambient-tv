@@ -123,6 +123,7 @@ class PlayerPanelNavigation {
 
     internal val videoState = VideoPanelState()
     internal val audioState = VideoPanelState().apply { section = "output" }
+    internal val activity = PlayerPanelActivity()
 
     private val path = mutableStateListOf<Level>()
     private val requesters = HashMap<String, FocusRequester>()
@@ -140,6 +141,7 @@ class PlayerPanelNavigation {
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: UnifiedPlayerPanel) = open(value)
 
     fun open(target: UnifiedPlayerPanel) {
+        activity.interact()
         when {
             target == UnifiedPlayerPanel.NONE -> close()
             target == panel -> Unit
@@ -193,6 +195,7 @@ class PlayerPanelNavigation {
     fun back(expectedPanel: UnifiedPlayerPanel = panel) {
         if (panel != expectedPanel) return
         val left = path.removeLastOrNull() ?: return
+        activity.interact()
         videoState.leave()
         audioState.leave()
         restore(left.originKey)
@@ -200,14 +203,30 @@ class PlayerPanelNavigation {
 
     fun close() {
         val root = path.firstOrNull() ?: return
+        activity.interact()
         path.clear()
         videoState.leave()
         audioState.leave()
         restore(root.originKey)
     }
 
+    /** Timeout dismisses the whole path without restoring a hidden OSD button. */
+    internal fun closeForInactivity(expectedActivity: Int): Boolean {
+        if (panel == UnifiedPlayerPanel.NONE || activity.version != expectedActivity ||
+            activity.blocked || dialogFocusOwner != null) return false
+        path.clear()
+        videoState.leave()
+        audioState.leave()
+        restoreKey = null
+        restoreFailed = false
+        restoreGeneration++
+        activity.interact()
+        return true
+    }
+
     /** Runs [action] with the calling control recorded as the origin of any level it opens. */
     fun fromOrigin(key: String, root: Boolean, action: () -> Unit) {
+        activity.interact()
         pendingOrigin = key
         pendingRoot = root
         try {

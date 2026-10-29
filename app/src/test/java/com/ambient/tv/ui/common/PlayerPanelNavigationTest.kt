@@ -168,4 +168,41 @@ class PlayerPanelNavigationTest {
         assertNull(nav.audioState.focusedSelector)
         assertNull(nav.audioState.expandedSelector)
     }
+
+    @Test fun inactivityDiscardsTheEntirePathAndInvalidatesPendingFocusRestoration() {
+        val nav = PlayerPanelNavigation()
+        nav.fromOrigin("bar:settings", true) { nav.open(UnifiedPlayerPanel.SETTINGS) }
+        nav.fromOrigin("entry:audio", false) { nav.open(UnifiedPlayerPanel.AUDIO) }
+        nav.open(UnifiedPlayerPanel.AUDIO_SECTION)
+        nav.back()
+        val generation = nav.restoreGeneration
+        nav.audioState.expandedSelector = "output:device"
+        assertTrue(nav.closeForInactivity(nav.activity.version))
+        assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
+        assertNull(nav.restoreKey)
+        assertFalse(nav.restoreFailed)
+        assertTrue(nav.restoreGeneration > generation)
+        assertNull(nav.audioState.expandedSelector)
+        nav.back()
+        assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
+    }
+
+    @Test fun inputAndIndependentDialogOwnersInvalidateOrBlockAnOldDeadline() {
+        val nav = PlayerPanelNavigation()
+        nav.open(UnifiedPlayerPanel.VIDEO)
+        val old = nav.activity.version
+        nav.activity.interact()
+        assertFalse(nav.closeForInactivity(old))
+        val first = Any()
+        val second = Any()
+        nav.activity.keepOpen(first, true)
+        nav.activity.keepOpen(second, true)
+        nav.activity.keepOpen(first, false)
+        assertFalse(nav.closeForInactivity(nav.activity.version))
+        nav.activity.keepOpen(second, false)
+        nav.activity.pointerPressed(first, true)
+        assertFalse(nav.closeForInactivity(nav.activity.version))
+        nav.activity.pointerPressed(first, false)
+        assertTrue(nav.closeForInactivity(nav.activity.version))
+    }
 }

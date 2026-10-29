@@ -25,6 +25,8 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
+import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
+import com.ambient.tv.ui.common.playerPanelInput
 
 /**
  * A dismissed modal leaves composition immediately: neither its BackHandler nor its focus trap
@@ -41,7 +43,8 @@ fun PlayerPanelVisibility(
     val levels = rememberSaveableStateHolder()
     // Android's Back dispatcher owns this key. Forwarding it from Compose as well
     // can pop both this panel and the underlying OSD on the same key release.
-    Box(Modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)) {
+    Box(Modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
+        .playerPanelInput(LocalPlayerPanelNavigation.current)) {
         levels.SaveableStateProvider(panel.name) {
             content(panel)
         }
