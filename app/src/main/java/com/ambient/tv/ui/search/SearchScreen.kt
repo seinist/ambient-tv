@@ -108,7 +108,6 @@ fun SearchScreen(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
-    onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -546,7 +545,7 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        ArtworkImage(model = item.imageUrl, title = item.title, modifier = Modifier.fillMaxWidth().aspectRatio(if (squareArtwork) 1f else 16f / 9f).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                        ArtworkImage(model = item.imageUrl, title = item.title, modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
                         CenteredMarqueeTitle(item.title, focused = focused, style = MaterialTheme.typography.titleSmall)
                         item.author?.let {
                             CenteredMarqueeTitle(
@@ -727,7 +726,7 @@ private fun SearchArtworkCard(
                 model = imageUrl,
                 title = title,
                 headers = imageHeaders,
-                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
+                modifier = Modifier.fillMaxWidth().aspectRatio(if (squareArtwork) 1f else 16f / 9f).clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop,
             )
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
