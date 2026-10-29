@@ -153,7 +153,7 @@ fun RadioScreen(
         }
 
         when {
-            state.loading -> com.ambient.tv.ui.common.SkeletonRow(modifier = Modifier.fillMaxWidth())
+            state.loading -> com.ambient.tv.ui.common.SkeletonRow(title = "", modifier = Modifier.fillMaxWidth())
             state.error && state.stations.isEmpty() -> StatePanel(
                 title = stringResource(R.string.radio_error),
                 modifier = Modifier.fillMaxWidth(),
