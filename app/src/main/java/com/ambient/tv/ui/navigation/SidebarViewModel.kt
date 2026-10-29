@@ -44,6 +44,7 @@ data class SidebarUiState(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    val radioHomeEnabled: Boolean = false,
     /** Address entered; TVHeadend stays in the menu even when its login was rejected. */
     val tvheadendEnabled: Boolean = false,
     /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
@@ -101,6 +102,7 @@ class SidebarViewModel @Inject constructor(
             youtubeEnabled = appPreferences.youtubeEnabled,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
+            radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
             tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
             tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
             spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
@@ -260,6 +262,7 @@ class SidebarViewModel @Inject constructor(
                 youtubeEnabled = appPreferences.youtubeEnabled,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
+                radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
