@@ -1,6 +1,7 @@
 package com.ambient.tv.data.radio
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -57,6 +58,30 @@ class RadioBrowserRepositoryTest {
         assertFalse(station.isHls)
     }
 
+    @Test fun browseFacetsNormalizeCodesNamesAndFlexibleCounts() = runBlocking {
+        val api = FakeRadioBrowserApi().apply {
+            countryFacets = listOf(
+                RadioBrowserFacetDto(" de ", JsonPrimitive(12)),
+                RadioBrowserFacetDto("US", JsonPrimitive("9")),
+                RadioBrowserFacetDto(" ", JsonPrimitive(4)),
+            )
+            languageFacets = listOf(
+                RadioBrowserFacetDto(" german ", JsonPrimitive("7")),
+                RadioBrowserFacetDto("English", JsonPrimitive(5)),
+            )
+            tagFacets = listOf(
+                RadioBrowserFacetDto(" rock ", JsonPrimitive(8)),
+                RadioBrowserFacetDto("pop", JsonPrimitive("6")),
+            )
+        }
+        val repository = RadioBrowserRepository(api)
+
+        assertEquals(listOf("DE", "US"), repository.countries().map { it.id })
+        assertEquals(listOf(12, 9), repository.countries().map { it.stationCount })
+        assertEquals(listOf("german", "English"), repository.languages().map { it.id })
+        assertEquals(listOf("rock", "pop"), repository.tags().map { it.id })
+    }
+
     @Test fun playbackUsesClickUrlButFallsBackToCatalogStream() = runBlocking {
         val station = station("one", "One").toRadioStation()!!
         val api = FakeRadioBrowserApi().apply {
@@ -96,6 +121,9 @@ class RadioBrowserRepositoryTest {
 
     private class FakeRadioBrowserApi : RadioBrowserApiService {
         var stations: List<RadioBrowserStationDto> = emptyList()
+        var countryFacets: List<RadioBrowserFacetDto> = emptyList()
+        var languageFacets: List<RadioBrowserFacetDto> = emptyList()
+        var tagFacets: List<RadioBrowserFacetDto> = emptyList()
         var click = RadioBrowserClickDto()
         var throwOnClick = false
         var lastName: String? = null
@@ -125,6 +153,27 @@ class RadioBrowserRepositoryTest {
             lastLimit = limit
             return stations
         }
+
+        override suspend fun countryCodes(
+            order: String,
+            reverse: Boolean,
+            hideBroken: Boolean,
+            limit: Int,
+        ): List<RadioBrowserFacetDto> = countryFacets.take(limit)
+
+        override suspend fun languages(
+            order: String,
+            reverse: Boolean,
+            hideBroken: Boolean,
+            limit: Int,
+        ): List<RadioBrowserFacetDto> = languageFacets.take(limit)
+
+        override suspend fun tags(
+            order: String,
+            reverse: Boolean,
+            hideBroken: Boolean,
+            limit: Int,
+        ): List<RadioBrowserFacetDto> = tagFacets.take(limit)
 
         override suspend fun topClicked(limit: Int, hideBroken: Boolean): List<RadioBrowserStationDto> = stations
 
