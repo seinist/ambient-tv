@@ -20,12 +20,14 @@ class RadioNowPlayingTest {
         assertEquals(5_000L, radioReconnectDelayMs(99))
     }
 
-    @Test fun reconnectOnlyBelongsToTheCurrentRadioStation() {
-        assertEquals(true, shouldReconnectRadio("radio", "one", "one", "one", 0))
-        assertEquals(false, shouldReconnectRadio("radio", "old", "one", "one", 0))
-        assertEquals(false, shouldReconnectRadio("radio", "one", "one", "two", 0))
-        assertEquals(false, shouldReconnectRadio("plex", "one", "one", "one", 0))
-        assertEquals(false, shouldReconnectRadio("radio", "one", "one", "one", MAX_RADIO_RECONNECT_ATTEMPTS))
+    @Test fun reconnectOnlyBelongsToTheCurrentRadioGeneration() {
+        assertEquals(true, shouldReconnectRadio("radio", "one", "one", "one", 7, 7, 0))
+        assertEquals(false, shouldReconnectRadio("radio", "old", "one", "one", 7, 7, 0))
+        assertEquals(false, shouldReconnectRadio("radio", "one", "one", "two", 7, 7, 0))
+        assertEquals(false, shouldReconnectRadio("plex", "one", "one", "one", 7, 7, 0))
+        // A late error from the replaced Media3 instance of the same station is ignored.
+        assertEquals(false, shouldReconnectRadio("radio", "one", "one", "one", 8, 7, 0))
+        assertEquals(false, shouldReconnectRadio("radio", "one", "one", "one", 7, 7, MAX_RADIO_RECONNECT_ATTEMPTS))
     }
 
 }
