@@ -147,7 +147,7 @@ fun RadioNowPlayingScreen(
                     },
                 )
                 TvActionButton(
-                    text = stringResource(R.string.action_back),
+                    text = stringResource(R.string.back),
                     onClick = onBack,
                 )
             }
