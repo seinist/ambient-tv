@@ -8,6 +8,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,6 +19,15 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 import com.ambient.tv.ui.tvheadend.Guide
 import com.ambient.tv.ui.tvheadend.TvhFocusTarget
+import com.ambient.tv.ui.tvheadend.TvheadendHeader
+import com.ambient.tv.ui.tvheadend.TvheadendTab
+import com.ambient.tv.ui.tvheadend.TvheadendUiState
+import com.ambient.tv.ui.tvheadend.LiveTvBrowseOptionsPanel
+import com.ambient.tv.ui.tvheadend.guideFilterModel
+import com.ambient.tv.ui.tvheadend.rememberLiveTvBrowseControls
+import com.ambient.tv.ui.common.FilterBarSetting
+import com.ambient.tv.ui.common.LocalFilterBarSetting
+import com.ambient.tv.ui.common.rememberPageFocusChain
 import java.io.File
 
 internal class GuideNavigationAudit(private val instrumentation: Instrumentation, private val log: (String) -> Unit) {
@@ -93,11 +103,26 @@ internal class GuideNavigationAudit(private val instrumentation: Instrumentation
         fun render(handheld: Boolean) = main {
             activity.setContent {
                 AmbientTvTheme {
+                    var filtersShown by remember { mutableStateOf(false) }
                     CompositionLocalProvider(LocalHandheldUi provides handheld,
+                        LocalFilterBarSetting provides FilterBarSetting(filtersShown) { filtersShown = it },
                         androidx.tv.material3.LocalContentColor provides androidx.tv.material3.MaterialTheme.colorScheme.onSurface) {
+                        val controls = rememberLiveTvBrowseControls(browse, "guide")
+                        val chain = rememberPageFocusChain()
+                        val model = guideFilterModel(options.value, channels.flatMap { it.tags }.distinct()) { options.value = it }
                         Box(Modifier.fillMaxSize()) {
+                            Column(Modifier.fillMaxSize()) {
+                            TvheadendHeader(
+                                state = TvheadendUiState(configured = true, tab = TvheadendTab.GUIDE),
+                                tabFocusRequesters = remember { TvheadendTab.entries.associateWith { FocusRequester() } },
+                                onTab = {}, onRefresh = {}, focusChain = chain,
+                                browseControls = controls, activeFilterCount = model.activeCount,
+                            )
                             Guide(browse, channels, events, emptyMap(), {}, remember { FocusRequester() }, TvhFocusTarget("channel:A1", "A1"),
-                                { id, _ -> focused = id }, options.value, { options.value = it }, { watched = it }, true)
+                                { id, _ -> focused = id }, options.value, { options.value = it }, { watched = it }, true,
+                                controls = controls, pageFocusChain = chain)
+                            }
+                            LiveTvBrowseOptionsPanel(controls, model)
                         }
                     }
                 }
@@ -114,7 +139,7 @@ internal class GuideNavigationAudit(private val instrumentation: Instrumentation
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             await("Radio without EPG can play") { watched == "Z1" }
             log("PASS A-Z jump across 78 virtualized channels, left-to-row focus and radio without EPG")
-            clickText(activity.getString(R.string.guide_options))
+            clickText(activity.getString(R.string.action_view))
             clickText(activity.getString(R.string.guide_kind))
             clickText(activity.getString(R.string.guide_radio))
             await("Radio selector applied") { options.value.kind == LiveTvChannelKind.RADIO }

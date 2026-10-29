@@ -1,0 +1,4 @@
+<resources>
+    <string name="browse_filter_options_hint">Sortierung und Filter anpassen.</string>
+    <string name="guide_count_filtered">%1$d von %2$d Sendern</string>
+</resources>

@@ -69,6 +69,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -164,6 +165,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val refreshing by viewModel.refreshing.collectAsState()
     val homeHeroStyleKey = viewModel.homeHeroStyleKey
     val homeHeroIntensityPercent = viewModel.homeHeroIntensityPercent
     val homeHeroSpreadKey = viewModel.homeHeroSpreadKey
@@ -274,6 +276,8 @@ fun HomeScreen(
                     onOpenAppHome()
                 },
                 onOpenOptions = { showOverviewOptions = true },
+                onRefresh = viewModel::reload,
+                refreshing = refreshing,
                 optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
                 modifier = headerModifier,
             )
@@ -357,10 +361,12 @@ fun HomeScreen(
 }
 
 @Composable
-private fun SystemOverviewHeader(
+internal fun SystemOverviewHeader(
     system: com.ambient.tv.ui.common.MediaSystem,
     onOpenHome: () -> Unit,
     onOpenOptions: () -> Unit,
+    onRefresh: () -> Unit,
+    refreshing: Boolean,
     optionsModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
 ) {
@@ -373,7 +379,7 @@ private fun SystemOverviewHeader(
             com.ambient.tv.ui.navigation.SidebarContentEntry.enter?.invoke() == true
         }
         .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
-        com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
+        com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onRefresh, refreshing, onOpenOptions, optionsModifier) }) {
             // The hero's title shares this line on TV; handheld has no such hero.
             if (LocalHandheldUi.current) com.ambient.tv.ui.common.SystemPageTitle(system)
         }
@@ -381,8 +387,15 @@ private fun SystemOverviewHeader(
 }
 
 @Composable
-private fun RowScope.OverviewActions(onOpenHome: () -> Unit, onOpenOptions: () -> Unit, optionsModifier: Modifier) {
+private fun RowScope.OverviewActions(
+    onOpenHome: () -> Unit,
+    onRefresh: () -> Unit,
+    refreshing: Boolean,
+    onOpenOptions: () -> Unit,
+    optionsModifier: Modifier,
+) {
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.nav_home), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenHome)
+    com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, onClick = onRefresh)
     com.ambient.tv.ui.common.TvChip(stringResource(R.string.action_view), modifier = optionsModifier, icon = Icons.Filled.Tune, iconOnly = true, onClick = onOpenOptions)
 }
 

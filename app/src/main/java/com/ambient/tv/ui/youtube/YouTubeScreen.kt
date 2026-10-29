@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Subscriptions
@@ -208,6 +209,10 @@ import kotlinx.coroutines.delay
                 viewOptionsOpened=true
                 showViewOptions=true
             },
+            onReload={
+                filterFocusState.keepControls()
+                viewModel.reload()
+            },
             filterModel = filterModel.takeIf { filterBarShown },
             filterFocus = filterFocus,
             filterUp = if (searchVisible) searchFieldFocusRequester else focusChain.contentUp,
@@ -314,6 +319,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     onOpenSearch:()->Unit,
     onCloseSearch:()->Unit,
     onOpenViewOptions:()->Unit,
+    onReload:()->Unit,
     filterModel: com.ambient.tv.ui.common.FilterBarModel?,
     filterFocus: FocusRequester,
     filterUp: FocusRequester,
@@ -322,14 +328,18 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     PageHeader(focusChain=focusChain, actions={
         if (channel == null) YouTubeAccountButton(state, vm::requestSignIn, vm::signOut)
         else if (state.signedIn) channel.subscribed?.let { subscribed ->
-            TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed, icon=Icons.Filled.Subscriptions, onClick=vm::toggleSubscription)
+            TvChip(stringResource(if (subscribed) R.string.youtube_subscribed else R.string.youtube_subscribe), subscribed,
+                icon=Icons.Filled.Subscriptions, iconOnly=true, onClick=vm::toggleSubscription)
         }
         TvChip(stringResource(R.string.action_search),modifier=searchActionModifier,icon=Icons.Filled.Search,iconOnly=true,onClick=onOpenSearch)
+        TvChip(stringResource(R.string.action_reload), icon=Icons.Filled.Refresh, iconOnly=true,
+            loading=state.loading || state.refreshing, enabled=state.available && !state.authBusy, onClick=onReload)
         ViewOptionsChip(if (filterModel == null && youtubeVideoFiltersAvailable(state.rows) && state.filter != YouTubeFilter.ALL) 1 else 0, onOpenViewOptions, viewOptionsModifier)
     }) {
         if (channel == null) com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.YOUTUBE)
         else YouTubeChannelTitle(channel)
     }
+    state.refreshError?.let { Text(it, color=MaterialTheme.colorScheme.error, maxLines=2, overflow=TextOverflow.Ellipsis) }
     if (channel == null) com.ambient.tv.ui.common.PageChipRow(focusChain) { items(state.visibleFeeds, key={it.key}) { feed ->
         val selected = state.feed==feed && state.query.isBlank()
         TvChip(feedLabel(feed), selected, modifier=if (state.feed==feed) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon=feedIcon(feed)) { onSelectFeed(feed) }
@@ -343,7 +353,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
             PlayerIconButton(Icons.Filled.Close,stringResource(R.string.action_close),onCloseSearch,modifier=searchCloseModifier)
         }
     }
-    state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=vm::refresh, loading=state.loading); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
+    state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=onReload, loading=state.loading || state.refreshing); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
     if (filterModel != null) com.ambient.tv.ui.common.FilterBar(filterModel, focusRequester = filterFocus, up = filterUp)
 }
 

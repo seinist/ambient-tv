@@ -131,6 +131,7 @@ data class DlnaBrowserUiState(
     val path: List<DlnaBrowserLocation> = emptyList(),
     val page: DlnaBrowsePage? = null,
     val loading: Boolean = true,
+    val refreshing: Boolean = false,
     val loadingMore: Boolean = false,
     val nextIndex: Int = 0,
     val pageSize: Int = DlnaRepository.PAGE_SIZE,
@@ -166,6 +167,7 @@ class DlnaBrowserViewModel @Inject constructor(
     ))
     val state = _state.asStateFlow()
     private var job: Job? = null
+    private var loadGeneration = 0L
     private var stagedNodes = linkedMapOf<String, DlnaNode>()
     private var storedPage: DlnaBrowsePage? = null
     private var refreshTotal: Int? = null
@@ -186,7 +188,7 @@ class DlnaBrowserViewModel @Inject constructor(
     }
     private var openingFolder = false
 
-    fun refresh() = load(_state.value.path)
+    fun refresh() { if (!_state.value.refreshing) load(_state.value.path) }
     fun refreshOnReconnect() = load(_state.value.path, silent = true)
 
     fun setViewMode(mode: DlnaViewMode) {
@@ -215,7 +217,7 @@ class DlnaBrowserViewModel @Inject constructor(
 
     fun more() {
         val state = _state.value
-        if (state.loading || state.loadingMore || !state.hasMore) return
+        if (state.loading || state.refreshing || state.loadingMore || !state.hasMore) return
         val objectId = state.path.lastOrNull()?.objectId ?: "0"
         job = viewModelScope.launch {
             val ticket = feedback.begin("browse")
@@ -281,7 +283,9 @@ class DlnaBrowserViewModel @Inject constructor(
 
     private fun load(path: List<DlnaBrowserLocation>, silent: Boolean = false) {
         val previous = _state.value
-        val refreshThrough = if (silent && previous.path == path) previous.nextIndex else 0
+        // A manual reload preserves the same already loaded extent as a reconnect refresh.
+        val refreshThrough = if (previous.path == path) previous.nextIndex else 0
+        val generation = ++loadGeneration
         job?.cancel()
         feedback.cancel("browse")
         val server = store.server(serverId)
@@ -296,12 +300,12 @@ class DlnaBrowserViewModel @Inject constructor(
             )
             return
         }
-        _state.update { it.copy(server = server, path = path, viewMode = dlnaViewMode(preferences.sectionViewMode(viewKey(path))), page = it.page.takeIf { _ -> it.path == path }, loading = !silent || it.page == null || it.path != path, loadingMore = false, nextIndex = refreshThrough, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
+        _state.update { it.copy(server = server, path = path, viewMode = dlnaViewMode(preferences.sectionViewMode(viewKey(path))), page = it.page.takeIf { _ -> it.path == path }, loading = !silent || it.page == null || it.path != path, refreshing = true, loadingMore = false, nextIndex = refreshThrough, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
         job = viewModelScope.launch {
             val refreshedNodes = linkedMapOf<String, DlnaNode>()
             val namespace = snapshots.namespace("dlna:$serverId", "${server.udn}|${server.contentDirectoryUrl}")
             snapshotNamespace = namespace
-            storedPage = previous.page.takeIf { silent && previous.path == path }
+            storedPage = previous.page.takeIf { previous.path == path }
                 ?: snapshots.read<DlnaBrowsePage>(namespace, snapshotKey(path))
             if (!silent || _state.value.page == null) storedPage?.let { cached -> _state.update { it.copy(page = cached, loading = false) } }
             val ticket = feedback.begin("browse")
@@ -351,6 +355,10 @@ class DlnaBrowserViewModel @Inject constructor(
                     _state.update { it.copy(loading = false, error = message) }
                 },
             )
+        }.also { request ->
+            request.invokeOnCompletion {
+                if (generation == loadGeneration) _state.update { it.copy(refreshing = false) }
+            }
         }
     }
 

@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.tvheadend
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
@@ -25,7 +24,6 @@ import com.ambient.tv.ui.common.*
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -45,12 +43,16 @@ internal fun Guide(
     onOptions: (GuideOptions) -> Unit,
     onWatch: (String) -> Unit,
     canWatch: Boolean,
+    controls: LiveTvBrowseControls,
     refreshing: Boolean = false,
     restoreFocus: Boolean = false,
     onFocusRestored: () -> Unit = {},
+    pageFocusChain: PageFocusChain? = null,
+    listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
-    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, refreshing = refreshing,
-    restoreFocus = restoreFocus, onFocusRestored = onFocusRestored)
+    firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, controls,
+    refreshing = refreshing, restoreFocus = restoreFocus, onFocusRestored = onFocusRestored,
+    pageFocusChain = pageFocusChain, listing = listing)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
 @Composable
@@ -67,20 +69,22 @@ internal fun LiveTvChannelBrowser(
     onOptions: (GuideOptions) -> Unit,
     onWatch: (String) -> Unit,
     canWatch: Boolean,
+    controls: LiveTvBrowseControls,
     channelList: Boolean = false,
     upcoming: List<LiveTvRecording> = emptyList(),
     refreshing: Boolean = false,
     /** Entering the tab (also back from the player): scroll to [focusTarget], then focus it. */
     restoreFocus: Boolean = false,
     onFocusRestored: () -> Unit = {},
+    pageFocusChain: PageFocusChain? = null,
+    listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
 ) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
-    LaunchedEffect(Unit) { while (true) { delay(60_000); now = System.currentTimeMillis() / 1000L } }
-    val eventsByChannel = remember(events, now) { events.groupBy { it.channelUuid }.mapValues { guideEvents(it.value, now) } }
-    val visibleChannels = remember(channels, eventsByChannel, options) { guideChannels(channels, eventsByChannel, now, options) }
+    val now = listing.now
+    val eventsByChannel = listing.eventsByChannel
+    val visibleChannels = listing.visibleChannels
     val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
     val positionKey = if (channelList) "channels" else "guide"
-    val filterFocusState = rememberFilterFocusState(browseState, positionKey)
+    val filterFocusState = controls.filterFocusState
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
@@ -94,6 +98,7 @@ internal fun LiveTvChannelBrowser(
     }
     val rowFocus = remember(visibleChannels) { visibleChannels.associate { it.uuid to FocusRequester() } }
     val alphabetFocus = remember { FocusRequester() }
+    val alphabetActionFocus = remember { FocusRequester() }
     val contentFocus = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     val handheld = LocalHandheldUi.current
@@ -189,48 +194,51 @@ internal fun LiveTvChannelBrowser(
     }
     val filterModel = guideFilterModel(options, tags, onOptions)
     val filterBarShown = LocalFilterBarSetting.current.shown
-    val optionsFocus = remember { FocusRequester() }
-    var showOptions by remember { mutableStateOf(false) }
-    var optionsOpened by remember { mutableStateOf(false) }
-    LaunchedEffect(showOptions) {
-        if (!showOptions && optionsOpened) {
-            withFrameNanos { }
-            runCatching { optionsFocus.requestFocus() }
-            optionsOpened = false
-        }
-    }
-    BackHandler(showOptions) { showOptions = false }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup()) {
-            val trailing: @Composable RowScope.() -> Unit = {
-                ViewOptionsChip(if (filterBarShown) 0 else filterModel.activeCount, {
-                    filterFocusState.keepControls(); optionsOpened = true; showOptions = true
-                },
-                    Modifier.focusRequester(optionsFocus)
-                        .then(if (!filterBarShown && visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
-                if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet, onClick = {
+        Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (controls.showOptions) cancelFocusChange() } }.focusGroup()) {
+            // The view action lives in the page header. A-Z stays beside the sender navigation,
+            // outside the scrolling filters, and never moves the header action off screen.
+            if (filterBarShown || visibleChannels.isNotEmpty()) Row(
+                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (filterBarShown) FilterBar(
+                    filterModel, Modifier.weight(1f)
+                        .then(if (visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
+                    focusRequester = controls.filterBarFocus,
+                    up = pageFocusChain?.contentUp,
+                ) else Spacer(Modifier.weight(1f))
+                if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet,
+                    modifier = Modifier.focusRequester(alphabetActionFocus)
+                        .focusProperties { up = pageFocusChain?.contentUp ?: FocusRequester.Default }, onClick = {
                     filterFocusState.keepControls()
                     pendingAlphabet = true
                     if (options.sort != GuideSort.NAME) onOptions(options.copy(sort = GuideSort.NAME, descending = false))
                 })
-                Text(stringResource(R.string.guide_count, visibleChannels.size), style = MaterialTheme.typography.bodySmall)
             }
-            if (filterBarShown) FilterBar(filterModel, Modifier.padding(bottom = 8.dp),
-                focusRequester = if (visibleChannels.isEmpty()) firstContentFocusRequester else null, trailing = trailing)
-            else Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically, content = trailing)
+            Box(Modifier.weight(1f).fillMaxWidth().then(
+                if (pageFocusChain == null) Modifier else Modifier.pageContentUp(pageFocusChain) {
+                    when {
+                        filterBarShown -> controls.filterBarFocus
+                        visibleChannels.isNotEmpty() -> alphabetActionFocus
+                        else -> pageFocusChain.contentUp
+                    }
+                },
+            ).focusGroup()) {
             if (visibleChannels.isEmpty()) {
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 } else StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
+                    modifier = if (!filterBarShown) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
                     onAction = {
                         filterFocusState.keepControls()
-                        if (!filterBarShown) { optionsOpened = true; showOptions = true }
+                        if (!filterBarShown) controls.openOptions()
                         onOptions(GuideOptions(sort = options.sort, descending = options.descending))
                         filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
                     })
-            } else Row(Modifier.weight(1f).fillMaxWidth()) {
+            } else Row(Modifier.fillMaxSize()) {
                 LazyColumn(allowUpExit = true, state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()
                         .overlayLazyScrollbar(listState, enabled = !showAlphabet),
@@ -309,11 +317,6 @@ internal fun LiveTvChannelBrowser(
                         jumpTo(target, true)
                     })
             }
-        }
-        if (showOptions) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
-            Box(Modifier.align(Alignment.TopEnd)) {
-                FilterOptionsPanel(stringResource(if (channelList) R.string.channel_options else R.string.guide_options), filterModel, { showOptions = false })
             }
         }
     }

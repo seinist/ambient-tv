@@ -9,6 +9,8 @@ import com.ambient.tv.spotify.SpotifyBrowseItem
 import com.ambient.tv.spotify.SpotifyRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +20,8 @@ import javax.inject.Inject
 
 data class SpotifyHomeUiState(
     val loading: Boolean = true,
+    /** Includes a refresh while cached/current items remain on screen. */
+    val refreshing: Boolean = false,
     val connected: Boolean = false,
     val webAuthorized: Boolean = false,
     val authBusy: Boolean = false,
@@ -42,6 +46,7 @@ class SpotifyHomeViewModel @Inject constructor(
     private val _state = MutableStateFlow(SpotifyHomeUiState(nativeAvailable = repo.nativeAvailable, webAuthorized = repo.authState.value.authorized, accountName = repo.authState.value.accountName))
     val state: StateFlow<SpotifyHomeUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var loadGeneration = 0L
     private var entered = false
 
     fun focusedItemId(stateKey: String): String? = preferences.sectionFocus(stateKey)
@@ -63,11 +68,12 @@ class SpotifyHomeViewModel @Inject constructor(
                     authBusy = a.busy,
                     accountName = a.accountName,
                     loading = if (a.authorized) _state.value.loading else false,
+                    refreshing = a.authorized && _state.value.refreshing,
                     items = if (a.authorized) _state.value.items else emptyList(),
                     error = a.error ?: if (a.authorized) null else _state.value.error,
                     errorRes = if (a.authorized || a.error != null) null else _state.value.errorRes,
                 )
-                if (!a.authorized) { loadJob?.cancel(); snapshots.clear("spotify") }
+                if (!a.authorized) { ++loadGeneration; loadJob?.cancel(); snapshots.clear("spotify") }
                 if (a.authorized && !wasAuthorized) {
                     repo.start()
                 }
@@ -88,59 +94,88 @@ class SpotifyHomeViewModel @Inject constructor(
     }
 
     fun loadHome() = load("", "home")
-    fun refresh() {
+    fun refresh() = refresh(manual = false)
+    fun reload() {
+        if (_state.value.refreshing || _state.value.authBusy || loadJob?.isActive == true) return
+        refresh(manual = true)
+    }
+    private fun refresh(manual: Boolean) {
         val current = _state.value
         when (current.sectionKey) {
-            "home" -> loadHome()
-            "search" -> search(current.query)
-            else -> loadSection(current.sectionKey)
+            "home" -> load("", "home", manual)
+            "search" -> load(current.query.trim(), "search", manual)
+            else -> loadSection(current.sectionKey, manual)
         }
     }
-    fun loadSection(section: String) {
+    fun loadSection(section: String) = loadSection(section, manual = false)
+    private fun loadSection(section: String, manual: Boolean) {
+        val generation = ++loadGeneration
         loadJob?.cancel()
+        beginLoad("", section)
         loadJob = viewModelScope.launch {
-            beginLoad("", section)
-            val namespace = restoreBrowse("section:$section")
-            if (!repo.webAuthorized) { _state.value = _state.value.copy(loading = false, items = emptyList(), errorRes = R.string.spotify_error_not_authorized); return@launch }
-            suspendResult { repo.librarySection(section) }
-                .onSuccess { if (scopes.forProvider("spotify") == namespace.second) {
-                    snapshots.write("spotify", namespace.first, "section:$section", it)
-                    _state.value = _state.value.copy(loading = false, items = it)
-                } }
-                .onFailure { if (_state.value.items.isEmpty()) _state.value = _state.value.copy(loading = false, error = it.message, errorRes = if (it.message.isNullOrBlank()) R.string.spotify_error_load else null) }
+            try {
+                val namespace = restoreBrowse("section:$section", generation)
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                if (!repo.webAuthorized) { _state.value = _state.value.copy(loading = false, items = emptyList(), errorRes = R.string.spotify_error_not_authorized); return@launch }
+                val result = suspendResult { repo.librarySection(section) }
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                result
+                    .onSuccess { if (scopes.forProvider("spotify") == namespace.second) {
+                        snapshots.write("spotify", namespace.first, "section:$section", it)
+                        currentCoroutineContext().ensureActive()
+                        if (generation == loadGeneration) _state.value = _state.value.copy(loading = false, items = it)
+                    } }
+                    .onFailure { if (manual || _state.value.items.isEmpty()) _state.value = _state.value.copy(loading = false, error = it.message, errorRes = if (it.message.isNullOrBlank()) R.string.spotify_error_load else null) }
+            } finally {
+                if (generation == loadGeneration) _state.value = _state.value.copy(refreshing = false)
+            }
         }
     }
     fun search(query: String) = load(query.trim(), "search")
 
-    private fun load(query: String, sectionKey: String) {
+    private fun load(query: String, sectionKey: String, manual: Boolean = false) {
+        val generation = ++loadGeneration
         loadJob?.cancel()
+        beginLoad(query, sectionKey)
         loadJob = viewModelScope.launch {
-            beginLoad(query, sectionKey)
-            val cacheKey = if (query.isBlank()) "home" else "search:$query"
-            val namespace = restoreBrowse(cacheKey)
-            if (!repo.nativeAvailable) {
-                _state.value = _state.value.copy(loading = false, errorRes = R.string.spotify_error_native_missing)
-                return@launch
+            try {
+                val cacheKey = if (query.isBlank()) "home" else "search:$query"
+                val namespace = restoreBrowse(cacheKey, generation)
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                if (!repo.nativeAvailable) {
+                    _state.value = _state.value.copy(loading = false, errorRes = R.string.spotify_error_native_missing)
+                    return@launch
+                }
+                if (!repo.webAuthorized) {
+                    _state.value = _state.value.copy(loading = false, items = emptyList(), errorRes = R.string.spotify_error_not_authorized_settings)
+                    return@launch
+                }
+                if (query.isNotBlank() && !manual) delay(350)
+                val result = suspendResult { if (query.isBlank()) repo.home() else repo.search(query) }
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                result
+                    .onSuccess { if (scopes.forProvider("spotify") == namespace.second) {
+                        snapshots.write("spotify", namespace.first, cacheKey, it)
+                        currentCoroutineContext().ensureActive()
+                        if (generation == loadGeneration) _state.value = _state.value.copy(loading = false, items = it)
+                    } }
+                    .onFailure { if (manual || _state.value.items.isEmpty()) _state.value = _state.value.copy(loading = false, error = it.message, errorRes = if (it.message.isNullOrBlank()) R.string.spotify_error_load else null) }
+            } finally {
+                if (generation == loadGeneration) _state.value = _state.value.copy(refreshing = false)
             }
-            if (!repo.webAuthorized) {
-                _state.value = _state.value.copy(loading = false, items = emptyList(), errorRes = R.string.spotify_error_not_authorized_settings)
-                return@launch
-            }
-            if (query.isNotBlank()) delay(350)
-            suspendResult { if (query.isBlank()) repo.home() else repo.search(query) }
-                .onSuccess { if (scopes.forProvider("spotify") == namespace.second) {
-                    snapshots.write("spotify", namespace.first, cacheKey, it)
-                    _state.value = _state.value.copy(loading = false, items = it)
-                } }
-                .onFailure { if (_state.value.items.isEmpty()) _state.value = _state.value.copy(loading = false, error = it.message, errorRes = if (it.message.isNullOrBlank()) R.string.spotify_error_load else null) }
         }
     }
 
-    private suspend fun restoreBrowse(key: String): Pair<String, String> {
+    private suspend fun restoreBrowse(key: String, generation: Long): Pair<String, String> {
         val identity = scopes.forProvider("spotify")
         val namespace = snapshots.namespace("spotify", identity)
         if (_state.value.items.isEmpty()) snapshots.read<List<SpotifyBrowseItem>>(namespace, key)?.let { items ->
-            if (scopes.forProvider("spotify") == identity) _state.value = _state.value.copy(items = items, loading = false)
+            currentCoroutineContext().ensureActive()
+            if (generation == loadGeneration && scopes.forProvider("spotify") == identity) _state.value = _state.value.copy(items = items, loading = false)
         }
         return namespace to identity
     }
@@ -149,7 +184,7 @@ class SpotifyHomeViewModel @Inject constructor(
         val current = _state.value
         val items = current.items.takeIf { current.sectionKey == sectionKey && current.query == query }.orEmpty()
         _state.value = current.copy(
-            loading = items.isEmpty(), items = items, query = query, sectionKey = sectionKey,
+            loading = items.isEmpty(), refreshing = true, items = items, query = query, sectionKey = sectionKey,
             error = null, errorRes = null,
         )
     }
@@ -176,10 +211,12 @@ class SpotifyHomeViewModel @Inject constructor(
 
     fun logout() {
         if (!_state.value.webAuthorized || _state.value.authBusy) return
+        ++loadGeneration
         loadJob?.cancel()
         repo.logoutWebApi()
         _state.value = _state.value.copy(
             loading = false,
+            refreshing = false,
             webAuthorized = false,
             accountName = null,
             items = emptyList(),

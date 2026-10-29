@@ -3,6 +3,7 @@ package com.ambient.tv.ui.browse
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.browse.BrowseReconnects
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.repository.MediaRepository
@@ -32,56 +33,92 @@ sealed interface FilteredBrowseUiState {
 }
 
 @HiltViewModel
-class FilteredBrowseViewModel @Inject constructor(
+class FilteredBrowseViewModel internal constructor(
     savedStateHandle: SavedStateHandle,
-    private val repository: MediaRepository,
     private val preferences: AppPreferences,
+    private val readItems: suspend (String, String) -> Result<List<MediaItem>>,
+    private val prepareRefresh: suspend (Set<String>) -> Unit,
 ) : ViewModel() {
+    @Inject constructor(
+        savedStateHandle: SavedStateHandle,
+        repository: MediaRepository,
+        preferences: AppPreferences,
+        reconnects: BrowseReconnects,
+    ) : this(savedStateHandle, preferences,
+        { kind, id -> when (kind) {
+            "actor" -> repository.getItemsByActor(id)
+            "collection" -> repository.getItemsByCollection(id)
+            else -> Result.failure(IllegalArgumentException("Unknown browse filter"))
+        } },
+        { sources -> reconnects.prepareEntry(sources); Unit },
+    )
+
     private val kind: String = checkNotNull(savedStateHandle.get<String>("kind"))
     private val id: String = checkNotNull(savedStateHandle.get<String>("filterId"))
     val reconnectSources: Set<String> = setOf(com.ambient.tv.data.browse.mediaProvider(id))
-    private val title: String = checkNotNull(savedStateHandle.get<String>("title"))
+    val title: String = checkNotNull(savedStateHandle.get<String>("title"))
     private val stateKey = "browse:$kind:$id"
     private var sourceItems: List<MediaItem> = emptyList()
 
     private val _uiState = MutableStateFlow<FilteredBrowseUiState>(FilteredBrowseUiState.Loading)
     val uiState: StateFlow<FilteredBrowseUiState> = _uiState.asStateFlow()
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+    private val _refreshError = MutableStateFlow<String?>(null)
+    val refreshError: StateFlow<String?> = _refreshError.asStateFlow()
 
     private var loadJob: Job? = null
+    private var loadRevision = 0L
 
-    fun load() {
+    /** Entry/reconnect callers already prepared this source's caches. */
+    fun load() = load(refreshCaches = false)
+
+    fun refresh() {
+        if (_refreshing.value) return
+        load(refreshCaches = true)
+    }
+
+    private fun load(refreshCaches: Boolean) {
+        val revision = ++loadRevision
         loadJob?.cancel()
+        _refreshing.value = true
+        _refreshError.value = null
         if (_uiState.value !is FilteredBrowseUiState.Loaded) {
             _uiState.value = FilteredBrowseUiState.Loading
         }
         loadJob = viewModelScope.launch {
-            val result = when (kind) {
-                "actor" -> repository.getItemsByActor(id)
-                "collection" -> repository.getItemsByCollection(id)
-                else -> Result.failure(IllegalArgumentException("Unknown browse filter"))
+            try {
+                val result = com.ambient.tv.util.suspendResult {
+                    if (refreshCaches) prepareRefresh(reconnectSources)
+                    readItems(kind, id).getOrThrow()
+                }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (revision != loadRevision) return@launch
+                result.fold(
+                    onSuccess = { sourceItems = it; _uiState.value = buildLoaded() },
+                    onFailure = {
+                        if (_uiState.value !is FilteredBrowseUiState.Loaded) {
+                            _uiState.value = FilteredBrowseUiState.Error(it.message.orEmpty())
+                        } else _refreshError.value = it.message.orEmpty()
+                    },
+                )
+            } finally {
+                // A canceled older request must not clear the newer request's spinner.
+                if (revision == loadRevision) _refreshing.value = false
             }
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            result.fold(
-                onSuccess = { sourceItems = it; _uiState.value = buildLoaded() },
-                onFailure = {
-                    if (_uiState.value !is FilteredBrowseUiState.Loaded) {
-                        _uiState.value = FilteredBrowseUiState.Error(it.message.orEmpty())
-                    }
-                },
-            )
         }
     }
 
-    fun toggleViewMode() {
-        val next = if (viewMode() == BrowseViewMode.GRID) BrowseViewMode.LIST else BrowseViewMode.GRID
-        preferences.setSectionViewMode(stateKey, next.name)
+    fun setViewMode(mode: BrowseViewMode) {
+        if (mode == viewMode()) return
+        preferences.setSectionViewMode(stateKey, mode.name)
         _uiState.value = buildLoaded()
     }
 
-    fun cycleSort() {
-        val next = if (sort() == BrowseSort.TITLE) BrowseSort.YEAR else BrowseSort.TITLE
-        val descending = next == BrowseSort.YEAR
-        preferences.setSectionSort(stateKey, next.name)
+    fun setSort(selectedSort: BrowseSort) {
+        if (selectedSort == sort()) return
+        val descending = selectedSort == BrowseSort.YEAR
+        preferences.setSectionSort(stateKey, selectedSort.name)
         preferences.setSectionSortOrder(stateKey, if (descending) "DESCENDING" else "ASCENDING")
         _uiState.value = buildLoaded()
     }

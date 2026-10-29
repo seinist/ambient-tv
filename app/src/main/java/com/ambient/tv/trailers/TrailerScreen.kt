@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -46,6 +47,9 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -96,8 +100,10 @@ internal data class TrailerFeedUi(
     val totalPages: Int = 1,
     val loadingInitial: Boolean = true,
     val loadingMore: Boolean = false,
+    val refreshing: Boolean = false,
     val error: Throwable? = null,
     val nextError: Throwable? = null,
+    val refreshError: Throwable? = null,
     val partialFailure: Boolean = false,
 ) { val hasNextPage: Boolean get() = page < totalPages }
 
@@ -192,18 +198,20 @@ internal fun TrailerCatalogContent(
     var entryRefresh by remember { mutableIntStateOf(0) }
     var loadedPages by rememberSaveable(loadKey) { mutableStateOf(IntArray(TrailerFeed.entries.size)) }
 
-    suspend fun loadPage(target: TrailerFeed, page: Int, replace: Boolean, keepContent: Boolean = false) {
+    suspend fun loadPage(target: TrailerFeed, page: Int, replace: Boolean, keepContent: Boolean = false, refreshCaches: Boolean = false) {
         if (!replace && (loads.containsKey(target) || states[target]?.loadKey != loadKey)) return
-        val token = Any()
-        loads[target] = token
+        val token = snapshot.beginLoad(target, replace, currentCoroutineContext()[Job])
         val before = states[target] ?: TrailerFeedUi()
         val refreshThrough = maxOf(page, before.page.takeIf { before.loadKey == loadKey } ?: 0, loadedPages[target.ordinal])
         states[target] = if (replace) before.copy(loadKey = loadKey,
             entries = if (keepContent) before.entries else emptyList(), page = if (keepContent) before.page else 0,
-            loadingInitial = !keepContent || before.page == 0, loadingMore = false, error = null, nextError = null, partialFailure = false)
+            loadingInitial = !keepContent || before.page == 0, loadingMore = false,
+            refreshing = keepContent && before.page > 0,
+            error = null, nextError = null, refreshError = null, partialFailure = false)
         else before.copy(loadingMore = true, nextError = null)
         try {
             com.ambient.tv.util.suspendResult {
+                if (refreshCaches) repository.refreshCaches()
                 var result = repository.feedPage(target, page, language, region).getOrThrow()
                 if (replace && refreshThrough > page) {
                     // Keep the focused page visible until its complete loaded extent is fresh.
@@ -223,32 +231,31 @@ internal fun TrailerCatalogContent(
                     val current = states[target] ?: TrailerFeedUi()
                     val entries = if (replace) result.entries else (current.entries + result.entries).distinctBy { it.key }
                     states[target] = current.copy(loadKey = loadKey, entries = entries, page = result.page,
-                        totalPages = result.totalPages, loadingInitial = false, loadingMore = false,
-                        error = null, nextError = null, partialFailure = current.partialFailure || result.partialFailure)
+                        totalPages = result.totalPages, loadingInitial = false, loadingMore = false, refreshing = false,
+                        error = null, nextError = null, refreshError = null, partialFailure = current.partialFailure || result.partialFailure)
                     loadedPages = loadedPages.copyOf().also { it[target.ordinal] = result.page }
                 },
                 onFailure = { failure ->
                     if (loads[target] !== token || currentLoadKey != loadKey) return@fold
                     val current = states[target] ?: TrailerFeedUi()
-                    states[target] = if (replace) current.copy(loadKey = loadKey, loadingInitial = false,
-                        error = failure.takeIf { current.entries.isEmpty() })
+                    states[target] = if (replace) current.copy(loadKey = loadKey, loadingInitial = false, refreshing = false,
+                        error = failure.takeIf { current.entries.isEmpty() }, refreshError = failure.takeIf { current.entries.isNotEmpty() })
                     else current.copy(loadingMore = false, nextError = failure)
                 },
             )
         } finally {
-            if (loads[target] === token) {
-                loads.remove(target)
+            if (snapshot.finishLoad(target, token)) {
                 val current = states[target]
                 // Switching tabs cancels the initial effect. Do not leave a cached spinner forever.
                 if (current?.loadingInitial == true || currentLoadKey != loadKey) states.remove(target)
-                else if (current != null) states[target] = current.copy(loadingMore = false)
+                else if (current != null) states[target] = current.copy(loadingMore = false, refreshing = false)
             }
         }
     }
 
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("trailers")) {
         // Old requests cannot republish pages from before this entry; other feeds reload when opened.
-        loads.clear()
+        snapshot.cancelLoads()
         states.keys.filter { it != feed }.forEach { states.remove(it) }
         entryRefresh++
     }
@@ -296,6 +303,22 @@ internal fun TrailerCatalogContent(
         Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
             PageHeader(actions = {
                 TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
+                if (configured && enabled) TvChip(
+                    text = stringResource(R.string.action_reload),
+                    icon = Icons.Filled.Refresh,
+                    iconOnly = true,
+                    loading = state.loadingInitial || loads[feed]?.replace == true,
+                    enabled = !state.loadingMore,
+                    onClick = {
+                        if (!loads.containsKey(feed)) {
+                            filterFocusState.keepControls()
+                            // Enter synchronously: another OK must see the token before this suspends.
+                            scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                loadPage(feed, 1, replace = true, keepContent = states[feed]?.loadKey == loadKey, refreshCaches = true)
+                            }
+                        }
+                    },
+                )
                 if (configured && enabled) ViewOptionsChip(
                     activeCount = if (filterBarShown) 0 else filterModel.activeCount,
                     onClick = { filterFocusState.keepControls(); optionsOpened = true; showViewOptions = true },
@@ -310,6 +333,12 @@ internal fun TrailerCatalogContent(
                 }
             }
             if (filterBarShown) FilterBar(filterModel, Modifier.padding(bottom = 8.dp), focusRequester = filterFocus)
+            if (state.refreshError != null) Text(
+                stringResource(R.string.trailers_failed),
+                modifier = Modifier.padding(bottom = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
             Box(
                 Modifier.fillMaxWidth().weight(1f).then(if (!filterBarShown) Modifier else Modifier.focusProperties {
                     onExit = {
@@ -345,7 +374,7 @@ internal fun TrailerCatalogContent(
                         }
                         // A filter may hide this page but match later ones. Do not strand the user
                         // or automatically crawl hundreds of empty pages in the background.
-                        if (state.hasNextPage && !state.loadingMore && state.nextError == null) {
+                        if (state.hasNextPage && !state.loadingMore && !state.refreshing && state.nextError == null) {
                             TvActionButton(stringResource(R.string.files_more), onClick = {
                                 scope.launch { loadPage(feed, state.page + 1, false) }
                             })
@@ -405,11 +434,11 @@ private fun TrailerGrid(entries: List<TrailerEntry>, mode: TrailerViewMode, colu
     onFocused: (TrailerEntry) -> Unit, onOpenTitle: (String, Int) -> Unit, state: TrailerFeedUi, onLoadMore: () -> Unit) {
     val selectedIndex = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = (selectedIndex - 1).coerceAtLeast(0))
-    LaunchedEffect(gridState, state.page, state.hasNextPage, state.loadingMore, state.nextError) {
+    LaunchedEffect(gridState, state.page, state.hasNextPage, state.loadingMore, state.refreshing, state.nextError) {
         snapshotFlow {
             val layout = gridState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
-            state.hasNextPage && !state.loadingMore && state.nextError == null &&
+            state.hasNextPage && !state.loadingMore && !state.refreshing && state.nextError == null &&
                 layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - maxOf(5, layout.visibleItemsInfo.size / 2)
         }.distinctUntilChanged().collect { nearEnd -> if (nearEnd) onLoadMore() }
     }
@@ -430,11 +459,11 @@ private fun TrailerList(entries: List<TrailerEntry>, listRows: Int, focusedKey: 
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
     val index = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = (index - 1).coerceAtLeast(0))
-    LaunchedEffect(listState, state.page, state.hasNextPage, state.loadingMore, state.nextError) {
+    LaunchedEffect(listState, state.page, state.hasNextPage, state.loadingMore, state.refreshing, state.nextError) {
         snapshotFlow {
             val layout = listState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
-            state.hasNextPage && !state.loadingMore && state.nextError == null &&
+            state.hasNextPage && !state.loadingMore && !state.refreshing && state.nextError == null &&
                 layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - maxOf(3, layout.visibleItemsInfo.size)
         }.distinctUntilChanged().collect { nearEnd -> if (nearEnd) onLoadMore() }
     }

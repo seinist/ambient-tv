@@ -90,7 +90,10 @@ class SectionViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<SectionUiState>(SectionUiState.Loading)
     val uiState: StateFlow<SectionUiState> = _uiState.asStateFlow()
+    private val _refreshing = MutableStateFlow(false)
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
     private var loadJob: Job? = null
+    private var loadGeneration = 0
     private var rebuildJob: Job? = null
     private val focusBuffer = BrowseFocusBuffer()
     private var focusPersistenceJob: Job? = null
@@ -109,10 +112,19 @@ class SectionViewModel @Inject constructor(
     /** Entry already expired this source under the shared mutation guard. */
     fun refreshAfterEntry() = load(force = true, invalidateCache = false)
 
-    fun load(force: Boolean = false, invalidateCache: Boolean = force) {
+    fun reload() {
+        if (_refreshing.value) return
+        captureFocusForReturn()
+        load(force = true, notifyFailure = true)
+    }
+
+    fun load(force: Boolean = false, invalidateCache: Boolean = force, notifyFailure: Boolean = false) {
+        val generation = ++loadGeneration
         loadJob?.cancel()
+        _refreshing.value = true
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
+            if (generation != loadGeneration) return@launch
             if (force) {
                 collectionJob?.cancel()
                 collectionJob = null
@@ -122,14 +134,16 @@ class SectionViewModel @Inject constructor(
             if (invalidateCache) mediaRepository.invalidateSectionCache(sectionKey)
             mediaRepository.cachedProviderOnDeck(sectionKey)?.let { onDeck = it }
             // Recovered libraries may have been renamed; do not race the sidebar's independent load.
-            launch {
+            val libraryHeaders = launch {
                 mediaRepository.getProviderLibrarySections(sectionKey).onSuccess {
+                    if (generation != loadGeneration) return@onSuccess
                     if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild()
                 }
             }
             // Independent of library pagination: a slow feed must not hold back the library.
-            launch {
+            val continueWatching = launch {
                 mediaRepository.getProviderOnDeck(sectionKey).onSuccess {
+                    if (generation != loadGeneration) return@onSuccess
                     onDeck = it
                     if (sourceItems.isNotEmpty()) rebuild()
                 }
@@ -143,8 +157,8 @@ class SectionViewModel @Inject constructor(
             val showPagesWhileLoading = sourceItems.isEmpty()
             val progressiveItems = mutableListOf<MediaItem>()
             var publishedItemCount = 0
-            mediaRepository.getSectionItems(sectionKey) { pageItems ->
-                if (showPagesWhileLoading) {
+            val result = mediaRepository.getSectionItems(sectionKey) { pageItems ->
+                if (showPagesWhileLoading && generation == loadGeneration) {
                     progressiveItems += pageItems
                     // Publish the first page immediately, then update in coarse batches so a
                     // very large library does not trigger a complete sort on every 100 items.
@@ -152,12 +166,16 @@ class SectionViewModel @Inject constructor(
                         publishedItemCount = progressiveItems.size
                         val snapshot = progressiveItems.toList()
                         withContext(Dispatchers.Main.immediate) {
-                            sourceItems = snapshot
-                            rebuild()
+                            if (generation == loadGeneration) {
+                                sourceItems = snapshot
+                                rebuild()
+                            }
                         }
                     }
                 }
-            }.fold(
+            }
+            if (generation != loadGeneration) return@launch
+            result.fold(
                 onSuccess = { items ->
                     // A reload returns Jellyfin/Emby items without collection tags. Keep the
                     // known ones so the collections page is updated in place, not blanked.
@@ -181,9 +199,28 @@ class SectionViewModel @Inject constructor(
                 onFailure = { error ->
                     if (_uiState.value !is SectionUiState.Loaded) {
                         _uiState.value = SectionUiState.Error(error.message ?: "")
+                    } else if (notifyFailure && generation == loadGeneration && error !is kotlinx.coroutines.CancellationException) {
+                        com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
+                            "section:reload:$sectionKey", R.string.library_load_failed,
+                            systems = listOf(com.ambient.tv.data.browse.mediaProvider(sectionKey)),
+                            phase = com.ambient.tv.notifications.NoticePhase.ERROR,
+                            kind = com.ambient.tv.notifications.NoticeKind.LIBRARY,
+                            interruptPlayback = false,
+                        ))
                     }
                 },
             )
+            libraryHeaders.join()
+            continueWatching.join()
+            // Collection metadata is a deferred pass, but it is part of the visible page's
+            // reload. Keep the header busy until the existing enrichment job has answered.
+            if (page == SectionPage.COLLECTIONS) collectionJob?.join()
+        }.also { job ->
+            // Completion includes the library-name and continue-watching child requests.
+            // A cancelled predecessor must never clear a replacement request's spinner.
+            job.invokeOnCompletion {
+                if (generation == loadGeneration) _refreshing.value = false
+            }
         }
     }
 
