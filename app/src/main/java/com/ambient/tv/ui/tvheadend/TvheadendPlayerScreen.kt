@@ -118,6 +118,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerTouchLayer
+import com.ambient.tv.ui.common.PlayerPinchZoom
+import com.ambient.tv.ui.common.pinchVideoAspectRatio
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -739,6 +741,25 @@ private fun TvheadendPlaybackSurface(
                 userSeekBy(BackgroundPlaybackSession.seekJumpMs(seekJumpMs))
                 controlsVisible = true
             }),
+            pinchZoom = if (!hasVideoTrack) null else PlayerPinchZoom(
+                key = player,
+                enabled = panel == UnifiedPlayerPanel.NONE,
+                presentation = com.ambient.tv.ui.player.VideoPresentation(
+                    resizeMode = when (playerResizeMode) {
+                        PlayerResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        PlayerResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        PlayerResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    },
+                    aspectRatio = aspectPreset.ratio,
+                    zoom = videoZoom,
+                ),
+                sourceAspectRatio = { player.pinchVideoAspectRatio() },
+                onChanged = {
+                    playerResizeMode = PlayerResizeMode.FIT
+                    aspectPreset = PlayerAspectPreset.AUTO
+                    videoZoom = it.zoom
+                },
+            ),
         )
 
         val tvhPlan = tvhAudio?.outputPlan()

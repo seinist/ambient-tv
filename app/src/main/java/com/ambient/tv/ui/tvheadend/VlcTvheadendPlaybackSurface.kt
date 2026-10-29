@@ -72,6 +72,10 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerTouchLayer
+import com.ambient.tv.ui.common.PlayerPinchZoom
+import com.ambient.tv.ui.player.VideoPresentation
+import com.ambient.tv.ui.player.videoAspectRatio
+import com.ambient.tv.ui.player.videoResizeMode
 import com.ambient.tv.ui.player.PlayerBufferingSpinner
 import com.ambient.tv.ui.player.waitingForPlaybackPicture
 import com.ambient.tv.ui.player.PlaybackLanguagePolicy
@@ -364,6 +368,18 @@ internal fun VlcTvheadendPlaybackSurface(
             onTogglePlayback = { BackgroundPlaybackSession.userToggle(); controlsVisible = true },
             onSeekBack = if (source.isLive) null else ({ userSeekBy(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)); controlsVisible = true }),
             onSeekForward = if (source.isLive) null else ({ userSeekBy(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)); controlsVisible = true }),
+            pinchZoom = if (audioOnlyContent) null else PlayerPinchZoom(
+                key = controller,
+                enabled = panel == UnifiedPlayerPanel.NONE,
+                presentation = VideoPresentation(videoResizeMode(resizeKey), videoAspectRatio(aspectKey), zoomFactor),
+                sourceAspectRatio = { controller.videoAspectRatio() },
+                onChanged = {
+                    resizeKey = "fit"
+                    aspectKey = "auto"
+                    zoomFactor = it.zoom
+                    controller.setVideoPresentation(resizeKey, null, zoomFactor)
+                },
+            ),
         )
         val tvhVlcPlan = controller.audioSession.outputPlan()
         LaunchedEffect(tvhVlcPlan.needsMpv, tvhVlcPlan.mode) {

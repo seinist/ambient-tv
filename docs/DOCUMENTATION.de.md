@@ -205,7 +205,7 @@ Standardmäßig aus. Zeigt geeignetes SDR-Video auf einem HDR-Display als HDR10.
 
 ### 3.9 Uhr
 
-Uhrzeit und Datum in den Seiten-Kopfzeilen (oben rechts, TV), schwebend über dem Startseiten-Hero und im Player. Ein gemeinsamer Takt springt zur vollen Minute bzw. Sekunde und folgt Zeit- und Zeitzonenwechseln sofort; die Player-Uhr läuft auch bei offenem OSD weiter. Die Seite hat eine Live-Vorschau.
+Uhrzeit und Datum in den Seiten-Kopfzeilen einschließlich Detailseiten, auf der Startseite und im Player, auf TV und Handy. Am TV schwebt die Startseiten-Uhr über dem Hero; am Handy bekommt sie eine eigene Zeile. Farbe, Deckkraft, Schrift, Größe und Schatten gelten auch für die Player-Uhr. Auf schmalen Handy-Kopfzeilen wird die Uhrzeit bei Bedarf verkleinert und ein zu langes Datum gekürzt, damit die Bedienelemente erreichbar bleiben. Ein gemeinsamer Takt springt zur vollen Minute bzw. Sekunde und folgt Zeit- und Zeitzonenwechseln sofort; die Player-Uhr läuft auch bei offenem OSD weiter. Die Seite hat eine Live-Vorschau.
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |
 | --- | --- | --- | --- |
@@ -222,6 +222,8 @@ Uhrzeit und Datum in den Seiten-Kopfzeilen (oben rechts, TV), schwebend über de
 | Endzeit im Player | An / Aus | An | Zeigt „Endet um …“ neben der Restzeit. |
 
 Die Uhr-Einstellungen sind Teil der Einstellungssicherung; ältere Sicherungen übernehmen ihren bisherigen 24-Stunden-Schalter.
+
+„Überall (Kopfzeilen)“ zeigt die Uhr außerhalb des Players; für die Wiedergabe ist „Überall + Player“ vorgesehen. Der Bildschirmschoner übernimmt Zeitformat und Datumsstil, behält aber seine eigene Helligkeit und OLED-Abdunklung.
 
 ---
 
@@ -624,7 +626,7 @@ Live-TV ohne spulbare Timeline nutzt die Senderinfo als Fokusziel. Automatische 
 | Player | Player wählen | Automatisch · Media3 · VLC · MPV | — | Zeigt, warum die Engine gewählt wurde (globale Vorgabe, Sender, Preset, Ersatz nach Fehler, Dolby-Vision-Schutz). |
 | Skalierung | Bildanpassung | Einpassen · Ausfüllen · Strecken | Alle | |
 | Skalierung | Seitenverhältnis | Auto · 16:9 · 4:3 · 21:9 | Alle | |
-| Skalierung | Zoom-Stufe | 100 %, 110 %, 125 %, 150 % | Alle | |
+| Skalierung | Zoom-Stufe | 100 %, 110 %, 125 %, 150 % sowie aktueller Pinch-Wert | Alle | Der tatsächliche Zoomwert ist ausgewählt; 100 % setzt ihn zurück. |
 | Bewegung | Wiedergabegeschwindigkeit | 0,5×, 0,75×, 1×, 1,25×, 1,5×, 2× | Alle | Nicht bei Live-TV. |
 | Bewegung | Bewegungsglättung (experimentell) | Aus · Automatisch · Überlastschutz · Ausgewogen · Hohe Qualität | MPV, VLC | SVP verfügbar an, Wiedergabeleistung Maximal, progressives SDR, nicht MPV-Direktausgabe. |
 | Ausgabe | Bildschirmmodus | Auto · Videoauflösung + Hz · Auto · volle Displayauflösung + Hz · Systemvorgabe · feste Modi | Alle | Mehr als ein Bildschirmmodus. |
@@ -789,6 +791,9 @@ Der Cast-Button von Chrome/Google Cast kann diese App nicht ansprechen (Google C
 - Einstellungen: Bereichs-Tabs statt linker Spalte
 - Video: Querformat Vollbild; Hochformat mit Navigation; optionaler Vollbild-Schalter bei gesperrter Rotation
 - Touch-Zeitleiste: Ziehen = Vorschau, Loslassen = Seek
+- Video mit zwei Fingern zoomen: Einrasten, sobald die Bildbreite oder Bildhöhe die verfügbare Player-Fläche ausfüllt. Weiteres Spreizen oder Zusammenziehen löst die Rastung. Gilt für Media3, VLC und MPV, einschließlich SmartTube und TVHeadend.
+
+Pinch-Zoom reicht von 50 bis 800 Prozent und erhält das ursprüngliche Seitenverhältnis. Eine erkannte Zoomgeste wechselt deshalb von einem erzwungenen Bildformat auf Auto und von Strecken/Zuschneiden auf Einpassen mit dem passenden Zoomwert. Beim Füllen einer Dimension kann die andere über den Bildschirm hinausragen und wird abgeschnitten. Maßgeblich ist die tatsächliche Player-Fläche, auch im Hochformat oder geteilten Fenster. Bei einer Größenänderung der Player-Fläche wird ein zuvor per Geste gesetzter Zoom auf Einpassen zurückgesetzt. Das Video-Panel zeigt auch frei gewählte Prozentwerte. Musik und offene Einstellungs-Panels reagieren nicht auf Pinch-Zoom; Tippen und Doppeltippen behalten ihre bisherigen Funktionen.
 
 ### 11.3 Medienauswahl
 

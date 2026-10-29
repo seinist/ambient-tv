@@ -493,6 +493,11 @@ internal fun SettingsHub(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         if (handheld) {
+            // Keep the clock out of the narrow title/search row, including large type
+            // and long dates. It follows the same visibility setting as other headers.
+            if (com.ambient.tv.ui.common.LocalClockSettings.current.inHeader) {
+                com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.End))
+            }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (showBack) androidx.compose.material3.IconButton(onClick = ::goBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))

@@ -63,6 +63,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.LanguagePreferences
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerTouchLayer
+import com.ambient.tv.ui.common.PlayerPinchZoom
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -316,6 +317,18 @@ internal fun MpvPlayerContent(
             onTogglePlayback = { BackgroundPlaybackSession.userToggle(); controlsVisible = true },
             onSeekBack = { seekBy(-BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); controlsVisible = true },
             onSeekForward = { seekBy(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); controlsVisible = true },
+            pinchZoom = if (audioOnlyContent) null else PlayerPinchZoom(
+                key = controller,
+                enabled = panel == UnifiedPlayerPanel.NONE,
+                presentation = VideoPresentation(videoResizeMode(resizeKey), videoAspectRatio(aspectKey), zoomFactor),
+                sourceAspectRatio = { controller.videoAspectRatio() ?: state.sourceAspectRatioHint },
+                onChanged = {
+                    resizeKey = it.resizeKey()
+                    aspectKey = it.aspectKey()
+                    zoomFactor = it.zoom
+                    controller.setVideoPresentation(resizeKey, aspectKey.takeUnless { value -> value == "auto" }, zoomFactor)
+                },
+            ),
         )
         PlaybackPerformanceNotice(mpvLoadHint(controller, snapshot, controller.deinterlaceModeKey != "off"))
         val showNerdOverlay = controller.audioSession.performanceHint
