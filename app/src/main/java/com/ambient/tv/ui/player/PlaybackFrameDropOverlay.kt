@@ -94,16 +94,21 @@ internal fun frameDropBarColor(dropPercent: Double?): Color {
 }
 
 /**
- * Window overlay shown while a video panel is open; fades in and out and never takes focus or handles Back.
+ * Window overlay shown in video panels or for the playback when enabled in OSD & Info.
+ * Fades in and out and never takes focus or handles Back.
  * Shows a smoothed FPS deviation when the intended output rate is known. Otherwise real
  * renderer counters still provide output FPS and the observed proportion of dropped frames.
  * Hosted by [PlayerPanelVisibility] so it outlives the panel long enough to fade out.
  */
 @Composable
 internal fun PlaybackFrameDropOverlay(visible: Boolean) {
+    val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     val handle = BackgroundPlaybackSession.activeHandle()
+    val session = playbackProfileAudio(handle)
     val visibility = remember { MutableTransitionState(false) }
-    visibility.targetState = visible && (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle)
+    visibility.targetState = (visible || session?.showFrameDropOverlay == true) &&
+        playback.metadata?.hasVideo == true && session?.audioOnly != true &&
+        (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle)
     if (!visibility.currentState && !visibility.targetState) return
     var targetFps by remember(handle) { mutableStateOf<Double?>(null) }
     var smoothed by remember(handle) { mutableStateOf<FrameDropSample?>(null) }
