@@ -413,7 +413,7 @@ private fun RightSidePanelChrome(
                 // Consume taps on empty panel space instead of reaching the page/player below.
                 detectTapGestures { }
             } else Modifier)
-            .graphicsLayer {
+            .then(if (playerPanelMotion.active) Modifier.graphicsLayer {
                 translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(
                     playerPanelMotion.panelProgress,
                     playerPanelMotion.reducedEffects,
@@ -422,7 +422,7 @@ private fun RightSidePanelChrome(
                     playerPanelMotion.panelProgress,
                     playerPanelMotion.reducedEffects,
                 )
-            }
+            } else Modifier)
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
             .focusProperties {
