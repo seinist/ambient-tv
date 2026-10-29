@@ -299,6 +299,8 @@ Beide Seiten haben dieselben Einstellungen.
 
 Reine Kanallisten bieten passende Sortierungen (Anbieterreihenfolge oder Titel), aber keine Videofilter oder Sortierung nach Dauer. In gemischten Ergebnissen wirken Videofilter nur auf Videos; Kanalkacheln bleiben sichtbar. Videos innerhalb eines Kanals behalten ihre üblichen Filter und Sortierungen. Gespeicherte Videoeinstellungen bleiben beim Besuch einer Kanalliste erhalten.
 
+Die Kennzeichnung **Neue Videos** auf einer Kanalkarte zeigt an, dass YouTube/SmartTube für dieses Abo neue Inhalte meldet. Sie ist kein Online- oder Live-Status des Kanals. Laufende und geplante Live-Videos haben ihre eigene Kennzeichnung am jeweiligen Video.
+
 ### 4.5 Spotify
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |

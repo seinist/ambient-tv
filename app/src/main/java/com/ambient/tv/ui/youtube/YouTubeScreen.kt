@@ -64,8 +64,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -382,7 +380,7 @@ private fun YouTubeChannelTitle(channel: com.ambient.tv.youtube.YouTubeChannelIn
 
 /**
  * 16:9 artwork of a tile. Channel avatars are square: they stay whole, round and centered on the
- * tile, with SmartTube's new-content dot for subscribed channels that uploaded since.
+ * tile. Label the provider's new-content hint explicitly so it cannot look like online presence.
  */
 @Composable
 private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
@@ -393,14 +391,10 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)), contentAlignment = Alignment.Center) {
         ArtworkImage(item.imageUrl, item.title, Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape), ContentScale.Crop)
         if (item.hasNewContent) {
-            val label = stringResource(R.string.youtube_channel_new_content)
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp)
-                    .size(12.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape)
-                    .semantics { contentDescription = label },
+            MetaBadge(
+                text = stringResource(R.string.youtube_channel_new_content),
+                emphasized = true,
+                modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
             )
         }
     }

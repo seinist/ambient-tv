@@ -17,7 +17,7 @@ data class YouTubeItem(
     val isShorts: Boolean = false,
     val channelId: String? = null,
     val scheduledStartMs: Long? = null,
-    /** Subscribed-channel tiles: the channel uploaded since it was last opened. */
+    /** Provider-reported new-content hint on subscribed channels; not an online or live status. */
     val hasNewContent: Boolean = false,
 ) {
     /** Channel tiles carry [youtubeChannelKey] as videoId, so rows, focus and paging keep one key. */

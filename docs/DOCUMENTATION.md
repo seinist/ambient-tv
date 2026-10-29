@@ -299,6 +299,8 @@ Both pages have the same controls.
 
 Channel directories offer channel-appropriate sorting (provider order or title), with no video filters or duration sort. In mixed results, video filters apply only to videos and keep channel tiles visible. Videos inside a channel retain their usual filters and sorting; saved video preferences are kept when visiting channel directories.
 
+The **New videos** label on a channel card means YouTube/SmartTube reports new content for that subscription. It is not an online or live status for the channel. Running and scheduled live videos have their own labels on the individual video.
+
 ### 4.5 Spotify
 
 | Setting | Options / values | Default | Description |
