@@ -808,7 +808,7 @@ open class MainActivity : ComponentActivity() {
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.RADIO_PLAYER, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1980,8 +1980,20 @@ private fun AmbientTvApp(
                     }
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {
-                            com.ambient.tv.ui.radio.RadioScreen(onBack = ::focusSidebar)
+                            com.ambient.tv.ui.radio.RadioScreen(
+                                onBack = ::focusSidebar,
+                                onNowPlaying = { navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true } },
+                            )
                         }
+                    }
+                    composable(Destinations.RADIO_PLAYER) {
+                        com.ambient.tv.ui.radio.RadioNowPlayingScreen(
+                            onBack = {
+                                if (!navController.popBackStack()) {
+                                    navController.navigate(Destinations.RADIO) { launchSingleTop = true }
+                                }
+                            },
+                        )
                     }
                     composable(Destinations.SPOTIFY) {
                         RestorableSidebarContent {
