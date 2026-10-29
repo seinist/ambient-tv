@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_system_sources_network">Quellen und Netzwerk</string>
+    <string name="settings_system_tunnel_import">Konfiguration importieren</string>
+    <string name="settings_system_tunnel_status">Tunnel und Status</string>
+    <string name="settings_system_server_account">Server und Anmeldung</string>
+    <string name="settings_system_connection_start">Verbindung und Start</string>
+    <string name="settings_system_library_display">Bibliothek und Darstellung</string>
+    <string name="settings_system_server_access">Server und Zugang</string>
+    <string name="settings_system_menu_home">Menü und Startseite</string>
+    <string name="settings_system_live_playback">Live-TV-Wiedergabe</string>
+    <string name="settings_system_account_setup">Konto und Einrichtung</string>
+    <string name="settings_system_device_playback">Gerät und Wiedergabe</string>
+    <string name="settings_system_menu_display">Menü und Darstellung</string>
+    <string name="settings_system_playback">Wiedergabe</string>
+    <string name="settings_system_menu_start">Menü und Startbereich</string>
+    <string name="settings_system_video_quality">Videoqualität</string>
+    <string name="settings_system_network_buffer">Netzwerk und Puffer</string>
+    <string name="settings_system_account_devices">Konto und Geräteverknüpfung</string>
+    <string name="settings_system_sources_devices">Quellen und Geräte</string>
+    <string name="settings_system_wake_servers">Server aufwecken</string>
+    <string name="settings_system_wake_behaviour">Wake-on-LAN-Verhalten</string>
+    <string name="settings_system_auto_wake">Automatisch aufwecken</string>
+    <string name="settings_system_receiver_identity">Empfang und Gerätename</string>
+    <string name="settings_system_receiver_access">Freigaben und bekannte Absender</string>
+    <string name="settings_system_connection_pairing">Verbindung und Kopplung</string>
+    <string name="settings_system_receiver_background">Empfang und Hintergrundstart</string>
+    <string name="settings_system_connection_network">Verbindung und Netzwerk</string>
+    <string name="settings_system_wake_device">Gerät aufwecken</string>
+    <string name="settings_system_paired_tvs">Gekoppelte TVs</string>
+    <string name="settings_system_device_management">Gerät verwalten</string>
+    <string name="settings_system_playlists_sources">Playlists und Quellen</string>
+    <string name="settings_system_source">Quelle</string>
+    <string name="settings_system_programme_guide">Programmführer</string>
+    <string name="settings_system_connection_options">Verbindungsoptionen</string>
+</resources>

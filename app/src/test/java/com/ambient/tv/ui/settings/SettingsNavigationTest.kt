@@ -314,14 +314,17 @@ class SettingsNavigationTest {
     }
 
     @Test
-    fun searchScrollHintsPreferAppearanceControls() {
-        assertEquals(3, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "ui scale"))
-        assertEquals(2, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "oled theme"))
-        assertEquals(1, settingsSearchScrollIndex(SettingsCategory.APPEARANCE, "HDR"))
-        assertEquals(1, settingsSearchScrollIndex(SettingsCategory.PLAYBACK, "Prüfdauer Bildaussetzer"))
-        assertEquals(3, settingsSearchScrollIndex(SettingsCategory.PLAYBACK, "MPV backend"))
-        assertEquals(1, settingsSearchScrollIndex(SettingsCategory.BACKGROUND, "Hintergrundvideo"))
-        assertEquals(0, settingsSearchScrollIndex(SettingsCategory.BACKGROUND, "Lichtstimmung"))
+    fun searchTargetsKeepTheirIdentityWhenSectionsMove() {
+        assertEquals("appearance:scale", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "ui scale"))
+        assertEquals("appearance:theme", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "oled theme"))
+        assertEquals("appearance:hdr", settingsSearchTargetKey(SettingsCategory.APPEARANCE, "HDR"))
+        assertEquals("playback:test-duration", settingsSearchTargetKey(SettingsCategory.PLAYBACK, "Prüfdauer Bildaussetzer"))
+        assertEquals("playback:renderer", settingsSearchTargetKey(SettingsCategory.PLAYBACK, "MPV backend"))
+        assertEquals("background:video", settingsSearchTargetKey(SettingsCategory.BACKGROUND, "Hintergrundvideo"))
+        val index = SettingsItemIndex()
+        assertEquals(0, index.landingPosition(settingsSearchTargetKey(SettingsCategory.BACKGROUND, "Lichtstimmung"), requested = true))
+        assertEquals("spotify:account", settingsSearchTargetKey(SettingsCategory.SPOTIFY, "client ID"))
+        assertEquals("seek:controls", settingsSearchTargetKey(SettingsCategory.SEEK, "Fortsetzen"))
         assertTrue(settingsSearchPrefersStartPageTab("home widgets"))
         assertEquals(SettingsCategory.SPOTIFY, SettingsCategory.fromKey("advanced"))
     }

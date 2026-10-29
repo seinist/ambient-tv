@@ -64,6 +64,9 @@ import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.animateContentSize
@@ -348,17 +351,29 @@ fun PageChipRow(
 fun SettingsSectionHeader(
     title: String,
     modifier: Modifier = Modifier,
+    description: String? = null,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    val page = LocalSettingsPresentation.current == SettingsPresentation.Page
+    Column(
+        modifier = modifier.fillMaxWidth().padding(top = if (page) 16.dp else 12.dp, bottom = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(
-            Modifier
-                .size(4.dp, 22.dp)
-                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
-        )
-        Text(title, style = MaterialTheme.typography.titleLarge)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(3.dp, 16.dp)
+                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
+            )
+            Text(
+                title,
+                modifier = Modifier.semantics { heading() },
+                style = MaterialTheme.typography.titleSmall.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        description?.takeIf(String::isNotBlank)?.let { SettingsHint(it) }
     }
 }

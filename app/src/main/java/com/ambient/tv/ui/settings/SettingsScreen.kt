@@ -98,6 +98,8 @@ import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.wrapFocusDownToTop
 import com.ambient.tv.ui.common.SettingsSectionHeader
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.theme.AccentOptions
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.LocalUiTokens
@@ -317,14 +319,16 @@ fun SettingsScreen(
                 if (selectedCategory == SettingsCategory.WAKE) viewModel.wakeGroups(uiState) else emptyList()
             }
             val scrollbarContentFocus = remember { FocusRequester() }
+            val itemIndex = LocalSettingsItemIndex.current
             val listOverflow = listState.canScrollForward || listState.canScrollBackward
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.focusRequester(scrollbarContentFocus).focusGroup().fillMaxSize().wrapFocusDownToTop(listState).padding(end = if (listOverflow) 16.dp else 0.dp),
                     contentPadding = PaddingValues(bottom = 24.dp).withTvFocusInsets(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                  indexedSettingsItems(itemIndex) {
                     when (selectedCategory) {
                         SettingsCategory.NAV_SOUNDS -> Unit // Full-page editor above.
                         SettingsCategory.COMPANION -> companionSettingsItems()
@@ -340,56 +344,31 @@ fun SettingsScreen(
                         }
                         SettingsCategory.APPEARANCE -> {
                             item { AppearancePreview(uiScale = uiState.uiScale, themeModeKey = uiState.themeModeKey) }
-                            item {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_design)) }
+                            item(key = "appearance:hdr") {
                                 UiHdrSettings(
                                     mode = uiState.uiHdrModeKey,
                                     onModeChanged = viewModel::onUiHdrModeChanged,
                                     showConversion = false,
                                 )
                             }
-                            item {
-                                SettingsGroup(title = stringResource(R.string.settings_theme_mode)) {
-                                    SettingsSelect(options = buildList {
-                                        listOf("dark", "oled", "dim").forEach { mode ->
-                                            add(SettingsSelectOption(
-                                                text = themeModeLabel(mode),
-                                                selected = uiState.themeModeKey == mode,
-                                                onClick = { viewModel.onThemeModeChanged(mode) },
-                                            ))
-                                        }
-                                    })
-                                }
+                            item(key = "appearance:theme") {
+                                SettingsSelect(label = stringResource(R.string.settings_theme_mode), options = buildList {
+                                    listOf("dark", "oled", "dim").forEach { mode ->
+                                        add(SettingsSelectOption(
+                                            text = themeModeLabel(mode),
+                                            selected = uiState.themeModeKey == mode,
+                                            onClick = { viewModel.onThemeModeChanged(mode) },
+                                        ))
+                                    }
+                                })
                             }
-                            item {
-                                com.ambient.tv.ui.common.RightPanelValueSlider(
-                                    title = stringResource(R.string.settings_ui_scale),
-                                    subtitle = stringResource(R.string.settings_ui_scale_hint),
-                                    value = (uiState.uiScale * 100).roundToInt(),
-                                    valueRange = com.ambient.tv.data.local.UiScalePolicy.percentRange,
-                                    step = 5,
-                                    valueLabel = "${(uiState.uiScale * 100).roundToInt()}%",
-                                    onValueChange = { viewModel.onUiScaleChanged(it / 100f) },
-                                )
-                            }
-                            item {
-                                if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) return@item
-                                var overscan by remember { mutableIntStateOf(viewModel.overscanPercent) }
-                                com.ambient.tv.ui.common.RightPanelValueSlider(
-                                    title = stringResource(R.string.settings_overscan),
-                                    subtitle = stringResource(R.string.settings_overscan_hint),
-                                    value = overscan,
-                                    valueRange = com.ambient.tv.data.local.OverscanPolicy.percentRange,
-                                    step = 1,
-                                    valueLabel = "$overscan%",
-                                    onValueChange = { overscan = it; viewModel.overscanPercent = it },
-                                )
-                            }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_accent_color),
-                                    subtitle = stringResource(if (uiState.dualAccentEnabled) R.string.settings_accent_pair_hint else R.string.settings_accent_single_hint),
-                                ) {
-                                    SettingsSelect(options = (AccentOptions.entries.map { it.key } + listOf("artwork", "custom")).map { key ->
+                            item(key = "appearance:accent") {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_accent_color),
+                                        description = stringResource(if (uiState.dualAccentEnabled) R.string.settings_accent_pair_hint else R.string.settings_accent_single_hint),
+                                        options = (AccentOptions.entries.map { it.key } + listOf("artwork", "custom")).map { key ->
                                         SettingsSelectOption(
                                             text = accentLabel(key),
                                             selected = uiState.accentColorKey == key,
@@ -433,12 +412,38 @@ fun SettingsScreen(
                                     )
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_display_size)) }
+                            item(key = "appearance:scale") {
+                                com.ambient.tv.ui.common.RightPanelValueSlider(
+                                    title = stringResource(R.string.settings_ui_scale),
+                                    subtitle = stringResource(R.string.settings_ui_scale_hint),
+                                    value = (uiState.uiScale * 100).roundToInt(),
+                                    valueRange = com.ambient.tv.data.local.UiScalePolicy.percentRange,
+                                    step = 5,
+                                    valueLabel = "${(uiState.uiScale * 100).roundToInt()}%",
+                                    onValueChange = { viewModel.onUiScaleChanged(it / 100f) },
+                                )
+                            }
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_intro_animation),
-                                    subtitle = stringResource(R.string.settings_intro_animation_hint),
-                                ) {
-                                    SettingsSelect(options = IntroAnimation.keys.map { key ->
+                                if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) return@item
+                                var overscan by remember { mutableIntStateOf(viewModel.overscanPercent) }
+                                com.ambient.tv.ui.common.RightPanelValueSlider(
+                                    title = stringResource(R.string.settings_overscan),
+                                    subtitle = stringResource(R.string.settings_overscan_hint),
+                                    value = overscan,
+                                    valueRange = com.ambient.tv.data.local.OverscanPolicy.percentRange,
+                                    step = 1,
+                                    valueLabel = "$overscan%",
+                                    onValueChange = { overscan = it; viewModel.overscanPercent = it },
+                                )
+                            }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_app_start)) }
+                            item {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_intro_animation),
+                                        description = stringResource(R.string.settings_intro_animation_hint),
+                                        options = IntroAnimation.keys.map { key ->
                                         SettingsSelectOption(
                                             text = introAnimationLabel(key),
                                             selected = uiState.introAnimationKey == key,
@@ -453,6 +458,7 @@ fun SettingsScreen(
                                     }
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance)) }
                             item {
                                 SettingsGroup(
                                     title = stringResource(R.string.settings_ui_performance),
@@ -470,64 +476,53 @@ fun SettingsScreen(
                                     onClick = viewModel::checkUiPerformance,
                                     loading = uiState.performanceProbe != null,
                                     modifier = Modifier.focusRequester(checkUiFocus),
-                                    fillWidth = true,
                                 )
                             }
                         }
 
                         SettingsCategory.LANGUAGE -> {
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_ui_language),
-                                    subtitle = stringResource(R.string.settings_ui_language_hint),
-                                ) {
-                                    LanguageChoiceRow(
-                                        selected = uiState.uiLanguageKey,
-                                        onSelected = viewModel::onUiLanguageChanged,
-                                    )
-                                }
+                                LanguageChoiceRow(
+                                    label = stringResource(R.string.settings_ui_language),
+                                    description = stringResource(R.string.settings_ui_language_hint),
+                                    selected = uiState.uiLanguageKey,
+                                    onSelected = viewModel::onUiLanguageChanged,
+                                )
                             }
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_metadata_language),
-                                    subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_metadata_language_hint)),
-                                ) {
-                                    LanguageChoiceRow(
-                                        selected = uiState.metadataLanguageKey,
-                                        onSelected = viewModel::onMetadataLanguageChanged,
-                                    )
-                                }
+                                LanguageChoiceRow(
+                                    label = stringResource(R.string.settings_metadata_language),
+                                    description = MediaSystem.renamedAll(stringResource(R.string.settings_metadata_language_hint)),
+                                    selected = uiState.metadataLanguageKey,
+                                    onSelected = viewModel::onMetadataLanguageChanged,
+                                )
                             }
                         }
 
                         SettingsCategory.MEDIA_SELECTION -> {
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_media_selection_title),
-                                    subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_media_selection_hint)),
-                                ) {
-                                    SettingsSelect(options = buildList {
-                                        listOf(
-                                            MediaSelectionPreferences.DETAILS,
-                                            MediaSelectionPreferences.PLAY,
-                                            MediaSelectionPreferences.ASK,
-                                        ).forEach { behavior ->
-                                            add(SettingsSelectOption(
-                                                text = stringResource(when (behavior) {
-                                                    MediaSelectionPreferences.PLAY -> R.string.settings_media_selection_play
-                                                    MediaSelectionPreferences.ASK -> R.string.settings_media_selection_ask
-                                                    else -> R.string.settings_media_selection_details
-                                                }),
-                                                selected = uiState.mediaSelectionBehaviorKey == behavior,
-                                                onClick = { viewModel.onMediaSelectionBehaviorChanged(behavior) },
-                                            ))
-                                        }
-                                    })
-                                }
+                                SettingsSelect(label = stringResource(R.string.settings_media_selection_title), description = MediaSystem.renamedAll(stringResource(R.string.settings_media_selection_hint)), options = buildList {
+                                    listOf(
+                                        MediaSelectionPreferences.DETAILS,
+                                        MediaSelectionPreferences.PLAY,
+                                        MediaSelectionPreferences.ASK,
+                                    ).forEach { behavior ->
+                                        add(SettingsSelectOption(
+                                            text = stringResource(when (behavior) {
+                                                MediaSelectionPreferences.PLAY -> R.string.settings_media_selection_play
+                                                MediaSelectionPreferences.ASK -> R.string.settings_media_selection_ask
+                                                else -> R.string.settings_media_selection_details
+                                            }),
+                                            selected = uiState.mediaSelectionBehaviorKey == behavior,
+                                            onClick = { viewModel.onMediaSelectionBehaviorChanged(behavior) },
+                                        ))
+                                    }
+                                })
                             }
                         }
 
                         SettingsCategory.SCREENSAVER -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_activation)) }
                             item {
                                 TvSettingRow(
                                     title = stringResource(R.string.settings_screensaver_enabled),
@@ -538,90 +533,99 @@ fun SettingsScreen(
                             }
                             if (uiState.screensaverEnabled) {
                                 item {
-                                    SettingsGroup(
-                                        title = stringResource(R.string.settings_screensaver_timeout),
-                                        subtitle = stringResource(R.string.settings_screensaver_timeout_hint),
-                                    ) {
-                                        SettingsSelect(options = buildList {
-                                            listOf(5, 10, 15, 30, 60).forEach { minutes ->
-                                                add(SettingsSelectOption(
-                                                    text = stringResource(R.string.settings_screensaver_minutes, minutes),
-                                                    selected = uiState.screensaverTimeoutMinutes == minutes,
-                                                    onClick = { viewModel.onScreensaverTimeoutChanged(minutes) },
-                                                ))
-                                            }
-                                        })
-                                    }
-                                }
-                            }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_screensaver_mode),
-                                    subtitle = stringResource(R.string.settings_screensaver_mode_hint),
-                                ) {
-                                    SettingsSelect(options = buildList {
-                                        run {
+                                    SettingsSelect(label = stringResource(R.string.settings_screensaver_timeout), description = stringResource(R.string.settings_screensaver_timeout_hint), options = buildList {
+                                        listOf(5, 10, 15, 30, 60).forEach { minutes ->
                                             add(SettingsSelectOption(
-                                                text = stringResource(R.string.settings_screensaver_mode_ambient),
-                                                selected = uiState.screensaverModeKey == "ambient",
-                                                onClick = { viewModel.onScreensaverModeChanged("ambient") },
-                                            ))
-                                        }
-                                        listOf(
-                                            "aurora" to R.string.settings_screensaver_mode_aurora,
-                                            "fluid" to R.string.settings_screensaver_mode_fluid,
-                                            "starfield" to R.string.settings_screensaver_mode_starfield,
-                                            "silk" to R.string.settings_screensaver_mode_silk,
-                                        ).forEach { (key, label) ->
-                                            add(SettingsSelectOption(
-                                                text = stringResource(label),
-                                                selected = uiState.screensaverModeKey == key,
-                                                onClick = { viewModel.onScreensaverModeChanged(key) },
-                                            ))
-                                        }
-                                        run {
-                                            add(SettingsSelectOption(
-                                                text = stringResource(R.string.settings_screensaver_mode_media),
-                                                selected = uiState.screensaverModeKey == "media",
-                                                onClick = { viewModel.onScreensaverModeChanged("media") },
-                                            ))
-                                        }
-                                        run {
-                                            add(SettingsSelectOption(
-                                                text = stringResource(R.string.settings_screensaver_mode_oled),
-                                                selected = uiState.screensaverModeKey == "oled",
-                                                onClick = { viewModel.onScreensaverModeChanged("oled") },
-                                            ))
-                                        }
-                                        run {
-                                            add(SettingsSelectOption(
-                                                text = stringResource(R.string.settings_screensaver_mode_photos),
-                                                selected = uiState.screensaverModeKey == "photos",
-                                                onClick = { viewModel.onScreensaverModeChanged("photos") },
+                                                text = stringResource(R.string.settings_screensaver_minutes, minutes),
+                                                selected = uiState.screensaverTimeoutMinutes == minutes,
+                                                onClick = { viewModel.onScreensaverTimeoutChanged(minutes) },
                                             ))
                                         }
                                     })
                                 }
+                            }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_motif_quality)) }
+                            item {
+                                SettingsSelect(label = stringResource(R.string.settings_screensaver_mode), description = stringResource(R.string.settings_screensaver_mode_hint), options = buildList {
+                                    run {
+                                        add(SettingsSelectOption(
+                                            text = stringResource(R.string.settings_screensaver_mode_ambient),
+                                            selected = uiState.screensaverModeKey == "ambient",
+                                            onClick = { viewModel.onScreensaverModeChanged("ambient") },
+                                        ))
+                                    }
+                                    listOf(
+                                        "aurora" to R.string.settings_screensaver_mode_aurora,
+                                        "fluid" to R.string.settings_screensaver_mode_fluid,
+                                        "starfield" to R.string.settings_screensaver_mode_starfield,
+                                        "silk" to R.string.settings_screensaver_mode_silk,
+                                    ).forEach { (key, label) ->
+                                        add(SettingsSelectOption(
+                                            text = stringResource(label),
+                                            selected = uiState.screensaverModeKey == key,
+                                            onClick = { viewModel.onScreensaverModeChanged(key) },
+                                        ))
+                                    }
+                                    run {
+                                        add(SettingsSelectOption(
+                                            text = stringResource(R.string.settings_screensaver_mode_media),
+                                            selected = uiState.screensaverModeKey == "media",
+                                            onClick = { viewModel.onScreensaverModeChanged("media") },
+                                        ))
+                                    }
+                                    run {
+                                        add(SettingsSelectOption(
+                                            text = stringResource(R.string.settings_screensaver_mode_oled),
+                                            selected = uiState.screensaverModeKey == "oled",
+                                            onClick = { viewModel.onScreensaverModeChanged("oled") },
+                                        ))
+                                    }
+                                    run {
+                                        add(SettingsSelectOption(
+                                            text = stringResource(R.string.settings_screensaver_mode_photos),
+                                            selected = uiState.screensaverModeKey == "photos",
+                                            onClick = { viewModel.onScreensaverModeChanged("photos") },
+                                        ))
+                                    }
+                                })
                             }
                             if (uiState.screensaverModeKey == "photos") {
                                 item { ScreensaverPhotoSourcePicker(uiState, viewModel) }
                             }
                             if (com.ambient.tv.ui.common.ShaderScene.forKey(uiState.screensaverModeKey) != null) {
                                 item {
-                                    SettingsGroup(
-                                        title = stringResource(R.string.settings_screensaver_quality),
-                                        subtitle = stringResource(R.string.settings_screensaver_quality_hint),
-                                    ) {
-                                        SettingsSelect(options = buildList {
-                                            listOf("economy", "balanced", "high").forEach { quality ->
+                                    SettingsSelect(label = stringResource(R.string.settings_screensaver_quality), description = stringResource(R.string.settings_screensaver_quality_hint), options = buildList {
+                                        listOf("economy", "balanced", "high").forEach { quality ->
+                                            add(SettingsSelectOption(
+                                                text = when (quality) {
+                                                    "economy" -> stringResource(R.string.settings_projectm_quality_economy)
+                                                    "high" -> stringResource(R.string.settings_projectm_quality_high)
+                                                    else -> stringResource(R.string.settings_projectm_quality_balanced)
+                                                },
+                                                selected = uiState.screensaverQualityKey == quality,
+                                                onClick = { viewModel.onScreensaverQualityChanged(quality) },
+                                            ))
+                                        }
+                                    })
+                                }
+                            }
+                            if (uiState.screensaverModeKey == "media") {
+                                item {
+                                    TvSettingRow(
+                                        title = stringResource(R.string.settings_screensaver_artwork),
+                                        body = stringResource(R.string.settings_screensaver_artwork_hint),
+                                        checked = uiState.screensaverUseArtwork,
+                                        onCheckedChange = viewModel::onScreensaverUseArtworkChanged,
+                                    )
+                                }
+                                if (uiState.screensaverUseArtwork) {
+                                    item {
+                                        SettingsSelect(label = stringResource(R.string.settings_screensaver_artwork_interval), description = stringResource(R.string.settings_screensaver_artwork_interval_hint), options = buildList {
+                                            listOf(15, 30, 60, 120).forEach { seconds ->
                                                 add(SettingsSelectOption(
-                                                    text = when (quality) {
-                                                        "economy" -> stringResource(R.string.settings_projectm_quality_economy)
-                                                        "high" -> stringResource(R.string.settings_projectm_quality_high)
-                                                        else -> stringResource(R.string.settings_projectm_quality_balanced)
-                                                    },
-                                                    selected = uiState.screensaverQualityKey == quality,
-                                                    onClick = { viewModel.onScreensaverQualityChanged(quality) },
+                                                    text = stringResource(R.string.settings_screensaver_seconds, seconds),
+                                                    selected = uiState.screensaverArtworkIntervalSeconds == seconds,
+                                                    onClick = { viewModel.onScreensaverArtworkIntervalChanged(seconds) },
                                                 ))
                                             }
                                         })
@@ -642,6 +646,7 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_clock_date)) }
                             item {
                                 TvSettingRow(
                                     title = stringResource(R.string.settings_screensaver_clock),
@@ -664,49 +669,17 @@ fun SettingsScreen(
                                     )
                                 }
                             }
-                            if (uiState.screensaverModeKey == "media") {
-                                item {
-                                    TvSettingRow(
-                                        title = stringResource(R.string.settings_screensaver_artwork),
-                                        body = stringResource(R.string.settings_screensaver_artwork_hint),
-                                        checked = uiState.screensaverUseArtwork,
-                                        onCheckedChange = viewModel::onScreensaverUseArtworkChanged,
-                                    )
-                                }
-                                if (uiState.screensaverUseArtwork) {
-                                    item {
-                                        SettingsGroup(
-                                            title = stringResource(R.string.settings_screensaver_artwork_interval),
-                                            subtitle = stringResource(R.string.settings_screensaver_artwork_interval_hint),
-                                        ) {
-                                            SettingsSelect(options = buildList {
-                                                listOf(15, 30, 60, 120).forEach { seconds ->
-                                                    add(SettingsSelectOption(
-                                                        text = stringResource(R.string.settings_screensaver_seconds, seconds),
-                                                        selected = uiState.screensaverArtworkIntervalSeconds == seconds,
-                                                        onClick = { viewModel.onScreensaverArtworkIntervalChanged(seconds) },
-                                                    ))
-                                                }
-                                            })
-                                        }
-                                    }
-                                }
-                            }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_brightness)) }
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_screensaver_dim),
-                                    subtitle = stringResource(R.string.settings_screensaver_dim_hint),
-                                ) {
-                                    SettingsSelect(options = buildList {
-                                        listOf(40, 55, 70, 85, 100).forEach { percent ->
-                                            add(SettingsSelectOption(
-                                                text = "$percent%",
-                                                selected = uiState.screensaverDimPercent == percent,
-                                                onClick = { viewModel.onScreensaverDimPercentChanged(percent) },
-                                            ))
-                                        }
-                                    })
-                                }
+                                SettingsSelect(label = stringResource(R.string.settings_screensaver_dim), description = stringResource(R.string.settings_screensaver_dim_hint), options = buildList {
+                                    listOf(40, 55, 70, 85, 100).forEach { percent ->
+                                        add(SettingsSelectOption(
+                                            text = "$percent%",
+                                            selected = uiState.screensaverDimPercent == percent,
+                                            onClick = { viewModel.onScreensaverDimPercentChanged(percent) },
+                                        ))
+                                    }
+                                })
                             }
                             if (uiState.screensaverModeKey == "oled") {
                                 item {
@@ -746,6 +719,7 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.PLAYBACK -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance)) }
                             item {
                                 SettingsGroup(
                                     title = stringResource(R.string.settings_playback_performance),
@@ -759,19 +733,14 @@ fun SettingsScreen(
                                     )
                                 }
                             }
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_frame_drop_duration),
-                                    subtitle = stringResource(R.string.settings_frame_drop_duration_hint),
-                                ) {
-                                    SettingsSelect(options = listOf(0, 2, 5, 6, 10, 15, 30, 60).map { seconds ->
-                                        SettingsSelectOption(
-                                            text = if (seconds == 0) stringResource(R.string.player_automatic) else stringResource(R.string.unit_seconds, seconds),
-                                            selected = uiState.frameDropTestSeconds == seconds,
-                                            onClick = { viewModel.onFrameDropTestSecondsChanged(seconds) },
-                                        )
-                                    })
-                                }
+                            item(key = "playback:test-duration") {
+                                SettingsSelect(label = stringResource(R.string.settings_frame_drop_duration), description = stringResource(R.string.settings_frame_drop_duration_hint), options = listOf(0, 2, 5, 6, 10, 15, 30, 60).map { seconds ->
+                                    SettingsSelectOption(
+                                        text = if (seconds == 0) stringResource(R.string.player_automatic) else stringResource(R.string.unit_seconds, seconds),
+                                        selected = uiState.frameDropTestSeconds == seconds,
+                                        onClick = { viewModel.onFrameDropTestSecondsChanged(seconds) },
+                                    )
+                                })
                             }
                             item {
                                 TvActionButton(
@@ -779,16 +748,16 @@ fun SettingsScreen(
                                     onClick = viewModel::checkPlaybackPerformance,
                                     loading = uiState.performanceProbe != null,
                                     modifier = Modifier.focusRequester(checkPlaybackFocus),
-                                    fillWidth = true,
                                 )
                             }
 
-                            item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_playback_backend),
-                                    subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
-                                ) {
-                                    SettingsSelect(options = buildList {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_renderer)) }
+                            item(key = "playback:renderer") {
+                                SettingsGroup {
+                                    SettingsSelect(
+                                        label = stringResource(R.string.settings_playback_backend),
+                                        description = MediaSystem.renamedAll(stringResource(R.string.settings_playback_backend_hint)),
+                                        options = buildList {
                                         listOf("media3", "vlc", "mpv").forEach { backend ->
                                             val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
                                             add(SettingsSelectOption(
@@ -809,29 +778,28 @@ fun SettingsScreen(
                                 }
                             }
                             item {
-                                TvActionButton(
-                                    text = stringResource(R.string.settings_playback_overview),
+                                SettingsNavigationRow(
+                                    title = stringResource(R.string.settings_playback_overview),
                                     onClick = { playbackOverview = viewModel.savedPlaybackOverview() },
-                                    fillWidth = true,
                                 )
                             }
                             item {
-                                TvActionButton(
-                                    text = stringResource(R.string.settings_saved_profiles),
+                                SettingsNavigationRow(
+                                    title = stringResource(R.string.settings_saved_profiles),
                                     onClick = { savedProfiles = viewModel.savedProfileEntries() },
-                                    fillWidth = true,
                                 )
                             }
                             if (uiState.playbackBackendKey == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) {
                                 item { Text(stringResource(R.string.player_backend_mpv_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_display)) }
                             if (supportedDisplayModes.size > 1) {
                                 item {
-                                    SettingsGroup(
-                                        title = stringResource(R.string.settings_display_adjustment_title),
-                                        subtitle = stringResource(R.string.settings_display_adjustment_hint),
-                                    ) {
-                                        SettingsSelect(options = buildList {
+                                    SettingsGroup {
+                                        SettingsSelect(
+                                            label = stringResource(R.string.settings_display_adjustment_title),
+                                            description = stringResource(R.string.settings_display_adjustment_hint),
+                                            options = buildList {
                                             listOf("off", "always", "start_stop", "start").forEach { key ->
                                                 add(SettingsSelectOption(
                                                     text = stringResource(when (key) {
@@ -878,11 +846,11 @@ fun SettingsScreen(
                                     }
                                 }
                                 item {
-                                    SettingsGroup(
-                                        title = stringResource(R.string.settings_display_mode_title),
-                                        subtitle = stringResource(R.string.settings_display_mode_hint),
-                                    ) {
-                                        SettingsSelect(options = buildList {
+                                    SettingsGroup {
+                                        SettingsSelect(
+                                            label = stringResource(R.string.settings_display_mode_title),
+                                            description = stringResource(R.string.settings_display_mode_hint),
+                                            options = buildList {
                                             add(SettingsSelectOption(
                                                 text = stringResource(R.string.settings_display_mode_auto_content),
                                                 selected = uiState.preferredDisplayModeKey == com.ambient.tv.data.local.AppPreferences.DISPLAY_MODE_AUTO_CONTENT,
@@ -908,12 +876,10 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
-                                        Text(stringResource(R.string.settings_display_modes_allowed), style = MaterialTheme.typography.titleSmall)
-                                        Text(stringResource(R.string.settings_display_modes_allowed_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         if (supportedDisplayModes.isEmpty()) {
                                             Text(stringResource(R.string.settings_display_modes_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         } else {
-                                            SettingsSelect(multiple = true, options = buildList {
+                                            SettingsSelect(label = stringResource(R.string.settings_display_modes_allowed), description = stringResource(R.string.settings_display_modes_allowed_hint), multiple = true, options = buildList {
                                                 run {
                                                     add(SettingsSelectOption(
                                                         text = stringResource(R.string.settings_display_modes_all),
@@ -946,10 +912,9 @@ fun SettingsScreen(
 
                         SettingsCategory.LIVE_TV -> {
                             item {
-                                TvActionButton(
-                                    text = stringResource(R.string.settings_saved_profiles),
+                                SettingsNavigationRow(
+                                    title = stringResource(R.string.settings_saved_profiles),
                                     onClick = { savedProfiles = viewModel.savedProfileEntries() },
-                                    fillWidth = true,
                                 )
                             }
 
@@ -957,11 +922,9 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.BACKGROUND -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_artwork)) }
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_home_hero_style),
-                                    subtitle = stringResource(R.string.settings_home_hero_style_hint),
-                                ) {
+                                SettingsGroup {
                                     TvSettingRow(
                                         title = stringResource(R.string.settings_home_background_everywhere),
                                         body = stringResource(R.string.settings_home_background_everywhere_hint),
@@ -974,7 +937,7 @@ fun SettingsScreen(
                                         checked = uiState.focusArtworkBackdrop,
                                         onCheckedChange = viewModel::onFocusArtworkBackdropChanged,
                                     )
-                                    SettingsSelect(options = HomeHeroStyle.keys.map { style ->
+                                    SettingsSelect(label = stringResource(R.string.settings_home_hero_style), description = stringResource(R.string.settings_home_hero_style_hint), options = HomeHeroStyle.keys.map { style ->
                                         SettingsSelectOption(
                                             text = homeHeroStyleLabel(style),
                                             selected = uiState.homeHeroStyleKey == style,
@@ -999,7 +962,8 @@ fun SettingsScreen(
                                 }
                             }
 
-                            item {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_background_video)) }
+                            item(key = "background:video") {
                                 SettingsGroup {
                                     TvSettingRow(
                                         title = stringResource(R.string.settings_visible_background_video),
@@ -1008,8 +972,7 @@ fun SettingsScreen(
                                         onCheckedChange = viewModel::onVisibleBackgroundVideoPlaybackChanged,
                                     )
                                     if (uiState.visibleBackgroundVideoPlayback) {
-                                        Text(stringResource(R.string.settings_background_video_dim), style = MaterialTheme.typography.titleSmall)
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_background_video_dim), description = stringResource(R.string.settings_background_video_dim_hint), options = buildList {
                                             listOf(90, 75, 60).forEach { dim ->
                                                 add(SettingsSelectOption(
                                                     text = stringResource(R.string.settings_background_video_visibility, 100 - dim),
@@ -1018,7 +981,6 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
-                                        Text(stringResource(R.string.settings_background_video_dim_hint), style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }
@@ -1027,10 +989,10 @@ fun SettingsScreen(
                         SettingsCategory.CLOCK -> clockSettingsItems(uiState.clock, viewModel::onClockChanged)
 
                         SettingsCategory.SUBTITLES -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_subtitle_selection)) }
                             item {
-                                SettingsGroup(title = stringResource(R.string.subtitle_policy_title), subtitle = stringResource(R.string.subtitle_policy_hint)) {
-                                    Text(stringResource(R.string.subtitle_mode), style = MaterialTheme.typography.titleSmall)
-                                    SettingsSelect(options = buildList {
+                                SettingsGroup {
+                                    SettingsSelect(label = stringResource(R.string.subtitle_mode), description = stringResource(R.string.subtitle_policy_hint), options = buildList {
                                         listOf("off" to R.string.player_subtitles_off, "forced" to R.string.subtitle_forced_only, "full" to R.string.subtitle_full).forEach { (key, label) ->
                                             add(SettingsSelectOption(text = stringResource(label), selected = uiState.subtitleModeKey == key, onClick = { viewModel.onSubtitleModeChanged(key) }))
                                         }
@@ -1047,41 +1009,44 @@ fun SettingsScreen(
                                         checked = uiState.forcedSubtitlesInUiLanguage,
                                         onCheckedChange = viewModel::onForcedSubtitlesInUiLanguageChanged,
                                     )
+                                }
+                            }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_subtitle_languages)) }
+                            item {
+                                SettingsGroup {
                                     SubtitleLanguageChoice(uiState.subtitleLanguageKey, false, viewModel::onSubtitleLanguageChanged)
                                     Text(stringResource(R.string.subtitle_auto_hint), style = MaterialTheme.typography.bodySmall)
                                     SubtitleLanguageChoice(uiState.subtitleFallbackLanguageKey, true, viewModel::onSubtitleFallbackChanged)
                                 }
                             }
                             subtitleAppearanceItems(uiState.subtitleAppearance, viewModel::onSubtitleAppearanceChanged)
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_subtitle_online)) }
                             item {
                                 com.ambient.tv.ui.player.OpenSubtitlesSettingsGroup { title, subtitle, body ->
-                                    SettingsGroup(title = title, subtitle = subtitle) { body() }
+                                    SettingsGroup(title = title, subtitle = subtitle, card = true) { body() }
                                 }
                             }
                         }
 
                         SettingsCategory.NEXT_UP -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_skipping)) }
                             item {
-                                SettingsGroup(title = stringResource(R.string.settings_intro_skip), subtitle = stringResource(R.string.settings_intro_skip_hint)) {
-                                    SettingsSelect(options = listOf(
-                                        SettingsSelectOption(text = stringResource(R.string.intro_skip_off), selected = uiState.introSkipMode == "off", onClick = { viewModel.onIntroSkipModeChanged("off") }),
-                                        SettingsSelectOption(text = stringResource(R.string.intro_skip_button), selected = uiState.introSkipMode == "button", onClick = { viewModel.onIntroSkipModeChanged("button") }),
-                                        SettingsSelectOption(text = stringResource(R.string.intro_skip_auto), selected = uiState.introSkipMode == "auto", onClick = { viewModel.onIntroSkipModeChanged("auto") }),
-                                    ))
-                                }
+                                SettingsSelect(label = stringResource(R.string.settings_intro_skip), description = stringResource(R.string.settings_intro_skip_hint), options = listOf(
+                                    SettingsSelectOption(text = stringResource(R.string.intro_skip_off), selected = uiState.introSkipMode == "off", onClick = { viewModel.onIntroSkipModeChanged("off") }),
+                                    SettingsSelectOption(text = stringResource(R.string.intro_skip_button), selected = uiState.introSkipMode == "button", onClick = { viewModel.onIntroSkipModeChanged("button") }),
+                                    SettingsSelectOption(text = stringResource(R.string.intro_skip_auto), selected = uiState.introSkipMode == "auto", onClick = { viewModel.onIntroSkipModeChanged("auto") }),
+                                ))
                             }
                             item {
-                                SettingsGroup(title = stringResource(R.string.settings_credits_skip), subtitle = stringResource(R.string.settings_credits_skip_hint)) {
-                                    SettingsSelect(options = listOf(
-                                        SettingsSelectOption(text = stringResource(R.string.credits_skip_off), selected = uiState.creditsSkipMode == "off", onClick = { viewModel.onCreditsSkipModeChanged("off") }),
-                                        SettingsSelectOption(text = stringResource(R.string.credits_skip_button), selected = uiState.creditsSkipMode == "button", onClick = { viewModel.onCreditsSkipModeChanged("button") }),
-                                        SettingsSelectOption(text = stringResource(R.string.credits_skip_auto), selected = uiState.creditsSkipMode == "auto", onClick = { viewModel.onCreditsSkipModeChanged("auto") }),
-                                    ))
-                                }
+                                SettingsSelect(label = stringResource(R.string.settings_credits_skip), description = stringResource(R.string.settings_credits_skip_hint), options = listOf(
+                                    SettingsSelectOption(text = stringResource(R.string.credits_skip_off), selected = uiState.creditsSkipMode == "off", onClick = { viewModel.onCreditsSkipModeChanged("off") }),
+                                    SettingsSelectOption(text = stringResource(R.string.credits_skip_button), selected = uiState.creditsSkipMode == "button", onClick = { viewModel.onCreditsSkipModeChanged("button") }),
+                                    SettingsSelectOption(text = stringResource(R.string.credits_skip_auto), selected = uiState.creditsSkipMode == "auto", onClick = { viewModel.onCreditsSkipModeChanged("auto") }),
+                                ))
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_next_title)) }
                             item {
                                 SettingsGroup(
-                                    title = stringResource(R.string.settings_next_up_title),
                                     subtitle = MediaSystem.renamedAll(stringResource(R.string.settings_next_up_subtitle)),
                                 ) {
                                     TvSettingRow(
@@ -1097,17 +1062,14 @@ fun SettingsScreen(
                                             checked = uiState.nextUpOverlayEnabled,
                                             onCheckedChange = viewModel::onNextUpOverlayEnabledChanged,
                                         )
-                                        Text(stringResource(R.string.settings_next_up_credits_delay), style = MaterialTheme.typography.titleSmall)
-                                        Text(stringResource(R.string.settings_next_up_credits_delay_hint), style = MaterialTheme.typography.bodySmall)
-                                        SettingsSelect(options = listOf(0, 5, 10, 15, 30).map { seconds ->
+                                        SettingsSelect(label = stringResource(R.string.settings_next_up_credits_delay), description = stringResource(R.string.settings_next_up_credits_delay_hint), options = listOf(0, 5, 10, 15, 30).map { seconds ->
                                             SettingsSelectOption(
                                                 text = if (seconds == 0) stringResource(R.string.credits_skip_off) else stringResource(R.string.settings_next_up_seconds, seconds),
                                                 selected = uiState.nextUpCreditsDelaySeconds == seconds,
                                                 onClick = { viewModel.onNextUpCreditsDelaySecondsChanged(seconds) },
                                             )
                                         })
-                                        Text(stringResource(R.string.settings_next_up_lead_time), style = MaterialTheme.typography.titleSmall)
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_next_up_lead_time), options = buildList {
                                             listOf(10, 20, 30, 60).forEach { seconds ->
                                                 add(SettingsSelectOption(
                                                     text = stringResource(R.string.settings_next_up_seconds, seconds),
@@ -1116,6 +1078,7 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
+                                        SettingsSubheader(stringResource(R.string.settings_section_general_autoplay))
                                         TvSettingRow(
                                             title = stringResource(R.string.settings_next_up_autoplay),
                                             body = MediaSystem.renamedAll(stringResource(R.string.settings_next_up_autoplay_hint)),
@@ -1129,8 +1092,7 @@ fun SettingsScreen(
                                             onCheckedChange = viewModel::onNextUpAutoplayCollectionsChanged,
                                         )
                                         if (uiState.nextUpAutoplayEpisodes || uiState.nextUpAutoplayCollections) {
-                                            Text(stringResource(R.string.settings_next_up_still_watching), style = MaterialTheme.typography.titleSmall)
-                                            SettingsSelect(options = buildList {
+                                            SettingsSelect(label = stringResource(R.string.settings_next_up_still_watching), options = buildList {
                                                 listOf(0, 2, 3, 5).forEach { advances ->
                                                     add(SettingsSelectOption(
                                                         text = if (advances == 0) stringResource(R.string.settings_next_up_off)
@@ -1144,13 +1106,12 @@ fun SettingsScreen(
                                     }
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_sleep)) }
                             item {
                                 SettingsGroup(
-                                    title = stringResource(R.string.settings_sleep_timer),
                                     subtitle = stringResource(R.string.settings_sleep_timer_hint),
                                 ) {
-                                    Text(stringResource(R.string.settings_sleep_auto_start), style = MaterialTheme.typography.titleSmall)
-                                    SettingsSelect(options = AppPreferences.SLEEP_AUTO_START_KEYS.map { key ->
+                                    SettingsSelect(label = stringResource(R.string.settings_sleep_auto_start), options = AppPreferences.SLEEP_AUTO_START_KEYS.map { key ->
                                         SettingsSelectOption(
                                             text = when (key) {
                                                 AppPreferences.SLEEP_AUTO_START_OFF -> stringResource(R.string.settings_next_up_off)
@@ -1169,8 +1130,7 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    Text(stringResource(R.string.settings_sleep_warning), style = MaterialTheme.typography.titleSmall)
-                                    SettingsSelect(options = AppPreferences.SLEEP_WARNING_VALUES.map { minutes ->
+                                    SettingsSelect(label = stringResource(R.string.settings_sleep_warning), options = AppPreferences.SLEEP_WARNING_VALUES.map { minutes ->
                                         SettingsSelectOption(
                                             text = if (minutes == 0) stringResource(R.string.settings_next_up_off)
                                             else stringResource(R.string.settings_sleep_minutes, minutes),
@@ -1183,7 +1143,7 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.SEEK -> {
-                            item {
+                            item(key = "seek:controls") {
                                 com.ambient.tv.ui.common.SeekPlaybackSettingsControls(
                                     settings = uiState.seekPlayback,
                                     onSeekJumpChanged = viewModel::onBigSeekJumpChanged,
@@ -1200,11 +1160,8 @@ fun SettingsScreen(
 
                         SettingsCategory.VISUALIZER -> {
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_audio_visualizer),
-                                    subtitle = stringResource(R.string.settings_audio_visualizer_hint),
-                                ) {
-                                    SettingsSelect(options = buildList {
+                                SettingsGroup {
+                                    SettingsSelect(label = stringResource(R.string.settings_audio_visualizer), description = stringResource(R.string.settings_audio_visualizer_hint), options = buildList {
                                         listOf("projectm", "spectrum", "off").forEach { mode ->
                                             val unavailable = mode == "projectm" && !com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable
                                             add(SettingsSelectOption(
@@ -1225,16 +1182,16 @@ fun SettingsScreen(
                                 }
                             }
                             if (uiState.audioVisualizerModeKey == "projectm") {
+                                item { SettingsSubheader(stringResource(R.string.settings_section_general_presets)) }
                                 item {
-                                    SettingsGroup(title = stringResource(R.string.settings_projectm_title), subtitle = stringResource(R.string.settings_projectm_hint)) {
+                                    SettingsGroup(subtitle = stringResource(R.string.settings_projectm_hint)) {
                                         TvSettingRow(
                                             title = stringResource(R.string.settings_projectm_show_preset_name),
                                             body = stringResource(R.string.settings_projectm_show_preset_name_hint),
                                             checked = uiState.projectmShowPresetName,
                                             onCheckedChange = viewModel::onProjectmShowPresetNameChanged,
                                         )
-                                        Text(stringResource(R.string.settings_projectm_interval), style = MaterialTheme.typography.titleSmall)
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_projectm_interval), options = buildList {
                                             listOf(15, 30, 60, 120, 300).forEach { seconds ->
                                                 add(SettingsSelectOption(
                                                     text = stringResource(R.string.settings_projectm_seconds, seconds),
@@ -1243,8 +1200,7 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
-                                        Text(stringResource(R.string.settings_projectm_transition), style = MaterialTheme.typography.titleSmall)
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_projectm_transition), options = buildList {
                                             listOf(0, 1, 2, 5).forEach { seconds ->
                                                 add(SettingsSelectOption(
                                                     text = stringResource(R.string.settings_projectm_seconds, seconds),
@@ -1253,8 +1209,17 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
-                                        Text(stringResource(R.string.settings_projectm_quality), style = MaterialTheme.typography.titleSmall)
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_section_general_preset_filter), options = buildList {
+                                            listOf("all", "favorites").forEach { category ->
+                                                add(SettingsSelectOption(
+                                                    text = if (category == "favorites") stringResource(R.string.settings_projectm_favorites_only) else stringResource(R.string.settings_projectm_all_presets),
+                                                    selected = uiState.projectmPresetCategoryKey == category,
+                                                    onClick = { viewModel.onProjectmCategoryChanged(category) },
+                                                ))
+                                            }
+                                        })
+                                        SettingsSubheader(stringResource(R.string.settings_section_general_quality_output))
+                                        SettingsSelect(label = stringResource(R.string.settings_projectm_quality), options = buildList {
                                             listOf("economy", "balanced", "high").forEach { quality ->
                                                 add(SettingsSelectOption(
                                                     text = when (quality) {
@@ -1267,10 +1232,9 @@ fun SettingsScreen(
                                                 ))
                                             }
                                         })
-                                        Text(stringResource(R.string.settings_projectm_resolution), style = MaterialTheme.typography.titleSmall)
                                         val projectmDisplayLines = androidx.compose.ui.platform.LocalView.current.display?.mode
                                             ?.let { minOf(it.physicalWidth, it.physicalHeight) } ?: 0
-                                        SettingsSelect(options = buildList {
+                                        SettingsSelect(label = stringResource(R.string.settings_projectm_resolution), options = buildList {
                                             com.ambient.tv.ui.common.projectm.ProjectMRenderResolution.options(projectmDisplayLines).forEach { key ->
                                                 add(SettingsSelectOption(
                                                     text = com.ambient.tv.ui.common.projectm.projectMResolutionLabel(key),
@@ -1295,15 +1259,7 @@ fun SettingsScreen(
                                                 onCheckedChange = viewModel::onProjectmHdr4kChanged,
                                             )
                                         }
-                                        SettingsSelect(options = buildList {
-                                            listOf("all", "favorites").forEach { category ->
-                                                add(SettingsSelectOption(
-                                                    text = if (category == "favorites") stringResource(R.string.settings_projectm_favorites_only) else stringResource(R.string.settings_projectm_all_presets),
-                                                    selected = uiState.projectmPresetCategoryKey == category,
-                                                    onClick = { viewModel.onProjectmCategoryChanged(category) },
-                                                ))
-                                            }
-                                        })
+
                                     }
                                 }
                             }
@@ -1330,14 +1286,14 @@ fun SettingsScreen(
                             if (uiState.plexThemeMusicEnabled || uiState.jellyfinThemeMusicEnabled || uiState.embyThemeMusicEnabled) themeMusicVolumeItems(uiState, viewModel)
                             item { SettingsAudioDefaults(uiState, viewModel) }
                             nightScheduleItems(uiState.nightSchedule, viewModel::onNightScheduleChanged)
-                            item {
-                                SettingsGroup(title = stringResource(R.string.settings_audio_tracks_language)) {
-                                    AudioLanguageChoice(uiState.audioLanguageKey, viewModel::onAudioLanguageChanged)
-                                }
-                            }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_audio_language)) }
+                            item { AudioLanguageChoice(uiState.audioLanguageKey, viewModel::onAudioLanguageChanged) }
                         }
 
                         SettingsCategory.HOME -> {
+                            if (uiState.homeRows.any { it.system == HomeRowDefinition.SYSTEM_ALL } || viewModel.launcherIntegrationSupported) {
+                                item { SettingsSubheader(stringResource(R.string.settings_section_general_home_sources)) }
+                            }
                             // Shown once the cross-system row is in the editor list.
                             if (uiState.homeRows.any { it.system == HomeRowDefinition.SYSTEM_ALL }) item {
                                 var included by remember { mutableStateOf(viewModel.allContinueSystems()) }
@@ -1369,9 +1325,9 @@ fun SettingsScreen(
                                     onCheckedChange = { enabled = it; viewModel.setLauncherIntegrationEnabled(it) },
                                 )
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_home_editor_title)) }
                             item {
                                 SettingsGroup(
-                                    title = stringResource(R.string.settings_home_editor_title),
                                     subtitle = stringResource(R.string.settings_home_editor_hint),
                                 ) {
                                     uiState.homeRows.forEachIndexed { index, row ->
@@ -1390,11 +1346,13 @@ fun SettingsScreen(
                                     if (uiState.homeRows.isEmpty()) Text(stringResource(R.string.settings_home_editor_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_home_add_row)) }
                             item {
-                                SettingsGroup(title = stringResource(R.string.settings_home_add_row), subtitle = stringResource(R.string.settings_home_add_row_hint)) {
+                                SettingsGroup(subtitle = stringResource(R.string.settings_home_add_row_hint)) {
                                     HomeRowAddButtons(uiState, viewModel::addHomeRow, viewModel::pickHomeGenre, viewModel::closeHomeGenrePicker)
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_history)) }
                             item {
                                 // LazyColumn items stack children in a Box; without a Column the button covers the hint.
                                 androidx.compose.foundation.layout.Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
@@ -1440,48 +1398,43 @@ fun SettingsScreen(
                             }
                         }
                         SettingsCategory.BACKUP -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_export)) }
                             item {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        TvActionButton(
-                                            text = if (uiState.isExportingSettings && !exportWithCredentials) stringResource(R.string.settings_exporting) else stringResource(R.string.settings_export_safe),
-                                            onClick = { askSafeExportPassphrase = true },
-                                            enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
-                                            loading = uiState.isExportingSettings && !exportWithCredentials,
-                                            modifier = Modifier.weight(1f),
-                                            fillWidth = true,
-                                        )
-                                        TvActionButton(
-                                            text = stringResource(R.string.settings_export_with_credentials),
-                                            onClick = { askExportPassphrase = true },
-                                            enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
-                                            loading = uiState.isExportingSettings && exportWithCredentials,
-                                            modifier = Modifier.weight(1f),
-                                            fillWidth = true,
-                                        )
-                                    }
+                                SettingsActionRow() {
                                     TvActionButton(
-                                        text = if (uiState.isImportingSettings) stringResource(R.string.settings_importing) else stringResource(R.string.settings_import),
-                                        onClick = { requestExit { launchBackupPicker { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) } } },
+                                        text = if (uiState.isExportingSettings && !exportWithCredentials) stringResource(R.string.settings_exporting) else stringResource(R.string.settings_export_safe),
+                                        onClick = { askSafeExportPassphrase = true },
                                         enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
-                                        loading = uiState.isImportingSettings,
-                                        modifier = Modifier.fillMaxWidth(),
-                                        fillWidth = true,
+                                        loading = uiState.isExportingSettings && !exportWithCredentials,
+                                    )
+                                    TvActionButton(
+                                        text = stringResource(R.string.settings_export_with_credentials),
+                                        onClick = { askExportPassphrase = true },
+                                        enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
+                                        loading = uiState.isExportingSettings && exportWithCredentials,
                                     )
                                 }
                             }
                             item { Text(stringResource(R.string.settings_export_saved_hint), style = MaterialTheme.typography.bodySmall) }
-                            item { Text(stringResource(R.string.settings_import_draft_hint), style = MaterialTheme.typography.bodySmall) }
-                            item { SettingsSubheader(stringResource(R.string.settings_backup_title)) }
                             item { Text(stringResource(R.string.settings_backup_warning), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_restore)) }
+                            item {
+                                TvActionButton(
+                                    text = if (uiState.isImportingSettings) stringResource(R.string.settings_importing) else stringResource(R.string.settings_import),
+                                    onClick = { requestExit { launchBackupPicker { importLauncher.launch(arrayOf("application/json", "text/json", "text/plain")) } } },
+                                    enabled = !uiState.isExportingSettings && !uiState.isImportingSettings,
+                                    loading = uiState.isImportingSettings,
+                                )
+                            }
+                            item { Text(stringResource(R.string.settings_import_draft_hint), style = MaterialTheme.typography.bodySmall) }
                         }
 
                         SettingsCategory.DIAGNOSTICS -> {
+                            item { SettingsSubheader(stringResource(R.string.diagnostics_log_title)) }
                             item {
                                 var enabled by remember { mutableStateOf(viewModel.diagnosticLogEnabled()) }
                                 var sizeBytes by remember { mutableStateOf(viewModel.diagnosticLogSizeBytes()) }
                                 SettingsGroup(
-                                    title = stringResource(R.string.diagnostics_log_title),
                                     subtitle = stringResource(R.string.diagnostics_log_hint),
                                 ) {
                                     TvSettingRow(
@@ -1499,7 +1452,7 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    SettingsActionRow() {
                                         TvActionButton(
                                             text = stringResource(R.string.diagnostics_export),
                                             onClick = {
@@ -1507,24 +1460,20 @@ fun SettingsScreen(
                                                 val launched = runCatching { diagnosticExportLauncher.launch(viewModel.diagnosticZipName()) }.isSuccess
                                                 if (!launched) viewModel.exportDiagnosticLog(null)
                                             },
-                                            modifier = Modifier.weight(1f),
-                                            fillWidth = true,
                                         )
                                         TvActionButton(
                                             text = stringResource(R.string.diagnostics_clear),
                                             onClick = { viewModel.clearDiagnosticLog(); sizeBytes = 0L },
-                                            modifier = Modifier.weight(1f),
-                                            fillWidth = true,
                                         )
                                     }
                                 }
                             }
+                            item { SettingsSubheader(stringResource(R.string.diagnostics_crash_title)) }
                             item {
                                 val crash = remember { viewModel.lastCrash() }
                                 val context = LocalContext.current
                                 val chooserTitle = stringResource(R.string.diagnostics_crash_share)
                                 SettingsGroup(
-                                    title = stringResource(R.string.diagnostics_crash_title),
                                     subtitle = stringResource(R.string.diagnostics_crash_hint),
                                 ) {
                                     Text(
@@ -1542,7 +1491,7 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    if (crash != null) DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    if (crash != null) SettingsActionRow() {
                                         TvActionButton(
                                             text = chooserTitle,
                                             onClick = {
@@ -1550,8 +1499,6 @@ fun SettingsScreen(
                                                     runCatching { context.startActivity(intent) }.isSuccess
                                                 }
                                             },
-                                            modifier = Modifier.weight(1f),
-                                            fillWidth = true,
                                         )
                                     }
                                 }
@@ -1566,6 +1513,7 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.ABOUT -> {
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_app_updates)) }
                             item { AboutAppCard() }
                             item { com.ambient.tv.update.UpdateSettingsCard() }
                             item { SettingsSubheader(stringResource(R.string.settings_about_playback)) }
@@ -1579,6 +1527,7 @@ fun SettingsScreen(
                         }
                     }
                 }
+                  }
                 if (listOverflow) {
                     OverlayLazyScrollbar(listState, Modifier.align(Alignment.CenterEnd).fillMaxHeight(), contentFocus = scrollbarContentFocus)
                 }
@@ -1672,7 +1621,7 @@ private fun aboutServiceComponents() = listOf(
 @Composable
 private fun AboutAppCard() {
     var focused by remember { mutableStateOf(false) }
-    SettingsGroup {
+    SettingsGroup(card = true) {
         DeviceActionRow(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1760,10 +1709,12 @@ private fun AboutComponentCard(component: AboutComponent) {
 
 @Composable
 private fun LanguageChoiceRow(
+    label: String,
+    description: String?,
     selected: String,
     onSelected: (String) -> Unit,
 ) {
-    SettingsSelect(options = buildList {
+    SettingsSelect(label = label, description = description, options = buildList {
         run {
             add(SettingsSelectOption(
                 text = stringResource(R.string.settings_language_auto),
@@ -1829,30 +1780,26 @@ internal fun isUsableWakeMac(macAddress: String): Boolean =
 
 @Composable
 internal fun SettingsSubheader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
-    )
+    SettingsSectionHeader(title)
 }
 
 @Composable
 internal fun SettingsGroup(
     title: String? = null,
     subtitle: String? = null,
+    card: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val surface = if (card) Modifier
+        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
+        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
+        .padding(14.dp) else Modifier
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.30f), RoundedCornerShape(10.dp))
-            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f), RoundedCornerShape(10.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth().then(surface),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (title != null) Text(title, style = MaterialTheme.typography.titleSmall)
-        if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (title != null) SettingsSectionHeader(title)
+        if (subtitle != null) com.ambient.tv.ui.common.SettingsHint(subtitle)
         content()
     }
 }
@@ -2206,7 +2153,7 @@ private fun AudioLanguageChoice(selected: String, onSelected: (String) -> Unit) 
         com.ambient.tv.data.local.LanguagePreferences.ORIGINAL to stringResource(R.string.settings_language_original),
     ) + names + listOfNotNull(selected.takeIf { key -> key != "auto" && key != "original" && names.none { it.first == key } }?.let { it to it.uppercase() })
     com.ambient.tv.ui.common.PlayerDropUpSelector(
-        label = "",
+        label = stringResource(R.string.settings_audio_tracks_language),
         value = options.first { it.first == selected }.second,
         options = options, selectedKey = selected, onSelected = onSelected, dropUp = false,
     )

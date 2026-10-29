@@ -3,6 +3,9 @@ package com.ambient.tv.ui.settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -19,6 +22,9 @@ import com.ambient.tv.R
 import com.ambient.tv.companion.CompanionConnectionSettingsContent
 import com.ambient.tv.companion.CompanionViewModel
 import com.ambient.tv.ui.common.SettingsSectionHeader
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -38,6 +44,7 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
     if (LocalHandheldUi.current) { com.ambient.tv.companion.CompanionDeviceHub(manager, state); return }
     var advanced by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SettingsSectionHeader(stringResource(R.string.settings_system_connection_pairing))
         // Where am I: is this TV receiving, and how many phones are paired.
         Text(if (state.enabled) stringResource(R.string.companion_tv_status_on, state.paired.size)
             else stringResource(R.string.companion_tv_status_off), style = MaterialTheme.typography.titleMedium)
@@ -51,13 +58,21 @@ private fun CompanionDevicesSection(vm: CompanionViewModel = hiltViewModel()) {
                 }
             }
         }
-        TvActionButton(stringResource(R.string.companion_pair_phone), manager::showPairing, selected = true, fillWidth = true)
+        SettingsActionRow {
+            TvActionButton(stringResource(R.string.companion_pair_phone), manager::showPairing, selected = true)
+        }
         CompanionHint(R.string.companion_tv_only_hint)
         SettingsSectionHeader(stringResource(R.string.companion_tv_paired_phones))
         if (state.paired.isEmpty()) Text(stringResource(R.string.companion_tv_no_phones))
         state.paired.forEach { peer -> com.ambient.tv.companion.CompanionPeerRow(manager, peer) { mod -> Text(peer.name, modifier = mod) } }
-        TvActionButton(stringResource(R.string.companion_advanced), { advanced = !advanced }, selected = advanced, fillWidth = true)
+        RightPanelChoice(
+            text = stringResource(R.string.companion_advanced),
+            selected = advanced,
+            trailingIcon = if (advanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+            onClick = { advanced = !advanced },
+        )
         if (advanced) {
+            SettingsSectionHeader(stringResource(R.string.settings_system_receiver_background))
             TvSettingRow(
                 title = stringResource(R.string.settings_companion_receiver),
                 body = stringResource(R.string.settings_companion_receiver_hint),
@@ -76,9 +91,9 @@ internal fun CompanionTransferSection(vm: CompanionViewModel = hiltViewModel()) 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SettingsSectionHeader(stringResource(R.string.settings_companion_transfer))
         CompanionHint(if (LocalHandheldUi.current) R.string.settings_companion_transfer_hint else R.string.sync_phone_to_tv_only)
-        if (LocalHandheldUi.current) TvActionButton(stringResource(R.string.sync_title), vm.manager::showSettingsTransfer, fillWidth = true)
+        if (LocalHandheldUi.current) SettingsNavigationRow(stringResource(R.string.sync_title), onClick = vm.manager::showSettingsTransfer)
         if (state.rollbackAvailable) {
-            TvActionButton(stringResource(R.string.companion_restore_backup), vm.manager::showRestore, fillWidth = true)
+            SettingsNavigationRow(stringResource(R.string.companion_restore_backup), onClick = vm.manager::showRestore)
         }
     }
 }

@@ -64,6 +64,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -217,7 +218,9 @@ private fun PlayerDropUpSelectorImpl(
     val startIndex = options.indexOfFirst { it.first == selectedKey && it.first !in disabledKeys }
         .takeIf { it >= 0 } ?: options.indexOfFirst { it.first !in disabledKeys }.coerceAtLeast(0)
     val enabled = options.any { it.first !in disabledKeys }
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
+    val inlineValue = LocalSettingsPresentation.current == SettingsPresentation.Page &&
+        label.isNotBlank() && triggerWidth >= 480.dp
     fun close() {
         restoreTriggerFocus = !focused
         setExpanded(false)
@@ -270,6 +273,7 @@ private fun PlayerDropUpSelectorImpl(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .focusRequester(triggerFocus)
                 .onFocusChanged {
                     focused = it.hasFocus
@@ -306,21 +310,38 @@ private fun PlayerDropUpSelectorImpl(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (label.isNotBlank()) {
-                    MarqueeTitle(
-                        label,
-                        focused,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.55f),
-                        style = LocalTextStyle.current.copy(fontSize = 13.sp),
-                    )
-                }
+            if (inlineValue) {
+                MarqueeTitle(
+                    label,
+                    focused,
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.55f),
+                    style = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
+                )
                 MarqueeTitle(
                     value,
                     focused,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.78f else 0.38f),
-                    style = LocalTextStyle.current.copy(fontSize = if (label.isBlank()) 13.sp else 11.sp),
+                    modifier = Modifier.weight(0.8f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 1f else 0.55f),
+                    style = LocalTextStyle.current.copy(fontSize = 13.sp),
                 )
+            } else {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (label.isNotBlank()) {
+                        MarqueeTitle(
+                            label,
+                            focused,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.55f),
+                            style = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
+                        )
+                    }
+                    MarqueeTitle(
+                        value,
+                        focused,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.78f else 0.38f),
+                        style = LocalTextStyle.current.copy(fontSize = if (label.isBlank()) 15.sp else 13.sp),
+                    )
+                }
             }
             SelectorColorSwatch(optionSwatches[selectedKey].orEmpty(), enabled)
             Icon(

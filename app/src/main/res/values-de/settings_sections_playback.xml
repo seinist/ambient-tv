@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_section_seek">Spulen</string>
+    <string name="settings_playback_section_pause">Nach einer Pause</string>
+    <string name="settings_playback_section_resume">Fortsetzen</string>
+    <string name="settings_playback_scope_global">Gilt für alle Wiedergaben.</string>
+    <string name="settings_playback_scope_defaults">Globale Vorgaben</string>
+    <string name="settings_playback_scope_current">Aktuelle Wiedergabe</string>
+    <string name="settings_playback_scope_remember">Änderungen merken für: %1$s</string>
+    <string name="settings_playback_scope_live_width">Gilt für Live-TV mit der ausgewählten Quellbreite.</string>
+    <string name="settings_playback_section_controls">Bedienung</string>
+    <string name="settings_playback_section_streaming">Streaming &amp; Puffer</string>
+    <string name="settings_playback_section_renderer">Renderer &amp; Ausgabe</string>
+    <string name="settings_playback_section_audio_defaults">Globale Audio-Vorgaben</string>
+    <string name="settings_playback_section_device_profile">Gerät &amp; Profil</string>
+    <string name="settings_playback_section_profile_scope">Profil &amp; Geltungsbereich</string>
+    <string name="settings_playback_section_audio_output">Ausgabe &amp; Kanäle</string>
+    <string name="settings_playback_section_audio_sync">Synchronisation</string>
+    <string name="settings_playback_section_audio_formats">Formate &amp; Kompatibilität</string>
+    <string name="settings_playback_section_audio_mix">Kanäle &amp; Mischung</string>
+    <string name="settings_playback_section_audio_dynamics">Lautstärke &amp; Dynamik</string>
+    <string name="settings_playback_section_profile_actions">Profilaktionen</string>
+    <string name="settings_playback_profile_type">Profilart</string>
+    <string name="settings_playback_timeshift_size">Puffergröße</string>
+    <string name="settings_playback_live_functions">Live-TV-Funktionen</string>
+</resources>

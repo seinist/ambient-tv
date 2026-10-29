@@ -79,7 +79,7 @@ internal fun CompanionConnectionSettingsContent(
         }
         if (handheld) {
             if (fixedPeer == null) {
-                Text(stringResource(R.string.settings_companion_select_device))
+                SettingsSectionHeader(stringResource(R.string.settings_companion_select_device))
                 if (state.paired.isEmpty()) Text(stringResource(R.string.sync_no_devices))
                 DisposableEffect(manager) { manager.startPageSearch(); onDispose { manager.stopSearchUnlessPanel() } }
                 state.paired.forEach { item ->
@@ -115,6 +115,7 @@ internal fun CompanionConnectionSettingsContent(
                         } finally { working = false; pendingAction = null }
                     }
                 }
+                SettingsSectionHeader(stringResource(R.string.settings_system_connection_network))
                 TvSettingRow(title = stringResource(R.string.companion_connection_vpn_toggle),
                     body = stringResource(R.string.companion_connection_vpn_hint), checked = settings.wireGuard,
                     enabled = !working, onCheckedChange = { settings = settings.copy(wireGuard = it, vpnHost = settings.vpnHost.ifBlank { peer.host }) })
@@ -125,6 +126,7 @@ internal fun CompanionConnectionSettingsContent(
                     })
                 }
                 TvTextField(portText, { portText = it.filter(Char::isDigit).take(5) }, stringResource(R.string.companion_connection_port, peer.port), requireExplicitEditing = true)
+                SettingsSectionHeader(stringResource(R.string.settings_system_wake_device))
                 TvSettingRow(title = stringResource(R.string.companion_connection_wake_toggle),
                     body = stringResource(R.string.companion_connection_wake_hint), checked = settings.wake,
                     enabled = !working, onCheckedChange = { settings = settings.copy(wake = it) })
@@ -139,8 +141,10 @@ internal fun CompanionConnectionSettingsContent(
                         enabled = !working && current().valid() && validCompanionMac(settings.mac), loading = working && pendingAction == "wake")
                 }
                 if (!current().valid()) Text(stringResource(R.string.companion_connection_invalid))
-                TvActionButton(stringResource(R.string.companion_connection_save), { save() }, enabled = !working && current().valid(), loading = working && pendingAction == "save")
-                TvActionButton(stringResource(R.string.companion_connection_test), { save(testConnection = true) }, enabled = !working && !state.busy && current().valid() && manager.reachability(peer, state) != PeerReachability.UNREACHABLE, loading = (working && pendingAction == "test") || state.busy)
+                SettingsActionRow {
+                    TvActionButton(stringResource(R.string.companion_connection_save), { save() }, enabled = !working && current().valid(), loading = working && pendingAction == "save")
+                    TvActionButton(stringResource(R.string.companion_connection_test), { save(testConnection = true) }, enabled = !working && !state.busy && current().valid() && manager.reachability(peer, state) != PeerReachability.UNREACHABLE, loading = (working && pendingAction == "test") || state.busy)
+                }
             }
         }
         if (state.busy) Text(stringResource(state.connectionStage ?: R.string.companion_connecting))

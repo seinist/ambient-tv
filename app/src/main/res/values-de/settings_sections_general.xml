@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_section_general_design">Design &amp; Farben</string>
+    <string name="settings_section_general_display_size">Größe &amp; Bildschirmränder</string>
+    <string name="settings_section_general_app_start">Beim App-Start</string>
+    <string name="settings_section_general_performance">Leistung</string>
+    <string name="settings_section_general_artwork">Artwork &amp; Lichtstimmung</string>
+    <string name="settings_section_general_background_video">Hintergrundvideo</string>
+    <string name="settings_section_general_activation">Startverhalten</string>
+    <string name="settings_section_general_motif_quality">Motiv &amp; Qualität</string>
+    <string name="settings_section_general_clock_date">Uhr &amp; Datum</string>
+    <string name="settings_section_general_brightness">Helligkeit</string>
+    <string name="settings_section_general_clock_display">Anzeige &amp; Format</string>
+    <string name="settings_section_general_playback">Während der Wiedergabe</string>
+    <string name="settings_section_general_subtitle_selection">Automatische Auswahl</string>
+    <string name="settings_section_general_subtitle_languages">Sprachen</string>
+    <string name="settings_section_general_subtitle_look">Darstellung</string>
+    <string name="settings_section_general_subtitle_online">Online-Untertitel</string>
+    <string name="settings_section_general_skipping">Überspringen</string>
+    <string name="settings_section_general_next_title">Nächster Titel</string>
+    <string name="settings_section_general_autoplay">Automatische Wiedergabe</string>
+    <string name="settings_section_general_sleep">Schlafenszeit &amp; Abschalten</string>
+    <string name="settings_section_general_slideshow">Diashow</string>
+    <string name="settings_section_general_photo_order">Auswahl &amp; Reihenfolge</string>
+    <string name="settings_section_general_overlays">Einblendungen</string>
+    <string name="settings_section_general_presets">Presets &amp; Wechsel</string>
+    <string name="settings_section_general_quality_output">Qualität &amp; Ausgabe</string>
+    <string name="settings_section_general_home_sources">Inhalte &amp; Quellen</string>
+    <string name="settings_section_general_history">Verlauf</string>
+    <string name="settings_section_general_export">Einstellungen exportieren</string>
+    <string name="settings_section_general_restore">Einstellungen wiederherstellen</string>
+    <string name="settings_section_general_app_updates">App &amp; Updates</string>
+    <string name="settings_section_general_notifications_display">Anzeige von Benachrichtigungen</string>
+    <string name="settings_section_general_connection">Zugang &amp; Verbindung</string>
+    <string name="settings_section_general_trailer_behavior">Wiedergabe &amp; Sprache</string>
+    <string name="settings_section_general_sound_general">Allgemein</string>
+    <string name="settings_section_general_sound_event">Ereignis &amp; Klangvorlage</string>
+    <string name="settings_section_general_sound_preview">Hörprobe</string>
+    <string name="settings_section_general_transfer">Import &amp; Export</string>
+    <string name="settings_section_general_renderer">Player &amp; Profile</string>
+    <string name="settings_section_general_display">Bildschirm &amp; Bildwiederholrate</string>
+    <string name="settings_section_general_audio_language">Audiosprache</string>
+    <string name="settings_section_general_preset_filter">Preset-Auswahl</string>
+</resources>

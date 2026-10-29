@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_playback_section_seek">Seeking</string>
+    <string name="settings_playback_section_pause">After a pause</string>
+    <string name="settings_playback_section_resume">Resuming</string>
+    <string name="settings_playback_scope_global">Applies to all playback.</string>
+    <string name="settings_playback_scope_defaults">Global defaults</string>
+    <string name="settings_playback_scope_current">Current playback</string>
+    <string name="settings_playback_scope_remember">Remember changes for: %1$s</string>
+    <string name="settings_playback_scope_live_width">Applies to Live TV at the selected source width.</string>
+    <string name="settings_playback_section_controls">Controls</string>
+    <string name="settings_playback_section_streaming">Streaming &amp; buffering</string>
+    <string name="settings_playback_section_renderer">Renderer &amp; output</string>
+    <string name="settings_playback_section_audio_defaults">Global audio defaults</string>
+    <string name="settings_playback_section_device_profile">Device &amp; profile</string>
+    <string name="settings_playback_section_profile_scope">Profile &amp; scope</string>
+    <string name="settings_playback_section_audio_output">Output &amp; channels</string>
+    <string name="settings_playback_section_audio_sync">Synchronization</string>
+    <string name="settings_playback_section_audio_formats">Formats &amp; compatibility</string>
+    <string name="settings_playback_section_audio_mix">Channels &amp; mixing</string>
+    <string name="settings_playback_section_audio_dynamics">Volume &amp; dynamics</string>
+    <string name="settings_playback_section_profile_actions">Profile actions</string>
+    <string name="settings_playback_profile_type">Profile type</string>
+    <string name="settings_playback_timeshift_size">Buffer size</string>
+    <string name="settings_playback_live_functions">Live TV features</string>
+</resources>

@@ -93,16 +93,12 @@ internal fun groupWakeTargets(members: List<WakeMember>): List<WakeHostGroup> {
     return members.indices.groupBy(::find).values.map { indices -> WakeHostGroup(indices.map(members::get)) }
 }
 
-/**
- * LazyColumn index of the group a settings link points at ("plex", "files", "dlna", ...).
- * Layout: hint (0), optional profile picker (1), then one item per group.
- */
-internal fun networkWakeScrollIndex(groups: List<WakeHostGroup>, hasProfilePicker: Boolean, target: String): Int {
-    val first = if (hasProfilePicker) 2 else 1
-    val index = groups.indexOfFirst { it.contains(target) }
+/** Stable list key for a server link; headers and profile pickers do not change its destination. */
+internal fun networkWakeTargetKey(groups: List<WakeHostGroup>, target: String): String? {
+    val group = groups.firstOrNull { it.contains(target) }
     return when {
-        index >= 0 -> first + index
-        target == "files" || target == "dlna" -> first + groups.size // the manage links below the groups
-        else -> 0
+        group != null -> "wake-group:${group.key}"
+        target == "files" || target == "dlna" -> "wake-sources"
+        else -> null
     }
 }

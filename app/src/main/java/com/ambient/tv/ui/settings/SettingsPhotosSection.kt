@@ -17,6 +17,7 @@ import com.ambient.tv.ui.photos.photoSortOrderOptions
 @Composable
 internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        SettingsSubheader(stringResource(R.string.settings_section_general_slideshow))
         com.ambient.tv.ui.common.RightPanelValueSlider(
             title = stringResource(R.string.settings_photos_interval),
             value = uiState.photoSlideshowIntervalSeconds,
@@ -24,23 +25,22 @@ internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsV
             valueLabel = stringResource(R.string.settings_photos_interval_value, uiState.photoSlideshowIntervalSeconds),
             onValueChange = viewModel::onPhotoSlideshowIntervalChanged,
         )
-        SettingsGroup(title = stringResource(R.string.settings_photos_transition)) {
-            SettingsSelect(options = buildList {
-                listOf("fade" to R.string.settings_photos_transition_fade, "slide" to R.string.settings_photos_transition_slide, "none" to R.string.settings_photos_transition_none).forEach { (key, label) ->
-                    add(SettingsSelectOption(
-                        stringResource(label),
-                        selected = uiState.photoTransitionKey == key,
-                        onClick = { viewModel.onPhotoTransitionChanged(key) },
-                    ))
-                }
-            })
-        }
+        SettingsSelect(label = stringResource(R.string.settings_photos_transition), options = buildList {
+            listOf("fade" to R.string.settings_photos_transition_fade, "slide" to R.string.settings_photos_transition_slide, "none" to R.string.settings_photos_transition_none).forEach { (key, label) ->
+                add(SettingsSelectOption(
+                    stringResource(label),
+                    selected = uiState.photoTransitionKey == key,
+                    onClick = { viewModel.onPhotoTransitionChanged(key) },
+                ))
+            }
+        })
         TvSettingRow(
             stringResource(R.string.settings_photos_ken_burns),
             stringResource(R.string.settings_photos_ken_burns_hint),
             uiState.photoKenBurns,
             viewModel::onPhotoKenBurnsChanged,
         )
+        SettingsSubheader(stringResource(R.string.settings_section_general_photo_order))
         TvSettingRow(
             stringResource(R.string.photos_shuffle),
             stringResource(R.string.settings_photos_shuffle_hint),
@@ -53,15 +53,9 @@ internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsV
             uiState.photoIncludeSubfolders,
             viewModel::onPhotoIncludeSubfoldersChanged,
         )
-        TvSettingRow(
-            stringResource(R.string.photos_info),
-            stringResource(R.string.settings_photos_info_hint),
-            uiState.photoShowInfo,
-            viewModel::onPhotoShowInfoChanged,
-        )
-        SettingsGroup(title = stringResource(R.string.settings_photos_sort)) {
+        SettingsGroup {
             val sort = PhotoSort.fromKey(uiState.photoSortKey)
-            SettingsSelect(options = listOf(
+            SettingsSelect(label = stringResource(R.string.settings_photos_sort), options = listOf(
                 SettingsSelectOption(
                     stringResource(R.string.photos_sort_date),
                     selected = sort.byDate,
@@ -80,6 +74,13 @@ internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsV
                 showTitle = true,
             )
         }
+        SettingsSubheader(stringResource(R.string.settings_section_general_overlays))
+        TvSettingRow(
+            stringResource(R.string.photos_info),
+            stringResource(R.string.settings_photos_info_hint),
+            uiState.photoShowInfo,
+            viewModel::onPhotoShowInfoChanged,
+        )
     }
 }
 
@@ -87,11 +88,10 @@ internal fun PhotoSettingsSection(uiState: SettingsUiState, viewModel: SettingsV
 internal fun ScreensaverPhotoSourcePicker(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     val libraries by viewModel.photoLibraries.collectAsState()
     LaunchedEffect(Unit) { viewModel.loadPhotoLibraries() }
-    SettingsGroup(
-        title = stringResource(R.string.settings_screensaver_photo_album),
-        subtitle = stringResource(R.string.settings_screensaver_photo_album_hint),
-    ) {
-        SettingsSelect(options = buildList {
+    SettingsSelect(
+        label = stringResource(R.string.settings_screensaver_photo_album),
+        description = stringResource(R.string.settings_screensaver_photo_album_hint),
+        options = buildList {
             run {
                 add(SettingsSelectOption(
                     stringResource(R.string.settings_screensaver_photo_recent),
@@ -106,6 +106,6 @@ internal fun ScreensaverPhotoSourcePicker(uiState: SettingsUiState, viewModel: S
                     onClick = { viewModel.onScreensaverPhotoAlbumChanged(library.key, library.title) },
                 ))
             }
-        })
-    }
+        },
+    )
 }

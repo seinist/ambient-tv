@@ -26,6 +26,7 @@ import com.ambient.tv.BuildConfig
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.TvSettingRow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -44,8 +45,7 @@ fun UpdateSettingsCard(viewModel: UpdateViewModel = hiltViewModel()) {
             title = stringResource(R.string.update_automatic), body = stringResource(R.string.update_automatic_hint),
             checked = state.automatic, onCheckedChange = updater::setAutomatic,
         )
-        TvActionButton(text = stringResource(R.string.update_title), onClick = { open = true },
-            modifier = Modifier.fillMaxWidth(), fillWidth = true)
+        SettingsNavigationRow(title = stringResource(R.string.update_title), onClick = { open = true })
     }
     if (open) UpdateDialog(updater) { open = false }
 }

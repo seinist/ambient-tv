@@ -2,7 +2,6 @@ package com.ambient.tv.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -10,7 +9,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -21,6 +19,9 @@ import com.ambient.tv.data.local.ResolutionVideoProfile
 import com.ambient.tv.data.local.TitleVideoSettings
 import com.ambient.tv.data.local.VideoResolutionClass
 import com.ambient.tv.ui.common.AppDialog
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.common.TvActionButton
 import java.text.DateFormat
 import java.util.Date
@@ -137,43 +138,46 @@ internal fun SavedProfilesDialog(
         widthFraction = 0.72f,
         maxWidth = 920.dp,
     ) {
-        TvActionButton(text = stringResource(R.string.live_profiles_title), onClick = onEditLive, fillWidth = true)
+        SettingsNavigationRow(title = stringResource(R.string.live_profiles_title), onClick = onEditLive)
         if (category == null) {
             Text(stringResource(R.string.settings_playback_overview_empty), style = MaterialTheme.typography.bodySmall)
             return@AppDialog
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            present.forEach { c ->
-                TvActionButton(
+        SettingsSelect(
+            label = stringResource(R.string.settings_playback_profile_type),
+            options = present.map { c ->
+                SettingsSelectOption(
                     text = "${categoryName(c)} (${entries.count { it.category == c }})",
                     onClick = { selected = c; confirmKey = null },
                     selected = c == category,
                 )
-            }
-        }
+            },
+        )
+        SettingsSectionHeader(categoryName(category))
         entries.filter { it.category == category }.forEach { entry ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(entryTitle(entry), style = MaterialTheme.typography.titleSmall)
                     Text(entrySummary(entry), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (entry.rememberedBy > 0) Text(stringResource(R.string.saved_profiles_remembered_here, entry.rememberedBy),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
-                if (entry.rememberedBy > 0)
-                    TvActionButton(text = stringResource(R.string.saved_profiles_stop_remembering), onClick = { onForgetRememberTarget(entry) })
-                if (entry.store == SavedProfileStore.GLOBAL)
-                    TvActionButton(text = stringResource(R.string.saved_profiles_edit), onClick = onEditDefaults)
-                val confirming = confirmKey == entry.key
-                TvActionButton(
-                    text = stringResource(when {
-                        confirming -> R.string.saved_profiles_delete_confirm
-                        entry.store == SavedProfileStore.GLOBAL -> R.string.playback_profile_reset
-                        else -> R.string.saved_profiles_delete
-                    }),
-                    onClick = { if (confirming) { onDelete(entry); confirmKey = null } else confirmKey = entry.key },
-                )
+                SettingsActionRow {
+                    if (entry.rememberedBy > 0)
+                        TvActionButton(text = stringResource(R.string.saved_profiles_stop_remembering), onClick = { onForgetRememberTarget(entry) })
+                    if (entry.store == SavedProfileStore.GLOBAL)
+                        TvActionButton(text = stringResource(R.string.saved_profiles_edit), onClick = onEditDefaults)
+                    val confirming = confirmKey == entry.key
+                    TvActionButton(
+                        text = stringResource(when {
+                            confirming -> R.string.saved_profiles_delete_confirm
+                            entry.store == SavedProfileStore.GLOBAL -> R.string.playback_profile_reset
+                            else -> R.string.saved_profiles_delete
+                        }),
+                        onClick = { if (confirming) { onDelete(entry); confirmKey = null } else confirmKey = entry.key },
+                    )
+                }
             }
         }
     }

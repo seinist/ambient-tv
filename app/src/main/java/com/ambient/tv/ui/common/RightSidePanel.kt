@@ -472,7 +472,10 @@ private fun RightSidePanelChrome(
                 .focusGroup(),
         ) {
             // Nested lazy lists route their right-edge shortcut to this panel's own footer.
-            androidx.compose.runtime.CompositionLocalProvider(LocalScrollListActionFocus provides footerFocus) { body() }
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalScrollListActionFocus provides footerFocus,
+                LocalSettingsPresentation provides SettingsPresentation.Panel,
+            ) { body() }
             OverlayEdgeFades(canScrollBackward, canScrollForward)
             if (scrollbar != null) {
                 Box(
@@ -512,20 +515,7 @@ private fun RightSidePanelChrome(
 
 @Composable
 fun RightPanelSectionTitle(title: String, description: String? = null) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(top = 5.dp, bottom = 1.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Text(
-            title,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        description?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp, lineHeight = 18.sp)
-        }
-    }
+    SettingsSectionHeader(title = title, description = description)
 }
 
 @Composable
@@ -538,19 +528,20 @@ fun RightPanelChoice(
     subtitle: String? = null,
     /** Decorative status icon; its meaning belongs in the row text. */
     trailingIcon: ImageVector? = null,
+    enabled: Boolean = true,
 ) {
     val uiSounds = LocalUiSoundPlayer.current
-    val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(onClick = onClick)
+    val activate = com.ambient.tv.ui.sound.rememberUiSoundAction(enabled = enabled, onClick = onClick)
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     Row(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) uiSounds?.playFocus() }
             .menuFocusMotion(focused, focusedScale = 1.006f)
-            .appControlSurface(focused, selected, shape = shape)
+            .appControlSurface(focused, selected, enabled = enabled, shape = shape)
             .semantics { this.selected = selected }
-            .activateOnTvKey(onClick = activate)
-            .clickable(role = Role.Button, onClick = activate)
+            .activateOnTvKey(enabled = enabled, onClick = activate)
+            .clickable(enabled = enabled, role = Role.Button, onClick = activate)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -559,7 +550,7 @@ fun RightPanelChoice(
             Icon(it, contentDescription = null, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-            MarqueeTitle(text, focused, color = MaterialTheme.colorScheme.onSurface, style = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.SemiBold))
+            MarqueeTitle(text, focused, color = MaterialTheme.colorScheme.onSurface, style = LocalTextStyle.current.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium))
             subtitle?.takeIf { it.isNotBlank() }?.let {
                 MarqueeTitle(it, focused, color = MaterialTheme.colorScheme.onSurfaceVariant, style = LocalTextStyle.current.copy(fontSize = 13.sp))
             }

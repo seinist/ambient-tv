@@ -33,49 +33,52 @@ internal fun SeekPlaybackSettingsControls(
     showSavedResumeRewind: Boolean = true,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(if (playbackPanel) 10.dp else 14.dp)) {
-        SeekPlaybackOption(
-            title = stringResource(R.string.settings_seek_jump),
-            description = stringResource(R.string.settings_seek_jump_hint),
-            value = settings.bigSeekJumpSeconds,
-            options = SEEK_JUMP_SECONDS,
-            icon = Icons.Filled.SwapHoriz,
-            playbackPanel = playbackPanel,
-            onChanged = onSeekJumpChanged,
-        )
-        if (showPauseRewind) {
+        SettingsHint(stringResource(R.string.settings_playback_scope_global))
+        SettingsGroup(title = stringResource(R.string.settings_playback_section_seek)) {
             SeekPlaybackOption(
-                title = stringResource(R.string.settings_pause_rewind),
-                description = pauseRewindDescription(settings),
-                value = settings.pauseRewindSeconds,
-                options = PAUSE_REWIND_SECONDS,
-                icon = Icons.Filled.Replay,
-                playbackPanel = playbackPanel,
-                onChanged = onPauseRewindChanged,
+                title = stringResource(R.string.settings_seek_jump),
+                description = stringResource(R.string.settings_seek_jump_hint),
+                value = settings.bigSeekJumpSeconds,
+                options = SEEK_JUMP_SECONDS,
+                icon = Icons.Filled.SwapHoriz,
+                onChanged = onSeekJumpChanged,
             )
-            if (settings.pauseRewindSeconds > 0) {
+        }
+        if (showPauseRewind) {
+            SettingsGroup(title = stringResource(R.string.settings_playback_section_pause)) {
                 SeekPlaybackOption(
-                    title = stringResource(R.string.settings_pause_rewind_min_pause),
-                    description = stringResource(R.string.settings_pause_rewind_min_pause_hint),
-                    value = settings.pauseRewindMinPauseSeconds,
-                    options = PAUSE_REWIND_MIN_PAUSE_SECONDS,
-                    icon = Icons.Filled.Timer,
-                    playbackPanel = playbackPanel,
-                    minimumPause = true,
-                    onChanged = onMinPauseChanged,
+                    title = stringResource(R.string.settings_pause_rewind),
+                    description = pauseRewindDescription(settings),
+                    value = settings.pauseRewindSeconds,
+                    options = PAUSE_REWIND_SECONDS,
+                    icon = Icons.Filled.Replay,
+                    onChanged = onPauseRewindChanged,
                 )
+                if (settings.pauseRewindSeconds > 0) {
+                    SeekPlaybackOption(
+                        title = stringResource(R.string.settings_pause_rewind_min_pause),
+                        description = stringResource(R.string.settings_pause_rewind_min_pause_hint),
+                        value = settings.pauseRewindMinPauseSeconds,
+                        options = PAUSE_REWIND_MIN_PAUSE_SECONDS,
+                        icon = Icons.Filled.Timer,
+                        minimumPause = true,
+                        onChanged = onMinPauseChanged,
+                    )
+                }
             }
         }
         if (showSavedResumeRewind) {
-            SeekPlaybackOption(
-                title = stringResource(R.string.settings_resume_rewind),
-                description = if (settings.resumeRewindSeconds == 0) stringResource(R.string.settings_resume_rewind_hint)
-                    else stringResource(R.string.settings_resume_rewind_active_hint, settings.resumeRewindSeconds),
-                value = settings.resumeRewindSeconds,
-                options = RESUME_REWIND_SECONDS,
-                icon = Icons.Filled.Replay,
-                playbackPanel = playbackPanel,
-                onChanged = onResumeRewindChanged,
-            )
+            SettingsGroup(title = stringResource(R.string.settings_playback_section_resume)) {
+                SeekPlaybackOption(
+                    title = stringResource(R.string.settings_resume_rewind),
+                    description = if (settings.resumeRewindSeconds == 0) stringResource(R.string.settings_resume_rewind_hint)
+                        else stringResource(R.string.settings_resume_rewind_active_hint, settings.resumeRewindSeconds),
+                    value = settings.resumeRewindSeconds,
+                    options = RESUME_REWIND_SECONDS,
+                    icon = Icons.Filled.Replay,
+                    onChanged = onResumeRewindChanged,
+                )
+            }
         }
     }
 }
@@ -112,28 +115,16 @@ private fun SeekPlaybackOption(
     value: Int,
     options: List<Int>,
     icon: ImageVector,
-    playbackPanel: Boolean,
     minimumPause: Boolean = false,
     onChanged: (Int) -> Unit,
 ) {
     val labels = options.map { seconds -> seconds to seekOptionValue(seconds, minimumPause) }
-    if (playbackPanel) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            PlayerDropUpSelector(
-                label = title,
-                value = seekOptionValue(value, minimumPause),
-                options = labels.map { (seconds, label) -> seconds.toString() to label },
-                selectedKey = value.toString(),
-                icon = icon,
-                onSelected = { selected -> selected.toIntOrNull()?.takeIf { it in options }?.let(onChanged) },
-            )
-            RightPanelInfoRow(description)
-        }
-    } else {
-        SettingsGroup(title = title, subtitle = description) {
-            SettingsSelect(options = labels.map { (seconds, label) ->
-                SettingsSelectOption(label, seconds == value, onClick = { onChanged(seconds) })
-            })
-        }
-    }
+    SettingsSelect(
+        label = title,
+        description = description,
+        icon = icon,
+        options = labels.map { (seconds, label) ->
+            SettingsSelectOption(label, seconds == value, onClick = { onChanged(seconds) })
+        },
+    )
 }

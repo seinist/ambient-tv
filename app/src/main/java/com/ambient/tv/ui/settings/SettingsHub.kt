@@ -807,9 +807,12 @@ internal fun SettingsHub(
                     key(current) {
                         states.SaveableStateProvider(current.name) {
                             val listState = rememberLazyListState()
+                            val itemIndex = remember(current) { SettingsItemIndex() }
                             val landingQuery = searchLandingQuery
                             CompositionLocalProvider(
                                 LocalSettingsSearchLanding provides landingQuery,
+                                LocalSettingsItemIndex provides itemIndex,
+                                com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
                                 LocalSettingsLinkFocus provides linkFocus,
                                 // Right from the page scrollbar reaches the header, like the index list.
                                 com.ambient.tv.ui.common.LocalScrollListActionFocus provides searchButtonFocus,
@@ -820,14 +823,21 @@ internal fun SettingsHub(
                                 },
                             ) {
                             LaunchedEffect(current, landingQuery) {
-                                if (handheld) return@LaunchedEffect
-                                settlingPageFocus = true
+                                if (!handheld) settlingPageFocus = true
                                 if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
                                 }
-                                val scrollTo = landingQuery?.let { if (current == SettingsCategory.WAKE) viewModel.wakeScrollIndex(state, it) else settingsSearchScrollIndex(current, it) }
+                                val targetKey = landingQuery?.let {
+                                    if (current == SettingsCategory.WAKE) viewModel.wakeTargetKey(state, it)
+                                    else settingsSearchTargetKey(current, it)
+                                }
+                                val scrollTo = itemIndex.landingPosition(targetKey, requested = landingQuery != null)
                                 if (scrollTo != null && scrollTo < listState.layoutInfo.totalItemsCount) {
                                     listState.scrollToItem(scrollTo)
+                                }
+                                if (handheld) {
+                                    if (landingQuery != null) searchLandingQuery = null
+                                    return@LaunchedEffect
                                 }
                                 val restore = returningLink
                                 if (restore != null) {
