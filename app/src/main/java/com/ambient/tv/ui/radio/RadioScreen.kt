@@ -87,6 +87,8 @@ import java.util.Locale
 fun RadioScreen(
     onBack: (() -> Unit)? = null,
     onOpenPlayer: () -> Unit = {},
+    initialSectionKey: String? = null,
+    onSelectSection: ((RadioSection) -> Unit)? = null,
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -94,8 +96,11 @@ fun RadioScreen(
     var showViewOptions by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
+    val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
 
-    LaunchedEffect(viewModel) { viewModel.enter() }
+    LaunchedEffect(viewModel, initialSectionKey) {
+        viewModel.enter(RadioSection.fromKey(initialSectionKey))
+    }
     ReportSidebarContentReady(!state.loading)
 
     BackHandler(enabled = showViewOptions) { showViewOptions = false }
@@ -158,16 +163,18 @@ fun RadioScreen(
                 )
             }
 
-            com.ambient.tv.ui.common.PageChipRow(focusChain) {
-                lazyItems(RadioSection.entries, key = { it.name }) { section ->
-                    TvChip(
-                        text = radioSectionLabel(section),
-                        selected = state.section == section &&
-                            state.submittedQuery.isBlank() &&
-                            state.selectedFacet == null,
-                        modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
-                        onClick = { viewModel.selectSection(section) },
-                    )
+            if (handheld) {
+                com.ambient.tv.ui.common.PageChipRow(focusChain) {
+                    lazyItems(RadioSection.entries, key = { it.key }) { section ->
+                        TvChip(
+                            text = radioSectionLabel(section),
+                            selected = state.section == section &&
+                                state.submittedQuery.isBlank() &&
+                                state.selectedFacet == null,
+                            modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                            onClick = { (onSelectSection ?: viewModel::selectSection)(section) },
+                        )
+                    }
                 }
             }
 
