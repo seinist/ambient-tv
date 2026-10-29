@@ -2137,11 +2137,11 @@
     <string name="player_broadcast_color_green">Grün</string>
     <string name="player_broadcast_color_yellow">Gelb</string>
     <string name="player_broadcast_color_blue">Blau</string>
-    <string name="radio_title">Radio</string>
+    <string name="radio_title">Radio Browser</string>
     <string name="setup_desc_radio">Internetradio aus dem offenen Radio-Browser-Katalog.</string>
     <string name="settings_page_radio_hint">Internetradio-Katalog und Anzeige.</string>
-    <string name="settings_radio_enable">Radio aktivieren</string>
-    <string name="settings_radio_enable_hint">Internetradiosender aus Radio Browser durchsuchen und abspielen.</string>
+    <string name="settings_radio_enable">Radio Browser aktivieren</string>
+    <string name="settings_radio_enable_hint">Internetradiosender mit Radio Browser durchsuchen und abspielen.</string>
     <string name="radio_provider_note">Senderkatalog: Radio Browser.</string>
     <string name="radio_popular">Beliebt</string>
     <string name="radio_search_placeholder">Sender suchen</string>
@@ -2155,6 +2155,7 @@
     <string name="radio_genres">Genres</string>
     <string name="radio_countries">Länder</string>
     <string name="radio_languages">Sprachen</string>
+    <string name="radio_stations">Sender</string>
     <string name="radio_station_count">%1$d Sender</string>
     <string name="radio_browse_back">Zurück zu %1$s</string>
 </resources>

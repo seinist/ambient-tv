@@ -411,9 +411,10 @@ class SearchViewModel @Inject constructor(
         }
     }
 
-    fun playRadio(station: RadioStation) {
+    fun playRadio(station: RadioStation, onStarted: () -> Unit = {}) {
         viewModelScope.launch {
             radioPlaybackLauncher.play(station, _uiState.value.radioResults)
+                .onSuccess { onStarted() }
         }
     }
 

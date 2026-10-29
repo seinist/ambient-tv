@@ -243,6 +243,9 @@ object BackgroundPlaybackSession {
         if (sameVideoSettingsPlayback(metadata, snapshot.value.metadata)) videoSettingsOverride = settings
     }
 
+    internal fun currentAudioSpectrum(): com.ambient.tv.ui.player.backend.AudioSpectrumAnalyzer? =
+        (handle as? Media3PlaybackHandle)?.player?.let(PlaybackEngineFactory::audioSpectrum)
+
     fun refreshMetadata(metadata: PlaybackMetadata) {
         checkThread()
         val current = snapshot.value
