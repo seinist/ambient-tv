@@ -69,6 +69,7 @@ internal fun playerPanelDrawerAlpha(progress: Float, reducedEffects: Boolean): F
 }
 
 internal data class PlayerPanelMotionState(
+    val active: Boolean = false,
     val panelProgress: Float = 1f,
     val scrimProgress: Float = 1f,
     val visualDepth: Int = 1,
@@ -177,6 +178,7 @@ fun PlayerPanelVisibility(
             LocalPlayerPanelInteractive provides interactive,
             LocalPlayerPanelStateHolder provides levels,
             LocalPlayerPanelMotion provides PlayerPanelMotionState(
+                active = true,
                 panelProgress = panelProgress.value,
                 scrimProgress = scrimProgress.value,
                 visualDepth = visualDepth,
