@@ -112,6 +112,7 @@ fun AppDialog(
     /** Null for confirmation-only dialogs: skips the content area and its extra hairline. */
     content: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
+    KeepPlayerPanelOpen()
     val density = LocalDensity.current
     val tokens = LocalUiTokens.current
     val accentMode = LocalAccentModeKey.current

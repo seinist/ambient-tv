@@ -240,7 +240,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         },
                     )
                 }
-                item {
+                item(key = "plex:customization") {
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.plexConfigured,
                         submenuContent = {
@@ -336,7 +336,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
                 item { SettingsPageLink(SettingsCategory.WAKE, "jellyfin-network", R.string.settings_network_link) }
                 item(key = "jellyfin-library-section") { SettingsSubheader(stringResource(R.string.settings_system_library_display)) }
-                item {
+                item(key = "jellyfin:customization") {
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.jellyfinConfigured,
                         submenuContent = {
@@ -432,7 +432,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 }
                 item { SettingsPageLink(SettingsCategory.WAKE, "emby-network", R.string.settings_network_link) }
                 item(key = "emby-library-section") { SettingsSubheader(stringResource(R.string.settings_system_library_display)) }
-                item {
+                item(key = "emby:customization") {
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.embyConfigured,
                         submenuContent = {
@@ -1094,9 +1094,15 @@ internal fun SystemCustomizationTabs(
             },
         )
     }
-    LaunchedEffect(showStartPageTab) {
-        if (!showStartPageTab && selected == SystemCustomizationTab.StartPage) {
+    LaunchedEffect(showStartPageTab, searchLanding) {
+        if (!showStartPageTab) {
             selected = SystemCustomizationTab.Submenu
+        } else if (searchLanding != null) {
+            selected = if (settingsSearchPrefersStartPageTab(searchLanding)) {
+                SystemCustomizationTab.StartPage
+            } else {
+                SystemCustomizationTab.Submenu
+            }
         }
     }
     if (!showStartPageTab) {

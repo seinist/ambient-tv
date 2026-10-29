@@ -28,6 +28,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.player.PlayerPinchZoomGesture
 import com.ambient.tv.ui.player.VideoPresentation
 import com.ambient.tv.ui.player.playerZoomEdges
+import com.ambient.tv.ui.player.normalized
 import kotlin.math.abs
 
 /** Local UI state and the renderer are updated together, so the video settings stay accurate. */
@@ -74,17 +75,21 @@ fun PlayerTouchLayer(
     val pinchAvailable = LocalHandheldUi.current && pinchZoom != null
     val pinchEnabled = pinchAvailable && pinchZoom?.enabled == true
     var viewport by remember(pinchZoom?.key) { mutableStateOf(IntSize.Zero) }
-    var wasPinched by remember(pinchZoom?.key) { mutableStateOf(false) }
+    var lastPinchPresentation by remember(pinchZoom?.key) { mutableStateOf<VideoPresentation?>(null) }
     Box(
         modifier = modifier
             .fillMaxSize()
             .pointerHoverIcon(PointerIcon.Hand)
             .onSizeChanged { next ->
                 // A crop fitted to portrait must not become an extreme crop after rotation or
-                // entering split-screen. Only gesture-created zoom is reset by a size change.
-                if (pinchAvailable && wasPinched && viewport != IntSize.Zero && viewport != next) {
-                    currentPinch?.onChanged?.invoke(VideoPresentation())
-                    wasPinched = false
+                // entering split-screen. A later manual choice wins, even on the same player.
+                if (pinchAvailable && viewport != IntSize.Zero && viewport != next) {
+                    val lastPinch = lastPinchPresentation
+                    val current = currentPinch
+                    lastPinchPresentation = null
+                    if (lastPinch != null && current != null && current.presentation.normalized() == lastPinch) {
+                        current.onChanged(VideoPresentation())
+                    }
                 }
                 viewport = next
             }
@@ -116,8 +121,9 @@ fun PlayerTouchLayer(
                                 }
                                 if (pastSlop) {
                                     gesture?.scaleBy(cumulativeZoom)?.let { presentation ->
-                                        currentPinch?.onChanged?.invoke(presentation)
-                                        wasPinched = true
+                                        val normalized = presentation.normalized()
+                                        currentPinch?.onChanged?.invoke(normalized)
+                                        lastPinchPresentation = normalized
                                     }
                                     cumulativeZoom = 1f
                                 }

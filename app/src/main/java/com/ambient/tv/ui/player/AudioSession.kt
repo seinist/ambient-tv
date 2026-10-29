@@ -104,6 +104,7 @@ class AudioSession(
         // Renderer/output/decoder replacement continues this playback, including its diagnostics.
         performanceHint = previous.performanceHint
         showFpsOverlay = previous.showFpsOverlay
+        showFrameDropOverlay = previous.showFrameDropOverlay
     }
 
     /** Apply a playback profile without replacing the global audio defaults. */
@@ -125,6 +126,8 @@ class AudioSession(
      * Closing the player drops the flag with the session.
      */
     var showFpsOverlay by mutableStateOf(false)
+    /** Keep frame-drop diagnostics visible outside video panels for this playback only. */
+    var showFrameDropOverlay by mutableStateOf(false)
     var route by mutableStateOf(AudioRouteCapabilities())
     var mpvAllowed by mutableStateOf(true)
         private set

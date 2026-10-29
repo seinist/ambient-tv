@@ -6,6 +6,16 @@ import java.util.Locale
 
 internal val LocalSettingsSearchLanding = staticCompositionLocalOf<String?> { null }
 
+/** Keep search intent available to lazy rows after the one-shot navigation signal is consumed. */
+internal class SettingsSearchLanding {
+    private var query: String? = null
+
+    fun accept(pendingQuery: String?): String? {
+        if (pendingQuery != null) query = pendingQuery
+        return query
+    }
+}
+
 internal enum class SettingsArea(val titleRes: Int) {
     START(R.string.settings_area_start),
     HOME(R.string.settings_area_home),
@@ -184,6 +194,11 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
         SettingsCategory.SPOTIFY -> when {
             listOf("developer", "entwickler", "client", "advanced").any { it in q } -> "spotify:account"
             else -> null
+        }
+        SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY -> {
+            val customization = settingsSearchPrefersStartPageTab(q) ||
+                listOf("submenu", "untermenü", "untermenue", "sidebar", "seitenmenü", "seitenmenue", "library", "bibliothek").any { it in q }
+            if (customization) "${category.name.lowercase(Locale.ROOT)}:customization" else null
         }
         else -> null
     }

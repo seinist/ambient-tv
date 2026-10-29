@@ -7,6 +7,10 @@
     <string name="player_osd_info_duration">Display time</string>
     <string name="player_osd_info_codecs_summary">Codec strip</string>
     <string name="player_osd_info_fps_summary">FPS</string>
+    <string name="player_osd_info_frame_drops_summary">Frame drops</string>
+    <string name="player_frame_drop_overlay">Frame-drop overlay</string>
+    <string name="player_frame_drop_overlay_auto">Automatic</string>
+    <string name="player_frame_drop_overlay_always">Always show</string>
     <string name="player_osd_info_stats_summary">Stats</string>
     <string name="osd_buttons_section_picture_sound">Picture &amp; sound</string>
     <string name="osd_buttons_section_youtube">YouTube</string>

@@ -11,6 +11,7 @@ import com.ambient.tv.ui.display.SdrToHdrStatus
 import java.lang.ref.WeakReference
 import java.util.WeakHashMap
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.ui.AspectRatioFrameLayout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +56,19 @@ class Media3PlaybackHandle(
 
     private var surfaceView: SurfaceView? = null
     private var released = false
+    private var frameDropGeneration = 0
+    private var frameDropCounters: DecoderCounters? = null
+
+    /** A polling window must not bridge a short seek, pause or decoder replacement. */
+    internal fun frameDropSampleGeneration(): Int {
+        val counters = if (released) null else player.videoDecoderCounters
+        if (frameDropCounters !== counters) {
+            frameDropCounters = counters
+            frameDropGeneration++
+        }
+        return frameDropGeneration
+    }
+
     override val usesRendererScaling: Boolean
         get() = !released && Media3ImageProcessing.rendererScalingRequested(player)
     private var outputError: String? = null
@@ -72,9 +86,14 @@ class Media3PlaybackHandle(
     )
     private val conversionListener = object : Player.Listener {
         override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            frameDropGeneration++
             hdrOutput.discontinuity()
         }
-        override fun onIsPlayingChanged(isPlaying: Boolean) { hdrOutput.discontinuity() }
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            frameDropGeneration++
+            hdrOutput.discontinuity()
+        }
+        override fun onPlaybackStateChanged(playbackState: Int) { frameDropGeneration++ }
     }
     init { handles[player] = WeakReference(this); player.addListener(conversionListener) }
     internal fun attachVideoView(view: SurfaceView) {

@@ -60,4 +60,24 @@ class PlayerOsdControllerTest {
         assertFalse(osd.seekFeedback)
         assertTrue(osd.visible.value)
     }
+
+    @Test fun panelTimeoutHidesImmediatelyAndInvalidatesAnOlderFade() {
+        val chrome = PlayerChromeState(initialZapOsd = true)
+        chrome.osd.expand()
+        chrome.osd.close()
+        val fade = chrome.osd.transitionVersion
+        chrome.panels.fromOrigin("bar:settings", true) {
+            chrome.panels.open(com.ambient.tv.ui.common.UnifiedPlayerPanel.SETTINGS)
+        }
+        assertTrue(chrome.closePanelsForInactivity(chrome.panels.activity.version))
+        assertEquals(PlayerOsdMode.HIDDEN, chrome.osd.mode)
+        assertFalse(chrome.osd.closing)
+        assertFalse(chrome.osd.shownByZap.value)
+        assertNull(chrome.panels.restoreKey)
+        chrome.osd.finishClose(fade)
+        assertEquals(PlayerOsdMode.HIDDEN, chrome.osd.mode)
+        chrome.osd.reveal()
+        chrome.osd.finishClose(fade)
+        assertEquals(PlayerOsdMode.COMPACT, chrome.osd.mode)
+    }
 }

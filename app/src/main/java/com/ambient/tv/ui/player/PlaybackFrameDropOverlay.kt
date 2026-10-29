@@ -39,7 +39,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.Locale
 
-private fun readFrameDrops(handle: PlaybackHandle?): FrameDropReading {
+internal fun readFrameDrops(handle: PlaybackHandle?): FrameDropReading {
     val status = handle?.status() ?: return FrameDropReading()
     val playing = status.playing && !status.ended && status.error == null
     val reading = when (handle) {
@@ -69,7 +69,12 @@ private fun readFrameDrops(handle: PlaybackHandle?): FrameDropReading {
         } ?: FrameDropReading()
         else -> FrameDropReading()
     }
-    return reading.copy(realtimeMs = android.os.SystemClock.elapsedRealtime(), generation = handle.reopenGeneration())
+    val generation = when (handle) {
+        is Media3PlaybackHandle -> handle.frameDropSampleGeneration()
+        is VlcPlaybackController -> handle.frameDropSampleGeneration()
+        else -> handle.reopenGeneration()
+    }
+    return reading.copy(realtimeMs = android.os.SystemClock.elapsedRealtime(), generation = generation)
 }
 
 private val frameDropColorStops = listOf(
@@ -89,15 +94,21 @@ internal fun frameDropBarColor(dropPercent: Double?): Color {
 }
 
 /**
- * Window overlay shown while a video panel is open; fades in and out and never takes focus or handles Back.
- * The existing slim bar, with a smoothed FPS deviation from the intended video output rate.
+ * Window overlay shown in video panels or for the playback when enabled in OSD & Info.
+ * Fades in and out and never takes focus or handles Back.
+ * Shows a smoothed FPS deviation when the intended output rate is known. Otherwise real
+ * renderer counters still provide output FPS and the observed proportion of dropped frames.
  * Hosted by [PlayerPanelVisibility] so it outlives the panel long enough to fade out.
  */
 @Composable
 internal fun PlaybackFrameDropOverlay(visible: Boolean) {
+    val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     val handle = BackgroundPlaybackSession.activeHandle()
+    val session = playbackProfileAudio(handle)
     val visibility = remember { MutableTransitionState(false) }
-    visibility.targetState = visible && (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle)
+    visibility.targetState = (visible || session?.showFrameDropOverlay == true) &&
+        playback.metadata?.hasVideo == true && session?.audioOnly != true &&
+        (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle)
     if (!visibility.currentState && !visibility.targetState) return
     var targetFps by remember(handle) { mutableStateOf<Double?>(null) }
     var smoothed by remember(handle) { mutableStateOf<FrameDropSample?>(null) }
@@ -114,8 +125,16 @@ internal fun PlaybackFrameDropOverlay(visible: Boolean) {
     val fill by animateFloatAsState(frameDropBarFill(smoothed?.deficitPercent), tween(900, easing = FastOutSlowInEasing), label = "frameDropFill")
     val color by animateColorAsState(frameDropBarColor(smoothed?.deficitPercent), tween(900), label = "frameDropColor")
     val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
-    val deviation = (if (smoothed?.estimated == true) "≈" else "") + formatFrameFpsDeviation(smoothed?.deviationFps, locale)
-    val label = stringResource(R.string.player_frame_drop_fps_deviation, deviation, formatFrameTargetFps(targetFps, locale))
+    val label = if (targetFps == null && handle !is MpvPlaybackController) {
+        stringResource(
+            R.string.player_frame_drop_measured_fps,
+            formatFrameOutputFps(smoothed?.actualFps, locale),
+            formatFramePercent(smoothed?.counterDropPercent, locale),
+        )
+    } else {
+        val deviation = (if (smoothed?.estimated == true) "≈" else "") + formatFrameFpsDeviation(smoothed?.deviationFps, locale)
+        stringResource(R.string.player_frame_drop_fps_deviation, deviation, formatFrameTargetFps(targetFps, locale))
+    }
     val inset = with(LocalDensity.current) { IntOffset(24.dp.roundToPx(), 28.dp.roundToPx()) }
     val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
     // The FPS overlay sits in the same corner; stack below it instead of drawing on top.

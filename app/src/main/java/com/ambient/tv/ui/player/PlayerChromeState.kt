@@ -45,6 +45,13 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     internal val engineFocus = FocusRequester()
     /** Whether anything inside the player (engine, OSD, panel) holds the focus. */
     internal var hasFocus = false
+
+    /** Synchronous: no panel-close effect may reveal controls between these changes. */
+    internal fun closePanelsForInactivity(expectedActivity: Int): Boolean {
+        if (!panels.closeForInactivity(expectedActivity)) return false
+        osd.hideImmediately()
+        return true
+    }
 }
 
 val LocalPlayerChromeState = compositionLocalOf<PlayerChromeState?> { null }
@@ -63,6 +70,7 @@ fun PersistentPlayerChrome(
         LocalPlayerControlFocus provides chrome.focus,
         LocalPlayerChangingItem provides changingItem,
     ) {
+        PlayerPanelAutoHide(chrome, changingItem)
         LaunchedEffect(chrome) {
             androidx.compose.runtime.snapshotFlow { chrome.visible.value }.collect { if (!it) chrome.shownByZap.value = false }
         }

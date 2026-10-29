@@ -218,15 +218,18 @@ private fun PlayerDropUpSelectorImpl(
     val startIndex = options.indexOfFirst { it.first == selectedKey && it.first !in disabledKeys }
         .takeIf { it >= 0 } ?: options.indexOfFirst { it.first !in disabledKeys }.coerceAtLeast(0)
     val enabled = options.any { it.first !in disabledKeys }
+    val select: (String) -> Unit = { key -> panelNavigation?.activity?.interact(); onSelected(key) }
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     val inlineValue = LocalSettingsPresentation.current == SettingsPresentation.Page &&
         label.isNotBlank() && triggerWidth >= 480.dp
     fun close() {
+        panelNavigation?.activity?.interact()
         restoreTriggerFocus = !focused
         setExpanded(false)
     }
     fun open() {
         if (!enabled) return
+        panelNavigation?.activity?.interact()
         if (matchTrigger) menuMaxHeight = selectMenuMaxHeight(anchor.value, rootView, density)
         restoreTriggerFocus = false
         setExpanded(true)
@@ -353,7 +356,7 @@ private fun PlayerDropUpSelectorImpl(
         if (matchTrigger && expanded && triggerWidth > 0.dp && menuMaxHeight != Dp.Unspecified) {
             SelectorListPopup(triggerWidth, menuMaxHeight, dismissAction, options, sections,
                 startIndex, selectedKeys, disabledKeys, optionFocus, optionSwatches,
-                shouldCloseOnSelection, ::close, onSelected)
+                shouldCloseOnSelection, ::close, select)
         }
     }
 }
@@ -415,6 +418,7 @@ private fun SelectorListPopup(
     ) {
         com.ambient.tv.ui.sound.SilenceSystemMenuSounds()
         com.ambient.tv.ui.display.SuspendUiHdrForPopup()
+        ReportPlayerPanelPopupWindow()
         CompositionLocalProvider(LocalDensity provides density) {
             LaunchedEffect(optionKeys) {
                 scroll.scrollToItem(rowIndices.getOrElse(initialIndex) { 0 }.coerceAtLeast(0))
@@ -424,7 +428,7 @@ private fun SelectorListPopup(
                 }
             }
             Box(
-                Modifier.navigationSoundInput()
+                Modifier.playerPanelInput(LocalPlayerPanelNavigation.current).navigationSoundInput()
                     .requiredWidth(width)
                     .heightIn(max = maxHeight)
                     .clip(shape)

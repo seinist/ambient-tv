@@ -73,6 +73,12 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
         shownByZap.value = false
     }
 
+    /** A timed-out settings panel must not reveal or animate the OSD behind it. */
+    fun hideImmediately() {
+        update(PlayerOsdPresentation(mode = PlayerOsdMode.HIDDEN))
+        shownByZap.value = false
+    }
+
     /** Ignore completion from an exit that was interrupted by another input/transition. */
     fun finishClose(expectedVersion: Int? = null) {
         if (expectedVersion != null && expectedVersion != transitionVersion) return

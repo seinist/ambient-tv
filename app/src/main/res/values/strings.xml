@@ -1087,6 +1087,7 @@
     <string name="settings_next_up_overlay_hint">Show a preview before the end.</string>
     <string name="settings_next_up_advances">%1$d changes</string>
     <string name="player_next_item">Next item</string>
+    <string name="player_previous_item">Previous video</string>
     <string name="settings_assets_title">Media artwork</string>
     <string name="settings_high_quality_assets">High-resolution images</string>
     <string name="settings_high_quality_assets_hint">Loads sharper covers and backdrops and uses more network and storage.</string>

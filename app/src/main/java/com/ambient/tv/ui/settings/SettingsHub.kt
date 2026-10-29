@@ -813,9 +813,10 @@ internal fun SettingsHub(
                         states.SaveableStateProvider(current.name) {
                             val listState = rememberLazyListState()
                             val itemIndex = remember(current) { SettingsItemIndex() }
+                            val pageSearchLanding = remember(current) { SettingsSearchLanding() }
                             val landingQuery = searchLandingQuery
                             CompositionLocalProvider(
-                                LocalSettingsSearchLanding provides landingQuery,
+                                LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
                                 com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
                                 LocalSettingsLinkFocus provides linkFocus,

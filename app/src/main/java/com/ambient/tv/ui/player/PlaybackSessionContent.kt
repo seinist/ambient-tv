@@ -13,6 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -22,6 +23,17 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import kotlin.math.ceil
+
+/** Shared title actions for renderer controls and the persistent OSD above their layout. */
+internal data class PlaybackItemControls(
+    val restart: (() -> Unit)? = null,
+    val next: (() -> Unit)? = null,
+    /** Already resolves to start-over when the current player has no previous item. */
+    val previous: (() -> Unit)? = restart,
+    val hasPreviousItem: Boolean = false,
+)
+
+internal val LocalPlaybackItemControls = compositionLocalOf<PlaybackItemControls?> { null }
 
 @Composable
 fun rememberPlaybackSleepTimer(owner: Any): MutableState<SleepTimerConfig> = remember(owner) {
@@ -51,6 +63,7 @@ fun PlaybackSessionContent(
     onTimelineSeek: ((Long) -> Unit)? = null,
     /** A failed new engine must be reported by its screen, not mistaken for stopping the old one. */
     acquisitionKey: Any = metadata.route,
+    onPlayPrevious: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -91,6 +104,7 @@ fun PlaybackSessionContent(
     var acquired by remember(metadata.route, acquisitionKey) { mutableStateOf(false) }
     var dismissedKey by remember(metadata.route) { mutableStateOf<String?>(null) }
     var handledKey by remember(metadata.route) { mutableStateOf<String?>(null) }
+    var previousHandled by remember(metadata.route, snapshot.generation) { mutableStateOf(false) }
     // A leaving navigation destination must not render a handle replaced by the next screen.
     if (acquired && snapshot.active && snapshot.metadata?.route != metadata.route) return
     if (acquired && !snapshot.active) {
@@ -157,13 +171,55 @@ fun PlaybackSessionContent(
     fun playNext(automatic: Boolean) {
         val next = candidate ?: return
         val current = BackgroundPlaybackSession.snapshot.value
-        if (changingItem || current.replacingSource || current.metadata?.route != metadata.route || current.generation != snapshot.generation) return
+        if (changingItem || current.replacingSource || com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+            current.metadata?.route != metadata.route || current.generation != snapshot.generation) return
         if (handledKey == candidateKey) return
         handledKey = candidateKey
         if (automatic) BackgroundPlaybackSession.recordAutomaticNextUp(next)
-        else BackgroundPlaybackSession.recordManualNextUp(next)
+        else {
+            BackgroundPlaybackSession.registerUserInteraction()
+            BackgroundPlaybackSession.recordManualNextUp(next)
+        }
         onPlayNext(next)
     }
+
+    fun restart() {
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (metadata.isLive || changingItem || current.replacingSource || com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+            current.metadata?.route != metadata.route || current.generation != snapshot.generation) return
+        if (onTimelineSeek == null && BackgroundPlaybackSession.activeHandle()?.canSeekNow() != true) return
+        if (onTimelineSeek != null) {
+            BackgroundPlaybackSession.userSeek()
+            onTimelineSeek(0L)
+        } else {
+            BackgroundPlaybackSession.registerUserInteraction()
+            BackgroundPlaybackSession.seekTo(0L)
+        }
+        chrome?.osd?.reveal()
+    }
+
+    fun playPrevious() {
+        val previous = onPlayPrevious
+        if (previous == null) {
+            restart()
+            return
+        }
+        val current = BackgroundPlaybackSession.snapshot.value
+        if (metadata.isLive || changingItem || current.replacingSource || com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+            current.metadata?.route != metadata.route || current.generation != snapshot.generation || previousHandled) return
+        previousHandled = true
+        BackgroundPlaybackSession.registerUserInteraction()
+        previous()
+    }
+
+    val itemActionsReady = ownsSnapshot && !changingItem && !queuePending
+    val restartAction = if (itemActionsReady && (onTimelineSeek != null || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true)) ::restart else null
+    val itemControls = if (metadata.hasVideo && !metadata.isLive && !metadata.isTrailer) PlaybackItemControls(
+        restart = restartAction,
+        next = if (itemActionsReady && candidate != null) ({ playNext(automatic = false) }) else null,
+        previous = if (onPlayPrevious == null) restartAction else if (itemActionsReady && !previousHandled) ::playPrevious else null,
+        hasPreviousItem = onPlayPrevious != null,
+    ) else null
 
     val creditsDue = earlyCreditsEnabled && finalCredits != null && creditsRemainingMs == 0L && snapshot.status.playing
     LaunchedEffect(acquired, atEnd, creditsDue, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
@@ -183,6 +239,7 @@ fun PlaybackSessionContent(
     CompositionLocalProvider(
         LocalPlaybackMetadata provides activeMetadata,
         LocalSegmentSkipControls provides skipControls,
+        LocalPlaybackItemControls provides itemControls,
     ) {
         Box(Modifier.fillMaxSize().onPreviewKeyEvent { event ->
             // Next Up is a sibling of the renderer's controls. Handle media keys here so its
@@ -196,11 +253,7 @@ fun PlaybackSessionContent(
                     true
                 } else false
                 Key.MediaPrevious -> {
-                    if (!changingItem) {
-                        if (onTimelineSeek != null) onTimelineSeek(0L)
-                        else BackgroundPlaybackSession.seekTo(0L)
-                        chrome?.visible?.value = true
-                    }
+                    playPrevious()
                     true
                 }
                 else -> false

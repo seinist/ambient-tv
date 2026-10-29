@@ -2,6 +2,7 @@ package com.ambient.tv.ui.player
 
 import androidx.annotation.StringRes
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
@@ -23,6 +24,7 @@ private enum class OsdInfoEntry(@StringRes val summary: Int, @StringRes val sect
     DURATION(R.string.player_osd_info_duration, R.string.player_osd_info_controls),
     CODECS(R.string.player_osd_info_codecs_summary, R.string.player_osd_info_information),
     FPS(R.string.player_osd_info_fps_summary, R.string.player_osd_info_information),
+    FRAME_DROPS(R.string.player_osd_info_frame_drops_summary, R.string.player_osd_info_information),
     STATS(R.string.player_osd_info_stats_summary, R.string.player_osd_info_information),
 }
 
@@ -33,6 +35,7 @@ private fun osdInfoEntries(audioSession: AudioSession?): List<OsdInfoEntry> = bu
     add(OsdInfoEntry.CODECS)
     if (audioSession != null) {
         add(OsdInfoEntry.FPS)
+        if (!audioSession.audioOnly) add(OsdInfoEntry.FRAME_DROPS)
         add(OsdInfoEntry.STATS)
     }
 }
@@ -100,6 +103,15 @@ internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, onOpenButto
                     title = stringResource(R.string.player_fps_overlay),
                     value = stringResource(if (session.showFpsOverlay) R.string.player_on else R.string.player_off),
                     onClick = { session.showFpsOverlay = !session.showFpsOverlay },
+                )
+            }
+            OsdInfoEntry.FRAME_DROPS -> audioSession?.let { session ->
+                PlayerPanelEntry(
+                    icon = Icons.AutoMirrored.Filled.ShowChart,
+                    title = stringResource(R.string.player_frame_drop_overlay),
+                    value = stringResource(if (session.showFrameDropOverlay)
+                        R.string.player_frame_drop_overlay_always else R.string.player_frame_drop_overlay_auto),
+                    onClick = { session.showFrameDropOverlay = !session.showFrameDropOverlay },
                 )
             }
             OsdInfoEntry.STATS -> audioSession?.let { session ->

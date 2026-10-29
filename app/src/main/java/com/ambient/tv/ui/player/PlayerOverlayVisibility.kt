@@ -9,16 +9,24 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.focusGroup
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
+import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
+import com.ambient.tv.ui.common.playerPanelInput
 
 /**
  * A dismissed modal leaves composition immediately: neither its BackHandler nor its focus trap
@@ -35,7 +43,8 @@ fun PlayerPanelVisibility(
     val levels = rememberSaveableStateHolder()
     // Android's Back dispatcher owns this key. Forwarding it from Compose as well
     // can pop both this panel and the underlying OSD on the same key release.
-    Box(Modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)) {
+    Box(Modifier.fillMaxSize().zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
+        .playerPanelInput(LocalPlayerPanelNavigation.current)) {
         levels.SaveableStateProvider(panel.name) {
             content(panel)
         }
@@ -55,6 +64,9 @@ fun PlayerOverlayVisibility(
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val hidden = osd?.mode == PlayerOsdMode.HIDDEN
     val show = playerOsdVisible(visible && osd?.closing != true, panelOpen)
+    val currentShow by rememberUpdatedState(show)
+    val currentPanelOpen by rememberUpdatedState(panelOpen)
+    var swallowingGesture by remember { mutableStateOf(false) }
     val visibility = remember(hidden) { MutableTransitionState(false) }
     val controlFocus = LocalPlayerControlFocus.current
     androidx.compose.runtime.LaunchedEffect(show, panelOpen, controlFocus) {
@@ -92,10 +104,27 @@ fun PlayerOverlayVisibility(
                 // Exiting controls remain drawn; focus cannot re-enter their stale actions.
                 .focusProperties { onEnter = { if (!show) cancelFocusChange() } }
                 .focusGroup()
-                // A new tap reverses a close instead of disappearing into the outgoing layer.
-                // Keep this node absent while open so the normal video touch layer remains usable.
-                .then(if (show || osd == null) Modifier else Modifier.pointerInput(osd) {
-                    detectTapGestures { osd.reveal() }
+                // Intercept before outgoing child clickables consume the Main pass. Keep
+                // the guard until every finger lifts even though reveal recomposes the OSD;
+                // a second finger must not activate the now-visible actions mid-gesture.
+                // With no intercepted gesture, omit the full-screen node while open so
+                // free-picture taps still reach the video touch layer below this sibling.
+                .then(if (show && !swallowingGesture) Modifier else Modifier.pointerInput(osd) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        if (currentShow) return@awaitEachGesture
+                        swallowingGesture = true
+                        try {
+                            currentEvent.changes.forEach { it.consume() }
+                            if (!currentPanelOpen) osd?.reveal()
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                event.changes.forEach { it.consume() }
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            swallowingGesture = false
+                        }
+                    }
                 }),
             content = content,
         ) }

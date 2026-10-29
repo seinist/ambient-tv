@@ -13,6 +13,8 @@ import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackMetadata
 import com.ambient.tv.ui.player.PlaybackSessionContent
+import com.ambient.tv.ui.player.PlaybackItemControls
+import com.ambient.tv.ui.player.LocalPlaybackItemControls
 import com.ambient.tv.ui.player.LocalPlaybackMetadata
 import com.ambient.tv.ui.player.Media3PlaybackHandle
 import com.ambient.tv.ui.player.Media3VideoTexture
@@ -79,6 +81,8 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Subtitles
@@ -387,6 +391,7 @@ fun YouTubePlayerScreen(
                 ),
                 onStopped = onBack,
                 onPlayNext = { candidate -> advance(candidate.mediaId) },
+                onPlayPrevious = state.previousVideoId?.let { previousId -> { viewModel.playPrevious(previousId) } },
                 onAutoplayChanged = { enabled -> prefs.youtubeAutoplayNextEnabled = enabled },
             ) {
             when (PlaybackBackendResolver.resolve(rendererKey)) {
@@ -481,7 +486,7 @@ fun YouTubePlayerScreen(
 }
 
 /** Channel actions of the YouTube OSD; provided by the screen, read by every engine's controls. */
-private data class YouTubeChannelOsd(
+internal data class YouTubeChannelOsd(
     val channel: com.ambient.tv.youtube.YouTubeChannelInfo,
     val onOpen: () -> Unit,
     val onToggleSubscription: () -> Unit,
@@ -653,7 +658,7 @@ private fun YouTubeMedia3Playback(
     var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
     val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -897,6 +902,7 @@ private fun YouTubeMedia3Playback(
 
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
+    val itemControls = LocalPlaybackItemControls.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -917,8 +923,11 @@ private fun YouTubeMedia3Playback(
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { seekRelative(-position) }
-                override fun next() = Unit
+                override fun restart() {
+                    if (itemControls != null) itemControls.previous?.invoke()
+                    else if (!playback.isLive) seekRelative(-position)
+                }
+                override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) = Unit
             },
@@ -1143,7 +1152,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1225,6 +1234,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
+    val itemControls = LocalPlaybackItemControls.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are VLC's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -1245,8 +1255,11 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { seekRelative(-displayedPosition) }
-                override fun next() = Unit
+                override fun restart() {
+                    if (itemControls != null) itemControls.previous?.invoke()
+                    else if (!playback.isLive) seekRelative(-displayedPosition)
+                }
+                override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) = Unit
             },
@@ -1424,7 +1437,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1506,6 +1519,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     // One remote handling for the engine and, while the focus is in the OSD or panel above it, the host.
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
+    val itemControls = LocalPlaybackItemControls.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = { e ->
         // Shared remote handling (PlayerOsdKeys); only the actions below are MPV's own.
         val seekRelative: (Long) -> Unit = { seek(it) }
@@ -1526,8 +1540,11 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { seekRelative(-displayedPosition) }
-                override fun next() = Unit
+                override fun restart() {
+                    if (itemControls != null) itemControls.previous?.invoke()
+                    else if (!playback.isLive) seekRelative(-displayedPosition)
+                }
+                override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) = Unit
             },
@@ -1654,7 +1671,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
 }
 
 /** The YouTube OSD (Media3, VLC and MPV alike), drawn by PersistentPlayerOverlays above the engine. */
-private data class YouTubeOsdModel(
+internal data class YouTubeOsdModel(
     val playback: YouTubePlayback,
     val backend: String,
     val position: Long,
@@ -1669,6 +1686,7 @@ private data class YouTubeOsdModel(
     /** "Passthrough", "→ PCM", "E-AC3 5.1 → PCM 5.1"; null for plain AAC/Opus decode. */
     val audioBadge: String? = null,
     val channel: YouTubeChannelOsd? = null,
+    val itemControls: PlaybackItemControls? = null,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
@@ -1715,6 +1733,12 @@ private data class YouTubeOsdModel(
                 PlayerControlBar(
                     player = com.ambient.tv.ui.player.OsdPlayer.YOUTUBE,
                     leftContent = {
+                        itemControls?.let { actions ->
+                            PlayerIconButton(Icons.Filled.SkipPrevious,
+                                stringResource(if (actions.hasPreviousItem) R.string.player_previous_item else R.string.detail_restart),
+                                { actions.previous?.invoke() }, enabled = actions.previous != null,
+                                osd = com.ambient.tv.ui.player.OsdButton.NEXT)
+                        }
                         val seekJumpSeconds = (BackgroundPlaybackSession.seekJumpMs(seekJumpMs) / 1000L).toInt().coerceAtLeast(1)
                         if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         PlayerIconButton(
@@ -1727,6 +1751,11 @@ private data class YouTubeOsdModel(
                         )
                         PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
                         if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        itemControls?.let { actions ->
+                            PlayerIconButton(Icons.Filled.SkipNext, stringResource(R.string.player_next_item),
+                                { actions.next?.invoke() }, enabled = actions.next != null,
+                                osd = com.ambient.tv.ui.player.OsdButton.NEXT)
+                        }
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
@@ -1800,6 +1829,7 @@ private fun YouTubeControls(
         info = info,
         audioBadge = com.ambient.tv.ui.player.audioOutputBadge(panelConfig.audioSession),
         channel = LocalYouTubeChannelOsd.current,
+        itemControls = LocalPlaybackItemControls.current,
     ), visible = controlsVisible)
     com.ambient.tv.ui.player.PublishPlayerPanel(com.ambient.tv.ui.player.PlayerPanelModel(
         scrimAlpha = 0.32f,
