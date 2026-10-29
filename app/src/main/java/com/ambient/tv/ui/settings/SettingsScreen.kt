@@ -1355,7 +1355,13 @@ fun SettingsScreen(
                             item { SettingsSubheader(stringResource(R.string.settings_home_add_row)) }
                             item {
                                 SettingsGroup(subtitle = stringResource(R.string.settings_home_add_row_hint)) {
-                                    HomeRowAddButtons(uiState, viewModel::addHomeRow, viewModel::pickHomeGenre, viewModel::closeHomeGenrePicker)
+                                    HomeRowAddButtons(
+                                        uiState,
+                                        viewModel::addHomeRow,
+                                        viewModel::pickHomeGenre,
+                                        viewModel::pickRadioHomeFacet,
+                                        viewModel::closeHomeGenrePicker,
+                                    )
                                 }
                             }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_history)) }
@@ -1832,6 +1838,7 @@ private fun HomeRowAddButtons(
     state: SettingsUiState,
     onAdd: (String, String) -> Unit,
     onPickGenre: (String) -> Unit,
+    onPickRadioFacet: (String) -> Unit,
     onCloseGenrePicker: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1897,7 +1904,8 @@ private fun HomeRowAddButtons(
         }
         addAll(base.filter { it.second.first !in mediaServers })
     }
-    if (options.isEmpty()) {
+    val radioFacetAvailable = state.radioEnabled
+    if (options.isEmpty() && !radioFacetAvailable) {
         Text(
             stringResource(R.string.settings_home_add_row_none),
             style = MaterialTheme.typography.bodySmall,
@@ -1915,24 +1923,52 @@ private fun HomeRowAddButtons(
         )
         val grouped = options.groupBy { it.second.first }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            systemOrder.filter { it in grouped }.forEach { system ->
-                val chips = grouped.getValue(system)
+            systemOrder.filter { it in grouped || (it == HomeRowDefinition.SYSTEM_RADIO && radioFacetAvailable) }.forEach { system ->
+                val chips = grouped[system].orEmpty()
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         text = homeRowSystemGroupTitle(system),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(chips) { (label, source) ->
-                            val genreChip = source.second == HomeRowDefinition.CONTENT_TOP_GENRE
-                            com.ambient.tv.ui.common.TvChip(
-                                text = label,
-                                selected = genreChip && state.homeGenrePicker?.system == source.first,
-                                onClick = {
-                                    if (genreChip) onPickGenre(source.first) else onAdd(source.first, source.second)
-                                },
-                            )
+                    if (chips.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(chips) { (label, source) ->
+                                val genreChip = source.second == HomeRowDefinition.CONTENT_TOP_GENRE
+                                com.ambient.tv.ui.common.TvChip(
+                                    text = label,
+                                    selected = genreChip && state.homeGenrePicker?.system == source.first &&
+                                        state.homeGenrePicker?.radioKind == null,
+                                    onClick = {
+                                        if (genreChip) onPickGenre(source.first) else onAdd(source.first, source.second)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    if (system == HomeRowDefinition.SYSTEM_RADIO && radioFacetAvailable) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            item {
+                                com.ambient.tv.ui.common.TvChip(
+                                    text = stringResource(R.string.radio_genres),
+                                    selected = state.homeGenrePicker?.radioKind == HomeRowDefinition.RADIO_GENRE,
+                                    onClick = { onPickRadioFacet(HomeRowDefinition.RADIO_GENRE) },
+                                )
+                            }
+                            item {
+                                com.ambient.tv.ui.common.TvChip(
+                                    text = stringResource(R.string.radio_countries),
+                                    selected = state.homeGenrePicker?.radioKind == HomeRowDefinition.RADIO_COUNTRY,
+                                    onClick = { onPickRadioFacet(HomeRowDefinition.RADIO_COUNTRY) },
+                                )
+                            }
+                            item {
+                                com.ambient.tv.ui.common.TvChip(
+                                    text = stringResource(R.string.radio_languages),
+                                    selected = state.homeGenrePicker?.radioKind == HomeRowDefinition.RADIO_LANGUAGE,
+                                    onClick = { onPickRadioFacet(HomeRowDefinition.RADIO_LANGUAGE) },
+                                )
+                            }
                         }
                     }
                 }
@@ -1949,29 +1985,83 @@ private fun HomeRowAddButtons(
         }
     }
     state.homeGenrePicker?.let { picker ->
-        val mediaSystem = MediaSystem.fromKey(picker.system)
-        Text(
-            stringResource(R.string.settings_home_genre_pick, mediaSystem?.let { systemName(it) } ?: picker.system),
-            style = MaterialTheme.typography.titleSmall,
-        )
-        val availableGenres = picker.genres.filter { genre ->
-            !homeRowAlreadyPresent(picker.system, HomeRowDefinition.topGenre(genre), state)
-        }
-        when {
-            picker.loading -> Text(stringResource(R.string.settings_home_genre_loading), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            picker.genres.isEmpty() -> Text(stringResource(R.string.settings_home_genre_none), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            availableGenres.isEmpty() -> Text(
-                stringResource(R.string.settings_home_genre_all_added),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            else -> SettingsSelect(options = availableGenres.map { genre ->
-                SettingsSelectOption(
-                    text = genre,
-                    selected = false,
-                    onClick = { onAdd(picker.system, HomeRowDefinition.topGenre(genre)) },
-                )
+        if (picker.system == HomeRowDefinition.SYSTEM_RADIO && picker.radioKind != null) {
+            val kind = picker.radioKind
+            val kindLabel = stringResource(when (kind) {
+                HomeRowDefinition.RADIO_COUNTRY -> R.string.radio_countries
+                HomeRowDefinition.RADIO_LANGUAGE -> R.string.radio_languages
+                else -> R.string.radio_genres
             })
+            Text(
+                stringResource(R.string.settings_home_radio_facet_pick, kindLabel),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            fun contentKey(facet: com.ambient.tv.data.radio.RadioFacet): String = when (kind) {
+                HomeRowDefinition.RADIO_COUNTRY -> HomeRowDefinition.radioCountry(facet.id)
+                HomeRowDefinition.RADIO_LANGUAGE -> HomeRowDefinition.radioLanguage(facet.id)
+                else -> HomeRowDefinition.radioGenre(facet.id)
+            }
+            val available = picker.radioFacets.filter { facet ->
+                !homeRowAlreadyPresent(HomeRowDefinition.SYSTEM_RADIO, contentKey(facet), state)
+            }
+            when {
+                picker.loading -> Text(
+                    stringResource(R.string.settings_home_radio_facet_loading),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                picker.radioFacets.isEmpty() -> Text(
+                    stringResource(R.string.settings_home_radio_facet_none),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                available.isEmpty() -> Text(
+                    stringResource(R.string.settings_home_radio_facet_all_added),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> SettingsSelect(options = available.map { facet ->
+                    val label = if (kind == HomeRowDefinition.RADIO_COUNTRY) {
+                        runCatching {
+                            java.util.Locale.Builder().setRegion(facet.id).build()
+                                .getDisplayCountry(java.util.Locale.getDefault())
+                                .takeIf(String::isNotBlank)
+                        }.getOrNull() ?: facet.name
+                    } else {
+                        facet.name
+                    }
+                    SettingsSelectOption(
+                        text = "$label · " + stringResource(R.string.radio_station_count, facet.stationCount),
+                        selected = false,
+                        onClick = { onAdd(HomeRowDefinition.SYSTEM_RADIO, contentKey(facet)) },
+                    )
+                })
+            }
+        } else {
+            val mediaSystem = MediaSystem.fromKey(picker.system)
+            Text(
+                stringResource(R.string.settings_home_genre_pick, mediaSystem?.let { systemName(it) } ?: picker.system),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            val availableGenres = picker.genres.filter { genre ->
+                !homeRowAlreadyPresent(picker.system, HomeRowDefinition.topGenre(genre), state)
+            }
+            when {
+                picker.loading -> Text(stringResource(R.string.settings_home_genre_loading), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                picker.genres.isEmpty() -> Text(stringResource(R.string.settings_home_genre_none), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                availableGenres.isEmpty() -> Text(
+                    stringResource(R.string.settings_home_genre_all_added),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> SettingsSelect(options = availableGenres.map { genre ->
+                    SettingsSelectOption(
+                        text = genre,
+                        selected = false,
+                        onClick = { onAdd(picker.system, HomeRowDefinition.topGenre(genre)) },
+                    )
+                })
+            }
         }
         TvActionButton(text = stringResource(R.string.settings_home_genre_done), onClick = onCloseGenrePicker)
     }
