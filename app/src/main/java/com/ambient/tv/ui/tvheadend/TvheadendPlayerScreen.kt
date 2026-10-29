@@ -358,6 +358,7 @@ fun TvheadendPlayerScreen(
                         current.source.url, current.source.headers,
                         ownConnectionAllowed = viewModel.sourceSystem == "tvheadend",
                         channelName = current.channel?.name,
+                        channelKey = playbackMetadata.route,
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
                     com.ambient.tv.ui.player.PersistentPlayerOverlays()
