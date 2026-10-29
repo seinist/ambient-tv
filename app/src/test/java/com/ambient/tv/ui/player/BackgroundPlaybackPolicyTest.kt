@@ -27,10 +27,17 @@ class BackgroundPlaybackPolicyTest {
     }
 
     @Test fun phoneKeepsEverythingPlayingInTheBackground() {
-        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false))
-        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, screenOn = false))
-        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, isLive = true))
-        assertEquals(BackgroundPlaybackAction.KEEP, action(television = false, isLive = true, screenOn = false))
+        listOf(false, true).forEach { live ->
+            listOf(false, true).forEach { video ->
+                listOf(false, true).forEach { screenOn ->
+                    assertEquals(
+                        "Phone playback must survive app switching and screen lock: live=$live video=$video screenOn=$screenOn",
+                        BackgroundPlaybackAction.KEEP,
+                        action(television = false, isLive = live, hasVideo = video, screenOn = screenOn),
+                    )
+                }
+            }
+        }
     }
 
     @Test fun liveTvStopsAtOnce() {
