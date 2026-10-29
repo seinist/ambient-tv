@@ -378,6 +378,57 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_SPOTIFY_ENABLED, value) }
 
+    var radioEnabled: Boolean
+        get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
+
+
+    val radioFavorites: List<com.ambient.tv.data.radio.RadioStation>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.data.radio.RadioStation>>(
+                prefs.getString(KEY_RADIO_FAVORITES, "[]") ?: "[]",
+            )
+        }.getOrDefault(emptyList()).distinctBy { it.id }.take(RADIO_FAVORITES_LIMIT)
+
+    val recentRadioStations: List<com.ambient.tv.data.radio.RadioStation>
+        get() = runCatching {
+            json.decodeFromString<List<com.ambient.tv.data.radio.RadioStation>>(
+                prefs.getString(KEY_RADIO_RECENT, "[]") ?: "[]",
+            )
+        }.getOrDefault(emptyList()).distinctBy { it.id }.take(RADIO_RECENT_LIMIT)
+
+    fun isRadioFavorite(stationId: String): Boolean =
+        radioFavorites.any { it.id == stationId }
+
+    @Synchronized
+    fun setRadioFavorite(station: com.ambient.tv.data.radio.RadioStation, favorite: Boolean) {
+        val current = radioFavorites
+        val next = if (favorite) {
+            (listOf(station) + current.filterNot { it.id == station.id }).take(RADIO_FAVORITES_LIMIT)
+        } else {
+            current.filterNot { it.id == station.id }
+        }
+        prefs.edit { putString(KEY_RADIO_FAVORITES, json.encodeToString(next)) }
+    }
+
+    @Synchronized
+    fun replaceRadioFavorites(stations: List<com.ambient.tv.data.radio.RadioStation>) {
+        val normalized = stations
+            .filter { it.id.isNotBlank() && it.name.isNotBlank() && it.streamUrl.isNotBlank() }
+            .distinctBy { it.id }
+            .take(RADIO_FAVORITES_LIMIT)
+        prefs.edit { putString(KEY_RADIO_FAVORITES, json.encodeToString(normalized)) }
+    }
+
+    @Synchronized
+    fun recordRadioStation(station: com.ambient.tv.data.radio.RadioStation) {
+        val next = (listOf(station) + recentRadioStations.filterNot { it.id == station.id })
+            .take(RADIO_RECENT_LIMIT)
+        prefs.edit { putString(KEY_RADIO_RECENT, json.encodeToString(next)) }
+    }
+
+    fun clearRecentRadioStations() = prefs.edit { remove(KEY_RADIO_RECENT) }
+
     var spotifyClientId: String
         get() = prefs.getString(KEY_SPOTIFY_CLIENT_ID, "") ?: ""
         set(value) = prefs.edit { putString(KEY_SPOTIFY_CLIENT_ID, value.trim()) }
@@ -471,7 +522,7 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
+        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
@@ -2140,6 +2191,11 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_PHOTOS,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
+        const val KEY_RADIO_ENABLED = "radio_enabled"
+        const val KEY_RADIO_FAVORITES = "radio_favorites"
+        const val KEY_RADIO_RECENT = "radio_recent"
+        const val RADIO_FAVORITES_LIMIT = 200
+        const val RADIO_RECENT_LIMIT = 50
         const val KEY_HOST = "server_host"
         const val KEY_PORT = "server_port"
         const val KEY_PLEX_HTTPS = "plex_https"
