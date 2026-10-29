@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlayerPanelNavigationTest {
+
+    @Test fun hierarchyDepthTracksForwardBackAndWholePanelClose() {
+        val nav = PlayerPanelNavigation()
+        assertEquals(0, nav.depth)
+        nav.fromOrigin("bar:settings", true) { nav.open(UnifiedPlayerPanel.SETTINGS) }
+        assertEquals(1, nav.depth)
+        nav.fromOrigin("entry:video", false) { nav.open(UnifiedPlayerPanel.VIDEO) }
+        assertEquals(2, nav.depth)
+        nav.back(UnifiedPlayerPanel.VIDEO)
+        assertEquals(1, nav.depth)
+        nav.close()
+        assertEquals(0, nav.depth)
+    }
+
     @Test fun videoSelectionSurvivesEngineIndependentPanelAccessButBackClosesPopup() {
         val nav = PlayerPanelNavigation()
         nav.open(UnifiedPlayerPanel.SETTINGS)

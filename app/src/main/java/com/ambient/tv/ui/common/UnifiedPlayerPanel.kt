@@ -136,6 +136,8 @@ class PlayerPanelNavigation {
     internal var restoreFailed by mutableStateOf(false)
 
     val panel: UnifiedPlayerPanel get() = path.lastOrNull()?.panel ?: UnifiedPlayerPanel.NONE
+    /** Current visual hierarchy depth: root panel = 1, each child level increments it. */
+    internal val depth: Int get() = path.size
 
     operator fun getValue(thisRef: Any?, property: KProperty<*>): UnifiedPlayerPanel = panel
     operator fun setValue(thisRef: Any?, property: KProperty<*>, value: UnifiedPlayerPanel) = open(value)

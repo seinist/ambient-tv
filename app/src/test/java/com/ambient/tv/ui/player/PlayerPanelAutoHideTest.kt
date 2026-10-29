@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -65,6 +66,8 @@ class PlayerPanelAutoHideTest {
         var keys = 0
         var dragMoves = 0
         var clicks = 0
+        var visualPanelComposed = false
+        var panelInteractive = false
     }
 
     private fun mount(): Fixture {
@@ -83,6 +86,12 @@ class PlayerPanelAutoHideTest {
                         BasicText("Engine", Modifier.focusRequester(chrome.engineFocus).focusable())
                         PlayerOverlayVisibility(chrome.visible.value) { BasicText("OSD") }
                         PlayerPanelVisibility(navigation.panel) {
+                            DisposableEffect(Unit) {
+                                fixture.visualPanelComposed = true
+                                onDispose { fixture.visualPanelComposed = false }
+                            }
+                            val panelInteractive = LocalPlayerPanelInteractive.current
+                            SideEffect { fixture.panelInteractive = panelInteractive }
                             key(fixture.renderer) {
                                 Column {
                                     BasicText("Action ${fixture.statsTick}", Modifier.size(200.dp, 48.dp).testTag("action")
@@ -138,6 +147,23 @@ class PlayerPanelAutoHideTest {
         }
         rule.onNodeWithTag("action").assertDoesNotExist()
         rule.onNodeWithText("OSD").assertDoesNotExist()
+    }
+
+    @Test fun manualCloseFinishesItsVisualExitButStopsPanelInteractionImmediately() {
+        val fixture = mount()
+        rule.runOnIdle {
+            assertTrue(fixture.visualPanelComposed)
+            assertTrue(fixture.panelInteractive)
+            fixture.chrome.panels.close()
+        }
+        advance(16)
+        rule.runOnIdle {
+            assertEquals(UnifiedPlayerPanel.NONE, fixture.chrome.panels.panel)
+            assertTrue(fixture.visualPanelComposed)
+            assertFalse(fixture.panelInteractive)
+        }
+        advance(PLAYER_PANEL_EXIT_MS + 32L)
+        rule.runOnIdle { assertFalse(fixture.visualPanelComposed) }
     }
 
     @Test fun idleClosesEverythingAndRendererStatsOrProgrammaticFocusDoNotRestartDeadline() {
