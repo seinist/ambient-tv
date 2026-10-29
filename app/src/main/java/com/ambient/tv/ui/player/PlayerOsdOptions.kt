@@ -43,7 +43,7 @@ private val osdHiddenState = mutableStateOf<Set<String>?>(null)
 enum class OsdPlayer(val buttons: List<OsdButton>) {
     MEDIA(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.AUDIO,
         OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.STATS, OsdButton.FPS) + toolButtons),
-    YOUTUBE(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
+    YOUTUBE(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
         OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP, OsdButton.STATS,
         OsdButton.FPS) + toolButtons),
     LIVE_TV(listOf(OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
