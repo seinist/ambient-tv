@@ -1266,6 +1266,11 @@ class VlcPlaybackController(
 
     internal fun hasPendingSeek(): Boolean = pendingRestorePositionMs != null
 
+    /** Reopens and priming can move counters before ordinary playback has resumed. */
+    fun frameDropSampleReady(): Boolean = !released && prepared && !openingOrRestarting &&
+        pendingRestorePositionMs == null && pauseAfterRestorePositionMs == null && !dvPrimeActive &&
+        !ended && errorMessage == null && isPlayingNow()
+
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
         if (imageOptions.svpMode != "off" || configuredSvpMode != "off") {
@@ -1564,6 +1569,16 @@ class VlcPlaybackController(
 
     /** Actual playback rate, so the panel follows renderer restores and bitstream resets. */
     fun currentSpeed(): Float = if (released) 1f else runCatching { player.rate }.getOrDefault(1f)
+
+    /** Expected output cadence before speed, based on this LibVLC instance's configuration. */
+    fun targetVideoFps(sourceFps: Double?): Double? {
+        if (released || audioOnly) return null
+        val svp = svpState()
+        return vlcTargetVideoFps(
+            sourceFps, svp?.active == true, svp?.targetFps,
+            configuredDeinterlaceMode, configuredDeinterlaceFilter,
+        )
+    }
 
     fun setSpeed(speed: Float) {
         if (!released) player.setRate(if (bitstreamPermitted) 1f else speed)

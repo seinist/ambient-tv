@@ -24,89 +24,52 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import androidx.tv.material3.Text
+import com.ambient.tv.R
 import com.ambient.tv.ui.player.backend.MpvPlaybackController
 import com.ambient.tv.ui.player.backend.VlcPlaybackController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import java.text.NumberFormat
-
-/** Denominator is explicit: expected frames for the watchdog, rendered frames for the overlay. */
-internal fun frameDropPercent(dropped: Long?, denominator: Double?): Double? =
-    if (dropped == null || dropped < 0 || denominator == null || !denominator.isFinite() || denominator <= 0) null
-    else (100.0 * dropped / denominator).takeIf { it.isFinite() }
-
-internal fun formatFramePercent(value: Double?): String = value?.let {
-    NumberFormat.getNumberInstance().apply { minimumFractionDigits = 1; maximumFractionDigits = 1 }.format(it) + " %"
-} ?: "—"
-
-internal data class FrameDropReading(
-    val dropped: Long? = null,
-    val rendered: Long? = null,
-    val positionMs: Long = 0,
-    val playing: Boolean = false,
-    val fps: Double? = null,
-    val estimated: Boolean = false,
-)
-
-/** Short-window ratio, with discontinuities excluded rather than counted as rendered video. */
-internal fun frameDropWindowPercent(previous: FrameDropReading?, current: FrameDropReading): Double? {
-    if (previous == null || !previous.playing || !current.playing || previous.estimated != current.estimated) return null
-    val dropped = current.dropped ?: return null
-    val oldDropped = previous.dropped ?: return null
-    val delta = dropped - oldDropped
-    if (delta < 0) return null
-    val rendered = if (current.estimated) {
-        val elapsed = current.positionMs - previous.positionMs
-        if (elapsed !in 1..2500) return null
-        val fps = current.fps?.takeIf { it.isFinite() && it > 0 } ?: return null
-        (fps * elapsed / 1000.0 - delta).coerceAtLeast(0.0)
-    } else {
-        val count = current.rendered ?: return null
-        val oldCount = previous.rendered ?: return null
-        (count - oldCount).toDouble()
-    }
-    return frameDropPercent(delta, rendered)
-}
+import java.util.Locale
 
 private fun readFrameDrops(handle: PlaybackHandle?): FrameDropReading {
-    val status = handle?.status()
-    return when (handle) {
+    val status = handle?.status() ?: return FrameDropReading()
+    val playing = status.playing && !status.ended && status.error == null
+    val reading = when (handle) {
         is MpvPlaybackController -> FrameDropReading(
             dropped = handle.frameDropCount(),
-            positionMs = status!!.positionMs,
-            playing = status.playing,
-            fps = if (handle.usesFrameInterpolation) handle.displayFps() else handle.containerFps(),
+            positionMs = status.positionMs,
+            playing = playing && handle.frameDropSampleReady(),
+            fps = handle.targetVideoFps(),
             estimated = true,
+            speed = handle.currentSpeed().toDouble(),
         )
         is VlcPlaybackController -> handle.runtimeStats()?.let {
-            FrameDropReading(it.lostPictures?.toLong(), it.displayedPictures?.toLong(), playing = status!!.playing)
+            FrameDropReading(
+                dropped = it.lostPictures?.toLong(), rendered = it.displayedPictures?.toLong(),
+                positionMs = status.positionMs, playing = playing && handle.frameDropSampleReady(),
+                fps = handle.targetVideoFps(it.videoFps), speed = handle.currentSpeed().toDouble(),
+            )
         } ?: FrameDropReading()
         is Media3PlaybackHandle -> handle.player.videoDecoderCounters?.let {
             it.ensureUpdated()
-            FrameDropReading(it.droppedBufferCount.toLong(), it.renderedOutputBufferCount.toLong(), playing = status!!.playing)
+            FrameDropReading(
+                dropped = it.droppedBufferCount.toLong(), rendered = it.renderedOutputBufferCount.toLong(),
+                positionMs = status.positionMs, playing = playing,
+                fps = handle.player.videoFormat?.frameRate?.toDouble(),
+                speed = handle.player.playbackParameters.speed.toDouble(),
+            )
         } ?: FrameDropReading()
         else -> FrameDropReading()
     }
-}
-
-/** Share of frames the watchdog tolerates before it steps in (see ImageProcessingPolicy). */
-internal const val FRAME_DROP_WATCHDOG_PERCENT = 10.0
-
-/** Bar fill: full while nothing drops, half at the watchdog threshold, empty at twice that. */
-internal fun frameDropBarFill(dropPercent: Double?): Float =
-    if (dropPercent == null) 1f else (1.0 - dropPercent / (2 * FRAME_DROP_WATCHDOG_PERCENT)).coerceIn(0.0, 1.0).toFloat()
-
-/** Exponential smoothing so single-second spikes do not make the bar jump. */
-internal fun smoothFrameDrop(previous: Double?, sample: Double?): Double? = when {
-    sample == null -> previous
-    previous == null -> sample
-    else -> previous + 0.35 * (sample - previous)
+    return reading.copy(realtimeMs = android.os.SystemClock.elapsedRealtime(), generation = handle.reopenGeneration())
 }
 
 private val frameDropColorStops = listOf(
@@ -118,7 +81,7 @@ private val frameDropColorStops = listOf(
 
 /** Green while (almost) every frame is shown, through amber to red at the watchdog threshold. */
 internal fun frameDropBarColor(dropPercent: Double?): Color {
-    val value = dropPercent ?: 0.0
+    val value = dropPercent ?: return Color(0xFF90A4AE)
     frameDropColorStops.zipWithNext().forEach { (from, to) ->
         if (value <= to.first) return lerp(from.second, to.second, ((value - from.first) / (to.first - from.first)).coerceIn(0.0, 1.0).toFloat())
     }
@@ -127,7 +90,7 @@ internal fun frameDropBarColor(dropPercent: Double?): Color {
 
 /**
  * Window overlay shown while a video panel is open; fades in and out and never takes focus or handles Back.
- * A slim bar of shown frames over the last seconds, coloured and scaled like the render watchdog sees it.
+ * The existing slim bar, with a smoothed FPS deviation from the intended video output rate.
  * Hosted by [PlayerPanelVisibility] so it outlives the panel long enough to fade out.
  */
 @Composable
@@ -136,20 +99,23 @@ internal fun PlaybackFrameDropOverlay(visible: Boolean) {
     val visibility = remember { MutableTransitionState(false) }
     visibility.targetState = visible && (handle is MpvPlaybackController || handle is VlcPlaybackController || handle is Media3PlaybackHandle)
     if (!visibility.currentState && !visibility.targetState) return
-    var estimated by remember(handle) { mutableStateOf(false) }
-    var smoothed by remember(handle) { mutableStateOf<Double?>(null) }
+    var targetFps by remember(handle) { mutableStateOf<Double?>(null) }
+    var smoothed by remember(handle) { mutableStateOf<FrameDropSample?>(null) }
     LaunchedEffect(handle) {
         var previous: FrameDropReading? = null
         while (isActive) {
             val current = readFrameDrops(handle)
-            smoothed = smoothFrameDrop(smoothed, frameDropWindowPercent(previous, current))
-            estimated = current.estimated
+            smoothed = smoothFrameDrop(smoothed, frameDropWindow(previous, current))
+            targetFps = current.targetFps
             previous = current
             delay(1_000)
         }
     }
-    val fill by animateFloatAsState(frameDropBarFill(smoothed), tween(900, easing = FastOutSlowInEasing), label = "frameDropFill")
-    val color by animateColorAsState(frameDropBarColor(smoothed), tween(900), label = "frameDropColor")
+    val fill by animateFloatAsState(frameDropBarFill(smoothed?.deficitPercent), tween(900, easing = FastOutSlowInEasing), label = "frameDropFill")
+    val color by animateColorAsState(frameDropBarColor(smoothed?.deficitPercent), tween(900), label = "frameDropColor")
+    val locale = LocalConfiguration.current.locales[0] ?: Locale.getDefault()
+    val deviation = (if (smoothed?.estimated == true) "≈" else "") + formatFrameFpsDeviation(smoothed?.deviationFps, locale)
+    val label = stringResource(R.string.player_frame_drop_fps_deviation, deviation, formatFrameTargetFps(targetFps, locale))
     val inset = with(LocalDensity.current) { IntOffset(24.dp.roundToPx(), 28.dp.roundToPx()) }
     val gap = with(LocalDensity.current) { 6.dp.roundToPx() }
     // The FPS overlay sits in the same corner; stack below it instead of drawing on top.
@@ -174,7 +140,7 @@ internal fun PlaybackFrameDropOverlay(visible: Boolean) {
                     drawLine(Color.White.copy(alpha = 0.35f), Offset(size.width / 2, -1.dp.toPx()), Offset(size.width / 2, size.height + 1.dp.toPx()), strokeWidth = 1.dp.toPx())
                 }
                 Text(
-                    text = (if (estimated && smoothed != null) "≈" else "") + formatFramePercent(smoothed),
+                    text = label,
                     color = Color.White.copy(alpha = 0.7f),
                     fontSize = 10.sp,
                     lineHeight = 12.sp,

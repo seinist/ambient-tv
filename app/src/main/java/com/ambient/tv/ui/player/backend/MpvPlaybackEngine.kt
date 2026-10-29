@@ -2017,10 +2017,32 @@ internal class MpvPlaybackEngine(
         mpvDeinterlacedFps(containerFps(), deinterlaceRequested, appliedDeinterlaceKey, deinterlaceSingleRate)
     } else containerFps()
     fun videoFps(): Double = getPropertyDouble("estimated-vf-fps", 0.0)
+    /** Expected output cadence before speed, using the applied chain rather than display Hz. */
+    fun targetVideoFps(): Double? {
+        if (released || !fileReady || audioOnly) return null
+        val svp = svpState()
+        return mpvTargetVideoFps(
+            sourceFps = containerFps(),
+            filteredFps = if (deinterlaceRequested) videoFps() else null,
+            svpActive = svp?.active == true,
+            svpTargetFps = svp?.targetFps,
+            deinterlaceEnabled = deinterlaceRequested,
+            deinterlaceAutomatic = deinterlaceAutomatic,
+            deinterlaceFilter = appliedDeinterlaceKey,
+            deinterlaceSingleRate = deinterlaceSingleRate,
+        )
+    }
     fun decoder(): String? = getPropertyString("hwdec-current")?.takeIf { it.isNotBlank() && it != "no" }
 
     fun videoBitrateBitsPerSecond(): Long? = getPropertyDouble("video-bitrate", -1.0).takeIf { it > 0.0 }?.toLong()
     fun audioBitrateBitsPerSecond(): Long? = getPropertyDouble("audio-bitrate", -1.0).takeIf { it > 0.0 }?.toLong()
+    /** A low/disabled cache is normal playback; only actual seeks and cache pauses interrupt a sample. */
+    fun frameDropSampleReady(): Boolean {
+        if (!fileReady || audioOnly || !isPlaying()) return false
+        val pausedForCache = observedFlag("paused-for-cache") ?: (getPropertyString("paused-for-cache") == "yes")
+        val seeking = observedFlag("seeking") ?: (getPropertyString("seeking") == "yes")
+        return !pausedForCache && !seeking
+    }
     /**
      * True while a missing picture is explained by the network, not by a stuck decoder: mpv is
      * seeking, paused for its cache, or holds less than a second of demuxed data. A stuck

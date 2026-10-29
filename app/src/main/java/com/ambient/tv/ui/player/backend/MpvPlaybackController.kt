@@ -515,6 +515,7 @@ class MpvPlaybackController(
     fun subtitleTracks(): List<MpvTrack> = read("subtitleTracks", emptyList(), 250L) { subtitleTracks() }
     override fun chapters(): List<VideoChapter> = read("chapters", emptyList(), 2000L) { chapters() }
     fun isConfirmedAudioOnly(): Boolean = read("isConfirmedAudioOnly", false, 750L) { isConfirmedAudioOnly() }
+    fun frameDropSampleReady(): Boolean = read("frameDropSampleReady", false, 250L) { frameDropSampleReady() }
     fun waitingForData(): Boolean = read("waitingForData", true, 250L) { waitingForData() }
     fun videoCodec(): String? = read("videoCodec", null, 750L) { videoCodec() }
     fun audioCodec(): String? = read("audioCodec", null, 750L) { audioCodec() }
@@ -522,6 +523,8 @@ class MpvPlaybackController(
     fun videoAspectRatio(): Float? = read("videoAspectRatio", null, 750L) { videoAspectRatio() }
     fun containerFps(): Double? = read("containerFps", null, 750L) { containerFps() }
     fun videoFps(): Double = read("videoFps", 0.0, 750L) { videoFps() }
+    /** Nominal output cadence; the caller applies [currentSpeed] to its wall-clock sample. */
+    fun targetVideoFps(): Double? = read("targetVideoFps", null, 750L) { targetVideoFps() }
     fun decoder(): String? = read("decoder", null, 750L) { decoder() }
     fun videoBitrateBitsPerSecond(): Long? = read("videoBitrateBitsPerSecond", null, 750L) { videoBitrateBitsPerSecond() }
     fun audioBitrateBitsPerSecond(): Long? = read("audioBitrateBitsPerSecond", null, 750L) { audioBitrateBitsPerSecond() }

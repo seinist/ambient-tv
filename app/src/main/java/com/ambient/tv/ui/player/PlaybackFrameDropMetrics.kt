@@ -1,0 +1,103 @@
+package com.ambient.tv.ui.player
+
+import java.text.NumberFormat
+import java.util.Locale
+import kotlin.math.abs
+
+/** Kept for the render watchdog's explicit expected-frame denominator. */
+internal fun frameDropPercent(dropped: Long?, denominator: Double?): Double? =
+    if (dropped == null || dropped < 0 || denominator == null || !denominator.isFinite() || denominator <= 0) null
+    else (100.0 * dropped / denominator).takeIf { it.isFinite() }
+
+internal fun formatFramePercent(value: Double?): String = value?.let {
+    NumberFormat.getNumberInstance().apply { minimumFractionDigits = 1; maximumFractionDigits = 1 }.format(it) + " %"
+} ?: "—"
+
+internal data class FrameDropReading(
+    val dropped: Long? = null,
+    val rendered: Long? = null,
+    val positionMs: Long = 0,
+    val playing: Boolean = false,
+    /** Expected pictures per media second, after rate-changing filters; never display Hz. */
+    val fps: Double? = null,
+    val estimated: Boolean = false,
+    val realtimeMs: Long = 0,
+    val speed: Double = 1.0,
+    val generation: Int = 0,
+) {
+    val targetFps: Double?
+        get() = fps?.takeIf { it.isFinite() && it > 0 && speed.isFinite() && speed > 0 }
+            ?.times(speed)?.takeIf { it.isFinite() && it > 0 }
+}
+
+internal data class FrameDropSample(val actualFps: Double, val targetFps: Double, val estimated: Boolean = false) {
+    val deviationFps: Double get() = actualFps - targetFps
+    val deficitPercent: Double get() = (100.0 * (targetFps - actualFps) / targetFps).coerceIn(0.0, 100.0)
+}
+
+private fun sameFrameTarget(first: Double, second: Double): Boolean =
+    abs(first - second) <= maxOf(0.05, second * 0.005)
+
+/**
+ * Renderer output per wall-clock second, compared with its intended output cadence.
+ * MPV exposes drops but no rendered counter here, so only its reading is an estimate.
+ * A discontinuity invalidates the whole window; a seek is never counted as playback time.
+ */
+internal fun frameDropWindow(previous: FrameDropReading?, current: FrameDropReading): FrameDropSample? {
+    if (previous == null || !previous.playing || !current.playing ||
+        previous.estimated != current.estimated || previous.generation != current.generation) return null
+    val target = current.targetFps ?: return null
+    val oldTarget = previous.targetFps ?: return null
+    if (!sameFrameTarget(oldTarget, target) || abs(previous.speed - current.speed) > 0.001) return null
+    val elapsed = current.realtimeMs - previous.realtimeMs
+    if (elapsed !in 500L..2500L) return null
+    val progress = current.positionMs - previous.positionMs
+    val expectedProgress = elapsed * current.speed
+    // Native players report position in coarser ticks than Media3. Allow that jitter,
+    // but discard stationary clocks and forward/backward seeks for every renderer.
+    if (progress <= 0 || abs(progress - expectedProgress) > maxOf(350.0, expectedProgress * 0.5)) return null
+    if (current.dropped?.let { it < 0 } == true || previous.dropped?.let { it < 0 } == true) return null
+    if (current.dropped != null && previous.dropped != null && current.dropped < previous.dropped) return null
+    val seconds = elapsed / 1000.0
+    val actual = if (current.estimated) {
+        val drops = current.dropped ?: return null
+        val oldDrops = previous.dropped ?: return null
+        (target - (drops - oldDrops) / seconds).coerceAtLeast(0.0)
+    } else {
+        val rendered = current.rendered ?: return null
+        val oldRendered = previous.rendered ?: return null
+        if (oldRendered < 0 || rendered < oldRendered) return null
+        (rendered - oldRendered) / seconds
+    }
+    return FrameDropSample(actual, target, current.estimated)
+}
+
+/** A missing/invalid sample clears the display instead of preserving stale green or red. */
+internal fun smoothFrameDrop(previous: FrameDropSample?, sample: FrameDropSample?): FrameDropSample? = when {
+    sample == null -> null
+    previous == null || previous.estimated != sample.estimated || !sameFrameTarget(previous.targetFps, sample.targetFps) -> sample
+    else -> sample.copy(actualFps = previous.actualFps + 0.35 * (sample.actualFps - previous.actualFps))
+}
+
+internal fun formatFrameFpsDeviation(value: Double?, locale: Locale = Locale.getDefault()): String {
+    if (value == null || !value.isFinite()) return "—"
+    // Avoid showing a negative zero from fractional frame rates and polling jitter.
+    val magnitude = if (abs(value) < 0.05) 0.0 else abs(value)
+    val sign = when { magnitude == 0.0 -> ""; value < 0 -> "−"; else -> "+" }
+    return sign + NumberFormat.getNumberInstance(locale).apply {
+        minimumFractionDigits = 1
+        maximumFractionDigits = 1
+        isGroupingUsed = false
+    }.format(magnitude)
+}
+
+internal fun formatFrameTargetFps(value: Double?, locale: Locale = Locale.getDefault()): String =
+    value?.takeIf { it.isFinite() && it > 0 }?.let {
+        NumberFormat.getNumberInstance(locale).apply { maximumFractionDigits = 3; isGroupingUsed = false }.format(it)
+    } ?: "—"
+
+/** Preserve the bar's visual scale: half full/red at 10% below target, empty at 20%. */
+internal const val FRAME_DROP_WATCHDOG_PERCENT = 10.0
+
+internal fun frameDropBarFill(deficitPercent: Double?): Float =
+    if (deficitPercent == null) 1f else (1.0 - deficitPercent / (2 * FRAME_DROP_WATCHDOG_PERCENT)).coerceIn(0.0, 1.0).toFloat()
