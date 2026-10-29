@@ -1229,7 +1229,7 @@ class HomeViewModel @Inject constructor(
                         stations.takeIf { it.isNotEmpty() }?.let { entries ->
                             ContentRowData(
                                 title = definition.displayTitle(context),
-                                items = entries.map(RadioStation::toHomeItem),
+                                items = entries.map { it.toHomeItem() },
                                 style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
                                 id = "radio.${definition.contentKey}",
                                 showDescription = false,
