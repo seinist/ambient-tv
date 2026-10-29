@@ -2145,6 +2145,9 @@
     <string name="settings_radio_enable_hint">Browse and play internet radio stations with Radio Browser.</string>
     <string name="radio_provider_note">Station catalog: Radio Browser.</string>
     <string name="radio_popular">Popular</string>
+    <string name="settings_home_source_radio_popular">Radio Browser: Popular</string>
+    <string name="settings_home_source_radio_favorites">Radio Browser: Favorites</string>
+    <string name="settings_home_source_radio_recent">Radio Browser: Recently played</string>
     <string name="radio_search_placeholder">Search stations</string>
     <string name="radio_no_stations">No stations found</string>
     <string name="radio_error">Radio Browser is currently unavailable.</string>
