@@ -37,7 +37,14 @@ Beispiel: `1.0-beta` und Code `274` ergeben den Tag `v1.0.274-beta` und:
 - `ambient-tv-x86_64-1.0.274-beta.apk`
 - `update.json`
 
-Stabile Versionen behalten ihren Namen, z. B. `ambient-tv-arm64-1.0.apk`.
+Auch stabile Versionen enthalten den Build-Code: `1.0` und Code `353` ergeben
+`ambient-tv-arm64-1.0.353.apk` und beim manuellen Workflow den Tag `v1.0.353`.
+Debug- und unsignierte APKs verwenden dieselbe Versionsbezeichnung, z. B.
+`ambient-tv-debug-1.0.353.apk` und `ambient-tv-arm64-unsigned-1.0.353.apk`.
+Ein bereits enthaltener Code wird nicht doppelt angehängt (`1.0.353` bleibt bei
+Code `353` unverändert). Name und Code stammen direkt aus den AGP-Metadaten der
+gebauten APK. Damit stimmen Dateiname, lokaler Build-Zähler und die tatsächlich
+angewendeten Gradle-Overrides (z. B. `ORG_GRADLE_PROJECT_versionCode`) überein.
 CI erhöht den Versionscode nicht automatisch und schreibt keine Versionsdateien zurück.
 Bei erneutem Lauf für einen bereits bestehenden Release wird dieser nicht überschrieben;
 die neu gebauten Dateien bleiben im Actions-Artefakt verfügbar.

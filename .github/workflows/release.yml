@@ -139,7 +139,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # Derive the tag from build.sh output, including its pre-release build number.
+          # Derive the tag from build.sh output, including its stable/pre-release build number.
           shopt -s nullglob
           apks=(dist/ambient-tv-arm64-*.apk)
           [[ ${#apks[@]} == 1 ]]
