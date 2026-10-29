@@ -18,6 +18,30 @@ interface RadioBrowserApiService {
         @Query("hidebroken") hideBroken: Boolean = true,
     ): List<RadioBrowserStationDto>
 
+    @GET("json/countrycodes")
+    suspend fun countryCodes(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("hidebroken") hideBroken: Boolean = true,
+        @Query("limit") limit: Int = 100,
+    ): List<RadioBrowserFacetDto>
+
+    @GET("json/languages")
+    suspend fun languages(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("hidebroken") hideBroken: Boolean = true,
+        @Query("limit") limit: Int = 100,
+    ): List<RadioBrowserFacetDto>
+
+    @GET("json/tags")
+    suspend fun tags(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("hidebroken") hideBroken: Boolean = true,
+        @Query("limit") limit: Int = 150,
+    ): List<RadioBrowserFacetDto>
+
     @GET("json/stations/topclick/{limit}")
     suspend fun topClicked(
         @Path("limit") limit: Int,
