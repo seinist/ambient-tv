@@ -44,7 +44,7 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - radio playback deliberately exposes no seek action;
 - transient Media3 stream failures use a bounded 1 s / 2.5 s / 5 s reconnect policy;
 - reconnect refreshes the station row without adding another Recent entry or user click;
-- stale errors from a station that is no longer active cannot revive it.
+- stale metadata/errors from an older playback generation cannot affect the replacement, even for the same station.
 
 ### Backup
 
