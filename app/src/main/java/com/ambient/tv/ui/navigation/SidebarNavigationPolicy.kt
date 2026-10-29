@@ -124,8 +124,9 @@ internal fun sidebarShowsHome(
     tvheadendConfigured: Boolean,
     youtubeEnabled: Boolean,
     spotifyEnabled: Boolean,
+    radioHomeEnabled: Boolean = false,
 ): Boolean = plexConfigured || jellyfinConfigured || embyConfigured ||
-    tvheadendConfigured || youtubeEnabled || spotifyEnabled
+    tvheadendConfigured || youtubeEnabled || spotifyEnabled || radioHomeEnabled
 
 
 internal data class SidebarNavSystem(
