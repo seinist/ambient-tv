@@ -28,27 +28,18 @@ data class RadioUiState(
     val favoriteIds: Set<String> = emptySet(),
 )
 
-data class RadioPlaybackRequest(
-    val station: RadioStation,
-    val streamUrl: String,
-    val requestId: Long,
-)
-
 @HiltViewModel
 class RadioViewModel @Inject constructor(
     private val repository: RadioBrowserRepository,
     private val preferences: AppPreferences,
+    private val playbackLauncher: RadioPlaybackLauncher,
 ) : ViewModel() {
     private val _state = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
 
-    private val _playbackRequest = MutableStateFlow<RadioPlaybackRequest?>(null)
-    val playbackRequest: StateFlow<RadioPlaybackRequest?> = _playbackRequest.asStateFlow()
-
     private var loadJob: Job? = null
     private var playJob: Job? = null
     private var entered = false
-    private var playbackRequestId = 0L
 
     fun enter() {
         if (entered) return
@@ -161,29 +152,16 @@ class RadioViewModel @Inject constructor(
     fun play(station: RadioStation) {
         playJob?.cancel()
         playJob = viewModelScope.launch {
-            _state.value = _state.value.copy(startingStationId = station.id)
-            val streamUrl = repository.playbackUrl(station)
-            preferences.recordRadioStation(station)
-            refreshLocalState()
-            _playbackRequest.value = RadioPlaybackRequest(
-                station = station,
-                streamUrl = streamUrl,
-                requestId = ++playbackRequestId,
-            )
-        }
-    }
-
-    fun playbackStarted(requestId: Long) {
-        if (_playbackRequest.value?.requestId == requestId) {
-            _state.value = _state.value.copy(startingStationId = null)
-            _playbackRequest.value = null
-        }
-    }
-
-    fun playbackFailed(requestId: Long) {
-        if (_playbackRequest.value?.requestId == requestId) {
-            _state.value = _state.value.copy(startingStationId = null, error = true)
-            _playbackRequest.value = null
+            _state.value = _state.value.copy(startingStationId = station.id, error = false)
+            val visibleStations = _state.value.stations
+            playbackLauncher.play(station, visibleStations)
+                .onSuccess {
+                    refreshLocalState()
+                    _state.value = _state.value.copy(startingStationId = null)
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(startingStationId = null, error = true)
+                }
         }
     }
 
