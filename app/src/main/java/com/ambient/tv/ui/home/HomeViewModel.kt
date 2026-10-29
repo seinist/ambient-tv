@@ -1175,6 +1175,7 @@ class HomeViewModel @Inject constructor(
             .filter { row ->
                 row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
                     (row.contentKey in setOf(
+                        "home",
                         HomeRowDefinition.RADIO_POPULAR,
                         HomeRowDefinition.RADIO_FAVORITES,
                         HomeRowDefinition.RADIO_RECENT,
@@ -1196,7 +1197,7 @@ class HomeViewModel @Inject constructor(
                 definitions.map { definition ->
                     async {
                         val stations = when {
-                            definition.contentKey == HomeRowDefinition.RADIO_POPULAR ->
+                            definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
                                 runCatching { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
                             definition.contentKey == HomeRowDefinition.RADIO_FAVORITES ->
                                 appPreferences.radioFavorites.take(HOME_ROW_LIMIT)
@@ -1450,7 +1451,7 @@ class HomeViewModel @Inject constructor(
             row.enabled && homeSystemActive(row.system) && when (row.system) {
                 HomeRowDefinition.SYSTEM_YOUTUBE -> true
                 HomeRowDefinition.SYSTEM_SPOTIFY -> true
-                HomeRowDefinition.SYSTEM_RADIO -> row.contentKey == "home"
+                HomeRowDefinition.SYSTEM_RADIO -> false
                 HomeRowDefinition.SYSTEM_TVHEADEND -> row.contentKey !in setOf("live", "recent_channels")
                 else -> false
             }
