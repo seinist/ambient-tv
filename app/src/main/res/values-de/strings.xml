@@ -739,7 +739,7 @@
     <string name="settings_audio_visualizer_projectm">MilkDrop / projectM</string>
     <string name="settings_audio_visualizer_spectrum">Spektrum</string>
     <string name="settings_audio_visualizer_off">Aus</string>
-    <string name="settings_projectm_unavailable">projectM ist in dieser App-Version nicht verfügbar. Wähle eine andere Visualisierung.</string>
+    <string name="settings_projectm_unavailable">Die projectM-Native-Runtime konnte auf diesem Gerät nicht gestartet werden. Die Bedienoberfläche bleibt erreichbar; bis projectM geladen werden kann, wird Spectrum als Fallback verwendet.</string>
     <string name="settings_projectm_title">MilkDrop-Presets</string>
     <string name="settings_projectm_hint">Wechselt automatisch die Visualisierung.</string>
     <string name="settings_projectm_show_preset_name">Preset-Namen anzeigen</string>
