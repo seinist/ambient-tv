@@ -312,7 +312,8 @@ internal fun AudioProfileEditor(
             }
         }
         "tracks" -> {
-            SettingsSectionHeader(stringResource(R.string.audio_track_preferences))
+            // In the player this is already the title of the dedicated tracks panel.
+            if (!flatLive || panelSection == null) SettingsSectionHeader(stringResource(R.string.audio_track_preferences))
             val t = settings.tracks
             ImageChoice(R.string.audio_track_role, t.role, listOf(
                 "auto" to stringResource(R.string.player_automatic), "main" to stringResource(R.string.audio_main),

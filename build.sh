@@ -42,7 +42,8 @@
 #   dist/ambient-tv-debug-<version>.apk
 #   dist/ambient-tv-{arm64,armv7,x86,x86_64}-<version>.apk          (signed when configured)
 #   dist/ambient-tv-{arm64,armv7,x86,x86_64}-unsigned-<version>.apk (without signing config)
-#   Pre-release suffixes (beta, alpha, rc, …) also include the build number:
+#   All names include the build number; pre-release suffixes stay at the end:
+#   dist/ambient-tv-arm64-1.0.<versionCode>.apk
 #   dist/ambient-tv-arm64-1.0.<versionCode>-beta.apk
 #
 # Signing:
@@ -181,41 +182,50 @@ verify_kotlin_dsl_entrypoints() {
         || fail "youtubeapi is not mapped to the host wrapper."
 }
 
-version_name() {
-    # Same resolution as Gradle: ORG_GRADLE_PROJECT_versionName (CI/tag) or version.properties.
-    if [[ -n "${ORG_GRADLE_PROJECT_versionName:-}" ]]; then
-        printf '%s\n' "$ORG_GRADLE_PROJECT_versionName"
-        return
-    fi
-    sed -nE 's/^[[:space:]]*VERSION_NAME[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$ROOT_DIR/version.properties" | head -n 1
+# Use the output selected by AGP and its effective version, including every Gradle
+# property override and the increment from this build. Source files/environment can
+# differ from the packaged version and must not determine the artifact's name.
+apk_output_metadata() {
+    python3 - "$1/output-metadata.json" "${2:-}" <<'PY_METADATA'
+import json
+from pathlib import Path
+import sys
+
+metadata = Path(sys.argv[1])
+abi = {"ARM64": "arm64-v8a", "ARMV7": "armeabi-v7a", "X86": "x86", "X86_64": "x86_64"}[sys.argv[2]] if sys.argv[2] else None
+elements = json.loads(metadata.read_text())["elements"]
+matches = []
+for element in elements:
+    abis = [item.get("value", item.get("identifier")) for item in element.get("filters", []) if item.get("filterType") == "ABI"]
+    if (abi is not None and abi in abis) or (abi is None and not abis):
+        matches.append(element)
+if len(matches) != 1:
+    raise SystemExit(f"Expected exactly one {abi or 'universal debug'} output in {metadata}")
+output = matches[0]
+name, code = output.get("versionName"), output.get("versionCode")
+if not isinstance(name, str) or not name or type(code) is not int or code <= 0:
+    raise SystemExit(f"Missing or invalid APK version in {metadata}")
+print(metadata.parent / output["outputFile"])
+print(name)
+print(code)
+PY_METADATA
 }
 
-version_code() {
-    # Same resolution as Gradle: ORG_GRADLE_PROJECT_versionCode or version.properties.
-    # Call this after Gradle has run so a local build sees the incremented code.
-    if [[ -n "${ORG_GRADLE_PROJECT_versionCode:-}" ]]; then
-        printf '%s\n' "$ORG_GRADLE_PROJECT_versionCode"
-        return
-    fi
-    sed -nE 's/^[[:space:]]*VERSION_CODE[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$ROOT_DIR/version.properties" | head -n 1
-}
-
-# Dist APK label. Stable names stay as versionName. A pre-release suffix such as
-# -beta, -alpha or -rc keeps the suffix and inserts the build number before it:
-# 1.0-beta -> 1.0.270-beta.
+# Dist APK label. Include the build number for stable and pre-release versions.
+# Keep a numeric version's pre-release/build-metadata suffix at the end:
+# 1.0 -> 1.0.353, 1.0-beta -> 1.0.353-beta. Tags that already end in the
+# current build number (before the suffix) must not receive it a second time.
 apk_version_label() {
-    local name code base suffix
-    name="$(version_name)"
-    if [[ "$name" =~ ^([0-9]+(\.[0-9]+)*)-([A-Za-z].*)$ ]]; then
+    local name="$1" code="$2" base suffix
+    [[ "$code" =~ ^[1-9][0-9]*$ ]] || fail "Cannot name APK: invalid or missing versionCode."
+    base="$name"
+    suffix=""
+    if [[ "$name" =~ ^([0-9]+(\.[0-9]+)*)([-+].*)$ ]]; then
         base="${BASH_REMATCH[1]}"
         suffix="${BASH_REMATCH[3]}"
-        code="$(version_code)"
-        if [[ "$code" =~ ^[0-9]+$ && "$base" != *".${code}" ]]; then
-            printf '%s.%s-%s\n' "$base" "$code" "$suffix"
-            return
-        fi
     fi
-    printf '%s\n' "$name"
+    [[ "$base" == *".${code}" ]] || base+=".${code}"
+    printf '%s%s\n' "$base" "$suffix"
 }
 
 ensure_android_sdk() {
@@ -903,9 +913,11 @@ build_debug() {
     "$ROOT_DIR/gradlew" --no-daemon --no-configuration-cache assembleDebug
     mkdir -p "$DIST_DIR"
     local debug_dir="$ROOT_DIR/app/build/outputs/apk/debug"
-    local src
-    src="$(find "$debug_dir" -maxdepth 1 -type f -name '*.apk' ! -name '*arm64*' ! -name '*armeabi*' ! -name '*x86*' -print 2>/dev/null | head -n 1 || true)"
-    local dest="$DIST_DIR/ambient-tv-debug-$(apk_version_label).apk"
+    local src name code metadata label dest
+    metadata="$(apk_output_metadata "$debug_dir")"
+    { IFS= read -r src; IFS= read -r name; IFS= read -r code; } <<< "$metadata"
+    label="$(apk_version_label "$name" "$code")"
+    dest="$DIST_DIR/ambient-tv-debug-${label}.apk"
     [[ -n "$src" && -f "$src" ]] || fail "Debug APK was not created under $debug_dir"
     cp "$src" "$dest"
     log "Debug APK: ${dest#$ROOT_DIR/}"
@@ -914,28 +926,17 @@ build_debug() {
 package_release_variant_output() {
     local variant="$1"
     local release_dir="$2"
-    local src=""
+    local src name code metadata
     # Select only the output AGP reports for this invocation, never an old matching filename.
-    src="$(python3 - "$release_dir/output-metadata.json" "$variant" <<'PY_METADATA'
-import json
-from pathlib import Path
-import sys
-metadata = Path(sys.argv[1])
-abi = {"ARM64": "arm64-v8a", "ARMV7": "armeabi-v7a", "X86": "x86", "X86_64": "x86_64"}[sys.argv[2]]
-elements = json.loads(metadata.read_text())["elements"]
-matches = [element for element in elements if any(
-    item.get("filterType") == "ABI" and item.get("value", item.get("identifier")) == abi for item in element.get("filters", []))]
-if len(matches) != 1:
-    raise SystemExit(f"Expected exactly one {abi} output in {metadata}")
-print(metadata.parent / matches[0]["outputFile"])
-PY_METADATA
-)"
+    metadata="$(apk_output_metadata "$release_dir" "$variant")"
+    { IFS= read -r src; IFS= read -r name; IFS= read -r code; } <<< "$metadata"
     [[ -n "$src" && -f "$src" ]] || fail "${variant} release APK was not created under app/build/outputs/apk/release/."
 
-    local suffix
+    local suffix label
     suffix="$(printf '%s' "$variant" | tr '[:upper:]' '[:lower:]')"
-    local signed_dest="$DIST_DIR/ambient-tv-${suffix}-$(apk_version_label).apk"
-    local unsigned_dest="$DIST_DIR/ambient-tv-${suffix}-unsigned-$(apk_version_label).apk"
+    label="$(apk_version_label "$name" "$code")"
+    local signed_dest="$DIST_DIR/ambient-tv-${suffix}-${label}.apk"
+    local unsigned_dest="$DIST_DIR/ambient-tv-${suffix}-unsigned-${label}.apk"
 
     if [[ "$(basename "$src")" != *unsigned* ]]; then
         cp "$src" "$signed_dest"
@@ -1156,6 +1157,11 @@ clean_android() {
     "$ROOT_DIR/gradlew" --no-daemon clean
     rm -rf "$DIST_DIR"
 }
+
+# Allow packaging helpers to be exercised in isolation without starting a build.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 0
+fi
 
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"

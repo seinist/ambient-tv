@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +80,13 @@ import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.fillWindowHeight
 import com.ambient.tv.ui.common.mediaFocusMotion
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
@@ -98,8 +106,12 @@ fun PhotoBrowserScreen(
     onBack: (() -> Unit)? = null,
     viewModel: PhotoBrowserViewModel = hiltViewModel(key = "photos:$rootKey"),
 ) {
-    // Runs before the focus effect below reads the focus target.
-    LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
+    // Resolve the viewer's return address before the shared owner can choose its first target.
+    var viewerReturnApplied by remember(viewModel) { mutableStateOf(false) }
+    LaunchedEffect(viewModel) {
+        viewModel.applyViewerReturn()
+        viewerReturnApplied = true
+    }
     val state by viewModel.state.collectAsState()
     val source = when {
         FileKeys.owns(rootKey) -> "files:${FileKeys.parse(rootKey).first}"
@@ -108,7 +120,7 @@ fun PhotoBrowserScreen(
         else -> "plex"
     }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(source)) { viewModel.enter(rootKey, title) }
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(!state.loading && viewerReturnApplied)
     val tokens = LocalUiTokens.current
     var showOptions by remember(rootKey) { mutableStateOf(false) }
     var restoreOptionsFocus by remember(rootKey) { mutableStateOf(false) }
@@ -134,9 +146,42 @@ fun PhotoBrowserScreen(
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
     val visible = if (state.timeline) state.timelineGroups.flatMap { it.entries } else state.entries
+    val folder = rootKey to state.current?.key
+    var focusFolder by remember { mutableStateOf(folder) }
+    BrowseFocusContentIdentity(
+        listOf(folder, state.timeline, state.sort),
+        restoreInitialTarget = focusFolder != folder,
+    )
+    SideEffect { focusFolder = folder }
+    val focusSlots = remember(state.timeline, state.timelineGroups, state.entries) {
+        buildList {
+            var index = 0
+            if (state.timeline) {
+                state.timelineGroups.forEach { group ->
+                    index++ // The month header occupies a physical LazyGrid slot, but cannot receive focus.
+                    group.entries.forEach { entry ->
+                        add(BrowseFocusSlot(BrowseFocusKey(null, entry.id, true), index++))
+                    }
+                }
+            } else {
+                state.entries.forEach { entry ->
+                    add(BrowseFocusSlot(BrowseFocusKey(null, entry.id, true), index++))
+                }
+            }
+        }
+    }
+    RegisterBrowseFocusSlots(gridState, focusSlots)
+    if (viewerReturnApplied && !state.loading && !state.failed) {
+        BrowseFocusInitialTarget(state.focusId?.takeIf { id -> visible.any { it.id == id } } ?: visible.firstOrNull()?.id)
+    }
     var initialFocusDone by remember(state.current?.key, state.timeline) { mutableStateOf(false) }
-    LaunchedEffect(state.current?.key, state.timeline, state.loading, showOptions, filterFocusState.allowContentAutoFocus) {
-        if (showOptions || !filterFocusState.allowContentAutoFocus || state.loading || initialFocusDone || visible.isEmpty()) return@LaunchedEffect
+    val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(state.current?.key, state.timeline, state.loading, viewerReturnApplied, sharedFocusOwner, showOptions, filterFocusState.allowContentAutoFocus) {
+        if (!viewerReturnApplied || showOptions || !filterFocusState.allowContentAutoFocus || state.loading || initialFocusDone || visible.isEmpty()) return@LaunchedEffect
+        if (sharedFocusOwner) {
+            initialFocusDone = true
+            return@LaunchedEffect
+        }
         val target = viewModel.state.value.focusId?.takeIf { id -> visible.any { it.id == id } } ?: visible.first().id
         val index = if (state.timeline) {
             // Header rows occupy grid slots too.
@@ -285,6 +330,7 @@ private fun PhotoTile(entry: PhotoEntry, modifier: Modifier, onClick: () -> Unit
     val shape = RoundedCornerShape(LocalUiTokens.current.cardRadius)
     Box(
         modifier
+            .browseFocusTarget(entry.id)
             .mediaFocusMotion(focused)
             .fillMaxWidth()
             .aspectRatio(4f / 3f)

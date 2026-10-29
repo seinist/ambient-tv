@@ -1203,11 +1203,12 @@ private fun AmbientTvApp(
         if (sidebarContentPending) return false
         contentFocusPermit.value = true
         return try {
-            val entry = com.ambient.tv.ui.navigation.SidebarContentEntry.enter?.let { runCatching { it() }.getOrDefault(false) }
+            val entry = com.ambient.tv.ui.navigation.SidebarContentEntry.requestFocus()
             // null: the page is still restoring its focus, so the caller retries next frame.
-            if (entry == null && com.ambient.tv.ui.navigation.SidebarContentEntry.enter != null) return false
-            val accepted = entry == true || runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false)
-            if (accepted) {
+            if (entry == null) return false
+            if (entry == true) return contentHasFocus && !contentContainerFocused
+            val accepted = runCatching { contentFocusRequester.requestFocus() }.getOrDefault(false)
+            if (accepted && contentContainerFocused) {
                 runCatching { focusManager.moveFocus(FocusDirection.Enter) }
             }
             // The container itself is not a visible, usable focus destination.
@@ -1236,12 +1237,14 @@ private fun AmbientTvApp(
         // Only repair actual focus loss. Dialogs have their own window; an existing content
         // selection is never re-requested just because metadata or readiness changed.
         kotlinx.coroutines.delay(180)
-        repeat(4) {
+        var attempts = 0
+        while (attempts < 4 || com.ambient.tv.ui.navigation.SidebarContentEntry.pending) {
             // The destination may have restored its own selection meanwhile (e.g. Home's last
             // tile after Back from Detail). Requesting the container would steal that focus and
             // Enter would land on the first tile instead.
             if (sidebarHasFocus || (contentHasFocus && !contentContainerFocused)) return@LaunchedEffect
             if (requestContentFocus()) return@LaunchedEffect
+            attempts++
             kotlinx.coroutines.delay(32)
         }
         sidebarEntryRequested.value = true
@@ -1284,7 +1287,8 @@ private fun AmbientTvApp(
         // player, so this applies equally to Home, libraries, Search, YouTube, TVH and Files.
         androidx.compose.runtime.withFrameNanos { }
         sidebarEntryRequested.value = false
-        repeat(8) {
+        var attempts = 0
+        while (attempts < 8 || com.ambient.tv.ui.navigation.SidebarContentEntry.pending) {
             // The destination may already have put focus back on the launching item (it keeps
             // its own saved selection). Re-entering the container would move it to the first child.
             if (contentHasFocus && !contentContainerFocused) {
@@ -1295,6 +1299,7 @@ private fun AmbientTvApp(
                 restoreFocusAfterNavigation = false
                 return@LaunchedEffect
             }
+            attempts++
             kotlinx.coroutines.delay(32)
         }
         // Do not keep stealing focus if a destination has no focusable content (for example an
@@ -2530,19 +2535,21 @@ private fun AmbientTvApp(
 
 @Composable
 private fun RestorableSidebarContent(content: @Composable () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // Re-selecting the open page drops the remembered child once, so focus lands on the
-            // top of the freshly scrolled page instead of jumping back down.
-            .then(
-                if (com.ambient.tv.ui.common.NavReselect.restoreTop.value) {
-                    Modifier.onFocusChanged { if (it.hasFocus) com.ambient.tv.ui.common.NavReselect.restoreTop.value = false }
-                } else Modifier.focusRestorer(),
-            )
-            .focusGroup(),
-    ) {
-        content()
+    com.ambient.tv.ui.common.BrowseFocusReturnScope {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // Re-selecting the open page drops the remembered child once, so focus lands on the
+                // top of the freshly scrolled page instead of jumping back down.
+                .then(
+                    if (com.ambient.tv.ui.common.NavReselect.restoreTop.value) {
+                        Modifier.onFocusChanged { if (it.hasFocus) com.ambient.tv.ui.common.NavReselect.restoreTop.value = false }
+                    } else Modifier.focusRestorer(),
+                )
+                .focusGroup(),
+        ) {
+            content()
+        }
     }
 }
 

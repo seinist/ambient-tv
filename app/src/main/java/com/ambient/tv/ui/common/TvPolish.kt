@@ -1066,6 +1066,8 @@ fun TvSettingRow(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /** Optional identity of the item this switch shows or hides; the row owns its interaction. */
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
     val uiSounds = LocalUiSoundPlayer.current
     val toggle = rememberUiSoundAction(enabled = enabled,
@@ -1076,6 +1078,7 @@ fun TvSettingRow(
         androidx.compose.material3.ListItem(
             headlineContent = { androidx.compose.material3.Text(title) },
             supportingContent = body?.let { description -> { androidx.compose.material3.Text(description) } },
+            leadingContent = leadingContent,
             trailingContent = {
                 androidx.compose.material3.Switch(
                     checked = checked,
@@ -1130,6 +1133,10 @@ fun TvSettingRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            leadingContent?.let { leading ->
+                Box(Modifier.size(20.dp * uiScale), contentAlignment = Alignment.Center) { leading() }
+                Spacer(Modifier.width(tokens.itemGap))
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 body?.takeIf { it.isNotBlank() && (focused || !enabled) }?.let {

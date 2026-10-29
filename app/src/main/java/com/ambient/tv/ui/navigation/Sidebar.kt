@@ -26,7 +26,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.filled.*
@@ -89,6 +88,10 @@ import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.common.SystemWordmark
 import com.ambient.tv.ui.common.overlayPanelBorder
 import com.ambient.tv.ui.common.systemName
+import com.ambient.tv.ui.common.librarySectionIcon
+import com.ambient.tv.ui.common.liveTvMenuIcon
+import com.ambient.tv.ui.common.spotifyMenuIcon
+import com.ambient.tv.ui.common.youtubeFeedIcon
 import com.ambient.tv.ui.player.BackgroundPlaybackBar
 import com.ambient.tv.ui.player.NextUpCandidate
 import com.ambient.tv.ui.theme.LocalUiTokens
@@ -276,26 +279,26 @@ internal fun SidebarContent(
                     "kids" -> R.string.nav_youtube_kids
                     else -> R.string.nav_youtube_home
                 })
-                MenuDestination("youtube:$key", label, iconForYouTubeFeed(key), Destinations.youtubeSection(key, sidebarState.youtubeStartFeedKey))
+                MenuDestination("youtube:$key", label, youtubeFeedIcon(key), Destinations.youtubeSection(key, sidebarState.youtubeStartFeedKey))
             }))
         // Signed in: native playback unlocks the full submenu; otherwise only Home.
         if (spotifyEnabled) {
             val entries = if (spotifyAuthorized && spotifyNativeAvailable) {
                 listOf(
-                    Triple("home", stringResource(R.string.nav_spotify_home), Icons.Filled.Home),
-                    Triple("liked", stringResource(R.string.nav_spotify_liked), Icons.Filled.Favorite),
-                    Triple("playlists", stringResource(R.string.nav_spotify_playlists), Icons.AutoMirrored.Filled.PlaylistPlay),
-                    Triple("albums", stringResource(R.string.nav_spotify_albums), Icons.Filled.Album),
-                    Triple("artists", stringResource(R.string.nav_spotify_artists), Icons.Filled.Person),
+                    Triple("home", stringResource(R.string.nav_spotify_home), spotifyMenuIcon("home")),
+                    Triple("liked", stringResource(R.string.nav_spotify_liked), spotifyMenuIcon("liked")),
+                    Triple("playlists", stringResource(R.string.nav_spotify_playlists), spotifyMenuIcon("playlists")),
+                    Triple("albums", stringResource(R.string.nav_spotify_albums), spotifyMenuIcon("albums")),
+                    Triple("artists", stringResource(R.string.nav_spotify_artists), spotifyMenuIcon("artists")),
                 )
                     .filter { it.first in spotifySubmenuKeys }
                     .map { (key, label, icon) -> MenuDestination("spotify:$key", label, icon, if (key == "home") Destinations.SPOTIFY else Destinations.spotifySection(key)) }
                     .toMutableList()
                     .also { list ->
                         if ("now_playing" in spotifySubmenuKeys) {
-                            list.add(MenuDestination("spotify:now_playing", stringResource(R.string.nav_spotify_now_playing), Icons.Filled.PlayArrow, Destinations.spotifyPlayer()))
+                            list.add(MenuDestination("spotify:now_playing", stringResource(R.string.nav_spotify_now_playing), spotifyMenuIcon("now_playing"), Destinations.spotifyPlayer()))
                         }
-                        if (list.isEmpty()) list.add(MenuDestination("spotify:home", overview, Icons.Filled.Home, Destinations.SPOTIFY))
+                        if (list.isEmpty()) list.add(MenuDestination("spotify:home", overview, spotifyMenuIcon("home"), Destinations.SPOTIFY))
                     }
             } else {
                 // Authorization is already known here; a missing native core needs a truthful
@@ -312,13 +315,13 @@ internal fun SidebarContent(
             add(MenuSystem("tvheadend", offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
             val entries = listOf(
-                Triple("live", stringResource(R.string.tvh_live), Icons.Filled.Tv),
-                Triple("guide", stringResource(R.string.tvh_guide), Icons.Filled.Schedule),
-                Triple("recordings", stringResource(R.string.tvh_recordings), Icons.Filled.FiberManualRecord),
-                Triple("timers", stringResource(R.string.tvh_timers), Icons.Filled.Schedule),
+                Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
+                Triple("guide", stringResource(R.string.tvh_guide), liveTvMenuIcon("guide")),
+                Triple("recordings", stringResource(R.string.tvh_recordings), liveTvMenuIcon("recordings")),
+                Triple("timers", stringResource(R.string.tvh_timers), liveTvMenuIcon("timers")),
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
-            }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), Icons.Filled.Tv, Destinations.LIVE_TV)) }
+            }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), liveTvMenuIcon("live"), Destinations.LIVE_TV)) }
             val label = offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems)
             add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
@@ -330,8 +333,8 @@ internal fun SidebarContent(
             val entries = iptvSources.flatMap { available ->
                 fun label(tab: String) = if (iptvSources.size > 1) "${available.source.name} · $tab" else tab
                 listOfNotNull(
-                    MenuDestination("tv:${available.source.id}:live", label(live), Icons.Filled.Tv, Destinations.liveTvSection("live", available.source.id)),
-                    MenuDestination("tv:${available.source.id}:guide", label(guide), Icons.Filled.Schedule, Destinations.liveTvSection("guide", available.source.id))
+                    MenuDestination("tv:${available.source.id}:live", label(live), liveTvMenuIcon("live"), Destinations.liveTvSection("live", available.source.id)),
+                    MenuDestination("tv:${available.source.id}:guide", label(guide), liveTvMenuIcon("guide"), Destinations.liveTvSection("guide", available.source.id))
                         .takeIf { available.capabilities.guide },
                 )
             }
@@ -451,7 +454,10 @@ internal fun SidebarContent(
     fun closePanel() {
         // The open page stays as it is: closing must not slide the panel back to the main page.
         pendingFocus = null
-        anchorHold = false
+        // Collapsing disables the selected menu row. Keep focus on the permanent anchor
+        // until the content accepts the handoff, so automatic focus cannot overwrite its
+        // remembered tile with the first header/chip in the meantime.
+        parkFocus()
         onEntryRequestConsumed()
         expanded = false
         requestedContentRoute = activeRoute
@@ -469,11 +475,11 @@ internal fun SidebarContent(
         }
     }
     fun navigate(entry: MenuDestination) {
+        pendingFocus = null
+        parkFocus()
         requestedContentRoute = entry.route
         contentFocusRequested = true
         expanded = false
-        pendingFocus = null
-        anchorHold = false
         if (entry.settingsCategory != null) onOpenSystemSettings(entry.settingsCategory) else onNavigate(entry.route)
     }
     // Only visibility matters here; collecting the snapshot itself recomposed the rail every tick.
@@ -541,16 +547,19 @@ internal fun SidebarContent(
             return@LaunchedEffect
         }
         delay(48)
-        repeat(4) {
+        var attempts = 0
+        while (attempts < 4 || SidebarContentEntry.pending) {
             if (requestContentFocus()) {
                 expanded = false
                 pendingFocus = null
+                anchorHold = false
                 if (contentReady) {
                     contentFocusRequested = false
                     requestedContentRoute = null
                 }
                 return@LaunchedEffect
             }
+            attempts++
             withFrameNanos { }
         }
         if (!contentReady) return@LaunchedEffect
@@ -675,7 +684,12 @@ internal fun SidebarContent(
                         // Left: from the editor button back to the settings row, on a system page back
                         // to the main page (focus on that system's row), on the main page nothing.
                         Key.DirectionLeft -> {
-                            when {
+                            if (contentFocusRequested) {
+                                contentFocusRequested = false
+                                requestedContentRoute = null
+                                expanded = true
+                                restoreEntry()
+                            } else when {
                                 lastFocusedId == "order" -> pendingFocus = "settings"
                                 openGroup != null -> leaveLevel()
                             }
@@ -933,29 +947,6 @@ private fun SidebarPageHeader(
 }
 
 
-private fun iconForYouTubeFeed(key: String): ImageVector = when (key) {
-    "home" -> Icons.Filled.Home
-    "subscriptions" -> Icons.Filled.Subscriptions
-    "channels" -> Icons.Filled.AccountCircle
-    "history" -> Icons.Filled.History
-    "playlists" -> Icons.AutoMirrored.Filled.PlaylistPlay
-    "shorts" -> Icons.Filled.SmartDisplay
-    "music" -> Icons.Filled.MusicNote
-    "news" -> Icons.Filled.Newspaper
-    "gaming" -> Icons.Filled.SportsEsports
-    "live" -> Icons.Filled.LiveTv
-    "kids" -> Icons.Filled.ChildCare
-    else -> Icons.Filled.SmartDisplay
-}
-
-private fun iconForSectionType(type: String): ImageVector = when (type) {
-    "movie" -> Icons.Filled.Movie
-    "show" -> Icons.Filled.Tv
-    "artist" -> Icons.Filled.LibraryMusic
-    "photo" -> Icons.Filled.PhotoLibrary
-    else -> Icons.Filled.VideoLibrary
-}
-
 @Composable
 private fun SidebarItem(
     icon: ImageVector,
@@ -1113,10 +1104,10 @@ internal fun providerMenuDestinations(state: SidebarUiState, system: String): Li
         else -> Destinations.EMBY
     }
     val liveTvLabels = listOf(
-        Triple("live", stringResource(R.string.tvh_live), Icons.Filled.Tv),
-        Triple("guide", stringResource(R.string.tvh_guide), Icons.Filled.Schedule),
-        Triple("recordings", stringResource(R.string.tvh_recordings), Icons.Filled.FiberManualRecord),
-        Triple("timers", stringResource(R.string.tvh_timers), Icons.Filled.Schedule),
+        Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
+        Triple("guide", stringResource(R.string.tvh_guide), liveTvMenuIcon("guide")),
+        Triple("recordings", stringResource(R.string.tvh_recordings), liveTvMenuIcon("recordings")),
+        Triple("timers", stringResource(R.string.tvh_timers), liveTvMenuIcon("timers")),
     )
     fun tvEntries(system: String): List<MenuDestination> {
         val sources = state.liveTvSources.filter { it.source.system == system }
@@ -1128,7 +1119,7 @@ internal fun providerMenuDestinations(state: SidebarUiState, system: String): Li
         } }
     }
     return listOf(MenuDestination("$system:home", stringResource(R.string.nav_overview), Icons.Filled.Home, home)) +
-        sections.map { MenuDestination("$system:${it.key}", it.title, iconForSectionType(it.type), Destinations.section(it.key)) } +
+        sections.map { MenuDestination("$system:${it.key}", it.title, librarySectionIcon(it.type), Destinations.section(it.key)) } +
         tvEntries(system)
 }
 

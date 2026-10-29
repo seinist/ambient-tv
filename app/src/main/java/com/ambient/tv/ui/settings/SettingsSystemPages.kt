@@ -45,6 +45,13 @@ import com.ambient.tv.domain.model.ServerProfile
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsGroupHeader
+import com.ambient.tv.ui.common.SettingsItemIcon
+import com.ambient.tv.ui.common.SystemLogo
+import com.ambient.tv.ui.common.librarySectionIcon
+import com.ambient.tv.ui.common.liveTvMenuIcon
+import com.ambient.tv.ui.common.spotifyMenuIcon
+import com.ambient.tv.ui.common.youtubeFeedIcon
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
@@ -250,6 +257,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                         title = section.title,
                                         checked = section.key !in uiState.plexHiddenSectionKeys,
                                         onCheckedChange = { visible -> viewModel.onPlexSectionVisibilityChanged(section.key, visible) },
+                                        leadingContent = { SettingsItemIcon(librarySectionIcon(section.type)) },
                                     )
                                 }
                                 SubmenuSettingsRow(MediaSystem.PLEX, uiState, viewModel::onSidebarSettingsShortcutChanged)
@@ -346,6 +354,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                         title = section.title,
                                         checked = section.key !in uiState.jellyfinHiddenSectionKeys,
                                         onCheckedChange = { visible -> viewModel.onJellyfinSectionVisibilityChanged(section.key, visible) },
+                                        leadingContent = { SettingsItemIcon(librarySectionIcon(section.type)) },
                                     )
                                 }
                                 SubmenuSettingsRow(MediaSystem.JELLYFIN, uiState, viewModel::onSidebarSettingsShortcutChanged)
@@ -442,6 +451,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                         title = section.title,
                                         checked = section.key !in uiState.embyHiddenSectionKeys,
                                         onCheckedChange = { visible -> viewModel.onEmbySectionVisibilityChanged(section.key, visible) },
+                                        leadingContent = { SettingsItemIcon(librarySectionIcon(section.type)) },
                                     )
                                 }
                                 SubmenuSettingsRow(MediaSystem.EMBY, uiState, viewModel::onSidebarSettingsShortcutChanged)
@@ -490,7 +500,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "recordings" to stringResource(R.string.tvh_recordings),
                             "timers" to stringResource(R.string.tvh_timers),
                         ).forEach { (key, label) ->
-                            TvSettingRow(title = label, checked = key in uiState.tvheadendSubmenuKeys, onCheckedChange = { enabled -> viewModel.onTvheadendSubmenuChanged(key, enabled) })
+                            TvSettingRow(title = label, checked = key in uiState.tvheadendSubmenuKeys,
+                                onCheckedChange = { enabled -> viewModel.onTvheadendSubmenuChanged(key, enabled) },
+                                leadingContent = { SettingsItemIcon(liveTvMenuIcon(key)) })
                         }
                         SubmenuSettingsRow(MediaSystem.TVHEADEND, uiState, viewModel::onSidebarSettingsShortcutChanged)
                     }
@@ -622,7 +634,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "artists" to stringResource(R.string.nav_spotify_artists),
                             "now_playing" to stringResource(R.string.nav_spotify_now_playing),
                         ).forEach { (key, label) ->
-                            TvSettingRow(title = label, checked = key in uiState.spotifySubmenuKeys, onCheckedChange = { enabled -> viewModel.onSpotifySubmenuChanged(key, enabled) })
+                            TvSettingRow(title = label, checked = key in uiState.spotifySubmenuKeys,
+                                onCheckedChange = { enabled -> viewModel.onSpotifySubmenuChanged(key, enabled) },
+                                leadingContent = { SettingsItemIcon(spotifyMenuIcon(key)) })
                         }
                         SubmenuSettingsRow(MediaSystem.SPOTIFY, uiState, viewModel::onSidebarSettingsShortcutChanged)
                     }
@@ -766,6 +780,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 title = label,
                                 checked = key in uiState.youtubeFeedKeys,
                                 onCheckedChange = { enabled -> viewModel.onYoutubeFeedChanged(key, enabled) },
+                                leadingContent = { SettingsItemIcon(youtubeFeedIcon(key)) },
                             )
                         }
                         SettingsSelect(
@@ -867,7 +882,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
 /** A list caption stays subordinate to the page's main section headers. */
 @Composable
 private fun ConnectionListCaption(title: String) {
-    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    SettingsGroupHeader(title)
 }
 
 /** Renames a system throughout the app; an empty field restores the provider's own name. */
@@ -1144,6 +1159,7 @@ internal fun SystemCustomizationTabs(
 @Composable
 internal fun SystemHomeRowsGroup(system: String, state: SettingsUiState, onChange: (String, String, Boolean) -> Unit) {
     val context = LocalContext.current
+    val mediaSystem = MediaSystem.fromKey(system)
     SettingsGroup(title = stringResource(R.string.settings_system_home_title), subtitle = stringResource(R.string.settings_system_home_hint)) {
         systemHomeRowTypes(system).forEach { type ->
             TvSettingRow(
@@ -1151,6 +1167,7 @@ internal fun SystemHomeRowsGroup(system: String, state: SettingsUiState, onChang
                 body = if (type == HomeRowDefinition.CONTENT_TOP_GENRE) stringResource(R.string.settings_system_home_genres_hint) else null,
                 checked = "$system.$type" !in state.systemHomeHiddenRows,
                 onCheckedChange = { visible -> onChange(system, type, visible) },
+                leadingContent = mediaSystem?.let { source -> { SystemLogo(source, size = 20.dp) } },
             )
         }
     }
@@ -1165,6 +1182,8 @@ internal fun SubmenuSettingsRow(system: MediaSystem, state: SettingsUiState, onC
         body = stringResource(R.string.settings_submenu_settings_hint),
         checked = system.key !in state.sidebarSettingsShortcutHidden,
         onCheckedChange = { visible -> onChange(system.key, visible) },
+        // The actual system submenu uses its provider mark for this shortcut too.
+        leadingContent = { SystemLogo(system, size = 20.dp) },
     )
 }
 

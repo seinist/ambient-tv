@@ -923,8 +923,7 @@ private fun YouTubeMedia3Playback(
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.previous?.invoke()
-                    else if (!playback.isLive) seekRelative(-position)
+                    itemControls?.previous?.invoke()
                 }
                 override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
@@ -1254,8 +1253,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.previous?.invoke()
-                    else if (!playback.isLive) seekRelative(-displayedPosition)
+                    itemControls?.previous?.invoke()
                 }
                 override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
@@ -1538,8 +1536,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() {
-                    if (itemControls != null) itemControls.previous?.invoke()
-                    else if (!playback.isLive) seekRelative(-displayedPosition)
+                    itemControls?.previous?.invoke()
                 }
                 override fun next() { itemControls?.next?.invoke() }
                 override fun previousTrack() = Unit
@@ -1732,8 +1729,8 @@ internal data class YouTubeOsdModel(
                     leftContent = {
                         itemControls?.let { actions ->
                             PlayerIconButton(Icons.Filled.SkipPrevious,
-                                stringResource(if (actions.hasPreviousItem) R.string.player_previous_item else R.string.detail_restart),
-                                { actions.previous?.invoke() }, enabled = actions.previous != null,
+                                stringResource(R.string.player_previous_item),
+                                { actions.previous?.invoke() }, enabled = actions.hasPreviousItem && actions.previous != null,
                                 osd = com.ambient.tv.ui.player.OsdButton.NEXT)
                         }
                         val seekJumpSeconds = (BackgroundPlaybackSession.seekJumpMs(seekJumpMs) / 1000L).toInt().coerceAtLeast(1)

@@ -113,6 +113,18 @@ internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, onOpenButto
                         R.string.player_frame_drop_overlay_always else R.string.player_frame_drop_overlay_auto),
                     onClick = { session.showFrameDropOverlay = !session.showFrameDropOverlay },
                 )
+                PlayerDropUpSelector(
+                    icon = Icons.AutoMirrored.Filled.ShowChart,
+                    label = stringResource(R.string.player_frame_drop_presentation),
+                    value = stringResource(if (session.showFrameDropHistory)
+                        R.string.player_frame_drop_with_history else R.string.player_frame_drop_compact),
+                    options = listOf(
+                        "compact" to stringResource(R.string.player_frame_drop_compact),
+                        "history" to stringResource(R.string.player_frame_drop_with_history),
+                    ),
+                    selectedKey = if (session.showFrameDropHistory) "history" else "compact",
+                    onSelected = { session.showFrameDropHistory = it == "history" },
+                )
             }
             OsdInfoEntry.STATS -> audioSession?.let { session ->
                 PlayerPanelEntry(

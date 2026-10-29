@@ -502,7 +502,7 @@ internal fun SettingsHub(
                 if (showBack) androidx.compose.material3.IconButton(onClick = ::goBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
                 } else Icon(Icons.Filled.Settings, null, Modifier.padding(12.dp))
-                Text(page?.let { settingsCategoryTitle(it) } ?: stringResource(if (addingSystems) R.string.settings_add_system else R.string.settings_title), modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, maxLines = 2)
+                SettingsPageTitle(page?.let { settingsCategoryTitle(it) } ?: stringResource(if (addingSystems) R.string.settings_add_system else R.string.settings_title), modifier = Modifier.weight(1f))
                 androidx.compose.material3.IconButton(onClick = ::openSearch) { Icon(Icons.Default.Search, stringResource(R.string.settings_search)) }
             }
         } else {
@@ -519,9 +519,16 @@ internal fun SettingsHub(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(Icons.Filled.Settings, null, Modifier.size(32.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineSmall)
-                    Text(listOfNotNull(stringResource(area.titleRes), if (addingSystems && page == null) stringResource(R.string.settings_add_system) else null, page?.let { settingsCategoryTitle(it) }).joinToString(" › "), style = MaterialTheme.typography.bodySmall)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(com.ambient.tv.ui.theme.LocalUiTokens.current.compactGap)) {
+                    if (page == null) {
+                        SettingsPageTitle(stringResource(R.string.settings_title))
+                        Text(listOfNotNull(stringResource(area.titleRes), stringResource(R.string.settings_add_system).takeIf { addingSystems }).joinToString(" › "),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        // The current page owns the content title below. This is its parent path only.
+                        Text(listOf(stringResource(R.string.settings_title), stringResource(area.titleRes)).joinToString(" › "),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
                 if (showBack) TvChip(stringResource(R.string.back),
                     // Left from the leftmost header chip stays put.

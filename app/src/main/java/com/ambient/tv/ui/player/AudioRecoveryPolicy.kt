@@ -13,6 +13,7 @@ internal data class AudioConversionRestart(
     val performanceHint: Boolean,
     val showFpsOverlay: Boolean,
     val showFrameDropOverlay: Boolean,
+    val showFrameDropHistory: Boolean,
 ) {
     fun restore(session: AudioSession) {
         session.restoreProfile(settings)
@@ -20,13 +21,15 @@ internal data class AudioConversionRestart(
         session.performanceHint = performanceHint
         session.showFpsOverlay = showFpsOverlay
         session.showFrameDropOverlay = showFrameDropOverlay
+        session.showFrameDropHistory = showFrameDropHistory
     }
 }
 
 internal fun AudioSession.conversionRestart(
     streamId: Long?, positionMs: Long, timelineOffsetMs: Long, wasServerConverted: Boolean,
 ): AudioConversionRestart = AudioConversionRestart(settings, titleDelayMs, streamId,
-    (positionMs + timelineOffsetMs).coerceAtLeast(0L), wasServerConverted, performanceHint, showFpsOverlay, showFrameDropOverlay)
+    (positionMs + timelineOffsetMs).coerceAtLeast(0L), wasServerConverted, performanceHint, showFpsOverlay,
+    showFrameDropOverlay, showFrameDropHistory)
 
 /** Only transport edits need a new server URL; DSP/delay edits remain local. */
 internal fun audioConversionRequiresReload(old: AudioOptions, next: AudioOptions): Boolean =

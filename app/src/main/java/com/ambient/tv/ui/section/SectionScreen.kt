@@ -159,6 +159,10 @@ import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PageChipRow
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusSections
+import com.ambient.tv.ui.common.RegisterBrowseFocusRows
+import com.ambient.tv.ui.common.BrowseFocusRow
 import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -308,39 +312,12 @@ internal fun SectionContent(
     } else {
         state
     }
-    // Entering the page from the sidebar lands on the last focused item, not on the header chips:
-    // the content is rebuilt once so every view runs the same restore as after a detail page.
-    val contentAreaFocus = remember { FocusRequester() }
-    var contentAreaHasFocus by remember { mutableStateOf(false) }
-    var contentEntryGeneration by remember { mutableIntStateOf(0) }
-    var contentEntryPending by remember { mutableStateOf(false) }
-    var contentEntryWaits by remember { mutableIntStateOf(0) }
-    val restoreContentFocus = {
-        filterFocusState.enterContent()
-        contentEntryPending = true
-        contentEntryWaits = 0
-        contentEntryGeneration++
-    }
-    val enterContent: () -> Boolean? = remember(filterFocusState) {
-        {
-            when {
-                contentAreaHasFocus -> true
-                !contentEntryPending -> { restoreContentFocus(); null }
-                // The sidebar asks once per frame; give the rebuilt view a few frames to restore.
-                ++contentEntryWaits < 3 -> null
-                // It did not take focus (e.g. empty): any content item will do.
-                else -> { contentEntryPending = false; runCatching { contentAreaFocus.requestFocus() }.getOrDefault(false) }
-            }
-        }
-    }
-    DisposableEffect(enterContent) {
-        com.ambient.tv.ui.navigation.SidebarContentEntry.enter = enterContent
-        onDispose {
-            if (com.ambient.tv.ui.navigation.SidebarContentEntry.enter === enterContent) {
-                com.ambient.tv.ui.navigation.SidebarContentEntry.enter = null
-            }
-        }
-    }
+    com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(sectionKey, state.page, state.viewMode,
+        state.sort, state.sortOrder, state.libraryFilters))
+    com.ambient.tv.ui.common.BrowseFocusInitialTarget(
+        if (state.page == SectionPage.COLLECTIONS) focusState.focusedCollectionId else focusState.focusedRatingKey,
+        focusState.focusedRecommendationRowId.takeIf { state.page == SectionPage.RECOMMENDATIONS },
+    )
     val markInitialFocusHandled = {
         initialContentFocusPending = false
         filterFocusState.enterContent()
@@ -348,7 +325,6 @@ internal fun SectionContent(
     val keepControlFocus = {
         filterFocusState.keepControls()
         initialContentFocusPending = false
-        contentEntryPending = false
     }
     var visibleLibraryLetter by remember(state.items, state.page, state.sort, state.viewMode) {
         mutableStateOf(state.items.firstOrNull()?.let { libraryIndexLetter(it.title) })
@@ -385,19 +361,7 @@ internal fun SectionContent(
             if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
             Column(Modifier.fillMaxSize().focusProperties {
                 onEnter = {
-                    // D-pad entry (e.g. Right out of the sidebar) restores like the sidebar handoff; plain
-                    // requests, such as a list restoring its item, pass.
-                    if (showOptions) {
-                        cancelFocusChange()
-                    } else if (requestedFocusDirection != FocusDirection.Enter) {
-                        // A second press while nothing was restored (e.g. empty view) enters normally.
-                        if (contentEntryPending) {
-                            contentEntryPending = false
-                        } else {
-                            restoreContentFocus()
-                            cancelFocusChange()
-                        }
-                    }
+                    if (showOptions) cancelFocusChange()
                 }
             }.focusGroup()) {
                 val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
@@ -433,8 +397,6 @@ internal fun SectionContent(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .focusRequester(contentAreaFocus)
-                        .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
                         .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.contentUp }
                         .focusGroup()
                         .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
@@ -452,7 +414,6 @@ internal fun SectionContent(
                     ) {
                         // The alphabet bar already shows the position; a scrollbar would sit under it.
                         CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar) {
-                            key(contentEntryGeneration) {
                                 SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
                                 SectionPage.RECOMMENDATIONS -> RecommendationsPage(
                                     focusState,
@@ -489,7 +450,6 @@ internal fun SectionContent(
                                     }
                                 }
                             } }
-                            }
                         }
                     }
                     if (showAlphabetBar) {
@@ -798,6 +758,7 @@ private fun RecommendationRowsPage(
             ?: state.recommendationRows.indexOfFirst { row -> key != null && row.items.any { key in it.allRatingKeys } }.coerceAtLeast(0)
     }
     val rowsState = rememberLazyListState(initialFirstVisibleItemIndex = restoreRowIndex)
+    RegisterBrowseFocusRows(rowsState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     val rowCentering = rememberRowCenteringState(rowsState)
     var centeredRowIndex by remember { mutableStateOf(-1) }
     val handheld = LocalHandheldUi.current
@@ -916,6 +877,7 @@ private fun RecommendationListPage(
     }
     val rowScale = (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * rememberUhdScale()
     val listState = rememberLazyListState()
+    RegisterBrowseFocusSections(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     LazyColumn(
         allowUpExit = true,
         state = listState,
@@ -933,6 +895,7 @@ private fun RecommendationListPage(
                 )
             }
             itemsIndexed(row.items, key = { itemIndex, item -> "recommendation-list:${row.id}:$itemIndex:${item.ratingKey}" }, contentType = { _, _ -> "recommendation-list-item" }) { itemIndex, item ->
+                BrowseFocusRow(row.id) {
                 RecommendationListItem(
                     item = item,
                     rowScale = rowScale,
@@ -943,6 +906,7 @@ private fun RecommendationListPage(
                     requestInitialFocus = (row.id == restoreRowId && item.ratingKey == initialKey) ||
                         (initialKey == null && sectionIndex == 0 && itemIndex == 0),
                 )
+                }
             }
         }
     }
@@ -962,7 +926,9 @@ private fun RecommendationListItem(
     val requester = remember { FocusRequester() }
     val handheldUi = LocalHandheldUi.current
     val filterFocusState = LocalFilterFocusState.current
-    LaunchedEffect(requestInitialFocus, filterFocusState) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(requestInitialFocus, filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (requestInitialFocus && filterFocusState?.allowContentAutoFocus != false && !handheldUi) {
             delay(120)
             if (filterFocusState?.allowContentAutoFocus != false) runCatching { requester.requestFocus() }
@@ -977,6 +943,7 @@ private fun RecommendationListItem(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (requestInitialFocus) Modifier.focusRequester(requester) else Modifier)
+            .browseFocusTarget(item.ratingKey)
             .mediaFocusMotion(focused, focusedScale = 1.012f)
             .activateOnTvKey(onClick = onClick)
             .bringFocusedContextIntoView()
@@ -1032,7 +999,10 @@ private fun RecommendationWallPage(
         initialRowId?.takeIf { id -> state.recommendationRows.any { it.id == id && initialKey != null && it.items.any { item -> initialKey in item.allRatingKeys } } }
             ?: state.recommendationRows.firstOrNull { row -> initialKey != null && row.items.any { initialKey in it.allRatingKeys } }?.id
     }
+    val gridState = rememberLazyGridState()
+    RegisterBrowseFocusSections(gridState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     LazyVerticalGrid(
+        state = gridState,
         columns = deviceGridCells(wallColumns, if (poster) 96.dp else 144.dp),
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(screenGutter(), 10.dp, deviceDp(52.dp, 16.dp), 34.dp),
@@ -1049,6 +1019,7 @@ private fun RecommendationWallPage(
                 )
             }
             itemsIndexed(row.items, key = { itemIndex, item -> "recommendation-wall:${row.id}:$itemIndex:${item.ratingKey}" }, contentType = { _, _ -> "recommendation-wall-item" }) { itemIndex, item ->
+                BrowseFocusRow(row.id) {
                 WallTile(
                     item = item,
                     poster = poster,
@@ -1057,6 +1028,7 @@ private fun RecommendationWallPage(
                     requestInitialFocus = (row.id == restoreRowId && item.ratingKey == initialKey) ||
                         (initialKey == null && sectionIndex == 0 && itemIndex == 0),
                 )
+                }
             }
         }
     }
@@ -1075,7 +1047,9 @@ private fun WallTile(
     val requester = remember { FocusRequester() }
     val handheldUi = LocalHandheldUi.current
     val filterFocusState = LocalFilterFocusState.current
-    LaunchedEffect(requestInitialFocus, filterFocusState) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(requestInitialFocus, filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (requestInitialFocus && filterFocusState?.allowContentAutoFocus != false && !handheldUi) {
             delay(120)
             if (filterFocusState?.allowContentAutoFocus != false) runCatching { requester.requestFocus() }
@@ -1089,6 +1063,7 @@ private fun WallTile(
         shape = ClickableSurfaceDefaults.shape(shape),
         modifier = modifier
             .then(if (requestInitialFocus) Modifier.focusRequester(requester) else Modifier)
+            .browseFocusTarget(item.ratingKey)
             .mediaFocusMotion(focused)
             .activateOnTvKey(onClick = onClick)
             .bringFocusedContextIntoView()
@@ -1132,6 +1107,7 @@ private fun RecommendationCinematicPage(
     val handheld = LocalHandheldUi.current
     val restoreIndex = remember(state.recommendationRows, restoreRowId) { state.recommendationRows.indexOfFirst { it.id == restoreRowId }.coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
+    RegisterBrowseFocusRows(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     // On TV each section fills the viewport and the list snaps to the section that holds focus,
     // so header, hero and tile row are always shown whole, in both scroll directions.
     var focusedSectionIndex by remember { mutableStateOf(-1) }
@@ -1313,12 +1289,14 @@ private fun RecommendationCinematicSection(
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
+    BrowseFocusRow(row.id) {
     Column(modifier.fillMaxWidth()) {
         ContentSectionHeader(title = row.title)
         Box(Modifier.fillMaxWidth().then(if (handheld) Modifier.height(deviceHeroHeight(500.dp, 390.dp)) else Modifier.weight(1f))) {
             CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent, fadeBottom = true)
             CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, showStreamProperties = false) {
                 LazyRow(
+                    state = rememberLazyListState(itemKeys = row.items.map { it.ratingKey }),
                     contentPadding = cinematicTileRowPadding(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1334,6 +1312,7 @@ private fun RecommendationCinematicSection(
                 }
             }
         }
+    }
     }
 }
 
@@ -1456,7 +1435,7 @@ private fun LibraryGrid(
     val restoreKey = remember(state.items) { state.focusedRatingKey }
     var restorePending by remember(state.items) { mutableStateOf(true) }
     val restoreIndex = remember(state.items, restoreKey) { state.items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.items.map { it.ratingKey })
     LaunchedEffect(restoreKey, state.items) {
         if (state.selectedLetter == null && restoreKey != null && restoreIndex in state.items.indices) {
             gridState.scrollToItem(restoreIndex)
@@ -1515,9 +1494,10 @@ private fun StylishMediaList(
 ) {
     val initialFocusedKey = remember(items) { focusedKey }
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     LaunchedEffect(selectedLetter, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) } } }
     LaunchedEffect(listState, items, onVisibleLetterChanged) {
         if (onVisibleLetterChanged != null) {
@@ -1527,7 +1507,8 @@ private fun StylishMediaList(
                 }
         }
     }
-    LaunchedEffect(filterFocusState) {
+    LaunchedEffect(filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (filterFocusState?.allowContentAutoFocus != false && initialFocusedKey != null &&
             restoreIndex in items.indices && items[restoreIndex].ratingKey == initialFocusedKey
         ) {
@@ -1541,7 +1522,7 @@ private fun StylishMediaList(
             var isFocused by remember(item.ratingKey) { mutableStateOf(false) }
             val focusModifier = if (item.ratingKey == initialFocusedKey) Modifier.focusRequester(restoreRequester) else Modifier
             val rowShape = RoundedCornerShape(10.dp)
-            Surface(onClick = { onItemClick(item.ratingKey) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focusModifier.mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged {
+            Surface(onClick = { onItemClick(item.ratingKey) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focusModifier.browseFocusTarget(item.ratingKey).mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onItemFocused(item)
             }) {
@@ -1593,7 +1574,7 @@ private fun PosterGrid(
     val restoreKey = remember(items) { focusedKey }
     var restorePending by remember(items) { mutableStateOf(true) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
     LazyVerticalGrid(
         state = gridState,
         modifier = Modifier.overlayLazyGridScrollbar(gridState, gutter = screenGutter()),
@@ -1628,7 +1609,7 @@ private fun LandscapeGrid(
     val restoreKey = remember(items) { focusedKey }
     var restorePending by remember(items) { mutableStateOf(true) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
     LaunchedEffect(selectedLetter, items) {
         selectedLetter?.let { letter ->
             items.indexOfFirst { libraryIndexLetter(it.title) == letter }
@@ -1683,14 +1664,16 @@ private fun InfoList(
     if (items.isEmpty()) return
     val initialFocusedKey = remember(items) { focusedKey ?: items.firstOrNull()?.ratingKey }
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     var preview by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == initialFocusedKey } ?: items.first()) }
     val uhdScale = rememberUhdScale()
     val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
 
-    LaunchedEffect(filterFocusState) {
+    LaunchedEffect(filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (filterFocusState?.allowContentAutoFocus != false && initialFocusedKey != null) {
             runCatching { restoreRequester.requestFocus() }
         }
@@ -1724,7 +1707,7 @@ private fun InfoList(
                     colors = transparentSurfaceColors(),
                     scale = noSurfaceScale(),
                     shape = ClickableSurfaceDefaults.shape(shape = rowShape),
-                    modifier = restoreMod.fillMaxWidth().mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged {
+                    modifier = restoreMod.fillMaxWidth().browseFocusTarget(item.ratingKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged {
                         focused = it.isFocused
                         if (it.isFocused) { preview = item; onItemFocused(item) }
                     },
@@ -1816,10 +1799,12 @@ private fun WallGrid(
     val wallColumns = if (poster) coverWallColumns(columns) else (columns + 2).coerceIn(6, 14)
     val restoreKey = remember(items) { focusedKey }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = items.map { it.ratingKey })
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
-    LaunchedEffect(filterFocusState) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (filterFocusState?.allowContentAutoFocus != false && restoreKey != null) {
             runCatching { restoreRequester.requestFocus() }
         }
@@ -1844,7 +1829,7 @@ private fun WallGrid(
             Surface(
                 onClick = { onItemClick(item.ratingKey) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape = cardShape),
-                modifier = fm.mediaFocusMotion(focused).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged { focused = it.isFocused; if (it.isFocused) onItemFocused(item) },
+                modifier = fm.browseFocusTarget(item.ratingKey).mediaFocusMotion(focused).activateOnTvKey { onItemClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged { focused = it.isFocused; if (it.isFocused) onItemFocused(item) },
             ) {
                 Box(
                     Modifier.fillMaxWidth().aspectRatio(if (poster) 2f / 3f else 16f / 9f)
@@ -1880,7 +1865,7 @@ private fun CinematicView(
     var restorePending by remember(items) { mutableStateOf(true) }
     var hero by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == restoreKey } ?: items.first()) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
-    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0))
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0), itemKeys = items.map { it.ratingKey })
     val heroArtwork = hero.landscapeBackdropUrl
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
@@ -1913,15 +1898,16 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
     // Captured once per list, see LibraryGrid: a live key would snap-scroll on every focus move.
     val restoreId = remember(state.collections) { state.focusedCollectionId }
     val restoreIndex = remember(state.collections, restoreId) { state.collections.indexOfFirst { it.id == restoreId }.coerceAtLeast(0) }
-    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
+    val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.collections.map { it.id })
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     LaunchedEffect(restoreId, state.collections, filterFocusState) {
         if (filterFocusState?.allowContentAutoFocus != false && restoreId != null &&
             restoreIndex in state.collections.indices && state.collections[restoreIndex].id == restoreId
         ) {
             gridState.scrollToItem(restoreIndex)
-            if (filterFocusState?.allowContentAutoFocus != false) runCatching { restoreRequester.requestFocus() }
+            if (!sharedInitialFocus && filterFocusState?.allowContentAutoFocus != false) runCatching { restoreRequester.requestFocus() }
         }
     }
     LazyVerticalGrid(
@@ -1936,7 +1922,7 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
             val focusModifier = if (collection.id == restoreId) Modifier.focusRequester(restoreRequester) else Modifier
             var isFocused by remember(collection.id) { mutableStateOf(false) }
             val cardShape = RoundedCornerShape(10.dp)
-            Surface(onClick = { onClick(collection.id, collection.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = focusModifier.mediaFocusMotion(isFocused).activateOnTvKey { onClick(collection.id, collection.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(collection.id) }) {
+            Surface(onClick = { onClick(collection.id, collection.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = focusModifier.browseFocusTarget(collection.id).mediaFocusMotion(isFocused).activateOnTvKey { onClick(collection.id, collection.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(collection.id) }) {
                 Column(
                     Modifier.width(cardWidth)
                         .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), cardShape)
@@ -1964,8 +1950,10 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
     val restoreIndex = remember(state.collections, initialFocusedCollectionId) { state.collections.indexOfFirst { it.id == initialFocusedCollectionId }.coerceAtLeast(0) }
     val restoreRequester = remember { FocusRequester() }
     val filterFocusState = LocalFilterFocusState.current
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
-    LaunchedEffect(filterFocusState) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex, itemKeys = state.collections.map { it.id })
+    LaunchedEffect(filterFocusState, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (filterFocusState?.allowContentAutoFocus != false && initialFocusedCollectionId != null &&
             restoreIndex in state.collections.indices && state.collections[restoreIndex].id == initialFocusedCollectionId
         ) {
@@ -1979,7 +1967,7 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
             val focusModifier = if (c.id == initialFocusedCollectionId) Modifier.focusRequester(restoreRequester) else Modifier
             var isFocused by remember(c.id) { mutableStateOf(false) }
             val rowShape = RoundedCornerShape(10.dp)
-            Surface(onClick = { onClick(c.id, c.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focusModifier.mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onClick(c.id, c.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(c.id) }) {
+            Surface(onClick = { onClick(c.id, c.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focusModifier.browseFocusTarget(c.id).mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onClick(c.id, c.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(c.id) }) {
                 Row(
                     Modifier.fillMaxWidth()
                         .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), rowShape)

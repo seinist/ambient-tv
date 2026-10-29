@@ -33,5 +33,28 @@ fun ProviderBrowseContent(
  * restoring (ask again next frame), and false to fall back to the plain container request.
  */
 object SidebarContentEntry {
-    @Volatile var enter: (() -> Boolean?)? = null
+    private var owner: Any? = null
+    private var enter: (() -> Boolean?)? = null
+    var pending: Boolean = false
+        private set
+    val registered: Boolean get() = enter != null
+
+    internal fun register(owner: Any, enter: () -> Boolean?) {
+        this.owner = owner
+        this.enter = enter
+        pending = false
+    }
+
+    internal fun unregister(owner: Any) {
+        if (this.owner !== owner) return
+        this.owner = null
+        enter = null
+        pending = false
+    }
+
+    fun requestFocus(): Boolean? {
+        val result = enter?.invoke() ?: if (enter == null) false else null
+        pending = result == null
+        return result
+    }
 }

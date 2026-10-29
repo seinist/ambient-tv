@@ -11,6 +11,9 @@
     <string name="player_frame_drop_overlay">Frame-Drops-Overlay</string>
     <string name="player_frame_drop_overlay_auto">Automatisch</string>
     <string name="player_frame_drop_overlay_always">Immer anzeigen</string>
+    <string name="player_frame_drop_presentation">Frame-Drops-Darstellung</string>
+    <string name="player_frame_drop_compact">Kompakt</string>
+    <string name="player_frame_drop_with_history">Mit Verlauf</string>
     <string name="player_osd_info_stats_summary">Stats</string>
     <string name="osd_buttons_section_picture_sound">Bild &amp; Ton</string>
     <string name="osd_buttons_section_youtube">YouTube</string>

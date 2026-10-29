@@ -1,5 +1,11 @@
 package com.ambient.tv.ui.dlna
 
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
+
 import com.ambient.tv.ui.common.leftKeyAction
 import com.ambient.tv.ui.theme.screenGutter
 import androidx.compose.foundation.lazy.grid.*
@@ -34,6 +40,7 @@ import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -181,6 +188,13 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         val (index, offset) = viewModel.scroll(locationKey)
         LazyGridState(index, offset)
     }
+    var focusLocation by remember { mutableStateOf(locationKey) }
+    BrowseFocusContentIdentity(
+        listOf(locationKey, state.viewMode),
+        restoreInitialTarget = focusLocation != locationKey,
+    )
+    SideEffect { focusLocation = locationKey }
+    RegisterBrowseFocusGrid(contentGrid, remember(nodes) { nodes.map { it.key } })
     androidx.compose.runtime.DisposableEffect(contentGrid) {
         onDispose { viewModel.rememberScroll(locationKey, contentGrid.firstVisibleItemIndex, contentGrid.firstVisibleItemScrollOffset) }
     }
@@ -215,8 +229,14 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     ReportSidebarContentReady(!state.loading)
     BackHandler(enabled = !showOptions) { restoreOptionsFocus = false; if (!viewModel.up()) onBack() }
     val targetKey = focusedKey?.takeIf { key -> nodes.any { it.key == key } } ?: nodes.firstOrNull()?.key
-    LaunchedEffect(state.loading, initialContentFocusPending, focusKey, showOptions, state.viewMode, restoreRevision, keepHeaderFocus) {
+    if (!state.loading) BrowseFocusInitialTarget(targetKey)
+    val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(state.loading, initialContentFocusPending, focusKey, showOptions, state.viewMode, restoreRevision, sharedFocusOwner, keepHeaderFocus) {
         if (showOptions || keepHeaderFocus || state.loading || nodes.isEmpty() || !initialContentFocusPending) return@LaunchedEffect
+        if (sharedFocusOwner) {
+            initialContentFocusPending = false
+            return@LaunchedEffect
+        }
         val index = nodes.indexOfFirst { it.key == targetKey }.coerceAtLeast(0)
         if (contentGrid.layoutInfo.visibleItemsInfo.none { it.index == index }) contentGrid.scrollToItem(index)
         delay(100)
@@ -524,6 +544,7 @@ private fun DlnaNodeRow(
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
     Box(
         modifier = Modifier.fillMaxWidth().padding(2.dp).then(focusModifier)
+            .browseFocusTarget(node.key)
             .focusOnTvPointer()
             .onPreviewKeyEvent { event ->
                 val activation = event.key == Key.Enter || event.key == Key.NumPadEnter ||

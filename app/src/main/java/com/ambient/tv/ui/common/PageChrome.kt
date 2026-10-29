@@ -64,9 +64,6 @@ import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.theme.appControlSurface
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.animateContentSize
@@ -267,8 +264,8 @@ fun PageHeader(
             // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
             Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
             // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
-            if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
-            else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+            if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
+            else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).browseFocusTarget("page-actions", content = false).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
             // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
             // same spot on every page, also where Home's floating clock is.
             if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top))
@@ -332,6 +329,7 @@ fun Modifier.pageChips(chain: PageFocusChain, up: FocusRequester = chain.actions
         onDispose { chain.hasChips = false }
     }
     return focusRequester(chain.chips)
+        .browseFocusTarget("page-chips", content = false)
         .focusRestorer(chain.selectedChip)
         .onPreviewKeyEvent { event ->
             if (event.key != Key.DirectionUp) false else {
@@ -364,28 +362,7 @@ fun SettingsSectionHeader(
     title: String,
     modifier: Modifier = Modifier,
     description: String? = null,
+    firstInContent: Boolean = false,
 ) {
-    val page = LocalSettingsPresentation.current == SettingsPresentation.Page
-    Column(
-        modifier = modifier.fillMaxWidth().padding(top = if (page) 16.dp else 12.dp, bottom = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(3.dp, 16.dp)
-                    .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(999.dp)),
-            )
-            Text(
-                title,
-                modifier = Modifier.semantics { heading() },
-                style = MaterialTheme.typography.titleSmall.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        description?.takeIf(String::isNotBlank)?.let { SettingsHint(it) }
-    }
+    SettingsHeading(title, SettingsHeadingLevel.SECTION, modifier, description, firstInContent)
 }

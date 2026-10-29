@@ -163,7 +163,7 @@ internal fun PlayerVideoSettingsGroups(
         // The list: one row per area with what is set there; OK opens the area as its own level.
         SettingsHint(playbackProfileScopeSummary())
         if (hasSdrToHdrControl) {
-            SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
+            SettingsHint(stringResource(R.string.settings_playback_scope_defaults))
             PlayerSdrToHdrControl()
             SettingsSectionHeader(stringResource(R.string.image_category))
         }
@@ -207,7 +207,7 @@ internal fun PlayerVideoSettingsGroups(
         }
         if (activeSection == "scaling") {
             if (hasPresentationControls) {
-                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_current))
+                SettingsHint(stringResource(R.string.settings_playback_scope_current))
             }
             presentationControls()
         }
@@ -218,7 +218,7 @@ internal fun PlayerVideoSettingsGroups(
                 SvpPanelEntry(handle) { onOpenSubPage?.invoke("svp") }
             }
             if (hasPlaybackControls) {
-                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_current))
+                SettingsHint(stringResource(R.string.settings_playback_scope_current))
             }
             playbackControls()
         }
@@ -226,7 +226,7 @@ internal fun PlayerVideoSettingsGroups(
         if (activeSection == "output") {
             PlayerHdrDiagnostics()
             if (hasSdrToHdrControl) {
-                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
+                SettingsHint(stringResource(R.string.settings_playback_scope_defaults))
                 PlayerSdrToHdrControl()
             }
             outputExtras()
@@ -683,7 +683,7 @@ private fun PlayerDisplayModeRows() {
     val playbackKey = LocalPlaybackMetadata.current?.route
     val modes = rememberAvailableDisplayModes(context)
     if (modes.size <= 1) return
-    SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
+    SettingsHint(stringResource(R.string.settings_playback_scope_defaults))
     val preferences = remember(context) { videoImagePreferences(context) }
     var selected by remember { mutableStateOf(preferences.preferredDisplayModeKey) }
     val options = listOf(

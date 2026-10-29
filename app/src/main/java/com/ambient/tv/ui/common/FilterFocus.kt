@@ -73,5 +73,7 @@ internal fun Modifier.filterControlFocus(key: String, surface: FilterFocusSurfac
         state.register(target, requester)
         onDispose { state.unregister(target, requester) }
     }
-    return focusRequester(requester).onFocusChanged { if (it.hasFocus) state.keepControls() }
+    return focusRequester(requester)
+        .then(if (surface == FilterFocusSurface.BAR) Modifier.browseFocusTarget("filter:$key", content = false) else Modifier)
+        .onFocusChanged { if (it.hasFocus) state.keepControls() }
 }

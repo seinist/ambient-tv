@@ -107,6 +107,38 @@ internal fun smoothFrameDrop(previous: FrameDropSample?, sample: FrameDropSample
     )
 }
 
+internal const val FRAME_DROP_HISTORY_WINDOW_MS = 60_000L
+internal const val FRAME_DROP_HISTORY_MAX_PERCENT = 20.0
+private const val FRAME_DROP_HISTORY_CAPACITY = 61
+
+/** An interval ends at [realtimeMs]; null is an explicit gap, never a zero-drop measurement. */
+internal data class FrameDropHistoryPoint(val realtimeMs: Long, val percent: Double?, val estimated: Boolean)
+
+/**
+ * The existing one-second reader supplies both the compact display and this bounded history.
+ * Keep raw counter ratios, before smoothing. Invalid windows (pause/seek/counter generation)
+ * stay as gaps; a new handle owns a new history, and a non-monotone clock starts it over.
+ */
+internal class FrameDropHistory {
+    private val buffer = ArrayDeque<FrameDropHistoryPoint>(FRAME_DROP_HISTORY_CAPACITY)
+    private var previous: FrameDropReading? = null
+    val points: List<FrameDropHistoryPoint> get() = buffer.toList()
+
+    fun record(current: FrameDropReading): FrameDropSample? {
+        if (previous?.let { current.realtimeMs <= it.realtimeMs } == true) {
+            buffer.clear()
+            previous = null
+        }
+        val sample = frameDropWindow(previous, current)
+        val percent = sample?.counterDropPercent?.takeIf { it.isFinite() && it in 0.0..100.0 }
+        buffer.addLast(FrameDropHistoryPoint(current.realtimeMs, percent, current.estimated))
+        while (buffer.size > FRAME_DROP_HISTORY_CAPACITY ||
+            buffer.first().realtimeMs < current.realtimeMs - FRAME_DROP_HISTORY_WINDOW_MS) buffer.removeFirst()
+        previous = current
+        return sample
+    }
+}
+
 /** Real output can be zero; an unavailable measurement must remain distinguishable from it. */
 internal fun formatFrameOutputFps(value: Double?, locale: Locale = Locale.getDefault()): String =
     value?.takeIf { it.isFinite() && it >= 0.0 }?.let {

@@ -49,6 +49,12 @@ import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.resolveContentFocusTarget
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusFallback
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import kotlinx.coroutines.delay
 
@@ -82,8 +88,24 @@ fun SpotifyHomeScreen(
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
         initialFirstVisibleItemIndex = state.items.indexOfFirst { spotifyFocusId(it) == focusItemId }.coerceAtLeast(0),
     )
-    LaunchedEffect(state.loading, state.items, state.sectionKey, state.webAuthorized, initialContentFocusPending, focusItemId) {
+    BrowseFocusContentIdentity(listOf(expectedSectionKey, state.sectionKey, state.query))
+    RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map(::spotifyFocusId) })
+    val failed = state.error != null || state.errorRes != null
+    if (!state.loading && state.sectionKey == expectedSectionKey && !failed) BrowseFocusInitialTarget(focusItemId)
+    RegisterBrowseFocusFallback {
+        if (state.loading || state.sectionKey != expectedSectionKey) null
+        else if (failed || state.items.isEmpty()) {
+            val target = if (state.webAuthorized) nowPlayingFocusRequester else signInFocusRequester
+            runCatching { target.requestFocus() }.getOrDefault(false)
+        } else false
+    }
+    val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(state.loading, state.items, state.sectionKey, state.webAuthorized, initialContentFocusPending, focusItemId, sharedFocusOwner) {
         if (!initialContentFocusPending || state.sectionKey != expectedSectionKey || state.loading) return@LaunchedEffect
+        if (sharedFocusOwner) {
+            initialContentFocusPending = false
+            return@LaunchedEffect
+        }
         val failed = state.error != null || state.errorRes != null
         delay(140)
         // The grid state was created while loading (no items yet): bring the saved tile into view first.
@@ -176,7 +198,7 @@ private fun SpotifyTile(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = modifier.width(deviceDp(190.dp, 160.dp)).mediaFocusMotion(focused).activateOnTvKey(onClick = activate).onFocusChanged {
+        modifier = modifier.browseFocusTarget(spotifyFocusId(item)).width(deviceDp(190.dp, 160.dp)).mediaFocusMotion(focused).activateOnTvKey(onClick = activate).onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onFocused()
         },

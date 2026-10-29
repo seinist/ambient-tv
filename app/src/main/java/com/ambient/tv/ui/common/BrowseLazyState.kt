@@ -42,24 +42,32 @@ internal val BrowseRowCacheBehind = 100.dp
 fun rememberBrowseRowState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
+    itemKeys: List<Any> = emptyList(),
 ): LazyListState = (if (LocalHandheldUi.current) {
     rememberLazyListState(initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
 } else {
     rememberLazyListState(
         remember { LazyLayoutCacheWindow(ahead = BrowseRowCacheAhead, behind = BrowseRowCacheBehind) },
         initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
-}).also { state -> ScrollToTopOnReselect { state.scrollToItem(0) } }
+}).also { state ->
+    ScrollToTopOnReselect { state.scrollToItem(0) }
+    if (itemKeys.isNotEmpty()) RegisterBrowseFocusList(state, itemKeys)
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun rememberBrowseListState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
+    itemKeys: List<Any> = emptyList(),
 ): LazyListState = (if (LocalHandheldUi.current) {
     rememberLazyListState(initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
 } else {
     rememberLazyListState(rememberBrowseCacheWindow(), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
-}).also { state -> ScrollToTopOnReselect { state.scrollToItem(0) } }
+}).also { state ->
+    ScrollToTopOnReselect { state.scrollToItem(0) }
+    if (itemKeys.isNotEmpty()) RegisterBrowseFocusList(state, itemKeys)
+}
 
 /**
  * Selecting the menu entry of the page that is already open scrolls its lists back to the top.
@@ -88,8 +96,12 @@ private fun ScrollToTopOnReselect(scroll: suspend () -> Unit) {
 fun rememberBrowseGridState(
     initialFirstVisibleItemIndex: Int = 0,
     initialFirstVisibleItemScrollOffset: Int = 0,
+    itemKeys: List<Any> = emptyList(),
 ): LazyGridState = (if (LocalHandheldUi.current) {
     rememberLazyGridState(initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
 } else {
     rememberLazyGridState(rememberBrowseCacheWindow(), initialFirstVisibleItemIndex, initialFirstVisibleItemScrollOffset)
-}).also { state -> ScrollToTopOnReselect { state.scrollToItem(0) } }
+}).also { state ->
+    ScrollToTopOnReselect { state.scrollToItem(0) }
+    if (itemKeys.isNotEmpty()) RegisterBrowseFocusGrid(state, itemKeys)
+}
