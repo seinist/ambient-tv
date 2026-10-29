@@ -309,7 +309,7 @@ private fun RightSidePanelChrome(
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
     val playerPanelInteractive = com.ambient.tv.ui.player.LocalPlayerPanelInteractive.current
     val playerPanelMotion = com.ambient.tv.ui.player.LocalPlayerPanelMotion.current
-    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current && playerPanelInteractive) {
+    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
         // Handheld: the screen beside the panel is a dismiss area. It takes the tap, so the
         // player underneath does not toggle its controls at the same time.
         Row(modifier.fillWindowHeight().fillMaxSize()) {
@@ -317,7 +317,9 @@ private fun RightSidePanelChrome(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .pointerInput(onOutsideTap) { detectTapGestures { onOutsideTap() } },
+                    .then(if (playerPanelInteractive) Modifier.pointerInput(onOutsideTap) {
+                        detectTapGestures { onOutsideTap() }
+                    } else Modifier),
             )
             RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
                 scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, retainFocus = retainFocus,
