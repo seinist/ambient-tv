@@ -287,7 +287,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
         ReferencePlayerClock(
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = model.clockEndPadding),
         )
-        ReferencePlayerBottomContent {
+        ReferencePlayerBottomContent(onTogglePlayback = model.onSeekBarToggle) {
             PlayerNowPlayingHeader(model.state)
             if (model.timelineAlways || model.durationMs > 0L) {
                 TvPlayerSeekBar(

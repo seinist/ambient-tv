@@ -20,6 +20,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerIconButton
+import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.theme.AmbientTvTheme
 
@@ -35,6 +36,7 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
     private val duration = mutableLongStateOf(120_000L)
     private val settingsVisible = mutableStateOf(true)
     private var seekDelta = 0L
+    private var toggles = 0
     private var selectedTrack = "1"
     private lateinit var focusState: PlayerControlFocus
     private fun mark(id: String) = Modifier.onFocusChanged {
@@ -106,13 +108,15 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                             PersistentPlayerChrome("osd-navigation-audit") {
                                 focusState = checkNotNull(LocalPlayerControlFocus.current)
                                 chrome = checkNotNull(LocalPlayerChromeState.current)
+                                val panels = rememberPlayerPanelNavigation()
+                                RequestPlayerOverlayFocus(play, chrome.osd.show && panels.panel == UnifiedPlayerPanel.NONE, panelNavigation = panels)
                                 Box(Modifier.fillMaxSize()) {
                                     Box(Modifier.fillMaxSize().focusRequester(rememberPlayerEngineFocus()).then(mark("engine")).focusable())
                                     PublishPlayerOsd(object : PlayerOsdSpec {
                                         @Composable
                                         override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
                                             PlayerOverlayVisibility(visible) {
-                                                ReferencePlayerBottomContent {
+                                                ReferencePlayerBottomContent(modifier = mark("info"), onTogglePlayback = { toggles++ }) {
                                                     ReferencePlayerHeader(
                                                         title = if (metadataLoaded.value) "Loaded title" else "Loading",
                                                         artworkUrl = null,
@@ -159,17 +163,22 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                 }
             }
             instrumentation.waitForIdleSync()
-            requestFocus(settings)
+            awaitFocus("timeline")
+            main {
+                check(!chrome.osd.expanded)
+                check(!runCatching { settings.requestFocus() }.getOrDefault(false)) { "Hidden action accepted focus" }
+            }
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
+            awaitFocus("play")
+            key(KeyEvent.KEYCODE_DPAD_RIGHT)
             awaitFocus("settings")
             key(KeyEvent.KEYCODE_DPAD_UP)
             awaitFocus("timeline")
-            key(KeyEvent.KEYCODE_DPAD_UP)
-            awaitFocus("settings")
             key(KeyEvent.KEYCODE_DPAD_UP)
             awaitFocus("timeline")
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             awaitFocus("settings")
-            log("PASS settings -> Up -> timeline -> Up/Down -> settings")
+            log("PASS compact startup, hidden buttons reject focus, Down expands and Up returns to compact")
 
             key(KeyEvent.KEYCODE_DPAD_LEFT)
             awaitFocus("play")
@@ -185,7 +194,7 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
             key(KeyEvent.KEYCODE_DPAD_UP)
             awaitFocus("timeline")
             main { settingsVisible.value = false }
-            awaitState("settings unregistered") { focusState.buttonTarget(play) === play }
+            instrumentation.waitForIdleSync()
             key(KeyEvent.KEYCODE_DPAD_DOWN)
             awaitFocus("play")
             log("PASS removed originating button falls back to play")
@@ -193,18 +202,24 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
             main { timelineVisible.value = false }
             awaitState("timeline unregistered") { focusState.seekTarget() == null }
             key(KeyEvent.KEYCODE_DPAD_UP)
-            awaitFocus("play")
+            awaitFocus("info")
+            key(KeyEvent.KEYCODE_DPAD_CENTER)
+            main { check(toggles == 1) { "Compact info OK did not toggle playback" } }
             main { timelineVisible.value = true; duration.longValue = 0 }
             instrumentation.waitForIdleSync()
-            key(KeyEvent.KEYCODE_DPAD_UP)
+            awaitFocus("info")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
             awaitFocus("play")
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            awaitFocus("info")
             main { duration.longValue = 120_000 }
             awaitState("timeline registered") { focusState.seekTarget() != null }
-            key(KeyEvent.KEYCODE_DPAD_UP)
             awaitFocus("timeline")
             key(KeyEvent.KEYCODE_DPAD_UP)
+            awaitFocus("timeline")
+            key(KeyEvent.KEYCODE_DPAD_DOWN)
             awaitFocus("play")
-            log("PASS missing/unknown-duration timeline retains focus; becoming seekable restores navigation")
+            log("PASS compact info without a timeline, OK toggle, and late seek availability restore focus")
             main { timelineVisible.value = false; settingsVisible.value = true }
             instrumentation.waitForIdleSync()
             requestFocus(settings)
@@ -220,7 +235,8 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                 main {
                     metadataLoaded.value = false
                     panelLoading.value = true
-                    chrome.panels.open(panel)
+                    chrome.osd.expand()
+                    chrome.panels.fromOrigin("bar:Settings", root = true) { chrome.panels.open(panel) }
                     chrome.panels.videoState.section = "output"
                 }
                 instrumentation.waitForIdleSync()
@@ -253,12 +269,24 @@ internal class PlayerOsdNavigationAudit(private val instrumentation: Instrumenta
                 }
                 main { chrome.panels.close() }
                 instrumentation.waitForIdleSync()
-                requestFocus(settings)
                 awaitFocus("settings")
                 Thread.sleep(100)
                 main { check(focused == "settings") { "Closed panel reclaimed focus" } }
                 log("PASS $panel metadata update and replaced control retain panel focus and D-pad navigation")
             }
+            main { chrome.osd.close() }
+            Thread.sleep(150)
+            main { chrome.osd.reveal() }
+            awaitFocus("timeline")
+            Thread.sleep(1_000)
+            main { check(chrome.osd.show && !chrome.osd.expanded) { "An outgoing animation closed the reopened compact OSD" } }
+            main { chrome.osd.close() }
+            awaitState("compact fade completes") { chrome.osd.mode == PlayerOsdMode.HIDDEN }
+            main { chrome.osd.reveal() }
+            awaitFocus("timeline")
+            main { chrome.osd.close(); chrome.osd.close() }
+            awaitState("second close finishes immediately") { chrome.osd.mode == PlayerOsdMode.HIDDEN }
+            log("PASS close reversal preserves compact focus; close completion and repeated Back reach hidden")
         } finally { main { activity.finish() } }
     }
 }

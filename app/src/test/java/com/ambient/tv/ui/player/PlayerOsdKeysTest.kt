@@ -64,6 +64,20 @@ class PlayerOsdKeysTest {
         assertEquals(true to listOf("seek:-120000:bar"), press(Key.DirectionLeft, state(OsdContent.RECORDING)))
     }
 
+    @Test fun firstOkClaimsAutomaticChannelInformationWithoutPausing() {
+        for (key in listOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter)) {
+            assertEquals(true to listOf("osd"), press(key, state(OsdContent.LIVE, visible = true, zapOsd = true)))
+        }
+    }
+
+    @Test fun directionsDuringClosingReopenWithoutJumpingOrZapping() {
+        for (content in OsdContent.entries) {
+            for (key in listOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)) {
+                assertEquals(true to listOf("osd"), press(key, state(content).copy(closing = true)))
+            }
+        }
+    }
+
     @Test fun upDownJumpOrChangeChannels() {
         assertEquals(true to listOf("seek:60000:bar"), press(Key.DirectionUp, state()))
         assertEquals(true to listOf("seek:-60000:bar"), press(Key.DirectionDown, state(OsdContent.MUSIC)))

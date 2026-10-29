@@ -13,12 +13,14 @@ internal data class OsdKeyState(
     val content: OsdContent,
     val osdVisible: Boolean,
     val panelOpen: Boolean,
-    /** The seek bar shown after a jump with the OSD hidden. */
+    /** The shared compact OSD is currently giving passive feedback after a jump. */
     val seekFeedbackVisible: Boolean,
     /** The OSD only shows a channel change; Up/Down keep changing channels. */
     val zapOsd: Boolean = false,
     /** False while the duration is unknown: Right then only opens the OSD. */
     val canSeekForward: Boolean = true,
+    /** The OSD is still drawn; navigation reverses its close instead of acting on hidden video. */
+    val closing: Boolean = false,
 )
 
 /** Jump sizes; [held] accelerates a base step while the key is held (repeat count). */
@@ -36,7 +38,7 @@ internal interface OsdKeyTarget {
     fun play()
     fun pause()
     fun stop()
-    /** Relative seek; with [revealOsd] false the seek bar is shown instead of the OSD. */
+    /** Relative seek; [revealOsd] false shows the same compact OSD as passive seek feedback. */
     fun seek(deltaMs: Long, revealOsd: Boolean)
     /** Null means no chapters; zero means the chapter boundary was reached. */
     fun chapterSeekDelta(direction: Int): Long? = null
@@ -83,11 +85,17 @@ internal fun handlePlayerOsdKey(
 ): Boolean {
     if (!keyDown || key in PASS_KEYS) return false
     if (state.panelOpen && key !in MEDIA_KEYS) return false
+    if (state.closing && key in setOf(Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown)) {
+        target.showOsd()
+        return true
+    }
     val live = state.content == OsdContent.LIVE
     val music = state.content == OsdContent.MUSIC
     when (key) {
         in CONFIRM_KEYS -> {
-            if (state.osdVisible) return false
+            // The first OK after automatic channel information claims the controls;
+            // it must not also toggle playback on the newly focused compact target.
+            if (state.osdVisible && !state.zapOsd) return false
             if (state.seekFeedbackVisible) target.hideSeekFeedback()
             target.showOsd()
             return true

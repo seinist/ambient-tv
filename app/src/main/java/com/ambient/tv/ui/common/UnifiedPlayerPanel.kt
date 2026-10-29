@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
@@ -59,7 +60,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -287,17 +291,31 @@ val LocalPlayerPanelNavigation = compositionLocalOf<PlayerPanelNavigation?> { nu
 /** Player-scoped [PlayerPanelNavigation] that also performs its focus hand-backs. */
 @Composable
 fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
-    val navigation = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.panels
+    val chrome = com.ambient.tv.ui.player.LocalPlayerChromeState.current
+    val navigation = chrome?.panels
         ?: remember(*keys) { PlayerPanelNavigation() }
     LaunchedEffect(navigation, navigation.restoreGeneration) {
         val key = navigation.restoreKey ?: return@LaunchedEffect
         val generation = navigation.restoreGeneration
         val destination = navigation.panel
         val requester = navigation.focusRequester(key)
+        if (destination == UnifiedPlayerPanel.NONE && key.startsWith("bar:")) {
+            if (chrome?.osd?.let { it.closing || !it.visible.value } == true) {
+                navigation.cancelFocusReturn()
+                return@LaunchedEffect
+            }
+            // Restore the visible action row before a pending requester can focus its button.
+            chrome?.osd?.expand()
+            withFrameNanos { }
+        }
         // The origin re-enters composition with the parent level, or slides back in with the bar.
         var placed = false
         val finished = retryFocusFor {
             if (navigation.restoreGeneration != generation || navigation.panel != destination) return@retryFocusFor true
+            if (destination == UnifiedPlayerPanel.NONE && key.startsWith("bar:") && chrome?.osd?.expanded == false) {
+                navigation.cancelFocusReturn()
+                return@retryFocusFor true
+            }
             placed = runCatching { requester.requestFocus() }.getOrDefault(false)
             placed
         }
@@ -318,8 +336,11 @@ object PlayerOsdTimeout {
 
 val PLAYER_CONTROLS_TIMEOUT_MS: Long get() = PlayerOsdTimeout.seconds * 1_000L
 
-/** OSD play/pause control. Seek-bar Down moves here, and the OSD opens on it. */
+/** Fallback action when the compact seek bar opens the button row. */
 val LocalPlayerPlayPauseFocus = compositionLocalOf<FocusRequester?> { null }
+
+/** Mounted controls retain their capability registration while a collapsed bar is inert. */
+private val LocalPlayerBarInteractive = compositionLocalOf { true }
 
 /**
  * Shared player action bar: transport/source actions stay left, while playback options and
@@ -378,29 +399,46 @@ private fun PlayerControlBarContent(
     }
     val focusManager = LocalFocusManager.current
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
+    val osd = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.osd
     val osdStow = com.ambient.tv.ui.player.LocalPlayerOsdStow.current
-    val stowed = controlFocus?.seekFocused == true || osdStow?.closing == true
-    // Slides down while the seek bar holds focus and when the OSD closes; the block above follows
-    // for the seek bar and slides down with it when the OSD closes.
-    // Stays in the layout so D-pad down still finds it.
-    // The OSD opening straight onto the seek bar snaps instead of visibly sliding away.
-    val openedAt = remember { android.os.SystemClock.uptimeMillis() }
-    val stow = remember { androidx.compose.animation.core.Animatable(if (stowed) 1f else 0f) }
+    val collapse = com.ambient.tv.ui.player.rememberCollapsePlayerControls()
+    val stowed = if (osd != null) !osd.expanded else controlFocus?.seekFocused == true || osdStow?.closing == true
+    val interactive = osd?.let { it.expanded && !it.closing } ?: (osdStow?.closing != true)
+    // A fresh compact OSD starts fully stowed. One animation moves both the row and its
+    // information block; closing never adds another downward step to the compact endpoint.
+    val ownStow = remember { androidx.compose.animation.core.Animatable(if (stowed) 1f else 0f) }
+    val stow = osdStow?.progress ?: ownStow
     LaunchedEffect(stowed) {
         val target = if (stowed) 1f else 0f
-        if (android.os.SystemClock.uptimeMillis() - openedAt < 300L) stow.snapTo(target)
-        // Closing gets a longer, eased slide so the bar is visibly stowed before the OSD fades.
-        else stow.animateTo(target, if (osdStow?.closing == true) androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing) else androidx.compose.animation.core.tween(200))
-    }
-    if (osdStow != null) LaunchedEffect(osdStow) {
-        androidx.compose.runtime.snapshotFlow { stow.value }.collect { osdStow.fraction = it }
+        stow.animateTo(target, androidx.compose.animation.core.tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
     }
     val navigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
+    androidx.compose.runtime.CompositionLocalProvider(LocalPlayerBarInteractive provides interactive) {
     Column(
-        modifier.fillMaxWidth().graphicsLayer {
-            translationY = stow.value * 72.dp.toPx()
-            alpha = 1f - stow.value
-        },
+        modifier.fillMaxWidth()
+            .onSizeChanged { osdStow?.barHeightPx = it.height }
+            .graphicsLayer {
+                // The parent already moves by the row height plus its gap. The final inset
+                // moves every button fully below the viewport without moving the info again.
+                translationY = stow.value * (osdStow?.bottomInsetPx ?: 72.dp.toPx())
+                // Measurement arrives after the first compact frame; no row may flash before it.
+                alpha = when {
+                    stow.value >= 0.999f -> 0f
+                    osdStow == null -> 1f - stow.value
+                    else -> 1f
+                }
+            }
+            .focusProperties { onEnter = { if (!interactive) cancelFocusChange() } }
+            .focusGroup()
+            .then(if (interactive) Modifier else Modifier.clearAndSetSemantics { }.pointerInput(osd) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.any { it.pressed && !it.previousPressed }) osd?.reveal()
+                        event.changes.forEach { it.consume() }
+                    }
+                }
+            }),
     ) {
     Row(
         modifier = Modifier.fillMaxWidth().height(58.dp)
@@ -408,8 +446,8 @@ private fun PlayerControlBarContent(
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (event.key) {
                     Key.DirectionUp -> {
-                        controlFocus?.seekTarget()?.let { runCatching { it.requestFocus() } }
-                        true // No seek bar: keep focus in the controls.
+                        collapse()
+                        true
                     }
                     // Second Down below the seek bar: the chapter row.
                     Key.DirectionDown -> {
@@ -431,6 +469,7 @@ private fun PlayerControlBarContent(
         rightContent()
     }
     com.ambient.tv.ui.player.ChapterStrip()
+    }
     }
 }
 
@@ -660,6 +699,7 @@ fun PlayerIconButton(
         if (!com.ambient.tv.ui.player.osdButtonVisible(osd)) return
     }
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
+    val barInteractive = LocalPlayerBarInteractive.current
     var focused by remember { mutableStateOf(false) }
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val shape = RoundedCornerShape(LocalUiTokens.current.controlRadius)
@@ -674,7 +714,7 @@ fun PlayerIconButton(
         controlFocus?.register(controlKey, controlRequester, controlOwner)
         onDispose { controlFocus?.unregister(controlKey, controlOwner) }
     }
-    val click: () -> Unit = { if (enabled) { navigation?.fromOrigin(originKey, root = true, onClick) ?: onClick() } }
+    val click: () -> Unit = { if (enabled && barInteractive) { navigation?.fromOrigin(originKey, root = true, onClick) ?: onClick() } }
     Row(
         modifier = modifier
             .then(if (controlFocus != null) Modifier.focusRequester(controlRequester).onFocusChanged {
@@ -682,6 +722,7 @@ fun PlayerIconButton(
             } else Modifier)
             .then(if (primary && playPauseFocus != null) Modifier.focusRequester(playPauseFocus) else Modifier)
             .then(if (navigation != null) Modifier.focusRequester(navigation.focusRequester(originKey)) else Modifier)
+            .focusProperties { canFocus = barInteractive }
             // Keep the compact television chrome unchanged. Touch controls need a full
             // 48 dp target even when the visible glyph remains deliberately small.
             .size(if (primary) 58.dp else 48.dp, if (handheld) 48.dp else 40.dp)
@@ -690,7 +731,7 @@ fun PlayerIconButton(
             // Size identifies the main action; only actual focus draws the focus treatment.
             .appControlSurface(focused, selected, shape = shape)
             .activateOnTvKey(onClick = click)
-            .clickable(role = Role.Button, onClick = click),
+            .clickable(enabled = barInteractive, role = Role.Button, onClick = click),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

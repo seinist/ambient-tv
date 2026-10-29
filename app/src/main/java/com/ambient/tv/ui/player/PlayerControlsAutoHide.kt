@@ -16,7 +16,8 @@ internal fun playerControlsCanAutoHide(
     playing: Boolean,
     panelOpen: Boolean,
     changingItem: Boolean,
-): Boolean = visible && playing && !panelOpen && !changingItem
+    closing: Boolean = false,
+): Boolean = visible && playing && !panelOpen && !changingItem && !closing
 
 /**
  * One timeout policy for every content source and decoder. Opening a panel cancels the
@@ -35,15 +36,17 @@ internal fun PlayerControlsAutoHide(
     val setVisible by rememberUpdatedState(onVisibilityChanged)
     val navigationInput = LocalPlaybackNavigation.current?.interactionVersion
     val userInput = BackgroundPlaybackSession.userInputVersion
+    val osd = LocalPlayerChromeState.current?.osd
     val timeoutMs = PLAYER_CONTROLS_TIMEOUT_MS
-    LaunchedEffect(visible, playing, panelOpen, changingItem, interactionVersion, navigationInput, userInput, timeoutMs) {
+    LaunchedEffect(visible, playing, panelOpen, changingItem, interactionVersion,
+        osd?.interactionVersion, osd?.closing, navigationInput, userInput, timeoutMs) {
         if (panelOpen) {
             // The overlay hides visually through playerOsdVisible. Keep its logical return
             // state so panel Back restores the OSD and the originating action together.
             if (!visible) setVisible(true)
             return@LaunchedEffect
         }
-        if (playerControlsCanAutoHide(visible, playing, panelOpen, changingItem)) {
+        if (playerControlsCanAutoHide(visible, playing, panelOpen, changingItem, osd?.closing == true)) {
             delay(timeoutMs)
             setVisible(false)
         }

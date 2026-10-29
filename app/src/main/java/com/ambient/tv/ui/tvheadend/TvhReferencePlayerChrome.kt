@@ -95,6 +95,7 @@ fun BoxScope.TvhReferencePlayerChrome(
     sleepSelected: Boolean = false,
     settingsSelected: Boolean = false,
 ) {
+    val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     val nowSeconds = System.currentTimeMillis() / 1000L
     val liveEventDurationMs = nowEvent?.durationSeconds?.times(1000L) ?: 0L
     val liveEventPositionMs = nowEvent?.let {
@@ -118,7 +119,7 @@ fun BoxScope.TvhReferencePlayerChrome(
         liveLabel = if (source.isLive) stringResource(if (com.ambient.tv.livetv.LiveTimeshift.current?.recordingId != null) R.string.live_recording_playback else R.string.tvh_live).uppercase() else null,
         modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = 48.dp),
     )
-    ReferencePlayerBottomContent {
+    ReferencePlayerBottomContent(onTogglePlayback = onTogglePlayback) {
         ReferencePlayerHeader(
             // Keep the header geometry while programme artwork and subtitles load after a zap.
             modifier = if (source.isLive)
@@ -204,7 +205,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 onSeekBy = onSeekBy,
-                onInteraction = {},
+                onInteraction = osd::interact,
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
                 modifier = Modifier.focusRequester(seekFocusRequester),
@@ -219,7 +220,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 positionMs = watchedWallMs.coerceIn(oldest, edge) - oldest,
                 durationMs = (edge - oldest).coerceAtLeast(1L),
                 onSeekBy = { delta -> if (shiftable) seekLiveTimeshiftBy(positionMs, delta) },
-                onInteraction = {},
+                onInteraction = osd::interact,
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
                 modifier = Modifier.focusRequester(seekFocusRequester),

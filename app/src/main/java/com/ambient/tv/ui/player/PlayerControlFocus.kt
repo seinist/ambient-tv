@@ -16,19 +16,24 @@ internal class PlayerControlFocus {
     private var lastButtonKey: String? by mutableStateOf(null)
     private var focusedOwner: Any? = null
 
-    val hasFocus: Boolean get() = focusedOwner != null
+    val hasFocus: Boolean get() = focusedOwner != null && controls[lastKey]?.owner === focusedOwner
     /** Observable so the action bar can slide away while the seek bar is focused. */
     var seekFocused: Boolean by mutableStateOf(false)
         private set
     fun target(fallback: FocusRequester): FocusRequester = controls[lastKey]?.requester ?: fallback
 
-    fun buttonTarget(fallback: FocusRequester): FocusRequester = controls[lastButtonKey]?.requester ?: fallback
+    fun buttonTarget(fallback: FocusRequester): FocusRequester =
+        controls[lastButtonKey]?.requester ?: controls["play-pause"]?.requester ?: fallback
     fun seekTarget(): FocusRequester? = controls["seek-bar"]?.requester
+    fun compactTarget(): FocusRequester? = seekTarget() ?: controls["compact-info"]?.requester
+    val compactFocused: Boolean get() = hasFocus && lastKey in COMPACT_CONTROLS
+    fun isFocused(target: FocusRequester?): Boolean = controls[lastKey]?.let {
+        it.requester === target && it.owner === focusedOwner
+    } == true
 
-    /** A closed OSD starts at Play/Pause next time, even during a reversed fade-out. */
+    /** A fresh opening enters compact controls; expanding still returns to the last used button. */
     fun resetForNextOpen() {
         lastKey = null
-        lastButtonKey = null
         focusedOwner = null
         seekFocused = false
     }
@@ -48,13 +53,17 @@ internal class PlayerControlFocus {
     fun focused(key: String, owner: Any, focused: Boolean) {
         if (focused) {
             lastKey = key
-            if (key != "seek-bar") lastButtonKey = key
+            if (key !in COMPACT_CONTROLS) lastButtonKey = key
             focusedOwner = owner
             seekFocused = key == "seek-bar"
         } else if (focusedOwner === owner) {
             focusedOwner = null
             seekFocused = false
         }
+    }
+
+    private companion object {
+        val COMPACT_CONTROLS = setOf("seek-bar", "compact-info")
     }
 }
 

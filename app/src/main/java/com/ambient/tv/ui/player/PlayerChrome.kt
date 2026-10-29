@@ -4,6 +4,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +19,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.graphicsLayer
@@ -29,6 +30,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -149,41 +159,45 @@ fun ReferencePlayerHeader(
 }
 
 /**
- * Shared by the OSD, its bottom block and the action bar: [fraction] is how far the bar has slid
- * away (0..1), and the block above it follows it down. [closing] stows the bar before the fade.
+ * One animation drives both the action bar and the block above it. Measured geometry keeps
+ * the compact endpoint stable when the chapter strip, display density or layout changes.
  */
-internal class PlayerOsdStow {
-    var fraction by mutableFloatStateOf(0f)
-    private var closingState by mutableStateOf(false)
-    /** [fraction] when closing began: a block already following a stowed bar stays put instead of jumping up. */
-    var closingFraction by mutableFloatStateOf(0f)
-        private set
-    var closing: Boolean
-        get() = closingState
-        set(value) {
-            if (value && !closingState) closingFraction = fraction
-            closingState = value
-        }
+internal class PlayerOsdStow(initiallyCollapsed: Boolean = false) {
+    val progress = androidx.compose.animation.core.Animatable(if (initiallyCollapsed) 1f else 0f)
+    val fraction: Float get() = progress.value
+    var closing by mutableStateOf(false)
+    var barHeightPx by androidx.compose.runtime.mutableIntStateOf(0)
+    var gapPx by androidx.compose.runtime.mutableFloatStateOf(0f)
+    var bottomInsetPx by androidx.compose.runtime.mutableFloatStateOf(0f)
 }
 
 internal val LocalPlayerOsdStow = compositionLocalOf<PlayerOsdStow?> { null }
 
-/** Action bar height plus the block spacing: the gap the stowed bar leaves behind. */
-private val StowedBarGap = 71.dp
-
 @Composable
 fun BoxScope.ReferencePlayerBottomContent(
     modifier: Modifier = Modifier,
+    onTogglePlayback: () -> Unit = BackgroundPlaybackSession::toggle,
     content: @Composable () -> Unit,
 ) {
+    val handheld = LocalHandheldUi.current
     val playPauseFocus = remember { FocusRequester() }
     val controlFocus = LocalPlayerControlFocus.current ?: remember { PlayerControlFocus() }
+    val osd = LocalPlayerChromeState.current?.osd
     val stow = LocalPlayerOsdStow.current
-    // A closing OSD slides the block down with the bar (same curve), even when it already followed a stowed bar.
-    val closeSlide = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(stow?.closing) {
-        if (stow?.closing == true) closeSlide.animateTo(1f, androidx.compose.animation.core.tween(350, easing = androidx.compose.animation.core.FastOutSlowInEasing))
-        else closeSlide.snapTo(0f)
+    val compactFocus = remember { FocusRequester() }
+    val compactOwner = remember { Any() }
+    var compactFocused by remember { mutableStateOf(false) }
+    val expand = rememberExpandPlayerControls()
+    val density = LocalDensity.current
+    val spacing = deviceDp(13.dp, 6.dp)
+    val bottomInset = deviceDp(32.dp, 12.dp)
+    SideEffect {
+        stow?.gapPx = with(density) { spacing.toPx() }
+        stow?.bottomInsetPx = with(density) { bottomInset.toPx() }
+    }
+    DisposableEffect(controlFocus, compactOwner) {
+        controlFocus.register("compact-info", compactFocus, compactOwner)
+        onDispose { controlFocus.unregister("compact-info", compactOwner) }
     }
     CompositionLocalProvider(
         LocalPlayerPlayPauseFocus provides playPauseFocus,
@@ -193,10 +207,40 @@ fun BoxScope.ReferencePlayerBottomContent(
             modifier = modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .then(if (LocalHandheldUi.current) Modifier.verticalScroll(rememberScrollState()) else Modifier)
-                .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = deviceDp(32.dp, 12.dp))
-                .then(stow?.let { Modifier.graphicsLayer { translationY = ((if (it.closing) it.closingFraction else it.fraction) + closeSlide.value) * StowedBarGap.toPx() } } ?: Modifier),
-            verticalArrangement = Arrangement.spacedBy(deviceDp(13.dp, 6.dp)),
+                .then(if (handheld) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = bottomInset)
+                .then(if (!handheld && stow != null) Modifier.graphicsLayer {
+                    translationY = stow.fraction * (stow.barHeightPx + stow.gapPx)
+                } else Modifier)
+                .focusRequester(compactFocus)
+                .focusProperties {
+                    canFocus = !handheld && osd != null && osd.visible.value && !osd.expanded &&
+                        !osd.closing && controlFocus.seekTarget() == null
+                }
+                .onFocusChanged {
+                    compactFocused = it.isFocused
+                    controlFocus.focused("compact-info", compactOwner, it.isFocused)
+                }
+                .onPreviewKeyEvent { event ->
+                    if (!compactFocused || osd?.closing == true) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> {
+                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) expand()
+                            true
+                        }
+                        Key.DirectionUp -> true
+                        Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
+                            if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                                osd?.interact()
+                                onTogglePlayback()
+                            }
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .focusable(),
+            verticalArrangement = Arrangement.spacedBy(spacing),
         ) {
             content()
         }

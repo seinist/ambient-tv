@@ -118,7 +118,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerTouchLayer
-import com.ambient.tv.ui.player.PlayerSeekModeBar
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -133,7 +132,6 @@ import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
-import com.ambient.tv.ui.common.PLAYER_CONTROLS_TIMEOUT_MS
 import com.ambient.tv.ui.player.PlayerBufferingSpinner
 import com.ambient.tv.ui.player.media3WaitingForPlaybackPicture
 import com.ambient.tv.ui.player.PlaybackEngineFactory
@@ -205,9 +203,9 @@ fun TvheadendPlayerScreen(
     val zapChrome = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     LaunchedEffect(viewModel.zapVersion) {
         if (viewModel.zapVersion > 0 && zapChrome != null && zapChrome.panels.panel == UnifiedPlayerPanel.NONE) {
-            // Zapped from the hidden OSD (or while it only shows a change): Up/Down keep zapping.
-            // From the OSD's own channel buttons it stays the normal OSD with its focus.
-            val zapOnly = !zapChrome.visible.value || zapChrome.shownByZap.value
+            // An automatic/compact channel change keeps Up/Down available for zapping.
+            // The expanded bar's channel buttons retain their controls and focus instead.
+            val zapOnly = !zapChrome.osd.expanded || zapChrome.osd.closing
             zapChrome.visible.value = true
             zapChrome.shownByZap.value = zapOnly
         }
@@ -417,6 +415,7 @@ private fun TvheadendPlaybackSurface(
     }
     com.ambient.tv.ui.player.ObserveMedia3DisplayFormat(player, onVideoFormatChanged, onSourceHdrChanged)
     com.ambient.tv.ui.player.RestoreMedia3PlaybackProfile(player, metadata)
+    val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val chromeState = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
@@ -449,8 +448,6 @@ private fun TvheadendPlaybackSurface(
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, player.duration.takeIf { it > 0 } ?: 0L)
     val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
-    var seekFeedbackVersion by remember(player) { mutableStateOf(0) }
-    var seekFeedbackVisible by remember(player) { mutableStateOf(false) }
     var isPlaying by remember(player) { mutableStateOf(player.isPlaying) }
     var playbackState by remember(player) { mutableIntStateOf(player.playbackState) }
     var playWhenReady by remember(player) { mutableStateOf(player.playWhenReady) }
@@ -634,13 +631,6 @@ private fun TvheadendPlaybackSurface(
         playbackStarted = isPlaying,
         panelNavigation = panelNavigation,
     )
-    LaunchedEffect(seekFeedbackVersion) {
-        if (seekFeedbackVersion > 0) {
-            seekFeedbackVisible = true
-            delay(PLAYER_CONTROLS_TIMEOUT_MS)
-            seekFeedbackVisible = false
-        }
-    }
 
     val persistentVideoHost = LocalPersistentPlaybackVideoHost.current
     Box(modifier = Modifier.fillMaxSize()) {
@@ -661,17 +651,18 @@ private fun TvheadendPlaybackSurface(
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
         // Timeshift owns Rewind/Forward while it buffers a live channel; media keys act with a panel open too.
-        if (source.isLive && handleTimeshiftMediaKey(event, positionMs, seekJumpMs) { controlsVisible = true }) return@osdKeys true
+        if (source.isLive && handleTimeshiftMediaKey(event, positionMs, seekJumpMs) { osd.reveal() }) return@osdKeys true
         // Shared remote handling (PlayerOsdKeys); only the actions below are Media3's own.
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(
                 content = if (source.isLive) OsdContent.LIVE else OsdContent.RECORDING,
-                osdVisible = controlsVisible,
+                osdVisible = controlsVisible && !osd.seekFeedback && !osd.closing,
                 panelOpen = panel != UnifiedPlayerPanel.NONE,
-                seekFeedbackVisible = seekFeedbackVisible,
+                seekFeedbackVisible = osd.seekFeedback,
                 zapOsd = chromeState?.shownByZap?.value == true,
                 canSeekForward = player.duration > 0,
+                closing = osd.closing,
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
@@ -684,10 +675,10 @@ private fun TvheadendPlaybackSurface(
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
                     player.seekTo(if (player.duration > 0) target.coerceAtMost(player.duration) else target)
-                    if (revealOsd) controlsVisible = true else seekFeedbackVersion++
+                    if (revealOsd) osd.reveal() else osd.showSeekFeedback()
                 }
-                override fun showOsd() { controlsVisible = true }
-                override fun hideSeekFeedback() { seekFeedbackVisible = false }
+                override fun showOsd() { osd.reveal() }
+                override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() { player.seekTo(0L) }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
@@ -710,9 +701,6 @@ private fun TvheadendPlaybackSurface(
             visible = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
             modifier = Modifier.align(Alignment.Center),
         )
-        if (!controlsVisible && !source.isLive && seekFeedbackVisible) {
-            PlayerSeekModeBar(positionMs, durationMs, Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp))
-        }
         val hasAudioTrack = currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }
         val hasVideoTrack = currentTracks.groups.any { it.type == C.TRACK_TYPE_VIDEO }
         if (hasAudioTrack && !hasVideoTrack) {

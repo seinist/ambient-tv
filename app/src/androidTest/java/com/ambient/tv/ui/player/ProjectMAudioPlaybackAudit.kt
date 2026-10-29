@@ -91,17 +91,22 @@ internal class ProjectMAudioPlaybackAudit(private val test: Instrumentation, pri
                             "projectmaudit/$backend/$live", "projectM audio", backend, "audit", "audio",
                             hasVideo = live, isLive = live,
                         )) {
-                            if (backend == "mpv") MpvTvheadendPlaybackSurface(
-                                source, null, emptyMap(), null, emptyList(), null, null,
-                                {}, {}, { playbackError = it }, "off", "auto", { _, _ -> },
-                                10000, backend, { _, _, _ -> }, "direct", "projectm", true,
-                                null, false, { _, _, _ -> }, {},
-                            ) else VlcTvheadendPlaybackSurface(
-                                source, null, emptyMap(), null, emptyList(), null, null,
-                                {}, {}, { playbackError = it }, "off", "auto", { _, _ -> },
-                                "bilinear", 10000, backend, { _, _, _ -> }, "projectm", true,
-                                null, false, { _, _, _ -> },
-                            )
+                            PersistentPlayerChrome("projectmaudit/$backend/$live", initialZapOsd = live) {
+                                androidx.compose.foundation.layout.Box {
+                                    if (backend == "mpv") MpvTvheadendPlaybackSurface(
+                                        source, null, emptyMap(), null, emptyList(), null, null,
+                                        {}, {}, { playbackError = it }, "off", "auto", { _, _ -> },
+                                        10000, backend, { _, _, _ -> }, "direct", "projectm", true,
+                                        null, false, { _, _, _ -> }, {},
+                                    ) else VlcTvheadendPlaybackSurface(
+                                        source, null, emptyMap(), null, emptyList(), null, null,
+                                        {}, {}, { playbackError = it }, "off", "auto", { _, _ -> },
+                                        "bilinear", 10000, backend, { _, _, _ -> }, "projectm", true,
+                                        null, false, { _, _, _ -> },
+                                    )
+                                    PersistentPlayerOverlays()
+                                }
+                            }
                         }
                     }
                 }
