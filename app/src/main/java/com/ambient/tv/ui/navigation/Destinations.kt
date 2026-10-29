@@ -34,6 +34,7 @@ object Destinations {
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
     const val RADIO = "radio"
+    const val RADIO_PLAYER = "radio/player"
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
