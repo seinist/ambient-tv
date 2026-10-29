@@ -2147,6 +2147,10 @@
     <string name="settings_home_source_radio_popular">Radio Browser: Beliebt</string>
     <string name="settings_home_source_radio_favorites">Radio Browser: Favoriten</string>
     <string name="settings_home_source_radio_recent">Radio Browser: Zuletzt gehört</string>
+    <string name="settings_home_radio_facet_pick">Radio Browser: %1$s auswählen</string>
+    <string name="settings_home_radio_facet_loading">Radio-Browser-Einträge werden geladen …</string>
+    <string name="settings_home_radio_facet_none">Keine Einträge verfügbar.</string>
+    <string name="settings_home_radio_facet_all_added">Alle verfügbaren Einträge sind bereits auf Home.</string>
     <string name="radio_search_placeholder">Sender suchen</string>
     <string name="radio_no_stations">Keine Sender gefunden</string>
     <string name="radio_error">Radio Browser ist derzeit nicht erreichbar.</string>
