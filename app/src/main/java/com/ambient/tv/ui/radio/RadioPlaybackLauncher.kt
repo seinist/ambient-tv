@@ -2,6 +2,7 @@ package com.ambient.tv.ui.radio
 
 import android.content.Context
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
@@ -38,6 +39,7 @@ class RadioPlaybackLauncher @Inject constructor(
             context = context,
             streamUrl = streamUrl,
             startPositionMs = 0L,
+            mimeType = if (station.isHls) MimeTypes.APPLICATION_M3U8 else null,
             metadata = PlaybackMetadata(
                 route = Destinations.RADIO,
                 title = station.name,
