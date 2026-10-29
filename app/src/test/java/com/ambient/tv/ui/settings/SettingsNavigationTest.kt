@@ -33,6 +33,7 @@ class SettingsNavigationTest {
         assertEquals(SettingsArea.TELEVISION, SettingsCategory.LIVE_TV.area)
         assertEquals(SettingsArea.STREAMING, SettingsCategory.YOUTUBE.area)
         assertEquals(SettingsArea.STREAMING, SettingsCategory.SPOTIFY.area)
+        assertEquals(SettingsArea.STREAMING, SettingsCategory.RADIO.area)
         assertEquals(SettingsArea.STREAMING, SettingsCategory.TRAILERS.area)
         assertEquals(SettingsArea.PICTURE, SettingsCategory.IMAGE.area)
         assertEquals(SettingsArea.PICTURE, SettingsCategory.AUDIO.area)
@@ -57,7 +58,7 @@ class SettingsNavigationTest {
         assertTrue(showsInAreaIndex(SettingsCategory.APPEARANCE, SettingsArea.START, listed = false))
         assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.STREAMING, listed = true))
         assertEquals(
-            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.TRAILERS, MediaSystem.FILES),
+            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES),
             MediaSystem.addOrder,
         )
     }
@@ -145,7 +146,7 @@ class SettingsNavigationTest {
             "vpn" to SettingsCategory.WIREGUARD, "wireguard" to SettingsCategory.WIREGUARD,
             "jellyfin" to SettingsCategory.JELLYFIN, "emby" to SettingsCategory.EMBY, "tvh" to SettingsCategory.TVHEADEND,
             "tvheadend" to SettingsCategory.TVHEADEND, "youtube" to SettingsCategory.YOUTUBE,
-            "spotify" to SettingsCategory.SPOTIFY, "files" to SettingsCategory.FILES,
+            "spotify" to SettingsCategory.SPOTIFY, "radio" to SettingsCategory.RADIO, "files" to SettingsCategory.FILES,
             "locale" to SettingsCategory.LANGUAGE, "nav" to SettingsCategory.MEDIA_SELECTION,
             "navigation" to SettingsCategory.MEDIA_SELECTION, "media_selection" to SettingsCategory.MEDIA_SELECTION,
             "libraries" to SettingsCategory.LIBRARY, "library" to SettingsCategory.LIBRARY,
@@ -209,6 +210,7 @@ class SettingsNavigationTest {
     @Test fun onlyUsableEnabledSourcesQualifyForSingleSystemShortcut() {
         val empty = SettingsUiState(plexEnabled = false, youtubeEnabled = false)
         assertFalse(sourceConfigured(SettingsCategory.SPOTIFY, empty.copy(spotifyEnabled = true)))
+        assertTrue(sourceConfigured(SettingsCategory.RADIO, empty.copy(radioEnabled = true)))
         assertFalse(sourceConfigured(SettingsCategory.FILES, empty.copy(filesEnabled = true)))
         assertFalse(sourceConfigured(SettingsCategory.DLNA, empty))
         assertFalse(systemListed(SettingsCategory.DLNA, empty))
