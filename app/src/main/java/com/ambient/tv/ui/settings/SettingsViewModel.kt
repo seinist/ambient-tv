@@ -799,8 +799,8 @@ class SettingsViewModel @Inject constructor(
 
     internal fun wakeGroups(state: SettingsUiState = _uiState.value): List<WakeHostGroup> = groupWakeTargets(wakeMembers(state))
 
-    fun wakeScrollIndex(state: SettingsUiState, target: String): Int =
-        networkWakeScrollIndex(wakeGroups(state), hasWakeProfilePicker(state), target)
+    fun wakeTargetKey(state: SettingsUiState, target: String): String? =
+        networkWakeTargetKey(wakeGroups(state), target)
 
     /**
      * Writes one MAC into every service of the machine. Like the server MAC fields, NAS/DLNA values

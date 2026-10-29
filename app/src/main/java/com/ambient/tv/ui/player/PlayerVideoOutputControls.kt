@@ -5,6 +5,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.PlayerDropUpSelector
+import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.player.backend.VideoAccelerationRuntime
 import com.ambient.tv.ui.player.backend.effectiveMpvDecoder
 import com.ambient.tv.ui.player.backend.mpvDecoderChoices
@@ -99,6 +100,7 @@ internal fun PlayerVideoOutputControls(backend: String) {
     }
     if (mpv && output != "direct") {
         // Live A/B: re-applying the image options re-sends target-trc and re-tags the surface.
+        SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
         var curve by remember { mutableStateOf(preferences.mpvSdrCurveKey) }
         val curves = com.ambient.tv.ui.settings.sdrCurveChoices()
         PlayerDropUpSelector(

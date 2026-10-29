@@ -25,7 +25,8 @@ import com.ambient.tv.data.local.VlcImageOptions
 import com.ambient.tv.ui.common.GroupedPlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerDropUpSection
 import com.ambient.tv.ui.common.PlayerDropUpSelector
-import com.ambient.tv.ui.common.RightPanelSectionTitle
+import com.ambient.tv.ui.common.SettingsHint
+import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 import com.ambient.tv.ui.player.backend.MpvPlaybackController
@@ -160,7 +161,12 @@ internal fun PlayerVideoSettingsGroups(
     val activeSection = subPage ?: resolvedSection ?: sections.firstOrNull()?.first ?: return
     if (!sectionView && onOpenSection != null) {
         // The list: one row per area with what is set there; OK opens the area as its own level.
-        if (hasSdrToHdrControl) PlayerSdrToHdrControl()
+        SettingsHint(playbackProfileScopeSummary())
+        if (hasSdrToHdrControl) {
+            SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
+            PlayerSdrToHdrControl()
+            SettingsSectionHeader(stringResource(R.string.image_category))
+        }
         available.forEach { (key, title) ->
             com.ambient.tv.ui.common.PlayerPanelEntry(
                 icon = videoSectionIcon(key),
@@ -176,6 +182,7 @@ internal fun PlayerVideoSettingsGroups(
     }
     androidx.compose.runtime.CompositionLocalProvider(com.ambient.tv.ui.common.LocalVideoPanelState provides videoState) {
         if (sectionPending) ImageHint(stringResource(R.string.player_panel_switching_hint))
+        if (activeSection !in setOf("motion", "output")) SettingsHint(playbackProfileScopeSummary())
         if (activeSection == "renderer" && showRenderer && onRendererSelected != null && rendererKey != null) {
             PlayerRendererSelector(rendererKey, onRendererSelected)
             val backend = BackgroundPlaybackSession.activeHandle()?.let { handle ->
@@ -198,16 +205,30 @@ internal fun PlayerVideoSettingsGroups(
         if (activeSection == "svp" && handle !is MpvPlaybackController && handle !is VlcPlaybackController) {
             SvpMainPage("off", com.ambient.tv.data.local.SvpOptions(), { _, _ -> }, com.ambient.tv.ui.player.backend.SvpInactiveReason.ENGINE) {}
         }
-        if (activeSection == "scaling") presentationControls()
+        if (activeSection == "scaling") {
+            if (hasPresentationControls) {
+                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_current))
+            }
+            presentationControls()
+        }
         if (activeSection == "motion") {
             // SVP gets its own level; playback speed stays directly under Motion.
-            if (svpEntryVisible) SvpPanelEntry(handle) { onOpenSubPage?.invoke("svp") }
+            if (svpEntryVisible) {
+                SettingsHint(playbackProfileScopeSummary())
+                SvpPanelEntry(handle) { onOpenSubPage?.invoke("svp") }
+            }
+            if (hasPlaybackControls) {
+                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_current))
+            }
             playbackControls()
         }
         if (activeSection == "output" && (handle !is MpvPlaybackController || !handle.supportsGpuFilters)) PlayerDisplayModeGroup()
         if (activeSection == "output") {
             PlayerHdrDiagnostics()
-            if (hasSdrToHdrControl) PlayerSdrToHdrControl()
+            if (hasSdrToHdrControl) {
+                SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
+                PlayerSdrToHdrControl()
+            }
             outputExtras()
         }
     }
@@ -384,6 +405,7 @@ private fun MpvVideoGroups(
         }
     }
     if (section == "output" && controller.supportsGpuFilters) {
+        SettingsHint(playbackProfileScopeSummary())
         if (visibility.toneMapping) {
             ImageChoice(R.string.image_tonemap, options.toneMapping, toneMappingChoices()) {
                 change(options.copy(toneMapping = it))
@@ -651,18 +673,17 @@ private fun PanelDeinterlaceRows(
  */
 @Composable
 private fun PlayerDisplayModeGroup() {
-    // The area's own level is titled "Output" already.
-    PlayerDisplayModeRows(showTitle = false)
+    PlayerDisplayModeRows()
 }
 
 @Composable
-private fun PlayerDisplayModeRows(showTitle: Boolean = false) {
+private fun PlayerDisplayModeRows() {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val playbackKey = LocalPlaybackMetadata.current?.route
     val modes = rememberAvailableDisplayModes(context)
     if (modes.size <= 1) return
-    if (showTitle) RightPanelSectionTitle(stringResource(R.string.image_output))
+    SettingsSectionHeader(stringResource(R.string.settings_playback_scope_defaults))
     val preferences = remember(context) { videoImagePreferences(context) }
     var selected by remember { mutableStateOf(preferences.preferredDisplayModeKey) }
     val options = listOf(

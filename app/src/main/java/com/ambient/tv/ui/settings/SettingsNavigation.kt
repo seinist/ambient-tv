@@ -159,31 +159,31 @@ internal data class SettingsHubNav(
 typealias SettingsExitGuard = (action: () -> Unit) -> Unit
 
 
-/** Approximate LazyColumn index to scroll to when opening a page from Settings search. */
-internal fun settingsSearchScrollIndex(category: SettingsCategory, query: String): Int? {
+/** Semantic destinations survive inserted section headings and conditional settings. */
+internal fun settingsSearchTargetKey(category: SettingsCategory, query: String): String? {
     val q = query.lowercase()
     if (q.isBlank()) return null
     return when (category) {
         SettingsCategory.APPEARANCE -> when {
-            listOf("hdr", "sdr").any { it in q } -> 1
-            listOf("scale", "skal", "größe", "groesse", "size", "zoom").any { it in q } -> 3
-            listOf("accent", "akzent", "colour", "color", "farbe").any { it in q } -> 5
-            listOf("theme", "thema", "oled", "dim", "dark", "dunkel").any { it in q } -> 2
-            else -> 0
+            listOf("hdr", "sdr").any { it in q } -> "appearance:hdr"
+            listOf("scale", "skal", "größe", "groesse", "size", "zoom").any { it in q } -> "appearance:scale"
+            listOf("accent", "akzent", "colour", "color", "farbe").any { it in q } -> "appearance:accent"
+            listOf("theme", "thema", "oled", "dim", "dark", "dunkel").any { it in q } -> "appearance:theme"
+            else -> null
         }
-        SettingsCategory.SEEK -> 0
+        SettingsCategory.SEEK -> "seek:controls"
         SettingsCategory.PLAYBACK -> when {
-            listOf("drop", "bildaussetzer", "prüfdauer", "duration").any { it in q } -> 1
-            listOf("backend", "player", "mpv", "vlc", "media3").any { it in q } -> 3
-            else -> 0
+            listOf("drop", "bildaussetzer", "prüfdauer", "duration").any { it in q } -> "playback:test-duration"
+            listOf("backend", "player", "mpv", "vlc", "media3").any { it in q } -> "playback:renderer"
+            else -> null
         }
         SettingsCategory.BACKGROUND -> when {
-            listOf("video", "dim", "abdunk", "opacity").any { it in q } -> 1
-            else -> 0
+            listOf("video", "dim", "abdunk", "opacity").any { it in q } -> "background:video"
+            else -> null
         }
         SettingsCategory.SPOTIFY -> when {
-            listOf("developer", "entwickler", "client", "advanced").any { it in q } -> 3
-            else -> 0
+            listOf("developer", "entwickler", "client", "advanced").any { it in q } -> "spotify:account"
+            else -> null
         }
         else -> null
     }

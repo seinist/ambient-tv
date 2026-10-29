@@ -23,6 +23,7 @@ import com.ambient.tv.ui.common.TvSettingRow
 
 internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((ClockSettings) -> ClockSettings) -> Unit) {
     item { ClockPreview(clock) }
+    item { SettingsSubheader(stringResource(R.string.settings_section_general_clock_display)) }
     item {
         SettingsGroup {
             ClockChoice(R.string.settings_clock_display, clock.display, ClockSettings.displays, ::displayLabel) { v -> onChange { it.copy(display = v) } }
@@ -35,8 +36,9 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
             )
         }
     }
+    item { SettingsSubheader(stringResource(R.string.settings_clock_date_group)) }
     item {
-        SettingsGroup(title = stringResource(R.string.settings_clock_date_group)) {
+        SettingsGroup {
             ClockChoice(R.string.settings_clock_date, clock.date, ClockSettings.dates, ::dateLabel) { v -> onChange { it.copy(date = v) } }
             if (clock.date != ClockSettings.DATE_OFF) {
                 TvSettingRow(
@@ -48,8 +50,9 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
             }
         }
     }
+    item { SettingsSubheader(stringResource(R.string.settings_clock_look_group)) }
     item {
-        SettingsGroup(title = stringResource(R.string.settings_clock_look_group)) {
+        SettingsGroup {
             ClockChoice(R.string.settings_clock_size, clock.size, ClockSettings.sizes, ::sizeLabel) { v -> onChange { it.copy(size = v) } }
             ClockChoice(R.string.settings_clock_font, clock.font, ClockSettings.fonts, ::fontLabel) { v -> onChange { it.copy(font = v) } }
             ClockChoice(R.string.settings_clock_color, clock.color, ClockSettings.colors, ::colorLabel) { v -> onChange { it.copy(color = v) } }
@@ -64,15 +67,14 @@ internal fun LazyListScope.clockSettingsItems(clock: ClockSettings, onChange: ((
             ClockChoice(R.string.settings_clock_shadow, clock.shadow, ClockSettings.shadows, ::shadowLabel) { v -> onChange { it.copy(shadow = v) } }
         }
     }
+    item { SettingsSubheader(stringResource(R.string.settings_section_general_playback)) }
     item {
-        SettingsGroup {
-            TvSettingRow(
-                title = stringResource(R.string.settings_clock_end_time),
-                body = stringResource(R.string.settings_clock_end_time_hint),
-                checked = clock.endTime,
-                onCheckedChange = { v -> onChange { it.copy(endTime = v) } },
-            )
-        }
+        TvSettingRow(
+            title = stringResource(R.string.settings_clock_end_time),
+            body = stringResource(R.string.settings_clock_end_time_hint),
+            checked = clock.endTime,
+            onCheckedChange = { v -> onChange { it.copy(endTime = v) } },
+        )
     }
 }
 

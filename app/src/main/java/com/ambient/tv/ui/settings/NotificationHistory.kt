@@ -18,6 +18,7 @@ import com.ambient.tv.notifications.NoticePhase
 import com.ambient.tv.notifications.noticeMessage
 import com.ambient.tv.notifications.noticeTitle
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsActionRow
 import java.text.DateFormat
 import java.util.Date
 
@@ -25,20 +26,23 @@ internal fun LazyListScope.notificationHistoryItems(uiState: SettingsUiState, vi
     item(key = "notification-history") {
         val snapshot by AppNotifications.store.state.collectAsState()
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            SettingsGroup(
-                title = stringResource(R.string.notice_display_duration),
-                subtitle = stringResource(R.string.notice_display_duration_hint),
-            ) {
-                SettingsSelect(options = listOf("off", "short", "normal", "long").map { key ->
+            SettingsSubheader(stringResource(R.string.settings_section_general_notifications_display))
+            SettingsSelect(
+                label = stringResource(R.string.notice_display_duration),
+                description = stringResource(R.string.notice_display_duration_hint),
+                options = listOf("off", "short", "normal", "long").map { key ->
                     SettingsSelectOption(
                         text = notificationDurationLabel(key),
                         selected = uiState.notificationDisplayDurationKey == key,
                         onClick = { viewModel.onNotificationDisplayDurationChanged(key) },
                     )
-                })
-            }
+                },
+            )
+            SettingsSubheader(stringResource(R.string.settings_section_general_history))
             Text(stringResource(R.string.notice_history_hint), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TvActionButton(stringResource(R.string.notice_history_clear), onClick = AppNotifications.store::clearHistory)
+            SettingsActionRow {
+                TvActionButton(stringResource(R.string.notice_history_clear), onClick = AppNotifications.store::clearHistory)
+            }
             if (snapshot.history.isEmpty()) Text(stringResource(R.string.notice_history_empty), color = MaterialTheme.colorScheme.onSurface)
             snapshot.history.forEach { entry ->
                 key(entry.id) {

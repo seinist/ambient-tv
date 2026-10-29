@@ -16,6 +16,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.SettingsSectionHeader
 
 /**
  * Shared phone entry point, in Settings and on the "Handy & TV" page: an overview of the paired
@@ -48,15 +51,18 @@ private fun CompanionTvOverview(manager: CompanionManager, state: CompanionState
                     color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             }
             TvActionButton(stringResource(R.string.companion_pair_tv), manager::startPairingFlow,
-                icon = Icons.Default.Add, selected = true, fillWidth = true)
+                icon = Icons.Default.Add, selected = true)
         } else {
             CompanionStatusCard(state)
+            SettingsSectionHeader(stringResource(R.string.settings_system_paired_tvs))
             state.paired.forEach { peer -> CompanionTvCard(manager, state, peer) { onOpen(peer) } }
-            if (state.paired.none { state.online && it.fingerprint == state.target?.fingerprint }) {
-                TvActionButton(stringResource(R.string.companion_search), manager::discover, loading = state.searching, fillWidth = true)
+            SettingsActionRow {
+                if (state.paired.none { state.online && it.fingerprint == state.target?.fingerprint }) {
+                    TvActionButton(stringResource(R.string.companion_search), manager::discover, loading = state.searching)
+                }
+                TvActionButton(stringResource(R.string.companion_add_tv), manager::startPairingFlow, icon = Icons.Default.Add)
             }
-            TvActionButton(stringResource(R.string.companion_add_tv), manager::startPairingFlow, icon = Icons.Default.Add, fillWidth = true)
-            if (state.rollbackAvailable) TvActionButton(stringResource(R.string.companion_restore_backup), manager::showRestore, fillWidth = true)
+            if (state.rollbackAvailable) SettingsNavigationRow(stringResource(R.string.companion_restore_backup), onClick = manager::showRestore)
         }
     }
 }
@@ -99,23 +105,21 @@ private fun CompanionTvDetail(manager: CompanionManager, state: CompanionState, 
             }
         }
         if (live) {
-            TvActionButton(stringResource(R.string.companion_remote_control), manager::showRemote,
-                icon = Icons.Default.SettingsRemote, selected = true, fillWidth = true)
-            TvActionButton(stringResource(R.string.playback_open), manager::showNowPlaying, icon = Icons.Default.PlayArrow, fillWidth = true)
+            SettingsNavigationRow(stringResource(R.string.companion_remote_control),
+                icon = Icons.Default.SettingsRemote, onClick = manager::showRemote)
+            SettingsNavigationRow(stringResource(R.string.playback_open), icon = Icons.Default.PlayArrow, onClick = manager::showNowPlaying)
         } else {
             TvActionButton(stringResource(R.string.companion_connect), { manager.connectRemote(found) },
-                icon = Icons.Default.SettingsRemote, selected = true, fillWidth = true,
+                icon = Icons.Default.SettingsRemote, selected = true,
                 enabled = !state.busy && reach.allowsActions(), loading = state.busy && state.target?.fingerprint == peer.fingerprint)
         }
-        TvActionButton(stringResource(R.string.sync_title), { manager.showSettingsTransferTo(peer) },
-            icon = Icons.Default.Sync, fillWidth = true, enabled = reach.allowsActions())
-        if (live) TvActionButton(stringResource(R.string.companion_disconnect), { manager.disconnect() }, fillWidth = true)
-        HorizontalDivider()
-        Text(stringResource(R.string.companion_detail_connection), style = MaterialTheme.typography.titleMedium)
+        SettingsNavigationRow(stringResource(R.string.sync_title), icon = Icons.Default.Sync,
+            enabled = reach.allowsActions(), onClick = { manager.showSettingsTransferTo(peer) })
+        if (live) TvActionButton(stringResource(R.string.companion_disconnect), { manager.disconnect() })
         Text(stringResource(R.string.companion_detail_connection_hint), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         CompanionConnectionSettingsContent(manager, fixedPeer = peer)
-        HorizontalDivider()
+        SettingsSectionHeader(stringResource(R.string.settings_system_device_management))
         CompanionUnpairButton(manager, peer, onUnpaired = onBack)
     }
 }

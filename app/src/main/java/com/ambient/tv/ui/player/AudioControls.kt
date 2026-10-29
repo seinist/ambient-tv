@@ -17,12 +17,16 @@ import com.ambient.tv.data.local.AudioSettings
 import com.ambient.tv.data.local.AudioTrackPreference
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerValueSlider
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsHint
+import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.common.formatDbLabel
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 
 @Composable
 fun AudioControls(session: AudioSession, section: String? = null, onOpenSection: ((String) -> Unit)? = null) {
     val route = session.effectiveRoute
+    SettingsHint(playbackProfileScopeSummary())
     AudioProfileEditor(
         session.displaySettings, session.backend, session.sourcePassthrough, session.supportsNight,
         session::selectProfile, session::update, session::trackPreference,
@@ -89,6 +93,7 @@ internal fun AudioProfileEditor(
     val forcedRoute = route.forcedBy(o)
     val codecs = visibleBitstreamCodecs(forcedRoute).filter { it !in AudioCodecRejects.snapshot() }
     if (!flatLive || panelSection == null) {
+        SettingsSectionHeader(stringResource(R.string.settings_playback_section_device_profile))
         ImageChoice(R.string.audio_profile, settings.selectedProfile, listOf(
             "auto" to stringResource(R.string.audio_profile_auto),
             "tv" to "TV", "avr" to stringResource(R.string.audio_profile_hdmi), "headphones" to stringResource(R.string.audio_headphones),
@@ -108,7 +113,8 @@ internal fun AudioProfileEditor(
                 AudioProfileReason.MIXED -> R.string.audio_profile_reason_mixed
             }))
         }
-        ImageHint(stringResource(R.string.audio_profile_hint))
+        // Live playback owns title/scope persistence; this hint describes only global defaults.
+        if (!flatLive) ImageHint(stringResource(R.string.audio_profile_hint))
     }
     var group by remember(backend, flatLive) { mutableStateOf("output") }
     val dspSuspended = (actualPlan ?: planAudioOutput(
@@ -154,6 +160,7 @@ internal fun AudioProfileEditor(
     sections.forEach { section ->
         when (section) {
         "output" -> {
+            SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_output))
             val summary = audioRouteSummary(route, o, o.permitsBitstream(sourcePassthrough), sourceChannels,
                 forcedChannelsFailed, AudioCodecRejects.snapshot())
             ImageHint(stringResource(R.string.audio_route_output) + ": " + audioRouteSummaryText(summary))
@@ -167,6 +174,10 @@ internal fun AudioProfileEditor(
             }
             ImageChoice(R.string.audio_output, displayedAudioOutput(o, sourcePassthrough), outputs) { change(withAudioOutput(o, it)) }
             ImageHint(stringResource(R.string.audio_output_hint))
+            if (!flatLive) {
+                ImageHint(stringResource(R.string.settings_audio_source_hint))
+                ImageHint(stringResource(R.string.settings_passthrough_visualizer_hint))
+            }
             ImageChoice(R.string.audio_pcm_channels, displayedPcmChannels(o), buildList {
                 add("0" to stringResource(R.string.player_automatic))
                 add("2" to "2.0")
@@ -176,11 +187,13 @@ internal fun AudioProfileEditor(
                 }
             }) { change(withPcmChannels(o, it)) }
             ImageHint(stringResource(R.string.audio_pcm_channels_hint))
+            SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_sync))
             PlayerDropUpSelector(stringResource(R.string.audio_delay), "${o.delayMs} ms",
                 listOf("-100" to "−100 ms", "-25" to "−25 ms", "0" to stringResource(R.string.audio_reset_delay), "+25" to "+25 ms", "+100" to "+100 ms"),
                 selectedKey = "0", onSelected = { change(o.copy(delayMs = if (it == "0") 0 else o.delayMs + it.toInt())) })
             ImageHint(stringResource(R.string.audio_delay_hint))
             delayScopeHint?.let { ImageHint(it) }
+            SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_formats))
             if (codecs.isNotEmpty() && liveVisibility?.bitstream != false && o.permitsBitstream(sourcePassthrough)) {
                 if (flatLive && onOpenSection != null) {
                     com.ambient.tv.ui.common.PlayerPanelEntry(
@@ -220,6 +233,7 @@ internal fun AudioProfileEditor(
             if (sourceCodec != null) ImageHint(outputModeLabel(planned.mode))
         }
         "codecs" -> {
+            SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_formats))
             if (o.permitsBitstream(sourcePassthrough) && liveVisibility?.bitstream != false) {
                 AudioCodecRows(codecs, o, change)
             }
@@ -236,6 +250,7 @@ internal fun AudioProfileEditor(
             if (section == "sound") {
                 audioDownmixLabel(sourceChannels, actualPlan ?: planAudioOutput(o, sourceCodec, route, backend, sourcePassthrough, sourceChannels = sourceChannels))?.let { ImageHint(it) }
                 if (liveVisibility?.channels ?: true) {
+                    SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_mix))
                     val modes = if (backend == "vlc") listOf("auto", "stereo") else visibleChannelModes(forcedRoute)
                     ImageChoice(R.string.audio_channel_mix, o.channels, modes.map { it to channelLabel(it) }) { change(o.copy(channels = it)) }
                     if (!suspended && backend != "vlc" && upmixRowVisible(o.pcmChannels(route.pcmChannels), o.channels)) {
@@ -245,6 +260,9 @@ internal fun AudioProfileEditor(
                     if (!suspended && backend != "vlc") ImageChoice(R.string.audio_maintain_volume, if (o.maintainDownmixVolume) "on" else "off", imageOnOff()) {
                         change(o.copy(maintainDownmixVolume = it == "on"))
                     }
+                }
+                if ((liveVisibility?.night ?: supportsNight) || !dspSuspended) {
+                    SettingsSectionHeader(stringResource(R.string.settings_playback_section_audio_dynamics))
                 }
                 if (liveVisibility?.night ?: supportsNight) ImageChoice(R.string.audio_night,
                     if (o.night) "on" else "off", imageOnOff()) { change(o.copy(night = it == "on")) }
@@ -294,6 +312,7 @@ internal fun AudioProfileEditor(
             }
         }
         "tracks" -> {
+            SettingsSectionHeader(stringResource(R.string.audio_track_preferences))
             val t = settings.tracks
             ImageChoice(R.string.audio_track_role, t.role, listOf(
                 "auto" to stringResource(R.string.player_automatic), "main" to stringResource(R.string.audio_main),
@@ -307,12 +326,15 @@ internal fun AudioProfileEditor(
         }
         }
     }
-    if (!flatLive || panelSection == null) com.ambient.tv.ui.common.TvActionButton(
-        text = stringResource(R.string.audio_reset_profile),
-        onClick = { change(AudioOptions(output = "auto")) },
-        modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
-        fillWidth = true,
-    )
+    if (!flatLive || panelSection == null) {
+        SettingsSectionHeader(stringResource(R.string.settings_playback_section_profile_actions))
+        SettingsActionRow {
+            com.ambient.tv.ui.common.TvActionButton(
+                text = stringResource(R.string.audio_reset_profile),
+                onClick = { change(AudioOptions(output = "auto")) },
+            )
+        }
+    }
 }
 
 @Composable

@@ -43,6 +43,8 @@ import com.ambient.tv.domain.model.EmbyServerProfile
 import com.ambient.tv.domain.model.JellyfinServerProfile
 import com.ambient.tv.domain.model.ServerProfile
 import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
@@ -83,13 +85,14 @@ internal fun LazyListScope.settingsSystemCategoryItems(
     when (category) {
         SettingsCategory.DLNA -> {
             item { Text(stringResource(R.string.dlna_explanation), style = MaterialTheme.typography.bodyMedium) }
-            item { TvActionButton(stringResource(R.string.dlna_servers), { requestExit(onOpenDlna) }) }
+            item { SettingsNavigationRow(stringResource(R.string.dlna_servers), onClick = { requestExit(onOpenDlna) }) }
             if (!handheldUi) item { SettingsPageLink(SettingsCategory.RECEIVER, "dlna-receiver") }
         }
         SettingsCategory.FILES -> {
             item { TvSettingRow(stringResource(R.string.files_enabled), stringResource(R.string.files_enabled_hint), uiState.filesEnabled, viewModel::onFilesEnabledChanged) }
             if (uiState.filesEnabled) item { SystemNameField(MediaSystem.FILES, uiState, viewModel) }
-            item { TvActionButton(stringResource(R.string.files_manage), { requestExit { viewModel.enableFilesForManagement(); onOpenFiles() } }) }
+            item(key = "files-sources-section") { SettingsSubheader(stringResource(R.string.settings_system_sources_network)) }
+            item { SettingsNavigationRow(stringResource(R.string.files_manage), onClick = { requestExit { viewModel.enableFilesForManagement(); onOpenFiles() } }) }
             item { SettingsPageLink(SettingsCategory.WAKE, "files-network", R.string.settings_network_link) }
             item { Text(stringResource(R.string.files_backup_hint), style = MaterialTheme.typography.bodySmall) }
             if (uiState.filesEnabled) item {
@@ -99,170 +102,165 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             }
         }
         SettingsCategory.WIREGUARD -> {
-            item { WireGuardRouteSection(uiState, viewModel) }
+            item(key = "wireguard-tunnel-section") {
+                SettingsSubheader(stringResource(if (uiState.wireGuardSummary.isBlank()) R.string.settings_system_tunnel_import else R.string.settings_system_tunnel_status))
+            }
+            item(key = "wireguard-tunnel") { WireGuardRouteSection(uiState, viewModel) }
             wireGuardSystemItems(uiState, viewModel)
         }
         SettingsCategory.PLEX -> {
             item { TvSettingRow(systemString(MediaSystem.PLEX, R.string.settings_plex_enable), systemString(MediaSystem.PLEX, R.string.settings_plex_enable_hint), uiState.plexEnabled, viewModel::onPlexEnabledChanged) }
             if (uiState.plexEnabled) {
-            item { SystemNameField(MediaSystem.PLEX, uiState, viewModel) }
-            if (uiState.savedServers.isNotEmpty()) {
-                item { SettingsSubheader(stringResource(R.string.settings_saved_servers)) }
-                items(uiState.savedServers, key = { it.id }) { server ->
-                    SavedServerRow(
-                        server = server,
-                        active = server.id == uiState.activeServerId,
-                        onSelect = { viewModel.selectSavedServer(server) },
-                        onRemove = {
-                            // Move focus to a stable target before this keyed row disappears.
-                            focusContent()
-                            viewModel.removeSavedServer(server)
-                        },
-                    )
-                }
-            }
-            item {
-                TvActionButton(
-                    text = stringResource(R.string.action_server_search),
-                    onClick = viewModel::discoverServers,
-                    loading = uiState.isDiscoveringServers,
-                    modifier = Modifier.fillMaxWidth(),
-                    fillWidth = true,
-                )
-            }
-            if (uiState.discoveredServers.isNotEmpty()) {
-                item { SettingsSubheader(stringResource(R.string.settings_discovered_servers)) }
-                itemsIndexed(uiState.discoveredServers, key = { _, it -> "${it.host}:${it.port}" }) { index, server ->
-                    DiscoveredServerButton(
-                        server = server,
-                        onClick = { viewModel.selectDiscoveredServer(server) },
-                        modifier = Modifier.focusFirstDiscovered(index, "plex", uiState, viewModel),
-                    )
-                }
-            }
-            item { SettingsSubheader(stringResource(R.string.settings_manual_connection)) }
-            item {
-                SettingsGroup {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TvTextField(value = uiState.host, onValueChange = viewModel::onHostChanged, label = stringResource(R.string.settings_host_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
-                        TvTextField(value = uiState.port, onValueChange = viewModel::onPortChanged, label = stringResource(R.string.settings_port_label), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
-                        TvTextField(value = uiState.token, onValueChange = viewModel::onTokenChanged, label = stringResource(R.string.settings_token_label), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
-                    }
-                }
-            }
-            item {
-                SettingsGroup {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (uiState.isLinkingAccount) {
-                            Text(stringResource(R.string.settings_link_instructions))
-                            uiState.linkCode?.let { Text(it, style = MaterialTheme.typography.headlineMedium) }
-                                ?: CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                        }
-                        // Keep this action in the same composition slot when linking starts or
-                        // stops. Replacing the entire subtree discarded DPAD focus.
-                        TvActionButton(
-                            text = stringResource(
-                                when {
-                                    uiState.isLinkingAccount -> R.string.settings_link_cancel
-                                    uiState.plexSignedIn -> R.string.action_sign_out
-                                    else -> R.string.action_sign_in
-                                },
-                            ),
-                            onClick = when {
-                                uiState.isLinkingAccount -> viewModel::cancelAccountLinking
-                                uiState.plexSignedIn -> viewModel::signOutPlex
-                                else -> viewModel::startAccountLinking
+                item { SystemNameField(MediaSystem.PLEX, uiState, viewModel) }
+                item(key = "plex-connection-section") { SettingsSubheader(stringResource(R.string.settings_system_server_account)) }
+                if (uiState.savedServers.isNotEmpty()) {
+                    item { ConnectionListCaption(stringResource(R.string.settings_saved_servers)) }
+                    items(uiState.savedServers, key = { it.id }) { server ->
+                        SavedServerRow(
+                            server = server,
+                            active = server.id == uiState.activeServerId,
+                            onSelect = { viewModel.selectSavedServer(server) },
+                            onRemove = {
+                                // Move focus to a stable target before this keyed row disappears.
+                                focusContent()
+                                viewModel.removeSavedServer(server)
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            fillWidth = true,
                         )
                     }
                 }
-            }
-            item { TvSettingRow(stringResource(R.string.settings_plex_https), stringResource(R.string.settings_plex_https_hint), uiState.plexUseHttps, viewModel::onPlexHttpsChanged) }
-            // Connection test right below address and sign-in, before Wake-on-LAN.
-            item {
-                DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
                     TvActionButton(
-                        text = if (uiState.isTestingConnection) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
-                        onClick = viewModel::testConnection,
-                        loading = uiState.isTestingConnection,
-                        modifier = Modifier.weight(1f),
-                        fillWidth = true,
+                        text = stringResource(R.string.action_server_search),
+                        onClick = viewModel::discoverServers,
+                        loading = uiState.isDiscoveringServers,
                     )
                 }
-            }
-            item { SettingsPageLink(SettingsCategory.WAKE, "plex-network", R.string.settings_network_link) }
-            item { TvSettingRow(stringResource(R.string.settings_choose_server_startup), stringResource(R.string.settings_choose_server_startup_hint), uiState.chooseServerOnStartup, viewModel::onChooseServerOnStartupToggled) }
-            uiState.plexDirectSuggestion?.let { suggestion ->
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = stringResource(R.string.settings_plex_direct_hint, suggestion.substringBeforeLast(':')),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (uiState.discoveredServers.isNotEmpty()) {
+                    item { ConnectionListCaption(stringResource(R.string.settings_discovered_servers)) }
+                    itemsIndexed(uiState.discoveredServers, key = { _, it -> "${it.host}:${it.port}" }) { index, server ->
+                        DiscoveredServerButton(
+                            server = server,
+                            onClick = { viewModel.selectDiscoveredServer(server) },
+                            modifier = Modifier.focusFirstDiscovered(index, "plex", uiState, viewModel),
                         )
-                        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            TvActionButton(text = stringResource(R.string.settings_plex_direct_use), onClick = viewModel::usePlexDirectSuggestion, modifier = Modifier.weight(1f), fillWidth = true)
-                            TvActionButton(text = stringResource(R.string.files_cancel), onClick = viewModel::dismissPlexDirectSuggestion, modifier = Modifier.weight(1f), fillWidth = true)
+                    }
+                }
+                item {
+                    SettingsGroup(title = stringResource(R.string.settings_manual_connection), card = true) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            TvTextField(value = uiState.host, onValueChange = viewModel::onHostChanged, label = stringResource(R.string.settings_host_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
+                            TvTextField(value = uiState.port, onValueChange = viewModel::onPortChanged, label = stringResource(R.string.settings_port_label), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
+                            TvTextField(value = uiState.token, onValueChange = viewModel::onTokenChanged, label = stringResource(R.string.settings_token_label), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                         }
                     }
                 }
-            }
-            item { TvSettingRow(stringResource(R.string.settings_local_only), stringResource(R.string.settings_local_only_hint), uiState.localNetworkOnly, viewModel::onLocalNetworkOnlyToggled) }
-            if (!uiState.localNetworkOnly) {
                 item {
-                    // A remote server without HTTPS is the case that actually leaks the token.
-                    val remoteCleartext = !uiState.plexUseHttps && uiState.host.isNotBlank() &&
-                        !com.ambient.tv.network.isHomeNetworkHost(uiState.host)
-                    Text(
-                        text = stringResource(
-                            if (remoteCleartext) R.string.settings_plex_cleartext_remote_warning
-                            else R.string.settings_local_only_cleartext_warning,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
+                    SettingsGroup {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (uiState.isLinkingAccount) {
+                                Text(stringResource(R.string.settings_link_instructions))
+                                uiState.linkCode?.let { Text(it, style = MaterialTheme.typography.headlineMedium) }
+                                    ?: CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                            }
+                            // Keep this action in the same composition slot when linking starts or
+                            // stops. Replacing the entire subtree discarded DPAD focus.
+                            TvActionButton(
+                                text = stringResource(
+                                    when {
+                                        uiState.isLinkingAccount -> R.string.settings_link_cancel
+                                        uiState.plexSignedIn -> R.string.action_sign_out
+                                        else -> R.string.action_sign_in
+                                    },
+                                ),
+                                onClick = when {
+                                    uiState.isLinkingAccount -> viewModel::cancelAccountLinking
+                                    uiState.plexSignedIn -> viewModel::signOutPlex
+                                    else -> viewModel::startAccountLinking
+                                },
+                            )
+                        }
+                    }
                 }
-            }
-            item { SettingsSubheader(systemString(MediaSystem.PLEX, R.string.settings_plex_refresh_title)) }
-            item {
-                SettingsGroup(
-                    title = stringResource(R.string.settings_plex_refresh_interval),
-                    subtitle = systemString(MediaSystem.PLEX, R.string.settings_plex_refresh_hint),
-                ) {
-                    SettingsSelect(options = buildList {
-                        listOf(0, 30, 60, 120).forEach { seconds ->
-                            add(SettingsSelectOption(
+                item(key = "plex-network-section") { SettingsSubheader(stringResource(R.string.settings_system_connection_start)) }
+                item { TvSettingRow(stringResource(R.string.settings_plex_https), stringResource(R.string.settings_plex_https_hint), uiState.plexUseHttps, viewModel::onPlexHttpsChanged) }
+                // Connection test right below address and sign-in, before Wake-on-LAN.
+                item {
+                    SettingsActionRow {
+                        TvActionButton(
+                            text = if (uiState.isTestingConnection) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                            onClick = viewModel::testConnection,
+                            loading = uiState.isTestingConnection,
+                        )
+                    }
+                }
+                item { SettingsPageLink(SettingsCategory.WAKE, "plex-network", R.string.settings_network_link) }
+                item { TvSettingRow(stringResource(R.string.settings_choose_server_startup), stringResource(R.string.settings_choose_server_startup_hint), uiState.chooseServerOnStartup, viewModel::onChooseServerOnStartupToggled) }
+                uiState.plexDirectSuggestion?.let { suggestion ->
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = stringResource(R.string.settings_plex_direct_hint, suggestion.substringBeforeLast(':')),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            SettingsActionRow {
+                                TvActionButton(text = stringResource(R.string.settings_plex_direct_use), onClick = viewModel::usePlexDirectSuggestion)
+                                TvActionButton(text = stringResource(R.string.files_cancel), onClick = viewModel::dismissPlexDirectSuggestion)
+                            }
+                        }
+                    }
+                }
+                item { TvSettingRow(stringResource(R.string.settings_local_only), stringResource(R.string.settings_local_only_hint), uiState.localNetworkOnly, viewModel::onLocalNetworkOnlyToggled) }
+                if (!uiState.localNetworkOnly) {
+                    item {
+                        // A remote server without HTTPS is the case that actually leaks the token.
+                        val remoteCleartext = !uiState.plexUseHttps && uiState.host.isNotBlank() &&
+                            !com.ambient.tv.network.isHomeNetworkHost(uiState.host)
+                        Text(
+                            text = stringResource(
+                                if (remoteCleartext) R.string.settings_plex_cleartext_remote_warning
+                                else R.string.settings_local_only_cleartext_warning,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                item(key = "plex-library-section") { SettingsSubheader(stringResource(R.string.settings_system_library_display)) }
+                item {
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_plex_refresh_interval),
+                        description = systemString(MediaSystem.PLEX, R.string.settings_plex_refresh_hint),
+                        options = listOf(0, 30, 60, 120).map { seconds ->
+                            SettingsSelectOption(
                                 text = if (seconds == 0) stringResource(R.string.settings_refresh_off) else stringResource(R.string.settings_refresh_seconds, seconds),
                                 selected = uiState.plexAutoRefreshIntervalSeconds == seconds,
                                 onClick = { viewModel.onPlexAutoRefreshIntervalChanged(seconds) },
-                            ))
-                        }
-                    })
+                            )
+                        },
+                    )
                 }
-            }
-            item {
-                SystemCustomizationTabs(
-                    showStartPageTab = uiState.plexConfigured,
-                    submenuContent = {
-                        SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
-                            uiState.plexLibrarySections.forEach { section ->
-                                TvSettingRow(
-                                    title = section.title,
-                                    checked = section.key !in uiState.plexHiddenSectionKeys,
-                                    onCheckedChange = { visible -> viewModel.onPlexSectionVisibilityChanged(section.key, visible) },
-                                )
+                item {
+                    SystemCustomizationTabs(
+                        showStartPageTab = uiState.plexConfigured,
+                        submenuContent = {
+                            SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                                uiState.plexLibrarySections.forEach { section ->
+                                    TvSettingRow(
+                                        title = section.title,
+                                        checked = section.key !in uiState.plexHiddenSectionKeys,
+                                        onCheckedChange = { visible -> viewModel.onPlexSectionVisibilityChanged(section.key, visible) },
+                                    )
+                                }
+                                SubmenuSettingsRow(MediaSystem.PLEX, uiState, viewModel::onSidebarSettingsShortcutChanged)
                             }
-                            SubmenuSettingsRow(MediaSystem.PLEX, uiState, viewModel::onSidebarSettingsShortcutChanged)
-                        }
-                    },
-                    startPageContent = {
-                        SystemHomeRowsGroup(HomeRowDefinition.SYSTEM_PLEX, uiState, viewModel::onSystemHomeRowChanged)
-                    },
-                )
-            }
-            item { TvSettingRow(stringResource(R.string.settings_theme_music), stringResource(R.string.settings_theme_music_hint), uiState.plexThemeMusicEnabled, viewModel::onPlexThemeMusicToggled) }
+                        },
+                        startPageContent = {
+                            SystemHomeRowsGroup(HomeRowDefinition.SYSTEM_PLEX, uiState, viewModel::onSystemHomeRowChanged)
+                        },
+                    )
+                }
+                item { TvSettingRow(stringResource(R.string.settings_theme_music), stringResource(R.string.settings_theme_music_hint), uiState.plexThemeMusicEnabled, viewModel::onPlexThemeMusicToggled) }
             }
         }
 
@@ -270,8 +268,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item { TvSettingRow(systemString(MediaSystem.JELLYFIN, R.string.settings_jellyfin_enable), systemString(MediaSystem.JELLYFIN, R.string.settings_jellyfin_enable_hint), uiState.jellyfinEnabled, viewModel::onJellyfinEnabledChanged) }
             if (uiState.jellyfinEnabled) {
                 item { SystemNameField(MediaSystem.JELLYFIN, uiState, viewModel) }
+                item(key = "jellyfin-connection-section") { SettingsSubheader(stringResource(R.string.settings_system_server_account)) }
                 if (uiState.savedJellyfinServers.isNotEmpty()) {
-                    item { SettingsSubheader(stringResource(R.string.settings_saved_servers)) }
+                    item { ConnectionListCaption(stringResource(R.string.settings_saved_servers)) }
                     items(uiState.savedJellyfinServers, key = { "jellyfin-${it.id}" }) { server ->
                         SavedJellyfinServerRow(
                             server = server,
@@ -292,11 +291,10 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         text = stringResource(R.string.action_server_search),
                         onClick = viewModel::discoverJellyfinServers,
                         loading = uiState.isDiscoveringJellyfin,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
                     )
                 }
                 if (uiState.discoveredJellyfinServers.isNotEmpty()) {
-                    item { SettingsSubheader(stringResource(R.string.settings_discovered_servers)) }
+                    item { ConnectionListCaption(stringResource(R.string.settings_discovered_servers)) }
                     itemsIndexed(uiState.discoveredJellyfinServers, key = { _, it -> "discovered-jellyfin-${it.serverId ?: "${it.host}:${it.port}"}" }) { index, server ->
                         ServerSurface(
                             title = server.name,
@@ -307,7 +305,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item {
-                    SettingsGroup(title = stringResource(R.string.settings_manual_connection)) {
+                    SettingsGroup(title = stringResource(R.string.settings_manual_connection), card = true) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             TvTextField(value = uiState.jellyfinHost, onValueChange = viewModel::onJellyfinHostChanged, label = stringResource(R.string.settings_host_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.jellyfinPort, onValueChange = viewModel::onJellyfinPortChanged, label = stringResource(R.string.settings_port_label), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
@@ -319,26 +317,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item(key = "jellyfin-sign-in") {
-                    TvActionButton(
-                        text = when {
-                            uiState.isSigningInJellyfin -> stringResource(R.string.action_signing_in)
-                            uiState.jellyfinConfigured -> stringResource(R.string.action_sign_out)
-                            else -> stringResource(R.string.action_sign_in)
-                        },
-                        onClick = if (uiState.jellyfinConfigured) viewModel::signOutJellyfin else viewModel::signInJellyfin,
-                        loading = uiState.isSigningInJellyfin,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
-                    )
+                    SettingsActionRow {
+                        TvActionButton(
+                            text = when {
+                                uiState.isSigningInJellyfin -> stringResource(R.string.action_signing_in)
+                                uiState.jellyfinConfigured -> stringResource(R.string.action_sign_out)
+                                else -> stringResource(R.string.action_sign_in)
+                            },
+                            onClick = if (uiState.jellyfinConfigured) viewModel::signOutJellyfin else viewModel::signInJellyfin,
+                            loading = uiState.isSigningInJellyfin,
+                        )
+                        TvActionButton(
+                            text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                            onClick = viewModel::testJellyfinConnection,
+                            enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
+                        )
+                    }
                 }
-                item {
-                    TvActionButton(
-                        text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
-                        onClick = viewModel::testJellyfinConnection,
-                        enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
-                    )
-                }
-            item { SettingsPageLink(SettingsCategory.WAKE, "jellyfin-network", R.string.settings_network_link) }
+                item { SettingsPageLink(SettingsCategory.WAKE, "jellyfin-network", R.string.settings_network_link) }
+                item(key = "jellyfin-library-section") { SettingsSubheader(stringResource(R.string.settings_system_library_display)) }
                 item {
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.jellyfinConfigured,
@@ -367,8 +364,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item { TvSettingRow(systemString(MediaSystem.EMBY, R.string.settings_emby_enable), systemString(MediaSystem.EMBY, R.string.settings_emby_enable_hint), uiState.embyEnabled, viewModel::onEmbyEnabledChanged) }
             if (uiState.embyEnabled) {
                 item { SystemNameField(MediaSystem.EMBY, uiState, viewModel) }
+                item(key = "emby-connection-section") { SettingsSubheader(stringResource(R.string.settings_system_server_account)) }
                 if (uiState.savedEmbyServers.isNotEmpty()) {
-                    item { SettingsSubheader(stringResource(R.string.settings_saved_servers)) }
+                    item { ConnectionListCaption(stringResource(R.string.settings_saved_servers)) }
                     items(uiState.savedEmbyServers, key = { "emby-${it.id}" }) { server ->
                         SavedEmbyServerRow(
                             server = server,
@@ -389,11 +387,10 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         text = stringResource(R.string.action_server_search),
                         onClick = viewModel::discoverEmbyServers,
                         loading = uiState.isDiscoveringEmby,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
                     )
                 }
                 if (uiState.discoveredEmbyServers.isNotEmpty()) {
-                    item { SettingsSubheader(stringResource(R.string.settings_discovered_servers)) }
+                    item { ConnectionListCaption(stringResource(R.string.settings_discovered_servers)) }
                     itemsIndexed(uiState.discoveredEmbyServers, key = { _, it -> "discovered-emby-${it.serverId ?: "${it.host}:${it.port}"}" }) { index, server ->
                         ServerSurface(
                             title = server.name,
@@ -404,7 +401,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item {
-                    SettingsGroup(title = stringResource(R.string.settings_manual_connection)) {
+                    SettingsGroup(title = stringResource(R.string.settings_manual_connection), card = true) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             TvTextField(value = uiState.embyHost, onValueChange = viewModel::onEmbyHostChanged, label = stringResource(R.string.settings_host_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.embyPort, onValueChange = viewModel::onEmbyPortChanged, label = stringResource(R.string.settings_port_label), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
@@ -416,26 +413,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item(key = "emby-sign-in") {
-                    TvActionButton(
-                        text = when {
-                            uiState.isSigningInEmby -> stringResource(R.string.action_signing_in)
-                            uiState.embyConfigured -> stringResource(R.string.action_sign_out)
-                            else -> stringResource(R.string.action_sign_in)
-                        },
-                        onClick = if (uiState.embyConfigured) viewModel::signOutEmby else viewModel::signInEmby,
-                        loading = uiState.isSigningInEmby,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
-                    )
+                    SettingsActionRow {
+                        TvActionButton(
+                            text = when {
+                                uiState.isSigningInEmby -> stringResource(R.string.action_signing_in)
+                                uiState.embyConfigured -> stringResource(R.string.action_sign_out)
+                                else -> stringResource(R.string.action_sign_in)
+                            },
+                            onClick = if (uiState.embyConfigured) viewModel::signOutEmby else viewModel::signInEmby,
+                            loading = uiState.isSigningInEmby,
+                        )
+                        TvActionButton(
+                            text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                            onClick = viewModel::testEmbyConnection,
+                            enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
+                        )
+                    }
                 }
-                item {
-                    TvActionButton(
-                        text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
-                        onClick = viewModel::testEmbyConnection,
-                        enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
-                        modifier = Modifier.fillMaxWidth(), fillWidth = true,
-                    )
-                }
-            item { SettingsPageLink(SettingsCategory.WAKE, "emby-network", R.string.settings_network_link) }
+                item { SettingsPageLink(SettingsCategory.WAKE, "emby-network", R.string.settings_network_link) }
+                item(key = "emby-library-section") { SettingsSubheader(stringResource(R.string.settings_system_library_display)) }
                 item {
                     SystemCustomizationTabs(
                         showStartPageTab = uiState.embyConfigured,
@@ -464,30 +460,28 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item { TvSettingRow(systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_enable), stringResource(R.string.settings_tvh_enable_hint), uiState.tvheadendEnabled, viewModel::onTvheadendEnabledChanged) }
             if (uiState.tvheadendEnabled) {
                 item { SystemNameField(MediaSystem.TVHEADEND, uiState, viewModel) }
+                item(key = "tvheadend-connection-section") { SettingsSubheader(stringResource(R.string.settings_system_server_access)) }
                 item {
-                    SettingsGroup {
+                    SettingsGroup(card = true) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             TvTextField(value = uiState.tvheadendHost, onValueChange = viewModel::onTvheadendHostChanged, label = stringResource(R.string.settings_tvh_host), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.tvheadendPort, onValueChange = viewModel::onTvheadendPortChanged, label = stringResource(R.string.settings_tvh_port), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.tvheadendUsername, onValueChange = viewModel::onTvheadendUsernameChanged, label = stringResource(R.string.settings_tvh_username), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
-                            TvTextField(value = uiState.tvheadendPassword, onValueChange = viewModel::onTvheadendPasswordChanged, label = stringResource(R.string.settings_tvh_password), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
-                            TvTextField(value = uiState.tvheadendStreamProfile, onValueChange = viewModel::onTvheadendStreamProfileChanged, label = stringResource(R.string.settings_tvh_stream_profile), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
+                            TvTextField(value = uiState.tvheadendPassword, onValueChange = viewModel::onTvheadendPasswordChanged, label = stringResource(R.string.settings_tvh_password), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
+                            TvSettingRow(stringResource(R.string.settings_tvh_https), stringResource(R.string.settings_tvh_https_hint), uiState.tvheadendUseHttps, viewModel::onTvheadendHttpsChanged)
                         }
                     }
                 }
-                item { TvSettingRow(stringResource(R.string.settings_tvh_https), stringResource(R.string.settings_tvh_https_hint), uiState.tvheadendUseHttps, viewModel::onTvheadendHttpsChanged) }
                 item {
                     TvActionButton(
                         text = if (uiState.isTestingTvheadend) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                         onClick = viewModel::testTvheadendConnection,
                         loading = uiState.isTestingTvheadend,
-                        modifier = Modifier.fillMaxWidth(),
-                        fillWidth = true,
                     )
                 }
-            item { SettingsPageLink(SettingsCategory.WAKE, "tvheadend-network", R.string.settings_network_link) }
+                item { SettingsPageLink(SettingsCategory.WAKE, "tvheadend-network", R.string.settings_network_link) }
                 item { Text(stringResource(R.string.settings_tvh_permissions_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                item { SettingsPageLink(SettingsCategory.LIVE_TV, "tvheadend-live-tv") }
+                item(key = "tvheadend-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_home)) }
                 item {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
                         listOf(
@@ -502,46 +496,49 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item { TvSettingRow(stringResource(R.string.settings_tvh_home), stringResource(R.string.settings_tvh_home_hint), uiState.tvheadendShowOnHome, viewModel::onTvheadendShowOnHomeChanged) }
+                item(key = "tvheadend-playback-section") { SettingsSubheader(stringResource(R.string.settings_system_live_playback)) }
                 item {
-                    SettingsGroup(
-                        title = systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_playback_backend),
-                        subtitle = stringResource(R.string.settings_tvh_playback_backend_hint),
-                    ) {
-                        SettingsSelect(options = buildList {
-                            listOf("media3", "vlc", "mpv").forEach { backend ->
-                                val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
-                                add(SettingsSelectOption(
-                                    text = when (backend) {
-                                        "media3" -> stringResource(R.string.player_backend_media3)
-                                        "vlc" -> stringResource(R.string.player_backend_vlc)
-                                        "mpv" -> stringResource(R.string.player_backend_mpv)
-                                        else -> stringResource(R.string.player_backend_auto)
-                                    },
-                                    selected = uiState.tvheadendPlaybackBackendKey == backend,
-                                    onClick = { if (!mpvUnavailable) viewModel.onTvheadendPlaybackBackendChanged(backend) },
-                                    enabled = !mpvUnavailable,
-                                ))
-                            }
-                        })
-                        SettingsPageLink(SettingsCategory.IMAGE, "tvh-gpu-output", R.string.settings_gpu_output_link)
-                    }
+                    TvTextField(value = uiState.tvheadendStreamProfile, onValueChange = viewModel::onTvheadendStreamProfileChanged, label = stringResource(R.string.settings_tvh_stream_profile), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
                 }
                 item {
-                    SettingsGroup(title = stringResource(R.string.tvh_deinterlace_state)) {
+                    SettingsSelect(
+                        label = systemString(MediaSystem.TVHEADEND, R.string.settings_tvh_playback_backend),
+                        description = stringResource(R.string.settings_tvh_playback_backend_hint),
+                        options = listOf("media3", "vlc", "mpv").map { backend ->
+                            val mpvUnavailable = backend == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable
+                            SettingsSelectOption(
+                                text = when (backend) {
+                                    "media3" -> stringResource(R.string.player_backend_media3)
+                                    "vlc" -> stringResource(R.string.player_backend_vlc)
+                                    "mpv" -> stringResource(R.string.player_backend_mpv)
+                                    else -> stringResource(R.string.player_backend_auto)
+                                },
+                                selected = uiState.tvheadendPlaybackBackendKey == backend,
+                                onClick = { if (!mpvUnavailable) viewModel.onTvheadendPlaybackBackendChanged(backend) },
+                                enabled = !mpvUnavailable,
+                            )
+                        },
+                    )
+                }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (uiState.tvheadendPlaybackBackendKey !in setOf("mpv", "vlc")) {
+                            ConnectionListCaption(stringResource(R.string.tvh_deinterlace_state))
                             ImageHint(stringResource(R.string.tvh_deinterlace_media3_hint))
                         } else {
-                        ImageChoice(R.string.tvh_deinterlace_state, uiState.tvheadendDeinterlaceModeKey, listOf(
-                            "off" to stringResource(R.string.player_off), "auto" to stringResource(R.string.tvh_deinterlace_auto), "on" to stringResource(R.string.player_on),
-                        ), viewModel::onTvheadendDeinterlaceModeChanged)
-                        com.ambient.tv.ui.player.DeinterlaceMethodChoice(
-                            backend = uiState.tvheadendPlaybackBackendKey,
-                            key = if (uiState.tvheadendPlaybackBackendKey == "mpv") uiState.tvheadendMpvDeinterlaceFilterKey else uiState.tvheadendDeinterlaceFilterKey,
-                            onSelected = viewModel::onTvheadendDeinterlaceFilterChanged,
-                        )
+                            ImageChoice(R.string.tvh_deinterlace_state, uiState.tvheadendDeinterlaceModeKey, listOf(
+                                "off" to stringResource(R.string.player_off), "auto" to stringResource(R.string.tvh_deinterlace_auto), "on" to stringResource(R.string.player_on),
+                            ), viewModel::onTvheadendDeinterlaceModeChanged)
+                            com.ambient.tv.ui.player.DeinterlaceMethodChoice(
+                                backend = uiState.tvheadendPlaybackBackendKey,
+                                key = if (uiState.tvheadendPlaybackBackendKey == "mpv") uiState.tvheadendMpvDeinterlaceFilterKey else uiState.tvheadendDeinterlaceFilterKey,
+                                onSelected = viewModel::onTvheadendDeinterlaceFilterChanged,
+                            )
                         }
                     }
                 }
+                item { SettingsPageLink(SettingsCategory.LIVE_TV, "tvheadend-live-tv") }
+                item { SettingsPageLink(SettingsCategory.IMAGE, "tvh-gpu-output", R.string.settings_gpu_output_link) }
             }
         }
 
@@ -551,8 +548,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             if (uiState.spotifyEnabled) {
                 item { SystemNameField(MediaSystem.SPOTIFY, uiState, viewModel) }
             }
-            item {
-                SettingsGroup(title = stringResource(R.string.settings_spotify_web_title), subtitle = stringResource(R.string.settings_spotify_web_subtitle)) {
+            item(key = "spotify-account-section") { SettingsSubheader(stringResource(R.string.settings_system_account_setup)) }
+            item(key = "spotify:account") {
+                SettingsGroup(subtitle = stringResource(R.string.settings_spotify_web_subtitle), card = true) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(
                             if (uiState.spotifyClientId.isNotBlank()) {
@@ -584,7 +582,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             Text(stringResource(R.string.settings_spotify_qr_redirect, qrRedirect), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         uiState.spotifyAuthError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                        DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        SettingsActionRow {
                             TvActionButton(
                                 text = if (uiState.spotifyWebAuthorized) stringResource(R.string.action_sign_out) else stringResource(R.string.action_sign_in),
                                 onClick = if (uiState.spotifyWebAuthorized) viewModel::logoutSpotify else viewModel::loginSpotify,
@@ -594,6 +592,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
             }
+            item(key = "spotify-playback-section") { SettingsSubheader(stringResource(R.string.settings_system_device_playback)) }
+            item { TvTextField(value = uiState.spotifyDeviceName, onValueChange = viewModel::onSpotifyDeviceNameChanged, label = stringResource(R.string.settings_spotify_device_name), modifier = Modifier.fillMaxWidth()) }
+            item {
+                if (!com.ambient.tv.ui.mobile.LocalHandheldUi.current) Text(
+                    text = stringResource(R.string.settings_spotify_boot_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            item {
+                SettingsSelect(
+                    label = stringResource(R.string.settings_spotify_audio_quality),
+                    description = stringResource(R.string.settings_spotify_audio_quality_subtitle),
+                    options = listOf(96, 160, 320).map { bitrate ->
+                        SettingsSelectOption(text = stringResource(R.string.unit_kbps, bitrate), selected = uiState.spotifyBitrateKbps == bitrate, onClick = { viewModel.onSpotifyBitrateChanged(bitrate) })
+                    },
+                )
+            }
+            item(key = "spotify-display-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_display)) }
             if (uiState.spotifyEnabled) {
                 item {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items), subtitle = stringResource(R.string.settings_submenu_items_hint)) {
@@ -611,39 +628,26 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
             }
-            item { TvTextField(value = uiState.spotifyDeviceName, onValueChange = viewModel::onSpotifyDeviceNameChanged, label = stringResource(R.string.settings_spotify_device_name), modifier = Modifier.fillMaxWidth()) }
             item {
-                if (!com.ambient.tv.ui.mobile.LocalHandheldUi.current) Text(
-                    text = stringResource(R.string.settings_spotify_boot_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            item {
-                SettingsGroup(title = stringResource(R.string.settings_spotify_audio_quality), subtitle = stringResource(R.string.settings_spotify_audio_quality_subtitle)) {
-                    SettingsSelect(options = buildList {
-                        listOf(96, 160, 320).forEach { bitrate -> add(SettingsSelectOption(text = stringResource(R.string.unit_kbps, bitrate), selected = uiState.spotifyBitrateKbps == bitrate, onClick = { viewModel.onSpotifyBitrateChanged(bitrate) })) }
-                    })
-                }
-            }
-            item {
-                SettingsGroup(title = stringResource(R.string.settings_spotify_visualization), subtitle = stringResource(R.string.settings_spotify_visualization_subtitle)) {
-                    SettingsSelect(options = buildList {
-                        listOf("cover", "spectrum", "projectm", "off").forEach { mode ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_spotify_visualization),
+                        description = stringResource(R.string.settings_spotify_visualization_subtitle),
+                        options = listOf("cover", "spectrum", "projectm", "off").map { mode ->
                             val label = when (mode) {
                                 "spectrum" -> stringResource(R.string.spotify_visual_spectrum)
                                 "projectm" -> "projectM"
                                 "off" -> stringResource(R.string.settings_spotify_visual_off)
                                 else -> stringResource(R.string.settings_spotify_visual_cover)
                             }
-                            add(SettingsSelectOption(
+                            SettingsSelectOption(
                                 text = label,
                                 selected = uiState.spotifyVisualizerModeKey == mode,
                                 enabled = mode != "projectm" || com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable,
                                 onClick = { viewModel.onSpotifyVisualizerChanged(mode) },
-                            ))
-                        }
-                    })
+                            )
+                        },
+                    )
                     Text(stringResource(R.string.settings_spotify_visualizer_link_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     SettingsPageLink(SettingsCategory.VISUALIZER, "spotify-visualizer")
                 }
@@ -661,6 +665,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 )
             }
             if (uiState.youtubeEnabled) item { SystemNameField(MediaSystem.YOUTUBE, uiState, viewModel) }
+            item(key = "youtube-account-section") { SettingsSubheader(stringResource(R.string.settings_system_account_devices)) }
             item {
                 SettingsGroup(
                     title = stringResource(R.string.setup_youtube_login),
@@ -722,11 +727,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                 item { YouTubeTvLinkSection(viewModel) }
             }
             if (uiState.youtubeEnabled) {
-                item {
-                    SettingsGroup(
-                        title = systemString(MediaSystem.YOUTUBE, R.string.settings_youtube_group),
-                        subtitle = stringResource(R.string.settings_youtube_group_subtitle),
-                    ) {
+                item(key = "youtube-playback-section") { SettingsSubheader(stringResource(R.string.settings_system_playback)) }
+                item(key = "youtube-playback-behaviour") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         TvSettingRow(
                             title = stringResource(R.string.settings_youtube_sponsorblock_title),
                             body = stringResource(R.string.settings_youtube_sponsorblock_hint),
@@ -739,7 +742,12 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             checked = uiState.youtubeAutoplayNextEnabled,
                             onCheckedChange = viewModel::onYoutubeAutoplayNextChanged,
                         )
-                        Text(stringResource(R.string.settings_youtube_feeds), style = MaterialTheme.typography.titleSmall)
+                    }
+                }
+                item(key = "youtube-menu-section") { SettingsSubheader(stringResource(R.string.settings_system_menu_start)) }
+                item(key = "youtube-feeds") {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        ConnectionListCaption(stringResource(R.string.settings_youtube_feeds))
                         val youtubeFeedLabels = listOf(
                             "home" to stringResource(R.string.nav_youtube_home),
                             "subscriptions" to stringResource(R.string.nav_youtube_subscriptions),
@@ -760,24 +768,31 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 onCheckedChange = { enabled -> viewModel.onYoutubeFeedChanged(key, enabled) },
                             )
                         }
-                        // Start page: one of the sections switched on above.
-                        Text(stringResource(R.string.settings_youtube_start_feed), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SettingsSelect(options = youtubeFeedLabels
-                            .filter { (key, _) -> key in uiState.youtubeFeedKeys && key in uiState.youtubeSupportedFeedKeys }
-                            .map { (key, label) ->
-                                SettingsSelectOption(
-                                    text = label,
-                                    selected = uiState.youtubeStartFeedKey == key,
-                                    onClick = { viewModel.onYoutubeStartFeedChanged(key) },
-                                )
-                            })
+                        SettingsSelect(
+                            label = stringResource(R.string.settings_youtube_start_feed),
+                            options = youtubeFeedLabels
+                                .filter { (key, _) -> key in uiState.youtubeFeedKeys && key in uiState.youtubeSupportedFeedKeys }
+                                .map { (key, label) ->
+                                    SettingsSelectOption(
+                                        text = label,
+                                        selected = uiState.youtubeStartFeedKey == key,
+                                        onClick = { viewModel.onYoutubeStartFeedChanged(key) },
+                                    )
+                                },
+                        )
                         SubmenuSettingsRow(MediaSystem.YOUTUBE, uiState, viewModel::onSidebarSettingsShortcutChanged)
-                        Text(stringResource(R.string.settings_youtube_video_preset), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        val youtubeContext = androidx.compose.ui.platform.LocalContext.current
-                        val devicePreset = remember {
-                            com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(youtubeContext, com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO, 0)
-                        }
-                        SettingsSelect(options = buildList {
+                    }
+                }
+                item(key = "youtube-quality-section") { SettingsSubheader(stringResource(R.string.settings_system_video_quality)) }
+                item(key = "youtube-video-preset") {
+                    val youtubeContext = LocalContext.current
+                    val devicePreset = remember {
+                        com.ambient.tv.youtube.YouTubeDeviceVideo.videoTarget(youtubeContext, com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO, 0)
+                    }
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_youtube_video_preset),
+                        description = stringResource(R.string.settings_youtube_quality_hint),
+                        options = buildList {
                             add(SettingsSelectOption(
                                 text = stringResource(R.string.settings_youtube_video_preset_auto, devicePreset.label),
                                 selected = uiState.youtubeVideoPreset == com.ambient.tv.youtube.YOUTUBE_PRESET_AUTO,
@@ -790,22 +805,28 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                     onClick = { viewModel.onYoutubeVideoPresetChanged(preset.key) },
                                 ))
                             }
-                        })
-                        Text(stringResource(R.string.settings_youtube_max_resolution), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SettingsSelect(options = buildList {
-                            listOf(0, 720, 1080, 1440, 2160).forEach { height ->
-                                add(SettingsSelectOption(
-                                    text = if (height == 0) stringResource(R.string.settings_youtube_max_resolution_display) else "${height}p",
-                                    selected = uiState.youtubeMaxVideoHeight == height,
-                                    onClick = { viewModel.onYoutubeMaxVideoHeightChanged(height) },
-                                ))
-                            }
-                        })
-                        Text(stringResource(R.string.settings_youtube_max_resolution_display_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(stringResource(R.string.settings_youtube_quality_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        // SmartTube's player options: network engine and buffer size (Media3 player).
-                        Text(stringResource(R.string.settings_youtube_network_engine), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SettingsSelect(options = com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES.map { engine ->
+                        },
+                    )
+                }
+                item(key = "youtube-resolution") {
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_youtube_max_resolution),
+                        description = stringResource(R.string.settings_youtube_max_resolution_display_hint),
+                        options = listOf(0, 720, 1080, 1440, 2160).map { height ->
+                            SettingsSelectOption(
+                                text = if (height == 0) stringResource(R.string.settings_youtube_max_resolution_display) else "${height}p",
+                                selected = uiState.youtubeMaxVideoHeight == height,
+                                onClick = { viewModel.onYoutubeMaxVideoHeightChanged(height) },
+                            )
+                        },
+                    )
+                }
+                item(key = "youtube-network-section") { SettingsSubheader(stringResource(R.string.settings_system_network_buffer)) }
+                item(key = "youtube-network-engine") {
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_youtube_network_engine),
+                        description = stringResource(R.string.settings_youtube_network_engine_hint),
+                        options = com.ambient.tv.ui.player.MEDIA3_NETWORK_ENGINES.map { engine ->
                             SettingsSelectOption(
                                 text = when (engine) {
                                     com.ambient.tv.ui.player.MEDIA3_NETWORK_CRONET -> stringResource(R.string.settings_youtube_network_engine_play)
@@ -815,10 +836,14 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 selected = uiState.youtubeNetworkEngine == engine,
                                 onClick = { viewModel.onYoutubeNetworkEngineChanged(engine) },
                             )
-                        })
-                        Text(stringResource(R.string.settings_youtube_network_engine_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(stringResource(R.string.settings_youtube_buffer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SettingsSelect(options = com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS.map { key ->
+                        },
+                    )
+                }
+                item(key = "youtube-buffer") {
+                    SettingsSelect(
+                        label = stringResource(R.string.settings_youtube_buffer),
+                        description = stringResource(R.string.settings_youtube_buffer_hint),
+                        options = com.ambient.tv.ui.player.MEDIA3_BUFFER_KEYS.map { key ->
                             SettingsSelectOption(
                                 text = stringResource(when (key) {
                                     "low" -> R.string.settings_youtube_buffer_low
@@ -828,9 +853,8 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 selected = uiState.youtubeBufferKey == key,
                                 onClick = { viewModel.onYoutubeBufferChanged(key) },
                             )
-                        })
-                        Text(stringResource(R.string.settings_youtube_buffer_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                        },
+                    )
                 }
             }
         }
@@ -839,6 +863,12 @@ internal fun LazyListScope.settingsSystemCategoryItems(
 }
 
 
+
+/** A list caption stays subordinate to the page's main section headers. */
+@Composable
+private fun ConnectionListCaption(title: String) {
+    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
 
 /** Renames a system throughout the app; an empty field restores the provider's own name. */
 @Composable
@@ -926,7 +956,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
         WireGuardRouteState.Up -> stringResource(R.string.wg_status_up)
         is WireGuardRouteState.Failed -> stringResource(R.string.wg_status_failed, route.message)
     }
-    SettingsGroup(title = stringResource(R.string.wg_title), subtitle = stringResource(R.string.wg_hint)) {
+    SettingsGroup(subtitle = stringResource(R.string.wg_hint), card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (uiState.wireGuardSummary.isBlank()) {
                 Text(
@@ -950,16 +980,14 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                     requireExplicitEditing = true,
                     modifier = Modifier.focusRequester(importFocus).fillMaxWidth().heightIn(min = 96.dp, max = 180.dp),
                 )
-                DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TvActionButton(text = stringResource(R.string.wg_load_file), onClick = { filePicker = true }, modifier = Modifier.weight(1f), fillWidth = true)
+                SettingsActionRow {
+                    TvActionButton(text = stringResource(R.string.wg_load_file), onClick = { filePicker = true })
                     TvActionButton(
                         text = stringResource(R.string.wg_save),
                         // The pasted text stays until the import succeeds (the field hides then), so a
                         // rejected config can be corrected instead of pasted again.
                         onClick = { viewModel.importWireGuardConfig(draft) },
                         enabled = draft.isNotBlank(),
-                        modifier = Modifier.weight(1f),
-                        fillWidth = true,
                     )
                 }
             } else {
@@ -969,7 +997,6 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                     onClick = viewModel::testWireGuard,
                     loading = uiState.wireGuard.testing,
                     modifier = Modifier.focusRequester(testFocus),
-                    fillWidth = true,
                 )
                 uiState.wireGuard.testMessage?.let { message ->
                     Text(
@@ -978,7 +1005,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                         color = if (uiState.wireGuard.testOk) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     )
                 }
-                DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsActionRow {
                     TvActionButton(
                         text = stringResource(R.string.wg_connect),
                         onClick = {
@@ -987,13 +1014,11 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                         },
                         enabled = viewModel.wireGuardInUse() &&
                             (uiState.wireGuard.status is WireGuardRouteState.Idle || uiState.wireGuard.status is WireGuardRouteState.Failed),
-                        modifier = Modifier.weight(1f),
-                        fillWidth = true,
                     )
                     TvActionButton(text = stringResource(R.string.wg_disconnect), onClick = viewModel::stopWireGuard,
                         enabled = uiState.wireGuard.status is WireGuardRouteState.Up || uiState.wireGuard.status is WireGuardRouteState.Connecting,
-                        modifier = Modifier.weight(1f), fillWidth = true)
-                    TvActionButton(text = stringResource(R.string.wg_remove), onClick = { confirmRemove = true }, modifier = Modifier.weight(1f), fillWidth = true)
+                    )
+                    TvActionButton(text = stringResource(R.string.wg_remove), onClick = { confirmRemove = true })
                 }
             }
         }
@@ -1157,20 +1182,17 @@ internal fun SavedServerRow(server: ServerProfile, active: Boolean, onSelect: ()
 /** Global theme-music volume; shown once, on the Audio page. */
 internal fun LazyListScope.themeMusicVolumeItems(uiState: SettingsUiState, viewModel: SettingsViewModel) {
     item {
-        SettingsGroup(
-            title = stringResource(R.string.settings_theme_music_volume),
-            subtitle = stringResource(R.string.settings_theme_music_volume_hint),
-        ) {
-            SettingsSelect(options = buildList {
-                listOf(20, 40, 60, 80).forEach { percent ->
-                    add(SettingsSelectOption(
-                        text = "$percent%",
-                        selected = uiState.themeMusicVolumePercent == percent,
-                        onClick = { viewModel.onThemeMusicVolumePercentChanged(percent) },
-                    ))
-                }
-            })
-        }
+        SettingsSelect(
+            label = stringResource(R.string.settings_theme_music_volume),
+            description = stringResource(R.string.settings_theme_music_volume_hint),
+            options = listOf(20, 40, 60, 80).map { percent ->
+                SettingsSelectOption(
+                    text = "$percent%",
+                    selected = uiState.themeMusicVolumePercent == percent,
+                    onClick = { viewModel.onThemeMusicVolumePercentChanged(percent) },
+                )
+            },
+        )
     }
 }
 

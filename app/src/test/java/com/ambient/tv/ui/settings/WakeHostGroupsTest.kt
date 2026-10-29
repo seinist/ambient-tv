@@ -60,14 +60,15 @@ class WakeHostGroupsTest {
         assertEquals(2, groups.size)
     }
 
-    @Test fun scrollIndexFollowsGroupsAndProfilePicker() {
+    @Test fun linksTargetMachinesIndependentlyOfSectionAndProfileRows() {
         val groups = groupWakeTargets(listOf(
             server(WakeMemberKind.PLEX, "a"), server(WakeMemberKind.JELLYFIN, "b"), server(WakeMemberKind.TVHEADEND, "a"),
         ))
-        assertEquals(1, networkWakeScrollIndex(groups, false, "tvheadend"))
-        assertEquals(2, networkWakeScrollIndex(groups, false, "jellyfin"))
-        assertEquals(3, networkWakeScrollIndex(groups, true, "jellyfin"))
-        assertEquals(3, networkWakeScrollIndex(groups, false, "dlna"))
-        assertEquals(0, networkWakeScrollIndex(groups, false, "wireguard"))
+        assertEquals("wake-group:${groups[0].key}", networkWakeTargetKey(groups, "tvheadend"))
+        assertEquals(networkWakeTargetKey(groups, "plex"), networkWakeTargetKey(groups, "tvheadend"))
+        assertEquals("wake-group:${groups[1].key}", networkWakeTargetKey(groups, "jellyfin"))
+        assertEquals("wake-sources", networkWakeTargetKey(groups, "dlna"))
+        assertEquals("wake-sources", networkWakeTargetKey(groups, "files"))
+        assertNull(networkWakeTargetKey(groups, "wireguard"))
     }
 }

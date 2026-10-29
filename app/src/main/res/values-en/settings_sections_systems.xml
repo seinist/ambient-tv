@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_system_sources_network">Sources and network</string>
+    <string name="settings_system_tunnel_import">Import configuration</string>
+    <string name="settings_system_tunnel_status">Tunnel and status</string>
+    <string name="settings_system_server_account">Servers and sign-in</string>
+    <string name="settings_system_connection_start">Connection and startup</string>
+    <string name="settings_system_library_display">Library and appearance</string>
+    <string name="settings_system_server_access">Server and access</string>
+    <string name="settings_system_menu_home">Menu and home screen</string>
+    <string name="settings_system_live_playback">Live TV playback</string>
+    <string name="settings_system_account_setup">Account and setup</string>
+    <string name="settings_system_device_playback">Device and playback</string>
+    <string name="settings_system_menu_display">Menu and appearance</string>
+    <string name="settings_system_playback">Playback</string>
+    <string name="settings_system_menu_start">Menu and start section</string>
+    <string name="settings_system_video_quality">Video quality</string>
+    <string name="settings_system_network_buffer">Network and buffering</string>
+    <string name="settings_system_account_devices">Account and device linking</string>
+    <string name="settings_system_sources_devices">Sources and devices</string>
+    <string name="settings_system_wake_servers">Wake servers</string>
+    <string name="settings_system_wake_behaviour">Wake-on-LAN behaviour</string>
+    <string name="settings_system_auto_wake">Automatic wake</string>
+    <string name="settings_system_receiver_identity">Receiver and device name</string>
+    <string name="settings_system_receiver_access">Access and trusted senders</string>
+    <string name="settings_system_connection_pairing">Connection and pairing</string>
+    <string name="settings_system_receiver_background">Receiver and background startup</string>
+    <string name="settings_system_connection_network">Connection and network</string>
+    <string name="settings_system_wake_device">Wake this device</string>
+    <string name="settings_system_paired_tvs">Paired TVs</string>
+    <string name="settings_system_device_management">Manage device</string>
+    <string name="settings_system_playlists_sources">Playlists and sources</string>
+    <string name="settings_system_source">Source</string>
+    <string name="settings_system_programme_guide">Programme guide</string>
+    <string name="settings_system_connection_options">Connection options</string>
+</resources>

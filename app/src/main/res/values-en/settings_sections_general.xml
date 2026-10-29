@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_section_general_design">Design &amp; colors</string>
+    <string name="settings_section_general_display_size">Size &amp; display edges</string>
+    <string name="settings_section_general_app_start">App startup</string>
+    <string name="settings_section_general_performance">Performance</string>
+    <string name="settings_section_general_artwork">Artwork &amp; lighting</string>
+    <string name="settings_section_general_background_video">Background video</string>
+    <string name="settings_section_general_activation">When to start</string>
+    <string name="settings_section_general_motif_quality">Scene &amp; quality</string>
+    <string name="settings_section_general_clock_date">Clock &amp; date</string>
+    <string name="settings_section_general_brightness">Brightness</string>
+    <string name="settings_section_general_clock_display">Display &amp; format</string>
+    <string name="settings_section_general_playback">During playback</string>
+    <string name="settings_section_general_subtitle_selection">Automatic selection</string>
+    <string name="settings_section_general_subtitle_languages">Languages</string>
+    <string name="settings_section_general_subtitle_look">Appearance</string>
+    <string name="settings_section_general_subtitle_online">Online subtitles</string>
+    <string name="settings_section_general_skipping">Skipping</string>
+    <string name="settings_section_general_next_title">Next title</string>
+    <string name="settings_section_general_autoplay">Automatic playback</string>
+    <string name="settings_section_general_sleep">Sleep &amp; shutdown</string>
+    <string name="settings_section_general_slideshow">Slideshow</string>
+    <string name="settings_section_general_photo_order">Selection &amp; order</string>
+    <string name="settings_section_general_overlays">On-screen information</string>
+    <string name="settings_section_general_presets">Presets &amp; transitions</string>
+    <string name="settings_section_general_quality_output">Quality &amp; output</string>
+    <string name="settings_section_general_home_sources">Content &amp; sources</string>
+    <string name="settings_section_general_history">History</string>
+    <string name="settings_section_general_export">Export settings</string>
+    <string name="settings_section_general_restore">Restore settings</string>
+    <string name="settings_section_general_app_updates">App &amp; updates</string>
+    <string name="settings_section_general_notifications_display">Notification display</string>
+    <string name="settings_section_general_connection">Account &amp; connection</string>
+    <string name="settings_section_general_trailer_behavior">Playback &amp; language</string>
+    <string name="settings_section_general_sound_general">General</string>
+    <string name="settings_section_general_sound_event">Event &amp; preset</string>
+    <string name="settings_section_general_sound_preview">Preview</string>
+    <string name="settings_section_general_transfer">Import &amp; export</string>
+    <string name="settings_section_general_renderer">Player &amp; profiles</string>
+    <string name="settings_section_general_display">Display &amp; refresh rate</string>
+    <string name="settings_section_general_audio_language">Audio language</string>
+    <string name="settings_section_general_preset_filter">Preset selection</string>
+</resources>

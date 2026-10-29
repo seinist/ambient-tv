@@ -31,9 +31,10 @@ internal fun LazyListScope.subtitleAppearanceItems(
     appearance: SubtitleAppearance,
     onChange: ((SubtitleAppearance) -> SubtitleAppearance) -> Unit,
 ) {
+    item { SettingsSubheader(stringResource(R.string.settings_section_general_subtitle_look)) }
     item { SubtitlePreview(appearance) }
     item {
-        SettingsGroup(title = stringResource(R.string.subtitle_look_title), subtitle = stringResource(R.string.subtitle_look_hint)) {
+        SettingsGroup(subtitle = stringResource(R.string.subtitle_look_hint)) {
             LookChoice(R.string.subtitle_look_size, appearance.size, SubtitleAppearance.sizes, ::sizeLabel) { v -> onChange { it.copy(size = v) } }
             LookChoice(R.string.subtitle_look_color, appearance.color, SubtitleAppearance.colors, ::colorLabel) { v -> onChange { it.copy(color = v) } }
             LookChoice(R.string.subtitle_look_edge, appearance.edge, SubtitleAppearance.edges, ::edgeLabel) { v -> onChange { it.copy(edge = v) } }

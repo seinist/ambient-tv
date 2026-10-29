@@ -22,6 +22,9 @@ import com.ambient.tv.data.iptv.IptvSource
 import com.ambient.tv.data.iptv.IptvStore
 import com.ambient.tv.livetv.LiveTvRegistry
 import com.ambient.tv.ui.common.AppDialog
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsNavigationRow
+import com.ambient.tv.ui.common.SettingsHint
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.TvTextField
@@ -79,20 +82,23 @@ class IptvSettingsViewModel @Inject constructor(
 internal fun IptvSettingsSection(viewModel: IptvSettingsViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()) {
     val sources by viewModel.sources.collectAsState()
     var editing by remember { mutableStateOf<IptvSource?>(null) }
-    SettingsGroup(title = stringResource(R.string.iptv_title), subtitle = stringResource(R.string.iptv_settings_hint)) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            sources.forEach { source ->
-                TvActionButton(
-                    source.name + if (source.enabled) "" else " · " + stringResource(R.string.iptv_disabled),
-                    { viewModel.clearResult(); editing = source }, fillWidth = true,
-                )
-            }
-            if (sources.isEmpty()) Text(stringResource(R.string.iptv_empty), style = MaterialTheme.typography.bodySmall)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SettingsSubheader(stringResource(R.string.settings_system_playlists_sources))
+        SettingsHint(stringResource(R.string.iptv_settings_hint))
+        sources.forEach { source ->
+            SettingsNavigationRow(
+                title = source.name,
+                summary = stringResource(if (source.enabled) R.string.iptv_enabled else R.string.iptv_disabled),
+                onClick = { viewModel.clearResult(); editing = source },
+            )
+        }
+        if (sources.isEmpty()) Text(stringResource(R.string.iptv_empty), style = MaterialTheme.typography.bodySmall)
+        SettingsActionRow {
             TvActionButton(stringResource(R.string.iptv_add), {
                 viewModel.clearResult(); editing = IptvSource(name = "", playlistUrl = "")
-            }, fillWidth = true)
-            Text(stringResource(R.string.iptv_privacy_hint), style = MaterialTheme.typography.bodySmall)
+            })
         }
+        SettingsHint(stringResource(R.string.iptv_privacy_hint))
     }
     editing?.let { source -> IptvSourceDialog(source, existing = sources.any { it.id == source.id }, viewModel, onDismiss = { editing = null }) }
 }
@@ -120,12 +126,15 @@ private fun IptvSourceDialog(source: IptvSource, existing: Boolean, viewModel: I
             TvActionButton(stringResource(R.string.files_cancel), onDismiss)
         },
     ) {
+        SettingsSubheader(stringResource(R.string.settings_system_source))
         TvTextField(name, { name = it.take(80) }, stringResource(R.string.files_source_name), Modifier.fillMaxWidth())
         TvTextField(playlist, { playlist = it.trim() }, stringResource(R.string.iptv_playlist_url), Modifier.fillMaxWidth())
+        TvSettingRow(stringResource(R.string.iptv_enabled), null, enabled, { enabled = it })
+        SettingsSubheader(stringResource(R.string.settings_system_programme_guide))
         TvTextField(epg, { epg = it.trim() }, stringResource(R.string.iptv_epg_url), Modifier.fillMaxWidth())
         Text(stringResource(R.string.iptv_epg_hint), style = MaterialTheme.typography.bodySmall)
+        SettingsSubheader(stringResource(R.string.settings_system_connection_options))
         TvTextField(userAgent, { userAgent = it.take(256) }, stringResource(R.string.iptv_user_agent), Modifier.fillMaxWidth())
-        TvSettingRow(stringResource(R.string.iptv_enabled), null, enabled, { enabled = it })
         if (invalid) Text(stringResource(R.string.iptv_invalid), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         result?.takeIf { it.sourceId == source.id }?.let { r ->
             val text = when {

@@ -32,6 +32,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.RightPanelValueSlider
+import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.sound.*
@@ -140,11 +141,11 @@ internal fun NavSoundEditor(
                     stop()
                     runCatching { import.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
                         .onFailure { message = R.string.nav_editor_file_error }
-                }, modifier = Modifier.weight(1f).focusRequester(transferFocus), enabled = !busy)
+                }, modifier = Modifier.focusRequester(transferFocus), enabled = !busy)
                 TvActionButton(stringResource(R.string.nav_editor_export), {
                     stop(); exportSnapshot = bank.encode()
                     runCatching { export.launch("ambient-navigation-sounds.json") }.onFailure { message = R.string.nav_editor_file_error }
-                }, modifier = Modifier.weight(1f), enabled = !busy)
+                }, enabled = !busy)
     }
     // Suppress ordinary navigation feedback; only the draft preview should be audible.
     CompositionLocalProvider(LocalUiSoundPlayer provides null,
@@ -152,6 +153,7 @@ internal fun NavSoundEditor(
         androidx.tv.material3.LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             val general: @Composable ColumnScope.() -> Unit = {
+                SettingsSubheader(stringResource(R.string.settings_section_general_sound_general))
                 TvSettingRow(
                     title = stringResource(R.string.settings_nav_sounds),
                     body = stringResource(R.string.settings_nav_sounds_hint),
@@ -168,19 +170,20 @@ internal fun NavSoundEditor(
             }
             val identity: @Composable ColumnScope.() -> Unit = {
                 if (handheld) general()
-                EditorLabel(stringResource(R.string.nav_editor_event))
-                SettingsSelect(UiSound.entries.map { kind ->
+                SettingsSubheader(stringResource(R.string.settings_section_general_sound_event))
+                SettingsSelect(label = stringResource(R.string.nav_editor_event), options = UiSound.entries.map { kind ->
                     SettingsSelectOption(stringResource(soundLabel(kind)), event == kind, { if (event != kind) { event = kind; message = null; previewChange(kind, bank.design(kind)) } })
                 })
-                EditorLabel(stringResource(R.string.nav_editor_preset))
-                SettingsSelect((if (preset == "custom") listOf(SettingsSelectOption(stringResource(R.string.nav_editor_custom), true, {})) else emptyList()) +
+                SettingsSelect(label = stringResource(R.string.nav_editor_preset), options = (if (preset == "custom") listOf(SettingsSelectOption(stringResource(R.string.nav_editor_custom), true, {})) else emptyList()) +
                     presets.map { (name, label) -> SettingsSelectOption(stringResource(label), preset == name,
                         { update(NavSoundDesign.preset(name, event)) }) })
                 TvSettingRow(stringResource(R.string.nav_editor_preview_on_change), checked = previewOnChange,
                     onCheckedChange = { previewOnChange = it; stop() })
                 TvSettingRow(stringResource(R.string.nav_editor_enabled), checked = design.enabled,
                     onCheckedChange = { update(design.copy(enabled = it)) })
-                TvActionButton(stringResource(R.string.nav_editor_reset), { update(NavSoundDesign.preset("warm", event)) }, fillWidth = true)
+                SettingsActionRow {
+                    TvActionButton(stringResource(R.string.nav_editor_reset), { update(NavSoundDesign.preset("warm", event)) })
+                }
             }
             val playPreview = {
                 stop()
@@ -200,14 +203,15 @@ internal fun NavSoundEditor(
                 }
             }
             val previewControls: @Composable ColumnScope.() -> Unit = {
+                SettingsSubheader(stringResource(R.string.settings_section_general_sound_preview))
                 message?.let {
                     Text(stringResource(it), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview, Modifier.weight(1.2f), enabled = design.enabled, selected = true)
-                    TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence, Modifier.weight(1f))
-                    TvActionButton(stringResource(R.string.nav_editor_stop), ::stop, Modifier.weight(1f))
+                SettingsActionRow {
+                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview, enabled = design.enabled, selected = true)
+                    TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence)
+                    TvActionButton(stringResource(R.string.nav_editor_stop), ::stop)
                 }
             }
             val controls: @Composable ColumnScope.() -> Unit = {
@@ -270,7 +274,8 @@ internal fun NavSoundEditor(
                             Spacer(Modifier.height(12.dp))
                             controls()
                             if (handheld) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = transferActions)
+                                SettingsSubheader(stringResource(R.string.settings_section_general_transfer))
+                                SettingsActionRow(content = transferActions)
                                 NavSoundSync(bank.encode(), volume, soundsEnabled)
                             }
                         }
@@ -283,24 +288,26 @@ internal fun NavSoundEditor(
                     Text(stringResource(it), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TvActionButton(stringResource(R.string.nav_editor_play), playPreview,
-                        Modifier.weight(1.2f).focusRequester(previewFocus),
-                        enabled = design.enabled, fillWidth = true, selected = true)
-                    TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence,
-                        Modifier.weight(1f).focusRequester(sequenceFocus))
-                    TvActionButton(stringResource(R.string.nav_editor_stop), ::stop, Modifier.weight(1f))
-                    transferActions()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SettingsSubheader(stringResource(R.string.settings_section_general_sound_preview))
+                        SettingsActionRow {
+                            TvActionButton(stringResource(R.string.nav_editor_play), playPreview,
+                                Modifier.focusRequester(previewFocus), enabled = design.enabled, selected = true)
+                            TvActionButton(stringResource(R.string.nav_editor_sequence), playSequence,
+                                Modifier.focusRequester(sequenceFocus))
+                            TvActionButton(stringResource(R.string.nav_editor_stop), ::stop)
+                        }
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SettingsSubheader(stringResource(R.string.settings_section_general_transfer))
+                        SettingsActionRow(content = transferActions)
+                    }
                 }
                 NavSoundSync(bank.encode(), volume, soundsEnabled)
             }
         }
     }
-}
-
-@Composable
-private fun EditorLabel(text: String) {
-    Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

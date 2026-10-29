@@ -13,7 +13,10 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.*
-import com.ambient.tv.ui.mobile.DeviceActionRow
+import com.ambient.tv.ui.settings.SettingsGroup
+import com.ambient.tv.ui.settings.SettingsSelect
+import com.ambient.tv.ui.settings.SettingsSelectOption
+import com.ambient.tv.ui.settings.SettingsSubheader
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.launch
 
@@ -34,41 +37,44 @@ fun TrailerSettings(onConnected: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SystemWordmark(MediaSystem.TRAILERS, stringResource(R.string.trailers_title), height = 24.dp)
-        Text(stringResource(R.string.trailers_key_help))
-        if (configured) Text(stringResource(R.string.trailers_connected), color = MaterialTheme.colorScheme.primary)
+        SettingsSubheader(stringResource(R.string.settings_section_general_connection))
+        SettingsGroup(card = true) {
+            Text(stringResource(R.string.trailers_key_help))
+            if (configured) Text(stringResource(R.string.trailers_connected), color = MaterialTheme.colorScheme.primary)
+            TvTextField(value = input, onValueChange = { input = it; failure = null }, label = stringResource(R.string.trailers_api_key),
+                modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+            failure?.let { Text(stringResource(it)) }
+            SettingsActionRow {
+                TvActionButton(text = stringResource(R.string.trailers_connect), enabled = input.isNotBlank() && !busy, loading = busy, onClick = {
+                    val pending = input
+                    busy = true
+                    failure = null
+                    scope.launch {
+                        try {
+                            repository.connect(pending).onSuccess {
+                                input = ""; enabled = true; preferences.trailersEnabled = true; onConnected()
+                            }.onFailure {
+                                failure = if (it is IllegalArgumentException || it is TrailerRequestFailed && it.status in setOf(401, 403))
+                                    R.string.trailers_key_invalid else R.string.trailers_failed
+                            }
+                        } finally { busy = false }
+                    }
+                })
+                if (configured) TvActionButton(text = stringResource(R.string.trailers_disconnect), enabled = !busy,
+                    onClick = { repository.disconnect(); input = ""; enabled = false; preferences.trailersEnabled = false; onConnected() })
+            }
+        }
+        SettingsSubheader(stringResource(R.string.settings_section_general_trailer_behavior))
         TvSettingRow(stringResource(R.string.trailers_enable), checked = enabled, onCheckedChange = {
             enabled = it; preferences.trailersEnabled = it; onConnected()
         })
-        TvTextField(value = input, onValueChange = { input = it; failure = null }, label = stringResource(R.string.trailers_api_key),
-            modifier = Modifier.fillMaxWidth(), visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-        failure?.let { Text(stringResource(it)) }
-        TvActionButton(text = stringResource(R.string.trailers_connect), enabled = input.isNotBlank() && !busy, loading = busy, onClick = {
-            val pending = input
-            busy = true
-            failure = null
-            scope.launch {
-                try {
-                    repository.connect(pending).onSuccess {
-                        input = ""; enabled = true; preferences.trailersEnabled = true; onConnected()
-                    }.onFailure {
-                        failure = if (it is IllegalArgumentException || it is TrailerRequestFailed && it.status in setOf(401, 403))
-                            R.string.trailers_key_invalid else R.string.trailers_failed
-                    }
-                } finally { busy = false }
-            }
-        })
-        if (configured) TvActionButton(text = stringResource(R.string.trailers_disconnect), enabled = !busy,
-            onClick = { repository.disconnect(); input = ""; enabled = false; preferences.trailersEnabled = false; onConnected() })
-        Text(stringResource(R.string.trailers_language))
-        // A plain Row clips the third language on a phone in portrait (Gerätesprache + Deutsch
-        // already fill the width). FlowRow wraps there; television keeps the original Row.
-        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            listOf("auto" to stringResource(R.string.trailers_auto), "de" to "Deutsch", "en" to "English").forEach { (key, label) ->
-                TvActionButton(text = label, selected = language == key, onClick = {
+        SettingsSelect(label = stringResource(R.string.trailers_language), options =
+            listOf("auto" to stringResource(R.string.trailers_auto), "de" to "Deutsch", "en" to "English").map { (key, label) ->
+                SettingsSelectOption(text = label, selected = language == key, onClick = {
                     language = key; preferences.trailerLanguage = key; onConnected()
                 })
-            }
-        }
+            },
+        )
     }
 }

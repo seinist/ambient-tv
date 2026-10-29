@@ -57,7 +57,7 @@ private fun GroupedImageChoice(
 }
 
 @Composable
-internal fun ImageHint(text: String) = Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+internal fun ImageHint(text: String) = com.ambient.tv.ui.common.SettingsHint(text)
 
 @Composable
 internal fun HdrMedia3Hint() = ImageHint(stringResource(R.string.hdr_plays_through_media3))

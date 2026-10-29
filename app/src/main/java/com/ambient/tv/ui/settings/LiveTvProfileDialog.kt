@@ -1,14 +1,14 @@
 package com.ambient.tv.ui.settings
 
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.data.local.*
 import com.ambient.tv.ui.common.AppDialog
+import com.ambient.tv.ui.common.SettingsActionRow
+import com.ambient.tv.ui.common.SettingsSectionHeader
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.player.*
 import com.ambient.tv.ui.player.backend.*
@@ -64,6 +64,10 @@ internal fun LiveTvProfileDialog(
             TvActionButton(text = stringResource(R.string.back), onClick = onDismiss)
         },
     ) {
+        SettingsSectionHeader(
+            stringResource(R.string.settings_playback_section_profile_scope),
+            description = stringResource(R.string.settings_playback_scope_live_width),
+        )
         ImageChoice(R.string.live_profiles_resolution, resolution,
             (VideoResolutionClass.keys + profiles.keys.filter { it != "all" }
                 .map { it.removePrefix("live:") }).distinct().map { it to VideoResolutionClass.label(it) }) { resolution = it }
@@ -71,6 +75,7 @@ internal fun LiveTvProfileDialog(
         ImageChoice(R.string.live_profiles_section, section, listOf(
             "video" to stringResource(R.string.player_video), "audio" to stringResource(R.string.player_audio),
         )) { section = it }
+        SettingsSectionHeader(stringResource(R.string.settings_playback_section_renderer))
         ImageChoice(R.string.live_profiles_player, draft.rendererKey,
             listOf("auto" to stringResource(R.string.live_profiles_player_inherit)) + renderers) {
             draft = draft.copy(rendererKey = it)
@@ -96,6 +101,7 @@ internal fun LiveTvProfileDialog(
                     checkAgain = { scope.launch { VideoAccelerationRuntime.refresh(context, force = true) } })
                 // Picture filters are set in the player; saved live:* filter values stay untouched.
                 if (editorBackend != "media3") {
+                    SettingsSectionHeader(stringResource(R.string.image_motion))
                     val mpv = editorBackend == "mpv"
                     val mode = (if (mpv) draft.mpvDeinterlaceMode else draft.vlcDeinterlaceMode) ?: initial.liveDeinterlaceMode
                     val filter = (if (mpv) draft.mpvDeinterlaceFilter else draft.vlcDeinterlaceFilter) ?: "auto"
@@ -111,11 +117,16 @@ internal fun LiveTvProfileDialog(
                 }
             }
         }
-        if (saved != null) TvActionButton(text = stringResource(R.string.live_profiles_reset), onClick = {
-            save(resolution, null)
-            drafts.remove(resolution)
-            opened.remove(resolution)
-            profiles = profiles - profileKey
-        }, modifier = Modifier.fillMaxWidth(), fillWidth = true)
+        if (saved != null) {
+            SettingsSectionHeader(stringResource(R.string.settings_playback_section_profile_actions))
+            SettingsActionRow {
+                TvActionButton(text = stringResource(R.string.live_profiles_reset), onClick = {
+                    save(resolution, null)
+                    drafts.remove(resolution)
+                    opened.remove(resolution)
+                    profiles = profiles - profileKey
+                })
+            }
+        }
     }
 }
