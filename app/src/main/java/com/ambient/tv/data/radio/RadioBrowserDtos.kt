@@ -1,12 +1,12 @@
 package com.ambient.tv.data.radio
 
-const val RADIO_HOME_ITEM_PREFIX = "radio-station:"
-
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
+
+const val RADIO_HOME_ITEM_PREFIX = "radio-station:"
 
 @Serializable
 data class RadioBrowserStationDto(
@@ -21,12 +21,19 @@ data class RadioBrowserStationDto(
     @SerialName("countrycode") val countryCode: String = "",
     val state: String = "",
     val language: String = "",
+    @SerialName("languagecodes") val languageCodes: String = "",
+    @SerialName("iso_3166_2") val regionCode: String = "",
     val codec: String = "",
     val bitrate: Int = 0,
     val hls: Int = 0,
     val votes: Int = 0,
     @SerialName("clickcount") val clickCount: Int = 0,
+    @SerialName("clicktrend") val clickTrend: Int = 0,
+    @SerialName("geo_lat") val latitude: Double? = null,
+    @SerialName("geo_long") val longitude: Double? = null,
     @SerialName("lastcheckok") val lastCheckOk: Int = 0,
+    @SerialName("lastcheckoktime_iso8601") val lastCheckOkTime: String = "",
+    @SerialName("ssl_error") val sslError: Int = 0,
 )
 
 @Serializable
@@ -73,6 +80,13 @@ data class RadioStation(
     val isHls: Boolean,
     val votes: Int,
     val clickCount: Int,
+    val languageCodes: List<String> = emptyList(),
+    val regionCode: String? = null,
+    val clickTrend: Int = 0,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val lastCheckOkTime: String? = null,
+    val sslError: Boolean = false,
 )
 
 internal fun RadioBrowserStationDto.toRadioStation(): RadioStation? {
@@ -97,11 +111,18 @@ internal fun RadioBrowserStationDto.toRadioStation(): RadioStation? {
         countryCode = countryCode.trim().uppercase().takeIf(String::isNotBlank),
         state = state.trim().takeIf(String::isNotBlank),
         languages = csv(language),
+        languageCodes = csv(languageCodes).map(String::lowercase),
+        regionCode = regionCode.trim().uppercase().takeIf(String::isNotBlank),
         tags = csv(tags),
         codec = codec.trim().uppercase().takeIf(String::isNotBlank),
         bitrateKbps = bitrate.takeIf { it > 0 },
         isHls = hls != 0,
         votes = votes.coerceAtLeast(0),
         clickCount = clickCount.coerceAtLeast(0),
+        clickTrend = clickTrend,
+        latitude = latitude,
+        longitude = longitude,
+        lastCheckOkTime = lastCheckOkTime.trim().takeIf(String::isNotBlank),
+        sslError = sslError != 0,
     )
 }
