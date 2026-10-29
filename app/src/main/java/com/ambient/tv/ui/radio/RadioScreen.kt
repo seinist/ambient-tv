@@ -87,7 +87,7 @@ fun RadioScreen(
         val station = request.station
         val subtitle = stationMeta(station)
         runCatching {
-            PlaybackEngineFactory.create(
+            val player = PlaybackEngineFactory.create(
                 context = context,
                 streamUrl = request.streamUrl,
                 startPositionMs = 0L,
@@ -105,6 +105,21 @@ fun RadioScreen(
                 audioOnly = true,
                 liveStream = true,
             )
+            fun publishNowPlaying(value: CharSequence?) {
+                val nowPlaying = radioNowPlayingTitle(value, station.name) ?: return
+                val current = BackgroundPlaybackSession.snapshot.value.metadata ?: return
+                // A delayed callback from the previous stream must never relabel the new station.
+                if (current.source != "radio" || current.mediaId != station.id || current.subtitle == nowPlaying) return
+                BackgroundPlaybackSession.refreshMetadata(current.copy(subtitle = nowPlaying))
+            }
+            player.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
+                    publishNowPlaying(mediaMetadata.title)
+                }
+            })
+            // Some streams expose their first ICY title before the listener is attached.
+            publishNowPlaying(player.mediaMetadata.title)
+            player
         }.onSuccess {
             viewModel.playbackStarted(request.requestId)
         }.onFailure {
@@ -327,3 +342,8 @@ private fun stationMeta(station: RadioStation): String = listOfNotNull(
     station.codec,
     station.bitrateKbps?.let { "$it kbps" },
 ).joinToString(" • ")
+
+
+internal fun radioNowPlayingTitle(value: CharSequence?, stationName: String): String? =
+    value?.toString()?.trim()
+        ?.takeIf { it.isNotBlank() && !it.equals(stationName.trim(), ignoreCase = true) }
