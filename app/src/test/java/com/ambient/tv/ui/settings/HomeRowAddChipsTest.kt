@@ -69,12 +69,22 @@ class HomeRowAddChipsTest {
      * could be added at all while signed out.
      */
     @Test
-    fun radioHomeShortcutRequiresRadioToBeEnabled() {
+    fun radioHomeRowsRequireRadioToBeEnabled() {
         val enabled = SettingsUiState(radioEnabled = true)
-        assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, "home", enabled))
+        for (key in listOf(
+            HomeRowDefinition.RADIO_POPULAR,
+            HomeRowDefinition.RADIO_FAVORITES,
+            HomeRowDefinition.RADIO_RECENT,
+            HomeRowDefinition.radioGenre("rock"),
+            HomeRowDefinition.radioCountry("de"),
+            HomeRowDefinition.radioLanguage("German"),
+        )) {
+            assertTrue(key, homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, key, enabled))
+        }
 
         val disabled = SettingsUiState(radioEnabled = false)
-        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, "home", disabled))
+        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, HomeRowDefinition.RADIO_POPULAR, disabled))
+        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, HomeRowDefinition.radioGenre("rock"), disabled))
     }
 
     @Test
