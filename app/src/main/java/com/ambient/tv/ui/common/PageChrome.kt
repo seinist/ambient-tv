@@ -197,13 +197,18 @@ fun PageUtilityBar(
             iconOnly = true,
             onClick = onBack,
         )
-        TvChip(
-            stringResource(R.string.nav_settings),
-            modifier = Modifier.focusRequester(settingsFocus).downAction(onDown),
-            icon = Icons.Filled.Settings,
-            iconOnly = true,
-            onClick = { restoreSettings = true; onSettings() },
-        )
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.Top) {
+            TvChip(
+                stringResource(R.string.nav_settings),
+                modifier = Modifier.focusRequester(settingsFocus).downAction(onDown),
+                icon = Icons.Filled.Settings,
+                iconOnly = true,
+                onClick = { restoreSettings = true; onSettings() },
+            )
+            // Detail pages use this rail instead of PageHeader. They follow the same
+            // clock setting, while the buttons keep their full touch/focus targets.
+            if (LocalClockSettings.current.inHeader) HeaderClock(Modifier.weight(1f, fill = false))
+        }
     }
 }
 
@@ -241,6 +246,7 @@ fun PageHeader(
     modifier: Modifier = Modifier,
     actions: @Composable RowScope.() -> Unit = {},
     focusChain: PageFocusChain? = null,
+    showClock: Boolean = true,
     title: @Composable ColumnScope.() -> Unit,
 ) {
     val handheld = LocalHandheldUi.current
@@ -249,15 +255,21 @@ fun PageHeader(
     // A list's own Up exit at its top follows the page chain (filter, chips, then these actions).
     val chainUp = remember(focusChain) { focusChain?.let { chain -> { chain.upTarget() } } }
     RegisterScrollListActions(actionFocus, chainUp)
-    DeviceActionRow(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
-        Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
-        // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
-        if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
-        else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
-        // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
-        // same spot on every page, also where Home's floating clock is.
-        if (!handheld && LocalClockSettings.current.inHeader) HeaderClock(Modifier.align(Alignment.Top))
+    val clockVisible = showClock && LocalClockSettings.current.inHeader
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // On a phone the full-width clock row keeps long dates and large type away from
+        // page actions. It is real layout space, so it never covers the first content row.
+        if (handheld && clockVisible) HeaderClock(Modifier.align(Alignment.End))
+        DeviceActionRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            // The title yields to the actions, so a long library or folder name ellipsizes instead of pushing them out.
+            Column(if (handheld) Modifier else Modifier.weight(1f).padding(end = 18.dp), verticalArrangement = Arrangement.spacedBy(3.dp), content = title)
+            // On handheld the actions never wrap among themselves: they sit beside the title or move as one block to the next line, right-aligned.
+            if (handheld) Row(Modifier.weight(1f).focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), verticalAlignment = Alignment.CenterVertically, content = actions)
+            else DeviceActionRow(modifier = Modifier.focusRequester(actionFocus).focusRestorer().downTo(focusChain).focusGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = actions)
+            // Top-aligned, not centred: with every header starting at [pageHeaderTop] the clock sits at the
+            // same spot on every page, also where Home's floating clock is.
+            if (!handheld && clockVisible) HeaderClock(Modifier.align(Alignment.Top))
+        }
     }
 }
 

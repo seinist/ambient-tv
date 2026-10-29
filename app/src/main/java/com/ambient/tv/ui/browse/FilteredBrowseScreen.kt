@@ -108,6 +108,8 @@ fun FilteredBrowseScreen(
                 val orderFocus = remember { FocusRequester() }
                 PageHeader(
                     focusChain = focusChain,
+                    // The utility bar above already owns the page clock.
+                    showClock = false,
                     modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
                     actions = {
                         val grid = value.viewMode == BrowseViewMode.GRID

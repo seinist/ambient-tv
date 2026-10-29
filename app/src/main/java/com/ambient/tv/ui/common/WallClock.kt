@@ -7,8 +7,13 @@ import android.content.IntentFilter
 import android.text.format.DateFormat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ambient.tv.data.local.ClockSettings
@@ -131,18 +137,38 @@ fun AmbientClock(settings: ClockSettings, modifier: Modifier = Modifier) {
         else -> TextStyle(shadow = Shadow(Color.Black.copy(alpha = 0.55f), Offset(0f, 2f), 8f))
     }
     val time: @Composable () -> Unit = {
-        Text(now.format(timeFormatter), color = timeColor, fontSize = timeSize, fontWeight = weight,
-            fontFamily = family, maxLines = 1, style = style)
+        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+            // Large 12-hour clocks with seconds can exceed the space beside a detail
+            // page's two buttons. Fit the actual text without changing the saved size
+            // or increasing that overlay's fixed height. The configured size is the cap.
+            BasicText(
+                text = now.format(timeFormatter),
+                style = LocalTextStyle.current.merge(style).merge(TextStyle(
+                    color = timeColor, fontSize = timeSize, fontWeight = weight, fontFamily = family,
+                )),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                autoSize = remember(timeSize) {
+                    TextAutoSize.StepBased(minFontSize = 12.sp, maxFontSize = timeSize, stepSize = 0.5.sp)
+                },
+            )
+        } else {
+            Text(now.format(timeFormatter), color = timeColor, fontSize = timeSize, fontWeight = weight,
+                fontFamily = family, maxLines = 1, style = style)
+        }
     }
-    val date: @Composable () -> Unit = {
-        if (dateFormatter != null) Text(now.format(dateFormatter), color = dateColor, fontSize = dateSize,
-            fontWeight = FontWeight.Medium, fontFamily = family, maxLines = 1, style = style)
+    val date: @Composable (Modifier) -> Unit = { dateModifier ->
+        if (dateFormatter != null) Text(now.format(dateFormatter), modifier = dateModifier, color = dateColor, fontSize = dateSize,
+            fontWeight = FontWeight.Medium, fontFamily = family, maxLines = 1, overflow = TextOverflow.Ellipsis, style = style)
     }
     if (settings.dateBeside) {
         // Like Kodi: the date leads, the time closes the line at the screen edge.
-        Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { date(); time() }
+        // Keep the time readable in a narrow header; a long date gives up space first.
+        Row(modifier.width(IntrinsicSize.Max), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            date(Modifier.weight(1f, fill = false)); time()
+        }
     } else {
-        Column(modifier, horizontalAlignment = Alignment.End) { time(); date() }
+        Column(modifier, horizontalAlignment = Alignment.End) { time(); date(Modifier) }
     }
 }
 

@@ -205,7 +205,7 @@ Off by default. Shows eligible SDR video as HDR10 on an HDR display. Does not cr
 
 ### 3.9 Clock
 
-Time and date in the page headers (top right, TV), floating above the Home hero and in the player. One shared tick jumps to the full minute or second and follows time and time-zone changes at once; the player clock keeps running while the OSD is open. The page has a live preview.
+Time and date in page headers including detail pages, on Home and in the player, on TV and phone. On TV the Home clock floats above the hero; on phones it has its own row. Color, opacity, font, size and shadow also apply to the player clock. Narrow phone headers shrink the time only when needed and shorten long dates to keep controls reachable. One shared tick jumps to the full minute or second and follows time and time-zone changes at once; the player clock keeps running while the OSD is open. The page has a live preview.
 
 | Setting | Options / values | Default | Description |
 | --- | --- | --- | --- |
@@ -222,6 +222,8 @@ Time and date in the page headers (top right, TV), floating above the Home hero 
 | End time in the player | On / Off | On | Shows "Ends at …" next to the remaining time. |
 
 The clock settings are part of the settings backup; older backups take over their former 24-hour switch.
+
+“Everywhere (headers)” shows the clock outside playback; “Everywhere + player” includes playback. The screensaver shares time format and date style but retains its separate brightness and OLED dimming.
 
 ---
 
@@ -624,7 +626,7 @@ Live TV without a seekable timeline uses channel information as its focus target
 | Player | Choose player | Automatic · Media3 · VLC · MPV | — | Shows why the engine was picked (global default, channel, preset, fallback, Dolby Vision protection). |
 | Scaling | Picture fit | Fit to screen · Fill screen · Stretch | All | |
 | Scaling | Aspect ratio | Auto · 16:9 · 4:3 · 21:9 | All | |
-| Scaling | Zoom level | 100 %, 110 %, 125 %, 150 % | All | |
+| Scaling | Zoom level | 100 %, 110 %, 125 %, 150 % and current pinch value | All | Selects the actual zoom value; 100 % resets it. |
 | Motion | Playback speed | 0.5×, 0.75×, 1×, 1.25×, 1.5×, 2× | All | Not for live TV. |
 | Motion | Motion smoothing (experimental) | Off · Automatic · adaptive protection · Balanced · High quality | MPV, VLC | SVP available on, playback performance Maximum, progressive SDR, not MPV direct output. |
 | Output | Display mode | Auto · video resolution + Hz · Auto · full display resolution + Hz · System default · fixed modes | All | More than one display mode. |
@@ -789,6 +791,9 @@ Chrome's Google Cast button cannot reach this app (Google Cast is tied to certif
 - Settings: area tabs instead of a left column
 - Video: landscape fullscreen; portrait with navigation; optional fullscreen toggle when rotation is locked
 - Touch timeline: drag = preview, release = seek
+- Pinch video with two fingers: snaps when the picture width or height fills the available player area. Keep spreading or closing your fingers to leave the snap. Available with Media3, VLC and MPV, including SmartTube and TVHeadend.
+
+Pinch zoom ranges from 50 to 800 percent and preserves the original aspect ratio. Recognizing a zoom gesture therefore changes a forced picture format to Auto and converts Stretch/Crop to Fit with the appropriate zoom. Filling one dimension may crop the other dimension at the screen edges. Snaps use the actual player area, including portrait and split-window layouts. Resizing the player area resets gesture-created zoom to Fit. The video panel shows custom percentages too. Music and open settings panels do not respond to pinch zoom; taps and double taps retain their existing actions.
 
 ### 11.3 Media selection
 

@@ -47,5 +47,28 @@ class VideoPresentationViewTest {
         assertEquals(1080, host.videoSurface.height)
         assertEquals(240, host.videoSurface.left)
         assertEquals(0, host.videoSurface.top)
+        assertEquals(1f, host.videoSurface.scaleX, 0f)
+        assertEquals(1f, host.videoSurface.scaleY, 0f)
+    }
+
+    @Test fun nativePinchZoomKeepsTheOutputBufferSmallAndScalesAroundItsCenter() {
+        val host = VideoSurfaceLayout(RuntimeEnvironment.getApplication())
+        host.sourceAspectRatio = 16f / 9f
+        for (zoom in listOf(1f, 3.95f, VIDEO_MAX_ZOOM, 0.5f)) {
+            host.presentation = VideoPresentation(zoom = zoom)
+            host.measure(View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2400, View.MeasureSpec.EXACTLY))
+            host.layout(0, 0, 1080, 2400)
+            assertEquals(1080, host.videoSurface.width)
+            assertEquals(608, host.videoSurface.height)
+            assertEquals(0, host.videoSurface.left)
+            assertEquals(896, host.videoSurface.top)
+            assertEquals(540f, host.videoSurface.pivotX, 0f)
+            assertEquals(304f, host.videoSurface.pivotY, 0f)
+            assertEquals(zoom, host.videoSurface.scaleX, 0f)
+            assertEquals(zoom, host.videoSurface.scaleY, 0f)
+            assertTrue(host.clipChildren)
+            assertEquals(android.graphics.Rect(0, 0, 1080, 2400), host.clipBounds)
+        }
     }
 }

@@ -112,6 +112,8 @@ import androidx.compose.material.icons.filled.GraphicEq
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.PlayerTouchLayer
+import com.ambient.tv.ui.common.PlayerPinchZoom
+import com.ambient.tv.ui.common.pinchVideoAspectRatio
 import com.ambient.tv.ui.common.LocalPlayerPlayPauseFocus
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
@@ -742,6 +744,25 @@ private fun PlayerContent(
             },
             onSeekBack = { seekBy(-BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); revealControls() },
             onSeekForward = { seekBy(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); revealControls() },
+            pinchZoom = if (audioOnlyHint) null else PlayerPinchZoom(
+                key = exoPlayer,
+                enabled = panel == UnifiedPlayerPanel.NONE,
+                presentation = VideoPresentation(
+                    resizeMode = when (playerResizeMode) {
+                        PlayerResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        PlayerResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        PlayerResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    },
+                    aspectRatio = aspectPreset.ratio,
+                    zoom = videoZoom,
+                ),
+                sourceAspectRatio = { exoPlayer.pinchVideoAspectRatio(state.sourceAspectRatioHint) },
+                onChanged = {
+                    playerResizeMode = it.playerResizeMode()
+                    aspectPreset = it.playerAspectPreset()
+                    videoZoom = it.zoom
+                },
+            ),
         )
 
         PlayerBufferingSpinner(

@@ -109,6 +109,11 @@ import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.player.PlayerTechBadgeRow
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerTouchLayer
+import com.ambient.tv.ui.common.PlayerPinchZoom
+import com.ambient.tv.ui.common.pinchVideoAspectRatio
+import com.ambient.tv.ui.player.VideoPresentation
+import com.ambient.tv.ui.player.videoAspectRatio
+import com.ambient.tv.ui.player.videoResizeMode
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
@@ -932,7 +937,23 @@ private fun YouTubeMedia3Playback(
             visible = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer(onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, onTogglePlayback = { BackgroundPlaybackSession.userToggle() }, onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
+        PlayerTouchLayer(
+            onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
+            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            pinchZoom = PlayerPinchZoom(
+                key = player,
+                enabled = !panelOpen && ytAudio?.audioOnly != true,
+                presentation = VideoPresentation(resizeMode, forcedAspectRatio, zoomFactor),
+                sourceAspectRatio = { player.pinchVideoAspectRatio(metadata.sourceAspectRatioHint) },
+                onChanged = {
+                    resizeMode = it.resizeMode
+                    aspectKey = "auto"
+                    zoomFactor = it.zoom
+                },
+            ),
+        )
         val ytPlan = ytAudio?.outputPlan()
         LaunchedEffect(ytPlan?.needsMpv, ytPlan?.mode) {
             if (ytPlan?.needsMpv == true && com.ambient.tv.ui.player.AudioEngineRedirectGuard.once(playback.uri)) {
@@ -1238,7 +1259,24 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { BackgroundPlaybackSession.userToggle() }, if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
+        PlayerTouchLayer(
+            onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
+            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            pinchZoom = if (controller.audioSession.audioOnly) null else PlayerPinchZoom(
+                key = controller,
+                enabled = !panelOpen,
+                presentation = VideoPresentation(videoResizeMode(resize), videoAspectRatio(aspect), zoom),
+                sourceAspectRatio = { controller.videoAspectRatio() },
+                onChanged = {
+                    resize = "fit"
+                    aspect = "auto"
+                    zoom = it.zoom
+                    controller.setVideoPresentation(resize, null, zoom)
+                },
+            ),
+        )
         val ytVlcPlan = controller.audioSession.outputPlan()
         LaunchedEffect(ytVlcPlan.needsMpv, ytVlcPlan.mode) {
             if (ytVlcPlan.needsMpv && com.ambient.tv.ui.player.AudioEngineRedirectGuard.once(playback.uri)) {
@@ -1502,7 +1540,24 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { BackgroundPlaybackSession.userToggle() }, if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
+        PlayerTouchLayer(
+            onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } },
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
+            onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }},
+            pinchZoom = if (controller.audioOnly) null else PlayerPinchZoom(
+                key = controller,
+                enabled = !panelOpen,
+                presentation = VideoPresentation(videoResizeMode(resize), videoAspectRatio(aspect), zoom),
+                sourceAspectRatio = { controller.videoAspectRatio() },
+                onChanged = {
+                    resize = "fit"
+                    aspect = "auto"
+                    zoom = it.zoom
+                    controller.setVideoPresentation(resize, null, zoom)
+                },
+            ),
+        )
         PlaybackPerformanceNotice(mpvLoadHint(controller, snapshot))
         val showNerdOverlay = controller.audioSession.performanceHint
         val showFpsOverlay = controller.audioSession.showFpsOverlay

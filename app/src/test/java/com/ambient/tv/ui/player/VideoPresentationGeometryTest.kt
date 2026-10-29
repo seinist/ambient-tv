@@ -51,5 +51,14 @@ class VideoPresentationGeometryTest {
         assertEquals(1920 to 1080, videoPresentationSize(1920, 1080, VideoPresentation(aspectRatio = Float.NaN, zoom = Float.NaN), Float.NaN))
     }
 
+    @Test fun autoZoomReachesPortraitHeightAndKeepsFiniteBounds() {
+        val portraitFill = (16f / 9f) / (1080f / 2400f)
+        assertEquals(4267 to 2400, videoPresentationSize(1080, 2400, VideoPresentation(zoom = portraitFill), 16f / 9f))
+        assertEquals(portraitFill, VideoPresentation(zoom = portraitFill).normalized().zoom, 0f)
+        assertEquals(VIDEO_MAX_ZOOM, VideoPresentation(zoom = 100f).normalized().zoom, 0f)
+        assertEquals(VIDEO_MIN_ZOOM, VideoPresentation(zoom = -1f).normalized().zoom, 0f)
+        assertEquals(1f, VideoPresentation(zoom = Float.POSITIVE_INFINITY).normalized().zoom, 0f)
+    }
+
     private fun size(ratio: Float) = videoPresentationSize(1920, 1080, VideoPresentation(aspectRatio = ratio), 4f / 3f)
 }
