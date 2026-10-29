@@ -166,6 +166,8 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var browseReconnects: com.ambient.tv.data.browse.BrowseReconnects
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
+    @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
+    @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
     @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
     @Inject lateinit var dlnaStore: com.ambient.tv.data.dlna.DlnaStore
     @Inject lateinit var liveTvBrowseRegistry: javax.inject.Provider<com.ambient.tv.livetv.LiveTvRegistry>
@@ -741,6 +743,8 @@ open class MainActivity : ComponentActivity() {
                         spotifyRepository = spotify,
                         plexRefreshBus = plexRefreshBus,
                         mediaRepository = mediaRepository,
+                        radioBrowserRepository = radioBrowserRepository,
+                        radioPlaybackLauncher = radioPlaybackLauncher,
                         playbackAvailability = playbackAvailability,
                         lastInteractionElapsedMs = lastInteractionElapsedMs.longValue,
                         screensaverActive = screensaverActive.value,
@@ -836,6 +840,8 @@ private fun AmbientTvApp(
     spotifyRepository: SpotifyRepository,
     plexRefreshBus: PlexRefreshBus,
     mediaRepository: MediaRepository,
+    radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository,
+    radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher,
     playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     lastInteractionElapsedMs: Long,
     screensaverActive: Boolean,
@@ -944,6 +950,28 @@ private fun AmbientTvApp(
         collectionId: String? = null,
         collectionSort: String? = null,
     ) {
+        if (ratingKey.startsWith(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)) {
+            val stationId = ratingKey.removePrefix(com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX)
+            if (stationId.isBlank() || mediaSelectionBusy) return
+            mediaSelectionBusy = true
+            val originEntry = navController.currentBackStackEntry?.id
+            mediaSelectionScope.launch {
+                val station = try {
+                    runCatching { radioBrowserRepository.station(stationId) }.getOrNull()
+                } finally {
+                    mediaSelectionBusy = false
+                }
+                if (station == null || navController.currentBackStackEntry?.id != originEntry) return@launch
+                radioPlaybackLauncher.play(station, listOf(station))
+                    .onSuccess {
+                        if (navController.currentBackStackEntry?.id == originEntry) {
+                            navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
+                        }
+                    }
+            }
+            return
+        }
+
         // Home "recently added photos" items open the photo viewer, not media details.
         if (ratingKey.startsWith("trailer-video:")) {
             playOnSelectedTarget(Destinations.trailerPlayer(ratingKey.substringAfter(':')))
@@ -1897,7 +1925,15 @@ private fun AmbientTvApp(
                                     when (row.system) {
                                         HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
-                                        HomeRowDefinition.SYSTEM_RADIO -> navigateTopLevel(Destinations.RADIO)
+                                        HomeRowDefinition.SYSTEM_RADIO -> {
+                                            val section = when {
+                                                row.contentKey == "home" -> "popular"
+                                                row.contentKey in com.ambient.tv.ui.radio.RadioSection.entries.map { it.key } -> row.contentKey
+                                                else -> "popular"
+                                            }
+                                            val route = Destinations.radioSection(section)
+                                            if (route == Destinations.RADIO) navigateTopLevel(route) else navigateToSection(route)
+                                        }
                                         HomeRowDefinition.SYSTEM_TVHEADEND -> navigateToSection(Destinations.liveTvSection(row.contentKey))
                                         else -> if (row.contentKey in setOf("live", "guide", "recordings", "timers")) {
                                             val sourceId = providerNavigationViewModel.uiState.value.liveTvSources
