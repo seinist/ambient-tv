@@ -811,7 +811,11 @@ internal fun SidebarContent(
                                                 onWrapKey = { wrapFocus(entry.destination.id, it) },
                                                 trailingChevron = entry.opensPage,
                                                 stateDescription = if (entry.opensPage) opensSubmenu else null,
-                                                logo = if (entry.opensPage) systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark } else null,
+                                                logo = when {
+                                                    entry.opensPage -> systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark }
+                                                    entry.systemId == MediaSystem.RADIO.key && entry.destination.id == "radio:home" -> MediaSystem.RADIO
+                                                    else -> null
+                                                },
                                                 testTag = "sidebar:${entry.destination.id}",
                                             )
                                         }
