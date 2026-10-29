@@ -168,6 +168,7 @@ class SidebarNavigationPolicyTest {
         assertEquals("youtube_feed/history", sidebarConcreteRoute(Destinations.YOUTUBE_FEED, youtubeFeedKey = "history"))
         assertEquals("trailers/feed/MOVIES", sidebarConcreteRoute(Destinations.TRAILER_FEED, trailerFeedKey = "MOVIES"))
         assertEquals("dlna/server-1", sidebarConcreteRoute(Destinations.DLNA_SERVER, dlnaServerId = "server-1"))
+        assertEquals("radio_section/favorites", sidebarConcreteRoute(Destinations.RADIO_SECTION, radioSectionKey = "favorites"))
     }
 
     @Test fun everyConcreteSidebarChildUsesArgumentAwareNavigation() {
@@ -176,6 +177,7 @@ class SidebarNavigationPolicyTest {
             "youtube_feed/history",
             "trailers/feed/MOVIES",
             "spotify_section/liked",
+            "radio_section/favorites",
             "live_tv/guide?sourceId=iptv%3Aone",
             "files_source/nas",
             "dlna/server-1",
