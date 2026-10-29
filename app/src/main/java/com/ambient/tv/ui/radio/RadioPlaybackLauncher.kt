@@ -70,7 +70,7 @@ class RadioPlaybackLauncher @Inject constructor(
                 startPositionMs = 0L,
                 mimeType = if (currentStation.isHls) MimeTypes.APPLICATION_M3U8 else null,
                 metadata = PlaybackMetadata(
-                    route = Destinations.RADIO,
+                    route = Destinations.RADIO_PLAYER,
                     title = currentStation.name,
                     subtitle = radioStationSubtitle(currentStation),
                     source = "radio",
