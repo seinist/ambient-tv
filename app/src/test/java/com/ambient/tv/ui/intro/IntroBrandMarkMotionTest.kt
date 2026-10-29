@@ -5,19 +5,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
-    @Test fun rigidMonitorAUsesTheSameFinalScaleAsTheOriginalWordmarkAWidth() {
-        assertEquals(16f / 18f, introBloomIconScaleInWordmarkUnits(), 0.0001f)
+    @Test fun aStaysRigidWithTheTvUntilTheFrameIsAlmostGone() {
+        assertEquals(0f, introBloomPeakMorph(2.29f), 0.0001f)
+        assertEquals(0f, introBloomPeakMorph(2.3f), 0.0001f)
     }
 
-    @Test fun mbientStartsAfterTheRetainedMonitorFrame() {
-        val scale = introBloomIconScaleInWordmarkUnits()
-        val frameRight = 9.914f + (42f - 24f) * scale
-        val firstLetterInkLeft = 19.828f + 82f * 0.022f + introBloomWordShift()
-        assertEquals(2.5f, firstLetterInkLeft - frameRight, 0.0001f)
-        assertTrue(introBloomWordShift() > 0f)
-    }
-
-    @Test fun finalMonitorFrameExpandsTheBloomBoundsToTheLeft() {
-        assertTrue(introBloomWordmarkLeft() < 0.5f)
+    @Test fun aFinishesItsWordmarkShapeOnlyAtTheEndOfTheTvFade() {
+        val duringFade = introBloomPeakMorph(2.35f)
+        assertTrue(duringFade > 0f && duringFade < 1f)
+        assertEquals(1f, introBloomPeakMorph(2.4f), 0.0001f)
     }
 }
