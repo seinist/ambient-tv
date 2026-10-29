@@ -10,13 +10,42 @@ interface RadioBrowserApiService {
         @Query("name") name: String? = null,
         @Query("countrycode") countryCode: String? = null,
         @Query("language") language: String? = null,
+        @Query("languageExact") languageExact: Boolean = false,
         @Query("tag") tag: String? = null,
+        @Query("tagExact") tagExact: Boolean = false,
         @Query("order") order: String = "clickcount",
         @Query("reverse") reverse: Boolean = true,
         @Query("offset") offset: Int = 0,
         @Query("limit") limit: Int = 50,
         @Query("hidebroken") hideBroken: Boolean = true,
     ): List<RadioBrowserStationDto>
+
+    @GET("json/tags")
+    suspend fun tags(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100,
+        @Query("hidebroken") hideBroken: Boolean = true,
+    ): List<RadioBrowserFacetDto>
+
+    @GET("json/countrycodes")
+    suspend fun countryCodes(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100,
+        @Query("hidebroken") hideBroken: Boolean = true,
+    ): List<RadioBrowserFacetDto>
+
+    @GET("json/languages")
+    suspend fun languages(
+        @Query("order") order: String = "stationcount",
+        @Query("reverse") reverse: Boolean = true,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 100,
+        @Query("hidebroken") hideBroken: Boolean = true,
+    ): List<RadioBrowserFacetDto>
 
     @GET("json/stations/topclick/{limit}")
     suspend fun topClicked(
