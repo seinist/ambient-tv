@@ -27,7 +27,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -294,7 +293,6 @@ fun RadioScreen(
                                     loading = state.startingStationId == station.id,
                                     favorite = station.id in state.favoriteIds,
                                     onClick = { viewModel.play(station, onOpenPlayer) },
-                                    onFavorite = { viewModel.toggleFavorite(station) },
                                     onFocused = { viewModel.onStationFocused(station.id) },
                                 )
                             }
@@ -317,7 +315,6 @@ fun RadioScreen(
                             favoriteIds = state.favoriteIds,
                             state = listState,
                             onClick = { station -> viewModel.play(station, onOpenPlayer) },
-                            onFavorite = viewModel::toggleFavorite,
                             onFocused = { station -> viewModel.onStationFocused(station.id) },
                         )
                     }
@@ -564,7 +561,6 @@ private fun RadioStationTile(
     loading: Boolean,
     favorite: Boolean,
     onClick: () -> Unit,
-    onFavorite: () -> Unit,
     onFocused: () -> Unit,
 ) {
     var focused by remember(station.id) { mutableStateOf(false) }
@@ -605,6 +601,14 @@ private fun RadioStationTile(
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
                     RadioArtwork(station, Modifier.fillMaxSize())
+                    if (favorite) {
+                        androidx.compose.material3.Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(20.dp),
+                        )
+                    }
                     if (playing || loading) {
                         Box(
                             Modifier
@@ -633,15 +637,6 @@ private fun RadioStationTile(
                 )
             }
         }
-        TvChip(
-            text = if (favorite) stringResource(R.string.radio_remove_favorite)
-            else stringResource(R.string.radio_add_favorite),
-            icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-            iconOnly = true,
-            selected = favorite,
-            onClick = onFavorite,
-            modifier = Modifier.align(Alignment.CenterHorizontally),
-        )
     }
 }
 
@@ -655,7 +650,6 @@ private fun RadioStationList(
     favoriteIds: Set<String>,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
-    onFavorite: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
@@ -720,14 +714,14 @@ private fun RadioStationList(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    TvChip(
-                        text = if (station.id in favoriteIds) stringResource(R.string.radio_remove_favorite)
-                        else stringResource(R.string.radio_add_favorite),
-                        icon = if (station.id in favoriteIds) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                        iconOnly = true,
-                        selected = station.id in favoriteIds,
-                        onClick = { onFavorite(station) },
-                    )
+                    if (station.id in favoriteIds) {
+                        androidx.compose.material3.Icon(
+                            Icons.Filled.Favorite,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
                 }
             }
         }
