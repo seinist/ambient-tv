@@ -108,7 +108,6 @@ fun SearchScreen(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
-    onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -117,6 +116,7 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val onRadioClick: (RadioStation) -> Unit = viewModel::playRadio
     val filterFocusState = rememberFilterFocusState(viewModel)
     val optionsFocus = remember { FocusRequester() }
     val queryFocus = remember { FocusRequester() }
