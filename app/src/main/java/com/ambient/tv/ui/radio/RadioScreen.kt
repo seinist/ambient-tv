@@ -13,10 +13,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyItems
-import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,19 +53,27 @@ import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
+import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.TvLazyColumn
 import com.ambient.tv.ui.common.TvLazyVerticalGrid
 import com.ambient.tv.ui.common.TvTextField
+import com.ambient.tv.ui.common.ViewOption
+import com.ambient.tv.ui.common.ViewOptionsChip
+import com.ambient.tv.ui.common.ViewOptionsPanel
+import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
+import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
-import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.transparentSurfaceColors
+import com.ambient.tv.ui.mobile.deviceDensityGridCells
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
@@ -76,193 +83,246 @@ import java.util.Locale
 @Composable
 fun RadioScreen(
     onBack: (() -> Unit)? = null,
+    onOpenPlayer: () -> Unit = {},
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
+    var showViewOptions by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) { viewModel.enter() }
     ReportSidebarContentReady(!state.loading)
 
-    BackHandler(enabled = state.selectedFacet != null) { viewModel.clearFacet() }
-    BackHandler(enabled = state.selectedFacet == null && state.submittedQuery.isNotBlank()) {
+    BackHandler(enabled = showViewOptions) { showViewOptions = false }
+    BackHandler(enabled = !showViewOptions && state.selectedFacet != null) { viewModel.clearFacet() }
+    BackHandler(enabled = !showViewOptions && state.selectedFacet == null && state.submittedQuery.isNotBlank()) {
         viewModel.clearSearch()
     }
     if (onBack != null) {
-        BackHandler(enabled = state.selectedFacet == null && state.submittedQuery.isBlank()) { onBack() }
+        BackHandler(enabled = !showViewOptions && state.selectedFacet == null && state.submittedQuery.isBlank()) { onBack() }
     }
 
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    LaunchedEffect(state.section, state.selectedFacet?.id, state.submittedQuery) {
-        if (gridState.firstVisibleItemIndex != 0 || gridState.firstVisibleItemScrollOffset != 0) {
-            runCatching { gridState.scrollToItem(0) }
-        }
+
+    LaunchedEffect(state.section, state.selectedFacet?.id, state.submittedQuery, state.viewMode) {
+        runCatching { if (gridState.firstVisibleItemIndex != 0) gridState.scrollToItem(0) }
+        runCatching { if (listState.firstVisibleItemIndex != 0) listState.scrollToItem(0) }
     }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(
-                start = screenGutter(),
-                end = screenGutter(),
-                bottom = screenGutter(),
-                top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter()),
-            ),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        PageHeader(
-            focusChain = focusChain,
-            actions = {
-                TvChip(
-                    text = stringResource(R.string.action_reload),
-                    icon = Icons.Filled.Refresh,
-                    iconOnly = true,
-                    loading = state.loading || state.loadingMore,
-                    onClick = viewModel::refresh,
-                )
-            },
-        ) {
-            SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
-            Text(
-                radioPageSubtitle(state),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
 
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp),
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(
+                    start = screenGutter(),
+                    end = screenGutter(),
+                    bottom = screenGutter(),
+                    top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter()),
+                ),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            lazyItems(RadioSection.entries, key = { it.name }) { section ->
-                TvChip(
-                    text = radioSectionLabel(section),
-                    selected = state.section == section &&
-                        state.submittedQuery.isBlank() &&
-                        state.selectedFacet == null,
-                    onClick = { viewModel.selectSection(section) },
-                )
-            }
-        }
-
-        state.selectedFacet?.let { selectedFacet ->
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            PageHeader(
+                focusChain = focusChain,
+                actions = {
+                    TvChip(
+                        text = stringResource(R.string.action_reload),
+                        icon = Icons.Filled.Refresh,
+                        iconOnly = true,
+                        loading = state.loading || state.loadingMore,
+                        onClick = viewModel::refresh,
+                    )
+                    ViewOptionsChip(0, onClick = { showViewOptions = true })
+                },
             ) {
-                TvChip(
-                    text = stringResource(R.string.radio_browse_back, radioSectionLabel(state.section)),
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    onClick = viewModel::clearFacet,
-                )
+                SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
                 Text(
-                    radioFacetLabel(state.section, selectedFacet),
-                    style = MaterialTheme.typography.titleMedium,
+                    radioPageSubtitle(state),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-        }
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TvTextField(
-                value = state.query,
-                onValueChange = viewModel::onQueryChanged,
-                label = stringResource(R.string.radio_search_placeholder),
-                modifier = Modifier.weight(1f),
-            )
-            TvActionButton(
-                text = stringResource(R.string.action_search),
-                onClick = viewModel::submitSearch,
-                enabled = state.query.trim().isEmpty() || state.query.trim().length >= 2,
-            )
-            if (state.submittedQuery.isNotBlank()) {
-                TvActionButton(
-                    text = stringResource(R.string.search_clear_recent),
-                    onClick = viewModel::clearSearch,
+            com.ambient.tv.ui.common.PageChipRow(focusChain) {
+                lazyItems(RadioSection.entries, key = { it.name }) { section ->
+                    TvChip(
+                        text = radioSectionLabel(section),
+                        selected = state.section == section &&
+                            state.submittedQuery.isBlank() &&
+                            state.selectedFacet == null,
+                        modifier = if (state.section == section) Modifier else Modifier,
+                        onClick = { viewModel.selectSection(section) },
+                    )
+                }
+            }
+
+            state.selectedFacet?.let { selectedFacet ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TvChip(
+                        text = stringResource(R.string.radio_browse_back, radioSectionLabel(state.section)),
+                        icon = Icons.AutoMirrored.Filled.ArrowBack,
+                        onClick = viewModel::clearFacet,
+                    )
+                    Text(
+                        radioFacetLabel(state.section, selectedFacet),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TvTextField(
+                    value = state.query,
+                    onValueChange = viewModel::onQueryChanged,
+                    label = stringResource(R.string.radio_search_placeholder),
+                    modifier = Modifier.weight(1f),
                 )
-            }
-        }
-
-        val showingFacets = state.section.isFacetSection &&
-            state.selectedFacet == null &&
-            state.submittedQuery.isBlank()
-
-        when {
-            state.loading -> com.ambient.tv.ui.common.SkeletonRow(
-                title = "",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            state.error && state.stations.isEmpty() && state.facets.isEmpty() -> StatePanel(
-                title = stringResource(R.string.radio_error),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            showingFacets && state.facets.isEmpty() -> StatePanel(
-                title = stringResource(R.string.radio_no_stations),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            showingFacets -> TvLazyVerticalGrid(
-                columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .overlayLazyGridScrollbar(gridState)
-                    .focusGroup(),
-                state = gridState,
-                contentPadding = PaddingValues(bottom = 40.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                items(state.facets, key = { it.id }) { facet ->
-                    RadioFacetTile(
-                        section = state.section,
-                        facet = facet,
-                        onClick = { viewModel.selectFacet(facet) },
+                TvActionButton(
+                    text = stringResource(R.string.action_search),
+                    onClick = viewModel::submitSearch,
+                    enabled = state.query.trim().isEmpty() || state.query.trim().length >= 2,
+                )
+                if (state.submittedQuery.isNotBlank()) {
+                    TvActionButton(
+                        text = stringResource(R.string.search_clear_recent),
+                        onClick = viewModel::clearSearch,
                     )
                 }
             }
-            state.stations.isEmpty() -> StatePanel(
-                title = stringResource(R.string.radio_no_stations),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            else -> TvLazyVerticalGrid(
-                columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .overlayLazyGridScrollbar(gridState)
-                    .focusGroup(),
-                state = gridState,
-                contentPadding = PaddingValues(bottom = 40.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
-                    RadioStationTile(
-                        station = station,
-                        playing = playback.metadata?.source == "radio" &&
-                            playback.metadata?.mediaId == station.id &&
-                            playback.wantsToPlay,
-                        loading = state.startingStationId == station.id,
-                        favorite = station.id in state.favoriteIds,
-                        onClick = { viewModel.play(station) },
-                        onFavorite = { viewModel.toggleFavorite(station) },
-                        onFocused = { viewModel.onStationFocused(station.id) },
-                    )
-                }
-                if (state.loadingMore) {
-                    items(
-                        count = RADIO_GRID_END_PLACEHOLDERS,
-                        key = { radioGridEndPlaceholderKey(it) },
-                    ) {
-                        RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+
+            val showingFacets = state.section.isFacetSection &&
+                state.selectedFacet == null &&
+                state.submittedQuery.isBlank()
+
+            when {
+                state.loading -> com.ambient.tv.ui.common.SkeletonRow(
+                    title = "",
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                state.error && state.stations.isEmpty() && state.facets.isEmpty() -> StatePanel(
+                    title = stringResource(R.string.radio_error),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                showingFacets && state.facets.isEmpty() -> StatePanel(
+                    title = stringResource(R.string.radio_no_stations),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                showingFacets -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                    if (state.viewMode == RadioViewMode.GRID) {
+                        TvLazyVerticalGrid(
+                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .overlayLazyGridScrollbar(gridState)
+                                .focusGroup(),
+                            state = gridState,
+                            contentPadding = PaddingValues(bottom = 40.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            items(state.facets, key = { it.id }) { facet ->
+                                RadioFacetTile(
+                                    section = state.section,
+                                    facet = facet,
+                                    onClick = { viewModel.selectFacet(facet) },
+                                )
+                            }
+                        }
+                    } else {
+                        RadioFacetList(
+                            section = state.section,
+                            facets = state.facets,
+                            listRows = state.listRows,
+                            state = listState,
+                            onClick = viewModel::selectFacet,
+                        )
                     }
                 }
+                state.stations.isEmpty() -> StatePanel(
+                    title = stringResource(R.string.radio_no_stations),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                else -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                    if (state.viewMode == RadioViewMode.GRID) {
+                        TvLazyVerticalGrid(
+                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .overlayLazyGridScrollbar(gridState)
+                                .focusGroup(),
+                            state = gridState,
+                            contentPadding = PaddingValues(bottom = 40.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
+                                RadioStationTile(
+                                    station = station,
+                                    playing = playback.metadata?.source == "radio" &&
+                                        playback.metadata?.mediaId == station.id &&
+                                        playback.wantsToPlay,
+                                    loading = state.startingStationId == station.id,
+                                    favorite = station.id in state.favoriteIds,
+                                    onClick = { viewModel.play(station, onOpenPlayer) },
+                                    onFavorite = { viewModel.toggleFavorite(station) },
+                                    onFocused = { viewModel.onStationFocused(station.id) },
+                                )
+                            }
+                            if (state.loadingMore) {
+                                items(
+                                    count = RADIO_GRID_END_PLACEHOLDERS,
+                                    key = { radioGridEndPlaceholderKey(it) },
+                                ) {
+                                    RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+                                }
+                            }
+                        }
+                    } else {
+                        RadioStationList(
+                            stations = state.stations,
+                            listRows = state.listRows,
+                            playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
+                            playing = playback.wantsToPlay,
+                            startingStationId = state.startingStationId,
+                            favoriteIds = state.favoriteIds,
+                            state = listState,
+                            onClick = { station -> viewModel.play(station, onOpenPlayer) },
+                            onFavorite = viewModel::toggleFavorite,
+                            onFocused = { station -> viewModel.onStationFocused(station.id) },
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showViewOptions) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
+            Box(Modifier.align(Alignment.TopEnd)) {
+                ViewOptionsPanel(
+                    views = listOf(
+                        ViewOption(RadioViewMode.GRID.name, stringResource(R.string.library_view_grid), ViewPreview.GRID),
+                        ViewOption(RadioViewMode.LIST.name, stringResource(R.string.library_view_list), ViewPreview.LIST),
+                    ),
+                    selectedView = state.viewMode.name,
+                    onView = { viewModel.selectViewMode(RadioViewMode.valueOf(it)) },
+                    gridColumns = state.gridColumns,
+                    listRows = state.listRows,
+                    onGridColumns = viewModel::setGridColumns,
+                    onListRows = viewModel::setListRows,
+                    onClose = { showViewOptions = false },
+                )
             }
         }
     }
@@ -348,7 +408,7 @@ private fun RadioFacetTile(
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         modifier = Modifier
-            .width(deviceDp(190.dp, 160.dp))
+            .fillMaxWidth()
             .mediaFocusMotion(focused)
             .activateOnTvKey(onClick = onClick)
             .onFocusChanged { focused = it.isFocused },
@@ -380,6 +440,58 @@ private fun RadioFacetTile(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun RadioFacetList(
+    section: RadioSection,
+    facets: List<RadioFacet>,
+    listRows: Int,
+    state: androidx.compose.foundation.lazy.LazyListState,
+    onClick: (RadioFacet) -> Unit,
+) {
+    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    TvLazyColumn(
+        allowUpExit = true,
+        modifier = Modifier.fillMaxSize(),
+        state = state,
+        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
+    ) {
+        lazyItems(facets, key = { it.id }) { facet ->
+            var focused by remember(facet.id) { mutableStateOf(false) }
+            val shape = RoundedCornerShape(10.dp)
+            Surface(
+                onClick = { onClick(facet) },
+                colors = transparentSurfaceColors(),
+                scale = noSurfaceScale(),
+                shape = ClickableSurfaceDefaults.shape(shape),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .mediaFocusMotion(focused, focusedScale = 1.012f)
+                    .activateOnTvKey { onClick(facet) }
+                    .bringFocusedContextIntoView()
+                    .onFocusChanged { focused = it.isFocused },
+            ) {
+                Row(
+                    Modifier
+                        .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
+                        .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f), shape)
+                        .padding(horizontal = 14.dp, vertical = 12.dp * rowScale),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        MarqueeTitle(radioFacetLabel(section, facet), focused = focused, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            stringResource(R.string.radio_station_count, facet.stationCount),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -437,10 +549,10 @@ private fun RadioStationTile(
     onFavorite: () -> Unit,
     onFocused: () -> Unit,
 ) {
-    var focused by remember { mutableStateOf(false) }
+    var focused by remember(station.id) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Column(
-        Modifier.width(deviceDp(190.dp, 160.dp)),
+        Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Surface(
@@ -474,26 +586,7 @@ private fun RadioStationTile(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-                    if (!station.artworkUrl.isNullOrBlank()) {
-                        ArtworkImage(
-                            station.artworkUrl,
-                            station.name,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.DarkGray),
-                            contentScale = ContentScale.Crop,
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .background(Color.DarkGray, RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            androidx.compose.material3.Icon(Icons.Default.MusicNote, null)
-                        }
-                    }
+                    RadioArtwork(station, Modifier.fillMaxSize())
                     if (playing || loading) {
                         Box(
                             Modifier
@@ -531,5 +624,115 @@ private fun RadioStationTile(
             onClick = onFavorite,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
+    }
+}
+
+@Composable
+private fun RadioStationList(
+    stations: List<RadioStation>,
+    listRows: Int,
+    playbackId: String?,
+    playing: Boolean,
+    startingStationId: String?,
+    favoriteIds: Set<String>,
+    state: androidx.compose.foundation.lazy.LazyListState,
+    onClick: (RadioStation) -> Unit,
+    onFavorite: (RadioStation) -> Unit,
+    onFocused: (RadioStation) -> Unit,
+) {
+    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    TvLazyColumn(
+        allowUpExit = true,
+        modifier = Modifier.fillMaxSize(),
+        state = state,
+        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
+    ) {
+        lazyItems(stations, key = { it.id }) { station ->
+            var focused by remember(station.id) { mutableStateOf(false) }
+            val selected = playbackId == station.id
+            val shape = RoundedCornerShape(10.dp)
+            Surface(
+                onClick = { onClick(station) },
+                colors = transparentSurfaceColors(),
+                scale = noSurfaceScale(),
+                shape = ClickableSurfaceDefaults.shape(shape),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .mediaFocusMotion(focused, focusedScale = 1.012f)
+                    .activateOnTvKey { onClick(station) }
+                    .bringFocusedContextIntoView()
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        if (it.isFocused) onFocused(station)
+                    },
+            ) {
+                Row(
+                    Modifier
+                        .background(
+                            if (focused || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent,
+                            shape,
+                        )
+                        .border(
+                            if (focused || selected) 2.dp else 1.dp,
+                            if (focused || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
+                            shape,
+                        )
+                        .padding(10.dp * rowScale),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(72.dp * rowScale)) {
+                        RadioArtwork(station, Modifier.fillMaxSize())
+                        if ((selected && playing) || startingStationId == station.id) {
+                            androidx.compose.material3.Icon(
+                                Icons.Default.PlayArrow,
+                                null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.align(Alignment.BottomEnd).size(22.dp),
+                            )
+                        }
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        MarqueeTitle(station.name, focused = focused, style = MaterialTheme.typography.titleMedium)
+                        MarqueeTitle(
+                            radioStationSubtitle(station),
+                            focused = focused,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TvChip(
+                        text = if (station.id in favoriteIds) stringResource(R.string.radio_remove_favorite)
+                        else stringResource(R.string.radio_add_favorite),
+                        icon = if (station.id in favoriteIds) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                        iconOnly = true,
+                        selected = station.id in favoriteIds,
+                        onClick = { onFavorite(station) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadioArtwork(station: RadioStation, modifier: Modifier) {
+    if (!station.artworkUrl.isNullOrBlank()) {
+        ArtworkImage(
+            station.artworkUrl,
+            station.name,
+            modifier = modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.DarkGray),
+            contentScale = ContentScale.Crop,
+        )
+    } else {
+        Box(
+            modifier.background(Color.DarkGray, RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            androidx.compose.material3.Icon(Icons.Default.MusicNote, null)
+        }
     }
 }
