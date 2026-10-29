@@ -3,4 +3,5 @@
     <string name="player_frame_drop_sample_percent">Dropped frames in sample: %1$s of expected frames</string>
     <string name="player_frame_drop_count">Dropped frames: %1$s</string>
     <string name="player_frame_drop_fps_deviation">Δ %1$s FPS · Target %2$s</string>
+    <string name="player_frame_drop_measured_fps">Output %1$s FPS · Drops %2$s</string>
 </resources>

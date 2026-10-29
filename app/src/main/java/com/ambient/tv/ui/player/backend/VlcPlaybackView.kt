@@ -60,6 +60,37 @@ import kotlinx.coroutines.flow.asStateFlow
 /** Stable playback time after a stream retry before another open/network error may retry again. */
 private const val STREAM_RETRY_RESET_MS = 30_000L
 
+/** Retains brief native transitions that can start and finish between two overlay polls. */
+internal class VlcFrameDropSampleState {
+    var generation: Int = 0
+        private set
+    var buffering: Boolean = false
+        private set
+
+    fun discontinuity() { generation++ }
+
+    fun prepare() {
+        buffering = false
+        discontinuity()
+    }
+
+    fun onEvent(type: Int, bufferPercent: Float = 100f) {
+        when (type) {
+            MediaPlayer.Event.Buffering -> {
+                if (!bufferPercent.isFinite() || bufferPercent !in 0f..100f) return
+                val active = bufferPercent < 100f
+                if (active != buffering) {
+                    buffering = active
+                    discontinuity()
+                }
+            }
+            MediaPlayer.Event.Opening, MediaPlayer.Event.Playing, MediaPlayer.Event.Paused,
+            MediaPlayer.Event.Stopped, MediaPlayer.Event.EndReached, MediaPlayer.Event.EncounteredError ->
+                discontinuity()
+        }
+    }
+}
+
 class VlcPlaybackController(
     private val context: Context,
     val url: String,
@@ -84,6 +115,7 @@ class VlcPlaybackController(
 ) : PlaybackHandle, VideoPresentationTarget, com.ambient.tv.ui.player.SubtitleDelayTarget {
     private val startupConstructionAt = System.nanoTime()
     private var initialOpenReported = false
+    private val frameDropSamples = VlcFrameDropSampleState()
     // HDR on an SDR display still needs the decoder/vout's tone mapping. CPU picture
     // filters must not strip its precision or feed it through SDR-to-HDR a second time.
     private val preserveHdrSource = nativeHdrPreferred || sourceHdrStandard != null
@@ -494,6 +526,8 @@ class VlcPlaybackController(
         Timber.i("AV-AUDIT VLC AudioTrack=%s digital-request=%s accepted=%s", audioOutputSet, digital, digitalOutputSet)
         player.vlcVout.addCallback(surfaceCallback)
         player.setEventListener { event ->
+            frameDropSamples.onEvent(event.type,
+                if (event.type == MediaPlayer.Event.Buffering) event.buffering else 100f)
             when (event.type) {
                 MediaPlayer.Event.EncounteredError -> {
                     com.ambient.tv.diagnostics.DiagnosticLog.error("playback", "VLC error ${com.ambient.tv.diagnostics.diagnosticUrl(url)}")
@@ -852,6 +886,7 @@ class VlcPlaybackController(
 
     private fun prepare(resumePositionMs: Long = pendingRestorePositionMs ?: startPositionMs, resumePlaying: Boolean = desiredPlayWhenReady) {
         if (released) return
+        frameDropSamples.prepare()
         if (previousReleaseOutcome == null && previousAudioRelease.isDone) {
             // Nothing to wait for: open in this call, not one main-thread round trip later.
             previousReleaseOutcome = previousReleaseOutcome(true, previousAudioRelease.failed, 0L)
@@ -1236,6 +1271,7 @@ class VlcPlaybackController(
 
     override fun play() {
         if (released) return
+        if (!desiredPlayWhenReady) frameDropSamples.discontinuity()
         desiredPlayWhenReady = true
         if (!dvPrimeActive) restorePausedSeekVolume()
         hdrOutput.discontinuity()
@@ -1250,6 +1286,7 @@ class VlcPlaybackController(
     }
 
     override fun pause() {
+        if (!released && desiredPlayWhenReady) frameDropSamples.discontinuity()
         hdrOutput.discontinuity()
         desiredPlayWhenReady = false
         pauseAfterRestorePositionMs = null
@@ -1266,10 +1303,12 @@ class VlcPlaybackController(
 
     internal fun hasPendingSeek(): Boolean = pendingRestorePositionMs != null
 
+    internal fun frameDropSampleGeneration(): Int = frameDropSamples.generation
+
     /** Reopens and priming can move counters before ordinary playback has resumed. */
     fun frameDropSampleReady(): Boolean = !released && prepared && !openingOrRestarting &&
         pendingRestorePositionMs == null && pauseAfterRestorePositionMs == null && !dvPrimeActive &&
-        !ended && errorMessage == null && isPlayingNow()
+        !frameDropSamples.buffering && !ended && errorMessage == null && isPlayingNow()
 
     override fun status(): PlaybackStatus {
         if (released) return PlaybackStatus()
@@ -1296,6 +1335,7 @@ class VlcPlaybackController(
 
     override fun seekTo(positionMs: Long) {
         if (released || liveStream) return
+        frameDropSamples.discontinuity()
         if (ended) {
             ended = false
             prepare(positionMs.coerceAtLeast(0), desiredPlayWhenReady)

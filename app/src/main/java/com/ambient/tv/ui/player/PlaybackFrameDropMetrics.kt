@@ -9,8 +9,8 @@ internal fun frameDropPercent(dropped: Long?, denominator: Double?): Double? =
     if (dropped == null || dropped < 0 || denominator == null || !denominator.isFinite() || denominator <= 0) null
     else (100.0 * dropped / denominator).takeIf { it.isFinite() }
 
-internal fun formatFramePercent(value: Double?): String = value?.let {
-    NumberFormat.getNumberInstance().apply { minimumFractionDigits = 1; maximumFractionDigits = 1 }.format(it) + " %"
+internal fun formatFramePercent(value: Double?, locale: Locale = Locale.getDefault()): String = value?.let {
+    NumberFormat.getNumberInstance(locale).apply { minimumFractionDigits = 1; maximumFractionDigits = 1 }.format(it) + " %"
 } ?: "—"
 
 internal data class FrameDropReading(
@@ -30,54 +30,92 @@ internal data class FrameDropReading(
             ?.times(speed)?.takeIf { it.isFinite() && it > 0 }
 }
 
-internal data class FrameDropSample(val actualFps: Double, val targetFps: Double, val estimated: Boolean = false) {
-    val deviationFps: Double get() = actualFps - targetFps
-    val deficitPercent: Double get() = (100.0 * (targetFps - actualFps) / targetFps).coerceIn(0.0, 100.0)
+internal data class FrameDropSample(
+    val actualFps: Double,
+    val targetFps: Double?,
+    val estimated: Boolean = false,
+    /** Reported drops per real second; these do not define the nominal output cadence. */
+    val droppedFps: Double? = null,
+) {
+    val deviationFps: Double? get() = targetFps?.let { actualFps - it }
+
+    /** Share of the renderer's reported shown/dropped pictures, not an inferred FPS target. */
+    val counterDropPercent: Double?
+        get() {
+            val drops = droppedFps?.takeIf { it.isFinite() && it >= 0.0 } ?: return null
+            if (!actualFps.isFinite() || actualFps < 0.0) return null
+            val observed = actualFps + drops
+            return if (observed.isFinite() && observed > 0.0) 100.0 * drops / observed else null
+        }
+
+    /** Known cadence measures output deficit; otherwise only reported counter loss is known. */
+    val deficitPercent: Double?
+        get() = targetFps?.let { (100.0 * (it - actualFps) / it).coerceIn(0.0, 100.0) }
+            ?: counterDropPercent
 }
 
-private fun sameFrameTarget(first: Double, second: Double): Boolean =
-    abs(first - second) <= maxOf(0.05, second * 0.005)
+private fun sameFrameTarget(first: Double?, second: Double?): Boolean =
+    if (first == null || second == null) first == second
+    else abs(first - second) <= maxOf(0.05, second * 0.005)
 
 /**
- * Renderer output per wall-clock second, compared with its intended output cadence.
- * MPV exposes drops but no rendered counter here, so only its reading is an estimate.
- * A discontinuity invalidates the whole window; a seek is never counted as playback time.
+ * Renderer output per wall-clock second, compared with nominal cadence only when it is known.
+ * MPV exposes drops but no rendered counter here, so its estimate also needs a valid media clock.
+ * True counter measurements ignore window-relative live positions. Reader generations mark
+ * seeks, pauses and renderer changes; non-monotone counters invalidate either measurement.
  */
 internal fun frameDropWindow(previous: FrameDropReading?, current: FrameDropReading): FrameDropSample? {
     if (previous == null || !previous.playing || !current.playing ||
         previous.estimated != current.estimated || previous.generation != current.generation) return null
-    val target = current.targetFps ?: return null
-    val oldTarget = previous.targetFps ?: return null
-    if (!sameFrameTarget(oldTarget, target) || abs(previous.speed - current.speed) > 0.001) return null
+    if (!previous.speed.isFinite() || previous.speed <= 0.0 ||
+        !current.speed.isFinite() || current.speed <= 0.0 || abs(previous.speed - current.speed) > 0.001) return null
+    val target = current.targetFps
+    if (!sameFrameTarget(previous.targetFps, target)) return null
     val elapsed = current.realtimeMs - previous.realtimeMs
     if (elapsed !in 500L..2500L) return null
-    val progress = current.positionMs - previous.positionMs
-    val expectedProgress = elapsed * current.speed
-    // Native players report position in coarser ticks than Media3. Allow that jitter,
-    // but discard stationary clocks and forward/backward seeks for every renderer.
-    if (progress <= 0 || abs(progress - expectedProgress) > maxOf(350.0, expectedProgress * 0.5)) return null
     if (current.dropped?.let { it < 0 } == true || previous.dropped?.let { it < 0 } == true) return null
     if (current.dropped != null && previous.dropped != null && current.dropped < previous.dropped) return null
     val seconds = elapsed / 1000.0
+    val droppedFps = if (current.dropped != null && previous.dropped != null)
+        (current.dropped - previous.dropped) / seconds else null
     val actual = if (current.estimated) {
-        val drops = current.dropped ?: return null
-        val oldDrops = previous.dropped ?: return null
-        (target - (drops - oldDrops) / seconds).coerceAtLeast(0.0)
+        val expected = target ?: return null
+        val drops = droppedFps ?: return null
+        val progress = current.positionMs - previous.positionMs
+        val expectedProgress = elapsed * current.speed
+        // Estimates must not turn a seek, buffering or a stalled clock into playback time.
+        if (progress <= 0 || abs(progress - expectedProgress) > maxOf(350.0, expectedProgress * 0.5)) return null
+        (expected - drops).coerceAtLeast(0.0)
     } else {
         val rendered = current.rendered ?: return null
         val oldRendered = previous.rendered ?: return null
         if (oldRendered < 0 || rendered < oldRendered) return null
         (rendered - oldRendered) / seconds
     }
-    return FrameDropSample(actual, target, current.estimated)
+    return FrameDropSample(actual, target, current.estimated, droppedFps)
 }
 
 /** A missing/invalid sample clears the display instead of preserving stale green or red. */
 internal fun smoothFrameDrop(previous: FrameDropSample?, sample: FrameDropSample?): FrameDropSample? = when {
     sample == null -> null
-    previous == null || previous.estimated != sample.estimated || !sameFrameTarget(previous.targetFps, sample.targetFps) -> sample
-    else -> sample.copy(actualFps = previous.actualFps + 0.35 * (sample.actualFps - previous.actualFps))
+    previous == null || previous.estimated != sample.estimated || !sameFrameTarget(previous.targetFps, sample.targetFps) ||
+        (previous.droppedFps == null) != (sample.droppedFps == null) -> sample
+    else -> sample.copy(
+        actualFps = previous.actualFps + 0.35 * (sample.actualFps - previous.actualFps),
+        droppedFps = if (previous.droppedFps != null && sample.droppedFps != null)
+            previous.droppedFps + 0.35 * (sample.droppedFps - previous.droppedFps) else null,
+    )
 }
+
+/** Real output can be zero; an unavailable measurement must remain distinguishable from it. */
+internal fun formatFrameOutputFps(value: Double?, locale: Locale = Locale.getDefault()): String =
+    value?.takeIf { it.isFinite() && it >= 0.0 }?.let {
+        NumberFormat.getNumberInstance(locale).apply {
+            minimumFractionDigits = 1
+            maximumFractionDigits = 1
+            isGroupingUsed = false
+        }.format(if (it == 0.0) 0.0 else it)
+    } ?: "—"
 
 internal fun formatFrameFpsDeviation(value: Double?, locale: Locale = Locale.getDefault()): String {
     if (value == null || !value.isFinite()) return "—"

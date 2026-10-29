@@ -3,4 +3,5 @@
     <string name="player_frame_drop_sample_percent">Verworfene Frames im Messfenster: %1$s der erwarteten Frames</string>
     <string name="player_frame_drop_count">Verworfene Frames: %1$s</string>
     <string name="player_frame_drop_fps_deviation">Δ %1$s FPS · Ziel %2$s</string>
+    <string name="player_frame_drop_measured_fps">Ausgabe %1$s FPS · Drops %2$s</string>
 </resources>
