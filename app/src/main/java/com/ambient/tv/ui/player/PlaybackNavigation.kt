@@ -127,6 +127,7 @@ fun PlaybackNavigationProvider(
         }
     }
     state.onChapterSeek = { target ->
+        BackgroundPlaybackSession.userSeek()
         if (onSeek != null) onSeek(target)
         else BackgroundPlaybackSession.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0))
     }

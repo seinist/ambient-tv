@@ -1184,20 +1184,13 @@ fun SettingsScreen(
 
                         SettingsCategory.SEEK -> {
                             item {
-                                SettingsGroup(
-                                    title = stringResource(R.string.settings_seek_jump),
-                                    subtitle = stringResource(R.string.settings_seek_jump_hint),
-                                ) {
-                                    SettingsSelect(options = buildList {
-                                        listOf(15, 30, 60, 90, 120).forEach { seconds ->
-                                            add(SettingsSelectOption(
-                                                text = stringResource(R.string.settings_seek_jump_seconds, seconds),
-                                                selected = uiState.bigSeekJumpSeconds == seconds,
-                                                onClick = { viewModel.onBigSeekJumpChanged(seconds) },
-                                            ))
-                                        }
-                                    })
-                                }
+                                com.ambient.tv.ui.common.SeekPlaybackSettingsControls(
+                                    settings = uiState.seekPlayback,
+                                    onSeekJumpChanged = viewModel::onBigSeekJumpChanged,
+                                    onPauseRewindChanged = viewModel::onPauseRewindChanged,
+                                    onMinPauseChanged = viewModel::onPauseRewindMinPauseChanged,
+                                    onResumeRewindChanged = viewModel::onResumeRewindChanged,
+                                )
                             }
                         }
 

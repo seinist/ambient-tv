@@ -142,6 +142,7 @@ class Media3PlaybackHandle(
         error = outputError ?: player.playerError?.localizedMessage,
     )
     override fun wantsToPlay(): Boolean = player.playWhenReady && player.playbackState != Player.STATE_ENDED
+    override fun canSeekNow(): Boolean = player.isCurrentMediaItemSeekable
     override fun play() {
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
         if (media3PrepareNow(player.playbackState == Player.STATE_IDLE, waitingForPreviousRelease)) player.prepare()

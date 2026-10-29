@@ -1262,7 +1262,7 @@ class VlcPlaybackController(
     fun isPlayingNow(): Boolean = !released && runCatching { player.isPlaying }.getOrDefault(false)
 
     /** A transcoded HTTP response may have no VLC seek index despite having a server start offset. */
-    fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
+    override fun canSeekNow(): Boolean = !released && prepared && !openingOrRestarting && player.isSeekable
 
     internal fun hasPendingSeek(): Boolean = pendingRestorePositionMs != null
 

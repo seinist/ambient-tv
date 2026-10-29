@@ -52,6 +52,8 @@ class YouTubePlaybackPreparationTest {
         assertNull(lateYouTubeResumeTarget(isLive = false, initialStartMs = 0, resumeMs = 0, userSeeked = false))
         assertNull(lateYouTubeResumeTarget(isLive = false, initialStartMs = 0, resumeMs = 30_000, userSeeked = true))
         assertNull(lateYouTubeResumeTarget(isLive = false, initialStartMs = 5_000, resumeMs = 30_000, userSeeked = false))
+        assertNull(lateYouTubeResumeTarget(isLive = false, initialStartMs = 0, resumeMs = 30_000,
+            userSeeked = false, resumeAlreadyApplied = true))
     }
     @Test fun missingMetadataDoesNotDiscardAPlayableStream() = runBlocking {
         val result = prepareYouTubePlayback(null, { null }, { stream().copy(title = "Stream title") })

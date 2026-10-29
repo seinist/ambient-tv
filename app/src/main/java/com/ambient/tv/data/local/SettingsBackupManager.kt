@@ -131,6 +131,10 @@ data class SettingsBackup(
     val projectmHdr4kAllowed: Boolean = false,
     val projectmPresetCategoryKey: String = "all",
     val bigSeekJumpSeconds: Int = 60,
+    /** Absent in older backups: keep the receiving device's current choice. */
+    val pauseRewindSeconds: Int? = null,
+    val pauseRewindMinPauseSeconds: Int? = null,
+    val resumeRewindSeconds: Int? = null,
     val youtubeSponsorBlockEnabled: Boolean = true,
     val youtubeFeedKeys: List<String> = AppPreferences.DEFAULT_YOUTUBE_FEEDS,
     /** Null in backups made before the setting existed: restoring them keeps the device's choice. */
@@ -441,6 +445,9 @@ class SettingsBackupManager @Inject constructor(
             projectmHdr4kAllowed = preferences.projectmHdr4kAllowed,
             projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
             bigSeekJumpSeconds = preferences.bigSeekJumpSeconds,
+            pauseRewindSeconds = preferences.pauseRewindSeconds,
+            pauseRewindMinPauseSeconds = preferences.pauseRewindMinPauseSeconds,
+            resumeRewindSeconds = preferences.resumeRewindSeconds,
             youtubeSponsorBlockEnabled = preferences.youtubeSponsorBlockEnabled,
             youtubeFeedKeys = preferences.youtubeFeedKeys,
             youtubeStartFeedKey = preferences.youtubeStartFeedKey,
@@ -800,6 +807,9 @@ class SettingsBackupManager @Inject constructor(
         preferences.projectmHdr4kAllowed = backup.projectmHdr4kAllowed
         preferences.projectmPresetCategoryKey = backup.projectmPresetCategoryKey
         preferences.bigSeekJumpSeconds = backup.bigSeekJumpSeconds
+        backup.pauseRewindSeconds?.let { preferences.pauseRewindSeconds = it }
+        backup.pauseRewindMinPauseSeconds?.let { preferences.pauseRewindMinPauseSeconds = it }
+        backup.resumeRewindSeconds?.let { preferences.resumeRewindSeconds = it }
         preferences.youtubeSponsorBlockEnabled = backup.youtubeSponsorBlockEnabled
         preferences.youtubeFeedKeys = backup.youtubeFeedKeys
         backup.youtubeStartFeedKey?.let { preferences.youtubeStartFeedKey = it }
@@ -958,7 +968,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 73
+        const val CURRENT_SCHEMA_VERSION = 74
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }

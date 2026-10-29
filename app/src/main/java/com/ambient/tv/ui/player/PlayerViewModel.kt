@@ -172,6 +172,7 @@ class PlayerViewModel @Inject constructor(
     private var ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
     private var mediaIndex: Int = savedStateHandle.get<String>("mediaIndex")?.toIntOrNull() ?: 0
     private var restartFromBeginning: Boolean = savedStateHandle.get<Boolean>("restart") ?: false
+    private val savedResumeRequest = SavedResumeRequest()
     private val collectionId: String? = savedStateHandle.get<String>("collectionId")?.takeIf { it.isNotBlank() }
     private val collectionSort: String? = savedStateHandle.get<String>("collectionSort")?.takeIf { it.isNotBlank() }
     val reopenRoute get() = com.ambient.tv.ui.navigation.Destinations.player(
@@ -234,6 +235,7 @@ class PlayerViewModel @Inject constructor(
         val state = _uiState.value as? PlayerUiState.Ready ?: return
         val index = key.toIntOrNull() ?: return
         if (state.companionVersions.none { it.first == key } || index == state.selectedVersionIndex) return
+        BackgroundPlaybackSession.cancelResumeRewind()
         forcedVersion = index
         versionResumeMs = (BackgroundPlaybackSession.currentStatus()?.positionMs ?: state.startPositionMs) + state.timelineOffsetMs
         _uiState.value = PlayerUiState.Loading
@@ -348,6 +350,7 @@ class PlayerViewModel @Inject constructor(
         ratingKey = nextId
         mediaIndex = 0
         restartFromBeginning = false
+        savedResumeRequest.skip()
         savedStateHandle["ratingKey"] = nextId
         savedStateHandle["mediaIndex"] = "0"
         savedStateHandle["restart"] = false
@@ -423,6 +426,7 @@ class PlayerViewModel @Inject constructor(
         val transitionToken = itemTransitionToken
         if (!restartFromBeginning && forcedVersion == null) {
             (BackgroundPlaybackSession.cached(reopenRoute) as? PlayerUiState.Ready)?.let {
+                savedResumeRequest.skip()
                 _uiState.value = it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend)
                 if (it.successorsLoading) {
                     val item = mediaRepository.getMetadata(ratingKey).getOrNull()
@@ -522,11 +526,20 @@ class PlayerViewModel @Inject constructor(
                 // retain a viewOffset at (or just before) the end for watched items; feeding that
                 // position back into a fresh player makes the decoder open and immediately close.
                 val resumeAtEnd = (item.progressFraction ?: 0f) > 0.94f
-                val startPositionMs = versionResumeMs ?: if (restartFromBeginning || resumeAtEnd) {
+                val savedPositionMs = versionResumeMs ?: if (restartFromBeginning || resumeAtEnd) {
                     0L
                 } else {
                     item.viewOffsetMs ?: 0L
                 }
+                // Work on the absolute media position before server conversion creates a
+                // relative stream timeline. Engine/version reloads retain their exact clock.
+                val startPositionMs = savedResumeRequest.position(
+                    savedPositionMs,
+                    appPreferences.resumeRewindSeconds,
+                    eligible = versionResumeMs == null && !restartFromBeginning && !resumeAtEnd &&
+                        !audioOnlyPlaybackHint(ratingKey, item.type, version.videoCodec) &&
+                        !item.type.equals("photo", ignoreCase = true),
+                )
                 val route = AudioPassthroughPolicy.probeCached(context)
                 val conversionMetadata = PlaybackMetadata(reopenRoute, "", source = titleSource(), mediaId = ratingKey,
                     sourceWidth = version.width, sourceHeight = version.height, videoScope = videoScope)
@@ -823,6 +836,7 @@ class PlayerViewModel @Inject constructor(
         ratingKey = nextRatingKey
         mediaIndex = 0
         restartFromBeginning = false
+        savedResumeRequest.skip()
         savedStateHandle["ratingKey"] = nextRatingKey
         savedStateHandle["mediaIndex"] = "0"
         savedStateHandle["restart"] = false
@@ -1017,32 +1031,71 @@ class PlayerViewModel @Inject constructor(
     } else plexStreamHeaders()
 
     private var timelineSeekJob: kotlinx.coroutines.Job? = null
+    fun canResumeSeekViaSource(): Boolean = (_uiState.value as? PlayerUiState.Ready)?.let {
+        it.playbackMode == PlaybackMode.TRANSCODE ||
+            it.playbackMode == PlaybackMode.DIRECT_STREAM && serverAudioFallbackCodec != null
+    } == true
+
     fun seekTimeline(positionMs: Long) {
-        if (changingItem) return
-        val current = _uiState.value as? PlayerUiState.Ready ?: return
+        BackgroundPlaybackSession.userSeek()
+        seekTimelineInternal(positionMs, forResume = false, onComplete = null)
+    }
+
+    fun seekTimelineForResume(positionMs: Long, stillCurrent: () -> Boolean, onComplete: (Boolean) -> Unit) {
+        seekTimelineInternal(positionMs, forResume = true, onComplete = onComplete, stillCurrent = stillCurrent)
+    }
+
+    private fun seekTimelineInternal(positionMs: Long, forResume: Boolean, onComplete: ((Boolean) -> Unit)?, stillCurrent: () -> Boolean = { true }) {
+        if (changingItem || !stillCurrent()) { onComplete?.invoke(false); return }
+        val current = _uiState.value as? PlayerUiState.Ready ?: run { onComplete?.invoke(false); return }
         val target = positionMs.coerceIn(0L, current.durationMs?.takeIf { it > 0 } ?: Long.MAX_VALUE)
         timelineSeekJob?.cancel()
         val vlcCannotSeekTranscode = current.playbackMode == PlaybackMode.TRANSCODE &&
             (BackgroundPlaybackSession.activeHandle() as? com.ambient.tv.ui.player.backend.VlcPlaybackController)
                 ?.canSeekNow() == false
-        if (target >= current.timelineOffsetMs && !vlcCannotSeekTranscode) {
-            BackgroundPlaybackSession.seekTo(target - current.timelineOffsetMs)
+        val canSeekDirectly = !forResume || BackgroundPlaybackSession.activeHandle()?.canSeekNow() == true
+        if (target >= current.timelineOffsetMs && !vlcCannotSeekTranscode && canSeekDirectly) {
+            if (forResume) {
+                // Automatic rewind must not look like another user seek and cancel its owner.
+                val handle = BackgroundPlaybackSession.activeHandle()
+                val applied = handle != null && runCatching {
+                    handle.seekTo(target - current.timelineOffsetMs)
+                    BackgroundPlaybackSession.tick()
+                }.isSuccess
+                onComplete?.invoke(applied)
+            } else {
+                BackgroundPlaybackSession.seekTo(target - current.timelineOffsetMs)
+            }
             return
         }
-        timelineSeekJob = viewModelScope.launch {
-            if (current.playbackMode == PlaybackMode.DIRECT_STREAM && serverAudioFallbackCodec != null) {
-                startServerAudioFallback(current, target - current.timelineOffsetMs, serverAudioFallbackCodec!!)
-                return@launch
-            }
-            if (current.playbackMode != PlaybackMode.TRANSCODE) return@launch
-            val result = mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, target, videoFallbackChannels)
-            result.onSuccess { url ->
-                if ((_uiState.value as? PlayerUiState.Ready)?.streamUrl != current.streamUrl) return@onSuccess
-                _uiState.value = current.copy(streamUrl = url, runtimeHdrStandard = null, runtimeHdrKnown = false, startPositionMs = 0L, timelineOffsetMs = target,
-                    timelineSeekToken = current.timelineSeekToken + 1, timelineSeekMs = target)
-            }.onFailure {
-                Timber.w(it, "Chapter seek could not restart compatibility stream")
-                notifyResult("playback:seek", success = false, kind = NoticeKind.PLAYBACK, failureMessage = R.string.player_seek_failed)
+        if (current.playbackMode == PlaybackMode.DIRECT_STREAM && serverAudioFallbackCodec != null) {
+            timelineSeekJob = startServerAudioFallback(current, target - current.timelineOffsetMs,
+                serverAudioFallbackCodec!!, onComplete = onComplete, stillCurrent = stillCurrent)
+            return
+        }
+        if (current.playbackMode != PlaybackMode.TRANSCODE) { onComplete?.invoke(false); return }
+        timelineSeekJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            var applied = false
+            try {
+                val result = suspendResult {
+                    mediaRepository.getVideoCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex, target, videoFallbackChannels).getOrThrow()
+                }
+                result.onSuccess { url ->
+                    currentCoroutineContext().ensureActive()
+                    val latest = _uiState.value as? PlayerUiState.Ready ?: return@onSuccess
+                    if (!stillCurrent() || latest.streamUrl != current.streamUrl || changingItem ||
+                        forResume && latest.playbackBackendKey != current.playbackBackendKey) return@onSuccess
+                    if (forResume) BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
+                    _uiState.value = latest.copy(streamUrl = url, runtimeHdrStandard = null, runtimeHdrKnown = false, startPositionMs = 0L, timelineOffsetMs = target,
+                        timelineSeekToken = latest.timelineSeekToken + 1, timelineSeekMs = target)
+                    applied = true
+                }.onFailure {
+                    if (!stillCurrent()) return@onFailure
+                    Timber.w(it, "Chapter seek could not restart compatibility stream")
+                    notifyResult("playback:seek", success = false, kind = NoticeKind.PLAYBACK, failureMessage = R.string.player_seek_failed)
+                }
+            } finally {
+                onComplete?.invoke(applied)
             }
         }
     }
@@ -1110,13 +1163,20 @@ class PlayerViewModel @Inject constructor(
     private fun startServerAudioFallback(
         current: PlayerUiState.Ready, positionMs: Long, codec: String, streamId: Long? = current.serverAudioStreamId,
         sourceChannels: Int? = null,
-    ) {
-        if (serverAudioFallbackInFlight || !supportsServerAudioConversion(current.sourceRatingKey)) return
+        onComplete: ((Boolean) -> Unit)? = null,
+        stillCurrent: () -> Boolean = { true },
+    ): Job? {
+        if (!stillCurrent() || serverAudioFallbackInFlight || !supportsServerAudioConversion(current.sourceRatingKey)) {
+            onComplete?.invoke(false)
+            return null
+        }
         serverAudioFallbackInFlight = true
         lastReadyForAudioRecovery = current.copy(serverAudioStreamId = streamId)
         lastAudioRecoveryPositionMs = positionMs
         val absolutePosition = (positionMs + current.timelineOffsetMs).coerceAtLeast(0L)
-        _uiState.value = PlayerUiState.Loading
+        // Keep the paused source and its controls during an automatic rewind request. A
+        // newer pause/seek can cancel it without leaving the screen stuck in Loading.
+        if (onComplete == null) _uiState.value = PlayerUiState.Loading
         postAudioRecoveryNotice(when (codec) {
             "ac3" -> R.string.notice_audio_ac3_conversion
             "eac3" -> R.string.notice_audio_eac3_conversion
@@ -1124,38 +1184,56 @@ class PlayerViewModel @Inject constructor(
         })
         val channels = serverAudioChannels(activeConversionOptions(), AudioPassthroughPolicy.probeCached(context), sourceChannels, codec)
         Timber.i("Server audio conversion target=%s channels=%d", codec, channels)
-        viewModelScope.launch {
-            mediaRepository.getAudioCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex,
-                absolutePosition, codec, streamId, channels).fold(
-                onSuccess = { url ->
-                    currentCoroutineContext().ensureActive()
-                    if (ratingKey != current.requestedRatingKey || changingItem) return@fold
-                    serverAudioFallbackCodec = codec
-                    AudioCodecRejects.clear()
-                    _uiState.value = current.copy(
-                        streamUrl = url,
-                        runtimeHdrStandard = null, runtimeHdrKnown = false,
-                        playbackMode = PlaybackMode.DIRECT_STREAM,
-                        playbackReason = PlaybackPlanner.audioFallback(url, current.audioCodec, codec).reason,
-                        playbackBackendKey = "media3",
-                        audioCodec = codec,
-                        serverAudioStreamId = streamId,
-                        serverAudioConversionCodec = codec,
-                        audioPassthroughEnabled = serverAudioTargetIsEncoded(serverAudioFallbackCodec) || appPreferences.mediaAudioPassthroughEnabled,
-                        startPositionMs = 0L,
-                        timelineOffsetMs = absolutePosition,
-                    )
-                },
-                onFailure = { error ->
-                    currentCoroutineContext().ensureActive()
-                    if (ratingKey != current.requestedRatingKey || changingItem) return@fold
-                    Timber.w(error, "Server audio conversion to %s failed", codec)
-                    serverAudioFallbackCodec = codec
-                    _uiState.value = PlayerUiState.Error(context.getString(R.string.player_audio_conversion_failed))
-                    postAudioRecoveryNotice(R.string.notice_audio_conversion_failed, failed = true)
-                },
-            )
-            serverAudioFallbackInFlight = false
+        return viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            var applied = false
+            try {
+                suspendResult {
+                    mediaRepository.getAudioCompatibleStreamUrl(current.sourceRatingKey, current.sourceMediaIndex,
+                        absolutePosition, codec, streamId, channels).getOrThrow()
+                }.fold(
+                    onSuccess = { url ->
+                        currentCoroutineContext().ensureActive()
+                        if (!stillCurrent() || ratingKey != current.requestedRatingKey || changingItem) return@fold
+                        val latest = if (onComplete != null) {
+                            (_uiState.value as? PlayerUiState.Ready)?.takeIf {
+                                it.streamUrl == current.streamUrl && it.playbackBackendKey == current.playbackBackendKey
+                            } ?: return@fold
+                        } else current
+                        serverAudioFallbackCodec = codec
+                        AudioCodecRejects.clear()
+                        if (onComplete != null) BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
+                        _uiState.value = latest.copy(
+                            streamUrl = url,
+                            runtimeHdrStandard = null, runtimeHdrKnown = false,
+                            playbackMode = PlaybackMode.DIRECT_STREAM,
+                            playbackReason = PlaybackPlanner.audioFallback(url, current.audioCodec, codec).reason,
+                            playbackBackendKey = if (onComplete != null) latest.playbackBackendKey else "media3",
+                            audioCodec = codec,
+                            serverAudioStreamId = streamId,
+                            serverAudioConversionCodec = codec,
+                            audioPassthroughEnabled = serverAudioTargetIsEncoded(serverAudioFallbackCodec) || appPreferences.mediaAudioPassthroughEnabled,
+                            startPositionMs = 0L,
+                            timelineOffsetMs = absolutePosition,
+                        )
+                        applied = true
+                    },
+                    onFailure = { error ->
+                        currentCoroutineContext().ensureActive()
+                        if (!stillCurrent() || ratingKey != current.requestedRatingKey || changingItem) return@fold
+                        Timber.w(error, "Server audio conversion to %s failed", codec)
+                        if (onComplete != null) {
+                            notifyResult("playback:seek", success = false, kind = NoticeKind.PLAYBACK, failureMessage = R.string.player_seek_failed)
+                        } else {
+                            serverAudioFallbackCodec = codec
+                            _uiState.value = PlayerUiState.Error(context.getString(R.string.player_audio_conversion_failed))
+                            postAudioRecoveryNotice(R.string.notice_audio_conversion_failed, failed = true)
+                        }
+                    },
+                )
+            } finally {
+                serverAudioFallbackInFlight = false
+                onComplete?.invoke(applied)
+            }
         }
     }
 
@@ -1220,6 +1298,7 @@ class PlayerViewModel @Inject constructor(
         val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
         val current = _uiState.value as? PlayerUiState.Ready ?: return
         if (normalized == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) return
+        BackgroundPlaybackSession.cancelResumeRewind()
         if (makeGlobal) appPreferences.playbackBackendKey = normalized
         val requested = (if (normalized == "auto" && !makeGlobal) ResolutionVideoProfileStore.rendererFor(
             context, current.sourceWidth, appPreferences.playbackBackendKey,
@@ -1349,6 +1428,7 @@ class PlayerViewModel @Inject constructor(
      */
     fun retryPlayback() {
         if (_uiState.value !is PlayerUiState.Error) return
+        savedResumeRequest.skip()
         serverUnreachableRetryAttempted = false
         videoFallbackAttempted = false
         runCatching { BackgroundPlaybackSession.stop() }

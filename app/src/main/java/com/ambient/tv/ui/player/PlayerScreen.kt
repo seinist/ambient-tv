@@ -134,7 +134,7 @@ import kotlinx.coroutines.launch
 import timber.log.Timber
 
 private const val POSITION_REFRESH_INTERVAL_MS = 500L
-// OSD / D-pad / media rewind-FF all use state.seekJumpMs (settings SEEK).
+// OSD / D-pad / media rewind-FF read the current SEEK setting on each user action.
 
 internal data class PlayerTrackOption(
     val label: String,
@@ -212,6 +212,8 @@ fun PlayerScreen(
                         quality = state.companionVersions.takeIf { it.size > 1 }.orEmpty().map { (key, label) -> com.ambient.tv.companion.CompanionOption(key, label.take(120), key == state.selectedVersionIndex.toString()) },
                         chooseQuality = viewModel::selectCompanionVersion,
                         seek = viewModel::seekTimeline,
+                        resumeSeek = viewModel::seekTimelineForResume,
+                        resumeSeekCanReload = viewModel.canResumeSeekViaSource(),
                     ))
                 PlayerContent(
                 state = state,
@@ -664,16 +666,16 @@ private fun PlayerContent(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
-            OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
                 // Buffering counts as playing for the explicit play/pause action.
                 override fun isPlaying() = media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)
                 override fun togglePlayback() {
-                    if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) exoPlayer.pause() else exoPlayer.play()
+                    if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) BackgroundPlaybackSession.userPause() else BackgroundPlaybackSession.userPlay()
                 }
-                override fun play() { exoPlayer.play() }
-                override fun pause() { exoPlayer.pause() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) { seekBy(deltaMs, reveal = revealOsd) }
                 override fun showOsd() { revealControls() }
@@ -735,11 +737,11 @@ private fun PlayerContent(
                 }
             },
             onTogglePlayback = {
-                if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) exoPlayer.pause() else exoPlayer.play()
+                if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) BackgroundPlaybackSession.userPause() else BackgroundPlaybackSession.userPlay()
                 revealControls()
             },
-            onSeekBack = { seekBy(-state.seekJumpMs); revealControls() },
-            onSeekForward = { seekBy(state.seekJumpMs); revealControls() },
+            onSeekBack = { seekBy(-BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); revealControls() },
+            onSeekForward = { seekBy(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); revealControls() },
         )
 
         PlayerBufferingSpinner(
@@ -802,7 +804,7 @@ private fun PlayerContent(
             sleepTimer = sleepTimer,
             onSleepTimerChange = { sleepTimer = it },
             onTogglePlayback = {
-                if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) exoPlayer.pause() else exoPlayer.play()
+                if (media3PauseOnToggle(exoPlayer.playWhenReady, exoPlayer.playbackState)) BackgroundPlaybackSession.userPause() else BackgroundPlaybackSession.userPlay()
                 revealControls()
             },
             seekState = seek,
@@ -1064,7 +1066,7 @@ internal fun TvPlayerSeekBar(
     modifier: Modifier = Modifier,
     interactive: Boolean = true,
     seekState: PlaybackSeekState? = null,
-    onTogglePlayback: () -> Unit = { BackgroundPlaybackSession.toggle() },
+    onTogglePlayback: () -> Unit = { BackgroundPlaybackSession.userToggle() },
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
@@ -1105,6 +1107,7 @@ internal fun TvPlayerSeekBar(
     // Input must read the live target: the persistent OSD model may be a frame behind.
     fun currentPosition() = latestSeekState?.positionMs ?: latestPositionMs
     fun submitTarget(target: Long) {
+        BackgroundPlaybackSession.userSeek()
         latestSeekState?.seekTo(target) ?: latestOnSeekBy(target - currentPosition())
     }
     val seekAcceleration = remember(seekState) { SeekKeyAcceleration() }
@@ -1184,6 +1187,7 @@ internal fun TvPlayerSeekBar(
                 navigation?.interact(); onInteraction()
                 when (event.type) {
                     KeyEventType.KeyDown -> {
+                        BackgroundPlaybackSession.userSeek()
                         pendingDirection = direction
                         val base = pendingTarget ?: currentPosition()
                         pendingTarget = (base + direction * seekAcceleration.step(10_000L, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, durationMs)).coerceIn(0, durationMs)
@@ -1203,6 +1207,7 @@ internal fun TvPlayerSeekBar(
                 val scroll = delta.let { if (kotlin.math.abs(it.y) >= kotlin.math.abs(it.x)) it.y else it.x }
                 if (scroll == 0f || durationMs <= 0L) return@onTvPointerScroll false
                 navigation?.interact(); onInteraction()
+                BackgroundPlaybackSession.userSeek()
                 onSeekBy(if (scroll < 0f) 10_000L else -10_000L)
                 true
             }
@@ -1221,6 +1226,7 @@ internal fun TvPlayerSeekBar(
                     onDragStart = { point ->
                         if (latestDurationMs > 0L) {
                             navigation?.interact(); latestOnInteraction()
+                            BackgroundPlaybackSession.userSeek()
                             pointerTarget = seekPositionFromPointer(point.x, size.width, latestDurationMs)
                         }
                     },

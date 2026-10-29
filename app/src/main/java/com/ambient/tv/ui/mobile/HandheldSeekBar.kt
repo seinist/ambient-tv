@@ -76,6 +76,7 @@ fun HandheldSeekBar(
                     progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
                     setProgress { target ->
                         if (durationMs > 0L) {
+                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                             navigation?.interact()
                             latestOnInteraction()
                             latestOnSeekBy(handheldSeekDelta(target, latestPositionMs, durationMs))
@@ -86,6 +87,7 @@ fun HandheldSeekBar(
                 .pointerInput(durationMs) {
                     detectTapGestures { point ->
                         if (durationMs > 0L) {
+                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                             val target = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()
                             latestOnInteraction()
@@ -96,6 +98,7 @@ fun HandheldSeekBar(
                 .pointerInput(durationMs) {
                     detectHorizontalDragGestures(
                         onDragStart = { point ->
+                            com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
                             dragStartMs = latestPositionMs
                             dragFraction = (point.x / size.width.coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                             navigation?.interact()

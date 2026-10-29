@@ -229,7 +229,7 @@ class MpvPlaybackController(
         }
         val next = MpvEngineState(
             confirmed = true,
-            status = status, wantsToPlay = player.wantsToPlay(), supportsGpuFilters = player.supportsGpuFilters, gpuRenderAtPanel = player.gpuRenderAtPanel, sdrSurfaceDataSpace = player.sdrSurfaceDataSpace,
+            status = status, wantsToPlay = player.wantsToPlay(), seekable = player.canSeekNow(), supportsGpuFilters = player.supportsGpuFilters, gpuRenderAtPanel = player.gpuRenderAtPanel, sdrSurfaceDataSpace = player.sdrSurfaceDataSpace,
             usesFrameInterpolation = player.usesFrameInterpolation, accelerationFallback = player.accelerationFallback, shieldSoftwareStatus = player.shieldSoftwareStatus,
             imageOptions = player.imageOptions, imageOptionWarnings = player.imageOptionWarnings.toList(),
             deinterlaceModeKey = player.deinterlaceModeKey, deinterlaceFilterKey = player.deinterlaceFilterKey,
@@ -364,6 +364,7 @@ class MpvPlaybackController(
     fun reduceAfterOverload() { command("overload") { reduceAfterOverload() } }
     override fun status() = state.status.copy(playing = !released && state.status.playing, ended = ended, error = errorMessage)
     override fun wantsToPlay() = !released && playIntent && !ended && errorMessage == null
+    override fun canSeekNow(): Boolean = !released && state.seekable
     fun positionMs() = state.status.positionMs
     fun durationMs() = state.status.durationMs
     fun isPlaying() = !released && state.status.playing
@@ -558,6 +559,7 @@ private data class MpvEngineState(
     val confirmed: Boolean = false,
     val status: PlaybackStatus = PlaybackStatus(),
     val wantsToPlay: Boolean = true,
+    val seekable: Boolean = false,
     val supportsGpuFilters: Boolean = false,
     val gpuRenderAtPanel: Boolean = false,
     val sdrSurfaceDataSpace: Int? = null,

@@ -71,6 +71,20 @@ class SettingsBackupRegressionTest {
         assertEquals(MediaSelectionPreferences.DETAILS, prefs.youtubeMediaSelectionBehaviorKey)
     }
 
+    @Test fun rewindDefaultsStayOffAndOlderBackupsKeepTheDevicesCurrentChoice() {
+        val (preferences, _, importer) = store()
+        assertEquals(0, preferences.pauseRewindSeconds)
+        assertEquals(10, preferences.pauseRewindMinPauseSeconds)
+        assertEquals(0, preferences.resumeRewindSeconds)
+        preferences.pauseRewindSeconds = 5
+        preferences.pauseRewindMinPauseSeconds = 30
+        preferences.resumeRewindSeconds = 15
+        importer.importJson("""{"schemaVersion":73,"exportedAtEpochMs":0}""")
+        assertEquals(5, preferences.pauseRewindSeconds)
+        assertEquals(30, preferences.pauseRewindMinPauseSeconds)
+        assertEquals(15, preferences.resumeRewindSeconds)
+    }
+
     @Test fun currentBackupRoundTripsNewSettingsAndEmptyHomeLayout() {
         val (source, _, exporter) = store()
         source.homeRows = emptyList()
@@ -118,6 +132,9 @@ class SettingsBackupRegressionTest {
         source.preferredDisplayModeKey = "3840x2160@59.940"
         source.allowDoubleRefreshRate = false
         source.allowThreeTwoPulldown = true
+        source.pauseRewindSeconds = 5
+        source.pauseRewindMinPauseSeconds = 10
+        source.resumeRewindSeconds = 30
         val raw = exporter.exportJson()
         val (target, _, importer) = store()
         importer.importJson(raw)
@@ -140,6 +157,9 @@ class SettingsBackupRegressionTest {
         assertEquals("system", target.preferredDisplayModeKey)
         assertFalse(target.allowDoubleRefreshRate)
         assertTrue(target.allowThreeTwoPulldown)
+        assertEquals(5, target.pauseRewindSeconds)
+        assertEquals(10, target.pauseRewindMinPauseSeconds)
+        assertEquals(30, target.resumeRewindSeconds)
         assertEquals("auto", target.introSkipMode)
         assertEquals("off", target.creditsSkipMode)
         assertEquals(15, target.nextUpCreditsDelaySeconds)
@@ -262,7 +282,7 @@ class SettingsBackupRegressionTest {
         val (source, _, exporter) = store()
         source.sdrToHdrReferenceWhiteNits = 300
         val json = exporter.exportJson()
-        assertEquals("73", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
+        assertEquals("74", Json.parseToJsonElement(json).jsonObject["schemaVersion"].toString())
         val (target, _, importer) = store()
         importer.importJson(json)
         assertEquals(300, target.sdrToHdrReferenceWhiteNits)

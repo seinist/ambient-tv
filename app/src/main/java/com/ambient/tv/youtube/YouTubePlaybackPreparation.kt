@@ -174,6 +174,7 @@ internal suspend fun prepareYouTubePlayback(
 /** Fills title, chapters, and resume from watch-next without touching an in-flight sponsor list. */
 internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: YouTubeMetadata?): YouTubePlayback {
     val duration = metadata?.durationMs?.coerceAtLeast(0) ?: stream.durationMs
+    val resolveResume = !stream.resumeResolved && metadata != null && (duration > 0L || stream.isLive)
     return stream.copy(
         title = stream.title.takeUnless { it.isBlank() || it == "YouTube" || it == "SmartTube" } ?: metadata?.title ?: "SmartTube",
         author = stream.author ?: metadata?.author,
@@ -182,9 +183,20 @@ internal fun applyYouTubePlaybackMetadata(stream: YouTubePlayback, metadata: You
         backgroundUrl = metadata?.backgroundUrl ?: stream.backgroundUrl,
         durationMs = duration,
         timeline = stream.timeline.copy(chapters = metadata?.chapters.orEmpty()).normalized(duration),
-        resumeMs = youtubeResumeMs(duration, metadata?.percentWatched, stream.isLive),
+        resumeMs = if (resolveResume) com.ambient.tv.ui.player.resumeRewindPositionMs(
+            youtubeResumeMs(duration, metadata.percentWatched, stream.isLive), stream.resumeRewindSeconds,
+        ) else stream.resumeMs,
+        resumeResolved = stream.resumeResolved || resolveResume,
     )
 }
+
+/** Called once for a new user launch; late metadata receives the same captured rewind value. */
+internal fun prepareYouTubeSavedResume(stream: YouTubePlayback, rewindSeconds: Int): YouTubePlayback =
+    stream.copy(
+        resumeMs = if (stream.isLive) 0L else com.ambient.tv.ui.player.resumeRewindPositionMs(stream.resumeMs, rewindSeconds),
+        resumeResolved = stream.resumeResolved || stream.resumeMs > 0L || stream.isLive,
+        resumeRewindSeconds = rewindSeconds.coerceAtLeast(0),
+    )
 
 /** Videos watched to (nearly) the end start from the beginning instead of at the credits. */
 internal const val YOUTUBE_FINISHED_PERCENT = 95
@@ -204,8 +216,9 @@ internal fun lateYouTubeResumeTarget(
     initialStartMs: Long,
     resumeMs: Long,
     userSeeked: Boolean,
+    resumeAlreadyApplied: Boolean = false,
 ): Long? {
-    if (isLive || userSeeked || initialStartMs > 0L) return null
+    if (isLive || userSeeked || resumeAlreadyApplied || initialStartMs > 0L) return null
     if (resumeMs <= 0L || resumeMs == initialStartMs) return null
     return resumeMs
 }

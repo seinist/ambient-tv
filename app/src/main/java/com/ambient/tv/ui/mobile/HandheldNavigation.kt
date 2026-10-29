@@ -434,7 +434,7 @@ private fun HandheldMiniPlayer(onOpen: (String) -> Unit) {
                     )
                 }
             }
-            IconButton(onClick = { if (useSpotify) controls.toggleSpotify() else BackgroundPlaybackSession.toggle() }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, stringResource(if (playing) R.string.player_pause else R.string.player_play)) }
+            IconButton(onClick = { if (useSpotify) controls.toggleSpotify() else BackgroundPlaybackSession.userToggle() }) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, stringResource(if (playing) R.string.player_pause else R.string.player_play)) }
             IconButton(onClick = { if (useSpotify) controls.stopSpotify() else BackgroundPlaybackSession.stop() }) { Icon(Icons.Default.Close, stringResource(R.string.player_stop)) }
         }
     }

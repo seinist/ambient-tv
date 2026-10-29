@@ -307,9 +307,9 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
             PlayerControlBar(
                 player = com.ambient.tv.ui.player.OsdPlayer.MEDIA,
                 leftContent = {
-                    val seekJumpMs = state.seekJumpMs
+                    val seekJumpMs = BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)
                     val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
-                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { model.onSeekButton(-seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                    PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { model.onSeekButton(-BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     PlayerIconButton(
                         if (model.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                         stringResource(if (model.isPlaying) R.string.player_pause else R.string.player_play),
@@ -319,7 +319,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         loading = model.loading,
                     )
                     PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
-                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { model.onSeekButton(seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                    PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { model.onSeekButton(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     nextItem?.let { next ->
                         PlayerIconButton(
                             Icons.Filled.SkipNext,

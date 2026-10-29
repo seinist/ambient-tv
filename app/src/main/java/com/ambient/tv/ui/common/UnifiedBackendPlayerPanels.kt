@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HighQuality
@@ -45,6 +46,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.data.local.seekPlaybackSettings
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
@@ -139,6 +141,17 @@ fun UnifiedBackendPlayerPanel(
     }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.metadata)
     val toolBookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(toolMetadata)
     val tools = availablePlayerTools(hasVideo, isLive, toolHandle != null, toolBookmarkKey != null)
+    val preferences = remember(context) { videoImagePreferences(context) }
+    val seekSettings by remember(preferences) {
+        preferences.changes().map { preferences.seekPlaybackSettings() }.distinctUntilChanged()
+    }.collectAsState(initial = preferences.seekPlaybackSettings())
+    val resumeCapabilities by remember {
+        kotlinx.coroutines.flow.combine(
+            com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot,
+            com.ambient.tv.livetv.LiveTimeshift.anchor,
+        ) { _, _ -> com.ambient.tv.ui.player.BackgroundPlaybackSession.resumeCapabilities() }.distinctUntilChanged()
+    }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.resumeCapabilities())
+    val canConfigureSeek = resumeCapabilities.pauseRewind || resumeCapabilities.savedResumeRewind
     val navigation = LocalPlayerPanelNavigation.current
     val segmentSkip = LocalSegmentSkipControls.current
     // Back follows the click path: a level opened straight from the action bar closes the panel.
@@ -201,6 +214,14 @@ fun UnifiedBackendPlayerPanel(
             if (isLive) {
                 LiveTvPlayerPanelEntry(onOpen = { onPanelChange(UnifiedPlayerPanel.LIVE_TV) })
             }
+            if (canConfigureSeek) {
+                PlayerPanelEntry(
+                    icon = Icons.Filled.Replay,
+                    title = stringResource(R.string.settings_seek_page_title),
+                    value = seekPlaybackSettingsSummary(seekSettings, resumeCapabilities.pauseRewind, resumeCapabilities.savedResumeRewind),
+                    onClick = { onPanelChange(UnifiedPlayerPanel.SEEK) },
+                )
+            }
             if (tools.isNotEmpty()) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Build,
@@ -262,6 +283,22 @@ fun UnifiedBackendPlayerPanel(
                 }
             settingsExtrasTitle?.let { RightPanelSectionTitle(it) }
             settingsExtras()
+        }
+        UnifiedPlayerPanel.SEEK -> UnifiedPlayerSidePanel(
+            title = stringResource(R.string.settings_seek_page_title),
+            modifier = modifier,
+            onBack = back,
+        ) {
+            if (canConfigureSeek) SeekPlaybackSettingsControls(
+                settings = seekSettings,
+                onSeekJumpChanged = { preferences.bigSeekJumpSeconds = it },
+                onPauseRewindChanged = { preferences.pauseRewindSeconds = it },
+                onMinPauseChanged = { preferences.pauseRewindMinPauseSeconds = it },
+                onResumeRewindChanged = { preferences.resumeRewindSeconds = it },
+                playbackPanel = true,
+                showPauseRewind = resumeCapabilities.pauseRewind,
+                showSavedResumeRewind = resumeCapabilities.savedResumeRewind,
+            )
         }
         UnifiedPlayerPanel.OSD_INFO -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.player_osd_info),

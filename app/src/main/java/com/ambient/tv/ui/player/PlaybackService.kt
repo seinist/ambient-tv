@@ -101,11 +101,11 @@ class PlaybackService : Service() {
             NotificationChannel(CHANNEL, getString(R.string.background_playback), NotificationManager.IMPORTANCE_LOW))
         mediaSession = MediaSession(this, "AmbientTvPlayback").apply {
             setCallback(object : MediaSession.Callback() {
-                override fun onPlay() { BackgroundPlaybackSession.registerUserInteraction(); BackgroundPlaybackSession.play() }
-                override fun onPause() { BackgroundPlaybackSession.registerUserInteraction(); resumeOnFocus = false; BackgroundPlaybackSession.pause() }
+                override fun onPlay() { BackgroundPlaybackSession.userPlay() }
+                override fun onPause() { resumeOnFocus = false; BackgroundPlaybackSession.userPause() }
                 override fun onStop() = BackgroundPlaybackSession.stop()
                 override fun onSeekTo(pos: Long) {
-                    BackgroundPlaybackSession.registerUserInteraction()
+                    BackgroundPlaybackSession.userSeek()
                     val offset = BackgroundPlaybackSession.snapshot.value.metadata?.timelineOffsetMs ?: 0
                     BackgroundPlaybackSession.seekTo((pos - offset).coerceAtLeast(0))
                 }
@@ -194,7 +194,7 @@ class PlaybackService : Service() {
         lastStartId = startId
         if (intent?.action in setOf(ACTION_TOGGLE, ACTION_STOP)) BackgroundPlaybackSession.registerUserInteraction()
         when (intent?.action) {
-            ACTION_TOGGLE -> BackgroundPlaybackSession.toggle()
+            ACTION_TOGGLE -> BackgroundPlaybackSession.userToggle()
             ACTION_STOP -> BackgroundPlaybackSession.stop()
             ACTION_EXTEND_SLEEP -> BackgroundPlaybackSession.extendSleepTimer()
         }

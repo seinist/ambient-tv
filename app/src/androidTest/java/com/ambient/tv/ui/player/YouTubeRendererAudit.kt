@@ -78,7 +78,7 @@ internal class YouTubeRendererAudit(private val instrumentation: Instrumentation
         val start = SystemClock.elapsedRealtime()
         try {
             main {
-                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to (args.getString("videoId") ?: "aqz-KE-bpKQ"))), SmartTubeEngine(context, prefs), auditPlaybackAvailability(context), auditSourceAvailability(context))
+                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to (args.getString("videoId") ?: "aqz-KE-bpKQ"))), SmartTubeEngine(context, prefs), auditPlaybackAvailability(context), auditSourceAvailability(context), prefs)
                 activity.viewModelStore.put("youtube-renderer-audit", model)
                 activity.setContent {
                     AmbientTvTheme {

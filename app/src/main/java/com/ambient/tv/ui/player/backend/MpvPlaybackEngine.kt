@@ -820,6 +820,7 @@ internal class MpvPlaybackEngine(
     }
 
     override fun wantsToPlay(): Boolean = !released && desiredPlayWhenReady && !ended && errorMessage == null
+    override fun canSeekNow(): Boolean = !released && fileReady && getPropertyString("seekable") == "yes"
 
     fun seekBy(deltaMs: Long) {
         conversionSampleStarted = 0L

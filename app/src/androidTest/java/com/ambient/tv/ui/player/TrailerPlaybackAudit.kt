@@ -48,7 +48,7 @@ class TrailerPlaybackAudit(private val instrumentation: Instrumentation, private
         }
         try {
             main {
-                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to videoId, "trailer" to true)), SmartTubeEngine(context.applicationContext, preferences), auditPlaybackAvailability(context), auditSourceAvailability(context))
+                model = YouTubePlayerViewModel(context.applicationContext, SavedStateHandle(mapOf("videoId" to videoId, "trailer" to true)), SmartTubeEngine(context.applicationContext, preferences), auditPlaybackAvailability(context), auditSourceAvailability(context), preferences)
                 activity.viewModelStore.put("trailer-audit", model)
                 activity.setContent {
                     AmbientTvTheme {

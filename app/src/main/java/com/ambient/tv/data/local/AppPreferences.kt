@@ -1310,6 +1310,20 @@ class AppPreferences @Inject constructor(
         get() = prefs.getInt(KEY_BIG_SEEK_JUMP_SECONDS, 60).coerceIn(10, 300)
         set(value) = prefs.edit { putInt(KEY_BIG_SEEK_JUMP_SECONDS, value.coerceIn(10, 300)) }
 
+    /** Zero keeps manual Pause/Play at the exact paused position. */
+    var pauseRewindSeconds: Int
+        get() = prefs.getInt(KEY_PAUSE_REWIND_SECONDS, 0).takeIf { it in PAUSE_REWIND_SECONDS } ?: 0
+        set(value) = prefs.edit { putInt(KEY_PAUSE_REWIND_SECONDS, value.takeIf { it in PAUSE_REWIND_SECONDS } ?: 0) }
+
+    var pauseRewindMinPauseSeconds: Int
+        get() = prefs.getInt(KEY_PAUSE_REWIND_MIN_PAUSE_SECONDS, 10).takeIf { it in PAUSE_REWIND_MIN_PAUSE_SECONDS } ?: 10
+        set(value) = prefs.edit { putInt(KEY_PAUSE_REWIND_MIN_PAUSE_SECONDS, value.takeIf { it in PAUSE_REWIND_MIN_PAUSE_SECONDS } ?: 10) }
+
+    /** Applied only when a saved video progress point starts a new playback. */
+    var resumeRewindSeconds: Int
+        get() = prefs.getInt(KEY_RESUME_REWIND_SECONDS, 0).takeIf { it in RESUME_REWIND_SECONDS } ?: 0
+        set(value) = prefs.edit { putInt(KEY_RESUME_REWIND_SECONDS, value.takeIf { it in RESUME_REWIND_SECONDS } ?: 0) }
+
     var screensaverEnabled: Boolean
         get() = prefs.getBoolean(KEY_SCREENSAVER_ENABLED, true)
         set(value) = prefs.edit { putBoolean(KEY_SCREENSAVER_ENABLED, value) }
@@ -2255,6 +2269,9 @@ class AppPreferences @Inject constructor(
         const val KEY_PROJECTM_HDR_4K = "projectm_hdr_4k"
         const val KEY_PROJECTM_CATEGORY = "projectm_category"
         const val KEY_BIG_SEEK_JUMP_SECONDS = "big_seek_jump_seconds"
+        const val KEY_PAUSE_REWIND_SECONDS = "pause_rewind_seconds"
+        const val KEY_PAUSE_REWIND_MIN_PAUSE_SECONDS = "pause_rewind_min_pause_seconds"
+        const val KEY_RESUME_REWIND_SECONDS = "resume_rewind_seconds"
         const val KEY_YOUTUBE_SPONSORBLOCK = "youtube_sponsorblock_enabled"
         const val KEY_YOUTUBE_AUTOPLAY_NEXT = "youtube_autoplay_next_enabled"
         const val KEY_YOUTUBE_MEDIA_SELECTION_BEHAVIOR = "youtube_media_selection_behavior"

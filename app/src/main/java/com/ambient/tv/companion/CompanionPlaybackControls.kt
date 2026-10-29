@@ -18,6 +18,10 @@ internal object CompanionPlaybackControls {
         val audio: List<CompanionOption>? = null, val chooseAudio: ((String) -> Unit)? = null,
         val next: (() -> Unit)? = null, val previous: (() -> Unit)? = null,
         val seek: ((Long) -> Unit)? = null,
+        /** Complete preparation before unpausing when a seek needs a new compatibility stream. */
+        val resumeSeek: ((Long, () -> Boolean, (Boolean) -> Unit) -> Unit)? = null,
+        /** Only compatibility streams can seek by reopening a server URL without a native index. */
+        val resumeSeekCanReload: Boolean = false,
     )
     fun update(owner: Any, route: String, controls: SourceControls) {
         leases.removeAll { it.owner === owner }; leases.add(Lease(owner, route, controls))

@@ -126,7 +126,7 @@ class YouTubeTvLink @Inject constructor(
                 if (!foreground) return
                 if (session?.metadata?.mediaId == videoId) {
                     if (command.positionMs > 0) BackgroundPlaybackSession.seekTo(command.positionMs)
-                    BackgroundPlaybackSession.play()
+                    BackgroundPlaybackSession.userPlay()
                 } else {
                     pendingSeek = if (command.positionMs > 1_000) videoId to command.positionMs else null
                     LauncherIntents.post(Destinations.youtubePlayer(videoId))
@@ -134,8 +134,8 @@ class YouTubeTvLink @Inject constructor(
                 forceReport = true
             }
             YouTubeLinkCommand.SEEK -> if (session != null) BackgroundPlaybackSession.seekTo(command.positionMs.coerceAtLeast(0))
-            YouTubeLinkCommand.PLAY -> if (session != null) BackgroundPlaybackSession.play()
-            YouTubeLinkCommand.PAUSE -> if (session != null) BackgroundPlaybackSession.pause()
+            YouTubeLinkCommand.PLAY -> if (session != null) BackgroundPlaybackSession.userPlay()
+            YouTubeLinkCommand.PAUSE -> if (session != null) BackgroundPlaybackSession.userPause()
             YouTubeLinkCommand.STOP -> if (session != null) BackgroundPlaybackSession.stop()
             YouTubeLinkCommand.GET_STATE -> forceReport = true
             YouTubeLinkCommand.VOLUME -> setVolume(command.volume)

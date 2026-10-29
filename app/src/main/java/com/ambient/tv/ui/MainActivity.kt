@@ -354,9 +354,9 @@ open class MainActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP)) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 when (event.keyCode) {
-                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> BackgroundPlaybackSession.toggle()
-                    KeyEvent.KEYCODE_MEDIA_PLAY -> BackgroundPlaybackSession.play()
-                    KeyEvent.KEYCODE_MEDIA_PAUSE -> BackgroundPlaybackSession.pause()
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> BackgroundPlaybackSession.userToggle()
+                    KeyEvent.KEYCODE_MEDIA_PLAY -> BackgroundPlaybackSession.userPlay()
+                    KeyEvent.KEYCODE_MEDIA_PAUSE -> BackgroundPlaybackSession.userPause()
                     KeyEvent.KEYCODE_MEDIA_STOP -> BackgroundPlaybackSession.stop()
                 }
             }
@@ -390,8 +390,8 @@ open class MainActivity : ComponentActivity() {
     private fun performKodiKeyboardAction(action: KodiKeyboardAction) {
         when (action) {
             KodiKeyboardAction.BACK -> onBackPressedDispatcher.onBackPressed()
-            KodiKeyboardAction.TOGGLE_PLAYBACK -> BackgroundPlaybackSession.toggle()
-            KodiKeyboardAction.PLAY -> BackgroundPlaybackSession.play()
+            KodiKeyboardAction.TOGGLE_PLAYBACK -> BackgroundPlaybackSession.userToggle()
+            KodiKeyboardAction.PLAY -> BackgroundPlaybackSession.userPlay()
             KodiKeyboardAction.STOP -> BackgroundPlaybackSession.stop()
             KodiKeyboardAction.SEEK_BACKWARD,
             KodiKeyboardAction.SEEK_FORWARD,

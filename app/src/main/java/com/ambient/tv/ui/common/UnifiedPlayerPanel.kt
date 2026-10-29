@@ -90,6 +90,8 @@ enum class UnifiedPlayerPanel {
     AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES,
     /** Channel services, timeshift and recording controls of live TV. */
     LIVE_TV,
+    /** Global seek steps and rewind behaviour for pause and saved progress. */
+    SEEK,
     SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
     /** Control-bar appearance and playback information overlays. */
     OSD_INFO,
