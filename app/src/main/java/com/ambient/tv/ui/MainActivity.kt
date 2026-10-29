@@ -807,7 +807,7 @@ open class MainActivity : ComponentActivity() {
     }
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
@@ -1100,6 +1100,11 @@ private fun AmbientTvApp(
     val currentFeedKey = currentBackStackEntry?.arguments?.getString("feedKey")
     val currentTrailerFeedKey = if (currentRoute == Destinations.TRAILER_FEED) currentFeedKey else null
     val currentSpotifySectionKey = if (currentRoute == Destinations.SPOTIFY_SECTION) currentBackStackEntry?.arguments?.getString("sectionKey") else null
+    val currentRadioSectionKey = when (currentRoute) {
+        Destinations.RADIO -> "popular"
+        Destinations.RADIO_SECTION -> currentBackStackEntry?.arguments?.getString("sectionKey")
+        else -> null
+    }
     val currentLiveTvSourceId = currentBackStackEntry?.arguments?.getString("sourceId")
     val currentTvheadendTab = if (currentRoute == Destinations.LIVE_TV_SECTION) currentBackStackEntry?.arguments?.getString("tab") else null
     val currentFileSourceId = if (currentRoute == Destinations.FILE_SOURCE) currentBackStackEntry?.arguments?.getString("sourceId") else null
@@ -1116,11 +1121,13 @@ private fun AmbientTvApp(
         currentRoute == Destinations.TRAILER_FEED ||
         currentRoute == Destinations.SPOTIFY ||
         currentRoute == Destinations.SPOTIFY_SECTION ||
+        currentRoute == Destinations.RADIO ||
+        currentRoute == Destinations.RADIO_SECTION ||
         currentRoute == Destinations.LIVE_TV ||
         currentRoute == Destinations.LIVE_TV_SECTION
     val sidebarDestinationKey = sidebarConcreteRoute(
         currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
-        currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+        currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey,
     )
     // Key readiness to the destination itself: a parent effect must not overwrite a child
     // readiness report later in the same composition frame.
@@ -1378,12 +1385,13 @@ private fun AmbientTvApp(
         }
     }
 
-    LaunchedEffect(currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
+    LaunchedEffect(currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId) {
         if (currentRoute in SIDEBAR_ROUTES && currentRoute != Destinations.SETTINGS) {
             lastTopLevelRoute = when (currentRoute) {
                 Destinations.YOUTUBE_FEED -> currentFeedKey?.let(Destinations::youtubeFeed) ?: Destinations.YOUTUBE
                 Destinations.TRAILER_FEED -> currentTrailerFeedKey?.let(Destinations::trailerFeed) ?: Destinations.TRAILERS
                 Destinations.SPOTIFY_SECTION -> currentSpotifySectionKey?.let(Destinations::spotifySection) ?: Destinations.SPOTIFY
+                Destinations.RADIO_SECTION -> currentRadioSectionKey?.let(Destinations::radioSection) ?: Destinations.RADIO
                 Destinations.LIVE_TV_SECTION -> currentTvheadendTab?.let { Destinations.liveTvSection(it, currentLiveTvSourceId) } ?: Destinations.LIVE_TV
                 Destinations.FILE_SOURCE -> currentFileSourceId?.let(Destinations::fileSource) ?: Destinations.FILES
                 Destinations.DLNA_SERVER -> currentDlnaServerId?.let(Destinations::dlnaServer) ?: Destinations.DLNA
@@ -1456,7 +1464,7 @@ private fun AmbientTvApp(
         }
         val activeSidebarRoute = sidebarConcreteRoute(
             currentRoute, currentSectionKey, currentFeedKey, currentTrailerFeedKey, currentSpotifySectionKey, currentTvheadendTab,
-            currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+            currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, currentRadioSectionKey,
         )
         // Selecting the already active destination is only a focus handoff. Re-navigating a
         // singleton destination destroys its focused subtree and is especially visible when
@@ -1697,6 +1705,7 @@ private fun AmbientTvApp(
                     currentYouTubeFeedKey = currentFeedKey,
                     currentTrailerFeedKey = currentTrailerFeedKey,
                     currentSpotifySectionKey = currentSpotifySectionKey,
+                    currentRadioSectionKey = currentRadioSectionKey,
                     currentTvheadendTab = currentTvheadendTab,
                     currentLiveTvSourceId = currentLiveTvSourceId,
                     currentFileSourceId = currentFileSourceId,
@@ -1985,8 +1994,23 @@ private fun AmbientTvApp(
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {
                             com.ambient.tv.ui.radio.RadioScreen(
+                                initialSectionKey = "popular",
                                 onBack = ::focusSidebar,
                                 onOpenPlayer = { navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true } },
+                                onSelectSection = { section -> navigateSidebar(Destinations.radioSection(section.key)) },
+                            )
+                        }
+                    }
+                    composable(
+                        Destinations.RADIO_SECTION,
+                        arguments = listOf(navArgument("sectionKey") { type = NavType.StringType }),
+                    ) { entry ->
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.radio.RadioScreen(
+                                initialSectionKey = entry.arguments?.getString("sectionKey"),
+                                onBack = ::focusSidebar,
+                                onOpenPlayer = { navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true } },
+                                onSelectSection = { section -> navigateSidebar(Destinations.radioSection(section.key)) },
                             )
                         }
                     }
