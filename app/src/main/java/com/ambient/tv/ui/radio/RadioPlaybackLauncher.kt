@@ -84,11 +84,16 @@ class RadioPlaybackLauncher @Inject constructor(
                 liveStream = true,
             )
 
+            val playbackGeneration = BackgroundPlaybackSession.snapshot.value.generation
+
             fun publishNowPlaying(value: CharSequence?) {
                 val nowPlaying = radioNowPlayingTitle(value, currentStation.name) ?: return
-                val current = BackgroundPlaybackSession.snapshot.value.metadata ?: return
-                // A delayed callback from the previous stream must never relabel the new station.
-                if (current.source != "radio" ||
+                val snapshot = BackgroundPlaybackSession.snapshot.value
+                val current = snapshot.metadata ?: return
+                // A delayed callback from an older stream generation — including an earlier
+                // connection of the same station — must never relabel the replacement.
+                if (snapshot.generation != playbackGeneration ||
+                    current.source != "radio" ||
                     current.mediaId != currentStation.id ||
                     current.subtitle == nowPlaying
                 ) return
@@ -101,7 +106,7 @@ class RadioPlaybackLauncher @Inject constructor(
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    scheduleReconnect(currentStation, error)
+                    scheduleReconnect(currentStation, playbackGeneration, error)
                 }
             })
             // Some streams expose the first ICY title before the listener is attached.
@@ -109,13 +114,16 @@ class RadioPlaybackLauncher @Inject constructor(
         }
     }
 
-    private fun scheduleReconnect(station: RadioStation, error: Throwable) {
-        val metadata = BackgroundPlaybackSession.snapshot.value.metadata
+    private fun scheduleReconnect(station: RadioStation, expectedGeneration: Long, error: Throwable) {
+        val snapshot = BackgroundPlaybackSession.snapshot.value
+        val metadata = snapshot.metadata
         if (!shouldReconnectRadio(
                 source = metadata?.source,
                 mediaId = metadata?.mediaId,
                 stationId = station.id,
                 activeStationId = reconnectStationId,
+                currentGeneration = snapshot.generation,
+                expectedGeneration = expectedGeneration,
                 attempt = reconnectAttempt,
             )
         ) return
@@ -131,8 +139,10 @@ class RadioPlaybackLauncher @Inject constructor(
             Timber.w(error, "Radio stream failed; retry %d/%d in %d ms", attempt, MAX_RADIO_RECONNECT_ATTEMPTS, delayMs)
             delay(delayMs)
 
-            val current = BackgroundPlaybackSession.snapshot.value.metadata
-            if (current?.source != "radio" ||
+            val currentSnapshot = BackgroundPlaybackSession.snapshot.value
+            val current = currentSnapshot.metadata
+            if (currentSnapshot.generation != expectedGeneration ||
+                current?.source != "radio" ||
                 current.mediaId != station.id ||
                 reconnectStationId != station.id
             ) return@launch
@@ -166,8 +176,11 @@ internal fun shouldReconnectRadio(
     mediaId: String?,
     stationId: String,
     activeStationId: String?,
+    currentGeneration: Long,
+    expectedGeneration: Long,
     attempt: Int,
 ): Boolean = source == "radio" &&
     mediaId == stationId &&
     activeStationId == stationId &&
+    currentGeneration == expectedGeneration &&
     attempt < MAX_RADIO_RECONNECT_ATTEMPTS
