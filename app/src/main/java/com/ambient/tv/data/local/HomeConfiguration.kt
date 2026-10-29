@@ -23,6 +23,16 @@ data class HomeRowDefinition(
         const val SYSTEM_TRAILERS = "trailers"
         const val SYSTEM_SPOTIFY = "spotify"
         const val SYSTEM_RADIO = "radio"
+        const val RADIO_POPULAR = "popular"
+        const val RADIO_FAVORITES = "favorites"
+        const val RADIO_RECENT = "recent"
+        const val RADIO_GENRE = "genre"
+        const val RADIO_COUNTRY = "country"
+        const val RADIO_LANGUAGE = "language"
+        fun radioGenre(name: String) = "$RADIO_GENRE:${name.trim()}"
+        fun radioCountry(code: String) = "$RADIO_COUNTRY:${code.trim().uppercase()}"
+        fun radioLanguage(name: String) = "$RADIO_LANGUAGE:${name.trim()}"
+
         /** Rows across every media server (Plex, Jellyfin, Emby) at once. */
         const val SYSTEM_ALL = "all"
         /** Photos of all servers (Plex/Jellyfin/Emby photo libraries). */
