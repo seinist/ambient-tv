@@ -38,6 +38,7 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - Media3 in-stream metadata updates the active Radio session without restarting the stream;
 - stale metadata from a previous station is rejected by UUID;
 - metadata changes force MediaSession and notification refresh;
+- Radio Browser's `hls=1` flag is forwarded to Media3 as an explicit HLS MIME hint;
 - global Ambient TV search can query Radio Browser and start a station directly;
 - the active station list drives previous/next controls in MediaSession and the notification;
 - radio playback deliberately exposes no seek action.
