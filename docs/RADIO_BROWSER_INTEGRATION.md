@@ -55,10 +55,16 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - selecting a facet performs a server-side filtered station query with paging;
 - Back returns from a selected facet to its facet list.
 
+### Branding and Home
+
+- menu, system badges, Settings and Home use a RadioBrowser-derived monochrome system glyph;
+- Add System uses the colored RadioBrowser logo;
+- an optional Radio Home shortcut can be added through the existing Home row editor;
+- RadioBrowser logo source/license is documented in SYSTEM_LOGO_RADIO_BROWSER_LICENSE.txt.
+
 ## Still to implement
 
-1. Optional Home integration for Radio where it fits Ambient TV's row model.
-2. Device playback tests with representative MP3/AAC/HLS and ICY stations.
+1. Device playback tests with representative MP3/AAC/HLS and ICY stations.
 
 ## Radio Browser contract relied upon
 
