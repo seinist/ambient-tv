@@ -64,6 +64,7 @@ fun HandheldNavigationHost(
         tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected || hasIptv,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
+        radioEnabled = sidebarState.radioEnabled,
     )
     // Rotation switches between the Row and Column branches below. Moving the content instead of
     // recreating it keeps the NavHost (and a running trailer, which stops on dispose) alive.
@@ -247,6 +248,7 @@ private fun HandheldSources(
     val emby = sidebarState.embyEnabled
     val youtube = sidebarState.youtubeEnabled
     val spotify = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
+    val radio = sidebarState.radioEnabled
     val files = sidebarState.filesEnabled
     val networkFileSources = sidebarState.networkFileSources
     val dlnaServers = sidebarState.dlnaServers
@@ -347,6 +349,10 @@ private fun HandheldSources(
             }
             add(withSettings(MediaSystem.SPOTIFY, entries))
         }
+        if (radio) add(withSettings(
+            MediaSystem.RADIO,
+            listOf(SourceEntry("home", overview, Destinations.RADIO)),
+        ))
         if (tv && sidebarState.tvheadendLoginRejected) add(withSettings(MediaSystem.TVHEADEND, listOf(SourceEntry("login",
             stringResource(R.string.tvh_login_check), Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))))
         else if (tv) add(withSettings(MediaSystem.TVHEADEND, tvKeys.mapNotNull { key ->
