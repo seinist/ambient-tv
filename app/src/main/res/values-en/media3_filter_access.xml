@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="image_media3_enable_filters_hint">Turn on image processing to adjust sharpening, denoise, debanding and film grain.</string>
+    <string name="image_media3_filters_source_unavailable">Media3 picture effects require an unprotected SDR video track.</string>
+    <string name="image_media3_filters_unavailable">Unavailable</string>
+</resources>

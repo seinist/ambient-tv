@@ -307,15 +307,23 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             media3NeedsUpscaling(source.width, source.height, outputWidth, outputHeight,
                 source.pixelWidthHeightRatio, source.rotationDegrees)
         } == true
-        // Multi-tap deband/sharpen passes stay within the Full HD 60 fps budget (sharpening runs
-        // after the scaler, so on the output size while upscaling).
+        val configuredStages = if (enabled) media3EffectPlan(effective, upscaling) else emptyList()
+        // Sharpening/grain run on output pixels only with an actual GPU scale stage. Bilinear
+        // leaves scaling to the display path, so these passes still process source pixels.
         val fps = format?.frameRate ?: 0f
         val debandAllowed = format?.let { media3FilterBudgetAllows(it.width, it.height, fps) } ?: true
-        val sharpenAllowed = if (upscaling) media3FilterBudgetAllows(outputWidth, outputHeight, fps) else debandAllowed
+        val sharpenAllowed = media3SharpenBudgetAllows(
+            sourceWidth = format?.width ?: 0,
+            sourceHeight = format?.height ?: 0,
+            outputWidth = outputWidth,
+            outputHeight = outputHeight,
+            fps = fps,
+            scalingInChain = configuredStages.any { it is Media3Stage.Scale },
+        )
         // NIS, RAVU and the EWA/wide kernels at most 4K30 output; above that they run as Catmull-Rom.
         val heavyScaleAllowed = !upscaling || media3HeavyScalerBudgetAllows(outputWidth, outputHeight, fps)
         val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed, heavyScaleAllowed) else emptyList()
-        filtersOverBudget = enabled && stages != media3EffectPlan(effective, upscaling)
+        filtersOverBudget = enabled && stages != configuredStages
         val userChange = userChangePending
         userChangePending = false
         if (signature == applied && stages == appliedStages) return

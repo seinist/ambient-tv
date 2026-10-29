@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="image_media3_enable_filters_hint">Bildverarbeitung einschalten, um Schärfen, Entrauschen, Debanding und Filmkorn einzustellen.</string>
+    <string name="image_media3_filters_source_unavailable">Media3-Bildeffekte benötigen eine ungeschützte SDR-Videospur.</string>
+    <string name="image_media3_filters_unavailable">Nicht verfügbar</string>
+</resources>

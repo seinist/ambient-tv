@@ -77,20 +77,6 @@ internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float):
     return width.toLong() * height * rate <= MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE
 }
 
-/** Pixels per second the multi-tap deband/sharpen shaders may process: Full HD at 60 fps. */
-internal const val MEDIA3_FILTER_MAX_PIXEL_RATE = 1920L * 1088L * 60L
-
-/**
- * Whether deband or sharpening may run on [width]×[height] at [fps]. Like the SDR→HDR budget,
- * the GPU passes stay within Full HD at 60 fps; 4K60 would be four times that work on every frame.
- * Unknown frame rates count as 30 fps (broadcast and most films).
- */
-internal fun media3FilterBudgetAllows(width: Int, height: Int, fps: Float): Boolean {
-    if (width <= 0 || height <= 0) return true
-    val rate = if (fps.isFinite() && fps > 0f) fps else 30f
-    return width.toLong() * height * rate <= MEDIA3_FILTER_MAX_PIXEL_RATE
-}
-
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
     upscalerApplies && options.normalized().scaler in setOf("fsr", "nis")

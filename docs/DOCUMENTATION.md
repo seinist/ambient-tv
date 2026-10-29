@@ -618,6 +618,10 @@ Need a GPU output (OpenGL or Vulkan). With "Android Surface (direct)" the filter
 | Media3 | Deband · Denoise · Film grain | Off · Light · Medium · Strong | Off | Denoise runs on the source pixels before deband; grain is added after sharpening. |
 | Media3 | Brightness · Contrast · Saturation · Gamma | −20 … +20 | 0 | Image processing on. |
 
+**Opening Media3 filters:** **Filters** remains available in the video panel while image processing is off. Choose **Image processing → On** directly in this area to access sharpening, denoise, debanding and film grain. Turning processing off leaves the area open. A device restriction, Low mode or an unsuitable video track instead shows its reason. These restrictions still include the GPU workaround for NVIDIA devices running Android 11 or older, and HDR, Dolby Vision and DRM tracks.
+
+**Media3 filter performance:** Sharpening and film grain are checked against the resolution their shaders actually process. With Bilinear, the display path scales afterwards, so 1080p on a 4K display still counts as 1080p for these filters. An active GPU upscaler makes the output resolution count instead. The existing limit is equivalent to Full HD at 60 FPS; the filter area shows a hint when the configured effects exceed the budget. Matching video and display resolution hides only the upscaler, not sharpening or filter controls.
+
 If the GPU cannot run the chosen Media3 effects (e.g. no highp fragment precision), playback restarts once without them instead of failing.
 
 ### 7.5 Deinterlacing

@@ -618,6 +618,10 @@ Brauchen eine GPU-Ausgabe (OpenGL oder Vulkan). Mit „Android Surface (direkt)�
 | Media3 | Debanding · Entrauschen · Filmkorn | Aus · Leicht · Mittel · Stark | Aus | Entrauschen läuft auf den Quellpixeln vor dem Debanding; Korn kommt nach dem Schärfen. |
 | Media3 | Helligkeit · Kontrast · Sättigung · Gamma | −20 … +20 | 0 | Bildverarbeitung an. |
 
+**Media3-Filter öffnen:** Im Videopanel bleibt **Filter** auch bei ausgeschalteter Bildverarbeitung erreichbar. **Bildverarbeitung → An** lässt sich dort direkt wählen; danach erscheinen Schärfen, Entrauschen, Debanding und Filmkorn. Ausschalten lässt den Bereich offen. Bei einer Gerätebeschränkung, Sparsam oder einer ungeeigneten Videospur zeigt der Bereich stattdessen den Grund an. Dazu gehören weiterhin der Schutz vor GPU-Problemen auf NVIDIA-Geräten mit Android 11 oder älter sowie HDR-, Dolby-Vision- und DRM-Spuren.
+
+**Media3-Filterleistung:** Schärfen und Filmkorn werden gegen die Auflösung geprüft, die ihre Shader tatsächlich verarbeiten. Bei Bilinear skaliert erst der Displaypfad: 1080p auf einem 4K-Display belastet diese Filter deshalb wie 1080p. Bei einem aktiven GPU-Upscaler zählt die Ausgabeauflösung. Der bestehende Grenzwert entspricht Full HD bei 60 FPS; bei überschrittenem Budget zeigt der Filterbereich einen Hinweis. Gleiche Video- und Displayauflösung blendet nur den Upscaler aus, nicht die Schärfe- und Filterregler.
+
 Kann die GPU die gewählten Media3-Effekte nicht ausführen (z. B. ohne highp-Präzision), startet die Wiedergabe einmal ohne sie neu, statt abzubrechen.
 
 ### 7.5 Deinterlacing

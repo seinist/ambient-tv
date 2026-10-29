@@ -182,3 +182,21 @@ internal fun panelShaderUpscalers(all: Map<String, String>, hdr: Boolean, hdrSaf
 /** True when the filters group has at least one control this renderer will run. */
 internal fun PlayerPanelVideoVisibility.hasFilters(svpAllowed: Boolean): Boolean =
     deinterlace || denoise || shaders || deband || (svp && svpAllowed)
+
+/** Media3 keeps an entry for its enable switch or an unavailable reason, even with effects off. */
+internal fun PlayerPanelVideoVisibility.hasFilterSection(media3: Boolean = false): Boolean =
+    media3 || deinterlace || denoise || shaders || deband
+
+internal enum class Media3FiltersUnavailableReason { DEVICE, PERFORMANCE, SOURCE }
+
+/** Eligibility is independent of the user's master switch; an off switch must remain reachable. */
+internal fun media3FiltersUnavailableReason(
+    gpuEffectsSupported: Boolean,
+    sdrEffectsAllowed: Boolean,
+    reduced: Boolean,
+): Media3FiltersUnavailableReason? = when {
+    !gpuEffectsSupported -> Media3FiltersUnavailableReason.DEVICE
+    reduced -> Media3FiltersUnavailableReason.PERFORMANCE
+    !sdrEffectsAllowed -> Media3FiltersUnavailableReason.SOURCE
+    else -> null
+}

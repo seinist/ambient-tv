@@ -97,6 +97,10 @@ internal fun PlayerVideoSettingsGroups(
     val scale = rememberPlaybackScaleRelation()
     val context = LocalContext.current
     val media3Processing = (handle as? Media3PlaybackHandle)?.let { Media3ImageProcessing.get(context, it.player) }
+    val media3FiltersUnavailable = media3Processing?.let {
+        media3FiltersUnavailableReason(it.gpuEffectsSupported, it.sdrEffectsAllowed,
+            LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
+    }
     val visible = when (handle) {
         is MpvPlaybackController -> playerPanelVideoVisibility("mpv", handle.supportsGpuFilters,
             handle.sdrImageProcessing, false, scale = scale, hdrInput = handle.hdrImageTransfer,
@@ -128,7 +132,7 @@ internal fun PlayerVideoSettingsGroups(
         if (showRenderer && onRendererSelected != null && rendererKey != null) add("renderer" to R.string.player_renderer)
         if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) || visible?.upscaler == true ||
             visible?.media3Processing == true) add("scaling" to R.string.image_scaling)
-        if (visible?.deinterlace == true || visible?.deband == true || visible?.shaders == true) add("filters" to R.string.image_filters)
+        if (visible?.hasFilterSection(media3 = handle is Media3PlaybackHandle) == true) add("filters" to R.string.image_filters)
         if (hasPlaybackControls || svpEntryVisible) add("motion" to R.string.image_motion)
         if (visible?.picture == true) add("color" to R.string.image_color)
         if (hasOutputControls) add("output" to R.string.image_output)
@@ -164,7 +168,7 @@ internal fun PlayerVideoSettingsGroups(
                 value = videoSectionSummary(key, handle, rendererKey, media3Processing?.options,
                     upscalerApplies = visible?.upscaler == true || visible?.media3Processing == true ||
                         (handle is MpvPlaybackController && handle.supportsGpuFilters),
-                    motionSummary = motionSummary),
+                    motionSummary = motionSummary, media3FiltersUnavailable = media3FiltersUnavailable != null),
                 onClick = { section = key; onOpenSection() },
             )
         }
@@ -569,6 +573,31 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
         processing.updateOptions(next)
         if (processing.saveDefaults) preferences.media3ImageOptions = processing.options
     }
+    // The default is OFF. Keep Filters reachable so enabling it does not require finding
+    // the master switch under Scaling, and turning it off does not navigate out of this page.
+    if (section == "filters") {
+        val blocked = media3FiltersUnavailableReason(processing.gpuEffectsSupported, processing.sdrEffectsAllowed,
+            LocalPerformanceProfile.current.gateExpensiveVideoVisuals)
+        if (blocked != null) {
+            ImageHint(stringResource(when (blocked) {
+                Media3FiltersUnavailableReason.DEVICE -> R.string.image_media3_device_bypass
+                Media3FiltersUnavailableReason.PERFORMANCE -> R.string.image_filters_sparsam_hint
+                Media3FiltersUnavailableReason.SOURCE -> R.string.image_media3_filters_source_unavailable
+            }))
+            return
+        }
+        ImageChoice(R.string.image_processing, if (options.enabled) "on" else "off", imageOnOff()) {
+            change(options.copy(enabled = it == "on"))
+        }
+        if (!options.enabled) {
+            ImageHint(stringResource(R.string.image_media3_enable_filters_hint))
+            return
+        }
+        Media3FilterRows(options, fsrSharpens = media3FsrSharpens(options, visibility.upscaler),
+            deband = visibility.deband, sharpen = visibility.shaders, change = ::change)
+        if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
+        return
+    }
     if (!visibility.media3Processing && !visibility.upscaler && !visibility.picture) return
     if (section == "scaling" && (visibility.media3Processing || visibility.upscaler)) {
         if (visibility.media3Processing) {
@@ -582,10 +611,6 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
                 change(options.copy(scaler = it))
             }
         }
-    }
-    if (section == "filters" && (visibility.deband || visibility.shaders)) {
-        Media3FilterRows(options, fsrSharpens = media3FsrSharpens(options, visibility.upscaler),
-            deband = visibility.deband, sharpen = visibility.shaders, change = ::change)
     }
     if (section == "color" && visibility.picture) {
         ImageLevel(R.string.image_brightness, options.brightness) { change(options.copy(brightness = it)) }
@@ -754,7 +779,7 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
 @androidx.compose.runtime.Composable
 private fun videoSectionSummary(
     key: String, handle: Any?, rendererKey: String?, media3: com.ambient.tv.data.local.Media3ImageOptions?,
-    upscalerApplies: Boolean, motionSummary: String?,
+    upscalerApplies: Boolean, motionSummary: String?, media3FiltersUnavailable: Boolean,
 ): String {
     val mpv = (handle as? MpvPlaybackController)?.imageOptions
     val vlc = (handle as? VlcPlaybackController)?.imageOptions
@@ -772,9 +797,13 @@ private fun videoSectionSummary(
         "motion" -> listOfNotNull(motionSummary,
             stringResource(R.string.image_motion_svp_on).takeIf { videoSectionChanges(key, mpv, vlc, media3) > 0 })
             .joinToString(" · ").ifEmpty { stringResource(R.string.video_section_default) }
-        else -> videoSectionChanges(key, mpv, vlc, media3).let { changed ->
-            if (changed == 0) stringResource(R.string.video_section_default)
-            else androidx.compose.ui.res.pluralStringResource(R.plurals.video_section_changed, changed, changed)
+        else -> when {
+            key == "filters" && media3 != null && media3FiltersUnavailable -> stringResource(R.string.image_media3_filters_unavailable)
+            key == "filters" && media3?.enabled == false -> stringResource(R.string.player_off)
+            else -> videoSectionChanges(key, mpv, vlc, media3).let { changed ->
+                if (changed == 0) stringResource(R.string.video_section_default)
+                else androidx.compose.ui.res.pluralStringResource(R.plurals.video_section_changed, changed, changed)
+            }
         }
     }
 }

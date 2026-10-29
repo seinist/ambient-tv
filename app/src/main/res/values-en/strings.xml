@@ -1183,7 +1183,7 @@
     <string name="image_mpv_sparsam_defaults_hint">Light defaults. Your own values still apply.</string>
     <string name="image_media3_waiting">Effects are waiting for an unprotected SDR video track.</string>
     <string name="image_media3_active">SDR effects enabled</string>
-    <string name="image_media3_filters_over_budget">Sharpening and deband are off for this video.</string>
+    <string name="image_media3_filters_over_budget">Some selected picture effects were reduced because of the resolution or frame rate.</string>
     <string name="image_vlc_fallback">Software filters could not be enabled. Playback continues without them.</string>
     <string name="audio_profile">Audio profile</string>
     <string name="audio_profile_auto">Auto (current output)</string>
