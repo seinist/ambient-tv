@@ -41,7 +41,10 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - Radio Browser's `hls=1` flag is forwarded to Media3 as an explicit HLS MIME hint;
 - global Ambient TV search can query Radio Browser and start a station directly;
 - the active station list drives previous/next controls in MediaSession and the notification;
-- radio playback deliberately exposes no seek action.
+- radio playback deliberately exposes no seek action;
+- transient Media3 stream failures use a bounded 1 s / 2.5 s / 5 s reconnect policy;
+- reconnect refreshes the station row without adding another Recent entry or user click;
+- stale errors from a station that is no longer active cannot revive it.
 
 ### Backup
 
