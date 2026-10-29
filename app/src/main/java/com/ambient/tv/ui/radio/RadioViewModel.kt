@@ -16,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class RadioViewMode { GRID, LIST }
+
 enum class RadioSection {
     POPULAR,
     FAVORITES,
@@ -41,6 +43,9 @@ data class RadioUiState(
     val error: Boolean = false,
     val startingStationId: String? = null,
     val favoriteIds: Set<String> = emptySet(),
+    val viewMode: RadioViewMode = RadioViewMode.GRID,
+    val gridColumns: Int = 8,
+    val listRows: Int = 7,
 )
 
 @HiltViewModel
@@ -62,6 +67,13 @@ class RadioViewModel @Inject constructor(
     fun enter() {
         if (entered) return
         entered = true
+        _state.value = _state.value.copy(
+            viewMode = runCatching {
+                RadioViewMode.valueOf(preferences.sectionViewMode(RADIO_VIEW_STATE_KEY) ?: RadioViewMode.GRID.name)
+            }.getOrDefault(RadioViewMode.GRID),
+            gridColumns = preferences.libraryGridColumns,
+            listRows = preferences.libraryListRows,
+        )
         refreshLocalState()
         loadStations(reset = true)
     }
@@ -169,6 +181,21 @@ class RadioViewModel @Inject constructor(
         if (_state.value.section == RadioSection.FAVORITES && _state.value.submittedQuery.isBlank()) {
             showLocalSection(RadioSection.FAVORITES)
         }
+    }
+
+    fun selectViewMode(mode: RadioViewMode) {
+        preferences.setSectionViewMode(RADIO_VIEW_STATE_KEY, mode.name)
+        _state.value = _state.value.copy(viewMode = mode)
+    }
+
+    fun setGridColumns(columns: Int) {
+        preferences.libraryGridColumns = columns
+        _state.value = _state.value.copy(gridColumns = preferences.libraryGridColumns)
+    }
+
+    fun setListRows(rows: Int) {
+        preferences.libraryListRows = rows
+        _state.value = _state.value.copy(listRows = preferences.libraryListRows)
     }
 
     fun loadMore() {
@@ -337,6 +364,7 @@ class RadioViewModel @Inject constructor(
     companion object {
         private const val PAGE_SIZE = 48
         private const val FACET_LIMIT = 150
+        private const val RADIO_VIEW_STATE_KEY = "radio"
     }
 }
 
