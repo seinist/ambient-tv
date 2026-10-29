@@ -1,5 +1,13 @@
 package com.ambient.tv.ui.player
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -42,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalDensity
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
@@ -162,6 +171,8 @@ internal fun PersistentPlayerOverlays() {
     }
 }
 
+private data class PlayerPanelVisualTarget(val panel: UnifiedPlayerPanel, val depth: Int)
+
 @Composable
 private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.tv.ui.common.PlayerPanelNavigation?) {
     val panel = navigation?.panel ?: UnifiedPlayerPanel.NONE
@@ -172,50 +183,105 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
     }
     CompositionLocalProvider(LocalProjectMBrowser provides model.projectMBrowser) {
         PlayerPanelVisibility(panel) { displayedPanel ->
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = model.scrimAlpha)))
-            UnifiedBackendPlayerPanel(
-                panel = displayedPanel,
-                onPanelChange = { target -> model.onPanelChange?.invoke(target) ?: navigation?.open(target) },
-                hasVideo = model.hasVideo,
-                isLive = model.isLive,
-                scalingKey = model.scalingKey,
-                aspectKey = model.aspectKey,
-                zoomFactor = model.zoomFactor,
-                speed = model.speed,
-                onScalingChanged = model.onScalingChanged,
-                onAspectChanged = model.onAspectChanged,
-                onZoomChanged = model.onZoomChanged,
-                onSpeedChanged = model.onSpeedChanged,
-                audioOptions = model.audioOptions,
-                selectedAudio = model.selectedAudio,
-                onAudioSelected = model.onAudioSelected,
-                subtitleOptions = model.subtitleOptions,
-                selectedSubtitle = model.selectedSubtitle,
-                onSubtitleSelected = model.onSubtitleSelected,
-                sleepTimer = model.sleepTimer,
-                onSleepChanged = model.onSleepChanged,
-                infoLines = model.infoLines,
-                qualityOptions = model.qualityOptions,
-                selectedQuality = model.selectedQuality,
-                onQualitySelected = model.onQualitySelected,
-                rendererKey = model.rendererKey,
-                onRendererSelected = model.onRendererSelected,
-                showRenderer = model.showRenderer,
-                showVideo = model.showVideo,
-                showAudio = model.showAudio,
-                showSubtitles = model.showSubtitles,
-                showVisualizer = model.showVisualizer,
-                settingsExtrasTitle = model.settingsExtrasTitle,
-                hasVideoExtras = model.hasVideoExtras,
-                videoExtrasTitle = model.videoExtrasTitle,
-                audioExtrasTitle = model.audioExtrasTitle,
-                audioSession = model.audioSession,
-                onDeinterlaceChanged = model.onDeinterlaceChanged,
-                settingsExtras = model.settingsExtras,
-                videoExtras = model.videoExtras,
-                audioExtras = model.audioExtras,
-                modifier = Modifier.align(Alignment.CenterEnd),
-            )
+            val motion = LocalPlayerPanelMotion.current
+            val stateHolder = LocalPlayerPanelStateHolder.current
+            val offsetPx = with(LocalDensity.current) { PLAYER_PANEL_CONTENT_OFFSET_DP.dp.roundToPx() }
+            val target = PlayerPanelVisualTarget(displayedPanel, motion.visualDepth)
+            Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = model.scrimAlpha * motion.scrimProgress)),
+                )
+                AnimatedContent(
+                    targetState = target,
+                    modifier = Modifier.fillMaxSize(),
+                    transitionSpec = {
+                        if (motion.reducedEffects) {
+                            fadeIn(tween(PLAYER_PANEL_REDUCED_MS)) togetherWith
+                                fadeOut(tween(PLAYER_PANEL_REDUCED_MS))
+                        } else {
+                            when (playerPanelContentMotion(initialState.depth, targetState.depth)) {
+                                PlayerPanelContentMotion.FORWARD ->
+                                    (fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
+                                        slideInHorizontally(
+                                            tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
+                                        ) { offsetPx }) togetherWith
+                                        (fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
+                                            slideOutHorizontally(
+                                                tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
+                                            ) { -offsetPx / 2 })
+                                PlayerPanelContentMotion.BACKWARD ->
+                                    (fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
+                                        slideInHorizontally(
+                                            tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
+                                        ) { -offsetPx }) togetherWith
+                                        (fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
+                                            slideOutHorizontally(
+                                                tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
+                                            ) { offsetPx / 2 })
+                                PlayerPanelContentMotion.REPLACE ->
+                                    fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) togetherWith
+                                        fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS))
+                            }
+                        }
+                    },
+                    label = "playerPanelLevel",
+                ) { visual ->
+                    Box(Modifier.fillMaxSize()) {
+                        val drawPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
+                            UnifiedBackendPlayerPanel(
+                                panel = visual.panel,
+                                onPanelChange = { next -> model.onPanelChange?.invoke(next) ?: navigation?.open(next) },
+                                hasVideo = model.hasVideo,
+                                isLive = model.isLive,
+                                scalingKey = model.scalingKey,
+                                aspectKey = model.aspectKey,
+                                zoomFactor = model.zoomFactor,
+                                speed = model.speed,
+                                onScalingChanged = model.onScalingChanged,
+                                onAspectChanged = model.onAspectChanged,
+                                onZoomChanged = model.onZoomChanged,
+                                onSpeedChanged = model.onSpeedChanged,
+                                audioOptions = model.audioOptions,
+                                selectedAudio = model.selectedAudio,
+                                onAudioSelected = model.onAudioSelected,
+                                subtitleOptions = model.subtitleOptions,
+                                selectedSubtitle = model.selectedSubtitle,
+                                onSubtitleSelected = model.onSubtitleSelected,
+                                sleepTimer = model.sleepTimer,
+                                onSleepChanged = model.onSleepChanged,
+                                infoLines = model.infoLines,
+                                qualityOptions = model.qualityOptions,
+                                selectedQuality = model.selectedQuality,
+                                onQualitySelected = model.onQualitySelected,
+                                rendererKey = model.rendererKey,
+                                onRendererSelected = model.onRendererSelected,
+                                showRenderer = model.showRenderer,
+                                showVideo = model.showVideo,
+                                showAudio = model.showAudio,
+                                showSubtitles = model.showSubtitles,
+                                showVisualizer = model.showVisualizer,
+                                settingsExtrasTitle = model.settingsExtrasTitle,
+                                hasVideoExtras = model.hasVideoExtras,
+                                videoExtrasTitle = model.videoExtrasTitle,
+                                audioExtrasTitle = model.audioExtrasTitle,
+                                audioSession = model.audioSession,
+                                onDeinterlaceChanged = model.onDeinterlaceChanged,
+                                settingsExtras = model.settingsExtras,
+                                videoExtras = model.videoExtras,
+                                audioExtras = model.audioExtras,
+                                modifier = Modifier.align(Alignment.CenterEnd),
+                            )
+                        }
+                        if (stateHolder != null) {
+                            stateHolder.SaveableStateProvider(visual.panel.name) { drawPanel() }
+                        } else {
+                            drawPanel()
+                        }
+                    }
+                }
+            }
         }
     }
 }
