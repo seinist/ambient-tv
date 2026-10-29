@@ -33,6 +33,7 @@ data class RadioBrowserClickDto(
     val url: String = "",
 )
 
+@Serializable
 data class RadioStation(
     val id: String,
     val name: String,
