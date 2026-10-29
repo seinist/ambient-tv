@@ -560,6 +560,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                item(key = "radio-visualizer") {
+                    SettingsPageLink(SettingsCategory.VISUALIZER, "radio-visualizer")
+                }
                 item(key = "radio-menu") {
                     SettingsGroup(subtitle = stringResource(R.string.settings_system_menu_display)) {
                         SubmenuSettingsRow(MediaSystem.RADIO, uiState, viewModel::onSidebarSettingsShortcutChanged)
