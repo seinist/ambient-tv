@@ -2032,7 +2032,6 @@
     <string name="subtitle_look_position">Abstand vom unteren Rand</string>
     <string name="subtitle_look_sample">So sehen deine Untertitel aus.</string>
     <string name="player_tools">Werkzeuge</string>
-    <string name="player_tools_summary">Lesezeichen, A-B-Wiederholung, Einzelbild, Bildschirmfoto</string>
     <string name="player_tools_ab_on">A-B-Wiederholung an</string>
     <string name="player_tools_ab">A-B-Wiederholung</string>
     <string name="player_tools_set_a">Punkt A setzen</string>
@@ -2066,7 +2065,6 @@
     <string name="player_tools_lyrics_show">Songtext anzeigen</string>
     <string name="player_tools_lyrics_online">Online suchen (LRCLIB)</string>
     <string name="player_tools_lyrics_online_hint">Songtexte kommen vom Server (Plex, Jellyfin). Die Online-Suche schickt Interpret, Titel, Album und Länge an lrclib.net, wenn der Server keinen hat.</string>
-    <string name="player_tools_summary_audio">A-B-Wiederholung, Lesezeichen, Songtexte</string>
     <string name="subtitle_sync_auto">Automatisch synchronisieren</string>
     <string name="subtitle_sync_auto_value">an Server-Untertitel</string>
     <string name="subtitle_sync_running">Synchronisiere…</string>

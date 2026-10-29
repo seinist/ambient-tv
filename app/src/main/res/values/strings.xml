@@ -2033,7 +2033,6 @@
     <string name="subtitle_look_position">Distance from the bottom</string>
     <string name="subtitle_look_sample">This is how your subtitles look.</string>
     <string name="player_tools">Tools</string>
-    <string name="player_tools_summary">Bookmarks, A-B repeat, frame step, screenshot</string>
     <string name="player_tools_ab_on">A-B repeat on</string>
     <string name="player_tools_ab">A-B repeat</string>
     <string name="player_tools_set_a">Set point A</string>
@@ -2067,7 +2066,6 @@
     <string name="player_tools_lyrics_show">Show lyrics</string>
     <string name="player_tools_lyrics_online">Search online (LRCLIB)</string>
     <string name="player_tools_lyrics_online_hint">Lyrics come from the server (Plex, Jellyfin). Online search sends artist, title, album and length to lrclib.net when the server has none.</string>
-    <string name="player_tools_summary_audio">A-B repeat, bookmarks, lyrics</string>
     <string name="subtitle_sync_auto">Sync automatically</string>
     <string name="subtitle_sync_auto_value">to the server subtitle</string>
     <string name="subtitle_sync_running">Syncing…</string>

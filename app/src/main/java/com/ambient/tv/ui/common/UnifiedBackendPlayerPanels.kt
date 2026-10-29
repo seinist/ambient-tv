@@ -38,6 +38,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.tv.material3.MaterialTheme
@@ -52,6 +54,8 @@ import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelEntry
+import com.ambient.tv.ui.player.PlayerTool
+import com.ambient.tv.ui.player.availablePlayerTools
 import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.playbackSubtitleSelection
 import com.ambient.tv.ui.player.playerTechBadgesVisible
@@ -133,6 +137,12 @@ fun UnifiedBackendPlayerPanel(
     )
     val subtitleSummary = subtitleSelection.options.first { it.first == subtitleSelection.selectedKey }.second
     val teletextSelected = teletextSubtitleChoice(subtitleSelection.selectedKey) != null
+    val toolHandle = com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle()
+    val toolMetadata by remember {
+        com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.map { it.metadata }.distinctUntilChanged()
+    }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.metadata)
+    val toolBookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(toolMetadata)
+    val tools = availablePlayerTools(hasVideo, isLive, toolHandle != null, toolBookmarkKey != null)
     val techBadgesVisible = playerTechBadgesVisible()
     val nerdStatsVisible = audioSession?.performanceHint == true
     val fpsOverlayVisible = audioSession?.showFpsOverlay == true
@@ -194,15 +204,11 @@ fun UnifiedBackendPlayerPanel(
             if (isLive) {
                 LiveTvPlayerPanelEntry(onOpen = { onPanelChange(UnifiedPlayerPanel.LIVE_TV) })
             }
-            if (hasVideo || !isLive) {
+            if (tools.isNotEmpty()) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Build,
                     title = stringResource(R.string.player_tools),
-                    value = stringResource(when {
-                        com.ambient.tv.ui.player.AbRepeat.active -> R.string.player_tools_ab_on
-                        hasVideo -> R.string.player_tools_summary
-                        else -> R.string.player_tools_summary_audio
-                    }),
+                    value = toolsSummary(tools),
                     onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
@@ -519,9 +525,9 @@ fun UnifiedBackendPlayerPanel(
             modifier = modifier,
             onBack = back,
         ) {
-            val handle = com.ambient.tv.ui.player.BackgroundPlaybackSession.activeHandle()
-            val title = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata?.title
-            if (handle != null && !isLive) {
+            val handle = toolHandle
+            val title = toolMetadata?.title
+            if (PlayerTool.AB_REPEAT in tools && handle != null) {
                 val ab = com.ambient.tv.ui.player.AbRepeat
                 val a = ab.pointA
                 val b = ab.pointB
@@ -544,30 +550,32 @@ fun UnifiedBackendPlayerPanel(
                     value = "",
                     onClick = { ab.clear() },
                 )
-                if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
-                if (hasVideo) PlayerPanelEntry(
+            }
+            if (PlayerTool.FRAME_STEP in tools && handle != null) {
+                RightPanelSectionTitle(stringResource(R.string.player_tools_frame))
+                PlayerPanelEntry(
                     icon = Icons.Filled.ChevronLeft,
                     title = stringResource(R.string.player_tools_frame_back),
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = false) },
                 )
-                if (hasVideo) PlayerPanelEntry(
+                PlayerPanelEntry(
                     icon = Icons.Filled.ChevronRight,
                     title = stringResource(R.string.player_tools_frame_forward),
                     value = "",
                     onClick = { com.ambient.tv.ui.player.stepFrame(handle, forward = true) },
                 )
             }
-            val metadata = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.metadata
-            val bookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(metadata)
-            if (handle != null && bookmarkKey != null) {
+            val bookmarkKey = toolBookmarkKey
+            if (PlayerTool.BOOKMARKS in tools && handle != null && bookmarkKey != null) {
+                val positionMs = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.collectAsState().value.status.positionMs
                 val revision = com.ambient.tv.ui.player.PlaybackBookmarks.revision.intValue
                 val marks = androidx.compose.runtime.remember(bookmarkKey, revision) { com.ambient.tv.ui.player.PlaybackBookmarks.list(context, bookmarkKey) }
                 RightPanelSectionTitle(stringResource(R.string.player_tools_bookmarks))
                 PlayerPanelEntry(
                     icon = Icons.Filled.BookmarkAdd,
                     title = stringResource(R.string.player_tools_bookmark_add),
-                    value = formatPlaybackClock(handle.status().positionMs),
+                    value = formatPlaybackClock(positionMs),
                     onClick = { com.ambient.tv.ui.player.PlaybackBookmarks.add(context, bookmarkKey, handle.status().positionMs) },
                 )
                 marks.forEach { mark ->
@@ -593,7 +601,7 @@ fun UnifiedBackendPlayerPanel(
                     )
                 }
             }
-            if (!hasVideo && !isLive) {
+            if (PlayerTool.LYRICS in tools) {
                 val revision = com.ambient.tv.ui.player.LyricsSettings.revision
                 val preferences = androidx.compose.runtime.remember { com.ambient.tv.ui.player.videoImagePreferences(context) }
                 val showLyrics = androidx.compose.runtime.remember(revision.intValue) { preferences.lyricsVisible }
@@ -612,6 +620,10 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { preferences.lyricsOnlineEnabled = !lyricsOnline; revision.intValue++ },
                 )
                 Text(stringResource(R.string.player_tools_lyrics_online_hint), style = MaterialTheme.typography.bodySmall)
+            }
+            if (PlayerTool.GAPLESS in tools) {
+                val revision = com.ambient.tv.ui.player.LyricsSettings.revision
+                val preferences = androidx.compose.runtime.remember { com.ambient.tv.ui.player.videoImagePreferences(context) }
                 val gapless = androidx.compose.runtime.remember(revision.intValue) { preferences.gaplessMusicEnabled }
                 RightPanelSectionTitle(stringResource(R.string.player_tools_music))
                 PlayerPanelEntry(
@@ -622,8 +634,8 @@ fun UnifiedBackendPlayerPanel(
                 )
                 Text(stringResource(R.string.player_tools_gapless_hint), style = MaterialTheme.typography.bodySmall)
             }
-            if (hasVideo) RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
-            if (hasVideo) PlayerPanelEntry(
+            if (PlayerTool.SCREENSHOT in tools) RightPanelSectionTitle(stringResource(R.string.player_tools_screenshot))
+            if (PlayerTool.SCREENSHOT in tools) PlayerPanelEntry(
                 icon = Icons.Filled.PhotoCamera,
                 title = stringResource(R.string.player_tools_screenshot_save),
                 value = stringResource(R.string.player_tools_screenshot_where),
@@ -677,6 +689,18 @@ fun UnifiedBackendPlayerPanel(
         }
     }
 }
+
+@Composable
+private fun toolsSummary(tools: List<PlayerTool>): String = tools.map { tool ->
+    stringResource(when (tool) {
+        PlayerTool.AB_REPEAT -> if (com.ambient.tv.ui.player.AbRepeat.active) R.string.player_tools_ab_on else R.string.player_tools_ab
+        PlayerTool.FRAME_STEP -> R.string.player_tools_frame
+        PlayerTool.BOOKMARKS -> R.string.player_tools_bookmarks
+        PlayerTool.LYRICS -> R.string.player_tools_lyrics
+        PlayerTool.GAPLESS -> R.string.player_tools_gapless
+        PlayerTool.SCREENSHOT -> R.string.player_tools_screenshot
+    })
+}.joinToString(" · ")
 
 @Composable
 private fun skipModeOptions(intro: Boolean) = listOf(
