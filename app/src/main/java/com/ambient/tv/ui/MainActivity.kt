@@ -1883,6 +1883,7 @@ private fun AmbientTvApp(
                                     when (row.system) {
                                         HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
+                                        HomeRowDefinition.SYSTEM_RADIO -> navigateTopLevel(Destinations.RADIO)
                                         HomeRowDefinition.SYSTEM_TVHEADEND -> navigateToSection(Destinations.liveTvSection(row.contentKey))
                                         else -> if (row.contentKey in setOf("live", "guide", "recordings", "timers")) {
                                             val sourceId = providerNavigationViewModel.uiState.value.liveTvSources
