@@ -68,7 +68,7 @@ enum class MediaSystem(
     val hasBrandMark: Boolean get() = logo != null
 
     /** TMDB's lettering is unreadable at icon size and DLNA's symbol has none, so neither spells its name. */
-    val markSpellsName: Boolean get() = hasBrandMark && this != TRAILERS && this != DLNA && this != IPTV
+    val markSpellsName: Boolean get() = hasBrandMark && this != TRAILERS && this != DLNA && this != IPTV && this != RADIO
 
     /** Name given to this system in Settings; null while it keeps the provider's own name. */
     val customName: String? get() = SystemNameOverrides.names[key]
