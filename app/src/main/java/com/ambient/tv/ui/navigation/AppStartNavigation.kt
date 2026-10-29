@@ -8,6 +8,7 @@ internal fun configuredContentRoute(
     tvheadend: Boolean,
     youtube: Boolean,
     spotify: Boolean,
+    radio: Boolean,
     files: Boolean,
     trailers: Boolean,
     iptvSourceId: String?,
@@ -15,6 +16,7 @@ internal fun configuredContentRoute(
     plex || jellyfin || emby || tvheadend -> Destinations.HOME
     youtube -> Destinations.YOUTUBE
     spotify -> Destinations.SPOTIFY
+    radio -> Destinations.RADIO
     files -> Destinations.FILES
     trailers -> Destinations.TRAILERS
     !iptvSourceId.isNullOrBlank() -> Destinations.liveTvSection("live", iptvSourceId)
