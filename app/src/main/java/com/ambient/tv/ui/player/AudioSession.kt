@@ -105,6 +105,7 @@ class AudioSession(
         performanceHint = previous.performanceHint
         showFpsOverlay = previous.showFpsOverlay
         showFrameDropOverlay = previous.showFrameDropOverlay
+        showFrameDropHistory = previous.showFrameDropHistory
     }
 
     /** Apply a playback profile without replacing the global audio defaults. */
@@ -128,6 +129,8 @@ class AudioSession(
     var showFpsOverlay by mutableStateOf(false)
     /** Keep frame-drop diagnostics visible outside video panels for this playback only. */
     var showFrameDropOverlay by mutableStateOf(false)
+    /** Presentation of this playback's overlay; compact by default, independent of visibility. */
+    var showFrameDropHistory by mutableStateOf(false)
     var route by mutableStateOf(AudioRouteCapabilities())
     var mpvAllowed by mutableStateOf(true)
         private set

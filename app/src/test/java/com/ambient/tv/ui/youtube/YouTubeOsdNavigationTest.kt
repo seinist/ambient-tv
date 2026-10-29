@@ -114,54 +114,61 @@ class YouTubeOsdNavigationTest {
 
     @Test fun navigationButtonsStayVisibleAndCallOnlyAvailableActionsForEveryRendererLabel() {
         val fixture = mount()
-        restartButton().assertIsDisplayed().performClick()
+        previousButton().assertIsDisplayed().performClick()
+        restartButton().assertDoesNotExist()
         nextButton().assertIsDisplayed().performClick()
         rule.runOnIdle {
-            assertEquals(1, fixture.restarts)
+            assertEquals(0, fixture.restarts)
+            assertEquals(0, fixture.previousVideos)
             assertEquals(0, fixture.advances)
         }
 
         for ((index, backend) in listOf("Media3", "VLC", "MPV").withIndex()) {
             rule.runOnIdle {
                 fixture.model.value = fixture.model.value.copy(backend = backend,
-                    itemControls = PlaybackItemControls(restart = { fixture.restarts++ }, next = { fixture.advances++ }))
+                    itemControls = PlaybackItemControls(
+                        restart = { fixture.restarts++ }, next = { fixture.advances++ },
+                        previous = { fixture.previousVideos++ }, hasPreviousItem = true,
+                    ))
             }
-            restartButton().assertIsDisplayed().performClick()
+            previousButton().assertIsDisplayed().performClick()
             nextButton().assertIsDisplayed().performClick()
             rule.runOnIdle {
-                assertEquals(index + 2, fixture.restarts)
+                assertEquals(0, fixture.restarts)
+                assertEquals(index + 1, fixture.previousVideos)
                 assertEquals(index + 1, fixture.advances)
             }
         }
 
         rule.runOnIdle { fixture.model.value = fixture.model.value.copy(itemControls = PlaybackItemControls()) }
         // Disabled TV controls deliberately remain focusable; clicks must have no effect.
-        restartButton().assertIsDisplayed().performClick()
+        previousButton().assertIsDisplayed().performClick()
         nextButton().assertIsDisplayed().performClick()
         rule.runOnIdle {
-            assertEquals(4, fixture.restarts)
+            assertEquals(0, fixture.restarts)
+            assertEquals(3, fixture.previousVideos)
             assertEquals(3, fixture.advances)
         }
     }
 
     @Test fun osdSettingHidesBothNavigationButtonsAndStillOffersTheSettingToRestoreThem() {
         mount()
-        restartButton().assertIsDisplayed()
+        previousButton().assertIsDisplayed()
         nextButton().assertIsDisplayed()
         rule.runOnIdle {
             setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.NEXT, false)
         }
-        restartButton().assertDoesNotExist()
+        previousButton().assertDoesNotExist()
         nextButton().assertDoesNotExist()
         rule.runOnIdle {
             assertTrue(OsdButton.NEXT in OsdPlayer.YOUTUBE.offeredButtons())
             setOsdButtonVisible(videoImagePreferences(rule.activity), OsdPlayer.YOUTUBE, OsdButton.NEXT, true)
         }
-        restartButton().assertIsDisplayed()
+        previousButton().assertIsDisplayed()
         nextButton().assertIsDisplayed()
     }
 
-    @Test fun historyPreviousUsesItsOwnLabelAndNeverFallsBackToRestartWhileBlocked() {
+    @Test fun historyPreviousNeverFallsBackToRestartWhileBlockedOrAtTheFirstVideo() {
         val fixture = mount()
         for ((index, backend) in listOf("Media3", "VLC", "MPV").withIndex()) {
             rule.runOnIdle {
@@ -191,20 +198,25 @@ class YouTubeOsdNavigationTest {
             assertEquals(0, fixture.restarts)
             fixture.model.value = fixture.model.value.copy(itemControls = PlaybackItemControls(restart = { fixture.restarts++ }))
         }
-        previousButton().assertDoesNotExist()
-        restartButton().assertIsDisplayed().performClick()
-        rule.runOnIdle { assertEquals(1, fixture.restarts) }
+        previousButton().assertIsDisplayed().performClick()
+        restartButton().assertDoesNotExist()
+        rule.runOnIdle {
+            assertEquals(0, fixture.restarts)
+            assertEquals(3, fixture.previousVideos)
+        }
     }
 
     @Test fun contentWithoutVideoItemControlsDoesNotAdvertiseNavigationButtons() {
         val fixture = mount()
         rule.runOnIdle { fixture.model.value = fixture.model.value.copy(itemControls = null) }
         restartButton().assertDoesNotExist()
+        previousButton().assertDoesNotExist()
         nextButton().assertDoesNotExist()
         rule.runOnIdle {
             fixture.model.value = fixture.model.value.copy(playback = fixture.model.value.playback.copy(isLive = true))
         }
         restartButton().assertDoesNotExist()
+        previousButton().assertDoesNotExist()
         nextButton().assertDoesNotExist()
     }
 }

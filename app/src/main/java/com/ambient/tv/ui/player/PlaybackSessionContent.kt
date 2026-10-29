@@ -28,7 +28,7 @@ import kotlin.math.ceil
 internal data class PlaybackItemControls(
     val restart: (() -> Unit)? = null,
     val next: (() -> Unit)? = null,
-    /** Already resolves to start-over when the current player has no previous item. */
+    /** Other video players may use start-over; YouTube requires an actual history item. */
     val previous: (() -> Unit)? = restart,
     val hasPreviousItem: Boolean = false,
 )
@@ -201,7 +201,7 @@ fun PlaybackSessionContent(
     fun playPrevious() {
         val previous = onPlayPrevious
         if (previous == null) {
-            restart()
+            if (metadata.source != "youtube") restart()
             return
         }
         val current = BackgroundPlaybackSession.snapshot.value
@@ -217,7 +217,11 @@ fun PlaybackSessionContent(
     val itemControls = if (metadata.hasVideo && !metadata.isLive && !metadata.isTrailer) PlaybackItemControls(
         restart = restartAction,
         next = if (itemActionsReady && candidate != null) ({ playNext(automatic = false) }) else null,
-        previous = if (onPlayPrevious == null) restartAction else if (itemActionsReady && !previousHandled) ::playPrevious else null,
+        previous = when {
+            onPlayPrevious != null -> if (itemActionsReady && !previousHandled) ::playPrevious else null
+            metadata.source == "youtube" -> null
+            else -> restartAction
+        },
         hasPreviousItem = onPlayPrevious != null,
     ) else null
 

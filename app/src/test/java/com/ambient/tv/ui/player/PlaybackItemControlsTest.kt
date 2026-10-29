@@ -146,7 +146,8 @@ class PlaybackItemControlsTest {
             ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
             val seekVersion = BackgroundPlaybackSession.externalSeekVersion
             assertFalse(requireNotNull(fixture.controls).hasPreviousItem)
-            requireNotNull(fixture.controls?.previous).invoke()
+            assertNull(fixture.controls?.previous)
+            requireNotNull(fixture.controls?.restart).invoke()
             assertEquals(listOf(0L), fixture.clock.seeks)
             assertEquals(seekVersion + 1, BackgroundPlaybackSession.externalSeekVersion)
             BackgroundPlaybackSession.userPlay()
@@ -196,19 +197,30 @@ class PlaybackItemControlsTest {
         }
     }
 
-    @Test fun mediaPreviousUsesHistoryAndFallsBackToStartOverWhenNoneIsAvailable() {
+    @Test fun youtubeMediaPreviousDoesNothingWithoutHistoryAndUsesHistoryWhenAvailable() {
         val fixture = mount()
         rule.runOnIdle { fixture.focus.requestFocus() }
         rule.onRoot().performKeyInput { pressKey(Key.MediaPrevious) }
         rule.runOnIdle {
-            assertEquals(listOf(0L), fixture.clock.seeks)
+            assertNull(fixture.controls?.previous)
+            assertTrue(fixture.clock.seeks.isEmpty())
             assertEquals(0, fixture.previousCalls)
             fixture.previousAvailable.value = true
         }
         rule.onRoot().performKeyInput { pressKey(Key.MediaPrevious) }
         rule.runOnIdle {
-            assertEquals(listOf(0L), fixture.clock.seeks)
+            assertTrue(fixture.clock.seeks.isEmpty())
             assertEquals(1, fixture.previousCalls)
+        }
+    }
+
+    @Test fun otherVideoSourcesKeepTheirStartOverFallback() {
+        val fixture = mount(metadata = metadata().copy(source = "plex", route = "plex/current"))
+        rule.runOnIdle { fixture.focus.requestFocus() }
+        rule.onRoot().performKeyInput { pressKey(Key.MediaPrevious) }
+        rule.runOnIdle {
+            assertEquals(listOf(0L), fixture.clock.seeks)
+            assertEquals(0, fixture.previousCalls)
         }
     }
 

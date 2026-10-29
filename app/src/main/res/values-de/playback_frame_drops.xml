@@ -4,4 +4,9 @@
     <string name="player_frame_drop_count">Verworfene Frames: %1$s</string>
     <string name="player_frame_drop_fps_deviation">Δ %1$s FPS · Ziel %2$s</string>
     <string name="player_frame_drop_measured_fps">Ausgabe %1$s FPS · Drops %2$s</string>
+    <string name="player_frame_drop_history_title">Frame-Drops · %1$d s</string>
+    <string name="player_frame_drop_history_estimated">Geschätzt</string>
+    <string name="player_frame_drop_history_now">Jetzt</string>
+    <string name="player_frame_drop_history_age">−%1$d s</string>
+    <string name="player_frame_drop_history_ceiling">%1$d %% +</string>
 </resources>

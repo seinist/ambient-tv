@@ -721,7 +721,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     if (foreground && frame.media != null) add("retry")
                 } else { addAll(listOf("play", "pause")); if (frame.seekable) add("seek") }
                 if (useSpotify || foreground && (source.next != null || playbackQueue.hasNext || (snapshot.metadata?.companionNext ?: snapshot.metadata?.nextUp) != null)) add("next")
-                if (useSpotify || foreground && (source.previous != null || playbackQueue.hasPrevious) || frame.seekable && source.previous == null && (source.seek != null || snapshot.metadata?.timelineOffsetMs == 0L)) add("previous")
+                if (useSpotify || foreground && (source.previous != null || playbackQueue.hasPrevious) || snapshot.metadata?.source != "youtube" && frame.seekable && source.previous == null && (source.seek != null || snapshot.metadata?.timelineOffsetMs == 0L)) add("previous")
                 if (useSpotify && spotify?.webAuthorized == true && music.supportsVolume == true || !useSpotify && adjustable) add("volume")
                 if (useSpotify && spotify?.webAuthorized == true) addAll(listOf("shuffle", "repeat"))
                 else if (options.isNotEmpty()) add("select")
@@ -845,7 +845,8 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                     persistQueue()
                 }
                 else -> {
-                    require(current.seekable)
+                    // YouTube Previous requires real history, including for delayed remote commands.
+                    require(snapshot.metadata?.source != "youtube" && current.seekable)
                     BackgroundPlaybackSession.userSeek()
                     val sourceSeek = CompanionPlaybackControls.current().seek
                     if (sourceSeek != null) sourceSeek(0) else { require(snapshot.metadata?.timelineOffsetMs == 0L); BackgroundPlaybackSession.seekTo(0) }

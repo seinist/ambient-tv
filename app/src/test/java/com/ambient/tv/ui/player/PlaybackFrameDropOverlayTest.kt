@@ -3,16 +3,18 @@
 package com.ambient.tv.ui.player
 
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -21,9 +23,11 @@ import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
+import com.ambient.tv.ui.common.UnifiedPlayerSidePanel
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import java.lang.reflect.Proxy
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -39,6 +43,7 @@ class PlaybackFrameDropOverlayTest {
 
     private var panel by mutableStateOf(UnifiedPlayerPanel.OSD_INFO)
     private lateinit var session: AudioSession
+    private var counterReads = 0
     private val metadata = PlaybackMetadata("frame-drops", "Frame-drop test", source = "audit", mediaId = "frame-drops")
     private val overlayText get() = rule.activity.getString(R.string.player_frame_drop_measured_fps, "—", "—")
     private val toggleTitle get() = rule.activity.getString(R.string.player_frame_drop_overlay)
@@ -51,7 +56,8 @@ class PlaybackFrameDropOverlayTest {
             "hashCode" -> System.identityHashCode(proxy)
             "equals" -> proxy === args?.get(0)
             "toString" -> "Frame-drop overlay fixture"
-            "getVideoDecoderCounters", "getVideoFormat", "getAudioFormat", "getPlayerError" -> null
+            "getVideoDecoderCounters" -> { counterReads++; null }
+            "getVideoFormat", "getAudioFormat", "getPlayerError" -> null
             "getCurrentTracks" -> Tracks.EMPTY
             "getCurrentTimeline" -> Timeline.EMPTY
             "getCurrentPosition" -> 1_000L
@@ -82,7 +88,10 @@ class PlaybackFrameDropOverlayTest {
             CompositionLocalProvider(LocalHandheldUi provides true) {
                 // The real host stays composed with NONE and owns exactly one popup.
                 PlayerPanelVisibility(panel) { displayed ->
-                    if (displayed == UnifiedPlayerPanel.OSD_INFO) Column {
+                    if (displayed == UnifiedPlayerPanel.OSD_INFO) UnifiedPlayerSidePanel(
+                        title = stringResource(R.string.player_osd_info),
+                        onBack = { panel = UnifiedPlayerPanel.NONE },
+                    ) {
                         PlayerOsdInfoPanelControls(session, onOpenButtons = {})
                     }
                 }
@@ -99,6 +108,19 @@ class PlaybackFrameDropOverlayTest {
         rule.waitForIdle()
     }
 
+    private fun clickPanelRow(title: String) {
+        val autoAdvance = rule.mainClock.autoAdvance
+        try {
+            // performScrollTo repeats until layout acknowledges each ScrollBy action.
+            rule.mainClock.autoAdvance = true
+            rule.onNodeWithText(title).performScrollTo()
+        } finally {
+            rule.mainClock.autoAdvance = autoAdvance
+        }
+        settle()
+        rule.onNodeWithText(title).assertIsDisplayed().performClick()
+    }
+
     @After fun cleanup() {
         rule.runOnUiThread {
             BackgroundPlaybackSession.stop()
@@ -110,7 +132,7 @@ class PlaybackFrameDropOverlayTest {
         mount()
         rule.onNodeWithText(rule.activity.getString(R.string.player_frame_drop_overlay_auto)).assertExists()
         rule.onNodeWithText(overlayText).assertDoesNotExist()
-        rule.onNodeWithText(toggleTitle).performClick()
+        clickPanelRow(toggleTitle)
         settle()
         rule.runOnIdle { assertTrue(session.showFrameDropOverlay) }
         rule.onNodeWithText(rule.activity.getString(R.string.player_frame_drop_overlay_always)).assertExists()
@@ -137,7 +159,7 @@ class PlaybackFrameDropOverlayTest {
 
     @Test fun audioOnlyAndStopHideTheOverlayEvenWhenAlwaysShowIsSelected() {
         mount()
-        rule.onNodeWithText(toggleTitle).performClick()
+        clickPanelRow(toggleTitle)
         settle()
         rule.onNodeWithText(overlayText).assertExists()
         rule.runOnIdle { session.updateAudioOnly(true) }
@@ -169,7 +191,7 @@ class PlaybackFrameDropOverlayTest {
 
     @Test fun unsupportedPlaybackCannotReuseThePreviousVideosOverlay() {
         mount()
-        rule.onNodeWithText(toggleTitle).performClick()
+        clickPanelRow(toggleTitle)
         settle()
         rule.onNodeWithText(overlayText).assertExists()
         rule.runOnIdle {
@@ -188,5 +210,61 @@ class PlaybackFrameDropOverlayTest {
         settle()
         rule.onNodeWithText(overlayText).assertDoesNotExist()
         rule.runOnIdle { assertTrue(session.showFrameDropOverlay) }
+    }
+
+    @Test fun displayChoiceIsIndependentOfVisibilityAndUsesNoReaderAfterTheOverlayCloses() {
+        mount()
+        val presentationTitle = rule.activity.getString(R.string.player_frame_drop_presentation)
+        val compact = rule.activity.getString(R.string.player_frame_drop_compact)
+        val withHistory = rule.activity.getString(R.string.player_frame_drop_with_history)
+        val graphTitle = rule.activity.getString(R.string.player_frame_drop_history_title, 60)
+        rule.runOnIdle {
+            assertFalse(session.showFrameDropHistory)
+            assertFalse(session.showFrameDropOverlay)
+        }
+        val hiddenReads = counterReads
+        clickPanelRow(presentationTitle)
+        settle()
+        rule.onNodeWithText(withHistory).assertIsDisplayed().performClick()
+        settle()
+        rule.runOnIdle {
+            assertTrue(session.showFrameDropHistory)
+            assertFalse(session.showFrameDropOverlay)
+            assertEquals("Choosing the graph alone must not start a hidden sampler", hiddenReads, counterReads)
+        }
+        rule.onNodeWithText(graphTitle).assertDoesNotExist()
+
+        clickPanelRow(toggleTitle)
+        settle()
+        rule.onNodeWithText(graphTitle).assertExists()
+        rule.onNodeWithText(overlayText).assertExists()
+        rule.runOnIdle {
+            assertTrue(counterReads > hiddenReads)
+            panel = UnifiedPlayerPanel.NONE
+        }
+        settle()
+        rule.onNodeWithText(graphTitle).assertExists()
+
+        rule.runOnIdle { panel = UnifiedPlayerPanel.OSD_INFO }
+        settle()
+        clickPanelRow(presentationTitle)
+        settle()
+        rule.onNodeWithText(compact).assertIsDisplayed().performClick()
+        settle()
+        rule.onNodeWithText(graphTitle).assertDoesNotExist()
+        rule.onNodeWithText(overlayText).assertExists()
+        rule.runOnIdle {
+            assertTrue(session.showFrameDropOverlay)
+            assertFalse(session.showFrameDropHistory)
+        }
+
+        clickPanelRow(toggleTitle)
+        rule.runOnIdle { panel = UnifiedPlayerPanel.NONE }
+        settle()
+        val closedReads = counterReads
+        rule.mainClock.advanceTimeBy(3_000)
+        rule.waitForIdle()
+        rule.onNodeWithText(overlayText).assertDoesNotExist()
+        rule.runOnIdle { assertEquals("Hidden overlay must stop polling the renderer", closedReads, counterReads) }
     }
 }
