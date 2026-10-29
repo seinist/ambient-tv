@@ -18,8 +18,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -50,6 +52,7 @@ import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvLazyVerticalGrid
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -133,6 +136,28 @@ fun RadioScreen(
 
         Row(
             Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TvChip(
+                text = stringResource(R.string.radio_popular),
+                selected = state.section == RadioSection.POPULAR && state.submittedQuery.isBlank(),
+                onClick = { viewModel.selectSection(RadioSection.POPULAR) },
+            )
+            TvChip(
+                text = stringResource(R.string.radio_favorites),
+                selected = state.section == RadioSection.FAVORITES && state.submittedQuery.isBlank(),
+                onClick = { viewModel.selectSection(RadioSection.FAVORITES) },
+            )
+            TvChip(
+                text = stringResource(R.string.radio_recent),
+                selected = state.section == RadioSection.RECENT && state.submittedQuery.isBlank(),
+                onClick = { viewModel.selectSection(RadioSection.RECENT) },
+            )
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -180,7 +205,9 @@ fun RadioScreen(
                             playback.metadata?.mediaId == station.id &&
                             playback.wantsToPlay,
                         loading = state.startingStationId == station.id,
+                        favorite = station.id in state.favoriteIds,
                         onClick = { viewModel.play(station) },
+                        onFavorite = { viewModel.toggleFavorite(station) },
                     )
                 }
                 if (state.hasMore) {
@@ -203,22 +230,28 @@ private fun RadioStationTile(
     station: RadioStation,
     playing: Boolean,
     loading: Boolean,
+    favorite: Boolean,
     onClick: () -> Unit,
+    onFavorite: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
-    Surface(
-        onClick = onClick,
-        colors = transparentSurfaceColors(),
-        scale = noSurfaceScale(),
-        shape = ClickableSurfaceDefaults.shape(shape),
-        modifier = Modifier
-            .width(deviceDp(190.dp, 160.dp))
-            .mediaFocusMotion(focused)
-            .activateOnTvKey(onClick = onClick)
-            .onFocusChanged { focused = it.isFocused },
+    Column(
+        Modifier.width(deviceDp(190.dp, 160.dp)),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Column(
+        Surface(
+            onClick = onClick,
+            colors = transparentSurfaceColors(),
+            scale = noSurfaceScale(),
+            shape = ClickableSurfaceDefaults.shape(shape = shape),
+            modifier = Modifier
+                .fillMaxWidth()
+                .mediaFocusMotion(focused)
+                .activateOnTvKey(onClick = onClick)
+                .onFocusChanged { focused = it.isFocused },
+        ) {
+            Column(
             Modifier
                 .background(
                     if (focused || playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
@@ -276,7 +309,16 @@ private fun RadioStationTile(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
         }
+        TvChip(
+            text = if (favorite) stringResource(R.string.radio_remove_favorite) else stringResource(R.string.radio_add_favorite),
+            icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+            iconOnly = true,
+            selected = favorite,
+            onClick = onFavorite,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
     }
 }
 
