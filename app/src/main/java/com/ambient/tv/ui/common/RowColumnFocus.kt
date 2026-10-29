@@ -198,6 +198,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         // The coordinates stay live and are only resolved on a key press; onGloballyPositioned
         // would dispatch for every placed tile on every frame of the vertical glide.
         focusRequester(target.requester)
+            .browseFocusTarget(itemKey, rowKey = rowKey)
             .onPlaced { target.coordinates = it }
             .onFocusChanged {
                 if (it.hasFocus) {
@@ -241,6 +242,7 @@ fun RegisterRowColumnFocus(
     defaultItemKey: Any? = null,
     focusableItemKeys: List<Any> = itemKeys,
 ) {
+    RegisterBrowseFocusList(state, itemKeys, rowKey)
     if (focus == null) return
     val keys by rememberUpdatedState(itemKeys)
     val defaultKey by rememberUpdatedState(defaultItemKey)

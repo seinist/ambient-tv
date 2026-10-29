@@ -173,8 +173,10 @@ fun MediaTile(
     val borderWidth = if (focused) 2.dp else 1.dp
     val borderColor = if (focused) MaterialTheme.colorScheme.onSurface.copy(alpha = .90f) else Color.Transparent
     val filterFocus = LocalFilterFocusState.current
+    val browseFocus = LocalBrowseFocusReturnState.current
     // A suppressed restore is consumed. Re-entering content must not restart an old tile request.
-    LaunchedEffect(requestInitialFocus, filterFocus) {
+    LaunchedEffect(requestInitialFocus, filterFocus, browseFocus) {
+        if (browseFocus?.managesInitialFocus == true) return@LaunchedEffect
         if (requestInitialFocus && filterFocus?.allowContentAutoFocus != false && !handheld) {
             delay(120)
             if (filterFocus?.allowContentAutoFocus != false) runCatching { focusRequester.requestFocus() }
@@ -222,6 +224,7 @@ fun MediaTile(
                     } else Modifier
                 )
                 .focusRequester(focusRequester)
+                .browseFocusTarget(item.ratingKey)
                 .onFocusChanged { state ->
                     focused = state.isFocused
                     if (state.isFocused) {

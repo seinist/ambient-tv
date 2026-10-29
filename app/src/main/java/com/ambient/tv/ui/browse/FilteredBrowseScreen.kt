@@ -75,6 +75,12 @@ import com.ambient.tv.ui.common.rememberUhdScale
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.mediaFocusMotion
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.LocalBrowseFocusReturnState
 
 @Composable
 fun FilteredBrowseScreen(
@@ -104,6 +110,9 @@ fun FilteredBrowseScreen(
                 )
             }
             is FilteredBrowseUiState.Loaded -> Column(Modifier.fillMaxSize().padding(top = screenGutter() + 44.dp)) {
+                BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending))
+                BrowseFocusInitialTarget(value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
+                    ?: value.items.firstOrNull()?.ratingKey)
                 val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
                 val orderFocus = remember { FocusRequester() }
                 PageHeader(
@@ -160,6 +169,7 @@ private fun BrowseGrid(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     val restoreKey = remember(state.items) { state.focusedRatingKey }
     val index = remember(state.items, restoreKey) { state.items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = index)
+    RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map { it.ratingKey } })
     LaunchedEffect(restoreKey, state.items) {
         if (restoreKey != null && index in state.items.indices && state.items[index].ratingKey == restoreKey) {
             gridState.scrollToItem(index)
@@ -191,7 +201,10 @@ private fun BrowseList(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     val index = remember(state.items, initialFocusedKey) { state.items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
     val requester = remember { FocusRequester() }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = index)
-    LaunchedEffect(Unit) {
+    RegisterBrowseFocusList(listState, remember(state.items) { state.items.map { it.ratingKey } })
+    val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(sharedFocusOwner) {
+        if (sharedFocusOwner) return@LaunchedEffect
         if (initialFocusedKey != null && index in state.items.indices && state.items[index].ratingKey == initialFocusedKey) {
             runCatching { requester.requestFocus() }
         }
@@ -199,7 +212,8 @@ private fun BrowseList(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     LazyColumn(allowUpExit = true, state = listState, modifier = Modifier.overlayLazyScrollbar(listState, gutter = screenGutter()), contentPadding = PaddingValues(screenGutter(), 14.dp, screenGutter(), 36.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         itemsIndexed(state.items, key = { _, it -> it.ratingKey }) { _, item ->
             var isFocused by remember(item.ratingKey) { mutableStateOf(false) }
-            val focus = if (item.ratingKey == initialFocusedKey) Modifier.focusRequester(requester) else Modifier
+            val focus = (if (item.ratingKey == initialFocusedKey) Modifier.focusRequester(requester) else Modifier)
+                .browseFocusTarget(item.ratingKey)
             val rowShape = RoundedCornerShape(10.dp)
             Surface(onClick = { onClick(item.ratingKey) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape), modifier = focus.mediaFocusMotion(isFocused, focusedScale = 1.012f).activateOnTvKey { onClick(item.ratingKey) }.bringFocusedContextIntoView().onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(item) }) {
                 Row(

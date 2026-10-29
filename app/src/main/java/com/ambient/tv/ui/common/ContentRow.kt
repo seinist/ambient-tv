@@ -102,26 +102,28 @@ fun ContentRow(
             sectionKey = row.id,
             focused = rowHadFocus,
         )
-        CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
-            LazyRow(
-                state = rowState,
-                contentPadding = PaddingValues(horizontal = screenGutter()),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                modifier = Modifier.containRowFocusExit(),
-            ) {
-                items(row.items, key = { it.ratingKey }, contentType = {
-                    resolveMediaTileStyle(row.style, it.type, handheld)
-                }) { item ->
-                    MediaTile(
-                        item = item,
-                        onClick = { onItemClick(item) },
-                        modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey, soundsOnFocus = true),
-                        onFocused = { lastFocusedKey = item.ratingKey; onItemFocused(item) },
-                        requestInitialFocus = item.ratingKey == restoreRatingKey || item.ratingKey == recoveryKey,
-                        style = row.style,
-                        showDescription = row.showDescription,
-                        reserveEpisodeLines = hasEpisodes,
-                    )
+        BrowseFocusRow(row.id) {
+            CompositionLocalProvider(LocalBringIntoViewSpec provides horizontalScrollSpec) {
+                LazyRow(
+                    state = rowState,
+                    contentPadding = PaddingValues(horizontal = screenGutter()),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.containRowFocusExit(),
+                ) {
+                    items(row.items, key = { it.ratingKey }, contentType = {
+                        resolveMediaTileStyle(row.style, it.type, handheld)
+                    }) { item ->
+                        MediaTile(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            modifier = Modifier.rowColumnFocusTarget(columnFocus, row.id, item.ratingKey, soundsOnFocus = true),
+                            onFocused = { lastFocusedKey = item.ratingKey; onItemFocused(item) },
+                            requestInitialFocus = item.ratingKey == restoreRatingKey || item.ratingKey == recoveryKey,
+                            style = row.style,
+                            showDescription = row.showDescription,
+                            reserveEpisodeLines = hasEpisodes,
+                        )
+                    }
                 }
             }
         }

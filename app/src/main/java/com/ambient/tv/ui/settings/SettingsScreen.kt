@@ -98,6 +98,8 @@ import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.wrapFocusDownToTop
 import com.ambient.tv.ui.common.SettingsSectionHeader
+import com.ambient.tv.ui.common.SettingsGroupHeader
+import com.ambient.tv.ui.common.SettingsPageTitle
 import com.ambient.tv.ui.common.SettingsNavigationRow
 import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.theme.AccentOptions
@@ -296,8 +298,9 @@ fun SettingsScreen(
         },
         onRequestAppExit = { showExitConfirmation = true },
     ) { selectedCategory, listState, panelModifier, focusContent, requestExit ->
-        Column(modifier = panelModifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            SettingsPaneHeader(selectedCategory)
+        Column(modifier = panelModifier, verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.itemGap)) {
+            // Handheld already names this page in its toolbar; TV keeps the title in the content pane.
+            if (!handheldUi) SettingsPageTitle(settingsCategoryTitle(selectedCategory))
             if (selectedCategory == SettingsCategory.RECEIVER) {
                 Text(stringResource(R.string.settings_network_receiver_save_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else if (selectedCategory.isMediaSource() || selectedCategory in setOf(SettingsCategory.BACKUP, SettingsCategory.WIREGUARD, SettingsCategory.TRANSFER)) {
@@ -326,7 +329,7 @@ fun SettingsScreen(
                     state = listState,
                     modifier = Modifier.focusRequester(scrollbarContentFocus).focusGroup().fillMaxSize().wrapFocusDownToTop(listState).padding(end = if (listOverflow) 16.dp else 0.dp),
                     contentPadding = PaddingValues(bottom = 24.dp).withTvFocusInsets(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap),
                 ) {
                   indexedSettingsItems(itemIndex) {
                     when (selectedCategory) {
@@ -719,10 +722,9 @@ fun SettingsScreen(
                         }
 
                         SettingsCategory.PLAYBACK -> {
-                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance)) }
+                            item { SettingsSubheader(stringResource(R.string.settings_section_general_performance), firstInContent = true) }
                             item {
                                 SettingsGroup(
-                                    title = stringResource(R.string.settings_playback_performance),
                                     subtitle = stringResource(R.string.settings_playback_performance_hint),
                                 ) {
                                     PerformanceModeSelect(
@@ -1312,6 +1314,9 @@ fun SettingsScreen(
                                                 included = if (on) included + system else included - system
                                                 viewModel.setAllContinueSystem(system, on)
                                             },
+                                            leadingContent = MediaSystem.fromKey(system)?.let { source -> {
+                                                com.ambient.tv.ui.common.SystemLogo(source, size = 20.dp)
+                                            } },
                                         )
                                     }
                                 }
@@ -1748,20 +1753,6 @@ private fun LanguageChoiceRow(
     })
 }
 
-@Composable
-private fun SettingsPaneHeader(category: SettingsCategory) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(settingsCategoryTitle(category), style = MaterialTheme.typography.headlineSmall)
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp)
-                .size(width = 52.dp, height = 2.dp)
-                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(1.dp)),
-        )
-    }
-}
-
 /** Automatic wake can only be switched while a usable MAC address is entered for that system. */
 @Composable
 internal fun AutoWakeRow(title: String, hint: String?, macAddress: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
@@ -1779,8 +1770,8 @@ internal fun isUsableWakeMac(macAddress: String): Boolean =
     runCatching { com.ambient.tv.data.files.WakeOnLan.packet(macAddress.trim()) }.isSuccess
 
 @Composable
-internal fun SettingsSubheader(title: String) {
-    SettingsSectionHeader(title)
+internal fun SettingsSubheader(title: String, firstInContent: Boolean = false) {
+    SettingsSectionHeader(title, firstInContent = firstInContent)
 }
 
 @Composable
@@ -1796,9 +1787,9 @@ internal fun SettingsGroup(
         .padding(14.dp) else Modifier
     Column(
         modifier = Modifier.fillMaxWidth().then(surface),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap),
     ) {
-        if (title != null) SettingsSectionHeader(title)
+        if (title != null) SettingsGroupHeader(title)
         if (subtitle != null) com.ambient.tv.ui.common.SettingsHint(subtitle)
         content()
     }
@@ -1995,7 +1986,9 @@ private fun HomeRowEditorItem(
     val sourceName = system?.customName ?: system?.brand ?: homeRowSystemGroupTitle(row.system)
     val sourceTitle = row.copy(title = "").displayTitle(context).removePrefix("$sourceName: ")
     SettingsGroup(title = row.displayTitle(context), subtitle = "$sourceName · $sourceTitle") {
-        TvSettingRow(title = stringResource(R.string.settings_home_visible), checked = row.enabled, onCheckedChange = { onUpdate(row.copy(enabled = it)) })
+        TvSettingRow(title = stringResource(R.string.settings_home_visible), checked = row.enabled,
+            onCheckedChange = { onUpdate(row.copy(enabled = it)) },
+            leadingContent = system?.let { source -> { com.ambient.tv.ui.common.SystemLogo(source, size = 20.dp) } })
         TvTextField(
             value = row.title,
             onValueChange = { onUpdate(row.copy(title = it.take(80))) },

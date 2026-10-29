@@ -45,9 +45,12 @@ internal fun UiHdrSettings(
     val showChoice = showInterface && hdrInterfaceChoiceVisible(facts.sdk, facts.displayHdr, facts.wideColor)
     val showSwitch = showConversion && sdrToHdrSwitchVisible(facts)
     if (!showChoice && !showConversion) return
+    // A standalone conversion switch already owns its label and explanation. Keep a
+    // group label when presenting HDR interface choices or explaining an unavailable switch.
+    val switchOwnsHeading = !showInterface && showSwitch
     SettingsGroup(
-        title = stringResource(if (showInterface) R.string.settings_ui_hdr else R.string.settings_sdr_to_hdr),
-        subtitle = stringResource(if (showInterface) R.string.settings_ui_hdr_hint else R.string.settings_sdr_to_hdr_hint),
+        title = if (switchOwnsHeading) null else stringResource(if (showInterface) R.string.settings_ui_hdr else R.string.settings_sdr_to_hdr),
+        subtitle = if (switchOwnsHeading) null else stringResource(if (showInterface) R.string.settings_ui_hdr_hint else R.string.settings_sdr_to_hdr_hint),
     ) {
         if (showChoice) {
             SettingsSelect(options = listOf(

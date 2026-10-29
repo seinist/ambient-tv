@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import com.ambient.tv.ui.common.browseFocusTarget
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -164,24 +165,15 @@ fun TvheadendScreen(
             viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab), System.currentTimeMillis() / 1000L)
     }
     var initialContentFocusPending by remember(initialTab) { mutableStateOf(true) }
-    // Back from the player the shell enters the content right away; while Live TV or the Guide
-    // still scrolls to the watched channel that would park focus on the first item instead.
-    val holdsContentEntry = initialContentFocusPending && state.tab == initialTab && !state.loading &&
-        (state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE) && !state.dashboard?.channels.isNullOrEmpty()
-    val currentHoldsContentEntry by androidx.compose.runtime.rememberUpdatedState(holdsContentEntry)
-    val enterContent: () -> Boolean? = remember { { if (currentHoldsContentEntry) null else false } }
-    DisposableEffect(enterContent) {
-        com.ambient.tv.ui.navigation.SidebarContentEntry.enter = enterContent
-        onDispose {
-            if (com.ambient.tv.ui.navigation.SidebarContentEntry.enter === enterContent) {
-                com.ambient.tv.ui.navigation.SidebarContentEntry.enter = null
-            }
-        }
-    }
+    com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.source.id, state.tab, state.guideOptions))
+    com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.contentId,
+        contentFocusTarget.rowId.takeIf { state.tab == TvheadendTab.GUIDE })
     LaunchedEffect(initialTab) {
         viewModel.prepareTab(initialTab)
     }
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     LaunchedEffect(state.loading, state.tab, state.dashboard, initialContentFocusPending, contentFocusTarget) {
+        if (sharedInitialFocus) return@LaunchedEffect
         val dashboard = state.dashboard ?: return@LaunchedEffect
         val hasContent = when (state.tab) {
             TvheadendTab.LIVE -> dashboard.channels.isNotEmpty()
@@ -524,7 +516,7 @@ internal fun ChannelRow(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = modifier.fillMaxWidth().mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey { onWatch(channel) }.onFocusChanged {
+        modifier = modifier.fillMaxWidth().browseFocusTarget(channel.uuid).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey { onWatch(channel) }.onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onFocused()
         },
@@ -599,7 +591,7 @@ internal fun GuideEventCard(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = modifier.width(width).mediaFocusMotion(focused).activateOnTvKey { onEvent(event) }.onFocusChanged {
+        modifier = modifier.width(width).browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid).mediaFocusMotion(focused).activateOnTvKey { onEvent(event) }.onFocusChanged {
             focused = it.isFocused
             if (it.isFocused) onFocused()
         },
@@ -653,6 +645,7 @@ private fun RecordingList(
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = rows.indexOfFirst { it.first.uuid == focusTarget.contentId }.coerceAtLeast(0),
     )
+    com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
             DvrRow(
@@ -696,6 +689,12 @@ private fun TimerList(
             .takeIf { it >= 0 }?.let { timers.size + 1 + it }
         ?: 0
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = targetIndex)
+    com.ambient.tv.ui.common.RegisterBrowseFocusSlots(listState, buildList {
+        timers.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
+            com.ambient.tv.ui.common.BrowseFocusKey(null, entry.uuid, true), index)) }
+        autoRecs.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
+            com.ambient.tv.ui.common.BrowseFocusKey(null, "autorec:${entry.uuid}", true), timers.size + 1 + index)) }
+    })
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
@@ -765,13 +764,13 @@ private fun SeriesTimerRow(
             text = stringResource(R.string.tvh_edit),
             onClick = onEdit,
             enabled = !busy,
-            modifier = initialFocusModifier.onFocusChanged { if (it.isFocused) onFocused() },
+            modifier = initialFocusModifier.browseFocusTarget("autorec:${entry.uuid}").onFocusChanged { if (it.isFocused) onFocused() },
         )
         if (canManage) TvActionButton(
             text = stringResource(R.string.tvh_delete),
             onClick = { onDelete(entry) },
             enabled = !busy,
-            modifier = (if (onEdit == null) initialFocusModifier else Modifier).onFocusChanged { if (it.isFocused) onFocused() },
+            modifier = (if (onEdit == null) initialFocusModifier.browseFocusTarget("autorec:${entry.uuid}") else Modifier).onFocusChanged { if (it.isFocused) onFocused() },
         )
     }
 }
@@ -806,7 +805,7 @@ private fun DvrRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Surface(onClick = onPrimary, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = rowShape),
-            modifier = modifier.weight(1f).activateOnTvKey(onClick = onPrimary).onFocusChanged {
+            modifier = modifier.weight(1f).browseFocusTarget(entry.uuid).activateOnTvKey(onClick = onPrimary).onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             }) {

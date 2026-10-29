@@ -370,7 +370,7 @@ private fun SystemOverviewHeader(
         .onPreviewKeyEvent { event ->
             if (event.key != Key.DirectionDown) return@onPreviewKeyEvent false
             if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
-            com.ambient.tv.ui.navigation.SidebarContentEntry.enter?.invoke() == true
+            com.ambient.tv.ui.navigation.SidebarContentEntry.requestFocus() == true
         }
         .padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(24.dp), bottom = 10.dp)) {
         com.ambient.tv.ui.common.PageHeader(actions = { OverviewActions(onOpenHome, onOpenOptions, optionsModifier) }) {
@@ -636,6 +636,20 @@ internal fun LibraryContent(
         val rowListState = rememberLazyListState(
             initialFirstVisibleItemIndex = if (restoreArmed) contentListIndex(restoreRowIndex) else 0,
         )
+        com.ambient.tv.ui.common.RegisterBrowseFocusRows(rowListState, state.rowKeys.map { rowKey ->
+            rowKey to when {
+                rowKey.startsWith(HOME_OFFLINE_ROW_PREFIX) -> listOf(rowKey.removePrefix(HOME_OFFLINE_ROW_PREFIX))
+                rowKey in state.tvRows -> listOf(if (rowKey.startsWith("recent-tv")) ChannelsTileKey else GuideTileKey) +
+                    state.tvRows[rowKey]?.items.orEmpty().map { "${it.channel.sourceId}:${it.channel.uuid}" }
+                rowKey.startsWith("shortcut:") -> listOf(rowKey.removePrefix("shortcut:"))
+                else -> state.rows.firstOrNull { it.id == rowKey }?.items.orEmpty().map { it.ratingKey }
+            }
+        })
+        val initialRow = state.rows.getOrNull(restoreRowIndex)
+        com.ambient.tv.ui.common.BrowseFocusInitialTarget(
+            initialRow?.items?.firstOrNull { initialFocusKey != null && initialFocusKey in it.allRatingKeys }?.ratingKey,
+            initialRow?.id,
+        )
         LaunchedEffect(rowListState) {
             snapshotFlow { rowListState.isScrollInProgress }.collect { rowsScrolling.value = it }
         }
@@ -651,17 +665,6 @@ internal fun LibraryContent(
         // Survives a live row leaving the lazy list, so the first entry of this visit
         // still starts on card 0 after the row is scrolled away and back.
         val liveRowEntry = remember { LiveRowEntry() }
-        // Right from the sidebar returns to the exact tile left, not the top-left focusable
-        // the plain container request would pick.
-        val enterContent: () -> Boolean? = remember(columnFocus) { { columnFocus.restoreLast() } }
-        androidx.compose.runtime.DisposableEffect(enterContent) {
-            com.ambient.tv.ui.navigation.SidebarContentEntry.enter = enterContent
-            onDispose {
-                if (com.ambient.tv.ui.navigation.SidebarContentEntry.enter === enterContent) {
-                    com.ambient.tv.ui.navigation.SidebarContentEntry.enter = null
-                }
-            }
-        }
         val glideWrap = !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
         val centeredRowKey = remember { MutableStateFlow<String?>(null) }
         val activeRowKey by centeredRowKey.collectAsState()
@@ -859,7 +862,9 @@ private fun HomeShortcutRow(
     rowKey: String = "",
 ) {
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(requestInitialFocus) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(requestInitialFocus, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (requestInitialFocus) {
             withFrameNanos { }
             runCatching { firstFocus.requestFocus() }
@@ -962,7 +967,9 @@ private fun HomeLiveTvRow(
                 runCatching { firstItemFocusRequester.requestFocus() }
             }
     }
-    LaunchedEffect(requestInitialFocus, anchorPlaced, channelKeys) {
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
+    LaunchedEffect(requestInitialFocus, anchorPlaced, channelKeys, sharedInitialFocus) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (entry == null || !requestInitialFocus || !anchorPlaced || !pinStart.value) return@LaunchedEffect
         if (items.isEmpty() && leadingKey == null) return@LaunchedEffect
         if (rowState.firstVisibleItemIndex != 0) rowState.scrollToItem(0)

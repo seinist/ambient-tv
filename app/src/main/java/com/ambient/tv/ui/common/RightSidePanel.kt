@@ -227,7 +227,7 @@ fun RightSidePanel(
                 .padding(vertical = 12.dp)
                 .then(if (scrollable) Modifier.wrapVerticalScrollFocus(scrollState, focusActionsOnRight = true).verticalScroll(scrollState) else Modifier)
                 .padding(horizontal = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.itemGap),
         ) {
             androidx.compose.runtime.CompositionLocalProvider(
                 LocalRightPanelScrollbarFocus provides if (overflow) scrollbarFocus else null,

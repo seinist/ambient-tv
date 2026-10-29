@@ -1,5 +1,9 @@
 package com.ambient.tv.ui.tvheadend
 
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.RegisterBrowseFocusRows
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -86,6 +90,11 @@ internal fun LiveTvChannelBrowser(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
         initialFirstVisibleItemScrollOffset = savedPosition?.offset ?: 0,
     )
+    if (channelList) RegisterBrowseFocusList(listState, visibleChannels.map { it.uuid })
+    else RegisterBrowseFocusRows(listState, visibleChannels.map { channel ->
+        channel.uuid to (listOf("channel:${channel.uuid}") +
+            eventsByChannel[channel.uuid].orEmpty().map { "event:${it.eventId}" })
+    })
     val currentChannels by rememberUpdatedState(visibleChannels)
     LaunchedEffect(listState, browseState, positionKey) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { (index, offset) ->
@@ -133,7 +142,9 @@ internal fun LiveTvChannelBrowser(
     }
     // The list keeps its old scroll position across the player, so the target row (for example a
     // channel reached by zapping) may not be composed yet: bring it into view before focusing.
+    val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
     LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState) {
+        if (sharedInitialFocus) return@LaunchedEffect
         if (!restoreFocus) return@LaunchedEffect
         if (!filterFocusState.allowContentAutoFocus) {
             currentOnFocusRestored()
@@ -257,6 +268,7 @@ internal fun LiveTvChannelBrowser(
                                     if (rowPosition != null) it.eventId == rowPosition.itemId
                                     else channel.uuid == focusTarget.rowId && "event:${it.eventId}" == focusTarget.contentId
                                 }.coerceAtLeast(0), initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0)
+                            RegisterBrowseFocusList(rowState, rowEvents.map { "event:${it.eventId}" }, channel.uuid)
                             // The row may keep an old saved position: show the current programme again.
                             if (channelTarget && restoreFocus) LaunchedEffect(filterFocusState) {
                                 if (filterFocusState.allowContentAutoFocus && rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
@@ -271,6 +283,7 @@ internal fun LiveTvChannelBrowser(
                                 Surface(onClick = { if (canWatch) onWatch(channel.uuid) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
                                     modifier = Modifier.width(if (LocalHandheldUi.current) 260.dp else 212.dp)
                                         .focusRequester(rowFocus.getValue(channel.uuid))
+                                        .browseFocusTarget("channel:${channel.uuid}", rowKey = channel.uuid)
                                         .then(if ("channel:${channel.uuid}" == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier)
                                         .onFocusChanged { focused = it.isFocused; if (it.isFocused) { alphabetTarget = channel.uuid; contentFocused("channel:${channel.uuid}", channel.uuid) } }
                                         .activateOnTvKey { if (canWatch) onWatch(channel.uuid) }) {

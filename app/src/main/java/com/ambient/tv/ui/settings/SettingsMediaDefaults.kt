@@ -5,11 +5,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import com.ambient.tv.R
 import com.ambient.tv.data.local.*
 import com.ambient.tv.ui.common.TvSettingRow
 import com.ambient.tv.ui.common.SettingsSectionHeader
+import com.ambient.tv.ui.common.SettingsHint
+import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.player.*
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 import com.ambient.tv.ui.player.backend.VlcNightProcessing
@@ -22,7 +23,7 @@ internal fun SettingsImageDefaults(state: SettingsUiState, model: SettingsViewMo
     var renderer by rememberSaveable(state.playbackBackendKey) {
         mutableStateOf(profileRendererKey(state.playbackBackendKey))
     }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
         SettingsSectionHeader(
             stringResource(R.string.settings_playback_section_renderer),
             description = stringResource(R.string.settings_playback_scope_defaults),
@@ -54,11 +55,8 @@ internal fun SettingsAudioDefaults(state: SettingsUiState, model: SettingsViewMo
     val vlcNightAvailable by produceState(initialValue = false) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { VlcNightProcessing.deviceSupported }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SettingsSectionHeader(
-            stringResource(R.string.settings_playback_section_audio_defaults),
-            description = stringResource(R.string.settings_defaults_hint),
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(LocalUiTokens.current.compactGap)) {
+        SettingsHint(stringResource(R.string.settings_playback_scope_defaults) + " · " + stringResource(R.string.settings_defaults_hint))
         ImageChoice(
             R.string.settings_defaults_renderer,
             renderer,
