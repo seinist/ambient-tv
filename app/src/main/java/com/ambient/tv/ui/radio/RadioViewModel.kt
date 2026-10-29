@@ -64,6 +64,30 @@ class RadioViewModel @Inject constructor(
     private var focusLoadStationId: String? = null
     private var entered = false
 
+    init {
+        viewModelScope.launch {
+            var favoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
+            preferences.changes().collect {
+                val nextFavoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
+                val favoritesChanged = nextFavoriteIds != favoriteIds
+                favoriteIds = nextFavoriteIds
+                if (favoritesChanged) {
+                    _state.value = _state.value.copy(favoriteIds = nextFavoriteIds)
+                    if (_state.value.section == RadioSection.FAVORITES &&
+                        _state.value.submittedQuery.isBlank()
+                    ) {
+                        showLocalSection(RadioSection.FAVORITES)
+                    }
+                }
+                if (_state.value.section == RadioSection.RECENT &&
+                    _state.value.submittedQuery.isBlank()
+                ) {
+                    showLocalSection(RadioSection.RECENT)
+                }
+            }
+        }
+    }
+
     fun enter() {
         if (entered) return
         entered = true
