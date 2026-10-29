@@ -3,50 +3,63 @@
 ## Decision
 
 Ambient TV uses **Radio Browser** as its only built-in internet-radio catalog.
-SHOUTcast and TuneIn are intentionally out of scope.
+SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is simply
+**Radio**; Radio Browser remains an implementation/source label.
 
-The user-facing system is simply **Radio**. Provider-specific implementation details stay
-inside the data layer.
+## Implemented on `feat/radio-browser-foundation`
 
-## First implementation slice
+### Catalog and network
 
-The initial data layer provides:
+- stable station identity via `stationuuid`;
+- paged server-side search with country-code, language and tag filters;
+- popular stations and broken-station filtering;
+- `url_resolved` with catalog URL fallback;
+- `/json/url/{stationuuid}` on playback start for click accounting and a fresh URL;
+- descriptive Ambient TV User-Agent;
+- DNS discovery through `all.api.radio-browser.info`, randomized mirrors and GET failover;
+- a dedicated public-internet client; debug logs strip URL queries.
 
-- stable station identity via \`stationuuid\`;
-- paged server-side station search;
-- filters for country code, language and tag;
-- popular stations;
-- broken-station filtering;
-- stream URL selection via \`url_resolved\` with \`url\` fallback;
-- the official \`/json/url/{stationuuid}\` call when playback starts, so Radio Browser can
-  count the click and return a fresh stream URL;
-- a descriptive Ambient TV User-Agent.
+### Ambient TV system
 
-The API client deliberately uses a separate public-internet OkHttp client instead of the
-LAN-scoped media-server clients.
+- `Radio` is an independent `MediaSystem` with its own icon;
+- it can be enabled without an account, server or API key;
+- initial setup, start routing, sidebar, system naming and Settings are wired;
+- Radio can be the only configured media system.
 
-## Next slices
+### Browse and playback
 
-1. Add the Radio system to setup/navigation/settings.
-2. Add browse screens: Popular, Genres/Tags, Countries, Languages, Favorites, Recent.
-3. Add global search integration and paging.
-4. Connect a station to the shared audio playback session.
-5. Propagate ICY metadata to player, miniplayer, notification, MediaSession and companion.
-6. Add persistent favorites/history keyed by \`stationuuid\`.
-7. Add previous/next station semantics and radio-appropriate transport controls.
-8. Add Android Auto browsing through the media library service.
-9. Add resilient Radio Browser server discovery/failover instead of relying on one API host.
+- Radio page with Popular, Favorites and Recently played;
+- explicit station search and server-side paging;
+- station artwork/name/country/codec/bitrate;
+- favorites keyed by stable station UUID;
+- recent listening history stored locally;
+- a station starts through the shared Media3/BackgroundPlaybackSession path, not a second player;
+- playback is marked live + audio-only and uses the existing audio-focus/background service;
+- Media3 in-stream metadata updates the active Radio session without restarting the stream;
+- stale metadata from a previous station is rejected by UUID;
+- metadata changes force MediaSession and notification refresh.
 
-## API behavior relied upon
+### Backup
 
-Radio Browser documents:
+- Radio enabled state and Favorites are included in settings backup schema 75;
+- Recently played intentionally stays device-local, matching the existing treatment of live-TV watch history.
 
-- \`/json/stations/search\` with \`offset\`, \`limit\`, sorting and \`hidebroken\`;
-- \`/json/stations/byuuid/{stationuuid}\`;
-- \`/json/stations/topclick/{limit}\`;
-- \`/json/url/{stationuuid}\` for playback starts;
-- \`url_resolved\` as the already-resolved stream URL;
-- a request for clients to send a descriptive User-Agent.
+## Still to implement
 
-The catalog is external and may be temporarily unavailable. UI work must therefore keep
-cached favorites/history usable and show catalog failures without breaking other systems.
+1. Global Ambient TV search integration for Radio.
+2. Optional Home rows for Radio Favorites/Recent.
+3. Previous/next station semantics for the active Radio list and radio-appropriate transport actions.
+4. Android Auto browse hierarchy through the media library service.
+5. Device playback tests with representative MP3/AAC/HLS and ICY stations.
+6. Better catalog facets (country/language/tag screens) beyond direct filtering/search.
+
+## Radio Browser contract relied upon
+
+Radio Browser documents server-side paging, `hidebroken`, stable station UUIDs,
+`url_resolved`, the station-click endpoint and mirror discovery. The client must send a
+descriptive User-Agent. Individual mirrors may disappear, so no single mirror is treated as
+permanent.
+
+The catalog is external and has no availability guarantee. Persisted Favorites and Recent
+therefore retain enough station data to render while the catalog is unavailable; playback
+still asks Radio Browser for the freshest URL and falls back to the stored catalog URL.
