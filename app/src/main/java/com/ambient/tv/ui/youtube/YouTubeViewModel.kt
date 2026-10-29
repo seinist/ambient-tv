@@ -41,8 +41,6 @@ enum class YouTubeFeed(val key: String) {
 
 /** YouTube has no poster artwork, so deliberately excludes Plex's poster/grid modes. */
 enum class YouTubeViewMode { LANDSCAPE, LIST, INFO_LIST, WALL, CINEMATIC }
-enum class YouTubeSort { DEFAULT, TITLE, DURATION }
-enum class YouTubeFilter { ALL, UNWATCHED, IN_PROGRESS, LIVE, SHORTS }
 
 data class YouTubeUiState(
     val available: Boolean = true,
@@ -586,29 +584,3 @@ class YouTubeViewModel @Inject constructor(
 }
 
 private fun Throwable.userMessage() = message?.takeIf { it.isNotBlank() } ?: "YouTube konnte nicht geladen werden."
-
-internal fun applyYouTubeViewOptions(
-    rows: List<YouTubeRow>,
-    sort: YouTubeSort,
-    filter: YouTubeFilter,
-    descending: Boolean = sort == YouTubeSort.DURATION,
-): List<YouTubeRow> = rows.mapNotNull { row ->
-    val filtered = row.items.filter { item ->
-        when (filter) {
-            YouTubeFilter.ALL -> true
-            YouTubeFilter.UNWATCHED -> item.percentWatched <= 0
-            YouTubeFilter.IN_PROGRESS -> item.percentWatched in 1..99
-            YouTubeFilter.LIVE -> item.isLive || item.isUpcoming
-            YouTubeFilter.SHORTS -> item.isShorts
-        }
-    }
-    val sorted = when (sort) {
-        YouTubeSort.DEFAULT -> filtered
-        YouTubeSort.TITLE -> if (descending) filtered.sortedByDescending { it.title.lowercase() } else filtered.sortedBy { it.title.lowercase() }
-        YouTubeSort.DURATION -> filtered.sortedWith(
-            (if (descending) compareByDescending<YouTubeItem> { it.durationMs } else compareBy { it.durationMs })
-                .thenBy { it.title.lowercase() },
-        )
-    }
-    row.copy(items = sorted).takeIf { it.items.isNotEmpty() }
-}

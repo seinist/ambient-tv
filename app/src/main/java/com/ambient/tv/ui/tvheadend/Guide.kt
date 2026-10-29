@@ -80,6 +80,7 @@ internal fun LiveTvChannelBrowser(
     val visibleChannels = remember(channels, eventsByChannel, options) { guideChannels(channels, eventsByChannel, now, options) }
     val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
     val positionKey = if (channelList) "channels" else "guide"
+    val filterFocusState = rememberFilterFocusState(browseState, positionKey)
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
@@ -106,6 +107,7 @@ internal fun LiveTvChannelBrowser(
         ?: visibleChannels.getOrNull(listState.firstVisibleItemIndex))?.let { guideIndexLetter(it.name) }
     fun jumpTo(index: Int, focus: Boolean) {
         val channel = visibleChannels.getOrNull(index) ?: return
+        if (focus) filterFocusState.enterContent()
         jumpJob?.cancel()
         jumpJob = scope.launch {
             listState.scrollToItem(index)
@@ -115,6 +117,7 @@ internal fun LiveTvChannelBrowser(
             if (focus) {
                 withFrameNanos { }
                 repeat(4) {
+                    if (!filterFocusState.allowContentAutoFocus) return@launch
                     if (runCatching { rowFocus[channel.uuid]?.requestFocus() == true }.getOrDefault(false)) return@launch
                     withFrameNanos { }
                 }
@@ -123,10 +126,19 @@ internal fun LiveTvChannelBrowser(
     }
     LaunchedEffect(options, visibleChannels) { jumpJob?.cancel() }
     val currentOnFocusRestored by rememberUpdatedState(onFocusRestored)
+    fun contentFocused(id: String, rowId: String?) {
+        filterFocusState.enterContent()
+        currentOnFocusRestored()
+        onFocused(id, rowId)
+    }
     // The list keeps its old scroll position across the player, so the target row (for example a
     // channel reached by zapping) may not be composed yet: bring it into view before focusing.
-    LaunchedEffect(restoreFocus, focusTarget, visibleChannels) {
+    LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState) {
         if (!restoreFocus) return@LaunchedEffect
+        if (!filterFocusState.allowContentAutoFocus) {
+            currentOnFocusRestored()
+            return@LaunchedEffect
+        }
         val rowId = if (channelList) focusTarget.contentId else focusTarget.rowId
         val index = visibleChannels.indexOfFirst { it.uuid == rowId }
         if (index >= 0) {
@@ -144,6 +156,10 @@ internal fun LiveTvChannelBrowser(
         }
         withFrameNanos { }
         repeat(8) {
+            if (!filterFocusState.allowContentAutoFocus) {
+                currentOnFocusRestored()
+                return@LaunchedEffect
+            }
             if (runCatching { firstContentFocusRequester.requestFocus() }.getOrDefault(false)) {
                 currentOnFocusRestored()
                 return@LaunchedEffect
@@ -151,7 +167,7 @@ internal fun LiveTvChannelBrowser(
             withFrameNanos { }
         }
         // A programme card outside its row's view: the channel itself is the next best target.
-        if (index >= 0) runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() }
+        if (index >= 0 && filterFocusState.allowContentAutoFocus) runCatching { rowFocus[visibleChannels[index].uuid]?.requestFocus() }
         // Done either way: the screen holds the shell's content entry while this is pending.
         currentOnFocusRestored()
     }
@@ -184,13 +200,17 @@ internal fun LiveTvChannelBrowser(
         }
     }
     BackHandler(showOptions) { showOptions = false }
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup()) {
             val trailing: @Composable RowScope.() -> Unit = {
-                ViewOptionsChip(if (filterBarShown) 0 else filterModel.activeCount, { optionsOpened = true; showOptions = true },
+                ViewOptionsChip(if (filterBarShown) 0 else filterModel.activeCount, {
+                    filterFocusState.keepControls(); optionsOpened = true; showOptions = true
+                },
                     Modifier.focusRequester(optionsFocus)
                         .then(if (!filterBarShown && visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                 if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet, onClick = {
+                    filterFocusState.keepControls()
                     pendingAlphabet = true
                     if (options.sort != GuideSort.NAME) onOptions(options.copy(sort = GuideSort.NAME, descending = false))
                 })
@@ -204,7 +224,12 @@ internal fun LiveTvChannelBrowser(
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 } else StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
-                    onAction = { onOptions(GuideOptions(sort = options.sort, descending = options.descending)) })
+                    onAction = {
+                        filterFocusState.keepControls()
+                        if (!filterBarShown) { optionsOpened = true; showOptions = true }
+                        onOptions(GuideOptions(sort = options.sort, descending = options.descending))
+                        filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
+                    })
             } else Row(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(allowUpExit = true, state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()
@@ -218,7 +243,7 @@ internal fun LiveTvChannelBrowser(
                             val recording = current?.let { event -> findProgrammeRecording(event, upcoming) != null } == true
                             ChannelRow(channel, current, next, recording, imageHeaders,
                                 onWatch = { if (canWatch) onWatch(it.uuid) }, onEvent = onEvent,
-                                onFocused = { alphabetTarget = channel.uuid; onFocused(channel.uuid, null) },
+                                onFocused = { alphabetTarget = channel.uuid; contentFocused(channel.uuid, null) },
                                 modifier = Modifier.focusRequester(rowFocus.getValue(channel.uuid))
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                         } else {
@@ -233,8 +258,8 @@ internal fun LiveTvChannelBrowser(
                                     else channel.uuid == focusTarget.rowId && "event:${it.eventId}" == focusTarget.contentId
                                 }.coerceAtLeast(0), initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0)
                             // The row may keep an old saved position: show the current programme again.
-                            if (channelTarget && restoreFocus) LaunchedEffect(Unit) {
-                                if (rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
+                            if (channelTarget && restoreFocus) LaunchedEffect(filterFocusState) {
+                                if (filterFocusState.allowContentAutoFocus && rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
                             }
                             DisposableEffect(rowState, rowEvents) {
                                 onDispose { rowEvents.getOrNull(rowState.firstVisibleItemIndex)?.let {
@@ -247,7 +272,7 @@ internal fun LiveTvChannelBrowser(
                                     modifier = Modifier.width(if (LocalHandheldUi.current) 260.dp else 212.dp)
                                         .focusRequester(rowFocus.getValue(channel.uuid))
                                         .then(if ("channel:${channel.uuid}" == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier)
-                                        .onFocusChanged { focused = it.isFocused; if (it.isFocused) { alphabetTarget = channel.uuid; onFocused("channel:${channel.uuid}", channel.uuid) } }
+                                        .onFocusChanged { focused = it.isFocused; if (it.isFocused) { alphabetTarget = channel.uuid; contentFocused("channel:${channel.uuid}", channel.uuid) } }
                                         .activateOnTvKey { if (canWatch) onWatch(channel.uuid) }) {
                                     Row(Modifier.fillMaxWidth().background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .22f) else Color.Transparent)
                                         .padding(6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -265,7 +290,7 @@ internal fun LiveTvChannelBrowser(
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 else LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(rowEvents, key = { it.eventId }) { event ->
-                                        GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; onFocused("event:${event.eventId}", channel.uuid) },
+                                        GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
                                             modifier = if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)
                                     }
@@ -291,6 +316,7 @@ internal fun LiveTvChannelBrowser(
                 FilterOptionsPanel(stringResource(if (channelList) R.string.channel_options else R.string.guide_options), filterModel, { showOptions = false })
             }
         }
+    }
     }
 }
 

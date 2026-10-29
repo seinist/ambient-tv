@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -43,9 +44,12 @@ fun FilterBar(
     up: FocusRequester? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
-    var first = true
-    fun Modifier.firstFocus(): Modifier =
-        if (first && focusRequester != null) { first = false; focusRequester(focusRequester) } else { first = false; this }
+    val focus = LocalFilterFocusState.current
+    val firstControl = groups.firstOrNull()?.let { "filter:${it.id}" }
+        ?: "sort".takeIf { sorts.isNotEmpty() }
+        ?: "sort-order".takeIf { sortOrders.size >= 2 }
+    fun Modifier.firstFocus(control: String): Modifier =
+        if (control == firstControl && focusRequester != null) focusRequester(focusRequester) else this
     Row(
         modifier.fillMaxWidth()
             .horizontalScroll(rememberScrollState())
@@ -59,46 +63,52 @@ fun FilterBar(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        groups.forEach { group ->
+        groups.forEach { group -> key(group.id) {
+            val control = "filter:${group.id}"
             val neutral = group.options.firstOrNull()?.key
             if (group.options.size == 2) {
                 val on = group.selectedKey != neutral
-                TvChip(group.options[1].title, selected = on, modifier = Modifier.firstFocus(),
-                    onClick = { onSelect(group.id, if (on) group.options[0].key else group.options[1].key) })
+                TvChip(group.options[1].title, selected = on,
+                    modifier = Modifier.filterControlFocus(control, FilterFocusSurface.BAR).firstFocus(control),
+                    onClick = {
+                        focus?.edited(control)
+                        onSelect(group.id, if (on) group.options[0].key else group.options[1].key)
+                    })
             } else {
                 PlayerDropUpSelector(
                     label = group.title,
                     value = group.options.firstOrNull { it.key == group.selectedKey }?.title ?: group.selectedKey,
                     options = group.options.map { it.key to it.title },
                     selectedKey = group.selectedKey,
-                    modifier = Modifier.width(FilterSelectorWidth).firstFocus(),
+                    modifier = Modifier.width(FilterSelectorWidth).filterControlFocus(control, FilterFocusSurface.BAR).firstFocus(control),
                     dropUp = false,
-                    onSelected = { onSelect(group.id, it) },
+                    onSelected = { focus?.edited(control); onSelect(group.id, it) },
                 )
             }
-        }
+        } }
         if (sorts.isNotEmpty()) {
             PlayerDropUpSelector(
                 label = stringResource(R.string.library_sort),
                 value = sorts.firstOrNull { it.key == selectedSort }?.title ?: selectedSort,
                 options = sorts.map { it.key to it.title },
                 selectedKey = selectedSort,
-                modifier = Modifier.width(FilterSelectorWidth).firstFocus(),
+                modifier = Modifier.width(FilterSelectorWidth).filterControlFocus("sort", FilterFocusSurface.BAR).firstFocus("sort"),
                 dropUp = false,
-                onSelected = onSort,
+                onSelected = { focus?.edited("sort"); onSort(it) },
             )
         }
         if (sortOrders.size >= 2) {
             val current = sortOrders.firstOrNull { it.key == selectedSortOrder } ?: sortOrders.first()
             val next = sortOrders.first { it.key != current.key }
-            TvChip(current.title, modifier = Modifier.firstFocus(),
+            TvChip(current.title, modifier = Modifier.filterControlFocus("sort-order", FilterFocusSurface.BAR).firstFocus("sort-order"),
                 icon = if (current.key == "DESCENDING") Icons.Filled.ArrowDownward else Icons.Filled.ArrowUpward,
-                onClick = { onSortOrder(next.key) })
+                onClick = { focus?.edited("sort-order"); onSortOrder(next.key) })
         }
         if (onReset != null && groups.any { it.selectedKey != it.options.firstOrNull()?.key }) {
             TvChip(stringResource(R.string.library_filter_reset), icon = Icons.Filled.FilterAltOff, onClick = {
-                // The chip disappears with the filters; keep focus in the bar.
-                focusRequester?.let { runCatching { it.requestFocus() } }
+                // The chip disappears; return to the field that changed, not the first result.
+                if (focus != null) focus.restoreFilter(FilterFocusSurface.BAR)
+                else focusRequester?.let { runCatching { it.requestFocus() } }
                 onReset()
             })
         }

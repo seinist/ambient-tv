@@ -133,6 +133,8 @@ Die **bevorzugte Audiosprache** liegt unter *Wiedergabe › Audioprofile*, die U
 | Listenzeilen auf dem Bildschirm | 4–10 | 7 | Listendichte. |
 | Filterleiste | An / Aus (Ansicht-Menü) | An | Filter und Sortierung als Leiste direkt über dem Inhalt in Mediathek, Live-TV-Programmführer, Trailern und SmartTube: Jeder Filter öffnet seine Werte am Platz, zweiwertige Filter sind Schalter, Zurücksetzen erscheint nur bei aktiven Filtern. Aus verschiebt Filter und Sortierung zurück ins Ansicht-Panel. |
 
+Beim Ändern von Filtern, Sortierung oder Ansicht bleibt der Fokus auf dem bearbeiteten Bedienelement, während die Ergebnisse aktualisiert werden. Liefert ein Filter keine Treffer, führt **Filter zurücksetzen** zum zuletzt bearbeiteten Filter zurück. Bei ausgeblendeter Filterleiste öffnet sich dafür das Ansicht-Panel an diesem Filter. Beim normalen Betreten des Inhalts und bei der Rückkehr von einer Detailseite wird weiterhin das ausgewählte Element fokussiert.
+
 ### 3.5 Aussehen
 
 | Einstellung | Optionen / Werte | Standard | Geräte | Sichtbar wenn / Beschreibung |
@@ -294,6 +296,8 @@ Beide Seiten haben dieselben Einstellungen.
 | Verbindung (Media3) | Klassisch (OkHttp) · Play-Dienste (Cronet) · Android (eingebaut) | Klassisch | Alle | Netzwerk-Engine des Media3-Players. Auch im Player unter Video › Stream; ein Wechsel dort öffnet das Video an der aktuellen Stelle neu und bleibt gespeichert. |
 | Puffergröße (Media3) | Klein (30 s) · Mittel (50 s) · Groß (3 min) | Mittel | Alle | Wie im Original-Client; auch im Player unter Video › Stream. |
 | Verknüpfen mit der YouTube-App erlauben | An / Aus | Aus | TV | „Auf dem Fernseher ansehen“: Handys öffnen, pausieren, spulen und stoppen Videos hier. Danach „TV-Code anzeigen“ / „Alle Handys trennen“. |
+
+Reine Kanallisten bieten passende Sortierungen (Anbieterreihenfolge oder Titel), aber keine Videofilter oder Sortierung nach Dauer. In gemischten Ergebnissen wirken Videofilter nur auf Videos; Kanalkacheln bleiben sichtbar. Videos innerhalb eines Kanals behalten ihre üblichen Filter und Sortierungen. Gespeicherte Videoeinstellungen bleiben beim Besuch einer Kanalliste erhalten.
 
 ### 4.5 Spotify
 

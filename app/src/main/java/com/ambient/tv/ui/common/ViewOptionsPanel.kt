@@ -75,16 +75,28 @@ fun ViewOptionsPanel(
     filtersActive: Boolean = false, onResetFilters: (() -> Unit)? = null,
     extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
+    val focus = LocalFilterFocusState.current
+    // Returning to a filter replaces the panel's initial focus for this opening. Clearing the
+    // return request must not start the panel's normal initial-focus effect afterwards.
+    val requestInitialPanelFocus = remember(focus) { focus?.pendingSurface != FilterFocusSurface.PANEL }
+    val resetFilters: (() -> Unit)? = onResetFilters?.let { reset -> {
+        focus?.restoreFilter(FilterFocusSurface.PANEL)
+        reset()
+    } }
+    DisposableEffect(focus) {
+        focus?.keepControls()
+        onDispose { }
+    }
     RightSidePanel(title, onClose, modifier,
         subtitle = hint, closeInsteadOfBack = true,
-        requestHeaderFocus = true) {
+        requestHeaderFocus = requestInitialPanelFocus) {
         if (views.isNotEmpty()) RightPanelSectionTitle(stringResource(R.string.library_view))
         // The panel focuses its first tile on open; hand that first focus to the selected layout.
         val selectedFocus = remember { FocusRequester() }
         val selectedIntoView = remember { BringIntoViewRequester() }
         var selectedSize by remember { mutableStateOf(IntSize.Zero) }
         val visibilityMargin = with(LocalDensity.current) { 32.dp.toPx() }
-        var initialFocusPending by remember { mutableStateOf(true) }
+        var initialFocusPending by remember(focus) { mutableStateOf(requestInitialPanelFocus) }
         var redirectInitialFocus by remember { mutableStateOf(false) }
         LaunchedEffect(redirectInitialFocus) {
             if (redirectInitialFocus) {
@@ -116,7 +128,7 @@ fun ViewOptionsPanel(
                         row.forEach { option -> key(option.key) {
                             val selected = selectedView == option.key
                             val rightmost = option == row.last()
-                            ViewPreviewChoice(option, selected, { onView(option.key) },
+                            ViewPreviewChoice(option, selected, { focus?.keepControls(); onView(option.key) },
                                 Modifier.weight(1f).then(
                                     if (rightmost) Modifier.focusProperties { right = scrollbarFocus ?: FocusRequester.Cancel }.rightPanelScrollbarReturn() else Modifier,
                                 ).then(
@@ -137,7 +149,7 @@ fun ViewOptionsPanel(
                     value = listRows,
                     valueRange = 4..10,
                     valueLabel = stringResource(R.string.library_list_rows, listRows),
-                    onValueChange = onListRows,
+                    onValueChange = { focus?.keepControls(); onListRows(it) },
                 )
             } else {
                 val displayedColumns = displayedGridColumns(gridColumns, preview)
@@ -148,7 +160,7 @@ fun ViewOptionsPanel(
                     value = displayedColumns,
                     valueRange = minColumns..maxColumns,
                     valueLabel = stringResource(R.string.library_grid_columns, displayedColumns),
-                    onValueChange = { onGridColumns(changedGridColumns(gridColumns, preview, it - displayedColumns)) },
+                    onValueChange = { focus?.keepControls(); onGridColumns(changedGridColumns(gridColumns, preview, it - displayedColumns)) },
                 )
             }
         }
@@ -156,7 +168,7 @@ fun ViewOptionsPanel(
         val filterBar = LocalFilterBarSetting.current
         if (sorts.isNotEmpty() || filters.isNotEmpty() || filterGroups.isNotEmpty()) {
             RightPanelDivider()
-            RightPanelChoice(stringResource(R.string.library_filter_bar), filterBar.shown, { filterBar.set(!filterBar.shown) },
+            RightPanelChoice(stringResource(R.string.library_filter_bar), filterBar.shown, { focus?.keepControls(); filterBar.set(!filterBar.shown) },
                 Modifier.fillMaxWidth(), subtitle = stringResource(R.string.library_filter_bar_hint))
         }
         // The visible bar owns sort and filters; the panel takes them back only when it is hidden.
@@ -164,45 +176,55 @@ fun ViewOptionsPanel(
         if (sorts.isNotEmpty()) {
             RightPanelDivider()
             RightPanelSectionTitle(stringResource(R.string.library_sort))
-            PanelChoices(sorts, selectedSort, onSort)
+            PanelChoices(sorts, selectedSort) { focus?.edited("sort:$it"); onSort(it) }
             if (sortOrders.isNotEmpty()) {
                 RightPanelSectionTitle(stringResource(R.string.library_sort_order))
-                SortOrderToggle(sortOrders, selectedSortOrder, onSortOrder)
+                SortOrderToggle(sortOrders, selectedSortOrder, { focus?.edited("sort-order"); onSortOrder(it) },
+                    modifier = Modifier.filterControlFocus("sort-order", FilterFocusSurface.PANEL))
             }
         }
         if (filters.isNotEmpty()) {
             if (sorts.isEmpty()) RightPanelDivider()
-            if (onResetFilters != null && filtersActive) {
-                RightPanelChoice(stringResource(R.string.library_filter_reset), selected = false, onClick = onResetFilters)
+            if (resetFilters != null && filtersActive) {
+                RightPanelChoice(stringResource(R.string.library_filter_reset), selected = false, onClick = resetFilters)
             }
-            PanelSelect(stringResource(R.string.library_filter), filters, selectedFilter, onFilter)
+            PanelSelect(stringResource(R.string.library_filter), filters, selectedFilter,
+                Modifier.filterControlFocus("filter:filter", FilterFocusSurface.PANEL)) {
+                focus?.edited("filter:filter"); onFilter(it)
+            }
         }
         if (filterGroups.isNotEmpty()) {
             RightPanelDivider()
-            if (filters.isEmpty() && onResetFilters != null && filtersActive) {
-                RightPanelChoice(stringResource(R.string.library_filter_reset), selected = false, onClick = onResetFilters)
+            if (filters.isEmpty() && resetFilters != null && filtersActive) {
+                RightPanelChoice(stringResource(R.string.library_filter_reset), selected = false, onClick = resetFilters)
             }
-            filterGroups.forEach { group ->
-                PanelSelect(group.title, group.options, group.selectedKey) { onFilterGroup(group.id, it) }
-            }
+            filterGroups.forEach { group -> key(group.id) {
+                val control = "filter:${group.id}"
+                PanelSelect(group.title, group.options, group.selectedKey,
+                    Modifier.filterControlFocus(control, FilterFocusSurface.PANEL)) {
+                    focus?.edited(control); onFilterGroup(group.id, it)
+                }
+            } }
         }
     }
 }
 
 @Composable
 private fun PanelChoices(options: List<PanelOption>, selected: String, onSelect: (String) -> Unit) {
-    options.forEach { option ->
-        RightPanelChoice(option.title, selected == option.key, { onSelect(option.key) }, Modifier.fillMaxWidth())
-    }
+    options.forEach { option -> key(option.key) {
+        RightPanelChoice(option.title, selected == option.key, { onSelect(option.key) },
+            Modifier.fillMaxWidth().filterControlFocus("sort:${option.key}", FilterFocusSurface.PANEL))
+    } }
 }
 
 @Composable
-private fun PanelSelect(label: String, options: List<PanelOption>, selectedKey: String, onSelect: (String) -> Unit) {
+private fun PanelSelect(label: String, options: List<PanelOption>, selectedKey: String, modifier: Modifier = Modifier, onSelect: (String) -> Unit) {
     PlayerDropUpSelector(
         label = label,
         value = options.firstOrNull { it.key == selectedKey }?.title ?: selectedKey,
         options = options.map { it.key to it.title },
         selectedKey = selectedKey,
+        modifier = modifier,
         dropUp = false,
         onSelected = onSelect,
     )

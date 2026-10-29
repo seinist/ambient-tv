@@ -2,21 +2,6 @@ package com.ambient.tv.youtube
 
 import java.util.Locale
 
-/** One adaptive (video-only or audio-only) format as SmartTube lists it. */
-data class YouTubeAdaptiveFormat(
-    val mimeType: String?,
-    val url: String?,
-    val height: Int = 0,
-    val bitrate: Long = 0,
-    val isOtf: Boolean = false,
-    val isDrc: Boolean = false,
-    val xtags: String? = null,
-    val width: Int = 0,
-    val fps: Int = 0,
-    val audioTrackId: String? = null,
-    val language: String? = null,
-)
-
 /**
  * Whether the device plays [family] ("avc", "vp9", "av1") at width×height and fps in hardware;
  * [hdr] ("hdr10", "hlg") additionally needs the 10-bit HDR decoder profile and a matching display.

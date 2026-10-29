@@ -149,6 +149,9 @@ import com.ambient.tv.ui.common.FullscreenSpinner
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.sanitizeUiErrorMessage
 import com.ambient.tv.ui.common.FilterBar
+import com.ambient.tv.ui.common.FilterFocusSurface
+import com.ambient.tv.ui.common.LocalFilterFocusState
+import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
@@ -219,6 +222,7 @@ fun SectionScreen(
             }
             is SectionUiState.Loaded -> SectionContent(
                 state = state,
+                sectionKey = viewModel.sectionKey,
                 system = when {
                     com.ambient.tv.data.emby.EmbyBackend.owns(viewModel.sectionKey) -> com.ambient.tv.ui.common.MediaSystem.EMBY
                     com.ambient.tv.data.jellyfin.JellyfinBackend.owns(viewModel.sectionKey) -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
@@ -266,11 +270,13 @@ internal fun SectionContent(
     onSetGridColumns: (Int) -> Unit,
     onSetListRows: (Int) -> Unit,
     onSelectLetter: (Char?) -> Unit,
+    sectionKey: String? = null,
 ) {
+    val filterFocusState = rememberFilterFocusState(sectionKey, state.page)
     var showOptions by remember { mutableStateOf(false) }
     var optionsOpened by remember { mutableStateOf(false) }
     val optionsFocusRequester = remember { FocusRequester() }
-    var initialContentFocusPending by remember(state.page) { mutableStateOf(true) }
+    var initialContentFocusPending by remember(sectionKey, state.page) { mutableStateOf(true) }
     val initialRecommendationRow = state.recommendationRows.firstOrNull { it.items.isNotEmpty() }
     val focusState = if (initialContentFocusPending) {
         when (state.page) {
@@ -304,11 +310,12 @@ internal fun SectionContent(
     var contentEntryPending by remember { mutableStateOf(false) }
     var contentEntryWaits by remember { mutableIntStateOf(0) }
     val restoreContentFocus = {
+        filterFocusState.enterContent()
         contentEntryPending = true
         contentEntryWaits = 0
         contentEntryGeneration++
     }
-    val enterContent: () -> Boolean? = remember {
+    val enterContent: () -> Boolean? = remember(filterFocusState) {
         {
             when {
                 contentAreaHasFocus -> true
@@ -328,7 +335,15 @@ internal fun SectionContent(
             }
         }
     }
-    val markInitialFocusHandled = { initialContentFocusPending = false }
+    val markInitialFocusHandled = {
+        initialContentFocusPending = false
+        filterFocusState.enterContent()
+    }
+    val keepControlFocus = {
+        filterFocusState.keepControls()
+        initialContentFocusPending = false
+        contentEntryPending = false
+    }
     var visibleLibraryLetter by remember(state.items, state.page, state.sort, state.viewMode) {
         mutableStateOf(state.items.firstOrNull()?.let { libraryIndexLetter(it.title) })
     }
@@ -359,132 +374,142 @@ internal fun SectionContent(
     LaunchedEffect(heroBackdrop, sharedBackgroundArtwork) {
         if (heroBackdrop) recommendationHero.collect { hero -> if (hero != null) sharedBackgroundArtwork?.value = hero }
     }
-    Box(Modifier.fillMaxSize()) {
-        if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
-        Column(Modifier.fillMaxSize().focusProperties {
-            onEnter = {
-                // D-pad entry (e.g. Right out of the sidebar) restores like the sidebar handoff; plain
-                // requests, such as a list restoring its item, pass.
-                if (showOptions) {
-                    cancelFocusChange()
-                } else if (requestedFocusDirection != FocusDirection.Enter) {
-                    // A second press while nothing was restored (e.g. empty view) enters normally.
-                    if (contentEntryPending) {
-                        contentEntryPending = false
-                    } else {
-                        restoreContentFocus()
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
+        Box(Modifier.fillMaxSize()) {
+            if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
+            Column(Modifier.fillMaxSize().focusProperties {
+                onEnter = {
+                    // D-pad entry (e.g. Right out of the sidebar) restores like the sidebar handoff; plain
+                    // requests, such as a list restoring its item, pass.
+                    if (showOptions) {
                         cancelFocusChange()
-                    }
-                }
-            }
-        }.focusGroup()) {
-            val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-            val filterFocus = remember { FocusRequester() }
-            val filterBarShown = state.page != SectionPage.RECOMMENDATIONS && com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
-            SectionHeader(
-                focusState,
-                onPage,
-                focusChain = focusChain,
-                system = system,
-                onOpenOverview = { onOpenOverview(system) },
-                onOpenOptions = {
-                    optionsOpened = true
-                    showOptions = true
-                },
-                optionsModifier = Modifier.focusRequester(optionsFocusRequester),
-                filterFocus = filterFocus,
-                filterUp = focusChain.chips,
-                onSetSort = onSetSort,
-                onSetSortOrder = onSetSortOrder,
-                onSetFilterGroup = onSetFilterGroup,
-                onResetFilters = onResetFilters,
-            )
-            // Cinematic has no scrollable grid for the bar to jump in.
-            val showAlphabetBar = state.page == SectionPage.LIBRARY &&
-                state.viewMode != SectionViewMode.CINEMATIC && state.viewMode != SectionViewMode.POSTER_CINEMATIC &&
-                state.sort == SectionSort.TITLE &&
-                state.availableLetters.size > 5
-            val libraryFocusRequester = remember { FocusRequester() }
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .focusRequester(contentAreaFocus)
-                    .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
-                    .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.contentUp }
-                    .focusGroup()
-                    .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .then(
-                            if (showAlphabetBar) {
-                                Modifier.focusRequester(libraryFocusRequester).focusGroup()
-                            } else {
-                                Modifier
-                            },
-                        ),
-                ) {
-                    // The alphabet bar already shows the position; a scrollbar would sit under it.
-                    CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar) {
-                        key(contentEntryGeneration) {
-                            SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
-                            SectionPage.RECOMMENDATIONS -> RecommendationsPage(
-                                focusState,
-                                onItemClick,
-                                { rowId, item -> markInitialFocusHandled(); onRecommendationItemFocused(rowId, item) },
-                                recommendationHero,
-                            )
-                            SectionPage.LIBRARY -> {
-                                if (state.items.isEmpty()) EmptyLibrary(!state.libraryFilters.isDefault, onResetFilters) else when (state.viewMode) {
-                                    SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {})
-                                    SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter)
-                                    SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {}, poster = state.viewMode == SectionViewMode.POSTER_LIST)
-                                    SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST)
-                                    SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL)
-                                    SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC -> CinematicView(focusState.items, focusState.focusedRatingKey, onItemClick, poster = state.viewMode == SectionViewMode.POSTER_CINEMATIC) { item -> markInitialFocusHandled(); onItemFocused(item) }
-                                }
-                            }
-                            SectionPage.COLLECTIONS -> {
-                                if (state.collectionsLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    FullscreenSpinner()
-                                } else if (state.collections.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    StatePanel(stringResource(R.string.collections_empty_title), stringResource(R.string.collections_empty_body))
-                                } else when (state.viewMode) {
-                                    SectionViewMode.POSTER, SectionViewMode.GRID, SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> CollectionGrid(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
-                                    else -> CollectionList(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
-                                }
-                            }
-                        } }
+                    } else if (requestedFocusDirection != FocusDirection.Enter) {
+                        // A second press while nothing was restored (e.g. empty view) enters normally.
+                        if (contentEntryPending) {
+                            contentEntryPending = false
+                        } else {
+                            restoreContentFocus()
+                            cancelFocusChange()
                         }
                     }
                 }
-                if (showAlphabetBar) {
-                    AlphabetBar(
-                        letters = state.availableLetters,
-                        selected = visibleLibraryLetter,
-                        onSelect = { letter -> visibleLibraryLetter = letter; onSelectLetter(letter) },
-                        gridFocus = libraryFocusRequester,
-                        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                    )
+            }.focusGroup()) {
+                val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+                val filterFocus = remember { FocusRequester() }
+                val filterBarShown = state.page != SectionPage.RECOMMENDATIONS && com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
+                SectionHeader(
+                    focusState,
+                    onPage,
+                    focusChain = focusChain,
+                    system = system,
+                    onOpenOverview = { onOpenOverview(system) },
+                    onOpenOptions = {
+                        optionsOpened = true
+                        showOptions = true
+                    },
+                    optionsModifier = Modifier.focusRequester(optionsFocusRequester),
+                    filterFocus = filterFocus,
+                    filterUp = focusChain.chips,
+                    onSetSort = { keepControlFocus(); onSetSort(it) },
+                    onSetSortOrder = { keepControlFocus(); onSetSortOrder(it) },
+                    onSetFilterGroup = { group, value -> keepControlFocus(); onSetFilterGroup(group, value) },
+                    onResetFilters = { keepControlFocus(); onResetFilters() },
+                )
+                // Cinematic has no scrollable grid for the bar to jump in.
+                val showAlphabetBar = state.page == SectionPage.LIBRARY &&
+                    state.viewMode != SectionViewMode.CINEMATIC && state.viewMode != SectionViewMode.POSTER_CINEMATIC &&
+                    state.sort == SectionSort.TITLE &&
+                    state.availableLetters.size > 5
+                val libraryFocusRequester = remember { FocusRequester() }
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .focusRequester(contentAreaFocus)
+                        .onFocusChanged { contentAreaHasFocus = it.hasFocus; if (it.hasFocus) contentEntryPending = false }
+                        .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.contentUp }
+                        .focusGroup()
+                        .acceleratedDpadNavigation(enabled = !LocalHandheldUi.current),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .then(
+                                if (showAlphabetBar) {
+                                    Modifier.focusRequester(libraryFocusRequester).focusGroup()
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    ) {
+                        // The alphabet bar already shows the position; a scrollbar would sit under it.
+                        CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar) {
+                            key(contentEntryGeneration) {
+                                SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
+                                SectionPage.RECOMMENDATIONS -> RecommendationsPage(
+                                    focusState,
+                                    onItemClick,
+                                    { rowId, item -> markInitialFocusHandled(); onRecommendationItemFocused(rowId, item) },
+                                    recommendationHero,
+                                )
+                                SectionPage.LIBRARY -> {
+                                    if (state.items.isEmpty()) EmptyLibrary(!state.libraryFilters.isDefault) {
+                                        keepControlFocus()
+                                        if (!filterBarShown) {
+                                            optionsOpened = true
+                                            showOptions = true
+                                        }
+                                        onResetFilters()
+                                        filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
+                                    } else when (state.viewMode) {
+                                        SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {})
+                                        SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter)
+                                        SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {}, poster = state.viewMode == SectionViewMode.POSTER_LIST)
+                                        SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST)
+                                        SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL)
+                                        SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC -> CinematicView(focusState.items, focusState.focusedRatingKey, onItemClick, poster = state.viewMode == SectionViewMode.POSTER_CINEMATIC) { item -> markInitialFocusHandled(); onItemFocused(item) }
+                                    }
+                                }
+                                SectionPage.COLLECTIONS -> {
+                                    if (state.collectionsLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        FullscreenSpinner()
+                                    } else if (state.collections.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        StatePanel(stringResource(R.string.collections_empty_title), stringResource(R.string.collections_empty_body))
+                                    } else when (state.viewMode) {
+                                        SectionViewMode.POSTER, SectionViewMode.GRID, SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> CollectionGrid(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
+                                        else -> CollectionList(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
+                                    }
+                                }
+                            } }
+                            }
+                        }
+                    }
+                    if (showAlphabetBar) {
+                        AlphabetBar(
+                            letters = state.availableLetters,
+                            selected = visibleLibraryLetter,
+                            onSelect = { letter -> visibleLibraryLetter = letter; onSelectLetter(letter) },
+                            gridFocus = libraryFocusRequester,
+                            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                        )
+                    }
                 }
             }
-        }
 
-        if (showOptions) Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
-        if (showOptions) Box(Modifier.align(Alignment.TopEnd)) {
-            SectionOptionsPanel(
-                state = state,
-                onSetSort = onSetSort,
-                onSetSortOrder = onSetSortOrder,
-                onSetFilterGroup = onSetFilterGroup,
-                onResetFilters = onResetFilters,
-                onSetView = onSetView,
-                onSetGridColumns = onSetGridColumns,
-                onSetListRows = onSetListRows,
-                onClose = { showOptions = false },
-            )
+            if (showOptions) Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+            if (showOptions) Box(Modifier.align(Alignment.TopEnd)) {
+                SectionOptionsPanel(
+                    state = state,
+                    onSetSort = { keepControlFocus(); onSetSort(it) },
+                    onSetSortOrder = { keepControlFocus(); onSetSortOrder(it) },
+                    onSetFilterGroup = { group, value -> keepControlFocus(); onSetFilterGroup(group, value) },
+                    onResetFilters = { keepControlFocus(); onResetFilters() },
+                    onSetView = { keepControlFocus(); onSetView(it) },
+                    onSetGridColumns = { keepControlFocus(); onSetGridColumns(it) },
+                    onSetListRows = { keepControlFocus(); onSetListRows(it) },
+                    onClose = { showOptions = false },
+                )
+            }
         }
     }
 }
@@ -925,10 +950,11 @@ private fun RecommendationListItem(
     var focused by remember(item.ratingKey) { mutableStateOf(false) }
     val requester = remember { FocusRequester() }
     val handheldUi = LocalHandheldUi.current
-    LaunchedEffect(requestInitialFocus) {
-        if (requestInitialFocus && !handheldUi) {
+    val filterFocusState = LocalFilterFocusState.current
+    LaunchedEffect(requestInitialFocus, filterFocusState) {
+        if (requestInitialFocus && filterFocusState?.allowContentAutoFocus != false && !handheldUi) {
             delay(120)
-            runCatching { requester.requestFocus() }
+            if (filterFocusState?.allowContentAutoFocus != false) runCatching { requester.requestFocus() }
         }
     }
     val shape = RoundedCornerShape(10.dp)
@@ -1037,10 +1063,11 @@ private fun WallTile(
     var focused by remember(item.ratingKey) { mutableStateOf(false) }
     val requester = remember { FocusRequester() }
     val handheldUi = LocalHandheldUi.current
-    LaunchedEffect(requestInitialFocus) {
-        if (requestInitialFocus && !handheldUi) {
+    val filterFocusState = LocalFilterFocusState.current
+    LaunchedEffect(requestInitialFocus, filterFocusState) {
+        if (requestInitialFocus && filterFocusState?.allowContentAutoFocus != false && !handheldUi) {
             delay(120)
-            runCatching { requester.requestFocus() }
+            if (filterFocusState?.allowContentAutoFocus != false) runCatching { requester.requestFocus() }
         }
     }
     val shape = RoundedCornerShape(10.dp)
@@ -1479,6 +1506,7 @@ private fun StylishMediaList(
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
     val restoreRequester = remember { FocusRequester() }
+    val filterFocusState = LocalFilterFocusState.current
     LaunchedEffect(selectedLetter, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) } } }
     LaunchedEffect(listState, items, onVisibleLetterChanged) {
         if (onVisibleLetterChanged != null) {
@@ -1488,8 +1516,10 @@ private fun StylishMediaList(
                 }
         }
     }
-    LaunchedEffect(Unit) {
-        if (initialFocusedKey != null && restoreIndex in items.indices && items[restoreIndex].ratingKey == initialFocusedKey) {
+    LaunchedEffect(filterFocusState) {
+        if (filterFocusState?.allowContentAutoFocus != false && initialFocusedKey != null &&
+            restoreIndex in items.indices && items[restoreIndex].ratingKey == initialFocusedKey
+        ) {
             runCatching { restoreRequester.requestFocus() }
         }
     }
@@ -1644,11 +1674,16 @@ private fun InfoList(
     val restoreIndex = remember(items, initialFocusedKey) { items.indexOfFirst { it.ratingKey == initialFocusedKey }.coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
     val restoreRequester = remember { FocusRequester() }
+    val filterFocusState = LocalFilterFocusState.current
     var preview by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == initialFocusedKey } ?: items.first()) }
     val uhdScale = rememberUhdScale()
     val rowScale = (7f / visibleRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f) * uhdScale
 
-    LaunchedEffect(Unit) { if (initialFocusedKey != null) runCatching { restoreRequester.requestFocus() } }
+    LaunchedEffect(filterFocusState) {
+        if (filterFocusState?.allowContentAutoFocus != false && initialFocusedKey != null) {
+            runCatching { restoreRequester.requestFocus() }
+        }
+    }
     LaunchedEffect(selectedLetter, items) {
         selectedLetter?.let { letter ->
             items.indexOfFirst { libraryIndexLetter(it.title) == letter }
@@ -1772,7 +1807,12 @@ private fun WallGrid(
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
     val restoreRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { if (restoreKey != null) runCatching { restoreRequester.requestFocus() } }
+    val filterFocusState = LocalFilterFocusState.current
+    LaunchedEffect(filterFocusState) {
+        if (filterFocusState?.allowContentAutoFocus != false && restoreKey != null) {
+            runCatching { restoreRequester.requestFocus() }
+        }
+    }
     LaunchedEffect(selectedLetter, items) { selectedLetter?.let { l -> items.indexOfFirst { libraryIndexLetter(it.title) == l }.takeIf { it >= 0 }?.let { gridState.scrollToItem(it) } } }
     LaunchedEffect(gridState, items, onVisibleLetterChanged) {
         if (onVisibleLetterChanged != null) snapshotFlow { gridState.firstVisibleItemIndex }.collect { index ->
@@ -1864,10 +1904,13 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
     val restoreIndex = remember(state.collections, restoreId) { state.collections.indexOfFirst { it.id == restoreId }.coerceAtLeast(0) }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = restoreIndex)
     val restoreRequester = remember { FocusRequester() }
-    LaunchedEffect(restoreId, state.collections) {
-        if (restoreId != null && restoreIndex in state.collections.indices && state.collections[restoreIndex].id == restoreId) {
+    val filterFocusState = LocalFilterFocusState.current
+    LaunchedEffect(restoreId, state.collections, filterFocusState) {
+        if (filterFocusState?.allowContentAutoFocus != false && restoreId != null &&
+            restoreIndex in state.collections.indices && state.collections[restoreIndex].id == restoreId
+        ) {
             gridState.scrollToItem(restoreIndex)
-            runCatching { restoreRequester.requestFocus() }
+            if (filterFocusState?.allowContentAutoFocus != false) runCatching { restoreRequester.requestFocus() }
         }
     }
     LazyVerticalGrid(
@@ -1909,9 +1952,12 @@ private fun CollectionList(state: SectionUiState.Loaded, onClick: (String, Strin
     val initialFocusedCollectionId = remember(state.collections) { state.focusedCollectionId }
     val restoreIndex = remember(state.collections, initialFocusedCollectionId) { state.collections.indexOfFirst { it.id == initialFocusedCollectionId }.coerceAtLeast(0) }
     val restoreRequester = remember { FocusRequester() }
+    val filterFocusState = LocalFilterFocusState.current
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
-    LaunchedEffect(Unit) {
-        if (initialFocusedCollectionId != null && restoreIndex in state.collections.indices && state.collections[restoreIndex].id == initialFocusedCollectionId) {
+    LaunchedEffect(filterFocusState) {
+        if (filterFocusState?.allowContentAutoFocus != false && initialFocusedCollectionId != null &&
+            restoreIndex in state.collections.indices && state.collections[restoreIndex].id == initialFocusedCollectionId
+        ) {
             runCatching { restoreRequester.requestFocus() }
         }
     }

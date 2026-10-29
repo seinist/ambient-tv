@@ -87,14 +87,17 @@ internal fun FeedbackContent(
         else -> colors.primary
     }
     val focus = remember { FocusRequester() }
+    val filterFocus = LocalFilterFocusState.current
     val pending = LocalSidebarContentPending.current
     val handheld = LocalHandheldUi.current
     val wideHandheld = isHandheldLandscape()
     val tablet = isTabletUi()
-    LaunchedEffect(requestActionFocus, pending, handheld) {
-        if (requestActionFocus && layout == FeedbackLayout.PAGE && !pending && !handheld && onAction != null) {
+    LaunchedEffect(requestActionFocus, pending, handheld, filterFocus) {
+        if (requestActionFocus && filterFocus?.allowContentAutoFocus != false &&
+            layout == FeedbackLayout.PAGE && !pending && !handheld && onAction != null
+        ) {
             withFrameNanos { }
-            runCatching { focus.requestFocus() }
+            if (filterFocus?.allowContentAutoFocus != false) runCatching { focus.requestFocus() }
         }
     }
     val page = layout == FeedbackLayout.PAGE

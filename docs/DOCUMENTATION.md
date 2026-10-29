@@ -133,6 +133,8 @@ The preferred **audio language** is on *Playback › Audio profiles*; subtitle l
 | List rows on screen | 4–10 | 7 | List density. |
 | Filter bar | On / Off (View menu) | On | Filters and sort as a bar directly above the content in Library, Live TV guide, Trailers and SmartTube: each filter opens its values in place, two-value filters are switches, Reset appears only with active filters. Off moves filters and sort back into the View panel. |
 
+Changing filters, sort or layout keeps focus on the control being edited while results update. If a filter leaves no results, **Reset filters** returns focus to the last edited filter. With the filter bar hidden, it reopens the View panel at that filter. Normal content entry and returning from a detail page still restore the selected item.
+
 ### 3.5 Look & feel
 
 | Setting | Options / values | Default | Devices | Shown when / Description |
@@ -294,6 +296,8 @@ Both pages have the same controls.
 | Connection (Media3) | Classic (OkHttp) · Play services (Cronet) · Android (built-in) | Classic | All | Network engine of the Media3 player. Also in the player: Video › Stream; a change there reopens the video at the current position and is kept. |
 | Buffer size (Media3) | Small (30 s) · Medium (50 s) · Large (3 min) | Medium | All | Like the original client; also under Video › Stream in the player. |
 | Allow linking with the YouTube app | On / Off | Off | TV | "Watch on TV": phones open, pause, seek and stop videos here. Then "Show TV code" / "Unlink all phones". |
+
+Channel directories offer channel-appropriate sorting (provider order or title), with no video filters or duration sort. In mixed results, video filters apply only to videos and keep channel tiles visible. Videos inside a channel retain their usual filters and sorting; saved video preferences are kept when visiting channel directories.
 
 ### 4.5 Spotify
 

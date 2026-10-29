@@ -172,10 +172,12 @@ fun MediaTile(
     }
     val borderWidth = if (focused) 2.dp else 1.dp
     val borderColor = if (focused) MaterialTheme.colorScheme.onSurface.copy(alpha = .90f) else Color.Transparent
-    LaunchedEffect(requestInitialFocus) {
-        if (requestInitialFocus && !handheld) {
+    val filterFocus = LocalFilterFocusState.current
+    // A suppressed restore is consumed. Re-entering content must not restart an old tile request.
+    LaunchedEffect(requestInitialFocus, filterFocus) {
+        if (requestInitialFocus && filterFocus?.allowContentAutoFocus != false && !handheld) {
             delay(120)
-            runCatching { focusRequester.requestFocus() }
+            if (filterFocus?.allowContentAutoFocus != false) runCatching { focusRequester.requestFocus() }
         }
     }
     // The focus scale/shadow visually grow beyond the tile's own layout bounds (Compose

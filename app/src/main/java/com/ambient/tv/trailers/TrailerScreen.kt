@@ -157,6 +157,7 @@ internal fun TrailerCatalogContent(
     var selectedFeedName by rememberSaveable(initialFeed.name) { mutableStateOf(initialFeed.name) }
     val feed = TrailerFeed.valueOf(selectedFeedName)
     val stateKey = "trailers:${feed.name}"
+    val filterFocusState = rememberFilterFocusState(stateKey)
     var viewMode by remember(selectedFeedName) { mutableStateOf(preferences.sectionViewMode(stateKey)
         ?.let { runCatching { TrailerViewMode.valueOf(it) }.getOrNull() } ?: TrailerViewMode.POSTER) }
     var sort by remember(selectedFeedName) { mutableStateOf(preferences.sectionSort(stateKey)
@@ -290,13 +291,14 @@ internal fun TrailerCatalogContent(
     )
     val filterBarShown = configured && enabled && LocalFilterBarSetting.current.shown
 
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().padding(start = 32.dp, end = 32.dp, top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
             PageHeader(actions = {
                 TvChip(stringResource(R.string.trailers_back), modifier = Modifier.leftKeyAction(onBack), icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = onBack)
                 if (configured && enabled) ViewOptionsChip(
                     activeCount = if (filterBarShown) 0 else filterModel.activeCount,
-                    onClick = { optionsOpened = true; showViewOptions = true },
+                    onClick = { filterFocusState.keepControls(); optionsOpened = true; showViewOptions = true },
                     modifier = Modifier.focusRequester(optionsFocus),
                 )
             }) { SystemPageTitle(MediaSystem.TRAILERS) }
@@ -333,8 +335,11 @@ internal fun TrailerCatalogContent(
                                 title = stringResource(R.string.trailers_empty_filtered),
                                 actionLabel = stringResource(R.string.library_filter_reset),
                                 onAction = {
+                                    filterFocusState.keepControls()
+                                    if (!filterBarShown) { optionsOpened = true; showViewOptions = true }
                                     filter = TrailerFilter.ALL
                                     preferences.setSectionFilter(stateKey, TrailerFilter.ALL.name)
+                                    filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
                                 },
                             )
                         }
@@ -350,10 +355,10 @@ internal fun TrailerCatalogContent(
                         }
                     }
                     viewMode == TrailerViewMode.LIST -> TrailerList(visibleEntries, listRows, focusedKey,
-                        { entry -> focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
+                        { entry -> filterFocusState.enterContent(); focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
                         onOpenTitle, state, { scope.launch { loadPage(feed, state.page + 1, false) } })
                     else -> TrailerGrid(visibleEntries, viewMode, gridColumns, focusedKey,
-                        { entry -> focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
+                        { entry -> filterFocusState.enterContent(); focusedKey = entry.key; preferences.setSectionFocus(stateKey, entry.key) },
                         onOpenTitle, state, { scope.launch { loadPage(feed, state.page + 1, false) } })
                 }
                 }
@@ -376,6 +381,7 @@ internal fun TrailerCatalogContent(
             filterGroups = filterModel.groups, onFilterGroup = filterModel.onSelect,
             filtersActive = filterModel.activeCount > 0, onResetFilters = filterModel.onReset,
         )
+    }
     }
 }
 
@@ -445,7 +451,13 @@ private fun TrailerList(entries: List<TrailerEntry>, listRows: Int, focusedKey: 
 private fun TrailerListItem(entry: TrailerEntry, rowScale: Float, onClick: () -> Unit, onFocused: () -> Unit, initialFocus: Boolean) {
     var focused by remember(entry.key) { mutableStateOf(false) }
     val requester = remember { FocusRequester() }
-    LaunchedEffect(initialFocus) { if (initialFocus) { delay(100); runCatching { requester.requestFocus() } } }
+    val filterFocusState = LocalFilterFocusState.current
+    LaunchedEffect(initialFocus, filterFocusState) {
+        if (initialFocus && filterFocusState?.allowContentAutoFocus != false) {
+            delay(100)
+            if (filterFocusState?.allowContentAutoFocus != false) runCatching { requester.requestFocus() }
+        }
+    }
     val shape = RoundedCornerShape(10.dp)
     Surface(onClick = onClick, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
         modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }) {
