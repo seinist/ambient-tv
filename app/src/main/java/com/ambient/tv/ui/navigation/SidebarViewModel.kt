@@ -43,6 +43,7 @@ data class SidebarUiState(
     val embyEnabled: Boolean = false,
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
+    val radioEnabled: Boolean = false,
     /** Address entered; TVHeadend stays in the menu even when its login was rejected. */
     val tvheadendEnabled: Boolean = false,
     /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
@@ -99,6 +100,7 @@ class SidebarViewModel @Inject constructor(
             embyEnabled = appPreferences.isEmbyConfigured,
             youtubeEnabled = appPreferences.youtubeEnabled,
             spotifyEnabled = appPreferences.spotifyEnabled,
+            radioEnabled = appPreferences.radioEnabled,
             tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
             tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
             spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
@@ -170,6 +172,7 @@ class SidebarViewModel @Inject constructor(
             addAll(liveTv.configured().map { it.source.system })
             if (appPreferences.youtubeEnabled) add("youtube")
             if (appPreferences.spotifyEnabled) add("spotify")
+            if (appPreferences.radioEnabled) add("radio")
             if (appPreferences.filesEnabled) add("files")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
         }
@@ -205,7 +208,7 @@ class SidebarViewModel @Inject constructor(
     private fun systemAvailability() = listOf(
         appPreferences.isConfigured, appPreferences.isJellyfinConfigured, appPreferences.isEmbyConfigured,
         appPreferences.isTvheadendConfigured, appPreferences.hasTvheadendEndpoint, appPreferences.youtubeEnabled, appPreferences.spotifyEnabled,
-        appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
+        appPreferences.radioEnabled, appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
     )
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
@@ -256,6 +259,7 @@ class SidebarViewModel @Inject constructor(
                 embyEnabled = appPreferences.isEmbyConfigured,
                 youtubeEnabled = appPreferences.youtubeEnabled,
                 spotifyEnabled = appPreferences.spotifyEnabled,
+                radioEnabled = appPreferences.radioEnabled,
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
