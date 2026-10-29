@@ -126,12 +126,14 @@ class RadioViewModel @Inject constructor(
     fun playbackStarted(requestId: Long) {
         if (_playbackRequest.value?.requestId == requestId) {
             _state.value = _state.value.copy(startingStationId = null)
+            _playbackRequest.value = null
         }
     }
 
     fun playbackFailed(requestId: Long) {
         if (_playbackRequest.value?.requestId == requestId) {
             _state.value = _state.value.copy(startingStationId = null, error = true)
+            _playbackRequest.value = null
         }
     }
 
