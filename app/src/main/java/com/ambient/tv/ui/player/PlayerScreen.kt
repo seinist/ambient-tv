@@ -146,6 +146,10 @@ internal data class PlayerTrackOption(
     val forced: Boolean,
 )
 
+/** The session and the screen must agree when a renderer has to be acquired again. */
+private fun PlayerUiState.Ready.acquisitionKey(mimeType: String? = directPlaybackMimeType(container, playbackMode)) =
+    listOf(playbackBackendKey, playerStreamUrl, playerStartPositionMs, streamHeaders, audioPassthroughEnabled, mimeType)
+
 @Composable
 fun PlayerScreen(
     onBack: (playedRatingKey: String?, mediaType: String?) -> Unit,
@@ -192,6 +196,7 @@ fun PlayerScreen(
             }
             is PlayerUiState.Ready -> PlaybackSessionContent(
                 metadata = viewModel.metadata(state),
+                acquisitionKey = state.acquisitionKey(),
                 timelineKey = "${state.sourceRatingKey}:${state.sourceMediaIndex}",
                 timelineLoader = { viewModel.loadTimeline(state.sourceRatingKey, state.sourceMediaIndex) },
                 onTimelineSeek = viewModel::seekTimeline,
@@ -260,8 +265,10 @@ private fun PlayerContent(
 
     val metadata = LocalPlaybackMetadata.current
     // Gapless music keeps the engine it started with ([PlayerUiState.Ready.playerStreamUrl]).
-    val exoPlayer = remember(state.playerStreamUrl, state.playerStartPositionMs, state.audioPassthroughEnabled) {
-            PlaybackEngineFactory.create(
+    val streamMimeType = directPlaybackMimeType(state.container, state.playbackMode)
+    val initializedPlayer = remember(state.acquisitionKey(streamMimeType)) {
+        try {
+            Result.success(PlaybackEngineFactory.create(
                 context = context,
                 streamUrl = state.playerStreamUrl,
                 startPositionMs = state.playerStartPositionMs,
@@ -269,9 +276,29 @@ private fun PlayerContent(
                 streamHeaders = state.streamHeaders,
                 audioPassthroughEnabled = state.audioPassthroughEnabled,
                 metadata = metadata,
+                mimeType = streamMimeType,
                 mpvAudioAllowed = viewModel.mpvAudioAllowed(state),
-            )
+            ))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            // setMediaItem can reject a source synchronously, before Player.Listener is attached.
+            // Remember the failed attempt so unrelated recompositions do not create it again.
+            Result.failure(error)
+        }
     }
+    val initializationError = initializedPlayer.exceptionOrNull()
+    if (initializationError != null) {
+        val fallbackMessage = stringResource(R.string.player_error)
+        val changingItem = viewModel.changingItem
+        LaunchedEffect(initializationError, changingItem) {
+            if (changingItem) return@LaunchedEffect
+            Timber.e(initializationError, "Media3 player initialization failed")
+            viewModel.reportPlaybackError(initializationError.message?.takeIf(String::isNotBlank) ?: fallbackMessage, initializationError)
+        }
+        return
+    }
+    val exoPlayer = initializedPlayer.getOrThrow()
 
     ObserveMedia3DisplayFormat(exoPlayer, requestDisplayMode, viewModel::applySourceHdrFromRuntime)
 

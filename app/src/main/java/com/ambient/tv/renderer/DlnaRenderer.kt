@@ -380,6 +380,8 @@ class DlnaRenderer @Inject constructor(
     }
 
     private fun startPlayback(target: Media, host: String) {
+        com.ambient.tv.diagnostics.CrashBreadcrumbs.add("cast",
+            "start format=${target.link.extension.ifBlank { "unknown" }} audio=${target.link.audioOnly}")
         val key = shared.register(target.link)
         synchronized(lock) {
             playingKey = key

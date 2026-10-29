@@ -108,7 +108,7 @@ object PlaybackEngineFactory {
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
-                listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled)) {
+                listOf(streamUrl, startPositionMs, streamHeaders, audioPassthroughEnabled, mimeType)) {
                 // Every Media3 player (Live TV, VOD, YouTube) takes part in the native release gate
                 // like MPV and VLC: it neither opens its stream while the previous player still
                 // holds one nor lets the next player open before its own stream is gone.
@@ -122,113 +122,133 @@ object PlaybackEngineFactory {
         val started = System.nanoTime()
         val spectrumAnalyzer = AudioSpectrumAnalyzer()
         val audioSession = AudioSession(videoImagePreferences(context), "media3", audioPassthroughEnabled, audioOnly = audioOnly)
-        audioSession.updateMpvAllowed(mpvAudioAllowed)
-        val renderersFactory = Media3AudioProcessing.factory(context, audioSession, spectrumAnalyzer)
+        var createdPlayer: ExoPlayer? = null
+        var audioReleased = false
+        return initializePlaybackOrRelease(
+            { createdPlayer?.let { Media3ResumePrimer.release(it) } },
+            { createdPlayer?.let { Media3ImageProcessing.release(it) } },
+            { createdPlayer?.let { player ->
+                val registered = Media3AudioProcessing.session(player) === audioSession
+                Media3AudioProcessing.release(player)
+                audioReleased = registered
+            } },
+            // Also covers a failure before attach, or while its listener/session is being removed.
+            { if (!audioReleased) audioSession.release() },
+            { createdPlayer?.let { spectrumAnalyzers.remove(it) } },
+            { createdPlayer?.release() },
+        ) {
+            audioSession.updateMpvAllowed(mpvAudioAllowed)
+            val renderersFactory = Media3AudioProcessing.factory(context, audioSession, spectrumAnalyzer)
 
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .build()
+            val audioAttributes = AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build()
 
-        val mediaItem = MediaItem.Builder()
-            .setUri(streamUrl)
-            .setMimeType(mimeType)
-            .setSubtitleConfigurations(
-                subtitleTracks
-                    .filter { it.type == MediaTrackType.SUBTITLE && !it.externalUrl.isNullOrBlank() }
-                    .mapNotNull(::externalSubtitleConfiguration),
-            )
-            .build()
+            val mediaItem = MediaItem.Builder()
+                .setUri(streamUrl)
+                .setMimeType(mimeType)
+                .setSubtitleConfigurations(
+                    subtitleTracks
+                        .filter { it.type == MediaTrackType.SUBTITLE && !it.externalUrl.isNullOrBlank() }
+                        .mapNotNull(::externalSubtitleConfiguration),
+                )
+                .build()
 
-        val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
-            .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
-        val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
-            .setDefaultRequestProperties(streamHeaders)
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory))
-            .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
+            val streamClient = if (streamUrlRenewer == null) streamingHttpClient else streamingHttpClient.newBuilder()
+                .addInterceptor(StreamUrlRenewalInterceptor(streamUrlRenewer)).build()
+            val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
+                .setDefaultRequestProperties(streamHeaders)
+            val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory))
+                .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
-        val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
-        val liveBuffer = media3LiveBufferThresholds(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
-        // SmartTube's own buffer setting, otherwise the global network buffer ("medium" = defaults).
-        val bufferKey = streamTuning?.bufferKey ?: videoImagePreferences(context).networkBufferKey
-        val tunedBuffer = bufferKey.takeIf { streamTuning != null || it != NETWORK_BUFFER_DEFAULT }?.let(::media3TunedBuffer)
-        val targetBytes = media3TargetBufferBytes(heapMb, tunedBuffer?.heapShare ?: 4)
-        val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setTargetBufferBytes(targetBytes)
-            .apply {
-                if (tunedBuffer != null) setBufferDurationsMs(tunedBuffer.minMs, tunedBuffer.maxMs,
-                    liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
-                    liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
-                else if (liveBuffer != null) setBufferDurationsMs(
-                    androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                    androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
-                    liveBuffer.startMs, liveBuffer.rebufferMs)
-            }
-            .build()
-        logPlaybackStartup("media3", "configured", started,
-            "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
-                "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
-                "target_bytes=$targetBytes max_height=$maxVideoHeight" +
-                (streamTuning?.let { " network=${it.networkEngine}" } ?: "") + " buffer=$bufferKey")
+            val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
+            val liveBuffer = media3LiveBufferThresholds(liveStream, com.ambient.tv.livetv.isLiveTimeshiftUrl(streamUrl))
+            // SmartTube's own buffer setting, otherwise the global network buffer ("medium" = defaults).
+            val bufferKey = streamTuning?.bufferKey ?: videoImagePreferences(context).networkBufferKey
+            val tunedBuffer = bufferKey.takeIf { streamTuning != null || it != NETWORK_BUFFER_DEFAULT }?.let(::media3TunedBuffer)
+            val targetBytes = media3TargetBufferBytes(heapMb, tunedBuffer?.heapShare ?: 4)
+            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setTargetBufferBytes(targetBytes)
+                .apply {
+                    if (tunedBuffer != null) setBufferDurationsMs(tunedBuffer.minMs, tunedBuffer.maxMs,
+                        liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                        liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                    else if (liveBuffer != null) setBufferDurationsMs(
+                        androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                        androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                        liveBuffer.startMs, liveBuffer.rebufferMs)
+                }
+                .build()
+            logPlaybackStartup("media3", "configured", started,
+                "start_buffer_ms=${liveBuffer?.startMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS} " +
+                    "rebuffer_ms=${liveBuffer?.rebufferMs ?: androidx.media3.exoplayer.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS} " +
+                    "target_bytes=$targetBytes max_height=$maxVideoHeight" +
+                    (streamTuning?.let { " network=${it.networkEngine}" } ?: "") + " buffer=$bufferKey")
 
-        return ExoPlayer.Builder(context, renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(loadControl)
-            .build()
-            .also { spectrumAnalyzers[it] = spectrumAnalyzer; Media3AudioProcessing.attach(it, audioSession, context) }
-            .apply {
-                setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
-                // The service applies the TV HDMI-transition policy; phones keep Media3's
-                // immediate headphone-unplug protection as well.
-                setHandleAudioBecomingNoisy(!com.ambient.tv.ui.mobile.isTelevision(context))
-                volume = 1f
-                val languages = if (preferOriginalAudio) emptyList() else com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
-                    videoImagePreferences(context).playbackAudioLanguage)
-                trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setPreferredAudioLanguages(*languages.toTypedArray())
-                    .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
-                        videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray()).build()
-                // Apply the first selection before prepare() can start loading DASH tracks.
-                // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
-                if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .youtubeMaxVideoSize(com.ambient.tv.youtube.youtubeMedia3MaxVideoSize(maxVideoHeight)).build()
-                // The box keeps square streams of a higher step: restrict the selected group by step too.
-                if (maxVideoHeight > 0) addListener(object : androidx.media3.common.Player.Listener {
-                    override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                        youtubeConstrainSquareVideo(this@apply, tracks, maxVideoHeight)
-                    }
-                })
-                // Upper bound with SmartTube's 10 fps tolerance (a 30 fps target still allows 25/30).
-                if (maxVideoFrameRate > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setMaxVideoFrameRate(maxVideoFrameRate + 9).build()
-                if (preferredVideoMimeType != null) trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setPreferredVideoMimeType(preferredVideoMimeType).build()
-                addListener(object : androidx.media3.common.Player.Listener {
-                    private var reportedReady = false
-                    private var reportedFrame = false
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (!reportedReady && playbackState == androidx.media3.common.Player.STATE_READY) {
-                            reportedReady = true
-                            logPlaybackStartup("media3", "ready", started)
+            ExoPlayer.Builder(context, renderersFactory)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(loadControl)
+                .build()
+                .also {
+                    createdPlayer = it
+                    spectrumAnalyzers[it] = spectrumAnalyzer
+                    Media3AudioProcessing.attach(it, audioSession, context)
+                }
+                .apply {
+                    setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
+                    // The service applies the TV HDMI-transition policy; phones keep Media3's
+                    // immediate headphone-unplug protection as well.
+                    setHandleAudioBecomingNoisy(!com.ambient.tv.ui.mobile.isTelevision(context))
+                    volume = 1f
+                    val languages = if (preferOriginalAudio) emptyList() else com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
+                        videoImagePreferences(context).playbackAudioLanguage)
+                    trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setPreferredAudioLanguages(*languages.toTypedArray())
+                        .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
+                            videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray()).build()
+                    // Apply the first selection before prepare() can start loading DASH tracks.
+                    // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
+                    if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .youtubeMaxVideoSize(com.ambient.tv.youtube.youtubeMedia3MaxVideoSize(maxVideoHeight)).build()
+                    // The box keeps square streams of a higher step: restrict the selected group by step too.
+                    if (maxVideoHeight > 0) addListener(object : androidx.media3.common.Player.Listener {
+                        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                            youtubeConstrainSquareVideo(this@apply, tracks, maxVideoHeight)
                         }
-                    }
-                    override fun onRenderedFirstFrame() {
-                        if (!reportedFrame) {
-                            reportedFrame = true
-                            logPlaybackStartup("media3", "first_frame_callback", started)
+                    })
+                    // Upper bound with SmartTube's 10 fps tolerance (a 30 fps target still allows 25/30).
+                    if (maxVideoFrameRate > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setMaxVideoFrameRate(maxVideoFrameRate + 9).build()
+                    if (preferredVideoMimeType != null) trackSelectionParameters = trackSelectionParameters.buildUpon()
+                        .setPreferredVideoMimeType(preferredVideoMimeType).build()
+                    addListener(object : androidx.media3.common.Player.Listener {
+                        private var reportedReady = false
+                        private var reportedFrame = false
+                        override fun onPlaybackStateChanged(playbackState: Int) {
+                            if (!reportedReady && playbackState == androidx.media3.common.Player.STATE_READY) {
+                                reportedReady = true
+                                logPlaybackStartup("media3", "ready", started)
+                            }
                         }
-                    }
-                })
-                val primeResume = needsDolbyVisionResumePriming(android.os.Build.MANUFACTURER,
-                    android.os.Build.VERSION.SDK_INT, sourceHdrStandard, startPositionMs)
-                setMediaItem(mediaItem)
-                seekTo(if (primeResume) 0L else startPositionMs.coerceAtLeast(0L))
-                playWhenReady = true
-                Media3ImageProcessing.get(context, this)
-                if (primeResume) Media3ResumePrimer.start(this, startPositionMs)
-                if (!deferPrepare) prepare()
-            }
+                        override fun onRenderedFirstFrame() {
+                            if (!reportedFrame) {
+                                reportedFrame = true
+                                logPlaybackStartup("media3", "first_frame_callback", started)
+                            }
+                        }
+                    })
+                    val primeResume = needsDolbyVisionResumePriming(android.os.Build.MANUFACTURER,
+                        android.os.Build.VERSION.SDK_INT, sourceHdrStandard, startPositionMs)
+                    setMediaItem(mediaItem)
+                    seekTo(if (primeResume) 0L else startPositionMs.coerceAtLeast(0L))
+                    playWhenReady = true
+                    Media3ImageProcessing.get(context, this)
+                    if (primeResume) Media3ResumePrimer.start(this, startPositionMs)
+                    if (!deferPrepare) prepare()
+                }
+        }
     }
 
     /**

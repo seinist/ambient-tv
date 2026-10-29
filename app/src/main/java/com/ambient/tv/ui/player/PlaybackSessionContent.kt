@@ -49,6 +49,8 @@ fun PlaybackSessionContent(
     timeline: com.ambient.tv.domain.model.PlaybackTimeline = com.ambient.tv.domain.model.PlaybackTimeline(),
     timelineLoader: (suspend () -> com.ambient.tv.domain.model.PlaybackTimeline)? = null,
     onTimelineSeek: ((Long) -> Unit)? = null,
+    /** A failed new engine must be reported by its screen, not mistaken for stopping the old one. */
+    acquisitionKey: Any = metadata.route,
     content: @Composable () -> Unit,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -86,7 +88,7 @@ fun PlaybackSessionContent(
     val observedSnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     // acquire() updates synchronously during composition; collectAsState may still hold the old item.
     val snapshot = remember(observedSnapshot, BackgroundPlaybackSession.activeHandle()) { BackgroundPlaybackSession.snapshot.value }
-    var acquired by remember(metadata.route) { mutableStateOf(false) }
+    var acquired by remember(metadata.route, acquisitionKey) { mutableStateOf(false) }
     var dismissedKey by remember(metadata.route) { mutableStateOf<String?>(null) }
     var handledKey by remember(metadata.route) { mutableStateOf<String?>(null) }
     // A leaving navigation destination must not render a handle replaced by the next screen.
