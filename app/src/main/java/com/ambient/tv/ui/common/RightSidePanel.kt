@@ -309,7 +309,7 @@ private fun RightSidePanelChrome(
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
     val playerPanelInteractive = com.ambient.tv.ui.player.LocalPlayerPanelInteractive.current
     val playerPanelMotion = com.ambient.tv.ui.player.LocalPlayerPanelMotion.current
-    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current && playerPanelInteractive) {
         // Handheld: the screen beside the panel is a dismiss area. It takes the tap, so the
         // player underneath does not toggle its controls at the same time.
         Row(modifier.fillWindowHeight().fillMaxSize()) {
