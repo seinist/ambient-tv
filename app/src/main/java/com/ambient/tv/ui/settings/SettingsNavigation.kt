@@ -53,6 +53,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
     FILES(SettingsArea.SYSTEMS, R.string.files_title, R.string.settings_page_files_hint),
     YOUTUBE(SettingsArea.STREAMING, R.string.settings_youtube_group, R.string.settings_page_youtube_hint),
     SPOTIFY(SettingsArea.STREAMING, R.string.settings_spotify_title, R.string.settings_page_spotify_hint),
+    RADIO(SettingsArea.STREAMING, R.string.radio_title, R.string.settings_page_radio_hint),
     TRAILERS(SettingsArea.STREAMING, R.string.trailers_title, R.string.trailers_setup_hint),
     /** M3U playlists with XMLTV guides; offered as a setup card until a playlist is saved. */
     IPTV(SettingsArea.TELEVISION, R.string.iptv_title, R.string.iptv_settings_hint),
