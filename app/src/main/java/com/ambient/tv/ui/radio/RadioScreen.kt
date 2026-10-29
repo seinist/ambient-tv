@@ -25,6 +25,8 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -55,6 +58,7 @@ import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SystemPageTitle
 import com.ambient.tv.ui.common.TvActionButton
@@ -89,17 +93,20 @@ fun RadioScreen(
     val state by viewModel.state.collectAsState()
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     var showViewOptions by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
 
     LaunchedEffect(viewModel) { viewModel.enter() }
     ReportSidebarContentReady(!state.loading)
 
     BackHandler(enabled = showViewOptions) { showViewOptions = false }
-    BackHandler(enabled = !showViewOptions && state.selectedFacet != null) { viewModel.clearFacet() }
-    BackHandler(enabled = !showViewOptions && state.selectedFacet == null && state.submittedQuery.isNotBlank()) {
-        viewModel.clearSearch()
+    BackHandler(enabled = !showViewOptions && searchVisible) {
+        if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
+        showSearch = false
     }
+    BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet != null) { viewModel.clearFacet() }
     if (onBack != null) {
-        BackHandler(enabled = !showViewOptions && state.selectedFacet == null && state.submittedQuery.isBlank()) { onBack() }
+        BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet == null) { onBack() }
     }
 
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
@@ -127,6 +134,13 @@ fun RadioScreen(
                 focusChain = focusChain,
                 actions = {
                     TvChip(
+                        text = stringResource(R.string.action_search),
+                        icon = Icons.Filled.Search,
+                        iconOnly = true,
+                        selected = searchVisible,
+                        onClick = { showSearch = true },
+                    )
+                    TvChip(
                         text = stringResource(R.string.action_reload),
                         icon = Icons.Filled.Refresh,
                         iconOnly = true,
@@ -152,7 +166,7 @@ fun RadioScreen(
                         selected = state.section == section &&
                             state.submittedQuery.isBlank() &&
                             state.selectedFacet == null,
-                        modifier = if (state.section == section) Modifier else Modifier,
+                        modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
                         onClick = { viewModel.selectSection(section) },
                     )
                 }
@@ -178,26 +192,30 @@ fun RadioScreen(
                 }
             }
 
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TvTextField(
-                    value = state.query,
-                    onValueChange = viewModel::onQueryChanged,
-                    label = stringResource(R.string.radio_search_placeholder),
-                    modifier = Modifier.weight(1f),
-                )
-                TvActionButton(
-                    text = stringResource(R.string.action_search),
-                    onClick = viewModel::submitSearch,
-                    enabled = state.query.trim().isEmpty() || state.query.trim().length >= 2,
-                )
-                if (state.submittedQuery.isNotBlank()) {
+            if (searchVisible) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TvTextField(
+                        value = state.query,
+                        onValueChange = viewModel::onQueryChanged,
+                        label = stringResource(R.string.radio_search_placeholder),
+                        modifier = Modifier.weight(1f),
+                    )
                     TvActionButton(
-                        text = stringResource(R.string.search_clear_recent),
-                        onClick = viewModel::clearSearch,
+                        text = stringResource(R.string.action_search),
+                        onClick = viewModel::submitSearch,
+                        enabled = state.query.trim().length >= 2,
+                    )
+                    PlayerIconButton(
+                        Icons.Filled.Close,
+                        stringResource(R.string.action_close),
+                        {
+                            if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
+                            showSearch = false
+                        },
                     )
                 }
             }
