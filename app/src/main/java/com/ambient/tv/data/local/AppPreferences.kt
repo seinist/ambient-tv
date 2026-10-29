@@ -412,6 +412,15 @@ class AppPreferences @Inject constructor(
     }
 
     @Synchronized
+    fun replaceRadioFavorites(stations: List<com.ambient.tv.data.radio.RadioStation>) {
+        val normalized = stations
+            .filter { it.id.isNotBlank() && it.name.isNotBlank() && it.streamUrl.isNotBlank() }
+            .distinctBy { it.id }
+            .take(RADIO_FAVORITES_LIMIT)
+        prefs.edit { putString(KEY_RADIO_FAVORITES, json.encodeToString(normalized)) }
+    }
+
+    @Synchronized
     fun recordRadioStation(station: com.ambient.tv.data.radio.RadioStation) {
         val next = (listOf(station) + recentRadioStations.filterNot { it.id == station.id })
             .take(RADIO_RECENT_LIMIT)
