@@ -73,7 +73,7 @@ Settings has five areas. Each area lists its pages; the settings search finds pa
 | **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock |
 | **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailers · DLNA · Files (configured systems first, then "add" entries) |
 | **Devices & network** | Phone & devices · UPnP receiver · WireGuard / VPN · Servers & Wake-on-LAN |
-| **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & playback · Picture profiles · Audio profiles · Audio visualization · Photos |
+| **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & resume · Picture profiles · Audio profiles · Audio visualization · Photos |
 | **App & data** | Notifications · Transfer accounts and settings · Settings backup · Diagnostics · About this app |
 
 **Saving.** Ordinary values are a draft and apply with **Save**. Leaving with open changes asks to save or discard. These act at once: sign-in, sign-out, server changes, connection tests and import ("Sign-in, server changes, tests and import apply at once; save for everything else."). Pairing and TV availability on *Phone & devices* also apply at once. Export writes the saved values, not the draft.
@@ -448,15 +448,22 @@ Per playback: subtitle track and **Subtitle delay** (±100 / ±500 ms steps, rem
 
 In the Next Up overlay, the autoplay switch sits at the left of the bottom action bar next to Close. Play now / Continue stays at the right and receives the initial focus. Long labels and the optional Skip credits action wrap onto another line when needed; the header contains only the title and countdown/status.
 
-### 6.4 Seek & playback
+### 6.4 Seek & resume
 
 | Setting | Options / values | Default | Description |
 | --- | --- | --- | --- |
 | Best version for this display | On / Off | On | Picks the version whose resolution fits the TV. |
 | Up/Down seek jump | 15, 30, 60, 90, 120 s | 60 s | Seek buttons and Up/Down during playback. |
+| Rewind after a pause | Off · 3 · 5 · 10 · 15 · 30 s | Off | Replays the last seconds when continuing after a user pause. |
+| Minimum pause duration | Always · 5 · 10 · 30 s · 1 minute | 10 s | Shown when pause rewind is enabled. Shorter pauses continue at the same position. |
+| Rewind when resuming a video | Off · 5 · 10 · 15 · 30 · 60 s | Off | Starts a previously watched video before its saved progress, clamped to the beginning. |
 | Player controls display time | 3, 5, 8, 15 s | 5 s | How long the OSD stays without a key press (all players, also after a channel change). |
 | Back in the player | Stop playback · Minimize (keep playing) | Stop playback | What Back does once the OSD is hidden (all players). Minimize works like the exit-fullscreen button. |
 | Network buffer | Small · Medium · Large | Medium | Read-ahead for Media3 (15–30 s / default / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB on low-RAM devices; only outside the home network) and VLC (0.8 / 1.2 / 3 s). Live timeshift keeps its own values; SmartTube has its own buffer size. Applies to the next playback. |
+
+**Seek & resume** is available under *Settings → Playback* and in Playback settings for seekable videos. Values apply globally to every renderer. The panel summary shows the seek step and only active, available rewind options; pause rewind and saved-progress rewind are independent. A saved point at 24:30 with a 10-second rewind starts at 24:20. Play from the beginning and explicit chapter or time selections retain their chosen start.
+
+Pause rewind runs once when you intentionally continue playback. Seeking during a pause keeps your selected position. Opening the OSD, switching between mini-player and fullscreen, reconnecting, changing renderer, buffering and technical pauses do not trigger another rewind. Music is excluded. Live TV offers pause rewind only when timeshift can actually seek, bounded by the available buffer. Recordings can also resume saved progress with rewind.
 
 Live TV: every channel change shows the OSD with the new channel; while it is only open for that, Up/Down keep changing channels. Started from Live TV or the guide, next/previous channel stays within that view's filtered, sorted list.
 
@@ -592,6 +599,7 @@ Live TV without a seekable timeline uses channel information as its focus target
 | Quality | Server/stream qualities | More than one quality. |
 | Audio | Audio track + [7.6](#76-audio) | |
 | Subtitles | Track, Subtitle delay | |
+| Seek & resume | Seek step · Pause rewind · Saved-progress rewind | Seekable videos; live TV offers pause rewind with usable timeshift. |
 | Save / load configuration | Save for all videos / for this width, load, reset | Video is playing. |
 | Skip TV show intros · Skip credits | Off · Show button · Automatic | Episodes with markers. |
 | Visualizer | MilkDrop presets | Audio-only playback. |

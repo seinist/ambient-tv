@@ -22,6 +22,7 @@ import kotlinx.coroutines.delay
 class PlaybackSeekState internal constructor(
     private val coordinator: PlaybackSeekCoordinator,
     initialPositionMs: Long,
+    private val onSeekRequested: () -> Unit = {},
     private val commit: (Long) -> Unit,
 ) {
     /** What the OSD shows: the requested target while a seek is in flight, else the engine. */
@@ -36,6 +37,7 @@ class PlaybackSeekState internal constructor(
     fun seekTo(targetMs: Long) = request(coordinator.requestAbsolute(targetMs))
 
     private fun request(target: Long) {
+        onSeekRequested()
         positionMs = target
         coordinator.consumeCommit()?.let(commit)
         requestVersion++
@@ -74,7 +76,8 @@ fun rememberPlaybackSeekState(
     val currentEngine by rememberUpdatedState(enginePositionMs)
     val currentCommit by rememberUpdatedState(commit)
     val state = remember(key) {
-        PlaybackSeekState(PlaybackSeekCoordinator(), currentEngine()) { currentCommit(it) }
+        PlaybackSeekState(PlaybackSeekCoordinator(), currentEngine(),
+            commit = { currentCommit(it) }, onSeekRequested = BackgroundPlaybackSession::userSeek)
     }
     androidx.compose.runtime.DisposableEffect(state) {
         val owner = BackgroundPlaybackSession.activeHandle()

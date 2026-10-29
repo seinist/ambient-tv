@@ -28,6 +28,20 @@ class SettingsAutosaveTest {
         assertEquals(saved.host, target.host)
     }
 
+    @Test fun `rewind changes save immediately and merge independently from other seek options`() {
+        val draft = saved.copy(seekPlayback = saved.seekPlayback.copy(pauseRewindSeconds = 5))
+        val stored = saved.copy(seekPlayback = saved.seekPlayback.copy(
+            bigSeekJumpSeconds = 90, pauseRewindMinPauseSeconds = 30, resumeRewindSeconds = 10,
+        ))
+        assertEquals(5, draft.deferredSettingsFrom(saved).pauseRewindSeconds)
+        val merged = mergeStoredSettings(draft, saved, stored)
+        assertEquals(5, merged.pauseRewindSeconds)
+        assertEquals(90, merged.bigSeekJumpSeconds)
+        assertEquals(30, merged.pauseRewindMinPauseSeconds)
+        assertEquals(10, merged.resumeRewindSeconds)
+        org.junit.Assert.assertNotEquals(saved.editableValues(), draft.editableValues())
+    }
+
     @Test fun `accent colour is saved only once it is a complete hex value`() {
         assertEquals("#E5A00D", saved.copy(customAccentHex = "#12").deferredSettingsFrom(saved).customAccentHex)
         assertEquals("#123456", saved.copy(customAccentHex = "#123456").deferredSettingsFrom(saved).customAccentHex)

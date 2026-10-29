@@ -182,7 +182,7 @@ data class SettingsUiState(
     val projectmHdr4kAllowed: Boolean = false,
     val projectmShowPresetName: Boolean = true,
     val projectmPresetCategoryKey: String = "all",
-    val bigSeekJumpSeconds: Int = 60,
+    val seekPlayback: com.ambient.tv.data.local.SeekPlaybackSettings = com.ambient.tv.data.local.SeekPlaybackSettings(),
     val creditsSkipMode: String = "button",
     val introSkipMode: String = "button",
     val nextUpEnabled: Boolean = true,
@@ -279,7 +279,12 @@ data class SettingsUiState(
     val photoShowInfo: Boolean = false,
     val screensaverPhotoAlbumKey: String = "",
     val screensaverPhotoAlbumTitle: String = "",
-)
+) {
+    val bigSeekJumpSeconds: Int get() = seekPlayback.bigSeekJumpSeconds
+    val pauseRewindSeconds: Int get() = seekPlayback.pauseRewindSeconds
+    val pauseRewindMinPauseSeconds: Int get() = seekPlayback.pauseRewindMinPauseSeconds
+    val resumeRewindSeconds: Int get() = seekPlayback.resumeRewindSeconds
+}
 
 /** Only editable values participate: auth, discovery, progress and errors are not drafts. */
 internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
@@ -396,7 +401,7 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     projectmHdr4kAllowed,
     projectmShowPresetName,
     projectmPresetCategoryKey,
-    bigSeekJumpSeconds,
+    seekPlayback,
     creditsSkipMode,
     introSkipMode,
     nextUpEnabled,
@@ -572,7 +577,12 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     projectmHdr4kAllowed = if (draft.projectmHdr4kAllowed != baseline.projectmHdr4kAllowed) draft.projectmHdr4kAllowed else stored.projectmHdr4kAllowed,
     projectmShowPresetName = if (draft.projectmShowPresetName != baseline.projectmShowPresetName) draft.projectmShowPresetName else stored.projectmShowPresetName,
     projectmPresetCategoryKey = if (draft.projectmPresetCategoryKey != baseline.projectmPresetCategoryKey) draft.projectmPresetCategoryKey else stored.projectmPresetCategoryKey,
-    bigSeekJumpSeconds = if (draft.bigSeekJumpSeconds != baseline.bigSeekJumpSeconds) draft.bigSeekJumpSeconds else stored.bigSeekJumpSeconds,
+    seekPlayback = stored.seekPlayback.copy(
+        bigSeekJumpSeconds = if (draft.bigSeekJumpSeconds != baseline.bigSeekJumpSeconds) draft.bigSeekJumpSeconds else stored.bigSeekJumpSeconds,
+        pauseRewindSeconds = if (draft.pauseRewindSeconds != baseline.pauseRewindSeconds) draft.pauseRewindSeconds else stored.pauseRewindSeconds,
+        pauseRewindMinPauseSeconds = if (draft.pauseRewindMinPauseSeconds != baseline.pauseRewindMinPauseSeconds) draft.pauseRewindMinPauseSeconds else stored.pauseRewindMinPauseSeconds,
+        resumeRewindSeconds = if (draft.resumeRewindSeconds != baseline.resumeRewindSeconds) draft.resumeRewindSeconds else stored.resumeRewindSeconds,
+    ),
     creditsSkipMode = if (draft.creditsSkipMode != baseline.creditsSkipMode) draft.creditsSkipMode else stored.creditsSkipMode,
     introSkipMode = if (draft.introSkipMode != baseline.introSkipMode) draft.introSkipMode else stored.introSkipMode,
     nextUpEnabled = if (draft.nextUpEnabled != baseline.nextUpEnabled) draft.nextUpEnabled else stored.nextUpEnabled,

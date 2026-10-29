@@ -176,7 +176,7 @@ internal val LocalPlayerOsdStow = compositionLocalOf<PlayerOsdStow?> { null }
 @Composable
 fun BoxScope.ReferencePlayerBottomContent(
     modifier: Modifier = Modifier,
-    onTogglePlayback: () -> Unit = BackgroundPlaybackSession::toggle,
+    onTogglePlayback: () -> Unit = BackgroundPlaybackSession::userToggle,
     content: @Composable () -> Unit,
 ) {
     val handheld = LocalHandheldUi.current

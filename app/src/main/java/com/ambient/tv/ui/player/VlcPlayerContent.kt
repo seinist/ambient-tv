@@ -243,13 +243,13 @@ internal fun VlcPlayerContent(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
                 panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
-            OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
                 override fun isPlaying() = snapshot.isPlaying
-                override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.play() }
-                override fun pause() { controller.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     seekBy(deltaMs)
@@ -286,9 +286,9 @@ internal fun VlcPlayerContent(
         )
         PlayerTouchLayer(
             onToggleControls = { if (osd.closing) osd.reveal() else controlsVisible = !controlsVisible },
-            onTogglePlayback = { controller.playPause(); controlsVisible = true },
-            onSeekBack = { seekBy(-state.seekJumpMs); controlsVisible = true },
-            onSeekForward = { seekBy(state.seekJumpMs); controlsVisible = true },
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle(); controlsVisible = true },
+            onSeekBack = { seekBy(-BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); controlsVisible = true },
+            onSeekForward = { seekBy(BackgroundPlaybackSession.seekJumpMs(state.seekJumpMs)); controlsVisible = true },
         )
         val vlcPlan = controller.audioSession.outputPlan()
         LaunchedEffect(vlcPlan.needsMpv, vlcPlan.mode) {
@@ -328,10 +328,10 @@ internal fun VlcPlayerContent(
             seekState = seek,
             onSeekBarSeek = { seekBy(it) },
             onSeekBarInteraction = { osd.interact() },
-            onSeekBarToggle = controller::playPause,
+            onSeekBarToggle = BackgroundPlaybackSession::userToggle,
             onSeekBarPlay = controller::play,
             onSeekButton = { seekBy(it) },
-            onPlayPauseButton = controller::playPause,
+            onPlayPauseButton = BackgroundPlaybackSession::userToggle,
             onPlayNext = onPlayNext,
             onBack = onBack,
             onPanelChange = { panel = it },

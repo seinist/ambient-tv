@@ -249,7 +249,10 @@ fun YouTubePlayerScreen(
             // manually changed, old server progress must not overwrite its current position.
             var allowLateResume by remember(playback.videoId) { mutableStateOf(
                 BackgroundPlaybackSession.snapshot.value.metadata?.route != route) }
-            val enginePlayback = playback.copy(resumeMs = if (allowLateResume) playback.resumeMs else 0L)
+            val enginePlayback = playback.copy(
+                resumeMs = if (allowLateResume) playback.resumeMs else 0L,
+                resumeResolved = playback.resumeResolved || !allowLateResume,
+            )
             // VLC/MPV get one fixed stream pair; the panel's quality/language choice picks another.
             var videoChoice by remember(playback.videoId) { mutableStateOf(com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO) }
             var audioChoice by remember(playback.videoId) { mutableStateOf(com.ambient.tv.youtube.YOUTUBE_STREAM_AUTO) }
@@ -261,10 +264,12 @@ fun YouTubePlayerScreen(
                 youtubeWithStreamChoice(context, enginePlayback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed)
             }
             val streamPanel = rememberYouTubeStreamPanel(playback, videoChoice, audioChoice, prefs.youtubeVideoPreset, prefs.youtubeMaxVideoHeight, hdrAllowed,
-                onVideo = { allowLateResume = false; videoChoice = it }, onAudio = { allowLateResume = false; audioChoice = it })
+                onVideo = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; videoChoice = it },
+                onAudio = { BackgroundPlaybackSession.cancelResumeRewind(); allowLateResume = false; audioChoice = it })
             fun switchRenderer(key: String, positionMs: Long, global: Boolean) {
                 val normalized = key.takeIf { it in setOf("auto", "media3", "vlc", "mpv") } ?: "auto"
                 if (normalized == "mpv" && !MpvBackendAvailability.isAvailable) return
+                BackgroundPlaybackSession.cancelResumeRewind()
                 val change = PlaybackBackendResolver.resolve(rendererKey) != PlaybackBackendResolver.resolve(normalized)
                 if (change) allowLateResume = false
                 if (change) resumePosition = com.ambient.tv.ui.player.rendererReopenPositionMs(playback.isLive,
@@ -643,6 +648,7 @@ private fun YouTubeMedia3Playback(
     var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
     val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator() }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
     var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -833,6 +839,7 @@ private fun YouTubeMedia3Playback(
     ) { controls = it }
     fun seek(delta: Long) {
         if (playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
         val limit = duration.takeIf { it > 0L } ?: playback.durationMs
@@ -849,8 +856,13 @@ private fun YouTubeMedia3Playback(
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, duration.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, player::seekTo)
-    LaunchedEffect(playback.resumeMs) {
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked) ?: return@LaunchedEffect
+    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
+        if (!playback.resumeResolved) return@LaunchedEffect
+        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
+            resumeAlreadyApplied = lateResumeApplied)
+        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
+        lateResumeApplied = true
+        if (target == null) return@LaunchedEffect
         position = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(player::seekTo)
     }
@@ -887,13 +899,13 @@ private fun YouTubeMedia3Playback(
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
-            OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(position, direction)
                 override fun isPlaying() = player.isPlaying
-                override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
-                override fun play() { player.play() }
-                override fun pause() { player.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     if (revealOsd) { seekRelative(deltaMs); osd.reveal() } else seekWithBar(deltaMs)
@@ -920,7 +932,7 @@ private fun YouTubeMedia3Playback(
             visible = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer(onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, onTogglePlayback = { if (player.isPlaying) player.pause() else player.play() }, onSeekBack = if (playback.isLive) null else {{ seek(-bigSeekSeconds * 1000L) }}, onSeekForward = if (playback.isLive) null else {{ seek(bigSeekSeconds * 1000L) }})
+        PlayerTouchLayer(onToggleControls = { if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, onTogglePlayback = { BackgroundPlaybackSession.userToggle() }, onSeekBack = if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, onSeekForward = if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
         val ytPlan = ytAudio?.outputPlan()
         LaunchedEffect(ytPlan?.needsMpv, ytPlan?.mode) {
             if (ytPlan?.needsMpv == true && com.ambient.tv.ui.player.AudioEngineRedirectGuard.once(playback.uri)) {
@@ -958,7 +970,7 @@ private fun YouTubeMedia3Playback(
                 loading = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
                 rendererKey = rendererKey,
                 seekJumpMs = bigSeekSeconds * 1000L,
-                onToggle = { if (player.isPlaying) player.pause() else player.play() },
+                onToggle = { BackgroundPlaybackSession.userToggle() },
                 onSeek = ::seek,
                 onBack = onBack,
                 onRenderer = { key, global -> onRenderer(key, position, global) },
@@ -1110,6 +1122,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1149,6 +1162,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     fun seek(delta: Long) {
         if (playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
@@ -1165,8 +1179,13 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, controller::seekTo)
-    LaunchedEffect(playback.resumeMs) {
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked) ?: return@LaunchedEffect
+    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
+        if (!playback.resumeResolved) return@LaunchedEffect
+        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
+            resumeAlreadyApplied = lateResumeApplied)
+        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
+        lateResumeApplied = true
+        if (target == null) return@LaunchedEffect
         displayedPosition = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
@@ -1192,13 +1211,13 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
-            OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
-                override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.play() }
-                override fun pause() { controller.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     if (revealOsd) { seekRelative(deltaMs); osd.reveal() } else seekWithBar(deltaMs)
@@ -1219,7 +1238,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { controller.playPause() }, if (playback.isLive) null else {{ seek(-bigSeekSeconds * 1000L) }}, if (playback.isLive) null else {{ seek(bigSeekSeconds * 1000L) }})
+        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { BackgroundPlaybackSession.userToggle() }, if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
         val ytVlcPlan = controller.audioSession.outputPlan()
         LaunchedEffect(ytVlcPlan.needsMpv, ytVlcPlan.mode) {
             if (ytVlcPlan.needsMpv && com.ambient.tv.ui.player.AudioEngineRedirectGuard.once(playback.uri)) {
@@ -1249,7 +1268,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
                 controlsVisible = controls,
                 playback, "VLC", displayedPosition, snapshot.durationMs, snapshot.isPlaying,
                 waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
-                rendererKey, bigSeekSeconds * 1000L, controller::playPause, ::seek, onBack,
+                rendererKey, bigSeekSeconds * 1000L, BackgroundPlaybackSession::userToggle, ::seek, onBack,
                 { key, global -> onRenderer(key, displayedPosition, global) },
                 if (snapshot.hasVideo) listOfNotNull(
                     snapshot.runtimeStats?.let { stats ->
@@ -1367,6 +1386,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1406,6 +1426,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     LaunchedEffect(controller.ended) { if (!playback.isLive && controller.ended) onCompleted() }
     fun seek(delta: Long) {
         if (playback.isLive) return
+        BackgroundPlaybackSession.userSeek()
         osd.interact()
         userSeeked = true
         val limit = snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs
@@ -1422,8 +1443,13 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     fun heldSeekStep(baseMs: Long, e: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, e.nativeKeyEvent.repeatCount, snapshot.durationMs.takeIf { it > 0L } ?: playback.durationMs)
     YouTubeSeekCommit(seekCommitVersion, seekCoordinator, controller::seekTo)
-    LaunchedEffect(playback.resumeMs) {
-        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked) ?: return@LaunchedEffect
+    LaunchedEffect(playback.resumeMs, playback.resumeResolved) {
+        if (!playback.resumeResolved) return@LaunchedEffect
+        val target = lateYouTubeResumeTarget(playback.isLive, startPositionMs, playback.resumeMs, userSeeked,
+            resumeAlreadyApplied = lateResumeApplied)
+        // Zero is a resolved target too: later metadata must not deduct/apply the resume again.
+        lateResumeApplied = true
+        if (target == null) return@LaunchedEffect
         displayedPosition = seekCoordinator.requestAbsolute(target)
         seekCoordinator.consumeCommit()?.let(controller::seekTo)
     }
@@ -1449,13 +1475,13 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
         handlePlayerOsdKey(
             e.key, e.type == KeyEventType.KeyDown,
             OsdKeyState(OsdContent.VIDEO, controls && !osd.seekFeedback && !osd.closing, panelOpen, osd.seekFeedback, closing = osd.closing),
-            OsdSeekSteps(bigSeekSeconds * 1000L, held = { heldSeekStep(it, e) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L), held = { heldSeekStep(it, e) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(displayedPosition, direction)
                 override fun isPlaying() = snapshot.isPlaying
-                override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.play() }
-                override fun pause() { controller.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     if (revealOsd) { seekRelative(deltaMs); osd.reveal() } else seekWithBar(deltaMs)
@@ -1476,7 +1502,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { controller.playPause() }, if (playback.isLive) null else {{ seek(-bigSeekSeconds * 1000L) }}, if (playback.isLive) null else {{ seek(bigSeekSeconds * 1000L) }})
+        PlayerTouchLayer({ if (!panelOpen) { if (!controls || osd.closing) osd.reveal() else osd.close() } }, { BackgroundPlaybackSession.userToggle() }, if (playback.isLive) null else {{ seek(-BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }}, if (playback.isLive) null else {{ seek(BackgroundPlaybackSession.seekJumpMs(bigSeekSeconds * 1000L)) }})
         PlaybackPerformanceNotice(mpvLoadHint(controller, snapshot))
         val showNerdOverlay = controller.audioSession.performanceHint
         val showFpsOverlay = controller.audioSession.showFpsOverlay
@@ -1501,7 +1527,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
                 controlsVisible = controls,
                 playback, "MPV", displayedPosition, snapshot.durationMs, snapshot.isPlaying,
                 waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
-                rendererKey, bigSeekSeconds * 1000L, controller::playPause, ::seek, onBack,
+                rendererKey, bigSeekSeconds * 1000L, BackgroundPlaybackSession::userToggle, ::seek, onBack,
                 { key, global -> onRenderer(key, displayedPosition, global) },
                 listOfNotNull(snapshot.videoSize, controller.sourceHdrStandard?.label, snapshot.videoCodec, snapshot.audioCodec, snapshot.decoder),
                 YouTubePanelConfig(
@@ -1634,8 +1660,8 @@ private data class YouTubeOsdModel(
                 PlayerControlBar(
                     player = com.ambient.tv.ui.player.OsdPlayer.YOUTUBE,
                     leftContent = {
-                        val seekJumpSeconds = (seekJumpMs / 1000L).toInt().coerceAtLeast(1)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        val seekJumpSeconds = (BackgroundPlaybackSession.seekJumpMs(seekJumpMs) / 1000L).toInt().coerceAtLeast(1)
+                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastRewind, stringResource(R.string.player_seek_back, seekJumpSeconds), { onSeek(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                         PlayerIconButton(
                             if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             stringResource(if (playing) R.string.player_pause else R.string.player_play),
@@ -1645,7 +1671,7 @@ private data class YouTubeOsdModel(
                             loading = loading,
                         )
                         PlayerIconButton(Icons.Filled.Stop, stringResource(R.string.player_stop), BackgroundPlaybackSession::stop, osd = com.ambient.tv.ui.player.OsdButton.STOP)
-                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(seekJumpMs) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
+                        if (!playback.isLive) PlayerIconButton(Icons.Filled.FastForward, stringResource(R.string.player_seek_forward, seekJumpSeconds), { onSeek(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)) }, osd = com.ambient.tv.ui.player.OsdButton.SEEK)
                     },
                     rightContent = {
                         PlayerExitButton(onBack)

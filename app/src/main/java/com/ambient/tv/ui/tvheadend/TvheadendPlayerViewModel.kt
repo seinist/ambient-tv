@@ -101,6 +101,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val kind: String = savedStateHandle["kind"] ?: "channel"
     internal val startsWithLiveChannel: Boolean get() = kind == "channel"
     private val initialId: String = savedStateHandle["id"] ?: ""
+    private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
     private val companionSource = runCatching {
         companionMapper.fromRoute(Destinations.tvhPlayer(kind, initialId, sourceId)).source
     }.getOrNull()
@@ -142,6 +143,9 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<TvheadendPlayerState>(TvheadendPlayerState.Loading)
     // Declared before init: init registers it with the timeshift buffer.
     private val timeshiftSeekHandler: (Long?) -> Unit = { seekTimeshift(it) }
+    private val timeshiftResumeSeekHandler: (Long, () -> Boolean, (Boolean) -> Unit) -> Unit = { wallMs, stillCurrent, complete ->
+        seekTimeshift(wallMs, onComplete = complete, stillCurrent = stillCurrent)
+    }
     val uiState: StateFlow<TvheadendPlayerState> = _uiState.asStateFlow()
 
     private val _recordingControl = MutableStateFlow(LiveRecordingControl())
@@ -224,6 +228,7 @@ class TvheadendPlayerViewModel @Inject constructor(
 
     init {
         com.ambient.tv.livetv.LiveTimeshift.seekHandler = timeshiftSeekHandler
+        com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = timeshiftResumeSeekHandler
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
         if (sourceSystem == "tvheadend" && kind == "channel") viewModelScope.launch {
@@ -302,6 +307,7 @@ class TvheadendPlayerViewModel @Inject constructor(
 
     private fun load() {
         (BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, currentChannelUuid, sourceId)) as? TvheadendPlayerState.Ready)?.let {
+            savedResumeRequest.skip()
             _uiState.value = it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend)
             viewModelScope.launch { channels = runCatching { repository.channels() }.getOrDefault(emptyList()) }
             return
@@ -338,8 +344,12 @@ class TvheadendPlayerViewModel @Inject constructor(
                             )
                         } else {
                             val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
+                            val source = acquireStream { repository.recordingStream(entry) }
+                            val resumeSource = source.copy(startPositionMs = savedResumeRequest.position(
+                                source.startPositionMs, preferences.resumeRewindSeconds, eligible = !source.isLive,
+                            ))
                             _uiState.value = TvheadendPlayerState.Ready(
-                                acquireStream { repository.recordingStream(entry) },
+                                resumeSource,
                                 artworkUrl = artwork.first,
                                 artworkFallbackUrls = artwork.second,
                                 playbackBackendKey = com.ambient.tv.ui.player.savedPlaybackRenderer(
@@ -466,44 +476,58 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var seekJob: Job? = null
 
     /** Reopens the local buffer or server recording at a wall-clock moment. */
-    fun seekTimeshift(wallMs: Long?) {
-        val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return
-        val buffer = LiveTimeshift.current ?: return
+    fun seekTimeshift(wallMs: Long?, onComplete: ((Boolean) -> Unit)? = null, stillCurrent: () -> Boolean = { true }) {
+        if (!stillCurrent()) { onComplete?.invoke(false); return }
+        val ready = _uiState.value as? TvheadendPlayerState.Ready ?: run { onComplete?.invoke(false); return }
+        val buffer = LiveTimeshift.current ?: run { onComplete?.invoke(false); return }
         seekJob?.cancel()
-        seekJob = viewModelScope.launch {
-            if (wallMs == null && buffer.finished && ready.playingRecording != null) {
-                val channel = ready.channel ?: return@launch
-                if (changingChannel) return@launch
-                changingChannel = true
-                try {
-                    val source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid)
-                    val (now, next) = loadProgramInfo(channel.uuid)
-                    _uiState.value = ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next)
-                } catch (error: CancellationException) { throw error }
-                catch (error: Exception) {
-                    _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.tvh_playback_failed))
-                } finally { changingChannel = false }
-                return@launch
+        // Enter the finally block even if the ViewModel is cleared immediately after this call.
+        seekJob = viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            var applied = false
+            try {
+                if (wallMs == null && buffer.finished && ready.playingRecording != null) {
+                    val channel = ready.channel ?: return@launch
+                    if (changingChannel) return@launch
+                    changingChannel = true
+                    try {
+                        val source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid)
+                        val (now, next) = loadProgramInfo(channel.uuid)
+                        if (!stillCurrent()) return@launch
+                        _uiState.value = ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next)
+                        applied = true
+                    } catch (error: CancellationException) { throw error }
+                    catch (error: Exception) {
+                        _uiState.value = TvheadendPlayerState.Error(context.getString(com.ambient.tv.R.string.tvh_playback_failed))
+                    } finally { changingChannel = false }
+                    return@launch
+                }
+                val result = suspendResult { withContext(Dispatchers.IO) {
+                    if (wallMs == null) buffer.liveUrl() else buffer.urlAt(wallMs)
+                } }
+                val (url, anchor) = result.getOrElse {
+                    android.widget.Toast.makeText(context, context.getString(com.ambient.tv.R.string.live_recording_seek_failed),
+                        android.widget.Toast.LENGTH_LONG).show()
+                    return@launch
+                }
+                val latest = _uiState.value as? TvheadendPlayerState.Ready ?: return@launch
+                if (!stillCurrent() || LiveTimeshift.current !== buffer || latest.source.url != ready.source.url || changingChannel) return@launch
+                if (url == ready.source.url) {
+                    applied = true
+                    return@launch
+                }
+                BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
+                LiveTimeshift.setAnchor(anchor)
+                _uiState.value = latest.copy(source = latest.source.copy(url = url))
+                applied = true
+            } finally {
+                onComplete?.invoke(applied)
             }
-            val result = suspendResult { withContext(Dispatchers.IO) {
-                if (wallMs == null) buffer.liveUrl() else buffer.urlAt(wallMs)
-            } }
-            val (url, anchor) = result.getOrElse {
-                android.widget.Toast.makeText(context, context.getString(com.ambient.tv.R.string.live_recording_seek_failed),
-                    android.widget.Toast.LENGTH_LONG).show()
-                return@launch
-            }
-            val latest = _uiState.value as? TvheadendPlayerState.Ready ?: return@launch
-            if (LiveTimeshift.current !== buffer || latest.source.url != ready.source.url || changingChannel) return@launch
-            if (url == ready.source.url) return@launch
-            BackgroundPlaybackSession.beginSourceReplacement(playWhenReadyOverride = true)
-            LiveTimeshift.setAnchor(anchor)
-            _uiState.value = latest.copy(source = latest.source.copy(url = url))
         }
     }
 
     override fun onCleared() {
         if (com.ambient.tv.livetv.LiveTimeshift.seekHandler === timeshiftSeekHandler) com.ambient.tv.livetv.LiveTimeshift.seekHandler = null
+        if (com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler === timeshiftResumeSeekHandler) com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = null
         // Leaving during tune must retire the pending session immediately. A late response
         // still closes its server stream, but cannot revive playback after navigation away.
         pendingSourceReplacement?.let(BackgroundPlaybackSession::cancelSourceReplacement)
@@ -531,6 +555,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     fun retry() {
+        savedResumeRequest.skip()
         viewModelScope.launch {
             if (BackgroundPlaybackSession.snapshot.value.metadata?.historyScope == historyScope) {
                 BackgroundPlaybackSession.stop(keepSleepTimer = true)
@@ -703,6 +728,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         if (makeGlobal) preferences.tvheadendPlaybackBackendKey = normalized
         val current = _uiState.value as? TvheadendPlayerState.Ready ?: return
         // Only this explicit action changes the manual choice. Recovery stays session-local.
+        BackgroundPlaybackSession.cancelResumeRewind()
         _uiState.value = current.copy(manualRendererKey = normalized, recoveryRendererKey = null)
             .withSelectedRenderer(positionMs)
     }

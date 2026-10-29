@@ -120,6 +120,10 @@ data class YouTubePlayback(
     val isLive: Boolean = false,
     val durationMs: Long = 0,
     val resumeMs: Long = 0,
+    /** A known saved start, explicit timestamp or handoff is final even when its target is zero. */
+    val resumeResolved: Boolean = false,
+    /** Captured for this launch while its saved watch position may still arrive asynchronously. */
+    val resumeRewindSeconds: Int = 0,
     val sponsorSegments: List<LongRange> = emptyList(),
     val timeline: com.ambient.tv.domain.model.PlaybackTimeline = com.ambient.tv.domain.model.PlaybackTimeline(),
     val headers: Map<String, String> = emptyMap(),

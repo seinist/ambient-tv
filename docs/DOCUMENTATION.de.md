@@ -73,7 +73,7 @@ Die Einstellungen haben fünf Bereiche. Jeder Bereich listet seine Seiten; die S
 | **Oberfläche & Bedienung** | Startseiten-Reihen · Beim Auswählen eines Mediums · Sprache · Mediathek · Aussehen · Hintergrundvideo · Bildschirmschoner · Menütöne · Uhr |
 | **Medienquellen & Konten** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailer · DLNA · Dateien (eingerichtete Systeme zuerst, dann „hinzufügen“) |
 | **Geräte & Netzwerk** | Handy & Geräte · UPnP-Receiver · WireGuard / VPN · Server & Wake-on-LAN |
-| **Wiedergabe** | Standard-Player · Untertitel · Intros, Abspann und nächste Folge · Sprungweite & Wiedergabe · Bildprofile · Audioprofile · Audio-Visualisierung · Fotos |
+| **Wiedergabe** | Standard-Player · Untertitel · Intros, Abspann und nächste Folge · Spulen & Fortsetzen · Bildprofile · Audioprofile · Audio-Visualisierung · Fotos |
 | **App & Daten** | Benachrichtigungen · Accounts und Einstellungen übertragen · Einstellungen sichern · Diagnose · Über die App |
 
 **Speichern.** Normale Werte sind ein Entwurf und gelten erst mit **Speichern**. Beim Verlassen mit offenen Änderungen fragt die App nach Speichern oder Verwerfen. Sofort wirken: Anmeldung, Abmeldung, Serverwechsel, Verbindungstests und Import („Anmeldung, Serverwechsel, Tests und Import gelten sofort; alles andere mit Speichern übernehmen.“). Kopplungen und TV-Erreichbarkeit auf *Handy & Geräte* wirken ebenfalls sofort. Der Export schreibt die gespeicherten Werte, nicht den Entwurf.
@@ -448,15 +448,22 @@ Je Wiedergabe im Player: Untertitelspur und **Untertitel-Verzögerung** (Schritt
 
 Im „Als Nächstes“-Dialog steht der Schalter für automatische Wiedergabe unten links neben Schließen. Jetzt abspielen / Weiterschauen bleibt rechts und erhält den Startfokus. Lange Beschriftungen und die optionale Aktion Abspann überspringen werden bei Bedarf in eine weitere Zeile umgebrochen; im Header stehen nur Titel und Countdown/Status.
 
-### 6.4 Sprungweite & Wiedergabe
+### 6.4 Spulen & Fortsetzen
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |
 | --- | --- | --- | --- |
 | Beste Version fürs Display | An / Aus | An | Wählt die Version, deren Auflösung zum TV passt. |
 | Hoch/Runter-Sprung | 15, 30, 60, 90, 120 s | 60 s | Sprungtasten und Hoch/Runter während der Wiedergabe. |
+| Nach Pause zurückspringen | Aus · 3 · 5 · 10 · 15 · 30 s | Aus | Wiederholt beim Aufheben einer Benutzerpause die letzten Sekunden. |
+| Mindestdauer der Pause | Immer · 5 · 10 · 30 s · 1 Minute | 10 s | Sichtbar, wenn der Rücksprung nach Pause aktiviert ist. Kürzere Pausen setzen an derselben Position fort. |
+| Beim Fortsetzen zurückspringen | Aus · 5 · 10 · 15 · 30 · 60 s | Aus | Startet ein begonnenes Video vor dem gespeicherten Spielstand, frühestens am Anfang. |
 | Anzeigedauer der Player-Steuerung | 3, 5, 8, 15 s | 5 s | Wie lange das OSD ohne Tastendruck sichtbar bleibt (alle Player, auch nach einem Senderwechsel). |
 | Zurück im Player | Wiedergabe stoppen · Minimieren (weiterspielen) | Wiedergabe stoppen | Was Zurück bei ausgeblendetem OSD tut (alle Player). Minimieren wirkt wie der Vollbild-verlassen-Button. |
 | Netzwerk-Puffer | Klein · Mittel · Groß | Mittel | Vorausladen für Media3 (15–30 s / Standard / 60 s–3 min), MPV (32 MiB·10 s / 64 MiB·20 s / 160 MiB·60 s, 96 MiB auf Geräten mit wenig RAM; nur außerhalb des Heimnetzes) und VLC (0,8 / 1,2 / 3 s). Live-Timeshift behält eigene Werte; SmartTube hat eine eigene Puffergröße. Gilt ab der nächsten Wiedergabe. |
+
+**Spulen & Fortsetzen** ist unter *Einstellungen → Wiedergabe* und bei spulbaren Videos im Playback-Settings-Panel erreichbar. Die Werte gelten global für alle Renderer. Im Panel nennt die Beschreibung die Sprungweite und nur aktive, verfügbare Rücksprünge; nach Pause und gespeicherter Spielstand lassen sich unabhängig einstellen. Ein gespeicherter Punkt bei 24:30 mit 10 Sekunden Rücksprung startet bei 24:20. „Von vorne“ und ausdrücklich gewählte Kapitel oder Zeitmarken behalten ihr Startziel.
+
+Der Rücksprung nach Pause gilt einmal beim bewussten Weiterlaufen. Wer während einer Pause spult, setzt an der selbst gewählten Position fort. OSD öffnen, Mini-Player/Vollbild wechseln, Reconnect, Rendererwechsel, Puffern und technische Pausen lösen keinen zusätzlichen Rücksprung aus. Musik bleibt ausgenommen. Bei Live-TV ist nur der Rücksprung nach Pause verfügbar, sobald Timeshift tatsächlich spulbar ist; er bleibt innerhalb des vorhandenen Puffers. Aufnahmen können zusätzlich den gespeicherten Spielstand mit Rücksprung fortsetzen.
 
 Live-TV: Nach jedem Senderwechsel erscheint das OSD mit dem neuen Sender; solange es nur deshalb offen ist, schalten Hoch/Runter weiter. Aus Live-TV oder dem Programmführer gestartet, bleibt Sender weiter/zurück in der dort gefilterten und sortierten Liste.
 
@@ -592,6 +599,7 @@ Live-TV ohne spulbare Timeline nutzt die Senderinfo als Fokusziel. Automatische 
 | Qualität | Qualitäten des Servers/Streams | Mehr als eine Qualität. |
 | Audio | Audiospur + [7.6](#76-audio) | |
 | Untertitel | Spur, Untertitel-Verzögerung | |
+| Spulen & Fortsetzen | Sprungweite · Rücksprung nach Pause · Rücksprung beim Fortsetzen | Spulbare Videos; Live-TV bietet nur Pause mit nutzbarem Timeshift. |
 | Konfiguration speichern / laden | Für alle Videos / diese Breite speichern, laden, zurücksetzen | Video läuft. |
 | Serien-Intros überspringen · Abspann überspringen | Aus · Schaltfläche anzeigen · Automatisch | Folgen mit Markierungen. |
 | Visualisierung | MilkDrop-Presets | Reine Audio-Wiedergabe. |

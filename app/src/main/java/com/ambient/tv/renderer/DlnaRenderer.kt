@@ -259,7 +259,7 @@ class DlnaRenderer @Inject constructor(
             "Pause" -> when {
                 ours() == null -> SoapResult.Fault(701, "Transition not available")
                 !mayControl(peer, sender) -> notAuthorized()
-                else -> { onMain { BackgroundPlaybackSession.pause() }; SoapResult.Ok() }
+                else -> { onMain { BackgroundPlaybackSession.userPause() }; SoapResult.Ok() }
             }
             "Stop" -> if (!mayReplace(peer, sender)) notAuthorized() else { stopOurs(); SoapResult.Ok() }
             "Seek" -> if (ours() != null && !mayControl(peer, sender)) notAuthorized() else seek(args)
@@ -329,7 +329,7 @@ class DlnaRenderer @Inject constructor(
         synchronized(lock) { if (media == null) return SoapResult.Fault(701, "Transition not available") }
         if (ours() != null) {
             if (!mayControl(peer, sender)) return notAuthorized()
-            onMain { BackgroundPlaybackSession.play() }
+            onMain { BackgroundPlaybackSession.userPlay() }
             return SoapResult.Ok()
         }
         // Opening the player needs the app on screen; in the background nothing new starts.

@@ -510,7 +510,10 @@ class SettingsViewModel @Inject constructor(
         projectmHdr4kAllowed = appPreferences.projectmHdr4kAllowed,
         projectmShowPresetName = appPreferences.projectmShowPresetName,
         projectmPresetCategoryKey = appPreferences.projectmPresetCategoryKey,
-        bigSeekJumpSeconds = appPreferences.bigSeekJumpSeconds,
+        seekPlayback = com.ambient.tv.data.local.SeekPlaybackSettings(
+            appPreferences.bigSeekJumpSeconds, appPreferences.pauseRewindSeconds,
+            appPreferences.pauseRewindMinPauseSeconds, appPreferences.resumeRewindSeconds,
+        ),
         creditsSkipMode = appPreferences.creditsSkipMode,
         introSkipMode = appPreferences.introSkipMode,
         nextUpEnabled = appPreferences.nextUpEnabled,
@@ -2161,7 +2164,18 @@ class SettingsViewModel @Inject constructor(
     fun onProjectmShowPresetNameChanged(value: Boolean) = _uiState.update { it.copy(projectmShowPresetName = value) }
     fun onProjectmHdr4kChanged(value: Boolean) = _uiState.update { it.copy(projectmHdr4kAllowed = value) }
     fun onProjectmCategoryChanged(value: String) = _uiState.update { it.copy(projectmPresetCategoryKey = value) }
-    fun onBigSeekJumpChanged(value: Int) = _uiState.update { it.copy(bigSeekJumpSeconds = value.coerceIn(10, 300)) }
+    fun onBigSeekJumpChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(bigSeekJumpSeconds = value.coerceIn(10, 300)))
+    }
+    fun onPauseRewindChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(pauseRewindSeconds = value.takeIf { seconds -> seconds in com.ambient.tv.data.local.PAUSE_REWIND_SECONDS } ?: 0))
+    }
+    fun onPauseRewindMinPauseChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(pauseRewindMinPauseSeconds = value.takeIf { seconds -> seconds in com.ambient.tv.data.local.PAUSE_REWIND_MIN_PAUSE_SECONDS } ?: 10))
+    }
+    fun onResumeRewindChanged(value: Int) = _uiState.update {
+        it.copy(seekPlayback = it.seekPlayback.copy(resumeRewindSeconds = value.takeIf { seconds -> seconds in com.ambient.tv.data.local.RESUME_REWIND_SECONDS } ?: 0))
+    }
     fun onCreditsSkipModeChanged(value: String) = _uiState.update { it.copy(creditsSkipMode = value) }
 
     fun onIntroSkipModeChanged(value: String) = _uiState.update { it.copy(introSkipMode = value) }
@@ -2614,6 +2628,9 @@ class SettingsViewModel @Inject constructor(
         appPreferences.projectmShowPresetName = state.projectmShowPresetName
         appPreferences.projectmPresetCategoryKey = state.projectmPresetCategoryKey
         appPreferences.bigSeekJumpSeconds = state.bigSeekJumpSeconds
+        appPreferences.pauseRewindSeconds = state.pauseRewindSeconds
+        appPreferences.pauseRewindMinPauseSeconds = state.pauseRewindMinPauseSeconds
+        appPreferences.resumeRewindSeconds = state.resumeRewindSeconds
         appPreferences.creditsSkipMode = state.creditsSkipMode
         appPreferences.introSkipMode = state.introSkipMode
         appPreferences.nextUpEnabled = state.nextUpEnabled

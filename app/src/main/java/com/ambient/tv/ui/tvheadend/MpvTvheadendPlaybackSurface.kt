@@ -199,6 +199,10 @@ internal fun MpvTvheadendPlaybackSurface(
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.
         if (controlsVisible && !handheldUi) controlsVisible = false else exitOnBack()
     }
+    fun userSeekBy(deltaMs: Long) {
+        BackgroundPlaybackSession.userSeek()
+        controller.seekBy(deltaMs)
+    }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, snapshot.durationMs)
     var resizeKey by remember(playbackKey) { mutableStateOf("fit") }
@@ -281,21 +285,21 @@ internal fun MpvTvheadendPlaybackSurface(
                 canSeekForward = true,
                 closing = osd.closing,
             ),
-            OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(controller.positionMs(), direction)
                 override fun isPlaying() = snapshot.isPlaying
-                override fun togglePlayback() { controller.playPause() }
-                override fun play() { controller.play() }
-                override fun pause() { controller.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
-                    controller.seekBy(deltaMs)
+                    userSeekBy(deltaMs)
                     if (revealOsd) osd.reveal() else osd.showSeekFeedback()
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { controller.seekTo(0L) }
+                override fun restart() { BackgroundPlaybackSession.userSeek(); controller.seekTo(0L) }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) { onZap(delta) }
@@ -319,9 +323,9 @@ internal fun MpvTvheadendPlaybackSurface(
         )
         PlayerTouchLayer(
             onToggleControls = { if (panel == UnifiedPlayerPanel.NONE) controlsVisible = !controlsVisible },
-            onTogglePlayback = { controller.playPause(); controlsVisible = true },
-            onSeekBack = if (source.isLive) null else ({ controller.seekBy(-10_000); controlsVisible = true }),
-            onSeekForward = if (source.isLive) null else ({ controller.seekBy(30_000); controlsVisible = true }),
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle(); controlsVisible = true },
+            onSeekBack = if (source.isLive) null else ({ userSeekBy(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs)); controlsVisible = true }),
+            onSeekForward = if (source.isLive) null else ({ userSeekBy(BackgroundPlaybackSession.seekJumpMs(seekJumpMs)); controlsVisible = true }),
         )
         PlaybackPerformanceNotice(mpvLoadHint(controller, snapshot, controller.deinterlaceModeKey != "off"))
         val showNerdOverlay = controller.audioSession.performanceHint
@@ -369,8 +373,8 @@ internal fun MpvTvheadendPlaybackSurface(
             seekJumpMs = seekJumpMs,
             svpBadge = com.ambient.tv.ui.player.backend.svpBadgeLabel(snapshot.svpState),
             audioBadge = com.ambient.tv.ui.player.audioOutputBadge(controller.audioSession),
-            onTogglePlayback = controller::playPause,
-            onSeekBy = { delta -> controller.seekBy(delta); controlsVisible = true },
+            onTogglePlayback = BackgroundPlaybackSession::userToggle,
+            onSeekBy = { delta -> userSeekBy(delta); controlsVisible = true },
             onZap = onZap,
             onStop = BackgroundPlaybackSession::stop,
             onBack = onBack,

@@ -252,7 +252,7 @@ fun BackgroundPlaybackBar(
             MiniPlaybackAction(
                 icon = if (session.playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 label = stringResource(if (session.playing) R.string.player_pause else R.string.player_play),
-                onClick = BackgroundPlaybackSession::toggle,
+                onClick = BackgroundPlaybackSession::userToggle,
                 primary = true,
                 onFocusedChanged = { if (it) focusedAction = "play" },
             )

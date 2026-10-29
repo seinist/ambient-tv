@@ -31,7 +31,7 @@ data class YouTubePlayerState(
 )
 
 @HiltViewModel
-class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context, private val savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine, private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability, private val availability: com.ambient.tv.data.browse.SourceAvailability) : ViewModel() {
+class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context, private val savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine, private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability, private val availability: com.ambient.tv.data.browse.SourceAvailability, private val preferences: com.ambient.tv.data.local.AppPreferences) : ViewModel() {
     internal fun ownsCompanionMedia(media: com.ambient.tv.companion.CompanionMedia?) = media?.kind == "youtube" && media.id == videoId && media.trailer == isTrailer
     private var videoId = requireNotNull(savedStateHandle.get<String>("videoId"))
     val isTrailer: Boolean = savedStateHandle.get<Boolean>("trailer") == true
@@ -40,6 +40,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     private var loadJob: kotlinx.coroutines.Job? = null
     private var foreground = true
     private val loadMutex = kotlinx.coroutines.sync.Mutex()
+    private val savedResumeRequest = com.ambient.tv.ui.player.SavedResumeRequest()
 
     init {
         load()
@@ -54,6 +55,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
 
     fun playNext(nextId: String) {
         if (isTrailer || _uiState.value.loading || nextId == videoId || _uiState.value.nextVideo?.videoId != nextId) return
+        savedResumeRequest.skip()
         transitionToken = BackgroundPlaybackSession.beginItemTransition()
         videoId = nextId
         savedStateHandle["videoId"] = nextId
@@ -61,6 +63,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
     }
 
     fun retry() {
+        savedResumeRequest.skip()
         if (transitionToken != null) transitionToken = BackgroundPlaybackSession.beginItemTransition()
         load(refresh = true)
     }
@@ -99,6 +102,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
         loadJob = viewModelScope.launch {
             var fresh = refresh
             var ready: YouTubePlayback? = null
+            var reusedSession = false
             while (ready == null) {
                 _uiState.update { it.copy(loading = true, error = null) }
                 val cached = if (fresh || isTrailer) null else BackgroundPlaybackSession.cached(Destinations.youtubePlayer(videoId)) as? YouTubePlayback
@@ -112,7 +116,10 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     suspendResult { cached ?: if (fresh) engine.refreshLivePlayback(videoId) else engine.playback(videoId) }
                 }
                 ready = result.getOrNull()
-                if (ready != null) break
+                if (ready != null) {
+                    reusedSession = cached != null
+                    break
+                }
                 val error = result.exceptionOrNull()
                 if (error is com.ambient.tv.youtube.YouTubeLiveOfflineException) {
                     _uiState.update { it.copy(loading = false, liveEvent = error.event, error = null) }
@@ -131,10 +138,13 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             if (requestToken != null && !BackgroundPlaybackSession.isSourceReplacement(requestToken)) return@launch
             transitionToken = null
             val chapterStart = YouTubeStartRequest.take(videoId)
+            val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
+                eligible = !isTrailer && chapterStart == null && !reusedSession && !playback.isLive)
             _uiState.value = YouTubePlayerState(false, when {
-                isTrailer -> playback.copy(resumeMs = 0)
-                chapterStart != null -> playback.copy(resumeMs = chapterStart)
-                else -> playback
+                isTrailer -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
+                chapterStart != null -> playback.copy(resumeMs = chapterStart, resumeResolved = true, resumeRewindSeconds = 0)
+                reusedSession -> playback.copy(resumeResolved = true, resumeRewindSeconds = 0)
+                else -> com.ambient.tv.youtube.prepareYouTubeSavedResume(playback, rewindSeconds)
             },
                 successorsLoading = !isTrailer)
             if (isTrailer) return@launch

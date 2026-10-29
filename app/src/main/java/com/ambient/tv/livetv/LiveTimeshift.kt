@@ -388,6 +388,9 @@ object LiveTimeshift {
     /** Set by the live player: reopens the stream at a wall-clock moment, or at the live edge for null. */
     @Volatile var seekHandler: ((Long?) -> Unit)? = null
 
+    /** Pause rewind waits for the requested stream before letting playback continue. */
+    @Volatile var resumeSeekHandler: ((Long, () -> Boolean, (Boolean) -> Unit) -> Unit)? = null
+
     suspend fun start(context: android.content.Context, route: String, url: String, headers: Map<String, String>, bytes: Long): TimeshiftBuffer? {
         stop()
         val directory = File(context.externalCacheDir ?: context.cacheDir, "timeshift")

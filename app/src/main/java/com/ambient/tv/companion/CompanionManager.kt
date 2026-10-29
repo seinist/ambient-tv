@@ -808,13 +808,14 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
         val music = useSpotifyPlayback(snapshot, spotify?.playback?.value ?: com.ambient.tv.spotify.SpotifyPlaybackState())
         when (command.type) {
             "retry" -> requireNotNull(execute).invoke(CompanionFrame(type = "start", media = requireNotNull(current.media)))
-            "play" -> if (music) spotify?.play() else BackgroundPlaybackSession.play()
-            "pause" -> if (music) spotify?.pause() else BackgroundPlaybackSession.pause()
+            "play" -> if (music) spotify?.play() else BackgroundPlaybackSession.userPlay()
+            "pause" -> if (music) spotify?.pause() else BackgroundPlaybackSession.userPause()
             "stop" -> { if (music) spotify?.stop() else BackgroundPlaybackSession.stop(); playbackQueue.clear(); CompanionQueuePlayback.pending = false; persistQueue() }
             "seek" -> {
                 require(current.seekable && command.position in 0..current.duration)
                 if (music) spotify?.seek(command.position)
                 else {
+                    BackgroundPlaybackSession.userSeek()
                     val sourceSeek = CompanionPlaybackControls.current().seek
                     val offset = snapshot.metadata?.timelineOffsetMs ?: 0
                     if (sourceSeek != null) sourceSeek(command.position)
@@ -845,6 +846,7 @@ class CompanionManager @Inject constructor(@ApplicationContext private val conte
                 }
                 else -> {
                     require(current.seekable)
+                    BackgroundPlaybackSession.userSeek()
                     val sourceSeek = CompanionPlaybackControls.current().seek
                     if (sourceSeek != null) sourceSeek(0) else { require(snapshot.metadata?.timelineOffsetMs == 0L); BackgroundPlaybackSession.seekTo(0) }
                 }

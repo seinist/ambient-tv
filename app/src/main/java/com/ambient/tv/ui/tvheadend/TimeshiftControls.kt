@@ -25,6 +25,7 @@ internal fun seekLiveTimeshiftBy(positionMs: Long, deltaMs: Long) {
     val buffer = LiveTimeshift.current ?: return
     val anchor = LiveTimeshift.anchor.value ?: return
     val seek = LiveTimeshift.seekHandler ?: return
+    com.ambient.tv.ui.player.BackgroundPlaybackSession.userSeek()
     seek(timeshiftSeekTarget(anchor, positionMs, deltaMs, buffer.oldestWallMs, buffer.liveWallMs))
 }
 
@@ -34,9 +35,10 @@ internal fun handleTimeshiftMediaKey(
     jumpMs: Long,
     onInteraction: () -> Unit,
 ): Boolean {
+    val step = com.ambient.tv.ui.player.BackgroundPlaybackSession.seekJumpMs(jumpMs)
     val delta = when (event.key) {
-        Key.MediaRewind -> -jumpMs
-        Key.MediaFastForward -> jumpMs
+        Key.MediaRewind -> -step
+        Key.MediaFastForward -> step
         else -> return false
     }
     if (LiveTimeshift.current == null || LiveTimeshift.anchor.value == null || LiveTimeshift.seekHandler == null) return false

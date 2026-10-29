@@ -152,6 +152,8 @@ interface PlaybackHandle {
     fun status(): PlaybackStatus
     /** Playback intent can differ from isPlaying while a newly created renderer is buffering. */
     fun wantsToPlay(): Boolean = status().playing
+    /** Current seek capability; a positive live clock alone never establishes a seek window. */
+    fun canSeekNow(): Boolean = status().durationMs > 0L
     fun play()
     fun pause()
     fun seekTo(positionMs: Long)
@@ -249,6 +251,24 @@ object BackgroundPlaybackSession {
     }
     private var generation = 0L
     private var appContext: Context? = null
+    private val pauseRewind = PauseRewindPolicy()
+    private var pauseRewindOwner: PlaybackHandle? = null
+    private var pauseReopenGeneration = 0
+    private var resumeRequestVersion = 0L
+    private var resumePreparationPending = false
+
+    private fun clearPauseRewind() {
+        pauseRewind.clear()
+        pauseRewindOwner = null
+        resumePreparationPending = false
+        resumeRequestVersion++
+    }
+
+    /** Invalidate as soon as a renderer/source choice changes, before Compose acquires it. */
+    internal fun cancelResumeRewind() {
+        checkThread()
+        clearPauseRewind()
+    }
     /** The shared sleep timer ([SleepSession]); this session is one of its targets. */
     val sleepTimer: SleepTimerConfig get() = SleepSession.config
     val sleepPromptDeadline: Long? get() = SleepSession.promptDeadline
@@ -308,6 +328,7 @@ object BackgroundPlaybackSession {
             @Suppress("UNCHECKED_CAST")
             return handle as T
         }
+        clearPauseRewind()
         val previous = handle
         val replacementPlayIntent = current.wantsToPlay.takeIf { current.replacingSource }
         val samePlayback = previous != null && current.metadata?.let { previousMetadata ->
@@ -450,6 +471,7 @@ object BackgroundPlaybackSession {
             runCatching { TitleVideoSettingsStore.capture(context, current.metadata, handle, videoSettingsOverride) }
         }
         lastTitleSettingsSave = SystemClock.elapsedRealtime()
+        clearPauseRewind()
         AudioEngineRedirectGuard.reset()
         videoSettingsOverride = null
         AbRepeat.clear()
@@ -463,6 +485,7 @@ object BackgroundPlaybackSession {
     /** Keep the outgoing picture/OSD until the next request is ready, without an EOF/Stop gap. */
     fun beginItemTransition(): Long {
         checkThread()
+        clearPauseRewind()
         val current = snapshot.value
         SleepSession.itemChanged(sleepTarget)
         mutableSnapshot.value = current.copy(
@@ -481,6 +504,10 @@ object BackgroundPlaybackSession {
     /** Release an upstream subscription without publishing Stop or resetting listening timers. */
     fun beginSourceReplacement(replacementMetadata: PlaybackMetadata? = null, playWhenReadyOverride: Boolean? = null): Long {
         checkThread()
+        // An accepted resume seek can itself replace the source. Preserve its request token
+        // until its preparation callback completes, but never arm another jump for the handoff.
+        pauseRewind.clear()
+        pauseRewindOwner = null
         val current = snapshot.value
         val previous = handle
         val status = previous?.status() ?: current.status
@@ -603,21 +630,148 @@ object BackgroundPlaybackSession {
 
     fun play() {
         checkThread()
+        clearPauseRewind()
         handle?.play()
         if (snapshot.value.replacingSource) mutableSnapshot.value = snapshot.value.copy(wantsToPlay = true)
         tick()
     }
     fun pause() {
         checkThread()
+        clearPauseRewind()
         handle?.pause()
         if (snapshot.value.replacingSource) mutableSnapshot.value = snapshot.value.copy(wantsToPlay = false)
         tick()
     }
     fun toggle() { if (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay) pause() else play() }
+
+    /** One current global value for keyboard, touch and transport buttons, including panel edits. */
+    fun seekJumpMs(fallbackMs: Long): Long =
+        subtitlePreferences?.bigSeekJumpSeconds?.times(1_000L) ?: fallbackMs
+
+    internal fun resumeCapabilities(): PlaybackResumeCapabilities {
+        val metadata = snapshot.value.metadata ?: return PlaybackResumeCapabilities()
+        val player = handle ?: return PlaybackResumeCapabilities()
+        val video = metadata.hasVideo && metadata.source != "spotify"
+        val live = metadata.isLive
+        val buffer = com.ambient.tv.livetv.LiveTimeshift.current
+        val source = com.ambient.tv.companion.CompanionPlaybackControls.current()
+        val seekable = if (live) {
+            buffer != null && com.ambient.tv.livetv.LiveTimeshift.anchor.value != null &&
+                com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler != null &&
+                buffer.liveWallMs > buffer.oldestWallMs
+        } else player.canSeekNow() || source.resumeSeekCanReload && source.resumeSeek != null && metadata.durationMs > 0L
+        val savesProgress = !metadata.isTrailer && metadata.source in setOf(
+            "plex", "jellyfin", "emby", "files", "dlna", "youtube", "tvheadend", "iptv",
+        )
+        return playbackResumeCapabilities(video, live, seekable, savesProgress)
+    }
+
+    private fun resumeTimelinePosition(player: PlaybackHandle, metadata: PlaybackMetadata?): Long {
+        val offset = if (metadata?.isLive == true) com.ambient.tv.livetv.LiveTimeshift.anchor.value ?: 0L
+            else metadata?.timelineOffsetMs ?: 0L
+        return offset + player.status().positionMs.coerceAtLeast(0L)
+    }
+
+    /** Explicit user transport is separate from buffering, audio focus and display-mode pauses. */
+    fun userPause() {
+        checkThread()
+        resumePreparationPending = false
+        resumeRequestVersion++
+        registerUserInteraction()
+        val player = handle
+        val wasPlaying = player?.wantsToPlay() == true
+        val eligible = player != null && resumeCapabilities().pauseRewind
+        if (wasPlaying && eligible) {
+            pauseRewindOwner = player
+            pauseReopenGeneration = player!!.reopenGeneration()
+        }
+        pauseRewind.userPaused(SystemClock.elapsedRealtime(),
+            player?.let { resumeTimelinePosition(it, snapshot.value.metadata) } ?: 0L,
+            wasPlaying, eligible)
+        player?.pause()
+        if (snapshot.value.replacingSource) mutableSnapshot.value = snapshot.value.copy(wantsToPlay = false)
+        tick()
+    }
+
+    fun userPlay() {
+        checkThread()
+        registerUserInteraction()
+        if (resumePreparationPending) return // Repeated Play must not bypass the pending seek.
+        val requestVersion = ++resumeRequestVersion
+        val player = handle
+        val metadata = snapshot.value.metadata
+        val prefs = subtitlePreferences
+        val buffer = com.ambient.tv.livetv.LiveTimeshift.current.takeIf { metadata?.isLive == true }
+        val source = com.ambient.tv.companion.CompanionPlaybackControls.current()
+        val position = player?.let { resumeTimelinePosition(it, metadata) } ?: 0L
+        val target = pauseRewind.resumeTarget(
+            nowMs = SystemClock.elapsedRealtime(), positionMs = position,
+            alreadyPlaying = player?.wantsToPlay() == true,
+            eligible = player != null && pauseRewindOwner === player &&
+                pauseReopenGeneration == player.reopenGeneration() && resumeCapabilities().pauseRewind,
+            rewindSeconds = prefs?.pauseRewindSeconds ?: 0,
+            minimumPauseSeconds = prefs?.pauseRewindMinPauseSeconds ?: 10,
+            earliestMs = buffer?.oldestWallMs ?: if (source.resumeSeekCanReload) 0L else metadata?.timelineOffsetMs ?: 0L,
+            latestMs = buffer?.liveWallMs ?: metadata?.durationMs?.takeIf { it > 0L }
+                ?: player?.status()?.durationMs?.takeIf { it > 0L }?.plus(metadata?.timelineOffsetMs ?: 0L)
+                ?: Long.MAX_VALUE,
+        )
+        pauseRewindOwner = null
+        if (target == null || player == null || metadata == null) {
+            play()
+            return
+        }
+        resumePreparationPending = true
+        val reopenGeneration = player.reopenGeneration()
+        val stillCurrent = {
+            val current = snapshot.value.metadata
+            resumeRequestVersion == requestVersion && current != null && current.route == metadata.route &&
+                current.source == metadata.source && current.mediaId == metadata.mediaId &&
+                (handle !== player || player.reopenGeneration() == reopenGeneration)
+        }
+        val prepared: (Boolean) -> Unit = {
+            // A failed seek still honours Play at the old position. A newer Pause/seek/Stop
+            // cancels both the asynchronous preparation and this playback request.
+            val mayPlay = stillCurrent()
+            if (resumeRequestVersion == requestVersion) resumePreparationPending = false
+            if (mayPlay) play()
+        }
+        when {
+            metadata.isLive -> {
+                val seek = com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler
+                if (seek == null) play() else seek(target, stillCurrent, prepared)
+            }
+            source.resumeSeek != null -> source.resumeSeek.invoke(target, stillCurrent, prepared)
+            else -> {
+                player.seekTo((target - metadata.timelineOffsetMs).coerceAtLeast(0L))
+                play()
+            }
+        }
+    }
+
+    fun userToggle() {
+        checkThread()
+        if (resumePreparationPending || (handle?.wantsToPlay() ?: snapshot.value.wantsToPlay)) userPause() else userPlay()
+    }
+
+    /** Call when the user begins a seek, including an uncommitted timeline preview. */
+    fun userSeek() {
+        checkThread()
+        clearPauseRewind()
+        externalSeekVersion++
+        registerUserInteraction()
+    }
+
     /** Bumped by every seek routed through the session (companion, media session, DLNA, OSD). */
     var externalSeekVersion by mutableIntStateOf(0)
         private set
-    fun seekTo(positionMs: Long) { checkThread(); externalSeekVersion++; handle?.seekTo(positionMs.coerceAtLeast(0)); tick() }
+    fun seekTo(positionMs: Long) {
+        checkThread()
+        clearPauseRewind()
+        externalSeekVersion++
+        handle?.seekTo(positionMs.coerceAtLeast(0))
+        tick()
+    }
 
     fun shouldConfirmNextUp(limit: Int): Boolean = limit > 0 && consecutiveAutoAdvances >= limit
     fun recordAutomaticNextUp(candidate: NextUpCandidate) {
@@ -636,6 +790,7 @@ object BackgroundPlaybackSession {
     fun stop(preserveNextUpChain: Boolean = false, keepSleepTimer: Boolean = false) {
         AudioEngineRedirectGuard.reset()
         checkThread()
+        clearPauseRewind()
         com.ambient.tv.diagnostics.CrashBreadcrumbs.add("session",
             "stop backend=${snapshot.value.backend} live=${snapshot.value.metadata?.isLive} keepTimer=$keepSleepTimer")
         PlaybackOutputTransition.clear()

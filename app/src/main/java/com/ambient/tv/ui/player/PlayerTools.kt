@@ -46,6 +46,7 @@ internal const val DEFAULT_FRAME_MS = 40L
 
 /** One frame: the engine's own step where it has one, else pause and an exact seek by a frame. */
 internal fun stepFrame(handle: PlaybackHandle, forward: Boolean, frameMs: Long = DEFAULT_FRAME_MS) {
+    BackgroundPlaybackSession.userSeek()
     AbRepeat.clearIfOther(handle)
     if (handle is FrameStepTarget) return handle.stepFrame(forward)
     handle.pause()

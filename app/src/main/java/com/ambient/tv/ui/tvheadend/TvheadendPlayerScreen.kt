@@ -445,6 +445,12 @@ private fun TvheadendPlaybackSurface(
         // Handheld: swipe Back leaves the player instead of only hiding the OSD.
         if (controlsVisible && !handheldUi) controlsVisible = false else exitOnBack()
     }
+    fun userSeekBy(deltaMs: Long) {
+        BackgroundPlaybackSession.userSeek()
+        val target = player.currentPosition + deltaMs
+        val max = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+        player.seekTo(target.coerceIn(0L, max))
+    }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, player.duration.takeIf { it > 0 } ?: 0L)
     val playFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
@@ -664,22 +670,21 @@ private fun TvheadendPlaybackSurface(
                 canSeekForward = player.duration > 0,
                 closing = osd.closing,
             ),
-            OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
+            OsdSeekSteps(BackgroundPlaybackSession.seekJumpMs(seekJumpMs), held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(player.currentPosition, direction)
                 override fun isPlaying() = player.isPlaying
-                override fun togglePlayback() { if (player.isPlaying) player.pause() else player.play() }
-                override fun play() { player.play() }
-                override fun pause() { player.pause() }
+                override fun togglePlayback() { BackgroundPlaybackSession.userToggle() }
+                override fun play() { BackgroundPlaybackSession.userPlay() }
+                override fun pause() { BackgroundPlaybackSession.userPause() }
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
-                    val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
-                    player.seekTo(if (player.duration > 0) target.coerceAtMost(player.duration) else target)
+                    userSeekBy(deltaMs)
                     if (revealOsd) osd.reveal() else osd.showSeekFeedback()
                 }
                 override fun showOsd() { osd.reveal() }
                 override fun hideSeekFeedback() { osd.reveal() }
-                override fun restart() { player.seekTo(0L) }
+                override fun restart() { BackgroundPlaybackSession.userSeek(); player.seekTo(0L) }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
                 override fun zap(delta: Int) { onZap(delta) }
@@ -723,16 +728,15 @@ private fun TvheadendPlaybackSurface(
                 if (panel == UnifiedPlayerPanel.NONE) controlsVisible = !controlsVisible
             },
             onTogglePlayback = {
-                if (player.isPlaying) player.pause() else player.play()
+                BackgroundPlaybackSession.userToggle()
                 controlsVisible = true
             },
             onSeekBack = if (source.isLive) null else ({
-                player.seekTo((player.currentPosition - 10_000).coerceAtLeast(0L))
+                userSeekBy(-BackgroundPlaybackSession.seekJumpMs(seekJumpMs))
                 controlsVisible = true
             }),
             onSeekForward = if (source.isLive) null else ({
-                val target = player.currentPosition + 30_000
-                player.seekTo(if (player.duration > 0) target.coerceAtMost(player.duration) else target)
+                userSeekBy(BackgroundPlaybackSession.seekJumpMs(seekJumpMs))
                 controlsVisible = true
             }),
         )
@@ -791,11 +795,9 @@ private fun TvheadendPlaybackSurface(
             mediaBadges = listOfNotNull(videoLabel, audioLabel),
             audioBadge = com.ambient.tv.ui.player.audioOutputBadge(tvhAudio),
             seekJumpMs = seekJumpMs,
-            onTogglePlayback = { if (player.isPlaying) player.pause() else player.play() },
+            onTogglePlayback = { BackgroundPlaybackSession.userToggle() },
             onSeekBy = { delta ->
-                val target = player.currentPosition + delta
-                val max = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
-                player.seekTo(target.coerceIn(0L, max))
+                userSeekBy(delta)
                 controlsVisible = true
             },
             onZap = onZap,
