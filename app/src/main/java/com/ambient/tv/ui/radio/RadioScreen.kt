@@ -69,6 +69,7 @@ import com.ambient.tv.ui.theme.screenGutter
 @Composable
 fun RadioScreen(
     onBack: (() -> Unit)? = null,
+    onNowPlaying: () -> Unit = {},
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -97,7 +98,17 @@ fun RadioScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        PageHeader(focusChain = focusChain) {
+        PageHeader(
+            focusChain = focusChain,
+            actions = {
+                if (playback.metadata?.source == "radio") {
+                    TvChip(
+                        text = stringResource(R.string.radio_now_playing),
+                        onClick = onNowPlaying,
+                    )
+                }
+            },
+        ) {
             SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
             Text(
                 if (state.submittedQuery.isNotBlank()) stringResource(R.string.radio_title)
