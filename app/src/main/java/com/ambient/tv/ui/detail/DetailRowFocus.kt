@@ -16,10 +16,12 @@ internal class DetailFocusMemory {
     fun rowItems(): Map<String, String> = positions.toMap()
 }
 
-/** Popping a detail route does not forget its rows; restarting the process does. */
+/** Popping a detail route keeps its rows; starting a new app session clears them. */
 internal class DetailFocusSessionStore {
     private val pages = mutableMapOf<Pair<String, String>, DetailFocusMemory>()
     fun page(scope: String, ratingKey: String): DetailFocusMemory = pages.getOrPut(scope to ratingKey) { DetailFocusMemory() }
+
+    fun clear() = pages.clear()
 }
 
 internal val DetailFocusSessions = DetailFocusSessionStore()

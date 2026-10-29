@@ -149,8 +149,8 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.launch
 
-/** Process-wide: false until the first activity of this process is created. */
-private var activityCreatedInProcess = false
+/** A running service may outlive the browse UI; only its configuration recreation restores focus. */
+private val browseUiSessionPolicy = BrowseUiSessionPolicy()
 
 @AndroidEntryPoint
 open class MainActivity : ComponentActivity() {
@@ -168,6 +168,8 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
     @Inject lateinit var dlnaStore: com.ambient.tv.data.dlna.DlnaStore
+    @Inject lateinit var liveTvBrowseRegistry: javax.inject.Provider<com.ambient.tv.livetv.LiveTvRegistry>
+    @Inject lateinit var photoViewerSession: javax.inject.Provider<com.ambient.tv.data.photos.PhotoViewerSession>
     @Inject lateinit var spotifyRepository: javax.inject.Provider<com.ambient.tv.spotify.SpotifyRepository>
     @Inject lateinit var resumeConnectivityMonitor: ResumeConnectivityMonitor
     @Inject lateinit var connectionNotifications: com.ambient.tv.notifications.ConnectionNotifications
@@ -178,6 +180,9 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var companionSettingsRefresh: com.ambient.tv.companion.CompanionSettingsRefresh
     private var companionIntentPending = true
     @Inject lateinit var uiSoundPlayer: com.ambient.tv.ui.sound.UiSoundPlayer
+
+    private val browseUiOwner = Any()
+    private var ownsBrowseUiSession = false
 
     private val lastInteractionElapsedMs = mutableLongStateOf(SystemClock.elapsedRealtime())
     private val screensaverActive = mutableStateOf(false)
@@ -231,6 +236,20 @@ open class MainActivity : ComponentActivity() {
             }
         }
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
+        super.onDestroy()
+    }
+
+    /** All browse positions belong to the UI session, including stores held by background services. */
+    private fun resetBrowseSessionPositions() {
+        appPreferences.clearSessionFocus()
+        com.ambient.tv.ui.detail.DetailFocusSessions.clear()
+        liveTvBrowseRegistry.get().clearBrowsePositions()
+        com.ambient.tv.livetv.LiveTvReturnFocus.clear()
+        photoViewerSession.get().clearReturnFocus()
     }
 
     private fun consumeScreensaverInput(result: ScreensaverInputResult): Boolean {
@@ -554,18 +573,18 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(restoredState: Bundle?) {
-        // A bundle in a fresh process means Android killed the app in the background; reopening it
-        // is a cold start for the user, so drop the saved scroll/focus/back-stack state and let
-        // every screen begin at its first item. Recreations within a live process keep their state.
-        val savedInstanceState = restoredState.takeIf { activityCreatedInProcess }
-        activityCreatedInProcess = true
+        // A redirecting TV/phone Activity does not own the UI session. It may merely forward a
+        // launcher intent to an already running Activity, whose focus must remain untouched.
+        val television = com.ambient.tv.ui.mobile.isTelevision(this)
+        ownsBrowseUiSession = television == (this !is com.ambient.tv.ui.mobile.HandheldActivity)
+        val restoreBrowseState = ownsBrowseUiSession && browseUiSessionPolicy.create(browseUiOwner, restoredState != null)
+        // Only a configuration recreation resumes saved focus/scroll/back-stack state. A new
+        // UI starts fresh even if a background service kept the old process alive.
+        val savedInstanceState = restoredState.takeIf { restoreBrowseState }
         super.onCreate(savedInstanceState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
         browseReconnects.start()
-        // A new launch in a process that outlived the closed app is a cold start for the user too:
-        // remembered focus (YouTube feeds, libraries, rows) begins at the first item again.
-        if (savedInstanceState == null) appPreferences.clearSessionFocus()
         companionIntentPending = savedInstanceState?.getBoolean("companion.intent.pending", false) ?: true
         if (this is com.ambient.tv.ui.mobile.HandheldActivity && com.ambient.tv.ui.mobile.isTelevision(this)) {
             startActivity(Intent(intent).setClass(this, MainActivity::class.java).apply {
@@ -581,6 +600,7 @@ open class MainActivity : ComponentActivity() {
             finish()
             return
         }
+        if (savedInstanceState == null) resetBrowseSessionPositions()
         // Set here, not in the manifest: a manifest orientation also applies to the phone launch
         // before the handheld trampoline, which made portrait phones start in landscape.
         if (com.ambient.tv.ui.mobile.isTelevision(this)) requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE

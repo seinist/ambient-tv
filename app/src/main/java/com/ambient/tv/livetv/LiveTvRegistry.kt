@@ -151,6 +151,11 @@ class LiveTvRegistry @Inject constructor(
             ?: LiveTvBrowseState().also { browseStates[repository.source.id] = repository to it }
     }
 
+    /** Reset browsing positions across sources without discarding their dashboard caches. */
+    @Synchronized fun clearBrowsePositions() {
+        browseStates.values.forEach { (_, state) -> state.clearPositions() }
+    }
+
     suspend fun discover(force: Boolean = false): List<AvailableLiveTvSource> = coroutineScope {
         restoreKnown()
         val before = known.snapshot()

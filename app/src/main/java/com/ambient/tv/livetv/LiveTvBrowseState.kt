@@ -29,4 +29,7 @@ class LiveTvBrowseState(private val now: () -> Long = { System.nanoTime() / 1_00
     fun savePosition(key: String, itemId: String, offset: Int) {
         positions[key] = Position(itemId, offset)
     }
+
+    /** A new app session starts at the beginning while keeping the cached dashboard fresh. */
+    fun clearPositions() = positions.clear()
 }

@@ -71,6 +71,29 @@ class DetailRowFocusTest {
         assertEquals(emptyMap<String, String>(), DetailFocusSessionStore().page("server-a:user-a", "42").rowItems())
     }
 
+    @Test fun aNewAppSessionClearsEveryPageEvenWhenTheProcessSurvives() {
+        val session = DetailFocusSessionStore()
+        val first = session.page("server-a", "42").apply {
+            record("children:episode:9")
+            record("cast:actor:3")
+        }
+        val second = session.page("server-b", "42").apply { record("similar:movie:2") }
+        assertSame(first, session.page("server-a", "42"))
+
+        session.clear()
+
+        val reopened = session.page("server-a", "42")
+        assertNotSame(first, reopened)
+        assertNotSame(second, session.page("server-b", "42"))
+        assertNull(reopened.key)
+        assertTrue(reopened.rowItems().isEmpty())
+        assertNull(session.page("server-b", "42").key)
+        first.record("children:episode:10")
+        assertTrue(reopened.rowItems().isEmpty())
+        reopened.record("children:episode:1")
+        assertEquals("children:episode:1", session.page("server-a", "42").key)
+    }
+
     @Test fun providerQualifiedIdsKeepTheirWholeRowAndItemIdentity() {
         assertEquals("actor:jellyfin:person:17", detailRowForFocusKey("actor:jellyfin:person:17\u0000jellyfin:movie:22"))
         assertEquals("collections", detailRowForFocusKey("collection:emby:collection:8"))

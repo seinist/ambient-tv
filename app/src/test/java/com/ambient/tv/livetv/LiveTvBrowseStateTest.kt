@@ -48,4 +48,25 @@ class LiveTvBrowseStateTest {
         assertEquals(LiveTvBrowseState.Position("channel-a", 27), first.position("guide"))
         assertEquals(LiveTvBrowseState.Position("event-1", 12), first.position("guide:channel-a"))
     }
+
+    @Test fun aNewSessionClearsPositionsWhileKeepingDashboardCapabilitiesAndFreshness() {
+        val state = LiveTvBrowseState { 10_000L }
+        val snapshot = dashboard()
+        val capabilities = LiveTvCapabilities(available = true, guide = true, recordings = true)
+        state.update(snapshot, capabilities)
+        state.savePosition("channels", "channel-a", 27)
+        state.savePosition("guide", "channel-b", 13)
+        state.savePosition("guide:channel-b", "event-2", 8)
+
+        state.clearPositions()
+
+        assertNull(state.position("channels"))
+        assertNull(state.position("guide"))
+        assertNull(state.position("guide:channel-b"))
+        assertSame(snapshot, state.dashboard)
+        assertSame(capabilities, state.capabilities)
+        assertFalse(state.needsRefresh())
+        state.savePosition("channels", "channel-first", 0)
+        assertEquals(LiveTvBrowseState.Position("channel-first", 0), state.position("channels"))
+    }
 }

@@ -1588,7 +1588,7 @@ class AppPreferences @Inject constructor(
         queueFocusWrite(mapOf("section_focus_$stateKey" to value))
     }
 
-    /** Item and recommendation row are one restore target; queue only one preference write. */
+    /** Item and recommendation row are one restore target within the current browse session. */
     fun setSectionFocusSnapshot(stateKey: String, value: String, rowId: String?) {
         queueFocusWrite(mapOf("section_focus_$stateKey" to value, "section_focus_row_$stateKey" to rowId))
     }
@@ -1600,16 +1600,17 @@ class AppPreferences @Inject constructor(
     }
 
     /*
-     * Grid focus is remembered only for this process: within a session every grid returns to its
-     * last item, after a cold start each one begins at its first item. Nothing is written to disk.
+     * Grid focus is remembered only for the current UI session: within that session every grid
+     * returns to its last item. MainActivity clears it when a new UI starts, even if a service
+     * kept the process alive. Nothing is written to disk.
      */
     private val sessionFocus = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun focusValue(key: String): String? = sessionFocus[key]
 
     /**
-     * A new launch of the app (no saved activity state) starts every grid at its first item, also
-     * when the process outlived the closed app (a background service kept it alive).
+     * A new UI session starts every grid at its first item. Configuration recreation and a
+     * normal return to an existing Activity do not clear its positions.
      */
     fun clearSessionFocus() = sessionFocus.clear()
 

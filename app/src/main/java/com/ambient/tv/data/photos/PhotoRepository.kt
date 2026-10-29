@@ -84,4 +84,9 @@ class PhotoViewerSession @Inject constructor() {
 
     /** Photo shown last in the viewer; the browser/Files list refocuses it on return. */
     @Volatile var lastViewedId: String? = null
+
+    /** A new browser session must not inherit the previous session's return selection. */
+    fun clearReturnFocus() {
+        lastViewedId = null
+    }
 }
