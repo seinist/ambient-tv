@@ -362,6 +362,7 @@ internal fun SidebarContent(
         tvheadendConfigured = tvheadendUsable || sidebarState.liveTvSources.any { it.source.system == "iptv" },
         youtubeEnabled = youtubeEnabled,
         spotifyCanSearch = spotifyEnabled && spotifyAuthorized && spotifyNativeAvailable,
+        radioEnabled = radioEnabled,
     )
     val globals = buildList {
         // Plex-style order: Search above Home.
