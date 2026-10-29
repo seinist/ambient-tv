@@ -58,6 +58,7 @@ import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -306,6 +307,8 @@ private fun RightSidePanelChrome(
     body: @Composable () -> Unit,
 ) {
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
+    val playerPanelInteractive = com.ambient.tv.ui.player.LocalPlayerPanelInteractive.current
+    val playerPanelMotion = com.ambient.tv.ui.player.LocalPlayerPanelMotion.current
     if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
         // Handheld: the screen beside the panel is a dismiss area. It takes the tap, so the
         // player underneath does not toggle its controls at the same time.
@@ -325,7 +328,7 @@ private fun RightSidePanelChrome(
     // TV and handheld: Back dismisses the panel. Previously only handheld
     // registered a BackHandler; TV relied on parent handlers / footer alone.
     val uiSounds = LocalUiSoundPlayer.current
-    androidx.activity.compose.BackHandler {
+    androidx.activity.compose.BackHandler(enabled = playerPanelInteractive) {
         if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK, onBack) else onBack()
     }
     val footerFocus = remember { FocusRequester() }
@@ -344,7 +347,8 @@ private fun RightSidePanelChrome(
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
     val dialogOwnsFocus = focusRescue?.dialogOwnsFocus?.invoke() == true
-    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus) {
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus, playerPanelInteractive) {
+        if (!playerPanelInteractive) return@LaunchedEffect
         // A player dialog's focus return owns the hand-back: a paused target of ours is obsolete.
         if (dialogOwnsFocus) rescue.pausedTarget = null
         if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
@@ -385,7 +389,7 @@ private fun RightSidePanelChrome(
             }
         }
     }
-    if (requestHeaderFocus) {
+    if (requestHeaderFocus && playerPanelInteractive) {
         LaunchedEffect(Unit) {
             delay(400)
             if (panelHasFocus) return@LaunchedEffect
@@ -409,9 +413,23 @@ private fun RightSidePanelChrome(
                 // Consume taps on empty panel space instead of reaching the page/player below.
                 detectTapGestures { }
             } else Modifier)
+            .graphicsLayer {
+                translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(
+                    playerPanelMotion.panelProgress,
+                    playerPanelMotion.reducedEffects,
+                )
+                alpha = com.ambient.tv.ui.player.playerPanelDrawerAlpha(
+                    playerPanelMotion.panelProgress,
+                    playerPanelMotion.reducedEffects,
+                )
+            }
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
-            .focusProperties { onExit = { cancelFocusChange() } }
+            .focusProperties {
+                canFocus = playerPanelInteractive
+                onEnter = { if (!playerPanelInteractive) cancelFocusChange() }
+                onExit = { cancelFocusChange() }
+            }
             .focusRequester(panelFocus)
             .onFocusChanged {
                 panelHasFocus = it.hasFocus
