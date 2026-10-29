@@ -133,6 +133,31 @@ private const val WORDMARK_LEFT = 0.5f
 private const val WORDMARK_RIGHT = 135.6f
 private const val WORDMARK_TOP = -18.8f
 private const val WORDMARK_BOTTOM = 2f
+private const val INTRO_ICON_WORD_GAP = 2.5f
+private const val INTRO_WORDMARK_PEAK_CENTER_X = 9.914f
+private const val INTRO_ICON_CENTER_X = 24f
+private const val INTRO_ICON_FRAME_LEFT_X = 6f
+private const val INTRO_ICON_FRAME_RIGHT_X = 42f
+private const val INTRO_ICON_PEAK_LEFT_X = 15f
+private const val INTRO_ICON_PEAK_RIGHT_X = 33f
+private const val INTRO_FIRST_LETTER_OFFSET_X = 19.828f
+private const val INTRO_FIRST_LETTER_GLYPH_LEFT_X = 82f
+
+/** Final Bloom geometry in wordmark units: the monitor remains the A instead of separating from it. */
+internal fun introBloomIconScaleInWordmarkUnits(): Float =
+    (17.914f - 1.914f) / (INTRO_ICON_PEAK_RIGHT_X - INTRO_ICON_PEAK_LEFT_X)
+
+internal fun introBloomWordShift(): Float {
+    val iconScale = introBloomIconScaleInWordmarkUnits()
+    val frameRight = INTRO_WORDMARK_PEAK_CENTER_X +
+        (INTRO_ICON_FRAME_RIGHT_X - INTRO_ICON_CENTER_X) * iconScale
+    val firstLetterInkLeft = INTRO_FIRST_LETTER_OFFSET_X + INTRO_FIRST_LETTER_GLYPH_LEFT_X * GLYPH_SCALE
+    return frameRight + INTRO_ICON_WORD_GAP - firstLetterInkLeft
+}
+
+internal fun introBloomWordmarkLeft(): Float =
+    INTRO_WORDMARK_PEAK_CENTER_X +
+        (INTRO_ICON_FRAME_LEFT_X - INTRO_ICON_CENTER_X) * introBloomIconScaleInWordmarkUnits()
 
 /** Composition center as a fraction of the height: the lower third stays free for the status card. */
 private const val STAGE_Y = 0.40f
@@ -364,9 +389,12 @@ private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
  */
 private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, start: Float, fromIcon: Boolean) {
     val t = frame.seconds - start
-    val unit = width / (WORDMARK_RIGHT - WORDMARK_LEFT)
+    val wordShift = if (fromIcon) introBloomWordShift() else 0f
+    val layoutLeft = if (fromIcon) introBloomWordmarkLeft() else WORDMARK_LEFT
+    val layoutRight = WORDMARK_RIGHT + wordShift
+    val unit = width / (layoutRight - layoutLeft)
     val origin = Offset(
-        at.x - (WORDMARK_LEFT + WORDMARK_RIGHT) / 2f * unit,
+        at.x - (layoutLeft + layoutRight) / 2f * unit,
         at.y - (WORDMARK_TOP + WORDMARK_BOTTOM) / 2f * unit,
     )
     fun mark(p: Offset) = origin + p * unit
@@ -377,25 +405,27 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
     val peak: List<Offset>
     val peakStroke: Float
     if (fromIcon) {
-        // The icon's apex lands on the Λ apex; its peak points slide onto the Λ points.
+        // Bloom keeps the complete brand mark rigid: frame, stand and A translate/scale together.
+        // The old code already morphed the A toward the standalone wordmark Λ while the monitor
+        // continued its own trip left, which visibly pulled the frame away from the centered A.
         val bigUnit = width * 0.30f / 48f
-        val bigOrigin = at - Offset(24f, 24f) * bigUnit
-        val endUnit = unit * 16f / 18f
-        val endOrigin = mark(WORDMARK_PEAK[1]) - ICON_PEAK[1] * endUnit
+        val bigOrigin = at - Offset(INTRO_ICON_CENTER_X, INTRO_ICON_CENTER_X) * bigUnit
+        val endUnit = unit * introBloomIconScaleInWordmarkUnits()
+        val endOrigin = mark(Offset(INTRO_WORDMARK_PEAK_CENTER_X, WORDMARK_PEAK[1].y)) -
+            Offset(INTRO_ICON_CENTER_X, ICON_PEAK[1].y) * endUnit
         val iconUnit = mix(bigUnit, endUnit, move)
         val iconOrigin = mix(bigOrigin, endOrigin, move)
-        peak = ICON_PEAK.indices.map { mix(iconOrigin + ICON_PEAK[it] * iconUnit, mark(WORDMARK_PEAK[it]), move) }
-        peakStroke = mix(3.6f * bigUnit, WORDMARK_PEAK_STROKE * unit, move)
-        val shell = appear * (1f - soft(phase(t, 1.5f, 2.4f)))
-        if (shell > 0f) {
+        peak = ICON_PEAK.map { iconOrigin + it * iconUnit }
+        peakStroke = 3.6f * iconUnit
+        if (appear > 0f) {
             val shellColor = lerp(frame.ink, frame.accent, 0.25f)
             withTransform({
                 translate(iconOrigin.x, iconOrigin.y)
                 scale(iconUnit, iconUnit, pivot = Offset.Zero)
             }) {
                 val style = Stroke(3.2f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                drawPath(frame.logo.frame, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
-                drawPath(frame.logo.stand, shellColor.copy(alpha = frame.ink.alpha * shell), style = style)
+                drawPath(frame.logo.frame, shellColor.copy(alpha = frame.ink.alpha * appear), style = style)
+                drawPath(frame.logo.stand, shellColor.copy(alpha = frame.ink.alpha * appear), style = style)
             }
         }
     } else {
@@ -419,7 +449,7 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
     }
     val line = soft(phase(t, badgeFrom, badgeFrom + 0.5f))
     if (line > 0f && !IntroDraw.lite) {
-        val badgeCenter = mark(BADGE_TOP_LEFT + Offset(BADGE_SIZE.width / 2f, BADGE_SIZE.height / 2f))
+        val badgeCenter = mark(BADGE_TOP_LEFT + Offset(wordShift + BADGE_SIZE.width / 2f, BADGE_SIZE.height / 2f))
         lightPool(lerp(frame.accent, frame.second, frame.breath), badgeCenter, BADGE_SIZE.width * unit * 1.4f, 0.12f * line, squash = 0.7f)
     }
     withTransform({
@@ -431,7 +461,7 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
             val letter = soft(phase(t, from, from + 1.2f))
             if (letter <= 0f) return@forEachIndexed
             withTransform({
-                translate(x, 2.4f * (1f - letter))
+                translate(x + wordShift, 2.4f * (1f - letter))
                 scale(GLYPH_SCALE, -GLYPH_SCALE, pivot = Offset.Zero)
             }) {
                 drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter))
@@ -445,7 +475,7 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
             val radius = minOf(4f, height / 2f)
             drawRoundRect(
                 lerp(frame.accent, Color.White, 0.5f * (1f - open)).copy(alpha = line),
-                topLeft = Offset(BADGE_TOP_LEFT.x, middle - height / 2f),
+                topLeft = Offset(BADGE_TOP_LEFT.x + wordShift, middle - height / 2f),
                 size = Size(BADGE_SIZE.width, height),
                 cornerRadius = CornerRadius(radius, radius),
             )
@@ -453,7 +483,7 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
             if (label > 0f) {
                 frame.wordmark.badgeLabel.forEach { (x, glyph) ->
                     withTransform({
-                        translate(LABEL_ORIGIN.x + x, LABEL_ORIGIN.y)
+                        translate(LABEL_ORIGIN.x + wordShift + x, LABEL_ORIGIN.y)
                         scale(LABEL_SCALE, -LABEL_SCALE, pivot = Offset.Zero)
                     }) {
                         drawPath(glyph, frame.cutout.copy(alpha = label))
