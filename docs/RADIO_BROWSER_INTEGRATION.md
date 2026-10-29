@@ -47,12 +47,18 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - Radio enabled state and Favorites are included in settings backup schema 75;
 - Recently played intentionally stays device-local, matching the existing treatment of live-TV watch history.
 
+### Browse facets
+
+- Genres use Radio Browser tags ordered by station count;
+- Countries use stable ISO country codes and localized display names;
+- Languages use the Radio Browser language index;
+- selecting a facet performs a server-side filtered station query with paging;
+- Back returns from a selected facet to its facet list.
+
 ## Still to implement
 
-1. Optional Home rows for Radio Favorites/Recent.
-2. Android Auto browse hierarchy through the media library service.
-3. Device playback tests with representative MP3/AAC/HLS and ICY stations.
-4. Better catalog facets (country/language/tag screens) beyond direct filtering/search.
+1. Optional Home integration for Radio where it fits Ambient TV's row model.
+2. Device playback tests with representative MP3/AAC/HLS and ICY stations.
 
 ## Radio Browser contract relied upon
 
