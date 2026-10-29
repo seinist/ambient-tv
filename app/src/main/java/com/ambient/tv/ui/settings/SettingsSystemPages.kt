@@ -542,6 +542,32 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             }
         }
 
+        SettingsCategory.RADIO -> {
+            item {
+                TvSettingRow(
+                    systemString(MediaSystem.RADIO, R.string.settings_radio_enable),
+                    systemString(MediaSystem.RADIO, R.string.settings_radio_enable_hint),
+                    uiState.radioEnabled,
+                    viewModel::onRadioEnabledChanged,
+                )
+            }
+            if (uiState.radioEnabled) {
+                item { SystemNameField(MediaSystem.RADIO, uiState, viewModel) }
+                item(key = "radio-provider") {
+                    Text(
+                        stringResource(R.string.radio_provider_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                item(key = "radio-menu") {
+                    SettingsGroup(subtitle = stringResource(R.string.settings_system_menu_display)) {
+                        SubmenuSettingsRow(MediaSystem.RADIO, uiState, viewModel::onSidebarSettingsShortcutChanged)
+                    }
+                }
+            }
+        }
+
         SettingsCategory.SPOTIFY -> {
             item { TvSettingRow(systemString(MediaSystem.SPOTIFY, R.string.settings_spotify_enable), systemString(MediaSystem.SPOTIFY, R.string.settings_spotify_enable_hint), uiState.spotifyEnabled, viewModel::onSpotifyEnabledChanged) }
 
