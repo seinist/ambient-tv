@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_teletext_page">Page %1$d</string>
+    <string name="player_teletext_page_previous">Previous page</string>
+    <string name="player_teletext_page_next">Next page</string>
+    <string name="player_teletext_page_input">Enter page</string>
+    <string name="player_teletext_page_input_hint">Three digits from 100 to 899</string>
+    <string name="player_teletext_start">Home 100</string>
+    <string name="player_teletext_subpage">Subpage %1$d/%2$d</string>
+    <string name="player_teletext_subpage_previous">Previous subpage</string>
+    <string name="player_teletext_subpage_next">Next subpage</string>
+    <string name="player_teletext_mix_value">Transparent: %1$s</string>
+    <string name="player_teletext_erase">Delete digit</string>
+    <string name="player_teletext_reading_hint">▲/▼: change page · OK: controls</string>
+    <string name="player_hbbtv_controls">Controls</string>
+    <string name="player_hbbtv_controls_hint">Hold Back: controls · Press Back: back in service</string>
+    <string name="player_hbbtv_back_to_page">Back in service</string>
+    <string name="player_hbbtv_return_to_page">Return to service</string>
+    <string name="player_hbbtv_home">Home</string>
+    <string name="player_hbbtv_reload">Reload</string>
+    <string name="player_hbbtv_close">Close HbbTV</string>
+    <string name="player_hbbtv_loading">Loading HbbTV …</string>
+    <string name="player_hbbtv_error">Could not load HbbTV</string>
+    <string name="player_hbbtv_error_hint">Check the connection or try again.</string>
+    <string name="player_broadcast_color_red">Red</string>
+    <string name="player_broadcast_color_green">Green</string>
+    <string name="player_broadcast_color_yellow">Yellow</string>
+    <string name="player_broadcast_color_blue">Blue</string>
+</resources>

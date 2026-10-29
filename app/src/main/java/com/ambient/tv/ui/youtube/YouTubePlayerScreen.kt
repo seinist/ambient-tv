@@ -653,7 +653,7 @@ private fun YouTubeMedia3Playback(
     var defaultAudioTrackApplied by remember(playback.videoId) { mutableStateOf(false) }
     var completionPending by remember { mutableStateOf(false) }
     val seekCoordinator = remember(playback.videoId) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(playback.videoId) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1143,7 +1143,7 @@ private fun YouTubeVlcPlayback(playback: YouTubePlayback, audioUri: String?, str
         }
     }
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
@@ -1424,7 +1424,7 @@ private fun YouTubeMpvPlayback(playback: YouTubePlayback, streams: YouTubeStream
     }
     com.ambient.tv.ui.player.MpvRenderOverloadDialog(controller, panelNavigation)
     val seekCoordinator = remember(controller) { PlaybackSeekCoordinator() }
-    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(playback.resumeResolved || startPositionMs > 0L) }
+    var lateResumeApplied by remember(seekCoordinator) { mutableStateOf(startPositionMs > 0L) }
     var userSeeked by remember(controller) { mutableStateOf(false) }
     // A seek from the phone or the session controls is a user seek too: the late resume
     // position must not overwrite it.
