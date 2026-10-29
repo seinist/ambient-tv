@@ -134,7 +134,7 @@ fun RadioScreen(
             }
         }
 
-        if (state.selectedFacet != null) {
+        state.selectedFacet?.let { selectedFacet ->
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -146,7 +146,7 @@ fun RadioScreen(
                     onClick = viewModel::clearFacet,
                 )
                 Text(
-                    radioFacetLabel(state.section, state.selectedFacet),
+                    radioFacetLabel(state.section, selectedFacet),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
