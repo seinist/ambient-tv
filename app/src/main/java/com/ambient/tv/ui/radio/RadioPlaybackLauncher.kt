@@ -119,6 +119,9 @@ class RadioPlaybackLauncher @Inject constructor(
                 attempt = reconnectAttempt,
             )
         ) return
+        // One player error can fan out through more than one Media3 callback. A pending retry
+        // already owns this failure; duplicate callbacks must not consume extra attempts.
+        if (reconnectJob?.isActive == true) return
 
         reconnectAttempt += 1
         val attempt = reconnectAttempt
