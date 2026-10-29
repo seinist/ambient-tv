@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -108,7 +109,18 @@ fun RadioScreen(
             ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        PageHeader(focusChain = focusChain) {
+        PageHeader(
+            focusChain = focusChain,
+            actions = {
+                TvChip(
+                    text = stringResource(R.string.action_reload),
+                    icon = Icons.Filled.Refresh,
+                    iconOnly = true,
+                    loading = state.loading || state.loadingMore,
+                    onClick = viewModel::refresh,
+                )
+            },
+        ) {
             SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
             Text(
                 radioPageSubtitle(state),
