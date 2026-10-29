@@ -80,6 +80,20 @@ internal val LocalPlayerPanelMotion = staticCompositionLocalOf { PlayerPanelMoti
 internal val LocalPlayerPanelInteractive = staticCompositionLocalOf { true }
 internal val LocalPlayerPanelStateHolder = staticCompositionLocalOf<SaveableStateHolder?> { null }
 
+internal fun Modifier.playerPanelInteractionGuard(interactive: Boolean): Modifier =
+    if (interactive) this else this
+        .focusProperties { onEnter = { cancelFocusChange() } }
+        .onPreviewKeyEvent { true }
+        .pointerInput(Unit) {
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    event.changes.forEach { it.consume() }
+                }
+            }
+        }
+        .clearAndSetSemantics { }
+
 /**
  * Navigation is dismissed immediately, but the last visual level stays composed until its exit
  * motion finishes. That lets the OSD start returning underneath without leaving a blank frame,
@@ -154,18 +168,7 @@ fun PlayerPanelVisibility(
     val input = if (interactive) {
         Modifier.playerPanelInput(navigation)
     } else {
-        Modifier
-            .focusProperties { onEnter = { cancelFocusChange() } }
-            .onPreviewKeyEvent { true }
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        event.changes.forEach { it.consume() }
-                    }
-                }
-            }
-            .clearAndSetSemantics { }
+        Modifier.playerPanelInteractionGuard(false)
     }
 
     key(stateGeneration) {
