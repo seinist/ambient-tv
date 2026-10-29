@@ -37,7 +37,10 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 - playback is marked live + audio-only and uses the existing audio-focus/background service;
 - Media3 in-stream metadata updates the active Radio session without restarting the stream;
 - stale metadata from a previous station is rejected by UUID;
-- metadata changes force MediaSession and notification refresh.
+- metadata changes force MediaSession and notification refresh;
+- global Ambient TV search can query Radio Browser and start a station directly;
+- the active station list drives previous/next controls in MediaSession and the notification;
+- radio playback deliberately exposes no seek action.
 
 ### Backup
 
@@ -46,12 +49,10 @@ SHOUTcast and TuneIn are intentionally out of scope. The user-facing system is s
 
 ## Still to implement
 
-1. Global Ambient TV search integration for Radio.
-2. Optional Home rows for Radio Favorites/Recent.
-3. Previous/next station semantics for the active Radio list and radio-appropriate transport actions.
-4. Android Auto browse hierarchy through the media library service.
-5. Device playback tests with representative MP3/AAC/HLS and ICY stations.
-6. Better catalog facets (country/language/tag screens) beyond direct filtering/search.
+1. Optional Home rows for Radio Favorites/Recent.
+2. Android Auto browse hierarchy through the media library service.
+3. Device playback tests with representative MP3/AAC/HLS and ICY stations.
+4. Better catalog facets (country/language/tag screens) beyond direct filtering/search.
 
 ## Radio Browser contract relied upon
 
