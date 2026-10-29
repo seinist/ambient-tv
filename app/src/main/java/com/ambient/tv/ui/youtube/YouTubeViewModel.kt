@@ -240,10 +240,10 @@ class YouTubeViewModel @Inject constructor(
     private var signInWatchJob: Job? = null
     private var contentJob: Job? = null
     private var displayedContentKey: String? = null
+    private var entered = false
     val uiState: StateFlow<YouTubeUiState> = _uiState.asStateFlow()
 
     init {
-        refresh()
         viewModelScope.launch {
             engine.subscriptionChanges.collect { changes ->
                 val channel = _uiState.value.channel ?: return@collect
@@ -251,6 +251,15 @@ class YouTubeViewModel @Inject constructor(
                 if (updated != channel) _uiState.value = _uiState.value.copy(channel = updated)
             }
         }
+    }
+
+    fun enter(initialFeedKey: String?) {
+        if (!entered) {
+            entered = true
+            val feed = initialFeedKey?.let(YouTubeFeed::fromKey)
+            if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
+        }
+        refresh()
     }
 
     fun refresh() {

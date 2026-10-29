@@ -104,14 +104,22 @@ class SectionViewModel @Inject constructor(
 
     init {
         if (sourceItems.isNotEmpty()) rebuild()
-        load()
-
     }
 
-    fun load(force: Boolean = false) {
+    /** Entry already expired this source under the shared mutation guard. */
+    fun refreshAfterEntry() = load(force = true, invalidateCache = false)
+
+    fun load(force: Boolean = false, invalidateCache: Boolean = force) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
+            if (force) {
+                collectionJob?.cancel()
+                collectionJob = null
+                collectionsLoading = false
+            }
+            // Invalidate before starting sibling reads; doing it afterwards cancels fresh work.
+            if (invalidateCache) mediaRepository.invalidateSectionCache(sectionKey)
             mediaRepository.cachedProviderOnDeck(sectionKey)?.let { onDeck = it }
             // Recovered libraries may have been renamed; do not race the sidebar's independent load.
             launch {
@@ -130,12 +138,6 @@ class SectionViewModel @Inject constructor(
             if (sourceItems.isEmpty()) {
                 sourceItems = mediaRepository.cachedSectionItems(sectionKey).orEmpty()
                 if (sourceItems.isNotEmpty()) rebuild()
-            }
-            if (force) {
-                collectionJob?.cancel()
-                collectionJob = null
-                collectionsLoading = false
-                mediaRepository.invalidateSectionCache(sectionKey)
             }
             if (_uiState.value !is SectionUiState.Loaded) _uiState.value = SectionUiState.Loading
             val showPagesWhileLoading = sourceItems.isEmpty()

@@ -7,6 +7,7 @@ import com.ambient.tv.data.files.FileStore
 import com.ambient.tv.data.dlna.DlnaServer
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.connectivity.UnreachableServerGate
+import com.ambient.tv.connectivity.HostConnectivity
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.SystemNameOverrides
 import com.ambient.tv.domain.repository.MediaRepository
@@ -46,8 +47,6 @@ data class SidebarUiState(
     val tvheadendEnabled: Boolean = false,
     /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
     val tvheadendLoginRejected: Boolean = false,
-    /** Server asleep or unreachable: TVHeadend stays, marked offline, with its cached data. */
-    val tvheadendOffline: Boolean = false,
     val youtubeFeedKeys: List<String> = listOf("home"),
     /** Section behind SmartTube's root route (see [Destinations.youtubeSection]). */
     val youtubeStartFeedKey: String = "home",
@@ -63,7 +62,7 @@ data class SidebarUiState(
     val sections: List<LibrarySection> = emptyList(),
     val jellyfinSections: List<LibrarySection> = emptyList(),
     val embySections: List<LibrarySection> = emptyList(),
-    /** Media servers that do not answer: listed with an offline mark, opening them offers a wake. */
+    /** Confirmed host outages, including concrete files:<id>/dlna:<id> sources; entries stay usable. */
     val offlineSystems: Set<String> = emptySet(),
 )
 
@@ -84,7 +83,7 @@ class SidebarViewModel @Inject constructor(
     private val spotifyProvider: javax.inject.Provider<SpotifyRepository>,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
-    private val tvheadendRepository: com.ambient.tv.tvheadend.data.TvheadendRepository,
+    private val hosts: HostConnectivity,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(
@@ -177,10 +176,14 @@ class SidebarViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            tvheadendRepository.servingCachedData.collect { offline -> _uiState.update { it.copy(tvheadendOffline = offline) } }
-        }
-        viewModelScope.launch {
-            unreachableServers.state.collect { gate -> _uiState.update { it.copy(offlineSystems = gate.offline) } }
+            observeSidebarAvailability(
+                hosts.states,
+                appPreferences.changes(),
+                fileStore.revision,
+                dlnaStore.serverRevision,
+                com.ambient.tv.data.local.LoginStateSignal.generation,
+                snapshot = ::currentOfflineSources,
+            ).collect { offline -> _uiState.update { it.copy(offlineSystems = offline) } }
         }
         viewModelScope.launch {
             fileStore.revision.collect {
@@ -207,6 +210,18 @@ class SidebarViewModel @Inject constructor(
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
         fileStore.sources().filter { it.network }
+
+    private fun currentOfflineSources(): Set<String> {
+        val configured = buildSet {
+            if (appPreferences.isConfigured) add("plex")
+            if (appPreferences.isJellyfinConfigured) add("jellyfin")
+            if (appPreferences.isEmbyConfigured) add("emby")
+            if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
+            if (appPreferences.filesEnabled) addAll(networkFileSourcesFromStore().map { "files:${it.id}" })
+            addAll(dlnaStore.servers().map { "dlna:${it.id}" })
+        }
+        return sidebarOfflineSources(configured, hosts::health)
+    }
 
     private fun observeSpotifyAuthorization() {
         if (appPreferences.spotifyEnabled && spotifyAuthJob == null) {

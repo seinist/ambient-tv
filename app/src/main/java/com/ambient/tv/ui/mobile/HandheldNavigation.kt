@@ -226,6 +226,7 @@ private data class SourceEntry(
     val title: String,
     val route: String,
     val settingsCategory: String? = null,
+    val offline: Boolean = false,
 )
 private data class SourceGroup(val system: MediaSystem, val entries: List<SourceEntry>)
 
@@ -283,10 +284,10 @@ private fun HandheldSources(
     }
     val groups = buildList {
         if (dlnaServers.isNotEmpty()) add(withSettings(MediaSystem.DLNA,
-            dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id)) } +
+            dlnaServers.map { SourceEntry(it.id, it.name, Destinations.dlnaServer(it.id), offline = "dlna:${it.id}" in sidebarState.offlineSystems) } +
                 listOf(SourceEntry("manage", stringResource(R.string.dlna_servers), Destinations.DLNA))))
         if (files) add(withSettings(MediaSystem.FILES,
-            networkFileSources.map { SourceEntry("source:${it.id}", it.name, Destinations.fileSource(it.id)) } + listOf(
+            networkFileSources.map { SourceEntry("source:${it.id}", it.name, Destinations.fileSource(it.id), offline = "files:${it.id}" in sidebarState.offlineSystems) } + listOf(
                 SourceEntry("browse", stringResource(R.string.files_browse), Destinations.FILES),
                 SourceEntry("favorites", stringResource(R.string.files_favorites), Destinations.FILE_FAVORITES),
                 SourceEntry("recent", stringResource(R.string.files_recent), Destinations.FILE_RECENT),
@@ -365,8 +366,8 @@ private fun HandheldSources(
                 item(group.system.key) {
                     ListItem(
                         headlineContent = { Text(systemName(group.system)) },
-                        supportingContent = if (group.system == MediaSystem.TVHEADEND && sidebarState.tvheadendOffline) {
-                            { Text(stringResource(R.string.tvh_offline_badge)) }
+                        supportingContent = if (group.system.key in sidebarState.offlineSystems) {
+                            { Text(stringResource(R.string.offline_badge)) }
                         } else null,
                         leadingContent = { SystemLogo(group.system) },
                         trailingContent = { Icon(if (open) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null) },
@@ -374,7 +375,9 @@ private fun HandheldSources(
                     )
                 }
                 if (open) items(group.entries, key = { "${group.system.key}:${it.key}" }) { entry ->
-                    ListItem(headlineContent = { Text(entry.title) }, trailingContent = { Icon(Icons.Default.ChevronRight, null) },
+                    ListItem(headlineContent = { Text(entry.title) },
+                        supportingContent = if (entry.offline) { { Text(stringResource(R.string.offline_badge)) } } else null,
+                        trailingContent = { Icon(Icons.Default.ChevronRight, null) },
                         modifier = Modifier.padding(start = 32.dp).clickable {
                             if (entry.settingsCategory != null) onOpenSystemSettings(entry.settingsCategory)
                             else onNavigate(entry.route)

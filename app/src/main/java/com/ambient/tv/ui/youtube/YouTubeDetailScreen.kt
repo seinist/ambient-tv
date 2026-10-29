@@ -102,7 +102,7 @@ fun YouTubeDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("youtube"), viewModel::refresh)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube"), viewModel::refresh)
     val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current || com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current
     val primaryFocusRequester = remember { FocusRequester() }
     var initialFocusRequested by remember(state.metadata?.videoId) { mutableStateOf(false) }

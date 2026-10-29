@@ -22,8 +22,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 private data class PlaybackHostSignal(val source: String?, val id: String?, val playing: Boolean, val error: String?)
 
-internal data class HostEndpoint(val system: String, val host: String, val port: Int, val machine: String)
-
 /** Shared reachability evidence. Probes never establish VPN routes or send wake packets. */
 @Singleton
 class HostConnectivity internal constructor(
@@ -62,21 +60,37 @@ class HostConnectivity internal constructor(
         if (preferences.jellyfinEnabled && preferences.jellyfinHost.isNotBlank()) addEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinPort, preferences.jellyfinMacAddress)
         if (preferences.embyEnabled && preferences.embyHost.isNotBlank()) addEndpoint("emby", preferences.embyHost, preferences.embyPort, preferences.embyMacAddress)
         if (preferences.hasTvheadendEndpoint) addEndpoint("tvheadend", preferences.tvheadendHost, preferences.tvheadendPort, preferences.tvheadendMacAddress)
+        // Live TV keeps its captured profile while another server is selected for normal browsing.
+        if (preferences.plexEnabled) preferences.serverProfiles.forEach { profile ->
+            mediaServerProfileSourceId("plex", profile.id)?.let {
+                addEndpoint(it, profile.host, profile.port, profile.macAddress)
+            }
+        }
+        if (preferences.jellyfinEnabled) preferences.jellyfinServerProfiles.filter { it.authenticated }.forEach { profile ->
+            mediaServerProfileSourceId("jellyfin", profile.id, profile.userId)?.let {
+                addEndpoint(it, profile.host, profile.port, profile.macAddress)
+            }
+        }
+        if (preferences.embyEnabled) preferences.embyServerProfiles.filter { it.authenticated }.forEach { profile ->
+            mediaServerProfileSourceId("emby", profile.id, profile.userId)?.let {
+                addEndpoint(it, profile.host, profile.port, profile.macAddress)
+            }
+        }
         preferences.fileSources.filter { it.kind != "local" }.forEach { addEndpoint("files:${it.id}", it.host, it.port, it.wolMac) }
         dlna.servers().forEach { server -> dlnaWakeEndpoint(server)?.let { (host, port) -> addEndpoint("dlna:${server.id}", host, port, server.wolMac) } }
     }
 
     fun machine(system: String): String? = endpoints().firstOrNull { it.system == system }?.machine
     fun begin(system: String): HostCheck? = machine(system)?.let(store::begin)
-    fun beginEndpoint(system: String, host: String, port: Int): HostCheck? = endpoints()
-        .firstOrNull { it.system == system && it.host.equals(NetworkEndpoint.normalizeHost(host), ignoreCase = true) && it.port == port }
+    fun beginEndpoint(system: String, host: String, port: Int): HostCheck? =
+        matchingHostEndpoint(endpoints(), host, port, system)
         ?.let { store.begin(it.machine) }
     fun nextCheck(previous: HostCheck?): HostCheck? = previous?.let { store.begin(it.machine) }
     fun health(system: String): HostHealth = machine(system)?.let { store.current(it).health } ?: HostHealth.UNKNOWN
     fun online(check: HostCheck?) { if (check != null) store.online(check.machine) }
     fun interceptor() = okhttp3.Interceptor { chain ->
         val url = chain.request().url
-        val target = endpoints().firstOrNull { it.host.equals(url.host, ignoreCase = true) && it.port == url.port }
+        val target = matchingHostEndpoint(endpoints(), url.host, url.port)
         val check = target?.let { store.begin(it.machine) }
         try {
             chain.proceed(chain.request()).also { if (it.networkResponse != null) online(check) }

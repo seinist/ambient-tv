@@ -2,6 +2,8 @@ package com.ambient.tv.livetv
 
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.branding.AppBrand
+import com.ambient.tv.connectivity.HostConnectivity
+import com.ambient.tv.connectivity.mediaServerProfileSourceId
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.TokenStore
 import com.ambient.tv.di.SharedOkHttp
@@ -32,10 +34,13 @@ class LiveTvRegistry @Inject constructor(
     @SharedOkHttp pool: ConnectionPool,
     @SharedOkHttp dispatcher: Dispatcher,
     private val browseDisk: com.ambient.tv.data.browse.BrowseDiskStore,
+    hosts: HostConnectivity,
 ) {
     private val client = OkHttpClient.Builder().connectionPool(pool).dispatcher(dispatcher)
         .connectTimeout(8, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false).addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build()
+        .callTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
+        .addInterceptor(hosts.interceptor())
+        .addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build()
     /** IPTV providers redirect (load balancers, tokenised CDNs) and guides are slow to download. */
     // No diagnostic logging: Xtream-style providers put user and password into the URL path.
     private val iptvClient = client.newBuilder().apply { interceptors().clear(); networkInterceptors().clear() }
@@ -73,7 +78,8 @@ class LiveTvRegistry @Inject constructor(
     @Synchronized fun configured(): List<LiveTvRepository> = buildList {
         fun addServer(system: String, id: String, name: String, host: String, port: Int, https: Boolean, path: String, token: String?, user: String? = null) {
             if (host.isBlank() || token.isNullOrBlank() || (system != "plex" && user.isNullOrBlank())) return
-            val source = LiveTvSource("$system:$id" + if (user == null) "" else ":$user", system, name)
+            val sourceId = mediaServerProfileSourceId(system, id, user) ?: return
+            val source = LiveTvSource(sourceId, system, name)
             val fingerprint = listOf(source, host, port, https, path, token, user, preferences.clientIdentifier)
             val existing = instances[source.id]?.takeIf { it.first == fingerprint }?.second
             val repository = existing ?: run {

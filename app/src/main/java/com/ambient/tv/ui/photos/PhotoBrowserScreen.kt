@@ -85,7 +85,6 @@ fun PhotoBrowserScreen(
     onBack: (() -> Unit)? = null,
     viewModel: PhotoBrowserViewModel = hiltViewModel(key = "photos:$rootKey"),
 ) {
-    LaunchedEffect(rootKey) { viewModel.start(rootKey, title) }
     // Runs before the focus effect below reads the focus target.
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state by viewModel.state.collectAsState()
@@ -95,7 +94,7 @@ fun PhotoBrowserScreen(
         com.ambient.tv.data.emby.EmbyBackend.owns(rootKey) -> "emby"
         else -> "plex"
     }
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf(source), viewModel::refresh)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(source)) { viewModel.enter(rootKey, title) }
     ReportSidebarContentReady(!state.loading)
     val tokens = LocalUiTokens.current
     BackHandler(enabled = !state.atRoot || state.timeline || onBack != null) {

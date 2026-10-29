@@ -186,8 +186,6 @@ class DlnaBrowserViewModel @Inject constructor(
     }
     private var openingFolder = false
 
-    init { refresh() }
-
     fun refresh() = load(_state.value.path)
     fun refreshOnReconnect() = load(_state.value.path, silent = true)
 

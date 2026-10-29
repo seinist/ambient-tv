@@ -32,6 +32,7 @@ class JellyfinRepository @Inject constructor(
     json: kotlinx.serialization.json.Json,
     disk: com.ambient.tv.data.browse.BrowseDiskStore,
     scopes: com.ambient.tv.data.browse.BrowseScopes,
+    private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
 ) : MediaRepository {
     init { cache.configurePersistence(disk) { scopes.forProvider("jellyfin") } }
     override suspend fun restoreCache() = cache.restore()
@@ -460,7 +461,10 @@ class JellyfinRepository @Inject constructor(
         }
     }
 
-    override suspend fun markWatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    private suspend fun <T> mutate(block: suspend kotlinx.coroutines.CoroutineScope.() -> Result<T>): Result<T> =
+        browseReconnects.get().withMutation("jellyfin") { cache.withGeneration(block) }
+
+    override suspend fun markWatched(ratingKey: String): Result<Unit> = mutate {
         suspendResult {
             // UserPlayedItems exists from Jellyfin 10.9; older servers use the user-scoped path.
             withLegacyFallback({ api.markPlayed(raw(ratingKey)) }) { api.markPlayedLegacy(userId(), raw(ratingKey)) }
@@ -468,14 +472,14 @@ class JellyfinRepository @Inject constructor(
         }
     }
 
-    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = mutate {
         suspendResult {
             withLegacyFallback({ api.markUnplayed(raw(ratingKey)) }) { api.markUnplayedLegacy(userId(), raw(ratingKey)) }
             cache.patchUnwatched(setOf(ratingKey)); cache.setOnDeck(null)
         }
     }
 
-    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = mutate {
         suspendResult {
             val item = cachedMediaItem(ratingKey) ?: getMetadataFast(ratingKey).getOrThrow()
             val update = JellyfinUserDataUpdate(0, item?.isWatched == true, item?.viewCount ?: 0)

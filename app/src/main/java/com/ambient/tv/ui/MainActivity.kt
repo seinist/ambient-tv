@@ -261,7 +261,6 @@ open class MainActivity : ComponentActivity() {
         consumedKodiKeyboardKeys.clear()
         super.onPause()
     }
-    private var hasResumedOnce = false
     private val openPlaybackRequest = mutableLongStateOf(0)
 
     override fun onNewIntent(intent: Intent) {
@@ -292,10 +291,6 @@ open class MainActivity : ComponentActivity() {
         if (::appPreferences.isInitialized && com.ambient.tv.ui.mobile.isTelevision(this) && appPreferences.spotifyEnabled) {
             runCatching { spotifyRepository.get().reconcileReceiverForPlatform() }
         }
-        if (hasResumedOnce && ::plexRefreshBus.isInitialized && ::appPreferences.isInitialized && (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured || appPreferences.isTvheadendConfigured)) {
-            plexRefreshBus.requestRefresh()
-        }
-        hasResumedOnce = true
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

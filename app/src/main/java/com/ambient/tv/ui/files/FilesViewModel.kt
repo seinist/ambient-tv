@@ -79,18 +79,27 @@ class FilesViewModel @Inject constructor(
     private var pendingReconnectRefresh = false
     private var limit = folders.lastOrNull()?.visibleLimit?.coerceAtLeast(300) ?: 300
     init {
-        refresh()
-        viewModelScope.launch { store.revision.collect {
-            val sourceId = folders.lastOrNull()?.sourceId
-            val previous = _state.value.sources.firstOrNull { it.id == sourceId }
-            updateStored()
-            val current = _state.value.sources.firstOrNull { it.id == sourceId }
-            if (sourceId != null && (current == null || previous?.sameLocation(current) == false)) {
-                folders = emptyList(); saved["focus"] = null; rememberFolders(); refresh()
-            } else if (folders.isEmpty()) {
-                if (pinnedSourceId != null) refresh() else showLanding(resetLoading = false)
+        val initialRevision = store.revision.value
+        updateStored()
+        if (folders.isEmpty()) restorePinnedSourceIfNeeded()
+        if (folders.isEmpty()) showLanding()
+        else _state.update { it.copy(folders = folders, loading = true, focusId = saved["focus"]) }
+        viewModelScope.launch {
+            var observedRevision = initialRevision
+            store.revision.collect { revision ->
+                if (revision == observedRevision) return@collect
+                observedRevision = revision
+                val sourceId = folders.lastOrNull()?.sourceId
+                val previous = _state.value.sources.firstOrNull { it.id == sourceId }
+                updateStored()
+                val current = _state.value.sources.firstOrNull { it.id == sourceId }
+                if (sourceId != null && (current == null || previous?.sameLocation(current) == false)) {
+                    folders = emptyList(); saved["focus"] = null; rememberFolders(); refresh()
+                } else if (folders.isEmpty()) {
+                    if (pinnedSourceId != null) refresh() else showLanding(resetLoading = false)
+                }
             }
-        } }
+        }
     }
     /** Sidebar NAS shortcuts land on that share's root instead of the source list. */
     private fun restorePinnedSourceIfNeeded(): Boolean {

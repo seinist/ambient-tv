@@ -10,6 +10,24 @@ internal fun browseSourceMatches(changed: String, watched: Set<String>): Boolean
 internal fun browseReconnectVersion(revisions: Map<String, Long>, sources: Set<String>): Long =
     revisions.entries.asSequence().filter { browseSourceMatches(it.key, sources) }.maxOfOrNull { it.value } ?: 0L
 
+/** Internal folder/source navigation owns its load; changing interests alone is not another entry. */
+internal class BrowseRefreshObservation(sources: Set<String>, revisions: Map<String, Long>) {
+    private var watched = sources.toSet()
+    private var seen = browseReconnectVersion(revisions, watched)
+
+    fun changed(sources: Set<String>, revisions: Map<String, Long>): Boolean {
+        val revision = browseReconnectVersion(revisions, sources)
+        if (watched != sources) {
+            watched = sources.toSet()
+            seen = revision
+            return false
+        }
+        if (revision <= seen) return false
+        seen = revision
+        return true
+    }
+}
+
 internal class BrowseReconnectRevisions {
     private var sequence = 0L
     private var revisions = emptyMap<String, Long>()

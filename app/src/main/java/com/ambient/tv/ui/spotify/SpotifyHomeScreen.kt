@@ -60,7 +60,7 @@ fun SpotifyHomeScreen(
     viewModel: SpotifyHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("spotify"), viewModel::refresh)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify")) { viewModel.enter(initialSectionKey) }
     val expectedSectionKey = initialSectionKey ?: "home"
     val focusStateKey = remember(expectedSectionKey) { "spotify:$expectedSectionKey" }
     val focusItemId = remember(focusStateKey, state.items) {
@@ -78,7 +78,6 @@ fun SpotifyHomeScreen(
     val nowPlayingFocusRequester = remember { FocusRequester() }
     val firstItemFocusRequester = remember { FocusRequester() }
     var initialContentFocusPending by remember(expectedSectionKey) { mutableStateOf(true) }
-    LaunchedEffect(initialSectionKey) { initialSectionKey?.let(viewModel::loadSection) }
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
         initialFirstVisibleItemIndex = state.items.indexOfFirst { spotifyFocusId(it) == focusItemId }.coerceAtLeast(0),
     )

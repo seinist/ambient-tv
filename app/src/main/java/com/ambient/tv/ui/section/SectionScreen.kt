@@ -174,20 +174,21 @@ fun SectionScreen(
     viewModel: SectionViewModel = hiltViewModel(),
 ) {
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnReconnect(
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)),
-    ) { viewModel.load(force = true) }
+    ) { viewModel.refreshAfterEntry() }
     DisposableEffect(viewModel) { onDispose { viewModel.captureFocusForReturn() } }
     val uiState by viewModel.uiState.collectAsState()
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
+    val entryRefreshGeneration = remember(viewModel) { refreshGeneration }
     LaunchedEffect(refreshGeneration) {
-        if (refreshGeneration > 0L) viewModel.load(force = true)
+        if (refreshGeneration != entryRefreshGeneration) viewModel.load(force = true)
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel.autoRefreshIntervalSeconds) {
         val seconds = viewModel.autoRefreshIntervalSeconds
-        if (seconds > 0) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        if (seconds > 0) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(seconds * 1_000L)
                 viewModel.load(force = true)

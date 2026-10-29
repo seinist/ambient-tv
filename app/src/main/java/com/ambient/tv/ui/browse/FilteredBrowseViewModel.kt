@@ -49,8 +49,6 @@ class FilteredBrowseViewModel @Inject constructor(
 
     private var loadJob: Job? = null
 
-    init { load() }
-
     fun load() {
         loadJob?.cancel()
         if (_uiState.value !is FilteredBrowseUiState.Loaded) {

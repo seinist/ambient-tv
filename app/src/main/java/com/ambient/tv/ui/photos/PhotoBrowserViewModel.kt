@@ -54,10 +54,12 @@ class PhotoBrowserViewModel @Inject constructor(
     /** Focus to restore per album when stepping back up. */
     private val focusByAlbum = mutableMapOf<String, String>()
 
-    fun start(rootKey: String, title: String) {
-        if (_state.value.stack.firstOrNull()?.key == rootKey) return
-        _state.update { it.copy(stack = listOf(PhotoAlbumLevel(rootKey, title)), timeline = false) }
-        load()
+    fun enter(rootKey: String, title: String) {
+        if (_state.value.stack.firstOrNull()?.key != rootKey) {
+            _state.value = PhotoBrowserUiState(stack = listOf(PhotoAlbumLevel(rootKey, title)), sort = _state.value.sort)
+        }
+        applyViewerReturn()
+        refresh()
     }
 
     fun openFolder(entry: PhotoEntry) {

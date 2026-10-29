@@ -137,7 +137,7 @@ fun TvheadendScreen(
     val seriesArt: (TvhAutoRec) -> LiveTvArt? = { liveTvSeriesArt(it, events, channels, titleArt) }
     val canEditTimers = state.capabilities.editTimers && !state.offline
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf(state.source.system), viewModel::refreshAfterReconnect)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
     ReportSidebarContentReady(!state.loading)
     if (onBack != null) {
         BackHandler(enabled = state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
@@ -178,9 +178,8 @@ fun TvheadendScreen(
             }
         }
     }
-    LaunchedEffect(Unit) { viewModel.start() }
     LaunchedEffect(initialTab) {
-        viewModel.selectTab(initialTab)
+        viewModel.prepareTab(initialTab)
     }
     LaunchedEffect(state.loading, state.tab, state.dashboard, initialContentFocusPending, contentFocusTarget) {
         val dashboard = state.dashboard ?: return@LaunchedEffect

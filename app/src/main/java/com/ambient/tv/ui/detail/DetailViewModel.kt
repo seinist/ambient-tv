@@ -15,6 +15,7 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.model.ThemeMusic
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.ui.player.ThemeMusicPlayer
+import com.ambient.tv.util.suspendResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -30,6 +31,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import com.ambient.tv.domain.model.dedupeCastMembers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 
 sealed interface DetailUiState {
     data object Loading : DetailUiState
@@ -102,8 +105,7 @@ class DetailViewModel @Inject constructor(
     )
     val uiState: StateFlow<DetailUiState> = _uiState.asStateFlow()
     private var loadJob: Job? = null
-    /** Bumped by every load: an answer of an older one (cancelled, overtaken) is dropped. */
-    private var loadGeneration = 0L
+    private val refreshPolicy = DetailRefreshPolicy()
     private var reloadJob: Job? = null
     private var autoReloads = 0
     private var themeMusicJob: Job? = null
@@ -143,7 +145,6 @@ class DetailViewModel @Inject constructor(
     }
 
     init {
-        load()
         viewModelScope.launch {
             _uiState.map { (it as? DetailUiState.Loaded)?.item }.filterNotNull()
                 .map { item -> item.takeIf { it.wideBackdropUrl == null } }
@@ -190,10 +191,11 @@ class DetailViewModel @Inject constructor(
     fun load() = load(automatic = false)
 
     private fun load(automatic: Boolean) {
+        val generation = refreshPolicy.beginLoad() ?: return
         if (!automatic) autoReloads = 0
         reloadJob?.cancel()
         loadJob?.cancel()
-        val generation = ++loadGeneration
+        refreshThemeMusic()
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
             if (_uiState.value !is DetailUiState.Loaded) cachedItem?.let { item ->
@@ -210,7 +212,7 @@ class DetailViewModel @Inject constructor(
 
             val result = mediaRepository.getMetadataFast(ratingKey)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            if (generation != loadGeneration) return@launch
+            if (!refreshPolicy.isCurrent(generation)) return@launch
             result.fold(
                 onSuccess = { freshItem ->
                     autoReloads = 0
@@ -240,7 +242,7 @@ class DetailViewModel @Inject constructor(
                         offline = sourceOffline(),
                     )
                     refreshThemeMusic()
-                    loadSecondaryContent(item)
+                    loadSecondaryContent(item, generation)
                 },
                 onFailure = { error ->
                     val removed = detailItemRemoved(error)
@@ -266,13 +268,16 @@ class DetailViewModel @Inject constructor(
         return seasonStripItems(mediaRepository.cachedChildren(showKey).orEmpty())
     }
 
-    private suspend fun loadSecondaryContent(item: MediaItem) = coroutineScope {
+    private suspend fun loadSecondaryContent(item: MediaItem, generation: Long) = coroutineScope {
+        fun updateCurrent(transform: (DetailUiState.Loaded) -> DetailUiState.Loaded) {
+            if (refreshPolicy.isCurrent(generation)) updateLoaded(transform)
+        }
         launch {
             val showKey = seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey)
             if (showKey != null) {
                 val result = mediaRepository.getChildren(showKey)
                 val seasons = result.getOrNull()?.let(::seasonStripItems).orEmpty()
-                updateLoaded { current ->
+                updateCurrent { current ->
                     current.copy(seasons = if (result.isSuccess) seasons else current.seasons)
                 }
             }
@@ -284,10 +289,12 @@ class DetailViewModel @Inject constructor(
                 else -> null
             }
             if (childKey != null) {
-                updateLoaded { it.copy(childrenLoading = true, childrenLoadFailed = false) }
+                updateCurrent { it.copy(childrenLoading = true, childrenLoadFailed = false) }
                 val initialChildren = mediaRepository.getChildren(childKey)
                 val onlySeason = initialChildren.getOrNull()?.singleOrNull()?.takeIf { item.type == "show" && it.type == "season" }
                 val result = if (onlySeason != null) mediaRepository.getChildren(onlySeason.ratingKey) else initialChildren
+                currentCoroutineContext().ensureActive()
+                if (!refreshPolicy.isCurrent(generation)) return@launch
                 val children = result.getOrElse {
                     // Otherwise a show simply looks like it has no seasons.
                     com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
@@ -301,7 +308,7 @@ class DetailViewModel @Inject constructor(
                     "season" -> nextUnwatchedFromEpisodes(children)
                     else -> null
                 }
-                updateLoaded { current ->
+                updateCurrent { current ->
                     current.copy(
                         children = if (result.isSuccess) children else current.children,
                         childrenLoading = false,
@@ -315,7 +322,7 @@ class DetailViewModel @Inject constructor(
         if (item.type == "movie" && !sourceOffline()) {
             launch {
                 mediaRepository.getMetadata(ratingKey).onSuccess { enriched ->
-                    if (enriched != null) updateLoaded { it.copy(item = enriched, offline = sourceOffline()) }
+                    if (enriched != null) updateCurrent { it.copy(item = enriched, offline = sourceOffline()) }
                 }
             }
         }
@@ -325,7 +332,7 @@ class DetailViewModel @Inject constructor(
         if (item.type == "show") {
             launch {
                 mediaRepository.getNextUnwatchedEpisode(ratingKey).onSuccess { next ->
-                    updateLoaded { it.copy(nextEpisode = next) }
+                    updateCurrent { it.copy(nextEpisode = next) }
                 }
             }
         }
@@ -333,7 +340,7 @@ class DetailViewModel @Inject constructor(
         if (item.type in RELATED_TYPES) {
             launch {
                 val result = mediaRepository.getSimilar(ratingKey)
-                updateLoaded { current ->
+                updateCurrent { current ->
                     current.copy(similar = result.getOrNull()?.take(20) ?: current.similar, similarLoading = false)
                 }
             }
@@ -351,7 +358,7 @@ class DetailViewModel @Inject constructor(
                         ActorRow(actor.id, actor.name, related).takeIf { related.size >= ACTOR_ROW_MIN_ITEMS }
                     }
                 }.awaitAll().filterNotNull()
-                updateLoaded { it.copy(actorRows = rows) }
+                updateCurrent { it.copy(actorRows = rows) }
             }
         }
     }
@@ -445,38 +452,31 @@ class DetailViewModel @Inject constructor(
 
     private fun runAction(message: Int, block: suspend () -> Result<Unit>) {
         val current = _uiState.value as? DetailUiState.Loaded ?: return
-        if (current.actionInProgress) return
+        if (!refreshPolicy.beginAction(loadJob?.isActive == true || reloadJob?.isActive == true)) return
+        // Old progressive reads must not replace the action's watch-state update afterwards.
+        loadJob?.cancel()
+        reloadJob?.cancel()
+        _uiState.value = current.copy(actionInProgress = true, actionMessage = null)
         viewModelScope.launch {
-            _uiState.value = current.copy(actionInProgress = true, actionMessage = null)
-            block().fold(
-                onSuccess = {
-                    notifyResult("detail:$ratingKey", detailSystem(), current.item.title, message, kind = NoticeKind.LIBRARY)
-                    // Actions only need a fast metadata refresh; cross-library duplicate discovery
-                    // must never block a watch-state UI update.
-                    mediaRepository.getMetadataFast(ratingKey).fold(
-                        onSuccess = { refreshed ->
-                            val latest = (_uiState.value as? DetailUiState.Loaded) ?: current
-                            _uiState.value = latest.copy(
-                                item = refreshed ?: latest.item,
-                                actionInProgress = false,
-                                actionMessage = "ok",
-                            )
-                        },
-                        onFailure = {
-                            val latest = (_uiState.value as? DetailUiState.Loaded) ?: current
-                            _uiState.value = latest.copy(actionInProgress = false, actionMessage = "ok")
-                        },
-                    )
-                },
-                onFailure = { error ->
-                    notifyResult("detail:$ratingKey", detailSystem(), current.item.title, success = false, kind = NoticeKind.LIBRARY)
-                    val latest = (_uiState.value as? DetailUiState.Loaded) ?: current
-                    _uiState.value = latest.copy(
-                        actionInProgress = false,
-                        actionMessage = error.message ?: "error",
-                    )
-                },
-            )
+            try {
+                suspendResult { block().getOrThrow() }.fold(
+                    onSuccess = {
+                        notifyResult("detail:$ratingKey", detailSystem(), current.item.title, message, kind = NoticeKind.LIBRARY)
+                        // Keep the action guard through the fast metadata read. A queued entry
+                        // refresh may then replace the remaining rows without racing this update.
+                        val refreshed = suspendResult { mediaRepository.getMetadataFast(ratingKey).getOrThrow() }.getOrNull()
+                        updateLoaded { it.copy(item = refreshed ?: it.item, actionMessage = "ok") }
+                    },
+                    onFailure = { error ->
+                        notifyResult("detail:$ratingKey", detailSystem(), current.item.title, success = false, kind = NoticeKind.LIBRARY)
+                        updateLoaded { it.copy(actionMessage = error.message ?: "error") }
+                    },
+                )
+            } finally {
+                val refresh = refreshPolicy.finishAction()
+                updateLoaded { it.copy(actionInProgress = false) }
+                if (refresh && currentCoroutineContext().isActive) load()
+            }
         }
     }
 

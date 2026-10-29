@@ -201,18 +201,16 @@ fun HomeScreen(
         }
     }
     BackHandler(enabled = showOverviewOptions) { showOverviewOptions = false }
-    LaunchedEffect(plexOnly, jellyfinOnly, embyOnly, focusStateKey) {
-        viewModel.start(
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
+        viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
+    ) {
+        viewModel.enter(
             plexOnly = plexOnly,
             jellyfinOnly = jellyfinOnly,
             embyOnly = embyOnly,
             focusStateKey = focusStateKey,
         )
     }
-    com.ambient.tv.ui.common.RefreshOnReconnect(
-        viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
-        viewModel::refreshAfterReconnect,
-    )
     val entryRefreshGeneration = remember { refreshGeneration }
     LaunchedEffect(refreshGeneration) {
         if (refreshGeneration != entryRefreshGeneration) viewModel.refresh()
@@ -220,7 +218,7 @@ fun HomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel.autoRefreshIntervalSeconds) {
         val seconds = viewModel.autoRefreshIntervalSeconds
-        if (seconds > 0) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        if (seconds > 0) lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 delay(seconds * 1_000L)
                 viewModel.refresh()
@@ -243,7 +241,7 @@ fun HomeScreen(
     }
 
     LaunchedEffect(viewModel, lifecycleOwner) {
-        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) { delay(15_000); viewModel.retryOffline() }
         }
     }

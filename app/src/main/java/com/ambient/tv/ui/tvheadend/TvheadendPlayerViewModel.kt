@@ -34,6 +34,8 @@ import kotlinx.coroutines.delay
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.connectivity.PlaybackServerRecovery
 import com.ambient.tv.connectivity.PlaybackServerUnreachable
+import com.ambient.tv.connectivity.HostConnectivity
+import com.ambient.tv.connectivity.HostHealth
 import com.ambient.tv.ui.player.PlaybackMetadata
 import com.ambient.tv.ui.navigation.Destinations
 
@@ -86,6 +88,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val playbackServerRecovery: PlaybackServerRecovery,
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
+    private val hosts: HostConnectivity,
 ) : ViewModel() {
     private val repository = registry.repository(savedStateHandle.get<String>("sourceId"))
     val sourceSystem = repository.source.system
@@ -310,9 +313,9 @@ class TvheadendPlayerViewModel @Inject constructor(
                 return@launch
             }
             _uiState.value = TvheadendPlayerState.Loading
-            // Offline TVHeadend: the cached channel list would start a stream that can never play.
-            // Check (and wake, when set up) first, and say plainly why it cannot start.
-            if (sourceSystem == "tvheadend" && repository.servingCachedData &&
+            // Confirmed offline TVHeadend: check (and wake, when configured) before starting.
+            // A cached EPG after an individual API error does not mean playback is unavailable.
+            if (sourceSystem == "tvheadend" && hosts.health("tvheadend") == HostHealth.OFFLINE &&
                 !suspendResult { playbackServerRecovery.tryWakeAndRecheck("tvh:resume") }.getOrDefault(false)) {
                 _uiState.value = TvheadendPlayerState.Error(
                     message = tvheadendUnreachableMessage(),

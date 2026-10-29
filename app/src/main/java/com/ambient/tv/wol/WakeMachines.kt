@@ -1,5 +1,6 @@
 package com.ambient.tv.wol
 
+import com.ambient.tv.connectivity.mediaServerProfileSourceId
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.data.dlna.dlnaWakeEndpoint
 import com.ambient.tv.data.local.AppPreferences
@@ -66,6 +67,22 @@ class WakeMachines @Inject constructor(
         if (preferences.jellyfinHost.isNotBlank()) add(WakeEndpoint("jellyfin", preferences.jellyfinHost, preferences.jellyfinMacAddress))
         if (preferences.embyHost.isNotBlank()) add(WakeEndpoint("emby", preferences.embyHost, preferences.embyMacAddress))
         if (preferences.tvheadendHost.isNotBlank()) add(WakeEndpoint("tvheadend", preferences.tvheadendHost, preferences.tvheadendMacAddress))
+        // Saved Live TV profiles must share the same machine even while another profile is active.
+        if (preferences.plexEnabled) preferences.serverProfiles.forEach { profile ->
+            mediaServerProfileSourceId("plex", profile.id)?.let {
+                add(WakeEndpoint(it, profile.host, profile.macAddress))
+            }
+        }
+        if (preferences.jellyfinEnabled) preferences.jellyfinServerProfiles.filter { it.authenticated }.forEach { profile ->
+            mediaServerProfileSourceId("jellyfin", profile.id, profile.userId)?.let {
+                add(WakeEndpoint(it, profile.host, profile.macAddress))
+            }
+        }
+        if (preferences.embyEnabled) preferences.embyServerProfiles.filter { it.authenticated }.forEach { profile ->
+            mediaServerProfileSourceId("emby", profile.id, profile.userId)?.let {
+                add(WakeEndpoint(it, profile.host, profile.macAddress))
+            }
+        }
         preferences.fileSources.filter { it.kind != "local" }.forEach { add(WakeEndpoint("files", it.host, it.wolMac)) }
         dlnaStore.servers().forEach { add(WakeEndpoint("dlna", dlnaWakeEndpoint(it)?.first, it.wolMac)) }
     }

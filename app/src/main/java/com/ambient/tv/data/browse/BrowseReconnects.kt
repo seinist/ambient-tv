@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import com.ambient.tv.connectivity.HostConnectivity
 import com.ambient.tv.connectivity.ResumeConnectivityMonitor
+import com.ambient.tv.connectivity.mediaServerProfileSourceId
 import com.ambient.tv.data.emby.EmbyRepository
 import com.ambient.tv.data.jellyfin.JellyfinRepository
 import com.ambient.tv.data.local.AppPreferences
@@ -21,7 +22,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +31,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
-/** Recovery expires source caches once, then notifies only the visible views of those sources. */
+/** Entry and recovery expire source caches before visible destinations start fresh reads. */
 @Singleton
 class BrowseReconnects @Inject constructor(
     @ApplicationContext context: Context,
@@ -52,31 +52,43 @@ class BrowseReconnects @Inject constructor(
     val epoch: String = java.util.UUID.randomUUID().toString()
     private val mutable = MutableStateFlow<Map<String, Long>>(emptyMap())
     val revisions = mutable.asStateFlow()
-    private val pending = mutableSetOf<String>()
-    private val signals = Channel<Unit>(Channel.CONFLATED)
+    private val refreshQueue = BrowseRefreshQueue()
+    private val sourceLocks = BrowseSourceLocks()
     private val networkRecovery = BrowseNetworkRecovery()
     private var started = false
 
     init {
         scope.launch {
-            for (signal in signals) {
-                // A machine may host several services. Combine their simultaneous recovery.
+            for (signal in refreshQueue.signals) {
+                // Coalesce simultaneous entries and recovery before any of their fresh reads start.
                 delay(200)
-                val sources = synchronized(pending) { pending.toSet().also { pending.clear() } }
-                if (sources.isEmpty()) continue
-                expire(sources)
-                mutable.value = clock.publish(sources)
+                try {
+                    refreshQueue.preparePending(sourceLocks, ::expire) { recovered ->
+                        if (recovered.isNotEmpty()) mutable.value = clock.publish(recovered)
+                        mutable.value
+                    }
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    Timber.w(error, "Could not prepare fresh browse content")
+                }
             }
         }
     }
 
     fun request(source: String) = request(setOf(source))
 
-    fun request(sources: Set<String>) {
-        if (sources.isEmpty()) return
-        synchronized(pending) { pending.addAll(sources) }
-        signals.trySend(Unit)
+    fun request(sources: Set<String>) = refreshQueue.recover(sources)
+
+    /** Expire once for entering destinations, without making sidebar/auxiliary observers reload. */
+    suspend fun prepareEntry(sources: Set<String>): Map<String, Long> {
+        if (sources.isEmpty()) return revisions.value
+        val ready = refreshQueue.enter(sources)
+        return try { ready.await() } finally { ready.cancel() }
     }
+
+    /** Watched/progress changes may span linked editions and must finish before automatic expiry. */
+    suspend fun <T> withMutation(source: String, action: suspend () -> T): T =
+        sourceLocks.withSources(setOf(source), action)
 
     @Synchronized fun start() {
         if (started) return
@@ -94,9 +106,19 @@ class BrowseReconnects @Inject constructor(
             hosts.states.map { states -> states.mapValues { it.value.recoveries } }.distinctUntilChanged().collect { current ->
                 val restored = current.filter { (machine, revision) -> revision > (seen[machine] ?: 0L) }.keys
                 seen = current
-                // Server managers confirm their services separately. NAS/DLNA have no such manager.
+                // Active server aliases are confirmed by their managers. Concrete saved profiles,
+                // NAS and DLNA instead re-read their own endpoints after host recovery.
+                val activeProfiles = setOfNotNull(
+                    preferences.activeServerId?.takeIf { preferences.matchesActivePlexEndpoint }
+                        ?.let { mediaServerProfileSourceId("plex", it) },
+                    preferences.activeJellyfinServerId?.takeIf { preferences.matchesActiveJellyfinEndpoint }
+                        ?.let { mediaServerProfileSourceId("jellyfin", it, preferences.jellyfinUserId) },
+                    preferences.activeEmbyServerId?.takeIf { preferences.matchesActiveEmbyEndpoint }
+                        ?.let { mediaServerProfileSourceId("emby", it, preferences.embyUserId) },
+                )
                 val sources = hosts.endpoints().filter {
-                    it.machine in restored && (it.system.startsWith("files:") || it.system.startsWith("dlna:"))
+                    it.machine in restored && it.system !in activeProfiles && ':' in it.system &&
+                        it.system.substringBefore(':') in setOf("files", "dlna", "plex", "jellyfin", "emby")
                 }.map { it.system }.toSet()
                 request(sources)
             }
@@ -133,9 +155,10 @@ class BrowseReconnects @Inject constructor(
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { Timber.w(error, "Could not expire browse data after reconnect") }
         }
-        if (includes("plex") && preferences.plexEnabled) safely { plex.get().refreshCaches() }
-        if (includes("jellyfin") && preferences.jellyfinEnabled) safely { jellyfin.get().refreshCaches() }
-        if (includes("emby") && preferences.embyEnabled) safely { emby.get().refreshCaches() }
+        // Restore snapshots first: a later disk restore must not revive their old freshness TTLs.
+        if (includes("plex") && preferences.plexEnabled) safely { plex.get().let { it.restoreCache(); it.refreshCaches() } }
+        if (includes("jellyfin") && preferences.jellyfinEnabled) safely { jellyfin.get().let { it.restoreCache(); it.refreshCaches() } }
+        if (includes("emby") && preferences.embyEnabled) safely { emby.get().let { it.restoreCache(); it.refreshCaches() } }
         if (includes("trailers")) safely { trailers.get().refreshCaches() }
         if (listOf("plex", "jellyfin", "emby", "tvheadend", "iptv").any(::includes)) {
             safely {

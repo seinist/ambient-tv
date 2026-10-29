@@ -37,6 +37,7 @@ class PlexRepository @Inject constructor(
     tokenStore: com.ambient.tv.data.local.TokenStore,
     disk: com.ambient.tv.data.browse.BrowseDiskStore,
     scopes: com.ambient.tv.data.browse.BrowseScopes,
+    private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
 ) : MediaRepository {
     init { cache.configurePersistence(disk) { scopes.forProvider("plex") } }
     override suspend fun restoreCache() = cache.restore()
@@ -539,21 +540,24 @@ class PlexRepository @Inject constructor(
             }
         }
 
-    override suspend fun markWatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    private suspend fun <T> mutate(block: suspend kotlinx.coroutines.CoroutineScope.() -> Result<T>): Result<T> =
+        browseReconnects.get().withMutation("plex") { cache.withGeneration(block) }
+
+    override suspend fun markWatched(ratingKey: String): Result<Unit> = mutate {
         forEachLinked(ratingKey, { key -> api.markWatched(ratingKey = key) }) { done ->
             cache.patchWatched(done)
             cache.setOnDeck(null)
         }
     }
 
-    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = mutate {
         forEachLinked(ratingKey, { key -> api.markUnwatched(ratingKey = key) }) { done ->
             cache.patchUnwatched(done)
             cache.setOnDeck(null)
         }
     }
 
-    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = mutate {
         forEachLinked(ratingKey, { key -> api.removeFromContinueWatching(key) }) { done ->
             cache.removeFromOnDeck(done)
         }

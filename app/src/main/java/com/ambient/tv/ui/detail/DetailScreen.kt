@@ -154,9 +154,8 @@ fun DetailScreen(
     viewModel: DetailViewModel = hiltViewModel(),
 ) {
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::load)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uiState by viewModel.uiState.collectAsState()
-    LaunchedEffect(Unit) { viewModel.refreshThemeMusic() }
     ThemeMusicEffect(viewModel.themeMusicPlayer, (uiState as? DetailUiState.Loaded)?.themeMusic)
     Box(modifier = Modifier.fillMaxSize()) {
         when (val state = uiState) {

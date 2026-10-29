@@ -32,6 +32,7 @@ class EmbyRepository @Inject constructor(
     json: kotlinx.serialization.json.Json,
     disk: com.ambient.tv.data.browse.BrowseDiskStore,
     scopes: com.ambient.tv.data.browse.BrowseScopes,
+    private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
 ) : MediaRepository {
     init { cache.configurePersistence(disk) { scopes.forProvider("emby") } }
     override suspend fun restoreCache() = cache.restore()
@@ -440,15 +441,18 @@ class EmbyRepository @Inject constructor(
         }
     }
 
-    override suspend fun markWatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    private suspend fun <T> mutate(block: suspend kotlinx.coroutines.CoroutineScope.() -> Result<T>): Result<T> =
+        browseReconnects.get().withMutation("emby") { cache.withGeneration(block) }
+
+    override suspend fun markWatched(ratingKey: String): Result<Unit> = mutate {
         suspendResult { api.markPlayed(userId(), raw(ratingKey)); cache.patchWatched(setOf(ratingKey)); cache.setOnDeck(null) }
     }
 
-    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun markUnwatched(ratingKey: String): Result<Unit> = mutate {
         suspendResult { api.markUnplayed(userId(), raw(ratingKey)); cache.patchUnwatched(setOf(ratingKey)); cache.setOnDeck(null) }
     }
 
-    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = cache.withGeneration {
+    override suspend fun removeFromContinueWatching(ratingKey: String): Result<Unit> = mutate {
         suspendResult {
             val item = cachedMediaItem(ratingKey) ?: getMetadataFast(ratingKey).getOrThrow()
             api.updateUserData(userId(), raw(ratingKey), EmbyUserDataUpdate(0, item?.isWatched == true, item?.viewCount ?: 0))

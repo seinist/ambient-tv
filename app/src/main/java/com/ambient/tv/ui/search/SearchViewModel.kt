@@ -181,8 +181,14 @@ class SearchViewModel @Inject constructor(
             youtubeProbe = viewModelScope.launch {
                 val signed = suspendResult { smartTubeEngine.isSignedIn() }.getOrDefault(false)
                 if (youtubeSignedIn != signed) {
+                    val before = _uiState.value
                     youtubeSignedIn = signed
-                    refreshSources()
+                    refreshSources(preserveResults = before.hasSearched)
+                    // A late login result must not discard an already submitted search. Only
+                    // changed selected sources need another request; an edited draft stays idle.
+                    if (before.hasSearched && before.selectedSources != _uiState.value.selectedSources) {
+                        startSearch(preserveResults = true)
+                    }
                 }
             }
         }

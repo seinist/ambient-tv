@@ -170,7 +170,7 @@ private fun SavedDlnaServer(server: DlnaServer, onOpen: () -> Unit, onRemove: ()
 fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: () -> Unit, viewModel: DlnaBrowserViewModel = hiltViewModel()) {
     OperationFeedbackScope(viewModel.feedback, "browse")
     val state by viewModel.state.collectAsState()
-    com.ambient.tv.ui.common.RefreshOnReconnect(
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         setOf(state.server?.id?.let { "dlna:$it" } ?: "dlna"), viewModel::refreshOnReconnect,
     )
     val nodes = remember(state.page) { state.page?.nodes.orEmpty().sortedBy { !it.container } }

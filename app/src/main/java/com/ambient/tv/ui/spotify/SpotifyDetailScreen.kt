@@ -40,7 +40,7 @@ fun SpotifyDetailScreen(
 ) {
     val state by viewModel.state.collectAsState()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("spotify"), viewModel::load)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("spotify"), viewModel::load)
     val current = playbackIndicator(CompanionMedia("spotify:${viewModel.type}", viewModel.id))
     val openCurrent = LocalOpenActivePlayback.current
     val playLabel = stringResource(if (current != null) R.string.playback_open else R.string.spotify_play)

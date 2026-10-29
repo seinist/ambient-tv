@@ -12,7 +12,7 @@ data class LiveTvDashboardPrefetch(
 
 interface LiveTvRepository {
     val source: LiveTvSource
-    /** The last answers came from the offline cache (server asleep or unreachable). */
+    /** A recent read needed stored fallback data; this alone is not evidence of an offline host. */
     val servingCachedData: Boolean get() = false
     fun authHeaders(): Map<String, String> = emptyMap()
     suspend fun capabilities(force: Boolean = false): LiveTvCapabilities

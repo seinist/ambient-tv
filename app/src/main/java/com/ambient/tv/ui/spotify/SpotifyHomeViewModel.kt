@@ -42,6 +42,7 @@ class SpotifyHomeViewModel @Inject constructor(
     private val _state = MutableStateFlow(SpotifyHomeUiState(nativeAvailable = repo.nativeAvailable, webAuthorized = repo.authState.value.authorized, accountName = repo.authState.value.accountName))
     val state: StateFlow<SpotifyHomeUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
+    private var entered = false
 
     fun focusedItemId(stateKey: String): String? = preferences.sectionFocus(stateKey)
     fun onItemFocused(stateKey: String, item: SpotifyBrowseItem) {
@@ -73,7 +74,17 @@ class SpotifyHomeViewModel @Inject constructor(
                 wasAuthorized = a.authorized
             }
         }
-        loadHome()
+    }
+
+    fun enter(initialSectionKey: String?) {
+        if (!entered) {
+            entered = true
+            if (!initialSectionKey.isNullOrBlank() && initialSectionKey != "home") {
+                loadSection(initialSectionKey)
+                return
+            }
+        }
+        refresh()
     }
 
     fun loadHome() = load("", "home")

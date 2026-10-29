@@ -24,6 +24,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -85,9 +87,12 @@ class TvheadendViewModel @Inject constructor(
     }
     val feedback = OperationFeedbackReporter()
     private val repository = registry.repository(savedStateHandle.get<String>("sourceId"))
+    private val hostSource = liveTvHostSource(repository.source.id, repository.source.system)
+    private fun offlineNow() = liveTvSourceOffline(availability.hasNetwork(), hosts.health(hostSource))
     val browseState = registry.browseState(repository)
     private val _uiState = MutableStateFlow(TvheadendUiState(
         configured = true, source = repository.source,
+        offline = offlineNow(), canWake = offlineNow() && canWake(),
         guideOptions = preferences.guideOptions(repository.source.id),
         dashboard = browseState.dashboard, capabilities = browseState.capabilities,
         loading = browseState.dashboard == null,
@@ -95,10 +100,11 @@ class TvheadendViewModel @Inject constructor(
             it.name.equals(savedStateHandle.get<String>("tab"), ignoreCase = true)
         } ?: TvheadendTab.LIVE,
     ))
-    val uiState: StateFlow<TvheadendUiState> = kotlinx.coroutines.flow.combine(_uiState, hosts.states) { state, _ ->
-        if (hosts.health(repository.source.system) == com.ambient.tv.connectivity.HostHealth.OFFLINE)
-            state.copy(offline = true, canWake = repository.source.system == "tvheadend" && !preferences.tvheadendMacAddress.isNullOrBlank())
-        else state
+    val uiState: StateFlow<TvheadendUiState> = kotlinx.coroutines.flow.combine(
+        _uiState, hosts.states.map { hosts.health(hostSource) }.distinctUntilChanged(), availability.changes,
+    ) { state, health, _ ->
+        val offline = liveTvSourceOffline(availability.hasNetwork(), health)
+        state.copy(offline = offline, canWake = offline && canWake())
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, _uiState.value)
 
     private val isTvheadend get() = repository.source.system == "tvheadend"
@@ -140,11 +146,13 @@ class TvheadendViewModel @Inject constructor(
         return channelUuid
     }
 
-    fun start() {
-        val configured = true
-        _uiState.update { it.copy(configured = configured) }
-        if (!configured || refreshJob?.isActive == true || !browseState.needsRefresh()) return
-        load(force = false)
+    private var preparedTab: TvheadendTab? = null
+
+    /** Apply a destination's tab once; returning must keep the current tab and open selection. */
+    fun prepareTab(tab: TvheadendTab) {
+        if (preparedTab == tab) return
+        preparedTab = tab
+        if (_uiState.value.tab != tab) selectTab(tab)
     }
 
     fun selectTab(tab: TvheadendTab) = _uiState.update { it.copy(tab = tab, selectedEvent = null, selectedRecording = null, editing = null, actionFeedback = null) }
@@ -193,12 +201,16 @@ class TvheadendViewModel @Inject constructor(
 
     private var refreshJob: Job? = null
     private val refreshPolicy = LiveTvRefreshPolicy()
+    private var refreshNeedsRetry = false
 
-    fun retryOffline() { if (uiState.value.offline && availability.hasNetwork() && refreshJob?.isActive != true) load(force = true, announceSuccess = false) }
+    fun retryOffline() {
+        if ((uiState.value.offline || refreshNeedsRetry) && availability.hasNetwork() && refreshJob?.isActive != true)
+            load(force = true, announceSuccess = false)
+    }
 
     fun refresh() { if (!_uiState.value.actionInProgress) load(force = true) }
 
-    /** Called by the visible screen after recovery, even when it still displays cached data. */
+    /** Each entry and recovery fetches fresh data, retaining the shown dashboard and selection. */
     fun refreshAfterReconnect() {
         refreshPolicy.reconnected()
         load(force = false)
@@ -214,7 +226,7 @@ class TvheadendViewModel @Inject constructor(
             val namespace = snapshots.namespace(owner, repository.authHeaders().toSortedMap().toString() +
                 "|${preferences.tvheadendHost}:${preferences.tvheadendPort}:${preferences.tvheadendUsername}")
             snapshots.read<LiveTvDashboard>(namespace, "dashboard")?.let { cached ->
-                if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = !availability.hasNetwork(), canWake = !availability.hasNetwork() && canWake(),
+                if (_uiState.value.dashboard == null) _uiState.update { it.copy(dashboard = cached, offline = offlineNow(), canWake = offlineNow() && canWake(),
                     capabilities = it.capabilities.copy(available = true, guide = cached.events.isNotEmpty(), recordings = cached.recordings.isNotEmpty()), loading = false, refreshing = true) }
             }
             _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
@@ -256,9 +268,11 @@ class TvheadendViewModel @Inject constructor(
                         delivery = if (request.announceSuccess && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
                     )) ?: return@launch
                     refreshPolicy.completed(request)
-                    val cachedOnly = repository.servingCachedData
+                    // Stored data may need another read, but says nothing about reachability.
+                    refreshNeedsRetry = repository.servingCachedData
+                    val offline = offlineNow()
                     requestMissingArt(dashboard)
-                    _uiState.update { it.copy(configured = true, offline = cachedOnly, canWake = cachedOnly && canWake(), loading = false, refreshing = false,
+                    _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(), loading = false, refreshing = false,
                         dashboard = dashboard,
                         selectedEvent = it.selectedEvent?.let { selected ->
                             dashboard.events.firstOrNull { event -> event.eventId == selected.eventId && event.channelUuid == selected.channelUuid }
@@ -278,9 +292,8 @@ class TvheadendViewModel @Inject constructor(
                         subject = repository.source.name, kind = NoticeKind.LIBRARY, delivery = FeedbackDelivery.INLINE,
                     )) ?: return@launch
                     refreshPolicy.completed(request)
-                    // TVHeadend: offline (record/timer locked) only when the server is really unreachable.
-                    val offline = !isTvheadend || !availability.hasNetwork() ||
-                        com.ambient.tv.tvheadend.data.tvhFallbackMarksOffline(error)
+                    refreshNeedsRetry = liveTvRefreshRetryable(error)
+                    val offline = offlineNow()
                     _uiState.update { it.copy(offline = offline, canWake = offline && canWake(), loading = false, refreshing = false, error = result) }
                 },
             )

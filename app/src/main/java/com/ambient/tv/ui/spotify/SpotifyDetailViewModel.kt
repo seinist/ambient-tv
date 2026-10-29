@@ -38,7 +38,6 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
     private val _state = MutableStateFlow(SpotifyDetailUiState())
     val state: StateFlow<SpotifyDetailUiState> = _state.asStateFlow()
     private var loadJob: kotlinx.coroutines.Job? = null
-    init { load() }
     fun retryOffline() { if (_state.value.offline && availability.hasNetwork() && loadJob?.isActive != true) load() }
     fun load() {
         loadJob?.cancel()

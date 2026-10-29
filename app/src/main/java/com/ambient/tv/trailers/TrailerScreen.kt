@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -88,7 +89,7 @@ fun rememberTrailerAvailable(item: MediaItem, enabled: Boolean): Boolean {
     return available
 }
 
-private data class TrailerFeedUi(
+internal data class TrailerFeedUi(
     val loadKey: String = "",
     val entries: List<TrailerEntry> = emptyList(),
     val page: Int = 0,
@@ -181,17 +182,21 @@ internal fun TrailerCatalogContent(
             optionsOpened = false
         }
     }
-    val states = remember { mutableStateMapOf<TrailerFeed, TrailerFeedUi>() }
-    val loads = remember { mutableMapOf<TrailerFeed, Any>() }
+    val snapshot: TrailerCatalogSnapshotViewModel = viewModel(key = "trailer-catalog:${initialFeed.name}")
+    val states = snapshot.feeds
+    val loads = snapshot.loads
     val scope = rememberCoroutineScope()
     val loadKey = "$credentialVersion:$language:$region:$enabled"
     val currentLoadKey by rememberUpdatedState(loadKey)
+    var entryRefresh by remember { mutableIntStateOf(0) }
+    var loadedPages by rememberSaveable(loadKey) { mutableStateOf(IntArray(TrailerFeed.entries.size)) }
 
     suspend fun loadPage(target: TrailerFeed, page: Int, replace: Boolean, keepContent: Boolean = false) {
         if (!replace && (loads.containsKey(target) || states[target]?.loadKey != loadKey)) return
         val token = Any()
         loads[target] = token
         val before = states[target] ?: TrailerFeedUi()
+        val refreshThrough = maxOf(page, before.page.takeIf { before.loadKey == loadKey } ?: 0, loadedPages[target.ordinal])
         states[target] = if (replace) before.copy(loadKey = loadKey,
             entries = if (keepContent) before.entries else emptyList(), page = if (keepContent) before.page else 0,
             loadingInitial = !keepContent || before.page == 0, loadingMore = false, error = null, nextError = null, partialFailure = false)
@@ -199,11 +204,11 @@ internal fun TrailerCatalogContent(
         try {
             com.ambient.tv.util.suspendResult {
                 var result = repository.feedPage(target, page, language, region).getOrThrow()
-                if (replace && keepContent) {
+                if (replace && refreshThrough > page) {
                     // Keep the focused page visible until its complete loaded extent is fresh.
                     val entries = result.entries.toMutableList()
                     var partialFailure = result.partialFailure
-                    while (result.page < minOf(before.page, result.totalPages)) {
+                    while (result.page < minOf(refreshThrough, result.totalPages)) {
                         if (loads[target] !== token || currentLoadKey != loadKey) return@suspendResult result
                         result = repository.feedPage(target, result.page + 1, language, region).getOrThrow()
                         entries += result.entries
@@ -219,6 +224,7 @@ internal fun TrailerCatalogContent(
                     states[target] = current.copy(loadKey = loadKey, entries = entries, page = result.page,
                         totalPages = result.totalPages, loadingInitial = false, loadingMore = false,
                         error = null, nextError = null, partialFailure = current.partialFailure || result.partialFailure)
+                    loadedPages = loadedPages.copyOf().also { it[target.ordinal] = result.page }
                 },
                 onFailure = { failure ->
                     if (loads[target] !== token || currentLoadKey != loadKey) return@fold
@@ -239,18 +245,19 @@ internal fun TrailerCatalogContent(
         }
     }
 
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("trailers")) {
-        if (configured && enabled) {
-            // Old requests cannot republish pre-reconnect pages; other feeds reload when opened.
-            loads.clear()
-            states.keys.filter { it != feed }.forEach { states.remove(it) }
-            scope.launch { loadPage(feed, 1, replace = true, keepContent = true) }
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("trailers")) {
+        // Old requests cannot republish pages from before this entry; other feeds reload when opened.
+        loads.clear()
+        states.keys.filter { it != feed }.forEach { states.remove(it) }
+        entryRefresh++
+    }
+    LaunchedEffect(feed, loadKey, configured, enabled, entryRefresh) {
+        if (entryRefresh > 0 && configured && enabled) {
+            loadPage(feed, 1, replace = true, keepContent = states[feed]?.loadKey == loadKey)
         }
     }
-    LaunchedEffect(feed, loadKey, configured, enabled) {
-        if (configured && enabled && states[feed]?.loadKey != loadKey) loadPage(feed, 1, replace = true)
-    }
-    val state = states[feed] ?: TrailerFeedUi(loadKey = loadKey, loadingInitial = configured && enabled)
+    val state = states[feed]?.takeIf { it.loadKey == loadKey }
+        ?: TrailerFeedUi(loadKey = loadKey, loadingInitial = configured && enabled)
     val visibleEntries = remember(state.entries, sort, sortDescending, filter) {
         applyTrailerViewOptions(state.entries, sort, filter, sortDescending)
     }
@@ -474,41 +481,46 @@ private fun TrailerTitleScreen(onBack: () -> Unit, onPlay: (String) -> Unit, onO
     val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val version by dependencies.trailers().configuration.collectAsState()
     val language = when (dependencies.preferences().trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-    var title by remember { mutableStateOf("") }
-    var videos by remember { mutableStateOf<List<TrailerVideo>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
+    val requestKey = "$ratingKey:$tmdbType:$tmdbId:$language:$version"
+    val snapshot: TrailerTitleSnapshotViewModel = viewModel(key = "trailer-title:$ratingKey:$tmdbType:$tmdbId")
+    var title by snapshot.title
+    var videos by snapshot.videos
+    var loadedKey by snapshot.loadedKey
+    var loading by remember(requestKey) { mutableStateOf(loadedKey != requestKey) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     var selectedVideo by rememberSaveable { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
-    var serverTrailers by remember { mutableStateOf<List<MediaItem>>(emptyList()) }
-    val requestKey = "$ratingKey:$tmdbType:$tmdbId:$language:$version"
-    var loadedKey by remember { mutableStateOf<String?>(null) }
+    var serverTrailers by snapshot.serverTrailers
     var initialFocusRequested by remember(requestKey) { mutableStateOf(false) }
     val sources = setOfNotNull("trailers", ratingKey?.let { com.ambient.tv.data.browse.mediaProvider(it) })
-    com.ambient.tv.ui.common.RefreshOnReconnect(sources) {
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(sources) {
         retry++
     }
     BackHandler { onBack() }
     LaunchedEffect(ratingKey, retry) {
+        if (retry == 0) return@LaunchedEffect
         if (ratingKey == null) serverTrailers = emptyList()
         else dependencies.media().getServerTrailers(ratingKey).onSuccess { serverTrailers = it }
     }
     LaunchedEffect(ratingKey, tmdbType, tmdbId, language, retry, version) {
+        if (retry == 0) return@LaunchedEffect
         val keepContent = loadedKey == requestKey
         loading = !keepContent; error = null
         if (!keepContent) videos = emptyList()
         if (!dependencies.trailers().configured || !dependencies.preferences().trailersEnabled) { loading = false; return@LaunchedEffect }
         com.ambient.tv.util.suspendResult {
             if (tmdbType != null && tmdbId != null) {
-                dependencies.trailers().forTmdb(tmdbType, tmdbId, language).getOrThrow().also { title = it.first.displayTitle }.second
+                val result = dependencies.trailers().forTmdb(tmdbType, tmdbId, language).getOrThrow()
+                result.first.displayTitle to result.second
             } else {
-                val item = dependencies.media().cachedMediaItem(requireNotNull(ratingKey)).takeIf { retry == 0 }
-                    ?: dependencies.media().getMetadataFast(ratingKey).getOrThrow() ?: error("Missing media")
-                title = item.title
-                dependencies.trailers().forItem(item, language).getOrThrow()
+                val item = dependencies.media().getMetadataFast(requireNotNull(ratingKey)).getOrThrow()
+                    ?: error("Missing media")
+                item.title to dependencies.trailers().forItem(item, language).getOrThrow()
             }
-        }.onSuccess { videos = it; loadedKey = requestKey }.onFailure { if (!keepContent) error = it }
+        }.onSuccess { (freshTitle, freshVideos) ->
+            title = freshTitle; videos = freshVideos; loadedKey = requestKey
+        }.onFailure { if (!keepContent) error = it }
         loading = false
     }
     LaunchedEffect(loading, videos, serverTrailers) {

@@ -90,7 +90,7 @@ import kotlinx.coroutines.delay
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("youtube"), viewModel::refresh)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) { viewModel.enter(initialFeedKey) }
     val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
         applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
     }
@@ -164,7 +164,6 @@ import kotlinx.coroutines.delay
             runCatching { searchActionFocusRequester.requestFocus() }
         }
     }
-    LaunchedEffect(initialFeedKey) { initialFeedKey?.let(viewModel::selectFeedKey) }
     LaunchedEffect(state.rows) { ScreensaverArtworkRegistry.offerAll(state.rows.flatMap { it.items }.take(24).map { it.imageUrl }) }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val filterFocus = remember { FocusRequester() }

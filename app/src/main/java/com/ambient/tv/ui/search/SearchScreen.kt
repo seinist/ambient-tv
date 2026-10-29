@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
@@ -106,15 +107,26 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    LaunchedEffect(viewModel) { viewModel.refreshSources() }
-    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
     // A query from the system search, voice search or the Assistant runs as typed here.
     val externalQuery by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
-    LaunchedEffect(externalQuery) {
-        val query = externalQuery ?: return@LaunchedEffect
+    var entryReady by remember(viewModel) { mutableStateOf(false) }
+    LifecycleResumeEffect(viewModel) {
+        onPauseOrDispose { entryReady = false }
+    }
+    fun consumeExternalQuery(): Boolean {
+        val query = com.ambient.tv.search.ExternalSearch.requests.value ?: return false
         viewModel.onQueryChanged(query)
         viewModel.submitSearch()
         com.ambient.tv.search.ExternalSearch.consumed(query)
+        return true
+    }
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources) {
+        entryReady = true
+        // Entry and an incoming search share one request after cache preparation.
+        if (!consumeExternalQuery()) viewModel.refreshAfterReconnect()
+    }
+    LaunchedEffect(externalQuery, entryReady) {
+        if (entryReady) consumeExternalQuery()
     }
     if (onBack != null) {
         BackHandler { onBack() }

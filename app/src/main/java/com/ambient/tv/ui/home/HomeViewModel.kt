@@ -176,6 +176,7 @@ class HomeViewModel @Inject constructor(
     private var plexOnly = false
     private var jellyfinOnly = false
     private var embyOnly = false
+    private var hasEntered = false
     private val _overviewViewMode = MutableStateFlow(HomeRowDefinition.DISPLAY_POSTER)
     /** Poster, landscape or list for the open system overview. Unused on the app home screen. */
     val overviewViewMode: StateFlow<String> = _overviewViewMode.asStateFlow()
@@ -292,16 +293,14 @@ class HomeViewModel @Inject constructor(
         return true
     }
 
-    fun start(
+    /** The entry hook expires caches first; adopt this page's context before starting any reads. */
+    fun enter(
         plexOnly: Boolean = false,
         jellyfinOnly: Boolean = false,
         embyOnly: Boolean = false,
         focusStateKey: String = HOME_FOCUS_STATE_KEY,
     ) {
-        val samePage = this.plexOnly == plexOnly && this.jellyfinOnly == jellyfinOnly &&
-            this.embyOnly == embyOnly && homeFocusStateKey == focusStateKey
-        // Re-entering the destination must not cancel an initial/background load in flight.
-        if (samePage && listOf(loadJob, tvPreviewJob, photoJob, trailerJob).any { it?.isActive == true }) return
+        hasEntered = true
         start(plexOnly, jellyfinOnly, embyOnly, focusStateKey, refreshing = false)
     }
 
@@ -509,7 +508,7 @@ class HomeViewModel @Inject constructor(
     }
 
     fun retryOffline() {
-        if (loadJob?.isActive == true || !availability.hasNetwork()) return
+        if (!hasEntered || loadJob?.isActive == true || !availability.hasNetwork()) return
         if (browseProviders.any { availability.state(it) == com.ambient.tv.data.browse.SourceHealth.OFFLINE }) {
             start(plexOnly, jellyfinOnly, embyOnly, homeFocusStateKey, refreshing = false)
         }
@@ -517,10 +516,8 @@ class HomeViewModel @Inject constructor(
 
     fun refresh() = refresh(invalidateCache = true)
 
-    /** Recovery already expired the source caches before notifying the visible page. */
-    fun refreshAfterReconnect() = refresh(invalidateCache = false)
-
     private fun refresh(invalidateCache: Boolean) {
+        if (!hasEntered) return
         loadJob?.cancel()
         jellyfinCollectionJob?.cancel()
         embyCollectionJob?.cancel()
@@ -1484,6 +1481,7 @@ class HomeViewModel @Inject constructor(
         jellyfinOnly = jellyfinOnly,
         embyOnly = embyOnly,
         focusStateKey = homeFocusStateKey,
+        refreshing = false,
     )
 
     /**

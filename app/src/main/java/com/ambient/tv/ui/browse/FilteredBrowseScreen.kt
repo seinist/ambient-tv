@@ -85,7 +85,7 @@ fun FilteredBrowseScreen(
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::load)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uhdScale = rememberUhdScale()
     Box(Modifier.fillMaxSize()) {
         when (val value = state) {

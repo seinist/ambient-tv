@@ -34,7 +34,6 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
     val uiState: StateFlow<YouTubeDetailState> = _uiState.asStateFlow()
     private var loadJob: kotlinx.coroutines.Job? = null
     init {
-        load()
         viewModelScope.launch {
             engine.subscriptionChanges.collect { changes ->
                 val channel = _uiState.value.channel ?: return@collect

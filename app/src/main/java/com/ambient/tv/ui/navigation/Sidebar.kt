@@ -309,7 +309,7 @@ internal fun SidebarContent(
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
             val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
                 Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
-            add(MenuSystem("tvheadend", systemName(MediaSystem.TVHEADEND, "TVHeadend"), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
+            add(MenuSystem("tvheadend", offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
             val entries = listOf(
                 Triple("live", stringResource(R.string.tvh_live), Icons.Filled.Tv),
@@ -319,9 +319,7 @@ internal fun SidebarContent(
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), Icons.Filled.Tv, Destinations.LIVE_TV)) }
-            val label = systemName(MediaSystem.TVHEADEND, "TVHeadend").let { name ->
-                if (sidebarState.tvheadendOffline) "$name · ${stringResource(R.string.tvh_offline_badge)}" else name
-            }
+            val label = offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems)
             add(MenuSystem("tvheadend", label, Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         }
         // IPTV playlists (M3U + XMLTV): one entry per playlist and tab, through the shared Live TV screens.
@@ -1086,7 +1084,8 @@ private fun rememberSidebarBackRegistration(): ((() -> Unit)?) -> Unit {
 internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination> = listOf(
     MenuDestination("files:browse", stringResource(R.string.files_browse), Icons.Filled.Folder, Destinations.FILES),
 ) + state.networkFileSources.map { source ->
-    MenuDestination("files:source:${source.id}", source.name, Icons.Filled.Storage, Destinations.fileSource(source.id))
+    MenuDestination("files:source:${source.id}", offlineLabel(source.name, "files:${source.id}" in state.offlineSystems),
+        Icons.Filled.Storage, Destinations.fileSource(source.id))
 } + listOf(
     MenuDestination("files:favorites", stringResource(R.string.files_favorites), Icons.Filled.Favorite, Destinations.FILE_FAVORITES),
     MenuDestination("files:recent", stringResource(R.string.files_recent), Icons.Filled.History, Destinations.FILE_RECENT),
@@ -1096,7 +1095,8 @@ internal fun filesMenuDestinations(state: SidebarUiState): List<MenuDestination>
 @Composable
 internal fun dlnaMenuDestinations(state: SidebarUiState): List<MenuDestination> =
     listOf(MenuDestination("dlna:manage", stringResource(R.string.dlna_servers), Icons.Filled.Settings, Destinations.DLNA)) +
-        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", server.name, Icons.Filled.Storage, Destinations.dlnaServer(server.id)) }
+        state.dlnaServers.map { server -> MenuDestination("dlna:${server.id}", offlineLabel(server.name, "dlna:${server.id}" in state.offlineSystems),
+            Icons.Filled.Storage, Destinations.dlnaServer(server.id)) }
 
 
 @Composable

@@ -66,6 +66,7 @@ class TvheadendRepository @Inject constructor(
     private val browseScopes: com.ambient.tv.data.browse.BrowseScopes,
     /** Runs the one TVHeadend wake (state, card, gate); a Provider because it uses this repository. */
     private val connection: javax.inject.Provider<com.ambient.tv.server.TvheadendConnectionManager>,
+    private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
 ) {
     /** Last answers per server/account on disk: channels, guide and recordings stay visible offline. */
     private val diskCache = TvheadendDiskCache(BrowseTvheadendCacheStore(browseDisk))
@@ -73,7 +74,7 @@ class TvheadendRepository @Inject constructor(
     @Volatile private var revalidateJob: kotlinx.coroutines.Job? = null
     @Volatile private var lastRevalidateAtMs = 0L
     private val _servingCachedData = kotlinx.coroutines.flow.MutableStateFlow(false)
-    /** True while answers come from the cache because the server is asleep or unreachable. */
+    /** Retry hint after a fallback; host reachability is reported independently by HostConnectivity. */
     val servingCachedData: kotlinx.coroutines.flow.StateFlow<Boolean> = _servingCachedData
     private val _revalidated = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     /** The server answered again after cached data was served; screens reload to get fresh data. */
@@ -374,14 +375,18 @@ class TvheadendRepository @Inject constructor(
         }.sortedBy { it.name.lowercase() }
     }
 
-    suspend fun deleteAutoRecording(uuid: String): Result<Unit> = suspendResult {
+    /** A recording action may read fresh state before writing; entry expiry must wait for both. */
+    private suspend fun <T> mutate(block: suspend () -> T): Result<T> =
+        browseReconnects.get().withMutation("tvheadend") { suspendResult { block() } }
+
+    suspend fun deleteAutoRecording(uuid: String): Result<Unit> = mutate {
         getJson("api/idnode/delete", mapOf("uuid" to uuid))
         patchCached("dvr:autorec", AUTOREC_LIST) { list -> list.filterNot { it.uuid == uuid } }
         invalidateDvrAndEpg()
     }
 
     /** Padding (minutes) and priority of a DVR entry, through TVHeadend's generic idnode save. */
-    suspend fun updateTimer(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = suspendResult {
+    suspend fun updateTimer(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = mutate {
         getJson("api/idnode/save", mapOf("node" to tvhTimerNode(uuid, edit).toString()))
         patchCached("dvr:upcoming", RECORDING_LIST) { list -> list.map { if (it.uuid == uuid) it.copy(
             paddingBeforeMinutes = edit.paddingBeforeMinutes ?: it.paddingBeforeMinutes,
@@ -391,7 +396,7 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
-    suspend fun updateAutoRecording(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = suspendResult {
+    suspend fun updateAutoRecording(uuid: String, edit: com.ambient.tv.livetv.LiveTvTimerEdit): Result<Unit> = mutate {
         getJson("api/idnode/save", mapOf("node" to tvhTimerNode(uuid, edit).toString()))
         patchCached("dvr:autorec", AUTOREC_LIST) { list -> list.map { if (it.uuid == uuid) it.copy(
             enabled = edit.enabled ?: it.enabled,
@@ -402,7 +407,7 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
-    suspend fun scheduleRecording(eventId: String): Result<Unit> = suspendResult {
+    suspend fun scheduleRecording(eventId: String): Result<Unit> = mutate {
         val configUuid = defaultDvrConfigUuid()
         val params = buildMap {
             put("event_id", eventId)
@@ -412,14 +417,14 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
-    suspend fun recordCurrentProgramme(event: TvhEpgEvent): Result<Unit> = suspendResult {
+    suspend fun recordCurrentProgramme(event: TvhEpgEvent): Result<Unit> = mutate {
         val configUuid = defaultDvrConfigUuid()
         val conf = currentProgrammeRecordingConfig(event, System.currentTimeMillis() / 1000, configUuid)
         getJson("api/dvr/entry/create", mapOf("conf" to conf.toString()))
         invalidateDvrAndEpg()
     }
 
-    suspend fun scheduleSeries(eventId: String): Result<Unit> = suspendResult {
+    suspend fun scheduleSeries(eventId: String): Result<Unit> = mutate {
         val configUuid = defaultDvrConfigUuid()
         val params = buildMap {
             put("event_id", eventId)
@@ -429,7 +434,7 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
-    suspend fun cancelRecording(uuid: String): Result<Unit> = suspendResult {
+    suspend fun cancelRecording(uuid: String): Result<Unit> = mutate {
         // Re-read the server state: a scheduled timer may have started since the UI loaded.
         val entry = upcomingRecordings(force = true).firstOrNull { it.uuid == uuid }
             ?: error("Recording is no longer scheduled or running. Refresh the recordings.")
@@ -439,7 +444,7 @@ class TvheadendRepository @Inject constructor(
         invalidateDvrAndEpg()
     }
 
-    suspend fun deleteRecording(uuid: String): Result<Unit> = suspendResult {
+    suspend fun deleteRecording(uuid: String): Result<Unit> = mutate {
         getJson("api/dvr/entry/remove", mapOf("uuid" to uuid))
         listOf("dvr:finished", "dvr:failed", "dvr:upcoming").forEach { key ->
             patchCached(key, RECORDING_LIST) { list -> list.filterNot { it.uuid == uuid } }

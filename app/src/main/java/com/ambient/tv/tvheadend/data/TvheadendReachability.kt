@@ -5,9 +5,9 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Whether stored data was served because the server is really gone (socket/connect failure, host
- * not found, VPN route down, Wake-on-LAN timeout; [error] null = the socket check failed). Only
- * then is TVHeadend shown offline with record/timer locked; an endpoint answering 5xx or garbage
- * only serves its own stored copy.
+ * not found, VPN route down, Wake-on-LAN timeout; [error] null = the socket check failed).
+ * This classifies fallback/revalidation only. Menus and browse actions use shared host evidence;
+ * an individual slow endpoint must not label an otherwise reachable machine offline.
  */
 internal fun tvhFallbackMarksOffline(error: Throwable?): Boolean = error == null || when (classifyTvheadendTestFailure(error)) {
     TvheadendTestFailure.UNREACHABLE, TvheadendTestFailure.WAKE, TvheadendTestFailure.HOST, TvheadendTestFailure.VPN -> true
