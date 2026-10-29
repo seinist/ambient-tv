@@ -69,6 +69,15 @@ class HomeRowAddChipsTest {
      * could be added at all while signed out.
      */
     @Test
+    fun radioHomeShortcutRequiresRadioToBeEnabled() {
+        val enabled = SettingsUiState(radioEnabled = true)
+        assertTrue(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, "home", enabled))
+
+        val disabled = SettingsUiState(radioEnabled = false)
+        assertFalse(homeRowSourceAddable(HomeRowDefinition.SYSTEM_RADIO, "home", disabled))
+    }
+
+    @Test
     fun signedOutSmartTubeStillOffersTheFeedsThatWorkWithoutAnAccount() {
         val signedOut = SettingsUiState(
             youtubeEnabled = true,
