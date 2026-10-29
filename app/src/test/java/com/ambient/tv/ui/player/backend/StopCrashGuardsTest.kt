@@ -18,7 +18,8 @@ class StopCrashGuardsTest {
             "ui/youtube/YouTubePlayerScreen.kt", "ui/player/backend/VlcPlaybackView.kt").forEach { path ->
             assertFalse("$path calls controller.player directly", Regex("""controller\.player\.""").containsMatchIn(source(path)))
         }
-        assertTrue(source("ui/player/VlcPlayerContent.kt").contains("override fun play() { controller.play() }"))
+        // Explicit transport goes through the session, which calls the guarded playback handle.
+        assertTrue(source("ui/player/VlcPlayerContent.kt").contains("override fun play() { BackgroundPlaybackSession.userPlay() }"))
     }
 
     @Test fun publicVlcMethodsTouchingNativeStateAreGuardedAfterRelease() {
