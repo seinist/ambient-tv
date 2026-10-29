@@ -22,6 +22,7 @@ data class HomeRowDefinition(
         const val SYSTEM_YOUTUBE = "youtube"
         const val SYSTEM_TRAILERS = "trailers"
         const val SYSTEM_SPOTIFY = "spotify"
+        const val SYSTEM_RADIO = "radio"
         /** Rows across every media server (Plex, Jellyfin, Emby) at once. */
         const val SYSTEM_ALL = "all"
         /** Photos of all servers (Plex/Jellyfin/Emby photo libraries). */
@@ -94,6 +95,7 @@ fun homeSystemReady(
     tvheadendReady: Boolean,
     youtubeReady: Boolean,
     spotifyReady: Boolean,
+    radioReady: Boolean = false,
     embyReady: Boolean = false,
     photosReady: Boolean = false,
     trailersReady: Boolean = false,
@@ -107,5 +109,6 @@ fun homeSystemReady(
     HomeRowDefinition.SYSTEM_TVHEADEND -> tvheadendReady
     HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeReady
     HomeRowDefinition.SYSTEM_SPOTIFY -> spotifyReady
+    HomeRowDefinition.SYSTEM_RADIO -> radioReady
     else -> false
 }

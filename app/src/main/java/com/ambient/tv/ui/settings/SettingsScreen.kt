@@ -708,6 +708,7 @@ fun SettingsScreen(
                         SettingsCategory.EMBY,
                         SettingsCategory.TVHEADEND,
                         SettingsCategory.SPOTIFY,
+                        SettingsCategory.RADIO,
                         SettingsCategory.YOUTUBE -> {
                             settingsSystemCategoryItems(
                                 category = selectedCategory,
@@ -1873,6 +1874,7 @@ private fun HomeRowAddButtons(
         stringResource(R.string.settings_home_source_spotify_albums) to (HomeRowDefinition.SYSTEM_SPOTIFY to "albums"),
         stringResource(R.string.settings_home_source_spotify_artists) to (HomeRowDefinition.SYSTEM_SPOTIFY to "artists"),
         stringResource(R.string.settings_home_source_spotify_now_playing) to (HomeRowDefinition.SYSTEM_SPOTIFY to "now_playing"),
+        stringResource(R.string.radio_title) to (HomeRowDefinition.SYSTEM_RADIO to "home"),
         stringResource(R.string.settings_home_source_photos_recent) to (HomeRowDefinition.SYSTEM_PHOTOS to "recent"),
         stringResource(R.string.trailers_cinema) to (HomeRowDefinition.SYSTEM_TRAILERS to "CINEMA"),
         stringResource(R.string.trailers_upcoming) to (HomeRowDefinition.SYSTEM_TRAILERS to "UPCOMING"),
@@ -1905,6 +1907,7 @@ private fun HomeRowAddButtons(
             HomeRowDefinition.SYSTEM_TVHEADEND,
             HomeRowDefinition.SYSTEM_YOUTUBE,
             HomeRowDefinition.SYSTEM_SPOTIFY,
+            HomeRowDefinition.SYSTEM_RADIO,
             HomeRowDefinition.SYSTEM_PHOTOS,
             HomeRowDefinition.SYSTEM_TRAILERS,
         )

@@ -1305,6 +1305,7 @@ class HomeViewModel @Inject constructor(
             row.enabled && homeSystemActive(row.system) && when (row.system) {
                 HomeRowDefinition.SYSTEM_YOUTUBE -> true
                 HomeRowDefinition.SYSTEM_SPOTIFY -> true
+                HomeRowDefinition.SYSTEM_RADIO -> true
                 HomeRowDefinition.SYSTEM_TVHEADEND -> row.contentKey !in setOf("live", "recent_channels")
                 else -> false
             }
@@ -1555,6 +1556,7 @@ class HomeViewModel @Inject constructor(
         tvheadendReady = appPreferences.isTvheadendConfigured,
         youtubeReady = appPreferences.youtubeEnabled,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
+        radioReady = appPreferences.radioEnabled,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
         trailersReady = appPreferences.trailersEnabled && trailerRepository.configured,
@@ -1618,6 +1620,7 @@ class HomeViewModel @Inject constructor(
         providerLabel = when (system) {
             HomeRowDefinition.SYSTEM_YOUTUBE -> "SmartTube"
             HomeRowDefinition.SYSTEM_SPOTIFY -> "Spotify"
+            HomeRowDefinition.SYSTEM_RADIO -> "RadioBrowser"
             HomeRowDefinition.SYSTEM_TVHEADEND -> "TV"
             HomeRowDefinition.SYSTEM_PLEX -> "Plex"
             HomeRowDefinition.SYSTEM_EMBY -> "Emby"

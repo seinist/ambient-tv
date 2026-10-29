@@ -222,6 +222,7 @@ internal fun SidebarContent(
     val youtubeEnabled = sidebarState.youtubeEnabled
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
+    val radioEnabled = sidebarState.radioEnabled
     val tvheadendEnabled = sidebarState.tvheadendEnabled
     val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
@@ -308,6 +309,10 @@ internal fun SidebarContent(
             }
             add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
+        if (radioEnabled) add(MenuSystem(
+            "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
+            entries = listOf(MenuDestination("radio:home", overview, Icons.Filled.Home, Destinations.RADIO)),
+        ))
         if (tvheadendEnabled && sidebarState.tvheadendLoginRejected) {
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
             val entries = listOf(MenuDestination("tvheadend:login", stringResource(R.string.tvh_login_check), Icons.AutoMirrored.Filled.Login,
@@ -360,6 +365,7 @@ internal fun SidebarContent(
         tvheadendConfigured = tvheadendUsable || sidebarState.liveTvSources.any { it.source.system == "iptv" },
         youtubeEnabled = youtubeEnabled,
         spotifyCanSearch = spotifyEnabled && spotifyAuthorized && spotifyNativeAvailable,
+        radioEnabled = radioEnabled,
     )
     val globals = buildList {
         // Plex-style order: Search above Home.
@@ -819,7 +825,11 @@ internal fun SidebarContent(
                                                 onWrapKey = { wrapFocus(entry.destination.id, it) },
                                                 trailingChevron = entry.opensPage,
                                                 stateDescription = if (entry.opensPage) opensSubmenu else null,
-                                                logo = if (entry.opensPage) systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark } else null,
+                                                logo = when {
+                                                    entry.opensPage -> systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark }
+                                                    entry.systemId == MediaSystem.RADIO.key && entry.destination.id == "radio:home" -> MediaSystem.RADIO
+                                                    else -> null
+                                                },
                                                 testTag = "sidebar:${entry.destination.id}",
                                             )
                                         }

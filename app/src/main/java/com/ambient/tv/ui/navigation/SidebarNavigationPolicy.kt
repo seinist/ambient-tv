@@ -112,8 +112,9 @@ internal fun sidebarShowsGlobalSearch(
     tvheadendConfigured: Boolean,
     youtubeEnabled: Boolean,
     spotifyCanSearch: Boolean,
+    radioEnabled: Boolean = false,
 ): Boolean = plexConfigured || jellyfinConfigured || embyConfigured ||
-    tvheadendConfigured || youtubeEnabled || spotifyCanSearch
+    tvheadendConfigured || youtubeEnabled || spotifyCanSearch || radioEnabled
 
 /** Home rail entry: systems that contribute home-like rows (Files-only has no Home). */
 internal fun sidebarShowsHome(

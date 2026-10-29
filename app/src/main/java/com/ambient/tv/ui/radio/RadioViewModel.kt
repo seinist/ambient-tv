@@ -1,0 +1,359 @@
+package com.ambient.tv.ui.radio
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.radio.RadioBrowserRepository
+import com.ambient.tv.data.radio.RadioFacet
+import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.browse.BrowseWorkBudget
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+enum class RadioSection {
+    POPULAR,
+    FAVORITES,
+    RECENT,
+    GENRES,
+    COUNTRIES,
+    LANGUAGES,
+}
+
+internal val RadioSection.isFacetSection: Boolean
+    get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
+
+data class RadioUiState(
+    val section: RadioSection = RadioSection.POPULAR,
+    val loading: Boolean = false,
+    val loadingMore: Boolean = false,
+    val query: String = "",
+    val submittedQuery: String = "",
+    val stations: List<RadioStation> = emptyList(),
+    val facets: List<RadioFacet> = emptyList(),
+    val selectedFacet: RadioFacet? = null,
+    val hasMore: Boolean = false,
+    val error: Boolean = false,
+    val startingStationId: String? = null,
+    val favoriteIds: Set<String> = emptySet(),
+)
+
+@HiltViewModel
+class RadioViewModel @Inject constructor(
+    private val repository: RadioBrowserRepository,
+    private val preferences: AppPreferences,
+    private val playbackLauncher: RadioPlaybackLauncher,
+) : ViewModel() {
+    private val _state = MutableStateFlow(RadioUiState())
+    val state: StateFlow<RadioUiState> = _state.asStateFlow()
+
+    private var loadJob: Job? = null
+    private var playJob: Job? = null
+    private var focusLoadJob: Job? = null
+    private var focusedStationId: String? = null
+    private var focusLoadStationId: String? = null
+    private var entered = false
+
+    fun enter() {
+        if (entered) return
+        entered = true
+        refreshLocalState()
+        loadStations(reset = true)
+    }
+
+    fun refresh() {
+        resetFocusPaging()
+        refreshLocalState()
+        val current = _state.value
+        when {
+            current.submittedQuery.isNotBlank() || current.selectedFacet != null -> loadStations(reset = true)
+            current.section == RadioSection.POPULAR -> loadStations(reset = true)
+            current.section.isFacetSection -> loadFacets(current.section)
+            else -> showLocalSection(current.section)
+        }
+    }
+
+    fun selectSection(section: RadioSection) {
+        val current = _state.value
+        if (current.section == section &&
+            current.submittedQuery.isBlank() &&
+            current.selectedFacet == null
+        ) return
+
+        loadJob?.cancel()
+        resetFocusPaging()
+        _state.value = current.copy(
+            section = section,
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            facets = emptyList(),
+            selectedFacet = null,
+            hasMore = false,
+            error = false,
+        )
+        when {
+            section == RadioSection.POPULAR -> loadStations(reset = true)
+            section.isFacetSection -> loadFacets(section)
+            else -> showLocalSection(section)
+        }
+    }
+
+    fun selectFacet(facet: RadioFacet) {
+        if (!_state.value.section.isFacetSection) return
+        resetFocusPaging()
+        _state.value = _state.value.copy(
+            selectedFacet = facet,
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            hasMore = false,
+            error = false,
+        )
+        loadStations(reset = true)
+    }
+
+    fun clearFacet() {
+        val section = _state.value.section
+        if (!section.isFacetSection || _state.value.selectedFacet == null) return
+        loadJob?.cancel()
+        resetFocusPaging()
+        _state.value = _state.value.copy(
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            selectedFacet = null,
+            hasMore = false,
+            error = false,
+        )
+        loadFacets(section)
+    }
+
+    fun onQueryChanged(value: String) {
+        _state.value = _state.value.copy(query = value.take(120))
+    }
+
+    fun submitSearch() {
+        val query = _state.value.query.trim()
+        if (query.isNotEmpty() && query.length < 2) return
+        if (query.isBlank()) {
+            clearSearch()
+            return
+        }
+        resetFocusPaging()
+        _state.value = _state.value.copy(submittedQuery = query)
+        loadStations(reset = true)
+    }
+
+    fun clearSearch() {
+        resetFocusPaging()
+        val current = _state.value
+        _state.value = current.copy(query = "", submittedQuery = "")
+        when {
+            current.selectedFacet != null -> loadStations(reset = true)
+            current.section == RadioSection.POPULAR -> loadStations(reset = true)
+            current.section.isFacetSection -> loadFacets(current.section)
+            else -> showLocalSection(current.section)
+        }
+    }
+
+    fun toggleFavorite(station: RadioStation) {
+        val favorite = station.id !in _state.value.favoriteIds
+        preferences.setRadioFavorite(station, favorite)
+        refreshLocalState()
+        if (_state.value.section == RadioSection.FAVORITES && _state.value.submittedQuery.isBlank()) {
+            showLocalSection(RadioSection.FAVORITES)
+        }
+    }
+
+    fun loadMore() {
+        val current = _state.value
+        if (current.loading || current.loadingMore || !current.hasMore) return
+        loadStations(reset = false)
+    }
+
+    fun onStationFocused(stationId: String) {
+        focusedStationId = stationId
+        val current = _state.value
+        val index = current.stations.indexOfFirst { it.id == stationId }
+        if (!radioShouldLoadOnFocus(index, current.stations.size, current.hasMore, current.loading, current.loadingMore)) {
+            focusLoadJob?.cancel()
+            focusLoadJob = null
+            focusLoadStationId = null
+            return
+        }
+        // Like SmartTube: moving inside the pending end region keeps the same settle timer.
+        if (focusLoadJob?.isActive == true) return
+        focusLoadStationId = stationId
+        focusLoadJob = viewModelScope.launch {
+            delay(RADIO_FOCUS_SETTLE_MS)
+            while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
+            val latest = _state.value
+            val latestFocusedId = focusedStationId ?: return@launch
+            val latestIndex = latest.stations.indexOfFirst { it.id == latestFocusedId }
+            if (!radioShouldLoadOnFocus(
+                    latestIndex,
+                    latest.stations.size,
+                    latest.hasMore,
+                    latest.loading,
+                    latest.loadingMore,
+                )
+            ) return@launch
+            loadMore()
+        }
+    }
+
+    private fun resetFocusPaging() {
+        focusLoadJob?.cancel()
+        focusLoadJob = null
+        focusedStationId = null
+        focusLoadStationId = null
+    }
+
+    private fun refreshLocalState() {
+        _state.value = _state.value.copy(
+            favoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id),
+        )
+    }
+
+    private fun showLocalSection(section: RadioSection) {
+        val stations = when (section) {
+            RadioSection.FAVORITES -> preferences.radioFavorites
+            RadioSection.RECENT -> preferences.recentRadioStations
+            else -> return
+        }
+        _state.value = _state.value.copy(
+            loading = false,
+            loadingMore = false,
+            stations = stations,
+            facets = emptyList(),
+            hasMore = false,
+            error = false,
+        )
+    }
+
+    private fun loadFacets(section: RadioSection) {
+        if (!section.isFacetSection) return
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _state.value = _state.value.copy(
+                loading = true,
+                loadingMore = false,
+                stations = emptyList(),
+                facets = emptyList(),
+                selectedFacet = null,
+                hasMore = false,
+                error = false,
+            )
+            runCatching {
+                when (section) {
+                    RadioSection.GENRES -> repository.tags(FACET_LIMIT)
+                    RadioSection.COUNTRIES -> repository.countries(FACET_LIMIT)
+                    RadioSection.LANGUAGES -> repository.languages(FACET_LIMIT)
+                    else -> emptyList()
+                }
+            }.onSuccess { facets ->
+                if (_state.value.section == section && _state.value.selectedFacet == null) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        facets = facets,
+                        error = false,
+                    )
+                }
+            }.onFailure {
+                if (_state.value.section == section && _state.value.selectedFacet == null) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        facets = emptyList(),
+                        error = true,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun loadStations(reset: Boolean) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            val before = _state.value
+            val offset = if (reset) 0 else before.stations.size
+            _state.value = before.copy(
+                loading = reset,
+                loadingMore = !reset,
+                stations = if (reset) emptyList() else before.stations,
+                error = false,
+            )
+            val facet = _state.value.selectedFacet
+            val section = _state.value.section
+            runCatching {
+                repository.search(
+                    query = _state.value.submittedQuery.takeIf(String::isNotBlank),
+                    countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
+                    language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
+                    tag = facet?.id.takeIf { section == RadioSection.GENRES },
+                    offset = offset,
+                    limit = PAGE_SIZE,
+                )
+            }.onSuccess { page ->
+                val existing = if (reset) emptyList() else _state.value.stations
+                _state.value = _state.value.copy(
+                    loading = false,
+                    loadingMore = false,
+                    stations = (existing + page.items).distinctBy(RadioStation::id),
+                    hasMore = page.hasMore,
+                    error = false,
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    loading = false,
+                    loadingMore = false,
+                    error = true,
+                )
+            }
+        }
+    }
+
+    fun play(station: RadioStation) {
+        playJob?.cancel()
+        playJob = viewModelScope.launch {
+            _state.value = _state.value.copy(startingStationId = station.id, error = false)
+            val visibleStations = _state.value.stations
+            playbackLauncher.play(station, visibleStations)
+                .onSuccess {
+                    refreshLocalState()
+                    _state.value = _state.value.copy(startingStationId = null)
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(startingStationId = null, error = true)
+                }
+        }
+    }
+
+    companion object {
+        private const val PAGE_SIZE = 48
+        private const val FACET_LIMIT = 150
+    }
+}
+
+internal fun radioShouldLoadOnFocus(
+    index: Int,
+    size: Int,
+    hasMore: Boolean,
+    loading: Boolean,
+    loadingMore: Boolean,
+    threshold: Int = RADIO_GRID_CONTINUE_THRESHOLD,
+): Boolean = index >= 0 &&
+    size > 0 &&
+    hasMore &&
+    !loading &&
+    !loadingMore &&
+    index >= size - threshold.coerceAtLeast(1)
+
+internal const val RADIO_GRID_CONTINUE_THRESHOLD = 10
+internal const val RADIO_FOCUS_SETTLE_MS = 350L
+

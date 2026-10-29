@@ -58,6 +58,8 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.branding.BrandMark
 import com.ambient.tv.domain.model.MediaItem
+import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.ui.radio.radioStationSubtitle
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.spotify.SpotifyBrowseItem
 import com.ambient.tv.spotify.SpotifyEntityType
@@ -234,7 +236,7 @@ fun SearchScreen(
                                 BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
                                 StatePanel(
                                     stringResource(R.string.search_no_results),
-                                    if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                    if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
                                         stringResource(R.string.search_no_results_partial_error)
                                     } else stringResource(R.string.search_no_results_body),
                                 )
@@ -249,6 +251,7 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                viewModel::playRadio,
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
                                 onTvheadendRecordingClick,
@@ -261,6 +264,7 @@ fun SearchScreen(
                                 onItemClick,
                                 onYouTubeClick,
                                 onSpotifyClick,
+                                viewModel::playRadio,
                                 onTvheadendChannelClick,
                                 onTvheadendProgramClick,
                                 onTvheadendRecordingClick,
@@ -301,6 +305,7 @@ private fun searchSourceLabel(source: SearchSource): String = when (source) {
     SearchSource.TRAILERS -> searchSystemName(MediaSystem.TRAILERS)
     SearchSource.YOUTUBE -> searchSystemName(MediaSystem.YOUTUBE)
     SearchSource.SPOTIFY -> searchSystemName(MediaSystem.SPOTIFY)
+    SearchSource.RADIO -> searchSystemName(MediaSystem.RADIO)
 }
 
 @Composable
@@ -324,6 +329,7 @@ private fun SearchRows(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -363,6 +369,7 @@ private fun SearchRows(
         state.tvheadendResults.recordings.isNotEmpty() -> "tvh-recordings"
         state.youtubeResults.isNotEmpty() -> "youtube"
         state.spotifyResults.isNotEmpty() -> "spotify"
+        state.radioResults.isNotEmpty() -> "radio"
         else -> null
     }
     val allMediaGroups = plexGroups + jellyfinGroups + embyGroups + trailerGroups
@@ -474,6 +481,12 @@ private fun SearchRows(
         items(spotifyGroups, key = { "spotify-${it.first}" }) { (type, items) ->
             SpotifySearchRow(type, items, onSpotifyClick, requestInitialResultFocus && firstExternalGroup == "spotify" && type == spotifyGroups.firstOrNull()?.first)
         }
+        sourceStatusItem("radio-status", MediaSystem.RADIO, state.radioState)
+        if (state.radioResults.isNotEmpty()) {
+            item(key = "radio-results") {
+                RadioSearchRow(state.radioResults, onRadioClick, requestInitialResultFocus && firstExternalGroup == "radio")
+            }
+        }
     }
 }
 
@@ -544,6 +557,34 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadioSearchRow(
+    items: List<RadioStation>,
+    onClick: (RadioStation) -> Unit,
+    requestInitialFocus: Boolean = false,
+) {
+    Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SearchGroupTitle(MediaSystem.RADIO, R.string.radio_title)
+        LazyRow(
+            state = rememberLazyListState(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            modifier = Modifier.containRowFocusExit(),
+        ) {
+            items(items, key = { it.id }) { station ->
+                SearchArtworkCard(
+                    imageUrl = station.artworkUrl,
+                    title = station.name,
+                    subtitle = radioStationSubtitle(station),
+                    squareArtwork = true,
+                    onClick = { onClick(station) },
+                    requestInitialFocus = requestInitialFocus && station == items.firstOrNull(),
+                )
             }
         }
     }
@@ -662,6 +703,7 @@ private fun SearchArtworkCard(
     title: String,
     subtitle: String?,
     imageHeaders: Map<String, String> = emptyMap(),
+    squareArtwork: Boolean = false,
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
 ) {
@@ -684,7 +726,7 @@ private fun SearchArtworkCard(
                 model = imageUrl,
                 title = title,
                 headers = imageHeaders,
-                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)),
+                modifier = Modifier.fillMaxWidth().aspectRatio(if (squareArtwork) 1f else 16f / 9f).clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop,
             )
             Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
@@ -704,6 +746,7 @@ private fun SearchList(
     onItemClick: (String) -> Unit,
     onYouTubeClick: (String) -> Unit,
     onSpotifyClick: (SpotifyBrowseItem) -> Unit,
+    onRadioClick: (RadioStation) -> Unit,
     onTvheadendChannelClick: (TvhChannel) -> Unit,
     onTvheadendProgramClick: (TvhEpgEvent) -> Unit,
     onTvheadendRecordingClick: (TvhDvrEntry) -> Unit,
@@ -728,6 +771,7 @@ private fun SearchList(
         state.tvheadendResults.recordings.isNotEmpty() -> "tvh-recordings"
         state.youtubeResults.isNotEmpty() -> "youtube"
         spotifyGroups.isNotEmpty() -> "spotify"
+        state.radioResults.isNotEmpty() -> "radio"
         else -> null
     }
 
@@ -864,6 +908,20 @@ private fun SearchList(
                     squareArtwork = true,
                     onClick = { onSpotifyClick(item) },
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "spotify" && groupIndex == 0 && item == groupItems.firstOrNull(),
+                )
+            }
+        }
+        sourceStatusItem("radio-list-status", MediaSystem.RADIO, state.radioState)
+        if (state.radioResults.isNotEmpty()) {
+            item(key = "radio-list-header") { SearchListGroupHeader(MediaSystem.RADIO, R.string.radio_title) }
+            items(state.radioResults, key = { "radio:${it.id}" }) { station ->
+                ExternalSearchListItem(
+                    imageUrl = station.artworkUrl,
+                    title = station.name,
+                    subtitle = radioStationSubtitle(station),
+                    squareArtwork = true,
+                    onClick = { onRadioClick(station) },
+                    requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "radio" && station == state.radioResults.firstOrNull(),
                 )
             }
         }

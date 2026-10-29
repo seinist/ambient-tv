@@ -1003,6 +1003,7 @@ internal fun settingsSystem(category: SettingsCategory): com.ambient.tv.ui.commo
     SettingsCategory.YOUTUBE -> com.ambient.tv.ui.common.MediaSystem.YOUTUBE
     SettingsCategory.TRAILERS -> com.ambient.tv.ui.common.MediaSystem.TRAILERS
     SettingsCategory.SPOTIFY -> com.ambient.tv.ui.common.MediaSystem.SPOTIFY
+    SettingsCategory.RADIO -> com.ambient.tv.ui.common.MediaSystem.RADIO
     SettingsCategory.DLNA -> com.ambient.tv.ui.common.MediaSystem.DLNA
     SettingsCategory.FILES -> com.ambient.tv.ui.common.MediaSystem.FILES
     else -> null
@@ -1040,6 +1041,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.YOUTUBE -> state.youtubeEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
     SettingsCategory.SPOTIFY -> state.spotifyEnabled && state.spotifyWebAuthorized
+    SettingsCategory.RADIO -> state.radioEnabled
     SettingsCategory.FILES -> state.filesEnabled && state.fileSourceCount > 0
     SettingsCategory.DLNA -> state.dlnaServerCount > 0
     SettingsCategory.IPTV -> state.iptvSourceCount > 0
@@ -1061,6 +1063,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             // without one.
             youtubeReady = sourceConfigured(SettingsCategory.YOUTUBE, state) && state.youtubeAvailable,
             spotifyReady = sourceConfigured(SettingsCategory.SPOTIFY, state),
+            radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),
         )
@@ -1088,6 +1091,7 @@ private fun settingsPageSummary(category: SettingsCategory, state: SettingsUiSta
             SettingsCategory.TVHEADEND -> state.tvheadendEnabled
             SettingsCategory.YOUTUBE -> state.youtubeEnabled
             SettingsCategory.SPOTIFY -> state.spotifyEnabled
+            SettingsCategory.RADIO -> state.radioEnabled
             SettingsCategory.DLNA -> true
             SettingsCategory.FILES -> state.filesEnabled
             else -> false

@@ -807,7 +807,7 @@ open class MainActivity : ComponentActivity() {
     }
 }
 
-internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
+internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
@@ -1012,6 +1012,7 @@ private fun AmbientTvApp(
         tvheadend = appPreferences.isTvheadendConfigured,
         youtube = appPreferences.youtubeEnabled,
         spotify = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore),
+        radio = appPreferences.radioEnabled,
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
         iptvSourceId = configuredIptvSourceId,
@@ -1798,6 +1799,12 @@ private fun AmbientTvApp(
                                 navController.navigate(Destinations.setupComplete(Destinations.YOUTUBE))
                             },
                             onSetupSpotify = { setupSource("spotify") },
+                            onUseRadio = {
+                                if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
+                                appPreferences.radioEnabled = true
+                                appPreferences.initialSetupCompleted = true
+                                navController.navigate(Destinations.setupComplete(Destinations.RADIO))
+                            },
                             onSetupTrailers = { setupSource("trailers") },
                             onOpenSettings = { setupSource("appearance") },
                             onRestore = { setupSource("backup") },
@@ -1846,7 +1853,7 @@ private fun AmbientTvApp(
                         )
                     }
                     composable(Destinations.SETUP_COMPLETE, arguments = listOf(navArgument("destination") { type = NavType.StringType })) { entry ->
-                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.SPOTIFY, Destinations.FILES) || it == configuredStartDestination() } ?: Destinations.HOME
+                        val destination = entry.arguments?.getString("destination")?.takeIf { it in setOf(Destinations.HOME, Destinations.YOUTUBE, Destinations.SPOTIFY, Destinations.RADIO, Destinations.FILES) || it == configuredStartDestination() } ?: Destinations.HOME
                         com.ambient.tv.ui.setup.SetupCompleteScreen(
                             onStart = { navController.navigate(destination) { popUpTo(Destinations.INITIAL_SETUP) { inclusive = true } } },
                             onAddSource = { navController.popBackStack(Destinations.INITIAL_SETUP, false) },
@@ -1881,6 +1888,7 @@ private fun AmbientTvApp(
                                     when (row.system) {
                                         HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeFeedRoute(row.contentKey).let { route -> if (route == Destinations.YOUTUBE) navigateTopLevel(route) else navigateToSection(route) }
                                         HomeRowDefinition.SYSTEM_SPOTIFY -> if (row.contentKey == "now_playing") playOnSelectedTarget(Destinations.spotifyPlayer()) else if (row.contentKey == "home") navigateTopLevel(Destinations.SPOTIFY) else navigateToSection(Destinations.spotifySection(row.contentKey))
+                                        HomeRowDefinition.SYSTEM_RADIO -> navigateTopLevel(Destinations.RADIO)
                                         HomeRowDefinition.SYSTEM_TVHEADEND -> navigateToSection(Destinations.liveTvSection(row.contentKey))
                                         else -> if (row.contentKey in setOf("live", "guide", "recordings", "timers")) {
                                             val sourceId = providerNavigationViewModel.uiState.value.liveTvSources
@@ -1971,6 +1979,11 @@ private fun AmbientTvApp(
                                 onBack = ::focusSidebar,
                                 onSelectFeed = { feed -> navigateSidebar(youtubeFeedRoute(feed.key)) },
                             )
+                        }
+                    }
+                    composable(Destinations.RADIO) {
+                        RestorableSidebarContent {
+                            com.ambient.tv.ui.radio.RadioScreen(onBack = ::focusSidebar)
                         }
                     }
                     composable(Destinations.SPOTIFY) {
