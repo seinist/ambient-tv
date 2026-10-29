@@ -18,6 +18,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,10 +71,12 @@ internal fun playerPanelDrawerAlpha(progress: Float, reducedEffects: Boolean): F
         (1f - PLAYER_PANEL_DRAWER_MIN_ALPHA) * value
 }
 
+private val StaticPlayerPanelProgress = mutableFloatStateOf(1f)
+
 internal data class PlayerPanelMotionState(
     val active: Boolean = false,
-    val panelProgress: Float = 1f,
-    val scrimProgress: Float = 1f,
+    val panelProgress: State<Float> = StaticPlayerPanelProgress,
+    val scrimProgress: State<Float> = StaticPlayerPanelProgress,
     val visualDepth: Int = 1,
     val reducedEffects: Boolean = false,
 )
@@ -114,6 +119,8 @@ fun PlayerPanelVisibility(
     var stateGeneration by remember { mutableIntStateOf(0) }
     val panelProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
     val scrimProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
+    val panelProgressState = remember(panelProgress) { derivedStateOf { panelProgress.value } }
+    val scrimProgressState = remember(scrimProgress) { derivedStateOf { scrimProgress.value } }
     val interactive = panel != UnifiedPlayerPanel.NONE
 
     LaunchedEffect(panel, currentDepth, reducedEffects) {
@@ -179,8 +186,8 @@ fun PlayerPanelVisibility(
             LocalPlayerPanelStateHolder provides levels,
             LocalPlayerPanelMotion provides PlayerPanelMotionState(
                 active = true,
-                panelProgress = panelProgress.value,
-                scrimProgress = scrimProgress.value,
+                panelProgress = panelProgressState,
+                scrimProgress = scrimProgressState,
                 visualDepth = visualDepth,
                 reducedEffects = reducedEffects,
             ),
