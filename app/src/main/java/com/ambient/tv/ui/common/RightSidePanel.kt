@@ -415,11 +415,11 @@ private fun RightSidePanelChrome(
             } else Modifier)
             .then(if (playerPanelMotion.active) Modifier.graphicsLayer {
                 translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(
-                    playerPanelMotion.panelProgress,
+                    playerPanelMotion.panelProgress.value,
                     playerPanelMotion.reducedEffects,
                 )
                 alpha = com.ambient.tv.ui.player.playerPanelDrawerAlpha(
-                    playerPanelMotion.panelProgress,
+                    playerPanelMotion.panelProgress.value,
                     playerPanelMotion.reducedEffects,
                 )
             } else Modifier)
