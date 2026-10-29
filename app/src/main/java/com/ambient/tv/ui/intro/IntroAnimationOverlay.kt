@@ -383,16 +383,18 @@ private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
 
 /**
  * The full wordmark centered on [at], [width] wide, starting at [start]. With [fromIcon] the TV
- * icon stands in the light first, then shrinks onto the A: its peak becomes the Λ while the frame
- * dissolves. Otherwise the Λ gathers on its own. "mbient" follows letter by letter, and the TV
- * badge switches on last: a line of light opens into the badge, then the label appears.
+ * icon stands in the light first, then the complete monitor+A mark moves left as one rigid unit.
+ * "mbient" follows letter by letter beside it. Otherwise the standalone Λ gathers on its own.
+ * The TV badge switches on last: a line of light opens into the badge, then the label appears.
  */
 private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, start: Float, fromIcon: Boolean) {
     val t = frame.seconds - start
     val wordShift = if (fromIcon) introBloomWordShift() else 0f
     val layoutLeft = if (fromIcon) introBloomWordmarkLeft() else WORDMARK_LEFT
     val layoutRight = WORDMARK_RIGHT + wordShift
-    val unit = width / (layoutRight - layoutLeft)
+    // Keep the established wordmark scale; Bloom only grows horizontally enough to retain
+    // the monitor around its A instead of shrinking the rest of the animation.
+    val unit = width / (WORDMARK_RIGHT - WORDMARK_LEFT)
     val origin = Offset(
         at.x - (layoutLeft + layoutRight) / 2f * unit,
         at.y - (WORDMARK_TOP + WORDMARK_BOTTOM) / 2f * unit,
