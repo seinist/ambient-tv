@@ -55,6 +55,13 @@ class RadioBrowserRepositoryTest {
         assertEquals(listOf("German", "English"), station.languages)
         assertEquals("DE", station.countryCode)
         assertEquals(128, station.bitrateKbps)
+        assertEquals(listOf("de", "en"), station.languageCodes)
+        assertEquals("DE-BE", station.regionCode)
+        assertEquals(4, station.clickTrend)
+        assertEquals(52.52, station.latitude!!, 0.001)
+        assertEquals(13.405, station.longitude!!, 0.001)
+        assertEquals("2026-10-29T19:00:00Z", station.lastCheckOkTime)
+        assertFalse(station.sslError)
         assertFalse(station.isHls)
     }
 
@@ -113,10 +120,17 @@ class RadioBrowserRepositoryTest {
         country = "Germany",
         countryCode = "de",
         language = "German, English, German",
+        languageCodes = "de,en,de",
+        regionCode = "de-be",
         tags = "Rock, Pop, Rock",
         codec = "mp3",
         bitrate = 128,
         hls = 0,
+        clickTrend = 4,
+        latitude = 52.52,
+        longitude = 13.405,
+        lastCheckOkTime = "2026-10-29T19:00:00Z",
+        sslError = 0,
     )
 
     private class FakeRadioBrowserApi : RadioBrowserApiService {

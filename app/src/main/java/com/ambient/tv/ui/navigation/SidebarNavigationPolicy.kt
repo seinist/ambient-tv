@@ -65,11 +65,13 @@ internal fun sidebarConcreteRoute(
     liveTvSourceId: String? = null,
     fileSourceId: String? = null,
     dlnaServerId: String? = null,
+    radioSectionKey: String? = null,
 ): String? = when (currentRoute) {
     Destinations.SECTION -> sectionKey?.let(Destinations::section)
     Destinations.YOUTUBE_FEED -> youtubeFeedKey?.let(Destinations::youtubeFeed)
     Destinations.TRAILER_FEED -> trailerFeedKey?.let(Destinations::trailerFeed)
     Destinations.SPOTIFY_SECTION -> spotifySectionKey?.let(Destinations::spotifySection)
+    Destinations.RADIO_SECTION -> radioSectionKey?.let(Destinations::radioSection)
     Destinations.LIVE_TV_SECTION -> tvheadendTab?.let { Destinations.liveTvSection(it, liveTvSourceId) }
     Destinations.FILE_SOURCE -> fileSourceId?.let(Destinations::fileSource)
     Destinations.DLNA_SERVER -> dlnaServerId?.let(Destinations::dlnaServer)
@@ -81,6 +83,7 @@ internal fun isParameterizedSidebarRoute(route: String): Boolean =
         route.startsWith("youtube_feed/") ||
         route.startsWith("trailers/feed/") ||
         route.startsWith("spotify_section/") ||
+        route.startsWith("radio_section/") ||
         route.startsWith("live_tv/") ||
         route.startsWith("files_source/") ||
         route.startsWith("dlna/")

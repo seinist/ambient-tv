@@ -63,8 +63,31 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
         HomeRowDefinition.SYSTEM_SPOTIFY to "artists" -> R.string.settings_home_source_spotify_artists
         HomeRowDefinition.SYSTEM_SPOTIFY to "now_playing" -> R.string.settings_home_source_spotify_now_playing
         HomeRowDefinition.SYSTEM_RADIO to "home" -> R.string.radio_title
+        HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_POPULAR -> R.string.settings_home_source_radio_popular
+        HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_FAVORITES -> R.string.settings_home_source_radio_favorites
+        HomeRowDefinition.SYSTEM_RADIO to HomeRowDefinition.RADIO_RECENT -> R.string.settings_home_source_radio_recent
         HomeRowDefinition.SYSTEM_PHOTOS to "recent" -> R.string.photos_recent_row
-        else -> return contentKey.replace('_', ' ').replaceFirstChar(Char::uppercase)
+        else -> {
+            if (system == HomeRowDefinition.SYSTEM_RADIO && ':' in contentKey) {
+                val kind = contentKey.substringBefore(':')
+                val value = contentKey.substringAfter(':').trim()
+                if (value.isNotBlank() && kind in setOf(
+                        HomeRowDefinition.RADIO_GENRE,
+                        HomeRowDefinition.RADIO_COUNTRY,
+                        HomeRowDefinition.RADIO_LANGUAGE,
+                    )
+                ) {
+                    val prefix = context.getString(when (kind) {
+                        HomeRowDefinition.RADIO_GENRE -> R.string.radio_genres
+                        HomeRowDefinition.RADIO_COUNTRY -> R.string.radio_countries
+                        else -> R.string.radio_languages
+                    })
+                    val name = MediaSystem.RADIO.customName ?: context.getString(MediaSystem.RADIO.label)
+                    return "$name: $prefix · $value"
+                }
+            }
+            return contentKey.replace('_', ' ').replaceFirstChar(Char::uppercase)
+        }
     }
     val title = context.getString(resource)
     return MediaSystem.fromKey(system)?.renamed(title) ?: title

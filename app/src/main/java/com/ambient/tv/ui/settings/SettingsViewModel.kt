@@ -112,6 +112,7 @@ class SettingsViewModel @Inject constructor(
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
     private val spotifyRepository: SpotifyRepository,
+    private val radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository,
     private val wireGuardRoute: WireGuardRouteController,
     private val fileStore: FileStore,
     private val textFileImporter: com.ambient.tv.data.files.TextFileImporter,
@@ -1917,6 +1918,43 @@ class SettingsViewModel @Inject constructor(
             }.distinctBy { it.lowercase() }.sortedWith(String.CASE_INSENSITIVE_ORDER)
             _uiState.update { state ->
                 if (state.homeGenrePicker?.system == system) state.copy(homeGenrePicker = HomeGenrePicker(system, loading = false, genres = genres)) else state
+            }
+        }
+    }
+
+    fun pickRadioHomeFacet(kind: String) {
+        val normalized = kind.takeIf {
+            it in setOf(
+                HomeRowDefinition.RADIO_GENRE,
+                HomeRowDefinition.RADIO_COUNTRY,
+                HomeRowDefinition.RADIO_LANGUAGE,
+            )
+        } ?: return
+        homeGenreJob?.cancel()
+        _uiState.update {
+            it.copy(homeGenrePicker = HomeGenrePicker(
+                system = HomeRowDefinition.SYSTEM_RADIO,
+                radioKind = normalized,
+            ))
+        }
+        homeGenreJob = viewModelScope.launch {
+            val facets = runCatching {
+                when (normalized) {
+                    HomeRowDefinition.RADIO_COUNTRY -> radioBrowserRepository.countries(150)
+                    HomeRowDefinition.RADIO_LANGUAGE -> radioBrowserRepository.languages(150)
+                    else -> radioBrowserRepository.tags(200)
+                }
+            }.getOrDefault(emptyList())
+            _uiState.update { state ->
+                val picker = state.homeGenrePicker
+                if (picker?.system == HomeRowDefinition.SYSTEM_RADIO && picker.radioKind == normalized) {
+                    state.copy(homeGenrePicker = picker.copy(
+                        loading = false,
+                        radioFacets = facets,
+                    ))
+                } else {
+                    state
+                }
             }
         }
     }

@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GraphicEq
@@ -64,6 +65,7 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.CHAPTERS -> Icons.AutoMirrored.Filled.ViewList
     OsdButton.CHANNEL -> Icons.Filled.AccountCircle
     OsdButton.SUBSCRIBE -> Icons.Filled.Subscriptions
+    OsdButton.FAVORITE -> Icons.Filled.Favorite
     OsdButton.AUDIO, OsdButton.VOLUME -> Icons.AutoMirrored.Filled.VolumeUp
     OsdButton.SUBTITLES -> Icons.Filled.Subtitles
     OsdButton.VIDEO -> Icons.Filled.Movie

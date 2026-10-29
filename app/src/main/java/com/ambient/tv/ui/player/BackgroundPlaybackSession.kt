@@ -246,6 +246,9 @@ object BackgroundPlaybackSession {
     internal fun currentAudioSpectrum(): com.ambient.tv.ui.player.backend.AudioSpectrumAnalyzer? =
         (handle as? Media3PlaybackHandle)?.player?.let(PlaybackEngineFactory::audioSpectrum)
 
+    internal fun currentAudioSession(): AudioSession? =
+        (handle as? Media3PlaybackHandle)?.player?.let(Media3AudioProcessing::session)
+
     fun refreshMetadata(metadata: PlaybackMetadata) {
         checkThread()
         val current = snapshot.value

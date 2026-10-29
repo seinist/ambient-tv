@@ -21,6 +21,9 @@ import com.ambient.tv.data.jellyfin.JellyfinRepository
 import com.ambient.tv.data.jellyfin.JellyfinBackend
 import com.ambient.tv.data.emby.EmbyRepository
 import com.ambient.tv.data.emby.EmbyBackend
+import com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX
+import com.ambient.tv.data.radio.RadioBrowserRepository
+import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.server.JellyfinConnectionManager
@@ -87,6 +90,7 @@ data class HomeHeroLive(val timeLabel: String, val startEpochSeconds: Long, val 
 internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     key = "${when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
+        ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> "radio"
         EmbyBackend.owns(ratingKey) -> "emby"
         JellyfinBackend.owns(ratingKey) -> "jellyfin"
         else -> "plex"
@@ -97,6 +101,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     titleLogoUrl = logoUrl,
     providerLabel = when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
+        ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
         EmbyBackend.owns(ratingKey) -> "Emby"
         JellyfinBackend.owns(ratingKey) -> "Jellyfin"
         else -> "Plex"
@@ -162,6 +167,7 @@ class HomeViewModel @Inject constructor(
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
+    private val radioRepository: RadioBrowserRepository,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val trailerRepository: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val performanceProfileResolver: PerformanceProfileResolver,
@@ -192,7 +198,9 @@ class HomeViewModel @Inject constructor(
     private var tvPreviewJob: Job? = null
     private var photoJob: Job? = null
     private var trailerJob: Job? = null
+    private var radioJob: Job? = null
     private var trailerRows: List<ContentRowData> = emptyList()
+    private var radioRows: List<ContentRowData> = emptyList()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
     private var photoRow: ContentRowData? = null
     private var tvPreview = HomeTvPreview()
@@ -218,7 +226,8 @@ class HomeViewModel @Inject constructor(
     private val homeFetchLimiter = Semaphore(HOME_FETCH_CONCURRENCY)
 
     private val _uiState = MutableStateFlow<HomeUiState>(
-        if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured || appPreferences.isTvheadendConfigured)
+        if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
+            appPreferences.isTvheadendConfigured || appPreferences.radioEnabled)
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -256,6 +265,22 @@ class HomeViewModel @Inject constructor(
             focusedRowId = activeFocusedRowId,
             hero = hero,
         )
+    }
+
+    init {
+        var favoriteIds = appPreferences.radioFavorites.map(RadioStation::id)
+        var recentIds = appPreferences.recentRadioStations.map(RadioStation::id)
+        viewModelScope.launch {
+            appPreferences.changes().collect {
+                val nextFavorites = appPreferences.radioFavorites.map(RadioStation::id)
+                val nextRecent = appPreferences.recentRadioStations.map(RadioStation::id)
+                if (nextFavorites != favoriteIds || nextRecent != recentIds) {
+                    favoriteIds = nextFavorites
+                    recentIds = nextRecent
+                    if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) loadRadioRows()
+                }
+            }
+        }
     }
 
     init {
@@ -346,6 +371,7 @@ class HomeViewModel @Inject constructor(
         tvPreviewScope = nextTvScope
         loadPhotoRow()
         loadTrailerRows()
+        loadRadioRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
         if ((jellyfinOnly || embyOnly) && !refreshing && _uiState.value !is HomeUiState.Loaded) {
             libraryLoading = true
@@ -368,7 +394,8 @@ class HomeViewModel @Inject constructor(
             return
         }
         if (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured) {
-            if (appPreferences.isTvheadendConfigured || trailerJob?.isActive == true) {
+            if (appPreferences.isTvheadendConfigured || trailerJob?.isActive == true ||
+                radioJob?.isActive == true || radioRows.isNotEmpty()) {
                 // The independent TV job publishes as soon as channels are ready.
                 if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.LoadingLibrary
             } else {
@@ -1138,6 +1165,122 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    private fun loadRadioRows() {
+        radioJob?.cancel()
+        if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.radioEnabled) {
+            radioRows = emptyList()
+            return
+        }
+        val definitions = appPreferences.homeRows
+            .filter { row ->
+                row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
+                    (row.contentKey in setOf(
+                        "home",
+                        HomeRowDefinition.RADIO_POPULAR,
+                        HomeRowDefinition.RADIO_FAVORITES,
+                        HomeRowDefinition.RADIO_RECENT,
+                    ) || row.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ||
+                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ||
+                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:"))
+            }
+            .distinctBy { it.contentKey.lowercase() }
+
+        val enabledIds = definitions.mapTo(hashSetOf()) { "radio.${it.contentKey}" }
+        radioRows = radioRows.filter { it.id in enabledIds }
+        if (definitions.isEmpty()) {
+            radioRows = emptyList()
+            return
+        }
+
+        radioJob = viewModelScope.launch {
+            val built = coroutineScope {
+                definitions.map { definition ->
+                    async {
+                        val stations = when {
+                            definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
+                                runCatching { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
+                            definition.contentKey == HomeRowDefinition.RADIO_FAVORITES ->
+                                appPreferences.radioFavorites.take(HOME_ROW_LIMIT)
+                            definition.contentKey == HomeRowDefinition.RADIO_RECENT ->
+                                appPreferences.recentRadioStations.take(HOME_ROW_LIMIT)
+                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
+                                runCatching {
+                                    radioRepository.search(
+                                        tag = definition.contentKey.substringAfter(':'),
+                                        limit = HOME_ROW_LIMIT,
+                                    ).items
+                                }.getOrDefault(emptyList())
+                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
+                                runCatching {
+                                    radioRepository.search(
+                                        countryCode = definition.contentKey.substringAfter(':'),
+                                        limit = HOME_ROW_LIMIT,
+                                    ).items
+                                }.getOrDefault(emptyList())
+                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
+                                runCatching {
+                                    radioRepository.search(
+                                        language = definition.contentKey.substringAfter(':'),
+                                        limit = HOME_ROW_LIMIT,
+                                    ).items
+                                }.getOrDefault(emptyList())
+                            else -> emptyList()
+                        }
+                        stations.takeIf { it.isNotEmpty() }?.let { entries ->
+                            ContentRowData(
+                                title = definition.displayTitle(context),
+                                items = entries.map { it.toHomeItem() },
+                                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                                id = "radio.${definition.contentKey}",
+                                showDescription = false,
+                            )
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            radioRows = built
+            if (!_uiState.value.isFailurePage()) {
+                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
+        }
+    }
+
+    private fun RadioStation.toHomeItem() = MediaItem(
+        ratingKey = RADIO_HOME_ITEM_PREFIX + id,
+        title = name,
+        type = "track",
+        index = null,
+        thumbUrl = artworkUrl,
+        artUrl = artworkUrl,
+        year = null,
+        summary = buildList {
+            country?.takeIf { it.isNotBlank() }?.let(::add)
+            languages.take(2).forEach(::add)
+            tags.take(3).forEach(::add)
+        }.distinct().joinToString(" · ").takeIf(String::isNotBlank),
+        tagline = null,
+        durationMs = null,
+        viewOffsetMs = null,
+        parentTitle = null,
+        parentRatingKey = null,
+        grandparentTitle = null,
+        grandparentRatingKey = null,
+        contentRating = null,
+        rating = null,
+        studio = "Radio Browser",
+        genres = tags,
+        mediaVersions = listOf(
+            com.ambient.tv.domain.model.MediaVersion(
+                streamUrl = streamUrl,
+                resolution = null,
+                videoCodec = null,
+                audioCodec = codec,
+                container = null,
+                bitrateKbps = bitrateKbps,
+            ),
+        ),
+    )
+
     private fun loadTrailerRows() {
         trailerJob?.cancel()
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.trailersEnabled || !trailerRepository.configured) {
@@ -1192,7 +1335,10 @@ class HomeViewModel @Inject constructor(
     // Whether there is anything to show is decided before the cross-system row is added, so an
     // offline Home (no rows) still leaves the launcher's channels alone.
     private fun publishRows(rows: List<ContentRowData>) =
-        publishRowsInternal(withAllContinueRow(applyOverviewStyle(rows)), hasRows = rows.isNotEmpty())
+        publishRowsInternal(
+            withAllContinueRow(applyOverviewStyle(rows)),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty(),
+        )
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
     private fun applyOverviewStyle(rows: List<ContentRowData>): List<ContentRowData> {
@@ -1295,9 +1441,9 @@ class HomeViewModel @Inject constructor(
             },
         )
         @Suppress("NAME_SHADOWING")
-        val rows = rows.filterNot { it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || homeRowHidden(it.id) } +
-            listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) +
-            trailerRows
+        val rows = rows.filterNot {
+            it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") || homeRowHidden(it.id)
+        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows
         val liveTvItems = tvPreview.live
         val recentTvItems = tvPreview.recent
         val previous = _uiState.value as? HomeUiState.Loaded
@@ -1305,7 +1451,7 @@ class HomeViewModel @Inject constructor(
             row.enabled && homeSystemActive(row.system) && when (row.system) {
                 HomeRowDefinition.SYSTEM_YOUTUBE -> true
                 HomeRowDefinition.SYSTEM_SPOTIFY -> true
-                HomeRowDefinition.SYSTEM_RADIO -> true
+                HomeRowDefinition.SYSTEM_RADIO -> false
                 HomeRowDefinition.SYSTEM_TVHEADEND -> row.contentKey !in setOf("live", "recent_channels")
                 else -> false
             }

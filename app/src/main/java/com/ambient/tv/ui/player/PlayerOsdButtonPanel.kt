@@ -23,6 +23,7 @@ private enum class OsdButtonSection(@StringRes val title: Int) {
     PICTURE_SOUND(R.string.osd_buttons_section_picture_sound),
     LIVE_TV(R.string.settings_live_tv_title),
     YOUTUBE(R.string.osd_buttons_section_youtube),
+    RADIO(R.string.radio_title),
     TOOLS(R.string.player_tools),
     INFORMATION(R.string.player_osd_info_information),
 }
@@ -36,6 +37,7 @@ private val OsdButton.section: OsdButtonSection get() = when (this) {
     OsdButton.ZAP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.TELETEXT,
     OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV -> OsdButtonSection.LIVE_TV
     OsdButton.CHANNEL, OsdButton.SUBSCRIBE -> OsdButtonSection.YOUTUBE
+    OsdButton.FAVORITE -> OsdButtonSection.RADIO
     OsdButton.SCREENSHOT, OsdButton.BOOKMARK, OsdButton.AB_REPEAT, OsdButton.FRAME_STEP,
     OsdButton.LYRICS, OsdButton.TOOLS -> OsdButtonSection.TOOLS
     OsdButton.STATS, OsdButton.FPS -> OsdButtonSection.INFORMATION

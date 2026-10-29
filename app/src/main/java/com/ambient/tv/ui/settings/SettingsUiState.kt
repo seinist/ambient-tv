@@ -6,7 +6,14 @@ import com.ambient.tv.ui.performance.PerformanceProbeTarget
 import com.ambient.tv.vpn.WireGuardRouteState
 
 /** Genres a system offers for a "top in genre" Home row; [loading] until the server answered. */
-data class HomeGenrePicker(val system: String, val loading: Boolean = true, val genres: List<String> = emptyList())
+data class HomeGenrePicker(
+    val system: String,
+    val loading: Boolean = true,
+    val genres: List<String> = emptyList(),
+    /** Radio Browser reuses the picker for tag/country/language facets. */
+    val radioKind: String? = null,
+    val radioFacets: List<com.ambient.tv.data.radio.RadioFacet> = emptyList(),
+)
 
 /**
  * Live WireGuard route and the last tunnel test: runtime state, never part of the saved draft.

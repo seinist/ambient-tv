@@ -34,6 +34,7 @@ object Destinations {
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
     const val RADIO = "radio"
+    const val RADIO_SECTION = "radio_section/{sectionKey}"
     const val RADIO_PLAYER = "radio_player"
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
@@ -67,6 +68,8 @@ object Destinations {
     fun youtubeSection(feedKey: String, startFeedKey: String) = if (feedKey == startFeedKey) YOUTUBE else youtubeFeed(feedKey)
     fun trailerFeed(feedKey: String) = "trailers/feed/${Uri.encode(feedKey)}"
     fun spotifySection(sectionKey: String) = "spotify_section/${Uri.encode(sectionKey)}"
+    fun radioSection(sectionKey: String) =
+        if (sectionKey == "popular") RADIO else "radio_section/${Uri.encode(sectionKey)}"
     fun youtubeDetail(videoId: String) = "youtube_detail/${Uri.encode(videoId)}"
     fun youtubeChannel(channelId: String, title: String? = null, avatarUrl: String? = null) =
         "youtube_channel/${Uri.encode(channelId)}?title=${Uri.encode(title.orEmpty())}&avatar=${Uri.encode(avatarUrl.orEmpty())}"
