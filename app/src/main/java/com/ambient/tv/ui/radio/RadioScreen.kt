@@ -64,6 +64,7 @@ import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDp
@@ -369,7 +370,7 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .skeletonPulseAlpha(pulse)
                 .background(fill, RoundedCornerShape(8.dp)),
         )
         Box(
@@ -378,7 +379,7 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
                 .align(Alignment.CenterHorizontally)
                 .padding(top = 2.dp)
                 .aspectRatio(8f)
-                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .skeletonPulseAlpha(pulse)
                 .background(fill, RoundedCornerShape(3.dp)),
         )
         Box(
@@ -386,7 +387,7 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
                 .fillMaxWidth(.5f)
                 .align(Alignment.CenterHorizontally)
                 .aspectRatio(10f)
-                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .skeletonPulseAlpha(pulse)
                 .background(fill, RoundedCornerShape(3.dp)),
         )
     }
