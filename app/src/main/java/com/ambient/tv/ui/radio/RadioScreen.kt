@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -78,6 +80,11 @@ fun RadioScreen(
 
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val browsingFacets = state.section in setOf(RadioSection.GENRES, RadioSection.COUNTRIES, RadioSection.LANGUAGES) &&
+        state.selectedFacet == null && state.submittedQuery.isBlank()
+    LaunchedEffect(state.section, state.selectedFacet?.value, state.submittedQuery) {
+        runCatching { gridState.scrollToItem(0) }
+    }
 
     Column(
         Modifier
@@ -93,34 +100,35 @@ fun RadioScreen(
         PageHeader(focusChain = focusChain) {
             SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
             Text(
-                stringResource(if (state.submittedQuery.isBlank()) R.string.radio_popular else R.string.radio_title),
+                if (state.submittedQuery.isNotBlank()) stringResource(R.string.radio_title)
+                else state.selectedFacet?.label ?: radioSectionLabel(state.section),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
 
-        Row(
+        LazyRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
         ) {
+            lazyItems(RadioSection.entries, key = { it.name }) { section ->
+                TvChip(
+                    text = radioSectionLabel(section),
+                    selected = state.section == section && state.submittedQuery.isBlank(),
+                    onClick = { viewModel.selectSection(section) },
+                )
+            }
+        }
+
+        state.selectedFacet?.let { facet ->
             TvChip(
-                text = stringResource(R.string.radio_popular),
-                selected = state.section == RadioSection.POPULAR && state.submittedQuery.isBlank(),
-                onClick = { viewModel.selectSection(RadioSection.POPULAR) },
-            )
-            TvChip(
-                text = stringResource(R.string.radio_favorites),
-                selected = state.section == RadioSection.FAVORITES && state.submittedQuery.isBlank(),
-                onClick = { viewModel.selectSection(RadioSection.FAVORITES) },
-            )
-            TvChip(
-                text = stringResource(R.string.radio_recent),
-                selected = state.section == RadioSection.RECENT && state.submittedQuery.isBlank(),
-                onClick = { viewModel.selectSection(RadioSection.RECENT) },
+                text = facet.label,
+                selected = true,
+                onClick = viewModel::clearFacet,
             )
         }
 
-        Row(
+        if (!browsingFacets) Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -143,10 +151,33 @@ fun RadioScreen(
 
         when {
             state.loading -> com.ambient.tv.ui.common.SkeletonRow(title = "", modifier = Modifier.fillMaxWidth())
-            state.error && state.stations.isEmpty() -> StatePanel(
+            state.error && state.stations.isEmpty() && state.facets.isEmpty() -> StatePanel(
                 title = stringResource(R.string.radio_error),
                 modifier = Modifier.fillMaxWidth(),
             )
+            browsingFacets && state.facets.isEmpty() -> StatePanel(
+                title = stringResource(R.string.radio_no_facets),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            browsingFacets -> TvLazyVerticalGrid(
+                columns = GridCells.Adaptive(deviceDp(220.dp, 180.dp)),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .overlayLazyGridScrollbar(gridState)
+                    .focusGroup(),
+                state = gridState,
+                contentPadding = PaddingValues(bottom = 40.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                items(state.facets, key = { it.value }) { facet ->
+                    TvActionButton(
+                        text = stringResource(R.string.radio_facet_station_count, facet.label, facet.stationCount),
+                        onClick = { viewModel.selectFacet(facet) },
+                        modifier = Modifier.width(deviceDp(220.dp, 180.dp)),
+                    )
+                }
+            }
             state.stations.isEmpty() -> StatePanel(
                 title = stringResource(R.string.radio_no_stations),
                 modifier = Modifier.fillMaxWidth(),
@@ -187,7 +218,17 @@ fun RadioScreen(
             }
         }
     }
-}
+} 
+
+@Composable
+private fun radioSectionLabel(section: RadioSection): String = stringResource(when (section) {
+    RadioSection.POPULAR -> R.string.radio_popular
+    RadioSection.GENRES -> R.string.radio_genres
+    RadioSection.COUNTRIES -> R.string.radio_countries
+    RadioSection.LANGUAGES -> R.string.radio_languages
+    RadioSection.FAVORITES -> R.string.radio_favorites
+    RadioSection.RECENT -> R.string.radio_recent
+})
 
 @Composable
 private fun RadioStationTile(
