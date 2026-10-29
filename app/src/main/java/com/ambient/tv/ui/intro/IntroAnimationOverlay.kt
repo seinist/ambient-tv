@@ -496,7 +496,7 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
     }
 }
 
-/** Two or three wide pools of the accents drift on long, unrelated periods; the icon settles into the wordmark. */
+/** Two or three wide pools drift on long periods; the complete monitor+A mark settles beside the revealed word. */
 private fun DrawScope.drawLightField(frame: IntroFrame) {
     val t = frame.seconds
     val gather = soft(phase(t, 0f, 2.6f)) * (0.85f + 0.15f * frame.breath)
