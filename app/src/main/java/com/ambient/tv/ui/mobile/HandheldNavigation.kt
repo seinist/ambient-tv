@@ -56,6 +56,7 @@ fun HandheldNavigationHost(
         tvheadendConfigured = sidebarState.tvheadendEnabled && !sidebarState.tvheadendLoginRejected,
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
+        radioHomeEnabled = sidebarState.radioHomeEnabled,
     )
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = sidebarState.plexEnabled,
