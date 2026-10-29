@@ -2,6 +2,7 @@ package com.ambient.tv.ui.radio
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,7 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class RadioSection { POPULAR, FAVORITES, RECENT }
+
 data class RadioUiState(
+    val section: RadioSection = RadioSection.POPULAR,
     val loading: Boolean = false,
     val loadingMore: Boolean = false,
     val query: String = "",
@@ -21,6 +25,7 @@ data class RadioUiState(
     val hasMore: Boolean = false,
     val error: Boolean = false,
     val startingStationId: String? = null,
+    val favoriteIds: Set<String> = emptySet(),
 )
 
 data class RadioPlaybackRequest(
@@ -32,6 +37,7 @@ data class RadioPlaybackRequest(
 @HiltViewModel
 class RadioViewModel @Inject constructor(
     private val repository: RadioBrowserRepository,
+    private val preferences: AppPreferences,
 ) : ViewModel() {
     private val _state = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
@@ -47,10 +53,21 @@ class RadioViewModel @Inject constructor(
     fun enter() {
         if (entered) return
         entered = true
+        refreshLocalState()
         load(reset = true)
     }
 
-    fun refresh() = load(reset = true)
+    fun refresh() {
+        refreshLocalState()
+        if (_state.value.section == RadioSection.POPULAR || _state.value.submittedQuery.isNotBlank()) load(reset = true)
+        else showLocalSection(_state.value.section)
+    }
+
+    fun selectSection(section: RadioSection) {
+        if (_state.value.section == section && _state.value.submittedQuery.isBlank()) return
+        _state.value = _state.value.copy(section = section, query = "", submittedQuery = "", error = false)
+        if (section == RadioSection.POPULAR) load(reset = true) else showLocalSection(section)
+    }
 
     fun onQueryChanged(value: String) {
         _state.value = _state.value.copy(query = value.take(120))
@@ -65,13 +82,44 @@ class RadioViewModel @Inject constructor(
 
     fun clearSearch() {
         _state.value = _state.value.copy(query = "", submittedQuery = "")
-        load(reset = true)
+        if (_state.value.section == RadioSection.POPULAR) load(reset = true)
+        else showLocalSection(_state.value.section)
+    }
+
+    fun toggleFavorite(station: RadioStation) {
+        val favorite = station.id !in _state.value.favoriteIds
+        preferences.setRadioFavorite(station, favorite)
+        refreshLocalState()
+        if (_state.value.section == RadioSection.FAVORITES && _state.value.submittedQuery.isBlank()) {
+            showLocalSection(RadioSection.FAVORITES)
+        }
     }
 
     fun loadMore() {
         val current = _state.value
         if (current.loading || current.loadingMore || !current.hasMore) return
         load(reset = false)
+    }
+
+    private fun refreshLocalState() {
+        _state.value = _state.value.copy(
+            favoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id),
+        )
+    }
+
+    private fun showLocalSection(section: RadioSection) {
+        val stations = when (section) {
+            RadioSection.FAVORITES -> preferences.radioFavorites
+            RadioSection.RECENT -> preferences.recentRadioStations
+            RadioSection.POPULAR -> return
+        }
+        _state.value = _state.value.copy(
+            loading = false,
+            loadingMore = false,
+            stations = stations,
+            hasMore = false,
+            error = false,
+        )
     }
 
     private fun load(reset: Boolean) {
@@ -115,6 +163,8 @@ class RadioViewModel @Inject constructor(
         playJob = viewModelScope.launch {
             _state.value = _state.value.copy(startingStationId = station.id)
             val streamUrl = repository.playbackUrl(station)
+            preferences.recordRadioStation(station)
+            refreshLocalState()
             _playbackRequest.value = RadioPlaybackRequest(
                 station = station,
                 streamUrl = streamUrl,
