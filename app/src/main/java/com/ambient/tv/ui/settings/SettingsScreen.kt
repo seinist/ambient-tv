@@ -1166,7 +1166,7 @@ fun SettingsScreen(
                                 SettingsGroup {
                                     SettingsSelect(label = stringResource(R.string.settings_audio_visualizer), description = stringResource(R.string.settings_audio_visualizer_hint), options = buildList {
                                         listOf("projectm", "spectrum", "off").forEach { mode ->
-                                            val unavailable = mode == "projectm" && !com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable
+                                            val unavailable = mode == "projectm" && !com.ambient.tv.ui.common.projectm.ProjectMAvailability.canConfigure
                                             add(SettingsSelectOption(
                                                 text = when (mode) {
                                                     "projectm" -> stringResource(R.string.settings_audio_visualizer_projectm)
