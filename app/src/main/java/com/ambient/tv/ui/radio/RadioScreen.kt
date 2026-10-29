@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,6 +44,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import androidx.compose.runtime.snapshotFlow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -96,6 +99,22 @@ fun RadioScreen(
         if (gridState.firstVisibleItemIndex != 0 || gridState.firstVisibleItemScrollOffset != 0) {
             runCatching { gridState.scrollToItem(0) }
         }
+    }
+    LaunchedEffect(gridState, viewModel) {
+        snapshotFlow {
+            val layout = gridState.layoutInfo
+            radioShouldLoadMore(
+                lastVisibleIndex = layout.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                totalItemCount = layout.totalItemsCount,
+                hasMore = state.hasMore,
+                loading = state.loading,
+                loadingMore = state.loadingMore,
+            )
+        }
+            .distinctUntilChanged()
+            .collect { shouldLoad ->
+                if (shouldLoad) viewModel.loadMore()
+            }
     }
 
     Column(
@@ -253,20 +272,35 @@ fun RadioScreen(
                         onFavorite = { viewModel.toggleFavorite(station) },
                     )
                 }
-                if (state.hasMore) {
-                    item(key = "radio:load-more") {
-                        TvActionButton(
-                            text = stringResource(R.string.radio_load_more),
-                            onClick = viewModel::loadMore,
-                            loading = state.loadingMore,
-                            modifier = Modifier.width(deviceDp(190.dp, 160.dp)),
-                        )
+                if (state.loadingMore) {
+                    item(key = "radio:loading-more") {
+                        Box(
+                            modifier = Modifier
+                                .width(deviceDp(190.dp, 160.dp))
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
                     }
                 }
             }
         }
     }
 }
+
+internal fun radioShouldLoadMore(
+    lastVisibleIndex: Int,
+    totalItemCount: Int,
+    hasMore: Boolean,
+    loading: Boolean,
+    loadingMore: Boolean,
+    prefetchDistance: Int = 8,
+): Boolean = hasMore &&
+    !loading &&
+    !loadingMore &&
+    totalItemCount > 0 &&
+    lastVisibleIndex >= (totalItemCount - prefetchDistance.coerceAtLeast(1)).coerceAtLeast(0)
 
 @Composable
 private fun radioPageSubtitle(state: RadioUiState): String = when {
