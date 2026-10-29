@@ -808,7 +808,7 @@ open class MainActivity : ComponentActivity() {
 }
 
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
-internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
+internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
 // that changes with every request.
 private const val SETTINGS_PAGE_KEY = "settings_page"
@@ -1338,9 +1338,9 @@ private fun AmbientTvApp(
         }
     }
     // The photo viewer is a presentation too: a running slideshow must not start the screensaver.
-    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.SPOTIFY_PLAYER)
+    val onPlayerRoute = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER)
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
-    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || backgroundPlayback.active
+    val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active
 
     val activity = androidx.activity.compose.LocalActivity.current
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
@@ -1600,7 +1600,7 @@ private fun AmbientTvApp(
             }
             val showHomeBackground = currentRoute != Destinations.HOME && homeBackground.visible(
                 reducedEffects = com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects,
-                foregroundPlayback = onPlayerScreen || currentRoute in setOf(Destinations.SPOTIFY_PLAYER,
+                foregroundPlayback = onPlayerScreen || currentRoute in setOf(Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER,
                     Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER) || screensaverOverlayPresent,
                 backgroundVideo = showVisibleBackgroundVideo,
             )
@@ -1629,7 +1629,7 @@ private fun AmbientTvApp(
                 // A windowed video page is browsable chrome again: the bottom navigation returns
                 // with the system bars and only the fullscreen orientation hides it.
                 showNavigation = currentRoute !in FULLSCREEN_ROUTES || (handheld && onPlayerScreen && !handheldFullscreen.enabled),
-                playerVisible = onPlayerScreen || currentRoute == Destinations.SPOTIFY_PLAYER,
+                playerVisible = onPlayerScreen || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER,
                 onNavigate = ::navigateSidebar,
                 onOpenPlayback = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } },
                 onOpenSystemSettings = ::openSystemSettings,
@@ -1957,6 +1957,7 @@ private fun AmbientTvApp(
                                     }
                                 },
                                 onTvheadendRecordingClick = { recording -> playOnSelectedTarget(Destinations.tvhPlayer("recording", recording.uuid, recording.sourceId)) },
+                                onRadioStarted = { navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true } },
                                 onBack = ::focusSidebar,
                             )
                         }
@@ -1983,8 +1984,14 @@ private fun AmbientTvApp(
                     }
                     composable(Destinations.RADIO) {
                         RestorableSidebarContent {
-                            com.ambient.tv.ui.radio.RadioScreen(onBack = ::focusSidebar)
+                            com.ambient.tv.ui.radio.RadioScreen(
+                                onBack = ::focusSidebar,
+                                onOpenPlayer = { navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true } },
+                            )
                         }
+                    }
+                    composable(Destinations.RADIO_PLAYER) {
+                        com.ambient.tv.ui.radio.RadioPlayerScreen(onBack = ::navigateBack)
                     }
                     composable(Destinations.SPOTIFY) {
                         RestorableSidebarContent {
