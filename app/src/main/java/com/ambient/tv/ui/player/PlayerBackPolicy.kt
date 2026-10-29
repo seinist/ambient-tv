@@ -3,17 +3,21 @@ package com.ambient.tv.ui.player
 /**
  * What remote Back does in a player, once the OSD is out of the way.
  *
- * On a television Back stops playback — including music and radio. Sending playback to the
- * background is the exit-fullscreen button's job and nothing else's, so "did I stop this or is it
- * still running?" never depends on which kind of item was playing.
+ * On a television Back stops playback by default, including music and radio. The viewer can
+ * keep playing with the exit-fullscreen button or the minimize-on-Back setting.
  *
- * A handheld keeps the phone convention for audio: leaving the screen is how music goes on
- * playing there, and that platform has no exit-fullscreen chip to do it instead.
+ * A handheld keeps audio and live content running when leaving the player. Use the source's
+ * live flag so this also works before the renderer has discovered its audio/video tracks.
  *
  * [minimizeOnBack] is the viewer's own choice (Settings › Playback): Back then minimizes everything.
  */
-internal fun backLeavesPlaybackRunning(audioOnly: Boolean, handheld: Boolean, minimizeOnBack: Boolean = false): Boolean =
-    minimizeOnBack || audioOnly && handheld
+internal fun backLeavesPlaybackRunning(
+    audioOnly: Boolean,
+    handheld: Boolean,
+    minimizeOnBack: Boolean = false,
+    isLive: Boolean = false,
+): Boolean =
+    minimizeOnBack || handheld && (audioOnly || isLive)
 
 /**
  * Settings › Playback "Back in the player": read when Back is pressed, so a change applies to
