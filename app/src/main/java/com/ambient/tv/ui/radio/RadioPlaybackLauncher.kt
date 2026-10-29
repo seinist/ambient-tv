@@ -39,7 +39,7 @@ class RadioPlaybackLauncher @Inject constructor(
             streamUrl = streamUrl,
             startPositionMs = 0L,
             metadata = PlaybackMetadata(
-                route = Destinations.RADIO,
+                route = Destinations.RADIO_PLAYER,
                 title = station.name,
                 subtitle = radioStationSubtitle(station),
                 source = "radio",
