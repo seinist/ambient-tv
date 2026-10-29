@@ -2149,6 +2149,7 @@
     <string name="radio_error">Radio Browser ist derzeit nicht erreichbar.</string>
     <string name="radio_load_more">Mehr laden</string>
     <string name="radio_favorites">Favoriten</string>
+    <string name="radio_favorite">Favorit</string>
     <string name="radio_recent">Zuletzt gehört</string>
     <string name="radio_add_favorite">Zu Favoriten hinzufügen</string>
     <string name="radio_remove_favorite">Aus Favoriten entfernen</string>
