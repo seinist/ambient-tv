@@ -1352,7 +1352,7 @@ private fun AmbientTvApp(
     // wantsToPlay covers buffering; isPlaying alone was too narrow.
     val keepScreenOn = screensaverOverlayPresent ||
         (!handheld && screensaverEnabled) ||
-        (onPlayerScreen && backgroundPlayback.wantsToPlay) ||
+        ((onPlayerScreen || currentRoute == Destinations.RADIO_PLAYER) && backgroundPlayback.wantsToPlay) ||
         (!handheld && backgroundPlayback.activeVideo && backgroundPlayback.wantsToPlay)
     DisposableEffect(keepScreenOn) {
         focusSoundView.keepScreenOn = keepScreenOn
