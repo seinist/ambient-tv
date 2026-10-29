@@ -86,9 +86,12 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     private val appContext = context.applicationContext
     private val playerRef = WeakReference(player)
     private val handler = Handler(player.applicationLooper)
+    private var reducedEffects = reducedVideoEffects(context)
     private var format: Format? = player.videoFormat
-    private var outputWidth = 0
-    private var outputHeight = 0
+    private val renderGeometry = Media3RenderGeometry()
+    // Shader destinations and GPU budgets always use the confirmed surface, never a prediction.
+    private val outputWidth: Int get() = renderGeometry.confirmedSurface?.first ?: 0
+    private val outputHeight: Int get() = renderGeometry.confirmedSurface?.second ?: 0
     /** Scaler key the chain really upscales with; null while the display path scales. */
     private var scalerInChain: String? = null
     private var applied: Triple<Media3ImageOptions, Int, Int>? = null
@@ -109,6 +112,9 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         private set
     /** True only while the current track is SDR and Media3 will actually run the effect chain. */
     var sdrEffectsAllowed by mutableStateOf(media3ImageEffectsAllowed(player.videoFormat))
+        private set
+    /** Preserve the display resolution as soon as the eligible processing path is requested. */
+    var rendererScalingRequested by mutableStateOf(false)
         private set
     var scaleRelation by mutableStateOf(VideoScaleRelation.UNKNOWN)
         private set
@@ -221,11 +227,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
                 scheduleUpdate()
             }
             override fun onSurfaceSizeChanged(eventTime: AnalyticsListener.EventTime, width: Int, height: Int) {
-                if (width > 0 && height > 0) {
-                    outputWidth = width
-                    outputHeight = height
-                    scheduleUpdate()
-                }
+                if (renderGeometry.updateSurface(width, height)) scheduleUpdate()
             }
         })
         scheduleUpdate()
@@ -273,9 +275,30 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     }
 
     fun refreshPerformanceOverrides() {
+        reducedEffects = reducedVideoEffects(appContext)
         applied = null
         userChangePending = true
         scheduleUpdate()
+    }
+
+    internal fun updatePerformancePolicy(reduced: Boolean) {
+        if (reducedEffects == reduced) return
+        reducedEffects = reduced
+        applied = null
+        userChangePending = true
+        scheduleUpdate()
+    }
+
+    internal fun attachRenderTarget(owner: Any) {
+        if (renderGeometry.attach(owner)) scheduleUpdate()
+    }
+
+    internal fun updateRenderTarget(owner: Any, size: Pair<Int, Int>?) {
+        if (renderGeometry.updateTarget(owner, size)) scheduleUpdate()
+    }
+
+    internal fun detachRenderTarget(owner: Any) {
+        if (renderGeometry.detach(owner)) scheduleUpdate()
     }
 
     private fun scheduleUpdate() {
@@ -289,17 +312,22 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
     private fun applyOptions() {
         sdrEffectsAllowed = media3ImageEffectsAllowed(format)
-        scaleRelation = format?.takeIf { it.width > 0 && it.height > 0 && outputWidth > 0 && outputHeight > 0 }?.let {
-            if (media3NeedsUpscaling(it.width, it.height, outputWidth, outputHeight,
-                    it.pixelWidthHeightRatio, it.rotationDegrees)) VideoScaleRelation.UPSCALE
-            else VideoScaleRelation.NATIVE
-        } ?: VideoScaleRelation.UNKNOWN
+        val viewport = renderGeometry.scalerViewport
+        scaleRelation = if (viewport == null) VideoScaleRelation.UNKNOWN else
+            format?.takeIf { it.width > 0 && it.height > 0 }?.let {
+                if (media3NeedsUpscaling(it.width, it.height, viewport.first, viewport.second,
+                        it.pixelWidthHeightRatio, it.rotationDegrees)) VideoScaleRelation.UPSCALE
+                else VideoScaleRelation.NATIVE
+            } ?: VideoScaleRelation.UNKNOWN
+        // Sparsam disables the effect chain without clearing saved preferences.
+        val gated = effectiveMedia3ImageOptions(options, reducedEffects)
+        val enabled = gpuEffectsSupported && !effectsFailed && gated.enabled && media3ImageEffectsAllowed(format)
+        // This must not wait for a Scale stage: the display matcher could otherwise switch to
+        // the source's 1080p mode before the 4K surface makes that very stage available.
+        rendererScalingRequested = enabled
         val player = playerRef.get() ?: return
         // Player release clears the playlist. Never revive a stopped/released session.
         if (player.mediaItemCount == 0 || player.playbackState == Player.STATE_IDLE) return
-        // Sparsam disables the GPU sink / Lanczos / brightness chain without clearing saved prefs.
-        val gated = effectiveMedia3ImageOptions(options, reducedVideoEffects(appContext))
-        val enabled = gpuEffectsSupported && !effectsFailed && gated.enabled && media3ImageEffectsAllowed(format)
         val effective = if (enabled) gated else Media3ImageOptions()
         val signature = Triple(effective, outputWidth, outputHeight)
         // Scalers only run while the fitted picture is larger than the source: never past the display.
@@ -357,6 +385,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         com.ambient.tv.diagnostics.DiagnosticLog.error("playback",
             "Media3 effects failed (${appliedStages.joinToString { media3StageSummary(it) }}); continuing without them", error)
         effectsFailed = true
+        rendererScalingRequested = false
         applied = Triple(Media3ImageOptions(), outputWidth, outputHeight)
         appliedStages = emptyList()
         restartWithEffects(player, emptyList())
@@ -390,6 +419,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
     companion object {
         private val instances = WeakHashMap<ExoPlayer, Media3ImageProcessing>()
         fun gpuInitialized(player: ExoPlayer): Boolean = instances[player]?.gpuPipelineInitialized == true
+        fun rendererScalingRequested(player: ExoPlayer): Boolean = instances[player]?.rendererScalingRequested == true
         /** True when [error] came from the effect chain and playback restarted without it. */
         fun recoverFromEffectFailure(player: ExoPlayer, error: PlaybackException): Boolean =
             instances[player]?.recover(error) == true
