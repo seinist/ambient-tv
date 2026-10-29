@@ -29,6 +29,11 @@ class RadioPlaybackQueue @Inject constructor() {
 
     fun snapshot(): State = state
 
+    fun current(): RadioStation? {
+        val current = state
+        return current.stations.firstOrNull { it.id == current.currentId }
+    }
+
     fun previous(): RadioStation? = adjacent(-1)
     fun next(): RadioStation? = adjacent(1)
 
