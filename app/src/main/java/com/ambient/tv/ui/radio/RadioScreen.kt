@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -44,8 +44,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.runtime.snapshotFlow
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -100,23 +98,6 @@ fun RadioScreen(
             runCatching { gridState.scrollToItem(0) }
         }
     }
-    LaunchedEffect(gridState, viewModel) {
-        snapshotFlow {
-            val layout = gridState.layoutInfo
-            radioShouldLoadMore(
-                lastVisibleIndex = layout.visibleItemsInfo.lastOrNull()?.index ?: -1,
-                totalItemCount = layout.totalItemsCount,
-                hasMore = state.hasMore,
-                loading = state.loading,
-                loadingMore = state.loadingMore,
-            )
-        }
-            .distinctUntilChanged()
-            .collect { shouldLoad ->
-                if (shouldLoad) viewModel.loadMore()
-            }
-    }
-
     Column(
         Modifier
             .fillMaxSize()
@@ -260,7 +241,7 @@ fun RadioScreen(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(state.stations, key = { it.id }) { station ->
+                itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
                     RadioStationTile(
                         station = station,
                         playing = playback.metadata?.source == "radio" &&
@@ -270,37 +251,21 @@ fun RadioScreen(
                         favorite = station.id in state.favoriteIds,
                         onClick = { viewModel.play(station) },
                         onFavorite = { viewModel.toggleFavorite(station) },
+                        onFocused = { viewModel.onStationFocused(station.id) },
                     )
                 }
                 if (state.loadingMore) {
-                    item(key = "radio:loading-more") {
-                        Box(
-                            modifier = Modifier
-                                .width(deviceDp(190.dp, 160.dp))
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator()
-                        }
+                    items(
+                        count = RADIO_GRID_END_PLACEHOLDERS,
+                        key = { radioGridEndPlaceholderKey(it) },
+                    ) {
+                        RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
                     }
                 }
             }
         }
     }
 }
-
-internal fun radioShouldLoadMore(
-    lastVisibleIndex: Int,
-    totalItemCount: Int,
-    hasMore: Boolean,
-    loading: Boolean,
-    loadingMore: Boolean,
-    prefetchDistance: Int = 8,
-): Boolean = hasMore &&
-    !loading &&
-    !loadingMore &&
-    totalItemCount > 0 &&
-    lastVisibleIndex >= (totalItemCount - prefetchDistance.coerceAtLeast(1)).coerceAtLeast(0)
 
 @Composable
 private fun radioPageSubtitle(state: RadioUiState): String = when {
@@ -384,6 +349,49 @@ private fun RadioFacetTile(
     }
 }
 
+internal const val RADIO_GRID_END_PLACEHOLDERS = 2
+
+internal fun radioGridEndPlaceholderKey(index: Int) = "radio-grid-more:$index"
+
+@Composable
+private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
+    val pulse = if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) null
+        else com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse)
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        modifier
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = .58f), shape)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .background(fill, RoundedCornerShape(8.dp)),
+        )
+        Box(
+            Modifier
+                .fillMaxWidth(.78f)
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 2.dp)
+                .aspectRatio(8f)
+                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .background(fill, RoundedCornerShape(3.dp)),
+        )
+        Box(
+            Modifier
+                .fillMaxWidth(.5f)
+                .align(Alignment.CenterHorizontally)
+                .aspectRatio(10f)
+                .com.ambient.tv.ui.common.skeletonPulseAlpha(pulse)
+                .background(fill, RoundedCornerShape(3.dp)),
+        )
+    }
+}
+
 @Composable
 private fun RadioStationTile(
     station: RadioStation,
@@ -392,6 +400,7 @@ private fun RadioStationTile(
     favorite: Boolean,
     onClick: () -> Unit,
     onFavorite: () -> Unit,
+    onFocused: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
@@ -408,7 +417,10 @@ private fun RadioStationTile(
                 .fillMaxWidth()
                 .mediaFocusMotion(focused)
                 .activateOnTvKey(onClick = onClick)
-                .onFocusChanged { focused = it.isFocused },
+                .onFocusChanged {
+                    focused = it.isFocused
+                    if (it.isFocused) onFocused()
+                },
         ) {
             Column(
                 Modifier
