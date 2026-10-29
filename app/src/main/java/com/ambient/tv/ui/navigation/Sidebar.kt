@@ -157,6 +157,7 @@ fun Sidebar(
     onFocusOwnershipChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: SidebarViewModel = hiltViewModel(),
+    currentRadioSectionKey: String? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
@@ -175,7 +176,7 @@ fun Sidebar(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
-        onFocusOwnershipChanged, modifier,
+        onFocusOwnershipChanged, modifier, currentRadioSectionKey,
     )
 }
 
@@ -213,6 +214,7 @@ internal fun SidebarContent(
     onEntryRequestConsumed: () -> Unit = {},
     onFocusOwnershipChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
+    currentRadioSectionKey: String? = null,
 ) {
     val uiScale = rememberUhdScale()
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
@@ -311,7 +313,16 @@ internal fun SidebarContent(
         }
         if (radioEnabled) add(MenuSystem(
             "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
-            entries = listOf(MenuDestination("radio:home", overview, Icons.Filled.Home, Destinations.RADIO)),
+            entries = listOf(
+                Triple("popular", stringResource(R.string.radio_popular), Icons.Filled.TrendingUp),
+                Triple("favorites", stringResource(R.string.radio_favorites), Icons.Filled.Favorite),
+                Triple("recent", stringResource(R.string.radio_recent), Icons.Filled.History),
+                Triple("genres", stringResource(R.string.radio_genres), Icons.Filled.MusicNote),
+                Triple("countries", stringResource(R.string.radio_countries), Icons.Filled.Public),
+                Triple("languages", stringResource(R.string.radio_languages), Icons.Filled.Language),
+            ).map { (key, label, icon) ->
+                MenuDestination("radio:$key", label, icon, Destinations.radioSection(key))
+            },
         ))
         if (tvheadendEnabled && sidebarState.tvheadendLoginRejected) {
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
@@ -353,6 +364,7 @@ internal fun SidebarContent(
     val activeRoute = sidebarConcreteRoute(
         currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey,
         currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
+        currentRadioSectionKey,
     )
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
@@ -827,7 +839,6 @@ internal fun SidebarContent(
                                                 stateDescription = if (entry.opensPage) opensSubmenu else null,
                                                 logo = when {
                                                     entry.opensPage -> systems.firstOrNull { it.id == entry.systemId }?.system?.takeIf { it.hasBrandMark }
-                                                    entry.systemId == MediaSystem.RADIO.key && entry.destination.id == "radio:home" -> MediaSystem.RADIO
                                                     else -> null
                                                 },
                                                 testTag = "sidebar:${entry.destination.id}",
