@@ -19,6 +19,7 @@ class RadioBrowserRepository @Inject constructor(
         countryCode: String? = null,
         language: String? = null,
         tag: String? = null,
+        exactFilters: Boolean = false,
         offset: Int = 0,
         limit: Int = 50,
     ): RadioSearchPage {
@@ -28,7 +29,9 @@ class RadioBrowserRepository @Inject constructor(
             name = query?.trim()?.takeIf(String::isNotBlank),
             countryCode = countryCode?.trim()?.uppercase()?.takeIf(String::isNotBlank),
             language = language?.trim()?.takeIf(String::isNotBlank),
+            languageExact = exactFilters && !language.isNullOrBlank(),
             tag = tag?.trim()?.takeIf(String::isNotBlank),
+            tagExact = exactFilters && !tag.isNullOrBlank(),
             offset = safeOffset,
             limit = safeLimit,
         )
@@ -39,6 +42,23 @@ class RadioBrowserRepository @Inject constructor(
             hasMore = dtos.size >= safeLimit,
         )
     }
+
+    suspend fun genres(limit: Int = 100): List<RadioFacet> =
+        api.tags(limit = limit.coerceIn(1, 250))
+            .mapNotNull(RadioBrowserFacetDto::toRadioFacet)
+
+    suspend fun countries(limit: Int = 250): List<RadioFacet> =
+        api.countryCodes(limit = limit.coerceIn(1, 250))
+            .mapNotNull { dto ->
+                val code = dto.name.trim().uppercase()
+                if (code.length != 2) null else dto.toRadioFacet(
+                    java.util.Locale("", code).displayCountry.ifBlank { code },
+                )?.copy(value = code)
+            }
+
+    suspend fun languages(limit: Int = 100): List<RadioFacet> =
+        api.languages(limit = limit.coerceIn(1, 250))
+            .mapNotNull(RadioBrowserFacetDto::toRadioFacet)
 
     suspend fun popular(limit: Int = 50): List<RadioStation> =
         api.topClicked(limit.coerceIn(1, 100))
