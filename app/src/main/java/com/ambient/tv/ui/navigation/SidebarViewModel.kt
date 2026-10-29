@@ -210,7 +210,9 @@ class SidebarViewModel @Inject constructor(
     private fun systemAvailability() = listOf(
         appPreferences.isConfigured, appPreferences.isJellyfinConfigured, appPreferences.isEmbyConfigured,
         appPreferences.isTvheadendConfigured, appPreferences.hasTvheadendEndpoint, appPreferences.youtubeEnabled, appPreferences.spotifyEnabled,
-        appPreferences.radioEnabled, appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
+        appPreferences.radioEnabled,
+        appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
+        appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
     )
 
     private fun networkFileSourcesFromStore(): List<FileSource> =
