@@ -284,7 +284,7 @@ private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String = 
             .getDisplayCountry(Locale.getDefault())
             .takeIf(String::isNotBlank)
     }.getOrNull() ?: facet.name
-    RadioSection.LANGUAGES -> facet.name.replaceFirstChar { it.titlecase(Locale.getDefault()) }
+    RadioSection.LANGUAGES -> facet.name.replaceFirstChar { it.titlecase() }
     else -> facet.name
 }
 
