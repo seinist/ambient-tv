@@ -6,8 +6,10 @@ import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.browse.BrowseWorkBudget
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +54,9 @@ class RadioViewModel @Inject constructor(
 
     private var loadJob: Job? = null
     private var playJob: Job? = null
+    private var focusLoadJob: Job? = null
+    private var focusedStationId: String? = null
+    private var focusLoadStationId: String? = null
     private var entered = false
 
     fun enter() {
@@ -62,6 +67,7 @@ class RadioViewModel @Inject constructor(
     }
 
     fun refresh() {
+        resetFocusPaging()
         refreshLocalState()
         val current = _state.value
         when {
@@ -80,6 +86,7 @@ class RadioViewModel @Inject constructor(
         ) return
 
         loadJob?.cancel()
+        resetFocusPaging()
         _state.value = current.copy(
             section = section,
             query = "",
@@ -99,6 +106,7 @@ class RadioViewModel @Inject constructor(
 
     fun selectFacet(facet: RadioFacet) {
         if (!_state.value.section.isFacetSection) return
+        resetFocusPaging()
         _state.value = _state.value.copy(
             selectedFacet = facet,
             query = "",
@@ -114,6 +122,7 @@ class RadioViewModel @Inject constructor(
         val section = _state.value.section
         if (!section.isFacetSection || _state.value.selectedFacet == null) return
         loadJob?.cancel()
+        resetFocusPaging()
         _state.value = _state.value.copy(
             query = "",
             submittedQuery = "",
@@ -136,11 +145,13 @@ class RadioViewModel @Inject constructor(
             clearSearch()
             return
         }
+        resetFocusPaging()
         _state.value = _state.value.copy(submittedQuery = query)
         loadStations(reset = true)
     }
 
     fun clearSearch() {
+        resetFocusPaging()
         val current = _state.value
         _state.value = current.copy(query = "", submittedQuery = "")
         when {
@@ -164,6 +175,43 @@ class RadioViewModel @Inject constructor(
         val current = _state.value
         if (current.loading || current.loadingMore || !current.hasMore) return
         loadStations(reset = false)
+    }
+
+    fun onStationFocused(stationId: String) {
+        focusedStationId = stationId
+        val current = _state.value
+        val index = current.stations.indexOfFirst { it.id == stationId }
+        if (!radioShouldLoadOnFocus(index, current.stations.size, current.hasMore, current.loading, current.loadingMore)) {
+            if (focusLoadStationId != stationId) focusLoadJob?.cancel()
+            return
+        }
+        // SmartTube keeps one settle timer while focus moves inside the same pending row.
+        if (focusLoadJob?.isActive == true && focusLoadStationId == stationId) return
+        focusLoadJob?.cancel()
+        focusLoadStationId = stationId
+        focusLoadJob = viewModelScope.launch {
+            delay(RADIO_FOCUS_SETTLE_MS)
+            while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
+            val latest = _state.value
+            val latestIndex = latest.stations.indexOfFirst { it.id == stationId }
+            if (focusedStationId != stationId ||
+                !radioShouldLoadOnFocus(
+                    latestIndex,
+                    latest.stations.size,
+                    latest.hasMore,
+                    latest.loading,
+                    latest.loadingMore,
+                )
+            ) return@launch
+            loadMore()
+        }
+    }
+
+    private fun resetFocusPaging() {
+        focusLoadJob?.cancel()
+        focusLoadJob = null
+        focusedStationId = null
+        focusLoadStationId = null
     }
 
     private fun refreshLocalState() {
@@ -290,3 +338,21 @@ class RadioViewModel @Inject constructor(
         private const val FACET_LIMIT = 150
     }
 }
+
+internal fun radioShouldLoadOnFocus(
+    index: Int,
+    size: Int,
+    hasMore: Boolean,
+    loading: Boolean,
+    loadingMore: Boolean,
+    threshold: Int = RADIO_GRID_CONTINUE_THRESHOLD,
+): Boolean = index >= 0 &&
+    size > 0 &&
+    hasMore &&
+    !loading &&
+    !loadingMore &&
+    index >= size - threshold.coerceAtLeast(1)
+
+internal const val RADIO_GRID_CONTINUE_THRESHOLD = 10
+internal const val RADIO_FOCUS_SETTLE_MS = 350L
+
