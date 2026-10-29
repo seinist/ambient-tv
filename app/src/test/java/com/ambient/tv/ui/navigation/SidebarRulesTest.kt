@@ -42,6 +42,21 @@ class SidebarRulesTest {
         assertEquals(entries, sidebarOrderedEntries(entries, null) { it })
     }
 
+
+    @Test fun radioOnlySetupShowsGlobalSearch() {
+        assertTrue(
+            sidebarShowsGlobalSearch(
+                plexConfigured = false,
+                jellyfinConfigured = false,
+                embyConfigured = false,
+                tvheadendConfigured = false,
+                youtubeEnabled = false,
+                spotifyCanSearch = false,
+                radioEnabled = true,
+            ),
+        )
+    }
+
     @Test fun iptvParticipatesInTheSharedMenuEditor() {
         val state = SidebarUiState(
             liveTvSources = listOf(AvailableLiveTvSource(
