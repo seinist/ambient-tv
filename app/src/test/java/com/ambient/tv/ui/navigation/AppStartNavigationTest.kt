@@ -17,10 +17,11 @@ class AppStartNavigationTest {
         tvheadend: Boolean = false,
         youtube: Boolean = false,
         spotify: Boolean = false,
+        radio: Boolean = false,
         files: Boolean = false,
         trailers: Boolean = false,
         iptv: String? = null,
-    ) = configuredContentRoute(plex, jellyfin, emby, tvheadend, youtube, spotify, files, trailers, iptv)
+    ) = configuredContentRoute(plex, jellyfin, emby, tvheadend, youtube, spotify, radio, files, trailers, iptv)
 
     @Test fun everyStandaloneSourceHasAUsableStartDestination() {
         assertEquals(Destinations.HOME, route(plex = true))
@@ -29,6 +30,7 @@ class AppStartNavigationTest {
         assertEquals(Destinations.HOME, route(tvheadend = true))
         assertEquals(Destinations.YOUTUBE, route(youtube = true))
         assertEquals(Destinations.SPOTIFY, route(spotify = true))
+        assertEquals(Destinations.RADIO, route(radio = true))
         assertEquals(Destinations.FILES, route(files = true))
         assertEquals(Destinations.TRAILERS, route(trailers = true))
         assertEquals(Destinations.liveTvSection("live", "iptv:one"), route(iptv = "iptv:one"))
