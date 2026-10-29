@@ -345,7 +345,7 @@ class RadioViewModel @Inject constructor(
         }
     }
 
-    fun play(station: RadioStation) {
+    fun play(station: RadioStation, onStarted: () -> Unit = {}) {
         playJob?.cancel()
         playJob = viewModelScope.launch {
             _state.value = _state.value.copy(startingStationId = station.id, error = false)
@@ -354,6 +354,7 @@ class RadioViewModel @Inject constructor(
                 .onSuccess {
                     refreshLocalState()
                     _state.value = _state.value.copy(startingStationId = null)
+                    onStarted()
                 }
                 .onFailure {
                     _state.value = _state.value.copy(startingStationId = null, error = true)
