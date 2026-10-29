@@ -57,6 +57,7 @@ import com.ambient.tv.ui.player.PlayerOsdInfoPanelControls
 import com.ambient.tv.ui.player.PlayerOsdInfoPanelEntry
 import com.ambient.tv.ui.player.PlayerTool
 import com.ambient.tv.ui.player.availablePlayerTools
+import com.ambient.tv.ui.player.playerZoomChoices
 import com.ambient.tv.ui.player.playbackSubtitleSelection
 import com.ambient.tv.ui.player.teletextSubtitleChoice
 import com.ambient.tv.ui.player.teletext.ProbeTeletextSubtitlePages
@@ -414,17 +415,12 @@ fun UnifiedBackendPlayerPanel(
                         )
                     }
                     if (onZoomChanged != null && aspectKey == "auto") {
-                        val zoomKey = when {
-                            kotlin.math.abs(zoomFactor - 1.5f) < .01f -> "1.5"
-                            kotlin.math.abs(zoomFactor - 1.25f) < .01f -> "1.25"
-                            kotlin.math.abs(zoomFactor - 1.1f) < .01f -> "1.1"
-                            else -> "1.0"
-                        }
+                        val zoomChoices = playerZoomChoices(zoomFactor)
                         PlayerDropUpSelector(
                             label = stringResource(R.string.player_zoom_level),
-                            value = "${(zoomFactor * 100).toInt()}%",
-                            options = listOf("1.0" to "100%", "1.1" to "110%", "1.25" to "125%", "1.5" to "150%"),
-                            selectedKey = zoomKey,
+                            value = zoomChoices.value,
+                            options = zoomChoices.options,
+                            selectedKey = zoomChoices.selectedKey,
                             onSelected = { onZoomChanged(it.toFloatOrNull() ?: 1f) },
                         )
                     }

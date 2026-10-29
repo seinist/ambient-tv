@@ -12,6 +12,10 @@ enum class PlayerAspectPreset(val ratio: Float?) {
     RATIO_21_9(21f / 9f),
 }
 
+internal const val VIDEO_MIN_ZOOM = 0.5f
+// A landscape video needs more than 2x to reach a portrait phone's full height.
+internal const val VIDEO_MAX_ZOOM = 8f
+
 data class VideoPresentation(
     val resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_FIT,
     val aspectRatio: Float? = null,
@@ -23,7 +27,7 @@ internal fun VideoPresentation.normalized(): VideoPresentation {
     val ratio = aspectRatio?.takeIf { it.isFinite() && it > 0f }
     return if (ratio != null) copy(
         resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT, aspectRatio = ratio, zoom = 1f,
-    ) else copy(aspectRatio = null, zoom = zoom.takeIf { it.isFinite() }?.coerceIn(0.5f, 2f) ?: 1f)
+    ) else copy(aspectRatio = null, zoom = zoom.takeIf { it.isFinite() }?.coerceIn(VIDEO_MIN_ZOOM, VIDEO_MAX_ZOOM) ?: 1f)
 }
 
 /** Common presentation target implemented by every playback backend. */

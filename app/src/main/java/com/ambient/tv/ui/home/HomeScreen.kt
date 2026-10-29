@@ -255,6 +255,13 @@ fun HomeScreen(
     Column(Modifier.fillMaxSize()) {
         if (!systemOverview) com.ambient.tv.update.UpdateHomeCard()
         val handheldHeader = LocalHandheldUi.current
+        // Phones have no tall hero corner: reserve a real row so the configured clock
+        // stays visible without covering the first cards or update notice.
+        if (!systemOverview && handheldHeader && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = screenGutter(), vertical = 8.dp)) {
+                com.ambient.tv.ui.common.HeaderClock(Modifier.align(Alignment.TopEnd))
+            }
+        }
         val overviewHeader: @Composable (Modifier) -> Unit = { headerModifier ->
             SystemOverviewHeader(
                 system = when {

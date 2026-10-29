@@ -169,7 +169,12 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
             return
         }
 
-        val (childWidth, childHeight) = videoPresentationSize(width, height, presentation, sourceAspectRatio)
+        // Keep the decoded/GPU surface at its unzoomed size. Reallocating the output buffer on
+        // every pinch frame is expensive and can exceed a phone's maximum texture size. The
+        // compositor applies the same centred view transform used by the Media3 video plane.
+        val (childWidth, childHeight) = videoPresentationSize(
+            width, height, presentation.normalized().copy(zoom = 1f), sourceAspectRatio,
+        )
         videoSurface.measure(
             MeasureSpec.makeMeasureSpec(childWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(childHeight, MeasureSpec.EXACTLY),
@@ -182,6 +187,11 @@ internal open class VideoSurfaceLayout(context: Context) : FrameLayout(context) 
         val childLeft = (width - childWidth) / 2
         val childTop = (height - childHeight) / 2
         videoSurface.layout(childLeft, childTop, childLeft + childWidth, childTop + childHeight)
+        val zoom = presentation.normalized().zoom
+        videoSurface.pivotX = childWidth / 2f
+        videoSurface.pivotY = childHeight / 2f
+        videoSurface.scaleX = zoom
+        videoSurface.scaleY = zoom
         updateRenderTarget()
         surfaceClip.set(0, 0, width, height)
         clipBounds = surfaceClip
