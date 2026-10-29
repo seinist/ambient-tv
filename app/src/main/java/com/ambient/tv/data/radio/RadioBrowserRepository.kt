@@ -40,6 +40,26 @@ class RadioBrowserRepository @Inject constructor(
         )
     }
 
+    suspend fun countries(limit: Int = 100): List<RadioFacet> =
+        api.countryCodes(limit = limit.coerceIn(1, 200))
+            .toFacets { it.trim().uppercase() }
+
+    suspend fun languages(limit: Int = 100): List<RadioFacet> =
+        api.languages(limit = limit.coerceIn(1, 200))
+            .toFacets { it.trim() }
+
+    suspend fun tags(limit: Int = 150): List<RadioFacet> =
+        api.tags(limit = limit.coerceIn(1, 250))
+            .toFacets { it.trim() }
+
+    private fun List<RadioBrowserFacetDto>.toFacets(
+        normalize: (String) -> String,
+    ): List<RadioFacet> = mapNotNull { dto ->
+        val id = normalize(dto.name)
+        val count = dto.count()
+        if (id.isBlank() || count <= 0) null else RadioFacet(id = id, name = id, stationCount = count)
+    }.distinctBy { it.id.lowercase() }
+
     suspend fun popular(limit: Int = 50): List<RadioStation> =
         api.topClicked(limit.coerceIn(1, 100))
             .mapNotNull(RadioBrowserStationDto::toRadioStation)
