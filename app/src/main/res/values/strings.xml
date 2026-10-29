@@ -2153,4 +2153,9 @@
     <string name="radio_recent">Recently played</string>
     <string name="radio_add_favorite">Add to favorites</string>
     <string name="radio_remove_favorite">Remove from favorites</string>
+    <string name="radio_genres">Genres</string>
+    <string name="radio_countries">Countries</string>
+    <string name="radio_languages">Languages</string>
+    <string name="radio_station_count">%1$d stations</string>
+    <string name="radio_browse_back">Back to %1$s</string>
 </resources>
