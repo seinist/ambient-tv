@@ -2138,4 +2138,19 @@
     <string name="player_broadcast_color_green">Green</string>
     <string name="player_broadcast_color_yellow">Yellow</string>
     <string name="player_broadcast_color_blue">Blue</string>
+    <string name="radio_title">Radio</string>
+    <string name="setup_desc_radio">Internet radio from the open Radio Browser catalog.</string>
+    <string name="settings_page_radio_hint">Internet radio catalog and display.</string>
+    <string name="settings_radio_enable">Enable Radio</string>
+    <string name="settings_radio_enable_hint">Browse and play internet radio stations from Radio Browser.</string>
+    <string name="radio_provider_note">Station catalog: Radio Browser.</string>
+    <string name="radio_popular">Popular</string>
+    <string name="radio_search_placeholder">Search stations</string>
+    <string name="radio_no_stations">No stations found</string>
+    <string name="radio_error">Radio Browser is currently unavailable.</string>
+    <string name="radio_load_more">Load more</string>
+    <string name="radio_favorites">Favorites</string>
+    <string name="radio_recent">Recently played</string>
+    <string name="radio_add_favorite">Add to favorites</string>
+    <string name="radio_remove_favorite">Remove from favorites</string>
 </resources>
