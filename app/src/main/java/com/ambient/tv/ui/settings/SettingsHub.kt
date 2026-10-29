@@ -1056,6 +1056,7 @@ internal fun homeRowSourceAddable(system: String, contentKey: String, state: Set
             // without one.
             youtubeReady = sourceConfigured(SettingsCategory.YOUTUBE, state) && state.youtubeAvailable,
             spotifyReady = sourceConfigured(SettingsCategory.SPOTIFY, state),
+            radioReady = sourceConfigured(SettingsCategory.RADIO, state),
             photosReady = sourceConfigured(SettingsCategory.PLEX, state) ||
                 sourceConfigured(SettingsCategory.JELLYFIN, state) || sourceConfigured(SettingsCategory.EMBY, state),
         )
