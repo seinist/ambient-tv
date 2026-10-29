@@ -32,6 +32,8 @@ data class SettingsBackup(
     val plexEnabled: Boolean = true,
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
+    val radioEnabled: Boolean = false,
+    val radioFavorites: List<com.ambient.tv.data.radio.RadioStation> = emptyList(),
     val smartTubeAccounts: List<SmartTubeAccountBackup>? = null,
     val spotifyAccount: SpotifyAccountBackup? = null,
     val spotifyClientId: String = "",
@@ -340,6 +342,8 @@ class SettingsBackupManager @Inject constructor(
                 scopes = tokenStore.spotifyWebScopes.orEmpty(),
             ),
             spotifyEnabled = preferences.spotifyEnabled,
+            radioEnabled = preferences.radioEnabled,
+            radioFavorites = preferences.radioFavorites,
             spotifyClientId = preferences.spotifyClientId,
             spotifyDeviceName = preferences.spotifyDeviceName,
             spotifyBitrateKbps = preferences.spotifyBitrateKbps,
@@ -691,6 +695,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.plexEnabled = backup.plexEnabled
         preferences.youtubeEnabled = backup.youtubeEnabled
         preferences.spotifyEnabled = backup.spotifyEnabled
+        preferences.radioEnabled = backup.radioEnabled
+        preferences.replaceRadioFavorites(backup.radioFavorites)
         preferences.trailersEnabled = backup.trailersEnabled
         preferences.trailerLanguage = backup.trailerLanguage
         if (backup.schemaVersion >= 47) backup.tmdbApiKey?.let { tokenStore.tmdbApiKey = it }
@@ -968,7 +974,7 @@ class SettingsBackupManager @Inject constructor(
     }
 
     private companion object {
-        const val CURRENT_SCHEMA_VERSION = 74
+        const val CURRENT_SCHEMA_VERSION = 75
         val PORTABLE_DISPLAY_MODES = setOf("system", AppPreferences.DISPLAY_MODE_AUTO_CONTENT, AppPreferences.DISPLAY_MODE_AUTO_DISPLAY)
     }
 }
