@@ -139,6 +139,31 @@ class SidebarNavigationPolicyTest {
         )
     }
 
+    @Test fun radioHomeShortcutMakesHomeAvailableWithoutOtherSystems() {
+        assertFalse(
+            sidebarShowsHome(
+                plexConfigured = false,
+                jellyfinConfigured = false,
+                embyConfigured = false,
+                tvheadendConfigured = false,
+                youtubeEnabled = false,
+                spotifyEnabled = false,
+                radioHomeEnabled = false,
+            ),
+        )
+        assertTrue(
+            sidebarShowsHome(
+                plexConfigured = false,
+                jellyfinConfigured = false,
+                embyConfigured = false,
+                tvheadendConfigured = false,
+                youtubeEnabled = false,
+                spotifyEnabled = false,
+                radioHomeEnabled = true,
+            ),
+        )
+    }
+
     @Test fun parameterizedRoutesResolveToTheVisibleSidebarEntry() {
         assertEquals("youtube_feed/history", sidebarConcreteRoute(Destinations.YOUTUBE_FEED, youtubeFeedKey = "history"))
         assertEquals("trailers/feed/MOVIES", sidebarConcreteRoute(Destinations.TRAILER_FEED, trailerFeedKey = "MOVIES"))
