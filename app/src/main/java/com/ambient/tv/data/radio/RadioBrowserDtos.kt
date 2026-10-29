@@ -1,5 +1,7 @@
 package com.ambient.tv.data.radio
 
+const val RADIO_HOME_ITEM_PREFIX = "radio-station:"
+
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
