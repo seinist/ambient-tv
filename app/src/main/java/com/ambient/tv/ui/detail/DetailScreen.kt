@@ -108,6 +108,7 @@ import com.ambient.tv.ui.common.RowColumnFocus
 import com.ambient.tv.ui.common.RegisterRowColumnFocus
 import com.ambient.tv.ui.common.rowColumnFocusTarget
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -652,6 +653,7 @@ private fun DetailContent(
                         false
                     }
                 }
+                .rowColumnFocusWrapRight(columnFocus)
                 .rowColumnFocusNavigation(
                     columnFocus,
                     scrollToRow = { rowKey ->
@@ -1211,18 +1213,23 @@ private fun rememberDetailRowState(
     rowKey: String,
     focusKeys: List<String>,
     restoreFocusKey: String?,
+    focusableKeys: List<String> = focusKeys,
 ): androidx.compose.foundation.lazy.LazyListState {
     val navigation = LocalDetailRowFocus.current
     val remembered = navigation?.focus?.rememberedItem(rowKey) as? String
     val defaultKey = navigation?.defaults?.get(rowKey)
-    val entryKey = remembered?.takeIf { it in focusKeys }
-        ?: restoreFocusKey?.takeIf { it in focusKeys }
-        ?: defaultKey?.takeIf { it in focusKeys }
+    val entryKey = remembered?.takeIf { it in focusableKeys }
+        ?: restoreFocusKey?.takeIf { it in focusableKeys }
+        ?: defaultKey?.takeIf { it in focusableKeys }
+        ?: focusableKeys.firstOrNull()
     val initialIndex = focusKeys.indexOf(entryKey).coerceAtLeast(0)
     val state = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
-    RegisterRowColumnFocus(navigation?.focus, rowKey, state, focusKeys, defaultItemKey = defaultKey)
-    LaunchedEffect(restoreFocusKey, focusKeys) {
-        val targetIndex = focusKeys.indexOf(restoreFocusKey)
+    RegisterRowColumnFocus(
+        navigation?.focus, rowKey, state, focusKeys,
+        defaultItemKey = defaultKey, focusableItemKeys = focusableKeys,
+    )
+    LaunchedEffect(restoreFocusKey, focusKeys, focusableKeys) {
+        val targetIndex = restoreFocusKey?.takeIf { it in focusableKeys }?.let(focusKeys::indexOf) ?: -1
         if (targetIndex >= 0) state.scrollToItem(targetIndex)
     }
     return state
@@ -1398,28 +1405,23 @@ private fun ChildrenSection(
                 }
             }
         } else if (children.isNotEmpty()) {
-            val currentEpisodeIndex = children.indexOfFirst {
-                "children:${it.ratingKey}" == restoreFocusKey ||
-                    (restoreFocusKey == null && item.type == "episode" && it.ratingKey == item.ratingKey)
-            }.coerceAtLeast(0)
             val episodeListState = rememberDetailRowState(
                 "children", children.map { "children:${it.ratingKey}" }, restoreFocusKey,
             )
             val scope = rememberCoroutineScope()
             val requesters = remember(children.map { it.ratingKey }) { children.map { FocusRequester() } }
-            var focusedIndex by remember(children.map { it.ratingKey }) { mutableIntStateOf(currentEpisodeIndex) }
             var wrapping by remember { mutableStateOf(false) }
             LazyRow(
                 state = episodeListState,
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.containRowFocusExit().onPreviewKeyEvent { event ->
+                    // All rows share Right -> first. Keep the episode row's existing
+                    // Left -> last shortcut, using the same stable focused identity.
                     if (wrapping && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) return@onPreviewKeyEvent true
-                    val target = when {
-                        event.key == Key.DirectionLeft && focusedIndex == 0 -> children.lastIndex
-                        event.key == Key.DirectionRight && focusedIndex == children.lastIndex -> 0
-                        else -> return@onPreviewKeyEvent false
-                    }
+                    if (event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                    if (columnFocus?.rememberedItem("children") != "children:${children.first().ratingKey}") return@onPreviewKeyEvent false
+                    val target = children.lastIndex
                     if (event.type == KeyEventType.KeyDown && !wrapping && target >= 0) {
                         wrapping = true
                         scope.launch {
@@ -1440,7 +1442,7 @@ private fun ChildrenSection(
                     val focusKey = "children:${child.ratingKey}"
                     MediaTile(
                         modifier = Modifier.detailRowTarget("children", focusKey, columnFocus)
-                            .focusRequester(requesters[index]).onFocusChanged { if (it.isFocused) focusedIndex = index },
+                            .focusRequester(requesters[index]),
                         item = child,
                         style = MediaTileStyle.EPISODE,
                         showDescription = false,
@@ -1767,7 +1769,10 @@ private fun CollectionsSection(
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_collections), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp))
         LazyRow(
-            state = rememberDetailRowState("collections", item.collections.map { "collection:${it.id ?: it.name}" }, restoreFocusKey),
+            state = rememberDetailRowState(
+                "collections", item.collections.map { "collection:${it.id ?: it.name}" }, restoreFocusKey,
+                focusableKeys = item.collections.filter { it.id != null }.map { "collection:${it.id}" },
+            ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1781,6 +1786,7 @@ private fun CollectionsSection(
                     onClick = { collection.id?.let { onBrowseCollection(it, collection.name) } },
                     enabled = collection.id != null,
                     modifier = Modifier.detailRowTarget("collections", focusKey, columnFocus)
+                        .focusProperties { canFocus = collection.id != null }
                         .focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(focusKey) },
                 )
             }
@@ -1796,15 +1802,19 @@ private fun CastSection(
     onFocused: (String) -> Unit,
 ) {
     val columnFocus = LocalDetailRowFocus.current?.focus
+    val members = item.cast.dedupeCastMembers().take(16)
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_cast), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp))
         LazyRow(
-            state = rememberDetailRowState("cast", item.cast.dedupeCastMembers().take(16).map { "cast:${it.id ?: it.name}" }, restoreFocusKey),
+            state = rememberDetailRowState(
+                "cast", members.map { "cast:${it.id ?: it.name}" }, restoreFocusKey,
+                focusableKeys = members.filter { it.id != null }.map { "cast:${it.id}" },
+            ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier.containRowFocusExit(),
         ) {
-            items(item.cast.dedupeCastMembers().take(16), key = { it.id ?: it.name }) { member ->
+            items(members, key = { it.id ?: it.name }) { member ->
                 val focusKey = "cast:${member.id ?: member.name}"
                 val requester = remember(member.id, member.name) { FocusRequester() }
                 RestoreDetailFocus(restoreFocusKey == focusKey, requester)
@@ -1827,6 +1837,7 @@ private fun CastSection(
                     scale = noSurfaceScale(),
                     border = noSurfaceBorder(),
                     modifier = Modifier.width(112.dp).detailRowTarget("cast", focusKey, columnFocus, soundsOnFocus = false)
+                        .focusProperties { canFocus = member.id != null }
                         .focusRequester(requester)
                         .activateOnTvKey(enabled = member.id != null, onClick = { member.id?.let { onBrowseActor(it, member.name) } })
                         .onFocusChanged {

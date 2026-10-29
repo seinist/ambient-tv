@@ -50,6 +50,16 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         val itemKeys: () -> List<Any>,
         val state: LazyListState,
         val defaultItemKey: () -> Any?,
+        val focusableItemKeys: () -> List<Any>,
+    )
+
+    /** A single Right press, invalidated by a different focus transaction or row registration. */
+    internal class RightWrapRequest(
+        val rowKey: Any,
+        val sourceItemKey: Any,
+        val targetItemKey: Any,
+        val focusGeneration: Long,
+        val rowHandle: Any,
     )
 
     private val rows = HashMap<Any, LinkedHashMap<Any, Target>>()
@@ -58,6 +68,11 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     private var focusedRow: Any? = null
     private var focused: Target? = null
     private var lastMoveTarget: Target? = null
+    // Unlike the remembered row, these values describe focus that is still inside a target.
+    private var activeRow: Any? = null
+    private var activeItem: Any? = null
+    private var activeTarget: Target? = null
+    private var focusGeneration = 0L
 
     /** Whether the target of the last successful move is silent itself and needs the tick. */
     internal val lastMoveNeedsSound: Boolean get() = lastMoveTarget?.soundsOnFocus != true
@@ -81,13 +96,20 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     private fun entry(rowKey: Any): Pair<Any, Int>? {
         val handle = handles[rowKey]
         val keys = handle?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
-        val index = rowColumnEntryIndex(keys, memory[rowKey], handle?.defaultItemKey?.invoke()) ?: return null
+        val index = rowColumnEntryIndex(
+            keys, memory[rowKey], handle?.defaultItemKey?.invoke(),
+            handle?.focusableItemKeys?.invoke() ?: keys,
+        ) ?: return null
         return keys[index] to index
     }
 
     /** Focuses [rowKey]'s entry tile if it is composed. */
     internal fun focusEntry(rowKey: Any): Boolean {
         val (itemKey, _) = entry(rowKey) ?: return false
+        return focusItem(rowKey, itemKey)
+    }
+
+    private fun focusItem(rowKey: Any, itemKey: Any): Boolean {
         val target = rows[rowKey]?.get(itemKey)?.takeIf { it.coordinates?.isAttached == true } ?: return false
         lastMoveTarget = target
         return runCatching { target.requester.requestFocus() }.getOrDefault(false)
@@ -102,6 +124,46 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         handle.state.scrollToItem((index - 1).coerceAtLeast(0))
     }
 
+    /** Only registered horizontal rows can wrap; headers and retry actions are not rows. */
+    internal fun rightWrapRequest(): RightWrapRequest? {
+        if (activeTarget?.coordinates?.isAttached != true) return null
+        val rowKey = activeRow ?: return null
+        val itemKey = activeItem ?: return null
+        val handle = handles[rowKey] ?: return null
+        val keys = handle.itemKeys()
+        val index = rowColumnWrapRightIndex(keys, itemKey, handle.focusableItemKeys()) ?: return null
+        return RightWrapRequest(rowKey, itemKey, keys[index], focusGeneration, handle)
+    }
+
+    private fun rightWrapIndex(request: RightWrapRequest): Int? {
+        if (activeTarget?.coordinates?.isAttached != true) return null
+        if (request.focusGeneration != focusGeneration || activeRow != request.rowKey || activeItem != request.sourceItemKey) return null
+        val handle = handles[request.rowKey]?.takeIf { it === request.rowHandle } ?: return null
+        val keys = handle.itemKeys()
+        val index = rowColumnWrapRightIndex(keys, request.sourceItemKey, handle.focusableItemKeys()) ?: return null
+        return index.takeIf { keys[it] == request.targetItemKey }
+    }
+
+    internal fun isRightWrapCurrent(request: RightWrapRequest): Boolean = rightWrapIndex(request) != null
+
+    internal fun focusRightWrap(request: RightWrapRequest): Boolean =
+        isRightWrapCurrent(request) && focusItem(request.rowKey, request.targetItemKey)
+
+    internal suspend fun scrollToRightWrap(request: RightWrapRequest): Boolean {
+        val index = rightWrapIndex(request) ?: return false
+        val handle = handles[request.rowKey] ?: return false
+        handle.state.scrollToItem(index)
+        return isRightWrapCurrent(request)
+    }
+
+    private fun clearActiveTarget(target: Target) {
+        if (activeTarget !== target) return
+        activeRow = null
+        activeItem = null
+        activeTarget = null
+        focusGeneration++
+    }
+
     /** Re-focuses the last focused tile when focus re-enters the rows (e.g. back from the sidebar). */
     fun restoreLast(): Boolean {
         val target = focused?.takeIf { it.coordinates?.isAttached == true } ?: return false
@@ -113,8 +175,9 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         state: LazyListState,
         itemKeys: () -> List<Any>,
         defaultItemKey: () -> Any?,
+        focusableItemKeys: () -> List<Any>,
     ): () -> Unit {
-        val handle = RowHandle(itemKeys, state, defaultItemKey)
+        val handle = RowHandle(itemKeys, state, defaultItemKey, focusableItemKeys)
         handles[rowKey] = handle
         return { if (handles[rowKey] === handle) handles.remove(rowKey) }
     }
@@ -129,6 +192,7 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
                 if (rows[rowKey]?.isEmpty() == true) rows.remove(rowKey)
                 if (focused === target) focused = null
                 if (lastMoveTarget === target) lastMoveTarget = null
+                clearActiveTarget(target)
             }
         }
         // The coordinates stay live and are only resolved on a key press; onGloballyPositioned
@@ -137,10 +201,14 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
             .onPlaced { target.coordinates = it }
             .onFocusChanged {
                 if (it.hasFocus) {
+                    if (activeTarget !== target) focusGeneration++
+                    activeRow = rowKey
+                    activeItem = itemKey
+                    activeTarget = target
                     focusedRow = rowKey
                     focused = target
                     memory[rowKey] = itemKey
-                }
+                } else clearActiveTarget(target)
             }
     }
 
@@ -160,7 +228,10 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
 @Composable
 fun rememberRowColumnFocus(): RowColumnFocus = rememberSaveable(saver = RowColumnFocus.Saver) { RowColumnFocus() }
 
-/** Scrolls to a remembered tile, or [defaultItemKey] on first entry, even before it is composed. */
+/**
+ * Scrolls to a remembered tile, or [defaultItemKey] on first entry, even before it is composed.
+ * [itemKeys] keeps physical list indices; [focusableItemKeys] can omit decorative/disabled cards.
+ */
 @Composable
 fun RegisterRowColumnFocus(
     focus: RowColumnFocus?,
@@ -168,12 +239,14 @@ fun RegisterRowColumnFocus(
     state: LazyListState,
     itemKeys: List<Any>,
     defaultItemKey: Any? = null,
+    focusableItemKeys: List<Any> = itemKeys,
 ) {
     if (focus == null) return
     val keys by rememberUpdatedState(itemKeys)
     val defaultKey by rememberUpdatedState(defaultItemKey)
+    val focusableKeys by rememberUpdatedState(focusableItemKeys)
     DisposableEffect(focus, rowKey, state) {
-        val unregister = focus.registerRow(rowKey, state, { keys }, { defaultKey })
+        val unregister = focus.registerRow(rowKey, state, { keys }, { defaultKey }, { focusableKeys })
         onDispose { unregister() }
     }
 }
@@ -184,6 +257,70 @@ fun RegisterRowColumnFocus(
  */
 fun Modifier.rowColumnFocusTarget(focus: RowColumnFocus?, rowKey: Any, itemKey: Any, soundsOnFocus: Boolean = false): Modifier =
     if (focus == null) this else with(focus) { target(rowKey, itemKey, soundsOnFocus) }
+
+/**
+ * Right at a horizontal row's last enabled card returns to its first enabled card. This is
+ * independent of the remembered/default vertical entry and never searches a page header.
+ */
+fun Modifier.rowColumnFocusWrapRight(focus: RowColumnFocus): Modifier = composed {
+    if (LocalHandheldUi.current) return@composed Modifier
+    val uiSounds = LocalUiSoundPlayer.current
+    val scope = rememberCoroutineScope()
+    var wrapJob by remember(focus) { mutableStateOf<Job?>(null) }
+    var pending by remember(focus) { mutableStateOf<RowColumnFocus.RightWrapRequest?>(null) }
+    var consumedRightDown by remember(focus) { mutableStateOf(false) }
+    DisposableEffect(focus) {
+        onDispose { wrapJob?.cancel() }
+    }
+    onPreviewKeyEvent { event ->
+        if (event.key != Key.DirectionRight) {
+            if (event.type == KeyEventType.KeyDown) {
+                wrapJob?.cancel()
+                pending = null
+                consumedRightDown = false
+            }
+            return@onPreviewKeyEvent false
+        }
+        if (event.type == KeyEventType.KeyUp) {
+            val consumed = consumedRightDown
+            consumedRightDown = false
+            return@onPreviewKeyEvent consumed
+        }
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        if (wrapJob?.isActive == true) {
+            if (pending?.let(focus::isRightWrapCurrent) == true) {
+                consumedRightDown = true
+                return@onPreviewKeyEvent true
+            }
+            wrapJob?.cancel()
+            pending = null
+        }
+        val request = focus.rightWrapRequest() ?: return@onPreviewKeyEvent false
+        consumedRightDown = true
+        if (request.sourceItemKey == request.targetItemKey) return@onPreviewKeyEvent true
+        if (focus.focusRightWrap(request)) {
+            if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+            return@onPreviewKeyEvent true
+        }
+        pending = request
+        wrapJob = scope.launch {
+            try {
+                if (!focus.scrollToRightWrap(request)) return@launch
+                repeat(12) {
+                    withFrameNanos { }
+                    if (!focus.isRightWrapCurrent(request)) return@launch
+                    if (focus.focusRightWrap(request)) {
+                        if (focus.lastMoveNeedsSound) uiSounds?.playFocus()
+                        return@launch
+                    }
+                }
+            } finally {
+                if (pending === request) pending = null
+            }
+        }
+        true
+    }
+}
 
 /**
  * Routes Up/Down inside this container through [focus]; unresolved moves fall through.
