@@ -378,6 +378,10 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_SPOTIFY_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_SPOTIFY_ENABLED, value) }
 
+    var radioEnabled: Boolean
+        get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
+
     var spotifyClientId: String
         get() = prefs.getString(KEY_SPOTIFY_CLIENT_ID, "") ?: ""
         set(value) = prefs.edit { putString(KEY_SPOTIFY_CLIENT_ID, value.trim()) }
@@ -471,7 +475,7 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
+        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
@@ -2140,6 +2144,7 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_PHOTOS,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
+        const val KEY_RADIO_ENABLED = "radio_enabled"
         const val KEY_HOST = "server_host"
         const val KEY_PORT = "server_port"
         const val KEY_PLEX_HTTPS = "plex_https"
