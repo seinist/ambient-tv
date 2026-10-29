@@ -3,6 +3,7 @@ package com.ambient.tv.di
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.data.radio.RadioBrowserApiService
 import com.ambient.tv.data.radio.RadioBrowserClient
+import com.ambient.tv.data.radio.RadioBrowserFailoverInterceptor
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -25,9 +26,12 @@ object RadioBrowserModule {
     @Provides
     @Singleton
     @RadioBrowserClient
-    fun provideRadioBrowserOkHttpClient(): OkHttpClient {
+    fun provideRadioBrowserOkHttpClient(
+        failoverInterceptor: RadioBrowserFailoverInterceptor,
+    ): OkHttpClient {
         val userAgent = "Ambient-TV/" + BuildConfig.VERSION_NAME
         return OkHttpClient.Builder()
+            .addInterceptor(failoverInterceptor)
             .addInterceptor(Interceptor { chain ->
                 chain.proceed(
                     chain.request().newBuilder()
