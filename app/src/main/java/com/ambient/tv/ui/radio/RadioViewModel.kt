@@ -1,5 +1,6 @@
 package com.ambient.tv.ui.radio
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.data.local.AppPreferences
@@ -7,6 +8,7 @@ import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,6 +35,7 @@ data class RadioUiState(
 
 @HiltViewModel
 class RadioViewModel @Inject constructor(
+    @ApplicationContext context: Context,
     private val repository: RadioBrowserRepository,
     private val preferences: AppPreferences,
     private val playbackLauncher: RadioPlaybackLauncher,
@@ -43,6 +46,8 @@ class RadioViewModel @Inject constructor(
     private var loadJob: Job? = null
     private var playJob: Job? = null
     private var entered = false
+    private val preferredCountryCode = preferredRadioCountryCode(context)
+    private var countryDefaultApplied = false
 
     fun enter() {
         if (entered) return
@@ -186,11 +191,22 @@ class RadioViewModel @Inject constructor(
                     else -> emptyList()
                 }
             }.onSuccess { facets ->
+                val defaultCountry = if (section == RadioSection.COUNTRIES && !countryDefaultApplied) {
+                    countryDefaultApplied = true
+                    preferredCountryCode?.let { code -> facets.firstOrNull { it.value.equals(code, ignoreCase = true) } }
+                } else null
                 _state.value = _state.value.copy(
                     loading = false,
                     facets = facets,
+                    selectedFacet = defaultCountry,
                     error = false,
                 )
+                if (defaultCountry != null) {
+                    viewModelScope.launch {
+                        kotlinx.coroutines.yield()
+                        load(reset = true)
+                    }
+                }
             }.onFailure {
                 _state.value = _state.value.copy(
                     loading = false,
