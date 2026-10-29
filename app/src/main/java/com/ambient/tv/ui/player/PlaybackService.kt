@@ -284,6 +284,9 @@ class PlaybackService : Service() {
         if (lastMetadata != metadataKey) {
             publishMetadata(metadata, duration)
             lastMetadata = metadataKey
+            // A station's ICY title can change while generation/status stay unchanged.
+            // Force MediaStyle to rebuild so lock screen and notification follow MediaSession.
+            lastNotification = null
         }
         mediaSession.setPlaybackState(PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
