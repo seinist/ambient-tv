@@ -61,20 +61,22 @@ class TeletextDecoderTest {
         return byteArrayOf(0, 0, 1, 0xBD.toByte(), (body.size shr 8).toByte(), body.size.toByte()) + body
     }
 
-    private fun ts(pid: Int, data: ByteArray): ByteArray {
+    private fun ts(pid: Int, data: ByteArray, firstCounter: Int = 0): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         var offset = 0
         var first = true
+        var counter = firstCounter
         while (offset < data.size) {
             val packet = ByteArray(188) { 0xFF.toByte() }
             packet[0] = 0x47
             packet[1] = ((if (first) 0x40 else 0) or (pid shr 8)).toByte()
             packet[2] = pid.toByte()
-            packet[3] = 0x10
+            packet[3] = (0x10 or counter).toByte()
             val n = minOf(184, data.size - offset)
             System.arraycopy(data, offset, packet, 4, n)
             offset += n
             first = false
+            counter = (counter + 1) and 0x0F
             out.write(packet)
         }
         return out.toByteArray()
@@ -102,6 +104,15 @@ class TeletextDecoderTest {
     private val pmtWithAit = section(byteArrayOf(0x02, 0, 0, 0, 1, 0xC1.toByte(), 0, 0, 0xE1.toByte(), 0x00, 0xF0.toByte(), 0x00) +
         bytes(0x06, 0xE1, 0x01, 0xF0, 0x07, 0x56, 0x05, 'd'.code, 'e'.code, 'u'.code, (1 shl 3) or 1, 0x00) +
         bytes(0x05, 0xE1, 0x02, 0xF0, 0x05, 0x6F, 0x03, 0x00, 0x10, 0x01))
+
+    private fun longPmtWithAit(): ByteArray {
+        // Several audio tracks push the AIT component beyond the first PMT packet.
+        val audioTracks = (0 until 16).fold(byteArrayOf()) { all, track ->
+            all + bytes(0x0F, 0xE2, track, 0xF0, 0x06, 0x0A, 0x04, 'e'.code, 'n'.code, 'g'.code, 0)
+        }
+        val body = pmtWithAit.copyOfRange(1, pmtWithAit.size - 4)
+        return section(body.copyOfRange(0, 12) + audioTracks + body.copyOfRange(12, body.size))
+    }
 
     private fun aitSection(base: String, path: String, name: String, control: Int = 1): ByteArray {
         val transportCommon = bytes(0x02, 5 + base.length, 0x00, 0x03, 0x01, base.length) + base.toByteArray() + bytes(0x00)
@@ -238,6 +249,90 @@ class TeletextDecoderTest {
         decoder.feed(ts(0x102, aitSection(longBase, "index.html?ch=1", "ARD Startleiste")))
         assertTrue(decoder.probeComplete())
         assertEquals(listOf(HbbtvApplication(longBase + "index.html?ch=1", "ARD Startleiste", 1)), decoder.hbbtvApps)
+    }
+
+    @Test fun pmtAcrossPacketsDoesNotFinishTheProbeBeforeTheAitPidArrives() {
+        val decoder = TeletextDecoder()
+        val packets = ts(0x1000, longPmtWithAit())
+        decoder.feed(ts(0, pat))
+        decoder.feed(packets, length = 188)
+        assertFalse("An incomplete PMT cannot establish that HbbTV is absent", decoder.pmtSeen)
+        assertFalse(decoder.probeComplete())
+
+        decoder.feed(packets, offset = 188, length = packets.size - 188)
+        assertTrue(decoder.pmtSeen)
+        assertEquals(0x102, decoder.aitPid)
+        assertFalse(decoder.probeComplete())
+        decoder.feed(ts(0x102, aitSection("https://hbbtv.example/", "index.html", "HbbTV")))
+        assertTrue(decoder.probeComplete())
+        assertEquals("https://hbbtv.example/index.html", decoder.hbbtvApps.single().url)
+    }
+
+    @Test fun patMustBeCompleteBeforeItsPmtIsUsed() {
+        val decoder = TeletextDecoder()
+        val programs = (1..45).fold(byteArrayOf()) { all, program ->
+            all + bytes(0, program, 0xF0, program - 1)
+        }
+        val packets = ts(0, section(bytes(0, 0, 0, 0, 1, 0xC1, 0, 0) + programs))
+        decoder.feed(packets, length = 188)
+        decoder.feed(ts(0x1000, pmtWithAit))
+        assertFalse(decoder.pmtSeen)
+        decoder.feed(packets, offset = 188, length = packets.size - 188)
+        decoder.feed(ts(0x1000, pmtWithAit, firstCounter = 1))
+        assertTrue(decoder.pmtSeen)
+        assertEquals(0x102, decoder.aitPid)
+    }
+
+    @Test fun reconnectDiscardsPartialPmtAndAitUntilTheyStartAgain() {
+        val decoder = TeletextDecoder()
+        decoder.feed(ts(0, pat))
+        val pmtPackets = ts(0x1000, longPmtWithAit())
+        decoder.feed(pmtPackets, length = 188)
+        decoder.discontinuity()
+        decoder.feed(pmtPackets, offset = 188, length = pmtPackets.size - 188)
+        assertFalse(decoder.pmtSeen)
+        decoder.feed(ts(0x1000, longPmtWithAit(), firstCounter = 2))
+        assertTrue(decoder.pmtSeen)
+
+        val ait = aitSection("https://hbbtv.example/" + "a".repeat(160) + "/", "index.html", "HbbTV")
+        val aitPackets = ts(0x102, ait)
+        decoder.feed(aitPackets, length = 188)
+        decoder.discontinuity()
+        decoder.feed(aitPackets, offset = 188, length = aitPackets.size - 188)
+        assertFalse(decoder.aitSeen)
+        assertFalse(decoder.probeComplete())
+        decoder.feed(ts(0x102, ait, firstCounter = 2))
+        assertTrue(decoder.probeComplete())
+        assertEquals(1, decoder.hbbtvApps.size)
+    }
+
+    @Test fun changingPatServiceOrPmtPidClearsHbbtvMetadataAndPartialSections() {
+        for (changedField in listOf("program", "pmtPid", "transportStream")) {
+            val decoder = TeletextDecoder()
+            decoder.feed(ts(0, pat) + ts(0x1000, pmtWithAit))
+            decoder.feed(ts(0x102, aitSection("https://old.example/", "index.html", "Old")))
+            assertTrue(decoder.probeComplete())
+            val partial = ts(0x102, aitSection("https://old.example/" + "a".repeat(160) + "/", "index.html", "Old"), firstCounter = 1)
+            decoder.feed(partial, length = 188)
+
+            val nextPat = pat.copyOf()
+            val nextPmt = pmtWithAit.copyOf()
+            when (changedField) {
+                "program" -> { nextPat[10] = 2; nextPmt[5] = 2 }
+                "pmtPid" -> nextPat[12] = 1
+                "transportStream" -> nextPat[5] = 2
+            }
+            decoder.feed(ts(0, nextPat, firstCounter = 1))
+            assertFalse(changedField, decoder.pmtSeen)
+            assertFalse(changedField, decoder.aitSeen)
+            assertTrue(changedField, decoder.hbbtvApps.isEmpty())
+            assertEquals(-1, decoder.aitPid)
+            decoder.feed(ts(if (changedField == "pmtPid") 0x1001 else 0x1000, nextPmt, firstCounter = 1))
+            decoder.feed(partial, offset = 188, length = partial.size - 188)
+            assertFalse(changedField, decoder.aitSeen)
+            decoder.feed(ts(0x102, aitSection("https://new.example/", "index.html", "New"), firstCounter = 3))
+            assertEquals("https://new.example/index.html", decoder.hbbtvApps.single().url)
+        }
     }
 
     @Test fun streamWithoutTeletextOrAitIsKnownAfterThePmt() {

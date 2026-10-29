@@ -19,6 +19,8 @@ class TeletextDecoder(
     private val carry = ByteArray(TS_PACKET)
     private var carryLength = 0
     private var pmtPid = -1
+    private var programNumber = -1
+    private var transportStreamId = -1
     /** PID of the teletext elementary stream, -1 until the PMT names one. */
     @Volatile var teletextPid = -1
         private set
@@ -41,9 +43,10 @@ class TeletextDecoder(
     @Volatile var packetCount = 0L
         private set
 
-    // AIT sections can span several TS packets.
-    private var ait = ByteArray(1024)
-    private var aitLength = 0
+    // PAT, PMT and AIT sections can all span several TS packets.
+    private val patSections = PsiSectionAssembler(::parsePat)
+    private val pmtSections = PsiSectionAssembler(::parsePmt)
+    private val aitSections = PsiSectionAssembler(::parseAitSection)
 
     // PES
     private var pes = ByteArray(4096)
@@ -62,6 +65,9 @@ class TeletextDecoder(
     /** A new connection (or a seek) continues at an unrelated byte: drop partial packets and pages. */
     fun discontinuity() {
         carryLength = 0
+        patSections.reset()
+        pmtSections.reset()
+        aitSections.reset()
         pesActive = false
         pesLength = 0
         synchronized(lock) { receiving.fill(null) }
@@ -89,6 +95,13 @@ class TeletextDecoder(
     private fun packet(buf: ByteArray, p: Int) {
         val b1 = buf[p + 1].u
         val pid = ((b1 and 0x1F) shl 8) or buf[p + 2].u
+        val sections = when (pid) {
+            0 -> patSections
+            pmtPid -> pmtSections
+            aitPid -> aitSections
+            else -> null
+        }
+        if (sections != null) { sections.packet(buf, p); return }
         val start = b1 and 0x40 != 0
         val afc = (buf[p + 3].u shr 4) and 3
         if (afc == 0 || afc == 2) return
@@ -96,61 +109,70 @@ class TeletextDecoder(
         if (afc == 3) payload += 1 + buf[p + 4].u
         val end = p + TS_PACKET
         if (payload >= end) return
-        when (pid) {
-            0 -> if (start) parsePat(buf, payload, end)
-            pmtPid -> if (start) parsePmt(buf, payload, end)
-            teletextPid -> pesData(buf, payload, end, start)
-            aitPid -> aitData(buf, payload, end, start)
-        }
+        if (pid == teletextPid) pesData(buf, payload, end, start)
     }
 
-    private fun section(buf: ByteArray, payload: Int, end: Int): IntRange? {
-        val begin = payload + 1 + buf[payload].u
-        if (begin + 3 > end) return null
-        val length = ((buf[begin + 1].u and 0x0F) shl 8) or buf[begin + 2].u
-        val last = minOf(begin + 3 + length - 4, end) // without CRC
-        return if (last > begin) begin until last else null
-    }
-
-    private fun parsePat(buf: ByteArray, payload: Int, end: Int) {
-        val range = section(buf, payload, end) ?: return
-        if (buf[range.first].u != 0x00) return
-        var i = range.first + 8
-        while (i + 4 <= range.last + 1) {
+    private fun parsePat(buf: ByteArray) {
+        if (buf.size < 12 || buf[0].u != 0x00 || buf[5].u and 1 == 0) return
+        val last = buf.size - 4 // without CRC
+        if ((last - 8) % 4 != 0) return
+        val tsid = (buf[3].u shl 8) or buf[4].u
+        var i = 8
+        while (i + 4 <= last) {
             val program = (buf[i].u shl 8) or buf[i + 1].u
             val pid = ((buf[i + 2].u and 0x1F) shl 8) or buf[i + 3].u
             if (program != 0) {
-                if (pid != pmtPid) { pmtPid = pid; teletextPid = -1 }
+                if (pid != pmtPid || program != programNumber || tsid != transportStreamId) {
+                    val wasKnown = pmtSeen
+                    pmtPid = pid
+                    programNumber = program
+                    transportStreamId = tsid
+                    pmtSections.reset()
+                    aitSections.reset()
+                    pmtSeen = false
+                    teletextPid = -1
+                    announcedPages = emptyList()
+                    aitPid = -1
+                    aitSeen = false
+                    hbbtvApps = emptyList()
+                    pesActive = false
+                    pesLength = 0
+                    synchronized(lock) { receiving.fill(null) }
+                    if (wasKnown) onServiceChanged()
+                }
                 return
             }
             i += 4
         }
     }
 
-    private fun parsePmt(buf: ByteArray, payload: Int, end: Int) {
-        val range = section(buf, payload, end) ?: return
-        val s = range.first
-        // A truncated section must not read past the packet (the carry buffer is one packet long).
-        if (buf[s].u != 0x02 || s + 12 > range.last + 1) return
-        val programInfo = ((buf[s + 10].u and 0x0F) shl 8) or buf[s + 11].u
-        var i = s + 12 + programInfo
-        val last = range.last + 1
+    private fun parsePmt(buf: ByteArray) {
+        if (buf.size < 16 || buf[0].u != 0x02 || buf[5].u and 1 == 0) return
+        if (((buf[3].u shl 8) or buf[4].u) != programNumber) return
+        val programInfo = ((buf[10].u and 0x0F) shl 8) or buf[11].u
+        var i = 12 + programInfo
+        val last = buf.size - 4 // without CRC
+        if (i > last) return
         var foundTeletext = -1
         var foundAit = -1
         val announced = mutableListOf<TeletextAnnouncedPage>()
-        while (i + 5 <= last) {
+        while (i < last) {
+            if (i + 5 > last) return
             val pid = ((buf[i + 1].u and 0x1F) shl 8) or buf[i + 2].u
             val esInfo = ((buf[i + 3].u and 0x0F) shl 8) or buf[i + 4].u
             var d = i + 5
-            val dEnd = minOf(d + esInfo, last)
-            while (d + 2 <= dEnd) {
+            val dEnd = d + esInfo
+            if (dEnd > last) return
+            while (d < dEnd) {
+                if (d + 2 > dEnd) return
                 val tag = buf[d].u
                 val len = buf[d + 1].u
+                if (d + 2 + len > dEnd) return
                 when (tag) {
                     0x56, 0x46 -> if (foundTeletext < 0) {
                         foundTeletext = pid
                         var e = d + 2
-                        while (e + 5 <= minOf(d + 2 + len, dEnd)) {
+                        while (e + 5 <= d + 2 + len) {
                             val language = String(byteArrayOf(buf[e], buf[e + 1], buf[e + 2]), Charsets.ISO_8859_1)
                             val type = buf[e + 3].u shr 3
                             val magazine = (buf[e + 3].u and 7).let { if (it == 0) 8 else it }
@@ -176,7 +198,7 @@ class TeletextDecoder(
         if (announced != announcedPages) { announcedPages = announced; changed = true }
         if (foundAit != aitPid) {
             aitPid = foundAit
-            aitLength = 0
+            aitSections.reset()
             aitSeen = false
             hbbtvApps = emptyList()
             changed = true
@@ -184,25 +206,8 @@ class TeletextDecoder(
         if (changed) onServiceChanged()
     }
 
-    private fun aitData(buf: ByteArray, payload: Int, end: Int, start: Boolean) {
-        var from = payload
-        if (start) {
-            from = payload + 1 + buf[payload].u
-            aitLength = 0
-        } else if (aitLength == 0) return
-        if (from >= end) return
-        val n = end - from
-        if (aitLength + n > ait.size) {
-            if (aitLength + n > 4096) { aitLength = 0; return }
-            ait = ait.copyOf(aitLength + n)
-        }
-        System.arraycopy(buf, from, ait, aitLength, n)
-        aitLength += n
-        if (aitLength < 3) return
-        val total = 3 + (((ait[1].u and 0x0F) shl 8) or ait[2].u)
-        if (aitLength < total) return
-        val apps = parseAit(ait, total)
-        aitLength = 0
+    private fun parseAitSection(buf: ByteArray) {
+        val apps = parseAit(buf, buf.size)
         if (apps != null && (!aitSeen || apps != hbbtvApps)) {
             aitSeen = true
             hbbtvApps = apps
