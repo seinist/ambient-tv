@@ -62,6 +62,7 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
         HomeRowDefinition.SYSTEM_SPOTIFY to "albums" -> R.string.settings_home_source_spotify_albums
         HomeRowDefinition.SYSTEM_SPOTIFY to "artists" -> R.string.settings_home_source_spotify_artists
         HomeRowDefinition.SYSTEM_SPOTIFY to "now_playing" -> R.string.settings_home_source_spotify_now_playing
+        HomeRowDefinition.SYSTEM_RADIO to "home" -> R.string.radio_title
         HomeRowDefinition.SYSTEM_PHOTOS to "recent" -> R.string.photos_recent_row
         else -> return contentKey.replace('_', ' ').replaceFirstChar(Char::uppercase)
     }
