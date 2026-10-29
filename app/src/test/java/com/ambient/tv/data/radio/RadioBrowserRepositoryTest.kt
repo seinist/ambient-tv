@@ -1,6 +1,7 @@
 package com.ambient.tv.data.radio
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -34,6 +35,8 @@ class RadioBrowserRepositoryTest {
         assertEquals("DE", api.lastCountryCode)
         assertEquals("German", api.lastLanguage)
         assertEquals("pop", api.lastTag)
+        assertFalse(api.lastLanguageExact)
+        assertFalse(api.lastTagExact)
         assertEquals(4, api.lastOffset)
         assertEquals(2, api.lastLimit)
     }
@@ -55,6 +58,27 @@ class RadioBrowserRepositoryTest {
         assertEquals("DE", station.countryCode)
         assertEquals(128, station.bitrateKbps)
         assertFalse(station.isHls)
+    }
+
+    @Test fun facetListsAreNormalizedAndExactFiltersReachSearch() = runBlocking {
+        val api = FakeRadioBrowserApi().apply {
+            facets = listOf(
+                RadioBrowserFacetDto("rock", JsonPrimitive("12")),
+                RadioBrowserFacetDto("", JsonPrimitive(99)),
+            )
+            stations = listOf(station("one", "One"))
+        }
+        val repository = RadioBrowserRepository(api)
+
+        assertEquals(listOf(RadioFacet("rock", "rock", 12)), repository.genres())
+        api.facets = listOf(RadioBrowserFacetDto("DE", JsonPrimitive(42)))
+        val country = repository.countries().single()
+        assertEquals("DE", country.value)
+        assertEquals(42, country.stationCount)
+        repository.search(language = "German", tag = "rock", exactFilters = true)
+
+        assertTrue(api.lastLanguageExact)
+        assertTrue(api.lastTagExact)
     }
 
     @Test fun playbackUsesClickUrlButFallsBackToCatalogStream() = runBlocking {
@@ -102,6 +126,9 @@ class RadioBrowserRepositoryTest {
         var lastCountryCode: String? = null
         var lastLanguage: String? = null
         var lastTag: String? = null
+        var lastLanguageExact = false
+        var lastTagExact = false
+        var facets: List<RadioBrowserFacetDto> = emptyList()
         var lastOffset = -1
         var lastLimit = -1
         var lastUuid: String? = null
@@ -110,7 +137,9 @@ class RadioBrowserRepositoryTest {
             name: String?,
             countryCode: String?,
             language: String?,
+            languageExact: Boolean,
             tag: String?,
+            tagExact: Boolean,
             order: String,
             reverse: Boolean,
             offset: Int,
@@ -120,11 +149,17 @@ class RadioBrowserRepositoryTest {
             lastName = name
             lastCountryCode = countryCode
             lastLanguage = language
+            lastLanguageExact = languageExact
             lastTag = tag
+            lastTagExact = tagExact
             lastOffset = offset
             lastLimit = limit
             return stations
         }
+
+        override suspend fun tags(order: String, reverse: Boolean, offset: Int, limit: Int, hideBroken: Boolean): List<RadioBrowserFacetDto> = facets
+        override suspend fun countryCodes(order: String, reverse: Boolean, offset: Int, limit: Int, hideBroken: Boolean): List<RadioBrowserFacetDto> = facets
+        override suspend fun languages(order: String, reverse: Boolean, offset: Int, limit: Int, hideBroken: Boolean): List<RadioBrowserFacetDto> = facets
 
         override suspend fun topClicked(limit: Int, hideBroken: Boolean): List<RadioBrowserStationDto> = stations
 
