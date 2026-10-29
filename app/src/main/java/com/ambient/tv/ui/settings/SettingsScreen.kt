@@ -705,6 +705,7 @@ fun SettingsScreen(
                         SettingsCategory.EMBY,
                         SettingsCategory.TVHEADEND,
                         SettingsCategory.SPOTIFY,
+                        SettingsCategory.RADIO,
                         SettingsCategory.YOUTUBE -> {
                             settingsSystemCategoryItems(
                                 category = selectedCategory,
