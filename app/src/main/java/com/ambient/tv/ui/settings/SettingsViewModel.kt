@@ -419,6 +419,7 @@ class SettingsViewModel @Inject constructor(
         youtubeEnabled = appPreferences.youtubeEnabled,
         youtubeAvailable = smartTubeEngine.available,
         spotifyEnabled = appPreferences.spotifyEnabled,
+        radioEnabled = appPreferences.radioEnabled,
         spotifyClientId = appPreferences.spotifyClientId,
         spotifyWebAuthorized = spotifyRepository.authState.value.authorized,
         spotifyAccountName = spotifyRepository.authState.value.accountName,
@@ -1533,6 +1534,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onSpotifyEnabledChanged(value: Boolean) = _uiState.update { it.copy(spotifyEnabled = value) }
+    fun onRadioEnabledChanged(value: Boolean) = _uiState.update { it.copy(radioEnabled = value) }
     fun onSpotifyClientIdChanged(value: String) = _uiState.update { it.copy(spotifyClientId = value.trim()) }
     fun loginSpotify() {
         appPreferences.spotifyClientId = _uiState.value.spotifyClientId
@@ -2523,6 +2525,7 @@ class SettingsViewModel @Inject constructor(
         if (state.systemNames != baseline.systemNames) appPreferences.systemNames = state.systemNames
         appPreferences.youtubeEnabled = state.youtubeEnabled
         appPreferences.spotifyEnabled = state.spotifyEnabled
+        appPreferences.radioEnabled = state.radioEnabled
         if (state.spotifyClientId != appPreferences.spotifyClientId) {
             spotifyRepository.logoutWebApi()
         }
