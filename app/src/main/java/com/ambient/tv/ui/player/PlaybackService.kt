@@ -58,6 +58,8 @@ class PlaybackService : Service() {
     @Inject lateinit var youtube: SmartTubeEngine
     @Inject lateinit var preferences: AppPreferences
     @Inject lateinit var launcher: com.ambient.tv.launcher.LauncherPublisher
+    @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
+    @Inject lateinit var radioQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var mediaSession: MediaSession
     private lateinit var wakeLock: PowerManager.WakeLock
@@ -104,7 +106,10 @@ class PlaybackService : Service() {
                 override fun onPlay() { BackgroundPlaybackSession.userPlay() }
                 override fun onPause() { resumeOnFocus = false; BackgroundPlaybackSession.userPause() }
                 override fun onStop() = BackgroundPlaybackSession.stop()
+                override fun onSkipToPrevious() { playRadioAdjacent(next = false) }
+                override fun onSkipToNext() { playRadioAdjacent(next = true) }
                 override fun onSeekTo(pos: Long) {
+                    if (BackgroundPlaybackSession.snapshot.value.metadata?.source == "radio") return
                     BackgroundPlaybackSession.userSeek()
                     val offset = BackgroundPlaybackSession.snapshot.value.metadata?.timelineOffsetMs ?: 0
                     BackgroundPlaybackSession.seekTo((pos - offset).coerceAtLeast(0))
@@ -192,10 +197,12 @@ class PlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         lastStartId = startId
-        if (intent?.action in setOf(ACTION_TOGGLE, ACTION_STOP)) BackgroundPlaybackSession.registerUserInteraction()
+        if (intent?.action in setOf(ACTION_TOGGLE, ACTION_STOP, ACTION_PREVIOUS, ACTION_NEXT)) BackgroundPlaybackSession.registerUserInteraction()
         when (intent?.action) {
             ACTION_TOGGLE -> BackgroundPlaybackSession.userToggle()
             ACTION_STOP -> BackgroundPlaybackSession.stop()
+            ACTION_PREVIOUS -> playRadioAdjacent(next = false)
+            ACTION_NEXT -> playRadioAdjacent(next = true)
             ACTION_EXTEND_SLEEP -> BackgroundPlaybackSession.extendSleepTimer()
         }
         return START_NOT_STICKY // Never restart an unknown stream after process death.
@@ -260,6 +267,15 @@ class PlaybackService : Service() {
         com.ambient.tv.notifications.notifyProgressNotSaved(metadata.source, metadata.mediaId, metadata.title, watched)
     }
 
+    private fun playRadioAdjacent(next: Boolean) {
+        if (BackgroundPlaybackSession.snapshot.value.metadata?.source != "radio") return
+        val station = if (next) radioQueue.next() else radioQueue.previous()
+        if (station != null) scope.launch {
+            radioPlaybackLauncher.play(station)
+                .onFailure { Timber.w(it, "Radio station change failed") }
+        }
+    }
+
     // Media-session notifications are exempt from Android 13's notification permission.
     @android.annotation.SuppressLint("NotificationPermission")
     private fun updatePlatformState(state: BackgroundPlaybackSession.Snapshot) {
@@ -288,9 +304,10 @@ class PlaybackService : Service() {
             // Force MediaStyle to rebuild so lock screen and notification follow MediaSession.
             lastNotification = null
         }
+        val hasPreviousRadio = metadata?.source == "radio" && radioQueue.previous() != null
+        val hasNextRadio = metadata?.source == "radio" && radioQueue.next() != null
         mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
-                PlaybackState.ACTION_STOP or PlaybackState.ACTION_SEEK_TO)
+            .setActions(platformPlaybackActions(metadata?.source, hasPreviousRadio, hasNextRadio))
             .setState(when {
                 !state.active || state.status.ended -> PlaybackState.STATE_STOPPED
                 state.status.error != null -> PlaybackState.STATE_ERROR
@@ -365,6 +382,8 @@ class PlaybackService : Service() {
         fun action(action: String, request: Int) = PendingIntent.getService(this, request,
             Intent(this, PlaybackService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val radioPrevious = state.metadata?.source == "radio" && radioQueue.previous() != null
+        val radioNext = state.metadata?.source == "radio" && radioQueue.next() != null
         val builder = Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentTitle(state.metadata?.title ?: getString(R.string.app_name))
@@ -373,12 +392,19 @@ class PlaybackService : Service() {
             .setOnlyAlertOnce(true)
             .setOngoing(state.playing)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .addAction(Notification.Action.Builder(
-                android.graphics.drawable.Icon.createWithResource(this, if (state.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
-                getString(if (state.playing) R.string.player_pause else R.string.player_play), action(ACTION_TOGGLE, 1)).build())
-            .addAction(Notification.Action.Builder(android.graphics.drawable.Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
-                getString(R.string.player_stop), action(ACTION_STOP, 2)).build())
             .apply {
+                if (radioPrevious) addAction(Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_media_previous),
+                    getString(R.string.companion_previous), action(ACTION_PREVIOUS, 4)).build())
+                addAction(Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService, if (state.playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play),
+                    getString(if (state.playing) R.string.player_pause else R.string.player_play), action(ACTION_TOGGLE, 1)).build())
+                if (radioNext) addAction(Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_media_next),
+                    getString(R.string.companion_next), action(ACTION_NEXT, 5)).build())
+                addAction(Notification.Action.Builder(
+                    android.graphics.drawable.Icon.createWithResource(this@PlaybackService, android.R.drawable.ic_menu_close_clear_cancel),
+                    getString(R.string.player_stop), action(ACTION_STOP, 2)).build())
                 // Sleep pre-warning: extend from the phone's notification or lock screen.
                 BackgroundPlaybackSession.sleepWarningDeadline?.let { deadline ->
                     setContentText(getString(R.string.sleep_warning_message_touch,
@@ -387,7 +413,14 @@ class PlaybackService : Service() {
                         getString(R.string.sleep_extend_action), action(ACTION_EXTEND_SLEEP, 3)).build())
                 }
             }
-            .setStyle(Notification.MediaStyle().setMediaSession(mediaSession.sessionToken).setShowActionsInCompactView(0, 1))
+        val playIndex = if (radioPrevious) 1 else 0
+        val compact = buildList {
+            if (radioPrevious) add(0)
+            add(playIndex)
+            if (radioNext) add(playIndex + 1)
+        }.take(3).toIntArray()
+        builder.setStyle(Notification.MediaStyle().setMediaSession(mediaSession.sessionToken)
+            .setShowActionsInCompactView(*compact))
         artworkBitmap?.let { builder.setLargeIcon(it) }
         return builder.build()
     }
@@ -516,6 +549,19 @@ class PlaybackService : Service() {
         private const val MAX_FOCUS_RETRIES = 10
         private const val FOCUS_RETRY_MS = 1_500L
         private const val ACTION_STOP = "com.ambient.tv.STOP_PLAYBACK"
+        private const val ACTION_PREVIOUS = "com.ambient.tv.RADIO_PREVIOUS"
+        private const val ACTION_NEXT = "com.ambient.tv.RADIO_NEXT"
         private const val ACTION_EXTEND_SLEEP = "com.ambient.tv.EXTEND_SLEEP_TIMER"
     }
+}
+
+internal fun platformPlaybackActions(source: String?, hasPrevious: Boolean, hasNext: Boolean): Long {
+    var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP
+    if (source == "radio") {
+        if (hasPrevious) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        if (hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+    } else {
+        actions = actions or PlaybackState.ACTION_SEEK_TO
+    }
+    return actions
 }
