@@ -1,0 +1,23 @@
+RadioBrowser system logo
+========================
+
+The RadioBrowser system mark in this repository
+(app/src/main/res/drawable/system_radio.xml and
+app/src/main/res/drawable/logo_radio_browser.xml)
+is a vectorized adaptation of the official RadioBrowser logo.
+
+Upstream source:
+https://gitlab.com/radiobrowser/radiobrowser-web-angular/-/blob/main/src/favicon.ico
+
+Reference:
+https://commons.wikimedia.org/wiki/File:RadioBrowser_logo.png
+
+Author: RadioBrowser
+
+The upstream logo is published under the GNU General Public License,
+version 3 or later. The vector adaptation is modified for Ambient TV
+(system-sized monochrome and colored Android drawable variants) and is
+distributed under the same license.
+
+A full copy of GPLv3 is already included in this repository in
+SYSTEM_LOGO_TVHEADEND_LICENSE.txt and third_party_licenses/image_shaders/GPL-3.0.txt.
