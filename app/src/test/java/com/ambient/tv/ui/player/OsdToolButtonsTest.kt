@@ -25,6 +25,14 @@ class OsdToolButtonsTest {
         assertTrue(osdButtonVisible(OsdButton.NEXT, OsdPlayer.YOUTUBE, emptySet()))
     }
 
+    @Test fun radioFavoriteStartsVisibleAndCanBeHiddenIndependently() {
+        assertTrue(OsdButton.FAVORITE in OsdPlayer.RADIO.buttons)
+        assertFalse(OsdButton.FAVORITE.optIn)
+        assertTrue(osdButtonVisible(OsdButton.FAVORITE, OsdPlayer.RADIO, emptySet()))
+        assertFalse(osdButtonVisible(OsdButton.FAVORITE, OsdPlayer.RADIO, setOf("RADIO/FAVORITE")))
+        assertTrue(osdButtonVisible(OsdButton.FAVORITE, OsdPlayer.YOUTUBE, setOf("RADIO/FAVORITE")))
+    }
+
     @Test fun youtubePreviousAndNextVisibilityIsIndependentOfOtherPlayers() {
         val hidden = setOf("YOUTUBE/NEXT")
         assertFalse(osdButtonVisible(OsdButton.NEXT, OsdPlayer.YOUTUBE, hidden))
