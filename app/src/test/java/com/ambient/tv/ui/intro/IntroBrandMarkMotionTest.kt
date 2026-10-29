@@ -5,6 +5,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
+    @Test fun retainedTvASettlesOnTheMbientBaseline() {
+        assertEquals(8f / 3f, introBloomBaselineShiftInWordmarkUnits(), 0.0001f)
+        assertTrue(introBloomBaselineShiftInWordmarkUnits() > 0f)
+    }
+
     @Test fun aStaysRigidWithTheTvUntilTheFrameIsAlmostGone() {
         assertEquals(0f, introBloomPeakMorph(2.29f), 0.0001f)
         assertEquals(0f, introBloomPeakMorph(2.3f), 0.0001f)
