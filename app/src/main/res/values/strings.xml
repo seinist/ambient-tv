@@ -2149,4 +2149,8 @@
     <string name="radio_no_stations">No stations found</string>
     <string name="radio_error">Radio Browser is currently unavailable.</string>
     <string name="radio_load_more">Load more</string>
+    <string name="radio_favorites">Favorites</string>
+    <string name="radio_recent">Recently played</string>
+    <string name="radio_add_favorite">Add to favorites</string>
+    <string name="radio_remove_favorite">Remove from favorites</string>
 </resources>
