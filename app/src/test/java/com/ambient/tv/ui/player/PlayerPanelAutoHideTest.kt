@@ -90,7 +90,8 @@ class PlayerPanelAutoHideTest {
                                 fixture.visualPanelComposed = true
                                 onDispose { fixture.visualPanelComposed = false }
                             }
-                            SideEffect { fixture.panelInteractive = LocalPlayerPanelInteractive.current }
+                            val panelInteractive = LocalPlayerPanelInteractive.current
+                            SideEffect { fixture.panelInteractive = panelInteractive }
                             key(fixture.renderer) {
                                 Column {
                                     BasicText("Action ${fixture.statsTick}", Modifier.size(200.dp, 48.dp).testTag("action")
