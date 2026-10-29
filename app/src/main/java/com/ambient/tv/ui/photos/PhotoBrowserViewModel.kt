@@ -78,7 +78,8 @@ class PhotoBrowserViewModel @Inject constructor(
         return true
     }
 
-    fun retry() = load()
+    fun retry() { if (_state.value.timeline) loadTimeline() else load() }
+    fun refresh() { if (_state.value.timeline) loadTimeline(silent = true) else load(silent = true) }
 
     fun setSort(sort: PhotoSort) {
         preferences.photoSortKey = sort.key
@@ -155,21 +156,22 @@ class PhotoBrowserViewModel @Inject constructor(
         return true
     }
 
-    private fun load() {
+    private fun load(silent: Boolean = false) {
         val key = _state.value.current?.key ?: return
         job?.cancel()
-        _state.update { it.copy(loading = true, failed = false) }
+        _state.update { it.copy(loading = !silent || it.loading, failed = false) }
         job = viewModelScope.launch {
             repository.list(key)
                 .onSuccess { entries -> _state.update { it.copy(loading = false, entries = entries.sortedForDisplay(it.sort)) } }
-                .onFailure { _state.update { it.copy(loading = false, failed = true, entries = emptyList()) } }
+                .onFailure { _state.update { it.copy(loading = false,
+                    failed = !silent || it.entries.isEmpty(), entries = if (silent) it.entries else emptyList()) } }
         }
     }
 
-    private fun loadTimeline() {
+    private fun loadTimeline(silent: Boolean = false) {
         val key = _state.value.current?.key ?: return
         job?.cancel()
-        _state.update { it.copy(loading = true, failed = false) }
+        _state.update { it.copy(loading = !silent || it.loading, failed = false) }
         job = viewModelScope.launch {
             repository.listRecursive(key)
                 .onSuccess { photos ->
@@ -182,7 +184,7 @@ class PhotoBrowserViewModel @Inject constructor(
                         .map { (month, entries) -> PhotoTimelineGroup(month, entries) }
                     _state.update { it.copy(loading = false, timelineGroups = groups) }
                 }
-                .onFailure { _state.update { it.copy(loading = false, failed = true) } }
+                .onFailure { _state.update { it.copy(loading = false, failed = !silent || it.timelineGroups.isEmpty()) } }
         }
     }
 }

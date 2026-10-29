@@ -41,6 +41,7 @@ class DlnaManageViewModel @Inject constructor(
 ) : ViewModel() {
     val feedback = OperationFeedbackReporter()
     private var discovered = emptyList<DlnaServer>()
+    private var pendingReconnectSearch = false
     private val _state = MutableStateFlow(DlnaManageUiState(saved = store.servers()))
     val state = _state.asStateFlow()
 
@@ -53,39 +54,54 @@ class DlnaManageViewModel @Inject constructor(
         }
     }
 
-    fun search() {
+    fun search() = search(silent = false)
+    fun refreshOnReconnect() {
+        if (_state.value.searching) { pendingReconnectSearch = true; return }
+        search(silent = true)
+    }
+
+    private fun search(silent: Boolean) {
         if (_state.value.searching) return
         viewModelScope.launch {
-            _state.update { it.copy(searching = true, searched = false, found = emptyList(), error = null) }
+            _state.update { it.copy(searching = true, searched = false,
+                found = if (silent) it.found else emptyList(), error = null) }
             val ticket = feedback.begin("dlna:discovery")
-            suspendResult { discovery.discover() }.fold(
-                onSuccess = { servers ->
-                    store.refreshSaved(servers)
-                    discovered = servers
-                    val saved = store.servers()
-                    _state.update {
-                        it.copy(
-                            saved = saved,
-                            found = servers.filterNot { server -> saved.any { savedServer -> savedServer.udn == server.udn } },
-                            searching = false,
-                            searched = true,
-                            searchRevision = it.searchRevision + 1,
-                        )
-                    }
-                },
-                onFailure = { error ->
-                    val message = feedback.complete(ticket, OperationFeedback(
-                        key = "dlna:discovery",
-                        scope = "discovery",
-                        system = "dlna",
-                        subject = "DLNA",
-                        kind = NoticeKind.CONNECTION,
-                        message = R.string.dlna_notification_search_failed,
-                        detail = feedbackFailureDetail(error),
-                    )) ?: return@launch
-                    _state.update { it.copy(searching = false, searched = true, error = message) }
-                },
-            )
+            try {
+                suspendResult { discovery.discover() }.fold(
+                    onSuccess = { servers ->
+                        store.refreshSaved(servers)
+                        discovered = servers
+                        val saved = store.servers()
+                        _state.update {
+                            it.copy(
+                                saved = saved,
+                                found = servers.filterNot { server -> saved.any { savedServer -> savedServer.udn == server.udn } },
+                                searching = false,
+                                searched = true,
+                                searchRevision = if (silent) it.searchRevision else it.searchRevision + 1,
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        val message = feedback.complete(ticket, OperationFeedback(
+                            key = "dlna:discovery",
+                            scope = "discovery",
+                            system = "dlna",
+                            subject = "DLNA",
+                            kind = NoticeKind.CONNECTION,
+                            message = R.string.dlna_notification_search_failed,
+                            detail = feedbackFailureDetail(error),
+                        )) ?: return@launch
+                        _state.update { it.copy(searching = false, searched = true, error = message) }
+                    },
+                )
+            } finally {
+                _state.update { it.copy(searching = false) }
+                if (pendingReconnectSearch) {
+                    pendingReconnectSearch = false
+                    search(silent = true)
+                }
+            }
         }
     }
 
@@ -173,6 +189,7 @@ class DlnaBrowserViewModel @Inject constructor(
     init { refresh() }
 
     fun refresh() = load(_state.value.path)
+    fun refreshOnReconnect() = load(_state.value.path, silent = true)
 
     fun setViewMode(mode: DlnaViewMode) {
         preferences.setSectionViewMode(viewKey(_state.value.path), mode.name)
@@ -264,7 +281,9 @@ class DlnaBrowserViewModel @Inject constructor(
         if (target != _state.value.path) load(target)
     }
 
-    private fun load(path: List<DlnaBrowserLocation>) {
+    private fun load(path: List<DlnaBrowserLocation>, silent: Boolean = false) {
+        val previous = _state.value
+        val refreshThrough = if (silent && previous.path == path) previous.nextIndex else 0
         job?.cancel()
         feedback.cancel("browse")
         val server = store.server(serverId)
@@ -279,32 +298,52 @@ class DlnaBrowserViewModel @Inject constructor(
             )
             return
         }
-        _state.update { it.copy(server = server, path = path, viewMode = dlnaViewMode(preferences.sectionViewMode(viewKey(path))), page = it.page.takeIf { _ -> it.path == path }, loading = true, loadingMore = false, nextIndex = 0, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
+        _state.update { it.copy(server = server, path = path, viewMode = dlnaViewMode(preferences.sectionViewMode(viewKey(path))), page = it.page.takeIf { _ -> it.path == path }, loading = !silent || it.page == null || it.path != path, loadingMore = false, nextIndex = refreshThrough, pageSize = DlnaRepository.PAGE_SIZE, pageError = null, hasMore = false, error = null) }
         job = viewModelScope.launch {
-            stagedNodes.clear()
-            refreshTotal = null
+            val refreshedNodes = linkedMapOf<String, DlnaNode>()
             val namespace = snapshots.namespace("dlna:$serverId", "${server.udn}|${server.contentDirectoryUrl}")
             snapshotNamespace = namespace
-            storedPage = snapshots.read<DlnaBrowsePage>(namespace, snapshotKey(path))
-            storedPage?.let { cached -> _state.update { it.copy(page = cached, loading = false) } }
+            storedPage = previous.page.takeIf { silent && previous.path == path }
+                ?: snapshots.read<DlnaBrowsePage>(namespace, snapshotKey(path))
+            if (!silent || _state.value.page == null) storedPage?.let { cached -> _state.update { it.copy(page = cached, loading = false) } }
             val ticket = feedback.begin("browse")
-            repository.browse(serverId, path.lastOrNull()?.objectId ?: "0")
-                .mapCatching { page ->
+            var nextIndex = 0
+            var lastReturned = 0
+            suspendResult {
+                    val objectId = path.lastOrNull()?.objectId ?: "0"
+                    var page = repository.browse(serverId, objectId).getOrThrow()
                     check(page.totalMatches <= 0 || page.nodes.isNotEmpty()) { "Incomplete DLNA first page" }
-                    refreshTotal = page.totalMatches.takeIf { it >= 0 }
-                    page
+                    val expectedTotal = page.totalMatches.takeIf { it >= 0 }
+                    page.nodes.forEach { refreshedNodes[it.key] = it }
+                    nextIndex = page.numberReturned
+                    lastReturned = page.numberReturned
+                    // Rebuild all already loaded pages before replacing the focused visible list.
+                    while (nextIndex < refreshThrough && hasMore(page.totalMatches, lastReturned, nextIndex, page.requestedCount)) {
+                        currentCoroutineContext().ensureActive()
+                        val next = repository.browse(serverId, objectId, start = nextIndex, count = page.requestedCount).getOrThrow()
+                        check(expectedTotal == null || next.totalMatches < 0 || expectedTotal == next.totalMatches) { "DLNA total changed during refresh" }
+                        check(next.nodes.isNotEmpty() || next.totalMatches == nextIndex) { "Incomplete DLNA page" }
+                        check(next.nodes.isEmpty() || next.nodes.any { it.key !in refreshedNodes }) { "Repeated DLNA page" }
+                        check(refreshedNodes.size + next.nodes.size <= 100_000) { "DLNA browse limit reached" }
+                        next.nodes.forEach { refreshedNodes[it.key] = it }
+                        nextIndex += next.numberReturned
+                        lastReturned = next.numberReturned
+                        page = next.copy(totalMatches = next.totalMatches.takeIf { it >= 0 } ?: page.totalMatches)
+                    }
+                    page.copy(nodes = refreshedNodes.values.toList(), numberReturned = nextIndex)
                 }
                 .also { currentCoroutineContext().ensureActive() }.fold(
                 onSuccess = { page ->
-                    page.nodes.forEach { stagedNodes[it.key] = it }
-                    val nextIndex = page.numberReturned
+                    stagedNodes = refreshedNodes
+                    refreshTotal = page.totalMatches.takeIf { it >= 0 }
+                    val hasMore = hasMore(page.totalMatches, lastReturned, nextIndex, page.requestedCount)
                     _state.update {
                         it.copy(
-                            page = publishPage(page, !hasMore(page.totalMatches, page.numberReturned, nextIndex, page.requestedCount), path),
+                            page = publishPage(page, !hasMore, path),
                             loading = false,
                             nextIndex = nextIndex,
                             pageSize = page.requestedCount,
-                            hasMore = hasMore(page.totalMatches, page.numberReturned, nextIndex, page.requestedCount),
+                            hasMore = hasMore,
                             contentRevision = it.contentRevision + 1,
                         )
                     }

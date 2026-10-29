@@ -38,6 +38,7 @@ class TvheadendConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
+    private val browseReconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val repository: TvheadendRepository,
     private val wolManager: WolManager,
     private val wireGuardRoute: WireGuardRouteController,
@@ -72,7 +73,10 @@ class TvheadendConnectionManager @Inject constructor(
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         resumeAutomaticReconnect()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        connectRun.joinOrStart(endpointKey()) { connect() }
+        val endpoint = endpointKey()
+        connectRun.joinOrStart(endpoint) { connect() }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("tvheadend")
+        }
     }
 
     /**
@@ -97,6 +101,7 @@ class TvheadendConnectionManager @Inject constructor(
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
+            browseReconnects.request("tvheadend")
             true
         }
     }
@@ -111,15 +116,24 @@ class TvheadendConnectionManager @Inject constructor(
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpointKey()) { connect() } }
+        val endpoint = endpointKey()
+        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpoint) { connect() } }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("tvheadend")
+        }
     }
 
     private suspend fun connect(): Boolean {
         val before = _state.value
+        var freshlyConfirmed = false
         val check = hosts.begin("tvheadend")
         val endpoint = endpointKey()
         return try {
-            connectService().also { connected -> if (endpoint == endpointKey() && !connected) hosts.failure(check) }
+            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+                if (endpoint == endpointKey()) {
+                    if (!connected) hosts.failure(check)
+                    else if (freshlyConfirmed) browseReconnects.request("tvheadend")
+                }
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
             if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
@@ -139,6 +153,7 @@ class TvheadendConnectionManager @Inject constructor(
         wakeTimeoutMs: Long = 60_000L,
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
+        onConnected: () -> Unit,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("tvheadend") != HostHealth.OFFLINE
         if (!configured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -191,6 +206,7 @@ class TvheadendConnectionManager @Inject constructor(
         lastSuccessfulCheckMs = System.currentTimeMillis()
         hosts.online(hosts.begin("tvheadend"))
         resumeConnectivity.get().noteHealthyNow()
+        onConnected()
         return true
     }
 

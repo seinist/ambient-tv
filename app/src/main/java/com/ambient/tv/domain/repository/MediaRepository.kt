@@ -33,6 +33,8 @@ interface MediaRepository {
 
     suspend fun getIdentity(): Result<PlexServerIdentity>
     suspend fun getLibrarySections(): Result<List<LibrarySection>>
+    /** Library headers for the provider selected by an open section. */
+    suspend fun getProviderLibrarySections(sectionKey: String): Result<List<LibrarySection>> = getLibrarySections()
     /** Provider-wide feed selected by library; callers must restrict it to library members. */
     suspend fun getProviderOnDeck(sectionKey: String): Result<List<MediaItem>> = getOnDeck()
     fun cachedProviderOnDeck(sectionKey: String): List<MediaItem>? = cachedOnDeck()

@@ -118,6 +118,18 @@ class SearchViewModel @Inject constructor(
 ) : ViewModel() {
     private var youtubeSignedIn = false
 
+    /** Include configured sources even while hidden as offline, so recovery restores their chips. */
+    val reconnectSources: Set<String>
+        get() = buildSet {
+            if (preferences.isConfigured) add("plex")
+            if (preferences.isJellyfinConfigured) add("jellyfin")
+            if (preferences.isEmbyConfigured) add("emby")
+            addAll(liveTvRegistry.configured().map { it.source.system })
+            if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
+            if (preferences.youtubeEnabled) add("youtube")
+            if (preferences.spotifyEnabled) add("spotify")
+        }
+
     private fun availableSearchSources(): Set<SearchSource> {
         val hidden = unreachableServers.current().offline
         return buildSet {
@@ -150,7 +162,9 @@ class SearchViewModel @Inject constructor(
     private var youtubeProbe: Job? = null
     private var searchRevision = 0L
 
-    fun refreshSources() {
+    fun refreshSources() = refreshSources(preserveResults = false)
+
+    private fun refreshSources(preserveResults: Boolean) {
         val available = availableSearchSources()
         if (available != _uiState.value.availableSources) {
             val selected = reconcileSearchSources(_uiState.value.selectedSources, _uiState.value.availableSources, available)
@@ -160,7 +174,7 @@ class SearchViewModel @Inject constructor(
             }
             _uiState.update { state ->
                 val updated = state.copy(availableSources = available, selectedSources = selected)
-                if (selected != state.selectedSources) clearResults(updated) else updated
+                if (selected != state.selectedSources && !preserveResults) clearResults(updated) else updated
             }
         }
         if (preferences.youtubeEnabled && smartTubeEngine.available && youtubeProbe?.isActive != true) {
@@ -207,13 +221,20 @@ class SearchViewModel @Inject constructor(
 
     fun useRecentSearch(query: String) = onQueryChanged(query)
 
-    fun submitSearch() {
-        refreshSources()
+    fun submitSearch() = startSearch(preserveResults = false)
+
+    fun refreshAfterReconnect() {
+        if (_uiState.value.hasSearched) startSearch(preserveResults = true)
+        else refreshSources()
+    }
+
+    private fun startSearch(preserveResults: Boolean) {
+        refreshSources(preserveResults)
         val state = _uiState.value
         if (state.query.trim().length < MIN_QUERY_LENGTH || state.selectedSources.isEmpty()) return
         searchJob?.cancel()
         val revision = ++searchRevision
-        searchJob = viewModelScope.launch { performSearch(state.query, state.selectedSources, revision) }
+        searchJob = viewModelScope.launch { performSearch(state.query, state.selectedSources, revision, preserveResults) }
     }
 
     fun clearRecentSearches() {
@@ -232,7 +253,7 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(focusedRatingKey = item.ratingKey, restoreResultFocus = true) }
     }
 
-    private suspend fun performSearch(rawQuery: String, selected: Set<SearchSource>, revision: Long) {
+    private suspend fun performSearch(rawQuery: String, selected: Set<SearchSource>, revision: Long, preserveResults: Boolean) {
         val query = rawQuery.trim()
         if (query.length < MIN_QUERY_LENGTH) return
         val enabled = selected intersect availableSearchSources()
@@ -251,13 +272,13 @@ class SearchViewModel @Inject constructor(
                 query = query,
                 liveTvSources = tvRepositories.associate { it.source.id to it.source },
                 liveTvHeaders = tvRepositories.associate { it.source.id to it.authHeaders() },
-                results = emptyList(),
-                jellyfinResults = emptyList(),
-                embyResults = emptyList(),
-                trailerResults = emptyList(),
-                youtubeResults = emptyList(),
-                spotifyResults = emptyList(),
-                tvheadendResults = TvhSearchResults(),
+                results = if (preserveResults && plexEnabled) it.results else emptyList(),
+                jellyfinResults = if (preserveResults && jellyfinEnabled) it.jellyfinResults else emptyList(),
+                embyResults = if (preserveResults && embyEnabled) it.embyResults else emptyList(),
+                trailerResults = if (preserveResults && trailersEnabled) it.trailerResults else emptyList(),
+                youtubeResults = if (preserveResults && youtubeEnabled) it.youtubeResults else emptyList(),
+                spotifyResults = if (preserveResults && spotifyEnabled) it.spotifyResults else emptyList(),
+                tvheadendResults = if (preserveResults && tvheadendEnabled) it.tvheadendResults else TvhSearchResults(),
                 hasSearched = true,
                 plexState = if (plexEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 jellyfinState = if (jellyfinEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,

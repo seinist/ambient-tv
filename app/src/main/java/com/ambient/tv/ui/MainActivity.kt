@@ -163,6 +163,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var appPreferences: AppPreferences
     @Inject lateinit var performanceProfileResolver: com.ambient.tv.ui.performance.PerformanceProfileResolver
     @Inject lateinit var plexRefreshBus: PlexRefreshBus
+    @Inject lateinit var browseReconnects: com.ambient.tv.data.browse.BrowseReconnects
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
@@ -566,6 +567,7 @@ open class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
+        browseReconnects.start()
         // A new launch in a process that outlived the closed app is a cold start for the user too:
         // remembered focus (YouTube feeds, libraries, rows) begins at the first item again.
         if (savedInstanceState == null) appPreferences.clearSessionFocus()

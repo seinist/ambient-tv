@@ -137,6 +137,7 @@ fun TvheadendScreen(
     val seriesArt: (TvhAutoRec) -> LiveTvArt? = { liveTvSeriesArt(it, events, channels, titleArt) }
     val canEditTimers = state.capabilities.editTimers && !state.offline
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf(state.source.system), viewModel::refreshAfterReconnect)
     ReportSidebarContentReady(!state.loading)
     if (onBack != null) {
         BackHandler(enabled = state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }

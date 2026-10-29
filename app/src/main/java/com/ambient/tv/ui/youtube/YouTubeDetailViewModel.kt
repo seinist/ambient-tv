@@ -47,11 +47,10 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
                 val offline = !availability.hasNetwork()
                 val previous = _uiState.value
                 _uiState.value = previous.copy(offline = offline)
-                if (previous.offline && !offline) load()
             }
         }
     }
-    fun retryOffline() { if (_uiState.value.offline && availability.hasNetwork() && loadJob?.isActive != true) load() }
+    fun retryOffline() { if (_uiState.value.offline && availability.hasNetwork() && loadJob?.isActive != true) refresh() }
     private var ratingJob: kotlinx.coroutines.Job? = null
 
     /** Like/dislike like SmartTube: pressing the active rating again removes it. */
@@ -78,14 +77,19 @@ class YouTubeDetailViewModel @Inject constructor(savedStateHandle: SavedStateHan
             }
         }
     }
-    fun load() {
+    fun load() = load(forceRefresh = false)
+    fun refresh() = load(forceRefresh = true)
+
+    private fun load(forceRefresh: Boolean) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(loading = true, error = null)
+            _uiState.value = _uiState.value.copy(loading = _uiState.value.metadata == null, error = null)
             cache.restore()
             val revision = cache.revision()
-            cache.metadata(videoId)?.let { _uiState.value = YouTubeDetailState(false, it, offline = !availability.hasNetwork()) }
-            suspendResult { engine.metadata(videoId) }.onSuccess {
+            if (_uiState.value.metadata == null) cache.metadata(videoId)?.let {
+                _uiState.value = YouTubeDetailState(false, it, offline = !availability.hasNetwork())
+            }
+            suspendResult { engine.metadata(videoId, forceRefresh = forceRefresh) }.onSuccess {
                 if (cache.revision() == revision) {
                     cache.putMetadata(it, revision)
                     val signedIn = suspendResult { engine.isSignedIn() }.getOrDefault(false)

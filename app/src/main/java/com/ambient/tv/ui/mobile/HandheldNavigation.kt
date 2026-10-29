@@ -239,6 +239,7 @@ private fun HandheldSources(
     viewModel: SidebarViewModel = hiltViewModel(),
 ) {
     val sidebarState by viewModel.uiState.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
     // Unreachable servers stay listed, as in the television sidebar.
     val plex = sidebarState.plexEnabled
     val jellyfin = sidebarState.jellyfinEnabled

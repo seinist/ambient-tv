@@ -67,6 +67,21 @@ class YouTubePlaybackPreparationTest {
         now = 120_001; assertNull(cache.get("video"))
         cache.clear(); cache.put(metadata(), generation); assertNull(cache.get("video"))
     }
+
+    @Test fun reconnectRefreshInvalidatesOnlyItsDetailAndRejectsOlderResponses() {
+        val cache = YouTubePlaybackMetadataCache { 0 }
+        val previousGeneration = cache.generation
+        cache.put(metadata("video"), previousGeneration)
+        cache.put(metadata("other"), previousGeneration)
+
+        cache.invalidate("video")
+        assertNull(cache.get("video"))
+        assertNotNull(cache.get("other"))
+        cache.put(metadata("video").copy(title = "Stale response"), previousGeneration)
+        assertNull(cache.get("video"))
+        cache.put(metadata("video").copy(title = "Fresh response"), cache.generation)
+        assertEquals("Fresh response", cache.get("video")!!.title)
+    }
     @Test fun recentProgressUpdatesCachedResumeAndCacheIsBounded() {
         val cache = YouTubePlaybackMetadataCache { 0 }
         cache.put(metadata(), cache.generation); cache.updatePosition("video", 60_000)

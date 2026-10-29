@@ -174,6 +174,9 @@ fun SectionScreen(
     viewModel: SectionViewModel = hiltViewModel(),
 ) {
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RefreshOnReconnect(
+        setOf(com.ambient.tv.data.browse.mediaProvider(viewModel.sectionKey)),
+    ) { viewModel.load(force = true) }
     DisposableEffect(viewModel) { onDispose { viewModel.captureFocusForReturn() } }
     val uiState by viewModel.uiState.collectAsState()
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)

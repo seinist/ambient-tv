@@ -113,6 +113,12 @@ class SectionViewModel @Inject constructor(
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
             mediaRepository.cachedProviderOnDeck(sectionKey)?.let { onDeck = it }
+            // Recovered libraries may have been renamed; do not race the sidebar's independent load.
+            launch {
+                mediaRepository.getProviderLibrarySections(sectionKey).onSuccess {
+                    if (sourceItems.isNotEmpty() || _uiState.value is SectionUiState.Loaded) rebuild()
+                }
+            }
             // Independent of library pagination: a slow feed must not hold back the library.
             launch {
                 mediaRepository.getProviderOnDeck(sectionKey).onSuccess {

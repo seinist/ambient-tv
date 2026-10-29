@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 
 enum class BrowseViewMode { GRID, LIST }
 enum class BrowseSort { TITLE, YEAR }
@@ -38,6 +39,7 @@ class FilteredBrowseViewModel @Inject constructor(
 ) : ViewModel() {
     private val kind: String = checkNotNull(savedStateHandle.get<String>("kind"))
     private val id: String = checkNotNull(savedStateHandle.get<String>("filterId"))
+    val reconnectSources: Set<String> = setOf(com.ambient.tv.data.browse.mediaProvider(id))
     private val title: String = checkNotNull(savedStateHandle.get<String>("title"))
     private val stateKey = "browse:$kind:$id"
     private var sourceItems: List<MediaItem> = emptyList()
@@ -60,9 +62,14 @@ class FilteredBrowseViewModel @Inject constructor(
                 "collection" -> repository.getItemsByCollection(id)
                 else -> Result.failure(IllegalArgumentException("Unknown browse filter"))
             }
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             result.fold(
                 onSuccess = { sourceItems = it; _uiState.value = buildLoaded() },
-                onFailure = { _uiState.value = FilteredBrowseUiState.Error(it.message.orEmpty()) },
+                onFailure = {
+                    if (_uiState.value !is FilteredBrowseUiState.Loaded) {
+                        _uiState.value = FilteredBrowseUiState.Error(it.message.orEmpty())
+                    }
+                },
             )
         }
     }

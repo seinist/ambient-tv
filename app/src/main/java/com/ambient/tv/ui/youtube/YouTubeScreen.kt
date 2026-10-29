@@ -90,6 +90,7 @@ import kotlinx.coroutines.delay
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("youtube"), viewModel::refresh)
     val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
         applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
     }

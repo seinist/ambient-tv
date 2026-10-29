@@ -105,6 +105,8 @@ Every media system page also has:
 
 **Offline servers on Home:** a server that does not answer keeps one row on Home with its name and **Wake up** (with Wake-on-LAN) or **Reconnect**; its other rows return by themselves once it answers. When only its rows were on Home, Home shows the offline page instead. A failure is reported by the connection notice only; there is no dialog.
 
+**Refresh after reconnect:** After a successful server reconnect or network recovery, open content views fetch their data again. This covers Home, libraries, details and submitted searches, plus Live TV channels, guide, recordings and timers; YouTube, Spotify, files/NAS, DLNA, photos and trailers participate too. Views in the background catch up on a missed refresh when they become visible again. The source, section, query and existing content remain in place while loading; previously loaded pages and focus are preserved where possible. Successful empty lists remove outdated entries, while a failed partial request retains its previous data. IPTV also requests fresh M3U and XMLTV data. An ongoing recording action or source change finishes before the pending refresh runs. Renewed Spotify authorization also refreshes open Spotify views.
+
 ### 3.2 When selecting media
 
 | Setting | Options / values | Default | Description |

@@ -162,6 +162,19 @@ class SidebarViewModel @Inject constructor(
     private var refreshJob: Job? = null
     private var spotifyAuthJob: Job? = null
 
+    val reconnectSources: Set<String>
+        get() = buildSet {
+            if (appPreferences.isConfigured) add("plex")
+            if (appPreferences.isJellyfinConfigured) add("jellyfin")
+            if (appPreferences.isEmbyConfigured) add("emby")
+            if (appPreferences.hasTvheadendEndpoint) add("tvheadend")
+            addAll(liveTv.configured().map { it.source.system })
+            if (appPreferences.youtubeEnabled) add("youtube")
+            if (appPreferences.spotifyEnabled) add("spotify")
+            if (appPreferences.filesEnabled) add("files")
+            if (dlnaStore.servers().isNotEmpty()) add("dlna")
+        }
+
     init {
         viewModelScope.launch {
             tvheadendRepository.servingCachedData.collect { offline -> _uiState.update { it.copy(tvheadendOffline = offline) } }
@@ -211,7 +224,9 @@ class SidebarViewModel @Inject constructor(
         }
     }
 
-    fun refresh(deferExpensiveWorkMs: Long = 0L) {
+    fun refreshAfterReconnect() = refresh(forceLiveTv = true)
+
+    fun refresh(deferExpensiveWorkMs: Long = 0L, forceLiveTv: Boolean = false) {
         observeSpotifyAuthorization()
         _uiState.update {
             it.copy(
@@ -246,7 +261,7 @@ class SidebarViewModel @Inject constructor(
                 embySections = embyRepository.cachedLibrarySections().orEmpty().filterNot { section -> section.key in appPreferences.embyHiddenSectionKeys },
             ) }
             if (deferExpensiveWorkMs > 0L) delay(deferExpensiveWorkMs)
-            launch { val sources = liveTv.discover(); _uiState.update { it.copy(liveTvSources = sources) } }
+            launch { val sources = liveTv.discover(force = forceLiveTv); _uiState.update { it.copy(liveTvSources = sources) } }
             val youtubeOn = _uiState.value.youtubeEnabled
             if (youtubeOn) launch {
                 val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(setOf("home"))

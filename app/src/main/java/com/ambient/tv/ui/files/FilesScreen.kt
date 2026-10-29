@@ -73,6 +73,12 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     val handheld = LocalHandheldUi.current
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state by viewModel.state.collectAsState()
+    val sourceId = state.folders.lastOrNull()?.sourceId
+    if (state.sources.firstOrNull { it.id == sourceId }?.kind != "local") {
+        com.ambient.tv.ui.common.RefreshOnReconnect(
+            setOf(sourceId?.let { "files:$it" } ?: "files"), viewModel::refreshOnReconnect,
+        )
+    }
     var editor by remember { mutableStateOf<FileSource?>(null) }
     var deleteSource by remember { mutableStateOf<FileSource?>(null) }
     var replaceLocalId by rememberSaveable { mutableStateOf<String?>(null) }

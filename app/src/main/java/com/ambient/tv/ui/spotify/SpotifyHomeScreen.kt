@@ -60,6 +60,7 @@ fun SpotifyHomeScreen(
     viewModel: SpotifyHomeViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("spotify"), viewModel::refresh)
     val expectedSectionKey = initialSectionKey ?: "home"
     val focusStateKey = remember(expectedSectionKey) { "spotify:$expectedSectionKey" }
     val focusItemId = remember(focusStateKey, state.items) {

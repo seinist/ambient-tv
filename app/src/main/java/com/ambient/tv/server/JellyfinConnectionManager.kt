@@ -37,6 +37,7 @@ class JellyfinConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
+    private val browseReconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val repository: JellyfinRepository,
     private val wolManager: WolManager,
     private val macResolver: MacAddressResolver,
@@ -71,7 +72,10 @@ class JellyfinConnectionManager @Inject constructor(
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        connectRun.joinOrStart(endpointKey()) { connect() }
+        val endpoint = endpointKey()
+        connectRun.joinOrStart(endpoint) { connect() }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("jellyfin")
+        }
     }
 
     /**
@@ -95,6 +99,7 @@ class JellyfinConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
+            browseReconnects.request("jellyfin")
             true
         }
     }
@@ -109,15 +114,24 @@ class JellyfinConnectionManager @Inject constructor(
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpointKey()) { connect() } }
+        val endpoint = endpointKey()
+        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpoint) { connect() } }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("jellyfin")
+        }
     }
 
     private suspend fun connect(): Boolean {
         val before = _state.value
+        var freshlyConfirmed = false
         val check = hosts.begin("jellyfin")
         val endpoint = endpointKey()
         return try {
-            connectService().also { connected -> if (endpoint == endpointKey() && !connected) hosts.failure(check) }
+            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+                if (endpoint == endpointKey()) {
+                    if (!connected) hosts.failure(check)
+                    else if (freshlyConfirmed) browseReconnects.request("jellyfin")
+                }
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
             if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
@@ -129,6 +143,7 @@ class JellyfinConnectionManager @Inject constructor(
         wakeTimeoutMs: Long = 60_000L,
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
+        onConnected: () -> Unit,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("jellyfin") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.isJellyfinConfigured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -140,13 +155,7 @@ class JellyfinConnectionManager @Inject constructor(
                 _state.value = ServerConnectionState.Error(error.message ?: context.getString(R.string.wg_failed))
                 false
             })) return false
-        val endpointKey = listOf(
-            preferences.activeJellyfinServerId.orEmpty(),
-            preferences.jellyfinUseHttps,
-            host,
-            preferences.jellyfinPort,
-            preferences.jellyfinBasePath,
-        ).joinToString("|")
+        val endpointKey = endpointKey()
         if (connectionReusable(_state.value is ServerConnectionState.Online && hosts.health("jellyfin") != com.ambient.tv.connectivity.HostHealth.OFFLINE, lastServerId, endpointKey,
                 lastSuccessfulCheckMs, System.currentTimeMillis(), windowMs = 30_000L)) {
             resumeConnectivity.get().noteHealthyNow()
@@ -186,6 +195,7 @@ class JellyfinConnectionManager @Inject constructor(
         }
         hosts.online(hosts.begin("jellyfin")) // MAC discovery may have changed the shared machine key.
         resumeConnectivity.get().noteHealthyNow()
+        onConnected()
         return true
     }
 

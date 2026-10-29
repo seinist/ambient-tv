@@ -156,6 +156,7 @@ fun Sidebar(
     viewModel: SidebarViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
     val actions = remember(viewModel) {
         object : SidebarActions {
             override fun prefetch(route: String) = viewModel.metadataPrefetcher.route(route)

@@ -53,9 +53,9 @@ class TvheadendLiveTvRepository(
     override suspend fun recordingStream(entry: LiveTvRecording): LiveTvPlaybackSource { checkSource(); return delegate.recordingStream(entry) }
     override suspend fun streamProfiles(force: Boolean): List<LiveTvStreamProfile> { checkSource(); return delegate.streamProfiles(force) }
     override suspend fun invalidateAll() { checkSource(); delegate.invalidateAll() }
-    override suspend fun dashboard(): LiveTvDashboard {
+    override suspend fun dashboard(force: Boolean, prefetch: LiveTvDashboardPrefetch?): LiveTvDashboard {
         checkSource()
-        return delegate.dashboard().let { d -> d.copy(
+        return delegate.dashboard(force).let { d -> d.copy(
             channels = d.channels.map { it.copy(sourceId = source.id) },
             events = d.events.map { it.copy(sourceId = source.id) },
             recordings = d.recordings.map { it.copy(sourceId = source.id) },

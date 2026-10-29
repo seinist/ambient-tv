@@ -50,6 +50,7 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
     val configuration = tokens.tmdbCredentialVersion
     val configured: Boolean get() = !tokens.tmdbApiKey.isNullOrBlank()
     private var cacheGeneration = -1L
+    private var refreshGeneration = 0L
     private var retryDeadlineNanos: Long? = null
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     private val limiter = Semaphore(4)
@@ -75,15 +76,22 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
         synchronized(cache) { cache.clear() }
     }
 
+    /** Re-read visible content after reconnect without discarding a server's Retry-After deadline. */
+    fun refreshCaches() = synchronized(cache) {
+        refreshGeneration++
+        cache.clear()
+    }
+
     private suspend fun request(path: String, parameters: Map<String, String> = emptyMap(),
         credential: String = tokens.tmdbApiKey.orEmpty(), cacheable: Boolean = true,
         ttlNanos: Long = TimeUnit.HOURS.toNanos(12)): JsonObject {
         if (credential.isBlank()) throw TrailerConfigurationMissing()
         val requestGeneration = tokens.tmdbCredentialVersion.value
-        synchronized(cache) {
+        val requestRefreshGeneration = synchronized(cache) {
             if (cacheGeneration != requestGeneration) {
                 cache.clear(); cacheGeneration = requestGeneration; retryDeadlineNanos = null
             }
+            refreshGeneration
         }
         val v3Key = isTmdbV3Key(credential)
         val url = "https://api.themoviedb.org/3/$path".toHttpUrl().newBuilder().apply {
@@ -125,7 +133,8 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
                     val result = runCatching { json.parseToJsonElement(body).jsonObject }
                         .getOrElse { throw TrailerServiceUnavailable(502) }
                     if (cacheable) synchronized(cache) {
-                        if (tokens.tmdbCredentialVersion.value == requestGeneration && cacheGeneration == requestGeneration)
+                        if (tokens.tmdbCredentialVersion.value == requestGeneration && cacheGeneration == requestGeneration &&
+                            refreshGeneration == requestRefreshGeneration)
                             cache[key] = Cached(nanoTime(), result)
                     }
                     result
@@ -133,7 +142,7 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
             }
         }
         if (!cacheable) return execute()
-        val requestKey = "$requestGeneration:$key"
+        val requestKey = "$requestGeneration:$requestRefreshGeneration:$key"
         val deferred = inFlightMutex.withLock {
             inFlight[requestKey]?.takeUnless { it.isCompleted } ?: requestScope.async { execute() }.also { created ->
                 inFlight[requestKey] = created

@@ -107,6 +107,7 @@ fun SearchScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     LaunchedEffect(viewModel) { viewModel.refreshSources() }
+    com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
     // A query from the system search, voice search or the Assistant runs as typed here.
     val externalQuery by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
     LaunchedEffect(externalQuery) {

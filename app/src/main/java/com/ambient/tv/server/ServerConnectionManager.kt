@@ -54,6 +54,7 @@ class ServerConnectionManager @Inject constructor(
     @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
+    private val browseReconnects: com.ambient.tv.data.browse.BrowseReconnects,
     private val repository: MediaRepository,
     private val reachabilityChecker: ServerReachabilityChecker,
     private val wolManager: WolManager,
@@ -83,7 +84,10 @@ class ServerConnectionManager @Inject constructor(
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        connectRun.joinOrStart(endpointKey()) { connect() }
+        val endpoint = endpointKey()
+        connectRun.joinOrStart(endpoint) { connect() }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("plex")
+        }
     }
 
     /**
@@ -107,6 +111,7 @@ class ServerConnectionManager @Inject constructor(
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastConnectedServerId = checkedEndpoint
+            browseReconnects.request("plex")
             true
         }
     }
@@ -122,15 +127,24 @@ class ServerConnectionManager @Inject constructor(
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
-        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpointKey()) { connect() } }
+        val endpoint = endpointKey()
+        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpoint) { connect() } }.also {
+            if (it && endpoint == endpointKey()) browseReconnects.request("plex")
+        }
     }
 
     private suspend fun connect(): Boolean {
         val before = _state.value
+        var freshlyConfirmed = false
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
         return try {
-            connectService().also { connected -> if (endpoint == endpointKey() && !connected) hosts.failure(check) }
+            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+                if (endpoint == endpointKey()) {
+                    if (!connected) hosts.failure(check)
+                    else if (freshlyConfirmed) browseReconnects.request("plex")
+                }
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
             if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
@@ -142,6 +156,7 @@ class ServerConnectionManager @Inject constructor(
         wakeTimeoutMs: Long = 60_000L,
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
+        onConnected: () -> Unit,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.hasPlexEndpoint) {
@@ -211,6 +226,7 @@ class ServerConnectionManager @Inject constructor(
         learnMacIfMissing()
         hosts.online(hosts.begin("plex")) // MAC discovery may have changed the shared machine key.
         resumeConnectivity.get().noteHealthyNow()
+        onConnected()
         return true
     }
 
@@ -245,6 +261,7 @@ class ServerConnectionManager @Inject constructor(
             lastSuccessfulCheckMs = System.currentTimeMillis()
             learnMacIfMissing()
             hosts.online(hosts.begin("plex"))
+            browseReconnects.request("plex")
         }.onFailure {
             if (com.ambient.tv.notifications.failureHttpCode(it) == 401) preferences.plexLoginVerified = false
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.host}:${preferences.port}"))

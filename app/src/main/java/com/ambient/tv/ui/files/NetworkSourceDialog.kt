@@ -129,7 +129,9 @@ internal fun NetworkSourceDialog(
         if (source.host.isBlank() && !com.ambient.tv.util.LocalNetworkAccess.isGranted(context)) {
             Text(stringResource(R.string.local_network_missing), style = MaterialTheme.typography.bodySmall)
         } else if (source.host.isBlank()) {
-            val found by remember { discoverNas(context.applicationContext) }.collectAsState(emptyList())
+            var discoveryGeneration by remember { mutableIntStateOf(0) }
+            com.ambient.tv.ui.common.RefreshOnReconnect(setOf("files")) { discoveryGeneration++ }
+            val found by remember(discoveryGeneration) { discoverNas(context.applicationContext) }.collectAsState(emptyList())
             Text(stringResource(if (found.isEmpty()) R.string.files_discovery_searching else R.string.files_discovery_found),
                 style = MaterialTheme.typography.bodySmall)
             found.forEach { nas ->

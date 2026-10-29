@@ -52,6 +52,7 @@ class RoutingMediaRepository @Inject constructor(
     override fun invalidateSectionCache(sectionKey: String) = forId(sectionKey).invalidateSectionCache(sectionKey)
     override suspend fun getIdentity(): Result<PlexServerIdentity> = plex.getIdentity()
     override suspend fun getLibrarySections(): Result<List<LibrarySection>> = plex.getLibrarySections()
+    override suspend fun getProviderLibrarySections(sectionKey: String) = forId(sectionKey).getLibrarySections()
     override suspend fun getOnDeck(): Result<List<MediaItem>> = plex.getOnDeck()
     override suspend fun getMetadata(ratingKey: String) = forId(ratingKey).getMetadata(ratingKey)
     override suspend fun getPlaybackTimeline(ratingKey: String, mediaIndex: Int) = forId(ratingKey).getPlaybackTimeline(ratingKey, mediaIndex)

@@ -20,6 +20,8 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
     private data class TuneChannel(val lineup: Lineup, val channel: LiveTvChannel, val rawId: String, val grid: String, val vcn: String)
     private data class Airing(val programme: LiveTvProgramme, val guid: String)
     private val lock = Mutex()
+    private val cacheGuard = Any()
+    private var cacheGeneration = 0L
     private var channelCache: List<TuneChannel> = emptyList()
     private var loadedAt = 0L
     private val airings = ConcurrentHashMap<String, Airing>()
@@ -27,7 +29,9 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
     private val permits = Semaphore(4)
     override fun authHeaders() = http.headers
     private suspend fun container(path: String, query: Map<String, String?> = emptyMap(), method: String = "GET") = http.request(path, query, method).obj("MediaContainer")
-    override suspend fun invalidateAll() { lock.withLock { loadedAt = 0 }; grids.clear() }
+    override suspend fun invalidateAll() {
+        synchronized(cacheGuard) { cacheGeneration++; loadedAt = 0; grids.clear() }
+    }
 
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities = try {
         val available = channels(force).isNotEmpty()
@@ -39,7 +43,10 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
         if (e.status in setOf(403, 404)) LiveTvCapabilities() else throw e
     }
     override suspend fun channels(force: Boolean): List<LiveTvChannel> = lock.withLock {
-        if (!force && loadedAt > System.currentTimeMillis() - 300_000) return@withLock channelCache.map { it.channel }
+        val generation = synchronized(cacheGuard) {
+            if (!force && loadedAt > System.currentTimeMillis() - 300_000) return@withLock channelCache.map { it.channel }
+            cacheGeneration
+        }
         val providers = container("media/providers").objects("MediaProvider")
         val dvrs = container("livetv/dvrs").let { it.objects("DVR") + it.objects("Dvr") }
         val lineups = providers.mapNotNull { p ->
@@ -48,7 +55,7 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
                 ?: dvrs.singleOrNull() ?: return@mapNotNull null
             Lineup(prefix, dvr.text("key") ?: return@mapNotNull null)
         }.distinct()
-        channelCache = lineups.flatMap { lineup ->
+        val loaded = lineups.flatMap { lineup ->
             container("${lineup.prefix}/lineups/dvr/channels").objects("Channel").mapNotNull { c ->
                 val id = c.text("id") ?: return@mapNotNull null
                 val vcn = c.text("vcn") ?: return@mapNotNull null
@@ -57,8 +64,13 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
                 TuneChannel(lineup, channel, id, c.text("gridKey") ?: id, vcn)
             }
         }
-        loadedAt = System.currentTimeMillis()
-        channelCache.map { it.channel }
+        synchronized(cacheGuard) {
+            if (generation == cacheGeneration) {
+                channelCache = loaded
+                loadedAt = System.currentTimeMillis()
+            }
+        }
+        loaded.map { it.channel }
     }
     private fun artwork(path: String?): String? = path?.takeIf(String::isNotBlank)?.let {
         // The PMS image proxy keeps account credentials away from external artwork hosts.
@@ -67,17 +79,22 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
     override suspend fun epgEvents(startEpochSeconds: Long, windowHours: Int, force: Boolean) = guide(null, startEpochSeconds, windowHours, force)
     override suspend fun channelEpgEvents(channelId: String, startEpochSeconds: Long, windowHours: Int) = guide(channelId, startEpochSeconds, windowHours, false)
     private suspend fun guide(channelId: String?, startEpochSeconds: Long, windowHours: Int, force: Boolean): List<LiveTvProgramme> = coroutineScope {
+        val generation = synchronized(cacheGuard) { cacheGeneration }
         channels()
         val end = startEpochSeconds + windowHours.coerceIn(1, 72) * 3600L
         val startDate = Instant.ofEpochSecond(startEpochSeconds).atZone(ZoneId.systemDefault()).toLocalDate()
         val endDate = Instant.ofEpochSecond(end).atZone(ZoneId.systemDefault()).toLocalDate()
         val days = generateSequence(startDate) { it.plusDays(1).takeUnless { day -> day > endDate } }.toList()
-        val tuning = lock.withLock { channelCache.filter { channelId == null || it.channel.uuid == channelId } }
+        val tuning = synchronized(cacheGuard) { channelCache.filter { channelId == null || it.channel.uuid == channelId } }
         tuning.flatMap { channel -> days.map { date -> async { permits.withPermit {
             val cacheKey = "${channel.channel.uuid}:$date"
-            val cached = grids[cacheKey]?.takeIf { !force && it.first > System.currentTimeMillis() - 120_000 }?.second
+            val cached = synchronized(cacheGuard) {
+                grids[cacheKey]?.takeIf { generation == cacheGeneration && !force && it.first > System.currentTimeMillis() - 120_000 }?.second
+            }
             val rows = cached ?: container("${channel.lineup.prefix}/grid", mapOf("channelGridKey" to channel.grid, "date" to date.toString()))
-                .objects("Metadata").also { grids[cacheKey] = System.currentTimeMillis() to it }
+                .objects("Metadata").also { rows -> synchronized(cacheGuard) {
+                    if (generation == cacheGeneration) grids[cacheKey] = System.currentTimeMillis() to rows
+                } }
             rows.flatMap { item -> item.objects("Media").mapNotNull { media ->
                 val begins = media.number("beginsAt") ?: return@mapNotNull null
                 val ends = media.number("endsAt") ?: return@mapNotNull null
@@ -88,11 +105,17 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
                     subtitle = item.text("title").takeIf { item.text("grandparentTitle") != null }, description = item.text("summary"),
                     startEpochSeconds = begins, stopEpochSeconds = ends, imageUrl = artwork(item.text("thumb")),
                     seriesLink = item.text("grandparentGuid") ?: item.text("grandparentTitle"), sourceId = source.id)
-                    .also { airings[id] = Airing(it, guid) }
+                    .also { programme -> synchronized(cacheGuard) {
+                        if (generation == cacheGeneration) airings[id] = Airing(programme, guid)
+                    } }
             } }
         } } } }.flatMap { it.await() }.distinctBy { it.eventId }.sortedBy { it.startEpochSeconds }.also {
-            grids.entries.removeAll { it.value.first < System.currentTimeMillis() - 300_000 }
-            airings.entries.removeAll { it.value.programme.stopEpochSeconds < startEpochSeconds - 86400 }
+            synchronized(cacheGuard) {
+                if (generation == cacheGeneration) {
+                    grids.entries.removeAll { it.value.first < System.currentTimeMillis() - 300_000 }
+                    airings.entries.removeAll { it.value.programme.stopEpochSeconds < startEpochSeconds - 86400 }
+                }
+            }
         }
     }
     override suspend fun upcomingRecordings(force: Boolean): List<LiveTvRecording> = container("media/subscriptions/scheduled").objects("MediaGrabOperation").mapNotNull { grab ->
@@ -147,7 +170,7 @@ internal class PlexLiveTvRepository(override val source: LiveTvSource, private v
     }
     override suspend fun liveStream(channel: LiveTvChannel, profileOverride: String?): LiveTvPlaybackSource {
         channels()
-        val tune = lock.withLock { channelCache.firstOrNull { it.channel.uuid == channel.uuid } } ?: error("Channel not found.")
+        val tune = synchronized(cacheGuard) { channelCache.firstOrNull { it.channel.uuid == channel.uuid } } ?: error("Channel not found.")
         val result = container("livetv/dvrs/${segment(tune.lineup.dvr)}/channels/${segment(tune.vcn)}/tune", method = "POST")
         val item = result.objects("Metadata").firstOrNull() ?: error("Plex could not tune this channel.")
         val id = item.objects("Media").firstOrNull()?.text("uuid") ?: item.text("key")?.substringAfterLast('/') ?: error("Plex returned no Live TV session.")

@@ -102,13 +102,15 @@ fun YouTubeDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("youtube"), viewModel::refresh)
     val visibleBackgroundVideo = LocalVisibleBackgroundVideo.current || com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current
     val primaryFocusRequester = remember { FocusRequester() }
+    var initialFocusRequested by remember(state.metadata?.videoId) { mutableStateOf(false) }
     // A skeleton is not an action. Focus Play only once content can actually be started.
     LaunchedEffect(state.loading, state.metadata?.videoId, state.offline) {
-        if (state.loading || state.metadata == null || state.offline) return@LaunchedEffect
+        if (initialFocusRequested || state.loading || state.metadata == null || state.offline) return@LaunchedEffect
         kotlinx.coroutines.delay(60)
-        runCatching { primaryFocusRequester.requestFocus() }
+        initialFocusRequested = runCatching { primaryFocusRequester.requestFocus() }.getOrDefault(false)
     }
     Box(Modifier.fillMaxSize()) {
         when {

@@ -40,6 +40,7 @@ fun SpotifyDetailScreen(
 ) {
     val state by viewModel.state.collectAsState()
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("spotify"), viewModel::load)
     val current = playbackIndicator(CompanionMedia("spotify:${viewModel.type}", viewModel.id))
     val openCurrent = LocalOpenActivePlayback.current
     val playLabel = stringResource(if (current != null) R.string.playback_open else R.string.spotify_play)
@@ -86,15 +87,17 @@ fun SpotifyDetailScreen(
         saver = SpotifyFocusMemorySaver,
     ) { SpotifyFocusMemory() }
     var restoreFocusPending by remember(viewModel.type, viewModel.id) { mutableStateOf(focusMemory.key != null) }
+    var initialFocusRequested by remember(viewModel.type, viewModel.id) { mutableStateOf(false) }
     val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending }
     fun rememberFocused(key: String?) {
         focusMemory.key = key
+        initialFocusRequested = true
         if (restoreFocusPending) restoreFocusPending = false
     }
     LaunchedEffect(state.loading, state.offline, state.error, restoreFocusPending) {
-        if (state.loading || (state.offline && state.error == null) || restoreFocusPending) return@LaunchedEffect
+        if (initialFocusRequested || state.loading || (state.offline && state.error == null) || restoreFocusPending) return@LaunchedEffect
         withFrameNanos { }
-        runCatching { primaryFocus.requestFocus() }
+        initialFocusRequested = runCatching { primaryFocus.requestFocus() }.getOrDefault(false)
     }
     LaunchedEffect(state.artworkUrl) { state.artworkUrl?.let { ScreensaverArtworkRegistry.offer(it) } }
     Box(Modifier.fillMaxSize()) {

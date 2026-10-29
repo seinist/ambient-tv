@@ -421,10 +421,17 @@ class SmartTubeEngine @Inject constructor(
         }
     }
 
-    suspend fun metadata(videoId: String): YouTubeMetadata {
+    suspend fun metadata(videoId: String, forceRefresh: Boolean = false): YouTubeMetadata {
+        if (forceRefresh) {
+            io { service("getMediaItemService").call("invalidateCache") }
+            playbackMetadata.invalidate(videoId)
+        }
+        val generation = playbackMetadata.generation
         playbackMetadata.get(videoId)?.let { return it }
+        // A post-reconnect request must not join work started against the old connection/account.
+        val requestKey = "$generation:$videoId"
         val gate = CompletableDeferred<Result<YouTubeMetadata>?>()
-        val existing = metadataInflight.putIfAbsent(videoId, gate)
+        val existing = metadataInflight.putIfAbsent(requestKey, gate)
         // A null result means the owning caller was cancelled: that is not this waiter's
         // failure, so start (or join) a fresh request instead of inheriting the cancellation.
         if (existing != null) return existing.await()?.getOrThrow() ?: metadata(videoId)
@@ -432,7 +439,6 @@ class SmartTubeEngine @Inject constructor(
             val value = io {
                 playbackMetadata.get(videoId)?.let { return@io it }
                 val media = service("getMediaItemService")
-                val generation = playbackMetadata.generation
                 val started = System.nanoTime()
                 val meta = media.call("getMetadata", videoId)
                     ?: throw IllegalStateException(context.getString(com.ambient.tv.R.string.youtube_metadata_failed))
@@ -444,14 +450,14 @@ class SmartTubeEngine @Inject constructor(
             gate.complete(Result.success(value))
             value
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            metadataInflight.remove(videoId, gate)
+            metadataInflight.remove(requestKey, gate)
             gate.complete(null)
             throw cancelled
         } catch (error: Throwable) {
             gate.complete(Result.failure(error))
             throw error
         } finally {
-            metadataInflight.remove(videoId, gate)
+            metadataInflight.remove(requestKey, gate)
         }
     }
 

@@ -76,6 +76,7 @@ class FilesViewModel @Inject constructor(
     private var job: Job? = null
     private var editorJob: Job? = null
     private var sourceMutationBusy = false
+    private var pendingReconnectRefresh = false
     private var limit = folders.lastOrNull()?.visibleLimit?.coerceAtLeast(300) ?: 300
     init {
         refresh()
@@ -117,7 +118,21 @@ class FilesViewModel @Inject constructor(
     fun scroll(key: String): Pair<Int, Int> = (saved.get<Int>("scroll-index:$key") ?: 0) to (saved.get<Int>("scroll-offset:$key") ?: 0)
     fun saveScroll(key: String, index: Int, offset: Int) { saved["scroll-index:$key"] = index; saved["scroll-offset:$key"] = offset }
     fun focus(id: String) { saved["focus"] = id; _state.update { it.copy(focusId = id) } }
-    fun refresh() {
+    fun refresh() = refresh(silent = false)
+    fun refreshOnReconnect() {
+        if (sourceMutationBusy) { pendingReconnectRefresh = true; return }
+        refresh(silent = true)
+    }
+
+    private fun finishSourceMutation() {
+        sourceMutationBusy = false
+        if (pendingReconnectRefresh) {
+            pendingReconnectRefresh = false
+            refresh(silent = true)
+        }
+    }
+
+    private fun refresh(silent: Boolean) {
         job?.cancel(); updateStored()
         if (folders.isEmpty() && !restorePinnedSourceIfNeeded()) {
             showLanding(); _state.update { it.copy(focusId = saved["focus"], revision = it.revision + 1) }; return
@@ -129,14 +144,14 @@ class FilesViewModel @Inject constructor(
             if (restorePinnedSourceIfNeeded()) { refresh(); return }
             showLanding(); return
         }
-        _state.update { it.copy(loading = true, error = null, folders = folders,
+        _state.update { it.copy(loading = !silent || it.folders != folders || it.loading, error = null, folders = folders,
             entries = it.entries.takeIf { _ -> it.folders == folders }.orEmpty(), more = false,
             tags = it.tags.takeIf { _ -> it.folders == folders }.orEmpty(), folderCover = it.folderCover.takeIf { _ -> it.folders == folders }) }
         job = viewModelScope.launch {
             val owner = "files:${source.id}"
             val namespace = snapshots.namespace(owner, json.encodeToString(source))
             val cacheKey = "folder:${location.path}:$limit"
-            snapshots.read<com.ambient.tv.data.files.FileListing>(namespace, cacheKey)?.let { cached ->
+            if (!silent || _state.value.entries.isEmpty()) snapshots.read<com.ambient.tv.data.files.FileListing>(namespace, cacheKey)?.let { cached ->
                 if (store.sources().any { it.id == source.id && it.sameLocation(source) }) {
                     _state.update { it.copy(entries = cached.entries, loading = false, more = cached.more) }
                 }
@@ -304,7 +319,7 @@ class FilesViewModel @Inject constructor(
                 folders = emptyList(); saved["focus"] = null; rememberFolders(); refresh()
                 if (source.wireGuard) wireGuardRoute.reconcile()
             } else _state.update { it.copy(error = message) }
-          } finally { sourceMutationBusy = false }
+          } finally { finishSourceMutation() }
         }
     }
     fun addLocal(uri: Uri, replaceId: String? = null) {
@@ -347,7 +362,7 @@ class FilesViewModel @Inject constructor(
                 val message = feedback.complete(ticket, OperationFeedback(ticket.key, "browse", errorMessage(error),
                     system = "files", delivery = FeedbackDelivery.ACTION))
                 _state.update { it.copy(error = message) }
-            } finally { sourceMutationBusy = false }
+            } finally { finishSourceMutation() }
         }
     }
     fun pickerUnavailable() { _state.update { it.copy(error = fileError(R.string.files_picker_unavailable)) } }

@@ -4,6 +4,12 @@ import com.ambient.tv.util.suspendResult
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 
+/** One dashboard load may obtain its capabilities and channel list from the same response. */
+data class LiveTvDashboardPrefetch(
+    val capabilities: LiveTvCapabilities,
+    val channels: List<LiveTvChannel>? = null,
+)
+
 interface LiveTvRepository {
     val source: LiveTvSource
     /** The last answers came from the offline cache (server asleep or unreachable). */
@@ -34,18 +40,20 @@ interface LiveTvRepository {
     suspend fun recordingStream(entry: LiveTvRecording): LiveTvPlaybackSource
     suspend fun streamProfiles(force: Boolean = false): List<LiveTvStreamProfile> = emptyList()
     suspend fun invalidateAll() = Unit
-    suspend fun dashboard(): LiveTvDashboard = coroutineScope {
-        val capabilities = capabilities()
+    suspend fun prefetchDashboard(force: Boolean = false): LiveTvDashboardPrefetch = LiveTvDashboardPrefetch(capabilities(force))
+    suspend fun dashboard(force: Boolean = false, prefetch: LiveTvDashboardPrefetch? = null): LiveTvDashboard = coroutineScope {
+        val prepared = prefetch ?: prefetchDashboard(force)
+        val capabilities = prepared.capabilities
         check(capabilities.available) { "Live TV is not available for this user or server." }
         val warnings = java.util.concurrent.ConcurrentLinkedQueue<String>()
         suspend fun <T> optional(label: String, block: suspend () -> List<T>): List<T> = suspendResult { block() }.getOrElse {
             warnings.add("$label: ${it.message ?: "Unavailable"}"); emptyList()
         }
-        val channels = async { channels() }
-        val events = async { if (capabilities.guide) optional("EPG") { epgEvents(windowHours = 12) } else emptyList() }
-        val recordings = async { if (capabilities.recordings) optional("Recordings") { finishedRecordings() } else emptyList() }
-        val timers = async { if (capabilities.timers) optional("Timers") { upcomingRecordings() } else emptyList() }
-        val series = async { if (capabilities.timers && capabilities.seriesTimers) optional("Series timers") { autoRecordings() } else emptyList() }
+        val channels = async { prepared.channels ?: channels(force) }
+        val events = async { if (capabilities.guide) optional("EPG") { epgEvents(windowHours = 12, force = force) } else emptyList() }
+        val recordings = async { if (capabilities.recordings) optional("Recordings") { finishedRecordings(force) } else emptyList() }
+        val timers = async { if (capabilities.timers) optional("Timers") { upcomingRecordings(force) } else emptyList() }
+        val series = async { if (capabilities.timers && capabilities.seriesTimers) optional("Series timers") { autoRecordings(force) } else emptyList() }
         LiveTvDashboard(LiveTvServerInfo(source.name, null, null), channels.await(), events.await(), timers.await(), recordings.await(), autoRecs = series.await(), warnings = warnings.toList())
     }
     suspend fun search(query: String): LiveTvSearchResults = coroutineScope {

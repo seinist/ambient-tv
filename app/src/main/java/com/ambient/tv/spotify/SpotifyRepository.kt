@@ -44,6 +44,7 @@ class SpotifyRepository @Inject constructor(
     private val api: SpotifyWebApi,
     private val auth: SpotifyAuthManager,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
+    private val browseReconnects: javax.inject.Provider<com.ambient.tv.data.browse.BrowseReconnects>,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val webPlayback = MutableStateFlow(SpotifyWebPlaybackOverlay())
@@ -98,10 +99,13 @@ class SpotifyRepository @Inject constructor(
         // A lost/revoked Web API authorization must also tear down the native receiver. Otherwise
         // the device can remain advertised in Spotify Connect after logout or refresh failure.
         scope.launch {
-            var wasAuthorized = auth.state.value.authorized
+            var previous = auth.state.value
             auth.state.collect { state ->
-                if (wasAuthorized && !state.authorized) stop()
-                wasAuthorized = state.authorized
+                if (previous.authorized && !state.authorized) stop()
+                if (state.authorized && (!previous.authorized || state.accountName != previous.accountName)) {
+                    browseReconnects.get().request("spotify")
+                }
+                previous = state
             }
         }
 

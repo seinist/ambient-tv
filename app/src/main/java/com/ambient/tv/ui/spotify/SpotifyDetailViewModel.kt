@@ -37,15 +37,17 @@ class SpotifyDetailViewModel @Inject constructor(saved: SavedStateHandle, privat
     internal val id = saved.get<String>("id").orEmpty()
     private val _state = MutableStateFlow(SpotifyDetailUiState())
     val state: StateFlow<SpotifyDetailUiState> = _state.asStateFlow()
+    private var loadJob: kotlinx.coroutines.Job? = null
     init { load() }
-    fun retryOffline() { if (_state.value.offline && availability.hasNetwork()) load() }
+    fun retryOffline() { if (_state.value.offline && availability.hasNetwork() && loadJob?.isActive != true) load() }
     fun load() {
-        viewModelScope.launch {
-        _state.value = _state.value.copy(loading = true, error = null)
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+        _state.value = _state.value.copy(loading = _state.value.title.isBlank(), error = null)
         val identity = scopes.forProvider("spotify")
         val namespace = snapshots.namespace("spotify", identity)
         val key = "detail:$type:$id"
-        snapshots.read<SpotifyDetailUiState>(namespace, key)?.let {
+        if (_state.value.title.isBlank()) snapshots.read<SpotifyDetailUiState>(namespace, key)?.let {
             if (scopes.forProvider("spotify") == identity) _state.value = it.copy(offline = !availability.hasNetwork())
         }
         suspendResult {

@@ -209,6 +209,10 @@ fun HomeScreen(
             focusStateKey = focusStateKey,
         )
     }
+    com.ambient.tv.ui.common.RefreshOnReconnect(
+        viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
+        viewModel::refreshAfterReconnect,
+    )
     val entryRefreshGeneration = remember { refreshGeneration }
     LaunchedEffect(refreshGeneration) {
         if (refreshGeneration != entryRefreshGeneration) viewModel.refresh()

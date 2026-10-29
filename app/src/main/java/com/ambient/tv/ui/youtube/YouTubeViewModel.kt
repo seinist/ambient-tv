@@ -13,6 +13,7 @@ import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.youtube.YouTubeRowPaging
+import com.ambient.tv.youtube.refreshYouTubeRowExtents
 import com.ambient.tv.data.browse.BrowseWorkBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -252,7 +253,11 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
-    fun refresh() = load(_uiState.value.feed)
+    fun refresh() {
+        val current = _uiState.value
+        if (current.query.trim().length >= 2) search(current.query, preserveExtent = true)
+        else load(current.feed, preserveExtent = true)
+    }
     fun selectFeed(feed: YouTubeFeed) {
         val nextSort = sort(feed)
         _uiState.value = _uiState.value.copy(
@@ -409,9 +414,10 @@ class YouTubeViewModel @Inject constructor(
         super.onCleared()
     }
 
-    private fun showCachedContent(key: String) {
+    private fun showCachedContent(key: String, retainedRows: List<YouTubeRow> = emptyList()) {
         val cached = contentCache.get(key)
-        val rows = cached ?: _uiState.value.rows.takeIf { displayedContentKey == key }.orEmpty()
+        val rows = retainedRows.takeIf { it.isNotEmpty() }
+            ?: cached ?: _uiState.value.rows.takeIf { displayedContentKey == key }.orEmpty()
         // The cache may have expired while this feed remained visible. Seed it again so the
         // first partial refresh cannot discard still-pending rows from the current screen.
         if (cached == null && rows.isNotEmpty()) contentCache.merge(key, rows)
@@ -425,11 +431,16 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
-    private fun load(feed: YouTubeFeed) {
-        if (channelId != null) { loadChannel(channelId); return }
+    private fun refreshSnapshot(key: String, preserveExtent: Boolean): List<YouTubeRow> =
+        _uiState.value.rows.takeIf { preserveExtent && displayedContentKey == key }.orEmpty()
+
+    private fun load(feed: YouTubeFeed, preserveExtent: Boolean = false) {
+        if (channelId != null) { loadChannel(channelId, preserveExtent); return }
+        val preserveFeedSelection = preserveExtent && displayedContentKey == "feed:${feed.key}"
+        val previousRows = refreshSnapshot("feed:${feed.key}", preserveExtent)
         contentJob?.cancel()
         resetPaging(null)
-        showCachedContent("feed:${feed.key}")
+        showCachedContent("feed:${feed.key}", previousRows)
         contentJob = viewModelScope.launch {
             contentCache.restore()
             val cacheRevision = contentCache.revision()
@@ -438,7 +449,9 @@ class YouTubeViewModel @Inject constructor(
                 return@launch
             }
             val supported = suspendResult { engine.supportedFeedKeys() }.getOrDefault(setOf("home"))
-            val feeds = configuredFeeds.filter { it.key in supported }.ifEmpty { listOf(YouTubeFeed.HOME) }
+            // A transient capability/auth probe during recovery must not change the open tab.
+            val feeds = configuredFeeds.filter { it.key in supported || (preserveFeedSelection && it == feed) }
+                .ifEmpty { listOf(YouTubeFeed.HOME) }
             val selectedFeed = feed.takeIf { it in feeds } ?: feeds.first()
             if (_uiState.value.visibleFeeds != feeds || _uiState.value.feed != selectedFeed) {
                 _uiState.value = _uiState.value.copy(
@@ -450,12 +463,15 @@ class YouTubeViewModel @Inject constructor(
                 )
             }
             val cacheKey = "feed:${selectedFeed.key}"
-            showCachedContent(cacheKey)
+            val refreshRows = previousRows.takeIf { selectedFeed == feed }.orEmpty()
+            showCachedContent(cacheKey, refreshRows)
             suspendResult {
                 val signed = engine.isSignedIn()
                 val profile = if (signed) suspendResult { engine.accountProfile() }.getOrNull() else null
                 _uiState.value = _uiState.value.copy(signedIn = signed, accountProfile = profile)
-                var rows = engine.feed(selectedFeed.key) { rows -> showRows(cacheKey, rows, cacheRevision) }
+                var rows = engine.feed(selectedFeed.key) { rows ->
+                    if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision)
+                }
                 // MediaServiceCore can report an empty Home feed while its services are still
                 // warming up on the first app start. A manual refresh then works immediately,
                 // so retry only that initial empty Home response for a short bounded window.
@@ -466,7 +482,7 @@ class YouTubeViewModel @Inject constructor(
                         if (rows.isNotEmpty()) break
                     }
                 }
-                signed to rows
+                signed to refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
             }.onSuccess { (signed, rows) ->
                 if (contentCache.revision() != cacheRevision) return@onSuccess
                 _uiState.value = _uiState.value.copy(loading = false, signedIn = signed, rows = contentCache.replace(cacheKey, rows, cacheRevision))
@@ -478,11 +494,12 @@ class YouTubeViewModel @Inject constructor(
     }
 
     /** Channel page: its rows (Uploads, Live, Shorts, ...) take the place of a feed. */
-    private fun loadChannel(channelId: String) {
+    private fun loadChannel(channelId: String, preserveExtent: Boolean = false) {
+        val cacheKey = "channel:$channelId"
+        val previousRows = refreshSnapshot(cacheKey, preserveExtent)
         contentJob?.cancel()
         resetPaging(null)
-        val cacheKey = "channel:$channelId"
-        showCachedContent(cacheKey)
+        showCachedContent(cacheKey, previousRows)
         contentJob = viewModelScope.launch {
             contentCache.restore()
             val cacheRevision = contentCache.revision()
@@ -493,7 +510,10 @@ class YouTubeViewModel @Inject constructor(
             suspendResult {
                 val signed = engine.isSignedIn()
                 _uiState.value = _uiState.value.copy(signedIn = signed, visibleFeeds = emptyList())
-                engine.channel(channelId, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
+                val rows = engine.channel(channelId, cacheKey) { rows ->
+                    if (previousRows.isEmpty()) showRows(cacheKey, rows, cacheRevision)
+                }
+                refreshYouTubeRowExtents(rows, previousRows) { rowId -> engine.continueRow(cacheKey, rowId) }
             }.onSuccess { rows ->
                 if (contentCache.revision() != cacheRevision) return@onSuccess
                 _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))
@@ -526,19 +546,24 @@ class YouTubeViewModel @Inject constructor(
         ))
     }
 
-    private fun search(query: String) {
+    private fun search(query: String, preserveExtent: Boolean = false) {
+        val cacheKey = channelId?.let { "channel:$it:search:${query.trim().lowercase()}" }
+            ?: "search:${query.trim().lowercase()}"
+        val previousRows = refreshSnapshot(cacheKey, preserveExtent)
         contentJob?.cancel()
         resetPaging(null)
         contentJob = viewModelScope.launch {
             contentCache.restore()
             val cacheRevision = contentCache.revision()
             delay(350)
-            val cacheKey = channelId?.let { "channel:$it:search:${query.trim().lowercase()}" }
-                ?: "search:${query.trim().lowercase()}"
-            showCachedContent(cacheKey)
+            showCachedContent(cacheKey, previousRows)
             suspendResult {
-                if (channelId != null) engine.channelSearch(channelId, query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
-                else engine.search(query, cacheKey) { rows -> showRows(cacheKey, rows, cacheRevision) }
+                val onRows: suspend (List<YouTubeRow>) -> Unit = { rows ->
+                    if (previousRows.isEmpty()) showRows(cacheKey, rows, cacheRevision)
+                }
+                val rows = if (channelId != null) engine.channelSearch(channelId, query, cacheKey, onRows)
+                    else engine.search(query, cacheKey, onRows)
+                refreshYouTubeRowExtents(rows, previousRows) { rowId -> engine.continueRow(cacheKey, rowId) }
             }
                 .onSuccess { rows ->
                     if (_uiState.value.query == query && contentCache.revision() == cacheRevision) {

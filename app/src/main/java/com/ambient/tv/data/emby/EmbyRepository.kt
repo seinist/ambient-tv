@@ -35,7 +35,7 @@ class EmbyRepository @Inject constructor(
 ) : MediaRepository {
     init { cache.configurePersistence(disk) { scopes.forProvider("emby") } }
     override suspend fun restoreCache() = cache.restore()
-    override fun refreshCaches() = cache.expire()
+    override fun refreshCaches() { cache.expire(); collectionMemberships.invalidate() }
     override fun cachedSectionPreview(sectionKey: String, sort: String, limit: Int) = cache.sectionPreview("$sectionKey|$sort|$limit", Long.MAX_VALUE)
     override fun cachedChildren(ratingKey: String) = cache.children(ratingKey, Long.MAX_VALUE)
     private data class Session(
@@ -49,11 +49,10 @@ class EmbyRepository @Inject constructor(
     private val onDeckMutex = Mutex()
     private val keyedMutexes = Array(KEYED_MUTEX_COUNT) { Mutex() }
     private val collectionMutex = Mutex()
-    @Volatile private var collectionMemberships: Map<String, List<MediaTag>>? = null
-    @Volatile private var collectionMembershipsAt = 0L
+    private val collectionMemberships = com.ambient.tv.data.repository.RefreshableCacheValue<Map<String, List<MediaTag>>>()
 
     private fun freshCollectionMemberships(): Map<String, List<MediaTag>>? =
-        collectionMemberships?.takeIf { System.nanoTime() / 1_000_000L - collectionMembershipsAt < COLLECTIONS_TTL_MS }
+        collectionMemberships.fresh(System.nanoTime() / 1_000_000L, COLLECTIONS_TTL_MS)
 
     private fun mutexFor(key: String): Mutex = keyedMutexes[(key.hashCode() and Int.MAX_VALUE) % keyedMutexes.size]
     private fun userId(): String = requireNotNull(preferences.embyUserId) { "Emby user is not configured" }
@@ -75,10 +74,10 @@ class EmbyRepository @Inject constructor(
     override fun cachedOnDeck() = cache.onDeck()
     override fun cachedSectionItems(sectionKey: String) = cache.sectionItems(sectionKey) ?: cache.sectionPreview("$sectionKey|titleSort:asc|100", Long.MAX_VALUE)
     override fun cachedMediaItem(ratingKey: String) = cache.mediaItem(ratingKey)
-    override fun invalidateCaches() { cache.clear(); collectionMemberships = null; sessions.clear() }
+    override fun invalidateCaches() { cache.clear(); collectionMemberships.invalidate(); sessions.clear() }
     override fun invalidateSectionCache(sectionKey: String) {
         cache.clearSection(sectionKey)
-        collectionMemberships = null
+        collectionMemberships.invalidate()
     }
 
     override suspend fun getIdentity(): Result<PlexServerIdentity> = cache.withGeneration {
@@ -545,6 +544,7 @@ class EmbyRepository @Inject constructor(
         if (items.none { it.type == "movie" || it.type == "show" }) return items
         val memberships = freshCollectionMemberships() ?: collectionMutex.withLock {
             freshCollectionMemberships() ?: run {
+                val expected = collectionMemberships.generation()
                 val boxSets = fetchAllMediaPages(PAGE_SIZE, key = { it.id }, maxItems = MAX_COLLECTIONS, truncateAtLimit = true) { start, size ->
                     val response = api.getItems(
                         userId = userId(), recursive = true, includeItemTypes = "BoxSet",
@@ -568,8 +568,10 @@ class EmbyRepository @Inject constructor(
                             }
                         }.awaitAll().flatten()
                     }
-                }.groupBy({ it.first }, { it.second })
-            }.also { collectionMemberships = it; collectionMembershipsAt = System.nanoTime() / 1_000_000L }
+                }.groupBy({ it.first }, { it.second }).also {
+                    collectionMemberships.publish(expected, it, System.nanoTime() / 1_000_000L)
+                }
+            }
         }
         return items.map { item ->
             val collections = memberships[item.ratingKey].orEmpty()

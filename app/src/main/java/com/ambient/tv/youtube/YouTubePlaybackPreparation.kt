@@ -236,4 +236,6 @@ internal class YouTubePlaybackMetadataCache(private val nowMs: () -> Long = { Sy
         }
     }
     @Synchronized fun clear() { generation++; entries.clear() }
+    /** Keep other details available, but reject pending writes from before a reconnect refresh. */
+    @Synchronized fun invalidate(id: String) { generation++; entries.remove(id) }
 }

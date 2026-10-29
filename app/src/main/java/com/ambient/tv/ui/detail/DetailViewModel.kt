@@ -78,12 +78,16 @@ class DetailViewModel @Inject constructor(
     val themeMusicPlayer: ThemeMusicPlayer,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
-    private val plexConnection: com.ambient.tv.server.ServerConnectionManager,
-    private val jellyfinConnection: com.ambient.tv.server.JellyfinConnectionManager,
-    private val embyConnection: com.ambient.tv.server.EmbyConnectionManager,
     private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
+    val reconnectSources: Set<String> = setOf(when {
+        FileKeys.owns(ratingKey) -> runCatching { "files:${FileKeys.parse(ratingKey).first}" }.getOrDefault("files")
+        com.ambient.tv.data.dlna.DlnaKeys.owns(ratingKey) -> runCatching {
+            "dlna:${com.ambient.tv.data.dlna.DlnaKeys.parse(ratingKey).first}"
+        }.getOrDefault("dlna")
+        else -> com.ambient.tv.data.browse.mediaProvider(ratingKey)
+    })
     private val cachedItem get() = mediaRepository.cachedMediaItem(ratingKey)
     private val _uiState = MutableStateFlow<DetailUiState>(
         cachedItem?.let {
@@ -126,15 +130,6 @@ class DetailViewModel @Inject constructor(
         if (availability.hasNetwork() && failed && loadJob?.isActive != true) load()
     }
 
-    /** The source's connection, when it has a connection manager (Plex, Jellyfin, Emby). */
-    private fun connectionState(): StateFlow<com.ambient.tv.server.ServerConnectionState>? =
-        when (com.ambient.tv.data.browse.mediaProvider(ratingKey)) {
-            "plex" -> plexConnection.state
-            "jellyfin" -> jellyfinConnection.state
-            "emby" -> embyConnection.state
-            else -> null
-        }
-
     /** Reloads after a temporary failure with backoff (2, 4, 8 s …) instead of hiding Play. */
     private fun scheduleReload(): Boolean {
         if (autoReloads >= DETAIL_MAX_AUTO_RELOADS) return false
@@ -174,32 +169,12 @@ class DetailViewModel @Inject constructor(
         }
         viewModelScope.launch {
             availability.changes.collect {
-                // A failed first load has nothing on screen to patch: try again once the source is back.
-                if (_uiState.value is DetailUiState.Error) {
-                    val health = availability.mediaState(ratingKey)
-                    val offline = health == com.ambient.tv.data.browse.SourceHealth.OFFLINE || health == com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED
-                    if (!offline && loadJob?.isActive != true) load(automatic = true)
-                    return@collect
-                }
+                // Recovery refreshes through the visible screen after cache expiry. Health updates
+                // only patch availability, so background pages do not start duplicate loads.
                 val current = _uiState.value as? DetailUiState.Loaded ?: return@collect
                 val health = availability.mediaState(ratingKey)
                 val offline = health == com.ambient.tv.data.browse.SourceHealth.OFFLINE || health == com.ambient.tv.data.browse.SourceHealth.AUTH_REQUIRED
                 _uiState.value = current.copy(offline = offline, themeMusic = current.themeMusic.takeUnless { offline })
-                if (current.offline && !offline && loadJob?.isActive != true) load(automatic = true)
-            }
-        }
-        viewModelScope.launch {
-            // A wake finished or the server came back from Offline/Error: always reload, even when the
-            // page shows a cached item without "offline" - its Play state and data are from before.
-            // Passive Online → Checking → Online re-checks do not reload ([DetailConnectionTracker]).
-            var tracker = DetailConnectionTracker()
-            connectionState()?.collect { state ->
-                val (next, reload) = tracker.next(state)
-                tracker = next
-                if (reload) {
-                    autoReloads = 0
-                    load()
-                }
             }
         }
     }
@@ -331,7 +306,7 @@ class DetailViewModel @Inject constructor(
                         children = if (result.isSuccess) children else current.children,
                         childrenLoading = false,
                         childrenLoadFailed = result.isFailure,
-                        nextEpisode = derivedNext ?: current.nextEpisode,
+                        nextEpisode = if (result.isSuccess && item.type in setOf("episode", "season")) derivedNext else current.nextEpisode,
                     )
                 }
             }
@@ -349,8 +324,9 @@ class DetailViewModel @Inject constructor(
         // work completely off the first paint and independent of the seasons/recommendations rows.
         if (item.type == "show") {
             launch {
-                val next = mediaRepository.getNextUnwatchedEpisode(ratingKey).getOrNull()
-                if (next != null) updateLoaded { it.copy(nextEpisode = next) }
+                mediaRepository.getNextUnwatchedEpisode(ratingKey).onSuccess { next ->
+                    updateLoaded { it.copy(nextEpisode = next) }
+                }
             }
         }
 
@@ -365,11 +341,14 @@ class DetailViewModel @Inject constructor(
                 val actors = item.cast.dedupeCastMembers().filter { !it.id.isNullOrBlank() }.take(ACTOR_ROW_ACTORS)
                 val rows = actors.map { actor ->
                     async {
-                        val others = mediaRepository.getItemsByActor(actor.id!!).getOrNull().orEmpty()
+                        val result = mediaRepository.getItemsByActor(actor.id!!)
+                        val others = result.getOrNull()
+                            ?: return@async (_uiState.value as? DetailUiState.Loaded)?.actorRows?.firstOrNull { it.actorId == actor.id }
+                        val related = others
                             .filter { it.ratingKey != item.ratingKey && it.type in RELATED_TYPES }
                             .distinctBy { it.ratingKey }
                             .take(20)
-                        ActorRow(actor.id, actor.name, others).takeIf { others.size >= ACTOR_ROW_MIN_ITEMS }
+                        ActorRow(actor.id, actor.name, related).takeIf { related.size >= ACTOR_ROW_MIN_ITEMS }
                     }
                 }.awaitAll().filterNotNull()
                 updateLoaded { it.copy(actorRows = rows) }

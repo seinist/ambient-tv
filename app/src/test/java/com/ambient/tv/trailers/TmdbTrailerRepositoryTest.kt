@@ -76,6 +76,75 @@ class TmdbTrailerRepositoryTest {
         assertEquals("en", videos.single().language)
     }
 
+    @Test fun reconnectRefreshReadsCachedFeedAndVideosAgain() = runBlocking {
+        tokens.tmdbApiKey = "token"
+        var currentTitle = "Before reconnect"
+        var currentVideo = "oldvideo000"
+        responder = { request ->
+            if (request.url.encodedPath.endsWith("/videos"))
+                """{"results":[{"key":"$currentVideo","site":"YouTube","type":"Trailer","iso_639_1":"de"}]}"""
+            else """{"page":1,"total_pages":1,"results":[{"id":7,"title":"$currentTitle"}]}"""
+        }
+        repository.feedPage(TrailerFeed.CINEMA, 1, "de-DE", "DE").getOrThrow()
+        repository.feedPage(TrailerFeed.CINEMA, 1, "de-DE", "DE").getOrThrow()
+        assertEquals(2, requests.size)
+
+        currentTitle = "After reconnect"
+        currentVideo = "newvideo000"
+        repository.refreshCaches()
+        val fresh = repository.feedPage(TrailerFeed.CINEMA, 1, "de-DE", "DE").getOrThrow()
+        assertEquals(4, requests.size)
+        assertEquals("After reconnect", fresh.entries.single().title.displayTitle)
+        assertEquals("newvideo000", fresh.entries.single().videos.single().key)
+    }
+
+    @Test fun reconnectRefreshKeepsTheRetryAfterDeadline() = runBlocking {
+        tokens.tmdbApiKey = "token"
+        status = 429
+        retryAfter = "17"
+        assertTrue(repository.feed(TrailerFeed.CINEMA, "de-DE", "DE").exceptionOrNull() is TrailerRateLimited)
+        val count = requests.size
+        repository.refreshCaches()
+        status = 200
+
+        assertTrue(repository.feed(TrailerFeed.CINEMA, "de-DE", "DE").exceptionOrNull() is TrailerRateLimited)
+        assertEquals(count, requests.size)
+        nowNanos += java.util.concurrent.TimeUnit.SECONDS.toNanos(18)
+        assertTrue(repository.feed(TrailerFeed.CINEMA, "de-DE", "DE").isSuccess)
+        assertEquals(count + 1, requests.size)
+    }
+
+    @Test fun reconnectRefreshDoesNotJoinOrCacheThePreviousInFlightRequest() = runBlocking {
+        tokens.tmdbApiKey = "token"
+        val firstStarted = java.util.concurrent.CountDownLatch(1)
+        val releaseFirst = java.util.concurrent.CountDownLatch(1)
+        val callCount = AtomicInteger()
+        val delayedClient = OkHttpClient.Builder().addInterceptor { chain ->
+            val first = callCount.incrementAndGet() == 1
+            if (first) {
+                firstStarted.countDown()
+                check(releaseFirst.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
+            val key = if (first) "oldvideo000" else "newvideo000"
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("fixture")
+                .body("""{"results":[{"key":"$key","site":"YouTube","type":"Trailer","iso_639_1":"de"}]}"""
+                    .toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val subject = TmdbTrailerRepository(tokens, delayedClient)
+        val previous = async(kotlinx.coroutines.Dispatchers.Default) { subject.videos("movie", 42, "de-DE", "de") }
+        try {
+            assertTrue(firstStarted.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            subject.refreshCaches()
+            val fresh = kotlinx.coroutines.withTimeout(2_000) { subject.videos("movie", 42, "de-DE", "de") }
+            assertEquals("newvideo000", fresh.single().key)
+        } finally {
+            releaseFirst.countDown()
+        }
+        assertEquals("oldvideo000", previous.await().single().key)
+        assertEquals("newvideo000", subject.videos("movie", 42, "de-DE", "de").single().key)
+        assertEquals(2, callCount.get())
+    }
+
     @Test fun pageMetadataAndPlayableEntriesArePreserved() = runBlocking {
         tokens.tmdbApiKey = "token"
         responder = { request ->

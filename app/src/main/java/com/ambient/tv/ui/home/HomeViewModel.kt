@@ -33,7 +33,6 @@ import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
 import com.ambient.tv.spotify.SpotifyRepository
 import com.ambient.tv.ui.common.MediaSystem
-import com.ambient.tv.connectivity.ResumeConnectivityMonitor
 import com.ambient.tv.connectivity.UnreachableServerGate
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -165,7 +164,6 @@ class HomeViewModel @Inject constructor(
     private val spotifyRepository: SpotifyRepository,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val trailerRepository: com.ambient.tv.trailers.TmdbTrailerRepository,
-    private val resumeConnectivityMonitor: ResumeConnectivityMonitor,
     private val performanceProfileResolver: PerformanceProfileResolver,
     private val unreachableServers: UnreachableServerGate,
     private val launcherPublisher: com.ambient.tv.launcher.LauncherPublisher,
@@ -261,12 +259,6 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             com.ambient.tv.data.local.LoginStateSignal.generation.drop(1).collect { refresh() }
         }
-        // TVHeadend woke up after Home showed its cached channels: reload only the TV rows.
-        viewModelScope.launch {
-            tvheadendRepository.revalidated.collect {
-                if (tvPreviewJob?.isActive != true && !plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
-            }
-        }
         // Address/login saved elsewhere (backup import, companion transfer) but not yet confirmed:
         // confirm it once here, so a working server appears without a manual connection test.
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -281,12 +273,7 @@ class HomeViewModel @Inject constructor(
             unreachableServers.state.collect { gate ->
                 val hidden = gate.offline
                 if (hidden == previousHidden) return@collect
-                val restored = previousHidden - hidden
                 previousHidden = hidden
-                if (restored.isNotEmpty()) {
-                    retry()
-                    return@collect
-                }
                 if (hidden.isEmpty()) return@collect
                 when (val current = _uiState.value) {
                     is HomeUiState.Loaded -> publishRows(current.rows)
@@ -295,22 +282,6 @@ class HomeViewModel @Inject constructor(
                     else -> Unit
                 }
             }
-        }
-        viewModelScope.launch {
-            var seen = resumeConnectivityMonitor.recheckGeneration.value
-            resumeConnectivityMonitor.recheckGeneration.collect { generation ->
-                if (generation == seen) return@collect
-                seen = generation
-                onResumeRecheckFinished()
-            }
-        }
-    }
-
-    /** After a ProcessLifecycle resume recheck, soft-retry offline/error Home without clearing Loaded. */
-    private fun onResumeRecheckFinished() {
-        when (_uiState.value) {
-            is HomeUiState.Offline, is HomeUiState.Error, is HomeUiState.WakeTimedOut -> retry()
-            else -> Unit
         }
     }
 
@@ -515,6 +486,28 @@ class HomeViewModel @Inject constructor(
             plexOnly, jellyfinOnly, embyOnly,
         )
 
+    fun reconnectSources(plexOnly: Boolean, jellyfinOnly: Boolean, embyOnly: Boolean): Set<String> = buildSet {
+        addAll(homeBrowseProviders(
+            appPreferences.isConfigured, appPreferences.isJellyfinConfigured, appPreferences.isEmbyConfigured,
+            plexOnly, jellyfinOnly, embyOnly,
+        ))
+        if (!plexOnly && !jellyfinOnly && !embyOnly) {
+            addAll(liveTvRegistry.configured().map { it.source.system })
+            // Reconnecting an account can restore its Home shortcuts as well as its own page.
+            if (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
+                it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
+            }) add("youtube")
+            if (appPreferences.spotifyEnabled && appPreferences.homeRows.any {
+                it.enabled && it.system == HomeRowDefinition.SYSTEM_SPOTIFY
+            }) add("spotify")
+            if (configuredRow(HomeRowDefinition.SYSTEM_PHOTOS, "recent") != null) {
+                add("files")
+                add("dlna")
+            }
+            if (appPreferences.trailersEnabled && trailerRepository.configured) add("trailers")
+        }
+    }
+
     fun retryOffline() {
         if (loadJob?.isActive == true || !availability.hasNetwork()) return
         if (browseProviders.any { availability.state(it) == com.ambient.tv.data.browse.SourceHealth.OFFLINE }) {
@@ -522,11 +515,16 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun refresh() {
+    fun refresh() = refresh(invalidateCache = true)
+
+    /** Recovery already expired the source caches before notifying the visible page. */
+    fun refreshAfterReconnect() = refresh(invalidateCache = false)
+
+    private fun refresh(invalidateCache: Boolean) {
         loadJob?.cancel()
         jellyfinCollectionJob?.cancel()
         embyCollectionJob?.cancel()
-        mediaRepository.refreshCaches()
+        if (invalidateCache) mediaRepository.refreshCaches()
         start(
             plexOnly = plexOnly,
             jellyfinOnly = jellyfinOnly,

@@ -14,7 +14,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
-import com.ambient.tv.tvheadend.data.TvheadendRepository
 import com.ambient.tv.tvheadend.domain.TvhAutoRec
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhDashboard
@@ -68,7 +67,6 @@ class TvheadendViewModel @Inject constructor(
     val availability: com.ambient.tv.data.browse.SourceAvailability,
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
-    private val tvheadend: TvheadendRepository,
     private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
 ) : ViewModel() {
@@ -106,22 +104,14 @@ class TvheadendViewModel @Inject constructor(
     private val isTvheadend get() = repository.source.system == "tvheadend"
     private fun canWake() = isTvheadend && !preferences.tvheadendMacAddress.isNullOrBlank()
 
-    init {
-        // The server answered again after cached data was shown: reload quietly.
-        if (isTvheadend) viewModelScope.launch {
-            tvheadend.revalidated.collect { if (uiState.value.offline && refreshJob?.isActive != true) load(force = false) }
-        }
-    }
-
-    /** "Wake server": the shared wake path with its notices, then a normal reload. */
+    /** "Wake server": the shared reconnect signal refreshes the visible screen afterwards. */
     fun wakeServer() {
         if (!canWake() || _uiState.value.waking) return
         _uiState.update { it.copy(waking = true) }
         viewModelScope.launch {
             // Same path as Plex's reconnect: wake with its packets and notices, then connect.
-            val awake = suspendResult { tvheadendConnection.reconnect() }.getOrDefault(false)
+            suspendResult { tvheadendConnection.reconnect() }
             _uiState.update { it.copy(waking = false) }
-            if (awake) load(force = false)
         }
     }
 
@@ -202,12 +192,20 @@ class TvheadendViewModel @Inject constructor(
     }
 
     private var refreshJob: Job? = null
+    private val refreshPolicy = LiveTvRefreshPolicy()
 
-    fun retryOffline() { if (uiState.value.offline && availability.hasNetwork() && refreshJob?.isActive != true) load(force = false) }
+    fun retryOffline() { if (uiState.value.offline && availability.hasNetwork() && refreshJob?.isActive != true) load(force = true, announceSuccess = false) }
 
     fun refresh() { if (!_uiState.value.actionInProgress) load(force = true) }
 
-    private fun load(force: Boolean) {
+    /** Called by the visible screen after recovery, even when it still displays cached data. */
+    fun refreshAfterReconnect() {
+        refreshPolicy.reconnected()
+        load(force = false)
+    }
+
+    private fun load(force: Boolean, announceSuccess: Boolean = force) {
+        val request = refreshPolicy.request(force, announceSuccess, _uiState.value.actionInProgress) ?: return
         refreshJob?.cancel()
         val ticket = feedback.begin("dashboard")
         _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
@@ -221,24 +219,27 @@ class TvheadendViewModel @Inject constructor(
             }
             _uiState.update { it.copy(loading = it.dashboard == null, refreshing = it.dashboard != null, error = null) }
             suspendResult {
-                if (force) repository.invalidateAll()
-                val caps = repository.capabilities(force)
+                val prefetch = repository.prefetchDashboard(request.force)
+                val caps = prefetch.capabilities
                 currentCoroutineContext().ensureActive()
                 _uiState.update { it.copy(capabilities = caps) }
                 if (caps.available && _uiState.value.dashboard == null) {
-                    val channels = repository.channels()
+                    val channels = prefetch.channels ?: repository.channels(request.force)
                     currentCoroutineContext().ensureActive()
                     _uiState.update { it.copy(loading = false, refreshing = true, dashboard = LiveTvDashboard(
                         LiveTvServerInfo(repository.source.name, null, null), channels, emptyList(), emptyList(), emptyList())) }
                 }
-                repository.dashboard()
+                repository.dashboard(force = request.force, prefetch = prefetch)
             }.also { currentCoroutineContext().ensureActive() }.fold(
                 onSuccess = { fresh ->
                     val old = _uiState.value.dashboard
+                    val merge = LiveTvDashboardMergePolicy(fresh.warnings)
                     val dashboard = if (fresh.warnings.isEmpty() || old == null) fresh else fresh.copy(
-                        channels = fresh.channels.ifEmpty { old.channels }, events = fresh.events.ifEmpty { old.events },
-                        recordings = fresh.recordings.ifEmpty { old.recordings }, upcoming = fresh.upcoming.ifEmpty { old.upcoming },
-                        failedRecordings = fresh.failedRecordings.ifEmpty { old.failedRecordings }, autoRecs = fresh.autoRecs.ifEmpty { old.autoRecs },
+                        events = merge.merge(LiveTvDashboardPart.EPG, fresh.events, old.events),
+                        recordings = merge.merge(LiveTvDashboardPart.RECORDINGS, fresh.recordings, old.recordings),
+                        upcoming = merge.merge(LiveTvDashboardPart.TIMERS, fresh.upcoming, old.upcoming),
+                        failedRecordings = merge.merge(LiveTvDashboardPart.FAILED_RECORDINGS, fresh.failedRecordings, old.failedRecordings),
+                        autoRecs = merge.merge(LiveTvDashboardPart.SERIES_TIMERS, fresh.autoRecs, old.autoRecs),
                     )
                     if (fresh.warnings.isEmpty()) snapshots.write(owner, namespace, "dashboard", dashboard.copy(
                         recordings = dashboard.recordings.map { it.copy(url = null) },
@@ -252,15 +253,21 @@ class TvheadendViewModel @Inject constructor(
                         if (dashboard.warnings.isEmpty()) FeedbackPhase.SUCCESS else FeedbackPhase.WARNING,
                         detail = if (dashboard.warnings.isEmpty()) null else R.string.feedback_live_partial_hint,
                         system = repository.source.system, subject = repository.source.name, kind = NoticeKind.LIBRARY,
-                        delivery = if (force && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
+                        delivery = if (request.announceSuccess && dashboard.warnings.isEmpty()) FeedbackDelivery.ACTION else FeedbackDelivery.INLINE,
                     )) ?: return@launch
+                    refreshPolicy.completed(request)
                     val cachedOnly = repository.servingCachedData
                     requestMissingArt(dashboard)
                     _uiState.update { it.copy(configured = true, offline = cachedOnly, canWake = cachedOnly && canWake(), loading = false, refreshing = false,
                         dashboard = dashboard,
+                        selectedEvent = it.selectedEvent?.let { selected ->
+                            dashboard.events.firstOrNull { event -> event.eventId == selected.eventId && event.channelUuid == selected.channelUuid }
+                        },
                         selectedRecording = it.selectedRecording?.let { selected ->
-                            (dashboard.upcoming + dashboard.recordings + dashboard.failedRecordings)
-                                .firstOrNull { entry -> entry.uuid == selected.uuid } ?: selected
+                            // A timer may have moved to completed recordings while its old area failed.
+                            (fresh.upcoming + fresh.recordings + fresh.failedRecordings +
+                                dashboard.upcoming + dashboard.recordings + dashboard.failedRecordings)
+                                .firstOrNull { entry -> entry.uuid == selected.uuid }
                         },
                         error = result.takeIf { dashboard.warnings.isNotEmpty() }) }
                 },
@@ -270,6 +277,7 @@ class TvheadendViewModel @Inject constructor(
                         detail = feedbackFailureDetail(error), system = repository.source.system,
                         subject = repository.source.name, kind = NoticeKind.LIBRARY, delivery = FeedbackDelivery.INLINE,
                     )) ?: return@launch
+                    refreshPolicy.completed(request)
                     // TVHeadend: offline (record/timer locked) only when the server is really unreachable.
                     val offline = !isTvheadend || !availability.hasNetwork() ||
                         com.ambient.tv.tvheadend.data.tvhFallbackMarksOffline(error)
@@ -355,6 +363,7 @@ class TvheadendViewModel @Inject constructor(
             )) ?: return@launch
             if (result.isFailure) {
                 _uiState.update { it.copy(actionInProgress = false, actionFeedback = message) }
+                if (refreshPolicy.recoveryPending) load(force = false)
                 return@launch
             }
             // Apply confirmed mutations immediately; a failed follow-up read must not erase lists.

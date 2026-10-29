@@ -89,6 +89,13 @@ fun PhotoBrowserScreen(
     // Runs before the focus effect below reads the focus target.
     LaunchedEffect(viewModel) { viewModel.applyViewerReturn() }
     val state by viewModel.state.collectAsState()
+    val source = when {
+        FileKeys.owns(rootKey) -> "files:${FileKeys.parse(rootKey).first}"
+        com.ambient.tv.data.jellyfin.JellyfinBackend.owns(rootKey) -> "jellyfin"
+        com.ambient.tv.data.emby.EmbyBackend.owns(rootKey) -> "emby"
+        else -> "plex"
+    }
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf(source), viewModel::refresh)
     ReportSidebarContentReady(!state.loading)
     val tokens = LocalUiTokens.current
     BackHandler(enabled = !state.atRoot || state.timeline || onBack != null) {

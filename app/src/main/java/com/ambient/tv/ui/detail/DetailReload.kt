@@ -43,36 +43,3 @@ internal fun detailOfflineAfterFailure(removed: Boolean, sourceHealth: SourceHea
     sourceHealth == SourceHealth.OFFLINE || sourceHealth == SourceHealth.AUTH_REQUIRED -> true
     else -> !retriesLeft
 }
-
-/**
- * Tracks the connection for the detail page's automatic reload. Only a real recovery reloads:
- * Online after a settled Offline/WakeTimedOut/Error, or after a wake (the server was asleep).
- * Passive re-checks (Online → Checking/Connecting → Online) keep the page as it is; they would
- * otherwise reload the page on every resume or background probe.
- */
-internal data class DetailConnectionTracker(
-    /** The last state that was not in flight; null before the first one. */
-    val settled: com.ambient.tv.server.ServerConnectionState? = null,
-    /** A wake packet went out since [settled]. */
-    val woke: Boolean = false,
-) {
-    /** The next tracker and whether the page reloads now. */
-    fun next(state: com.ambient.tv.server.ServerConnectionState): Pair<DetailConnectionTracker, Boolean> = when (state) {
-        com.ambient.tv.server.ServerConnectionState.SendingWakePacket,
-        is com.ambient.tv.server.ServerConnectionState.Waking -> copy(woke = true) to false
-        com.ambient.tv.server.ServerConnectionState.Checking,
-        com.ambient.tv.server.ServerConnectionState.Connecting -> this to false
-        is com.ambient.tv.server.ServerConnectionState.Online -> DetailConnectionTracker(state) to connectionCameOnline(settled, woke, state)
-        else -> DetailConnectionTracker(state) to false
-    }
-}
-
-/** Online after a settled failure state or after a wake: the page reloads. */
-internal fun connectionCameOnline(
-    lastSettled: com.ambient.tv.server.ServerConnectionState?,
-    woke: Boolean,
-    current: com.ambient.tv.server.ServerConnectionState,
-): Boolean = current is com.ambient.tv.server.ServerConnectionState.Online && (woke ||
-    lastSettled == com.ambient.tv.server.ServerConnectionState.Offline ||
-    lastSettled == com.ambient.tv.server.ServerConnectionState.WakeTimedOut ||
-    lastSettled is com.ambient.tv.server.ServerConnectionState.Error)

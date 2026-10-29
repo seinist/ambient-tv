@@ -105,6 +105,8 @@ Jede Seite eines Mediensystems hat zusätzlich:
 
 **Offline-Server auf der Startseite:** Ein Server, der nicht antwortet, behält auf der Startseite eine Reihe mit seinem Namen und **Aufwecken** (mit Wake-on-LAN) bzw. **Neu verbinden**; seine übrigen Reihen kommen von selbst zurück, sobald er antwortet. Standen nur seine Reihen auf der Startseite, zeigt sie stattdessen die Offline-Seite. Gemeldet wird ein Ausfall nur über die Verbindungsmeldung, ohne Dialog.
 
+**Aktualisieren nach Neuverbindung:** Nach einer erfolgreichen Server-Neuverbindung oder der Rückkehr des Netzwerks holen offene Inhaltsansichten ihre Daten erneut. Das umfasst Startseiten, Mediatheken, Details und abgeschickte Suchen sowie Live-TV mit Sendern, Programm, Aufnahmen und Timern; auch YouTube, Spotify, Dateien/NAS, DLNA, Fotos und Trailer sind eingebunden. Ansichten im Hintergrund holen eine verpasste Aktualisierung nach, sobald sie wieder sichtbar werden. Quelle, Bereich, Suchanfrage und vorhandene Inhalte bleiben während des Nachladens erhalten; bereits geladene Seiten und der Fokus werden soweit möglich beibehalten. Erfolgreich geladene leere Listen entfernen veraltete Einträge, während eine fehlgeschlagene Teilabfrage ihre bisherigen Daten behält. Bei IPTV werden auch M3U und XMLTV frisch angefordert. Eine laufende Aufnahmeaktion oder Quellenänderung wird zuerst abgeschlossen und anschließend aktualisiert. Die erneute Spotify-Autorisierung aktualisiert ebenfalls die geöffneten Spotify-Ansichten.
+
 ### 3.2 Beim Auswählen eines Mediums
 
 | Einstellung | Optionen / Werte | Standard | Beschreibung |

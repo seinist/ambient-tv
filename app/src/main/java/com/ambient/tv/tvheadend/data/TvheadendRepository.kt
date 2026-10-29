@@ -166,14 +166,18 @@ class TvheadendRepository @Inject constructor(
             }
         }
 
-    suspend fun dashboard(): TvhDashboard = coroutineScope {
-        val info = async { serverInfo() }
-        val channels = async { channels() }
-        val events = async { suspendResult { epgEvents(windowHours = 12) }.getOrDefault(emptyList()) }
-        val upcoming = async { suspendResult { upcomingRecordings() }.getOrDefault(emptyList()) }
-        val recordings = async { suspendResult { finishedRecordings() }.getOrDefault(emptyList()) }
-        val failed = async { suspendResult { failedRecordings() }.getOrDefault(emptyList()) }
-        val autoRecs = async { suspendResult { autoRecordings() }.getOrDefault(emptyList()) }
+    suspend fun dashboard(force: Boolean = false): TvhDashboard = coroutineScope {
+        val warnings = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        suspend fun <T> optional(label: String, block: suspend () -> List<T>): List<T> = suspendResult { block() }.getOrElse {
+            warnings.add("$label: ${it.message ?: "Unavailable"}"); emptyList()
+        }
+        val info = async { serverInfo(force) }
+        val channels = async { channels(force) }
+        val events = async { optional("EPG") { epgEvents(windowHours = 12, force = force) } }
+        val upcoming = async { optional("Timers") { upcomingRecordings(force) } }
+        val recordings = async { optional("Recordings") { finishedRecordings(force) } }
+        val failed = async { optional("Failed recordings") { failedRecordings(force) } }
+        val autoRecs = async { optional("Series timers") { autoRecordings(force) } }
         TvhDashboard(
             serverInfo = info.await(),
             channels = channels.await(),
@@ -182,6 +186,7 @@ class TvheadendRepository @Inject constructor(
             recordings = recordings.await(),
             failedRecordings = failed.await(),
             autoRecs = autoRecs.await(),
+            warnings = warnings.toList(),
         )
     }
 

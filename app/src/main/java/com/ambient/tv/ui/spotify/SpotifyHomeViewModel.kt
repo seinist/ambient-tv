@@ -69,7 +69,6 @@ class SpotifyHomeViewModel @Inject constructor(
                 if (!a.authorized) { loadJob?.cancel(); snapshots.clear("spotify") }
                 if (a.authorized && !wasAuthorized) {
                     repo.start()
-                    loadHome()
                 }
                 wasAuthorized = a.authorized
             }
@@ -78,6 +77,14 @@ class SpotifyHomeViewModel @Inject constructor(
     }
 
     fun loadHome() = load("", "home")
+    fun refresh() {
+        val current = _state.value
+        when (current.sectionKey) {
+            "home" -> loadHome()
+            "search" -> search(current.query)
+            else -> loadSection(current.sectionKey)
+        }
+    }
     fun loadSection(section: String) {
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
@@ -121,7 +128,7 @@ class SpotifyHomeViewModel @Inject constructor(
     private suspend fun restoreBrowse(key: String): Pair<String, String> {
         val identity = scopes.forProvider("spotify")
         val namespace = snapshots.namespace("spotify", identity)
-        snapshots.read<List<SpotifyBrowseItem>>(namespace, key)?.let { items ->
+        if (_state.value.items.isEmpty()) snapshots.read<List<SpotifyBrowseItem>>(namespace, key)?.let { items ->
             if (scopes.forProvider("spotify") == identity) _state.value = _state.value.copy(items = items, loading = false)
         }
         return namespace to identity

@@ -17,17 +17,29 @@ internal class MediaBrowserLiveTvRepository(
     private val audioProfile: () -> LiveTvAudioProfile,
 ) : LiveTvRepository {
     private val lock = Mutex()
+    private val cacheGuard = Any()
+    private var cacheGeneration = 0L
     private val cache = mutableMapOf<String, Pair<Long, Any>>()
     private suspend fun <T : Any> cached(key: String, ttl: Long, force: Boolean, block: suspend () -> T): T = lock.withLock {
-        @Suppress("UNCHECKED_CAST")
-        cache[key]?.takeIf { !force && System.currentTimeMillis() - it.first < ttl }?.let { return@withLock it.second as T }
-        block().also {
-            cache[key] = System.currentTimeMillis() to it
-            if (cache.size > 128) cache.entries.minByOrNull { entry -> entry.value.first }?.let { oldest -> cache.remove(oldest.key) }
+        val generation = synchronized(cacheGuard) {
+            @Suppress("UNCHECKED_CAST")
+            cache[key]?.takeIf { !force && System.currentTimeMillis() - it.first < ttl }?.let { return@withLock it.second as T }
+            cacheGeneration
+        }
+        block().also { value ->
+            synchronized(cacheGuard) {
+                if (generation == cacheGeneration) {
+                    cache[key] = System.currentTimeMillis() to value
+                    if (cache.size > 128) cache.entries.minByOrNull { entry -> entry.value.first }?.let { oldest -> cache.remove(oldest.key) }
+                }
+            }
         }
     }
     override fun authHeaders() = http.headers
-    override suspend fun invalidateAll() = lock.withLock { cache.clear() }
+    override suspend fun invalidateAll() {
+        // Recovery must not wait for an old HTTP request before it can notify and reload the view.
+        synchronized(cacheGuard) { cacheGeneration++; cache.clear() }
+    }
     private val userQuery get() = mapOf("UserId" to userId)
 
     override suspend fun capabilities(force: Boolean): LiveTvCapabilities = cached("capabilities", 60_000, force) {

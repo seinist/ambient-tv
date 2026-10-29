@@ -497,7 +497,7 @@ class PlexRepository @Inject constructor(
                 coroutineScope {
                     sections.map { section ->
                         async {
-                            val cachedSection = if (useSectionCache) cache.sectionItems(section.key) else null
+                            val cachedSection = if (useSectionCache) cache.freshSectionItems(section.key, SECTION_ITEMS_TTL_MS) else null
                             if (cachedSection != null) Result.success(cachedSection.filter(localPredicate))
                             else suspendResult { remoteFetch(section.key).map { it.toDomain(urlBuilder) } }
                         }

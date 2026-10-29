@@ -85,13 +85,14 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun DlnaManageScreen(onOpen: (String) -> Unit, onBack: () -> Unit, viewModel: DlnaManageViewModel = hiltViewModel()) {
     OperationFeedbackScope(viewModel.feedback, "discovery")
     val state by viewModel.state.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(setOf("dlna"), viewModel::refreshOnReconnect)
     var removeServer by remember { mutableStateOf<DlnaServer?>(null) }
     val serverList = rememberLazyListState()
     val firstFoundFocus = remember { FocusRequester() }
     ReportSidebarContentReady(!state.searching)
     // Once per finished search: later updates of the found list (e.g. after adding a server)
     // must not pull focus back to the first server.
-    LaunchedEffect(state.searchRevision, state.searching) {
+    LaunchedEffect(state.searchRevision) {
         if (state.searching || state.searchRevision == 0L || state.found.isEmpty()) return@LaunchedEffect
         val firstFoundIndex = (if (state.saved.isNotEmpty()) state.saved.size + 1 else 0) + 1
         serverList.scrollToItem(firstFoundIndex)
@@ -169,6 +170,9 @@ private fun SavedDlnaServer(server: DlnaServer, onOpen: () -> Unit, onRemove: ()
 fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: () -> Unit, viewModel: DlnaBrowserViewModel = hiltViewModel()) {
     OperationFeedbackScope(viewModel.feedback, "browse")
     val state by viewModel.state.collectAsState()
+    com.ambient.tv.ui.common.RefreshOnReconnect(
+        setOf(state.server?.id?.let { "dlna:$it" } ?: "dlna"), viewModel::refreshOnReconnect,
+    )
     val nodes = remember(state.page) { state.page?.nodes.orEmpty().sortedBy { !it.container } }
     val context = LocalContext.current
     val locationKey = com.ambient.tv.data.dlna.DlnaKeys.key(state.server?.id.orEmpty(), state.path.lastOrNull()?.objectId ?: "0")

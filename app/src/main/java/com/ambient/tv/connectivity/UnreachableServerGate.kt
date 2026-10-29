@@ -8,7 +8,6 @@ import com.ambient.tv.server.JellyfinConnectionManager
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.ui.common.MediaSystem
-import com.ambient.tv.ui.common.PlexRefreshBus
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +52,6 @@ class UnreachableServerGate @Inject constructor(
     private val jellyfin: JellyfinConnectionManager,
     private val emby: EmbyConnectionManager,
     private val resumeConnectivity: ResumeConnectivityMonitor,
-    private val refreshBus: PlexRefreshBus,
     private val tvheadend: com.ambient.tv.server.TvheadendConnectionManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -72,21 +70,24 @@ class UnreachableServerGate @Inject constructor(
 
     init {
         scope.launch {
-            hosts.states.map { states -> states.mapValues { it.value.health } }.distinctUntilChanged().collect {
+            var seenRecoveries = emptyMap<String, Long>()
+            hosts.states.map { states -> states.mapValues { it.value.health to it.value.recoveries } }.distinctUntilChanged().collect { states ->
+                val restored = states.filter { (machine, value) -> value.second > (seenRecoveries[machine] ?: 0L) }.keys
+                seenRecoveries = states.mapValues { it.value.second }
                 refresh()
                 // A machine that just came up may still be starting its services (503, refused):
                 // retry briefly instead of leaving them unreachable until the next 30 s round.
                 val startGraceMs = com.ambient.tv.server.CONNECT_RETRY_GRACE_MS
                 // Refresh actual service identities silently; never manufacture an authenticated state.
                 coroutineScope {
-                    if (hosts.health("plex") == HostHealth.ONLINE && plex.state.value !is ServerConnectionState.Online)
-                        launch { if (plex.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
-                    if (hosts.health("jellyfin") == HostHealth.ONLINE && jellyfin.state.value !is ServerConnectionState.Online)
-                        launch { if (jellyfin.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
-                    if (hosts.health("emby") == HostHealth.ONLINE && emby.state.value !is ServerConnectionState.Online)
-                        launch { if (emby.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
-                    if (hosts.health("tvheadend") == HostHealth.ONLINE && tvheadend.state.value !is ServerConnectionState.Online)
-                        launch { if (tvheadend.checkInBackground(force = true, retryForMs = startGraceMs)) refreshBus.requestRefresh() }
+                    if (hosts.health("plex") == HostHealth.ONLINE && (plex.state.value !is ServerConnectionState.Online || hosts.machine("plex") in restored))
+                        launch { plex.checkInBackground(force = true, retryForMs = startGraceMs) }
+                    if (hosts.health("jellyfin") == HostHealth.ONLINE && (jellyfin.state.value !is ServerConnectionState.Online || hosts.machine("jellyfin") in restored))
+                        launch { jellyfin.checkInBackground(force = true, retryForMs = startGraceMs) }
+                    if (hosts.health("emby") == HostHealth.ONLINE && (emby.state.value !is ServerConnectionState.Online || hosts.machine("emby") in restored))
+                        launch { emby.checkInBackground(force = true, retryForMs = startGraceMs) }
+                    if (hosts.health("tvheadend") == HostHealth.ONLINE && (tvheadend.state.value !is ServerConnectionState.Online || hosts.machine("tvheadend") in restored))
+                        launch { tvheadend.checkInBackground(force = true, retryForMs = startGraceMs) }
                 }
             }
         }
@@ -95,10 +96,10 @@ class UnreachableServerGate @Inject constructor(
                 delay(30_000L)
                 val offline = current().offline
                 coroutineScope {
-                    if (MediaSystem.PLEX.key in offline) launch { if (plex.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.JELLYFIN.key in offline) launch { if (jellyfin.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.EMBY.key in offline) launch { if (emby.checkInBackground()) refreshBus.requestRefresh() }
-                    if (MediaSystem.TVHEADEND.key in offline) launch { if (tvheadend.checkInBackground()) refreshBus.requestRefresh() }
+                    if (MediaSystem.PLEX.key in offline) launch { plex.checkInBackground() }
+                    if (MediaSystem.JELLYFIN.key in offline) launch { jellyfin.checkInBackground() }
+                    if (MediaSystem.EMBY.key in offline) launch { emby.checkInBackground() }
+                    if (MediaSystem.TVHEADEND.key in offline) launch { tvheadend.checkInBackground() }
                 }
             }
         }
@@ -118,7 +119,7 @@ class UnreachableServerGate @Inject constructor(
 
     private var retryJob: kotlinx.coroutines.Job? = null
 
-    fun retry(refreshBus: PlexRefreshBus) {
+    fun retry() {
         if (retryJob?.isActive == true) return
         retrying.value = true
         retryJob = scope.launch {
@@ -142,7 +143,6 @@ class UnreachableServerGate @Inject constructor(
                     } }
                 } }
             }
-            refreshBus.requestRefresh()
             refresh()
             // Say how it ended: without this, a failed retry just shows the same dialog again.
             val still = current().unreachable
