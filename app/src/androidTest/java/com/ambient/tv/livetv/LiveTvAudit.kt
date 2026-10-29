@@ -234,7 +234,7 @@ class LiveTvAudit(private val instrumentation: Instrumentation, private val log:
             await("search view model") { screen.search != null }
             main { screen.search!!.onQueryChanged("Channel") }
             await("multi-source search") { screen.search!!.uiState.value.tvheadendResults.channels.size == 7 }
-            main { screen.search!!.toggleViewMode() }
+            main { screen.search!!.setViewMode(com.ambient.tv.ui.search.SearchViewMode.LIST) }
             instrumentation.waitForIdleSync()
             log("PASS rendered global search in row/list mode preserves all seven channels")
             for (repo in listOf(second, registry.repository("emby:audit-emby:user"), plex)) {

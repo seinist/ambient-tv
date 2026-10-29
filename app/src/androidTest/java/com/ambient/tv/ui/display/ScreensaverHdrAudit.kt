@@ -4,6 +4,7 @@ import android.app.Instrumentation
 import android.content.pm.ActivityInfo
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
+import com.ambient.tv.data.local.ClockSettings
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.common.AppScreensaver
 import com.ambient.tv.ui.theme.AmbientTvTheme
@@ -23,7 +24,7 @@ internal class ScreensaverHdrAudit(private val instrumentation: Instrumentation,
                 SideEffect { state = hdr }
                 CompositionLocalProvider(LocalUiHdrState provides hdr) {
                     AmbientTvTheme {
-                        AppScreensaver(scene.value, true, true, true, false, 30, 60, "balanced")
+                        AppScreensaver(scene.value, true, true, ClockSettings(), false, 30, 60, "balanced")
                     }
                 }
             }

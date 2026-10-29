@@ -72,6 +72,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CollectionsBookmark
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Recommend
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -188,6 +189,7 @@ fun SectionScreen(
     ) { viewModel.refreshAfterEntry() }
     DisposableEffect(viewModel) { onDispose { viewModel.captureFocusForReturn() } }
     val uiState by viewModel.uiState.collectAsState()
+    val refreshing by viewModel.refreshing.collectAsState()
     ReportSidebarContentReady(uiState !is SectionUiState.Loading)
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
     val entryRefreshGeneration = remember(viewModel) { refreshGeneration }
@@ -248,6 +250,8 @@ fun SectionScreen(
                 onSetGridColumns = viewModel::setGridColumns,
                 onSetListRows = viewModel::setListRows,
                 onSelectLetter = viewModel::selectLetter,
+                onRefresh = viewModel::reload,
+                refreshing = refreshing,
             )
         }
 
@@ -275,6 +279,8 @@ internal fun SectionContent(
     onSetListRows: (Int) -> Unit,
     onSelectLetter: (Char?) -> Unit,
     sectionKey: String? = null,
+    onRefresh: () -> Unit = {},
+    refreshing: Boolean = false,
 ) {
     val filterFocusState = rememberFilterFocusState(sectionKey, state.page)
     var showOptions by remember { mutableStateOf(false) }
@@ -372,6 +378,8 @@ internal fun SectionContent(
                         showOptions = true
                     },
                     optionsModifier = Modifier.focusRequester(optionsFocusRequester),
+                    onRefresh = { keepControlFocus(); onRefresh() },
+                    refreshing = refreshing,
                     filterFocus = filterFocus,
                     filterUp = focusChain.chips,
                     onSetSort = { keepControlFocus(); onSetSort(it) },
@@ -483,6 +491,8 @@ private fun SectionHeader(
     system: com.ambient.tv.ui.common.MediaSystem,
     focusChain: com.ambient.tv.ui.common.PageFocusChain,
     optionsModifier: Modifier = Modifier,
+    onRefresh: () -> Unit = {},
+    refreshing: Boolean = false,
     filterFocus: FocusRequester? = null,
     filterUp: FocusRequester? = null,
     onSetSort: (SectionSort) -> Unit = {},
@@ -498,6 +508,7 @@ private fun SectionHeader(
         PageHeader(focusChain = focusChain, actions = {
             // Jumps straight to the owning system's overview, sparing the detour through the sidebar.
             TvChip(stringResource(R.string.nav_overview), icon = Icons.Filled.Home, iconOnly = true, onClick = onOpenOverview)
+            TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, iconOnly = true, loading = refreshing, onClick = onRefresh)
             ViewOptionsChip(
                 if (com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown || state.page != SectionPage.LIBRARY) 0 else state.libraryFilters.activeCount,
                 onOpenOptions, optionsModifier,

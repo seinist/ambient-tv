@@ -2,6 +2,7 @@ package com.ambient.tv.ui.browse
 
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.deviceDp
+import androidx.activity.compose.BackHandler
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
@@ -25,34 +25,40 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.SoftViewChange
-import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.ContentRatingBadge
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -61,10 +67,20 @@ import com.ambient.tv.ui.common.MediaArtworkWithStreamIcons
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.pageContentUp
 import androidx.compose.foundation.focusGroup
-import com.ambient.tv.ui.common.PageUtilityBar
+import com.ambient.tv.ui.common.FilterBar
+import com.ambient.tv.ui.common.LocalFilterBarSetting
+import com.ambient.tv.ui.common.LocalFilterFocusState
+import com.ambient.tv.ui.common.PanelOption
+import com.ambient.tv.ui.common.ViewOption
+import com.ambient.tv.ui.common.ViewOptionsChip
+import com.ambient.tv.ui.common.ViewOptionsPanel
+import com.ambient.tv.ui.common.ViewPreview
+import com.ambient.tv.ui.common.fillWindowHeight
+import com.ambient.tv.ui.common.leftKeyAction
+import com.ambient.tv.ui.common.pageHeaderTop
+import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.SkeletonTile
 import com.ambient.tv.ui.common.StatePanel
-import com.ambient.tv.ui.common.SortOrderToggle
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
@@ -91,69 +107,182 @@ fun FilteredBrowseScreen(
     viewModel: FilteredBrowseViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val refreshing by viewModel.refreshing.collectAsState()
+    val refreshError by viewModel.refreshError.collectAsState()
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(viewModel.reconnectSources, viewModel::load)
     val uhdScale = rememberUhdScale()
-    Box(Modifier.fillMaxSize()) {
-        when (val value = state) {
-            FilteredBrowseUiState.Loading -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(deviceDp(184.dp, 144.dp) * uhdScale),
-                contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = screenGutter() + 56.dp, bottom = 36.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) { items(18) { SkeletonTile() } }
-            is FilteredBrowseUiState.Error -> Box(Modifier.fillMaxSize().padding(top = screenGutter() + 38.dp), contentAlignment = Alignment.Center) {
-                StatePanel(
-                    title = stringResource(R.string.library_load_failed),
-                    body = value.message.ifBlank { stringResource(R.string.error_generic) },
-                    actionLabel = stringResource(R.string.home_retry),
-                    onAction = viewModel::load,
-                )
-            }
-            is FilteredBrowseUiState.Loaded -> Column(Modifier.fillMaxSize().padding(top = screenGutter() + 44.dp)) {
-                BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending))
-                BrowseFocusInitialTarget(value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
-                    ?: value.items.firstOrNull()?.ratingKey)
-                val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-                val orderFocus = remember { FocusRequester() }
-                PageHeader(
-                    focusChain = focusChain,
-                    // The utility bar above already owns the page clock.
-                    showClock = false,
-                    modifier = Modifier.padding(horizontal = screenGutter(), vertical = 8.dp),
-                    actions = {
-                        val grid = value.viewMode == BrowseViewMode.GRID
-                        TvChip(if (value.sort == BrowseSort.TITLE) stringResource(R.string.browse_sort_title) else stringResource(R.string.browse_sort_year), onClick = viewModel::cycleSort)
-                        TvChip(if (grid) stringResource(R.string.browse_view_list) else stringResource(R.string.browse_view_grid), icon = if (grid) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.GridView, iconOnly = true, onClick = viewModel::toggleViewMode)
-                    },
-                ) {
-                    Text(value.title, style = MaterialTheme.typography.headlineMedium)
-                    Text(stringResource(R.string.library_item_count, value.items.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val filterFocusState = rememberFilterFocusState(viewModel)
+    val filterFocus = remember { FocusRequester() }
+    val settingsFocus = remember { FocusRequester() }
+    val optionsFocus = remember { FocusRequester() }
+    var showOptions by remember(viewModel) { mutableStateOf(false) }
+    var restoreOptionsFocus by remember(viewModel) { mutableStateOf(false) }
+    var restoreSettingsFocus by rememberSaveable { mutableStateOf(false) }
+    val filterBarShown = LocalFilterBarSetting.current.shown
+    val loaded = state as? FilteredBrowseUiState.Loaded
+    BackHandler(enabled = showOptions) { showOptions = false }
+    LaunchedEffect(showOptions, restoreOptionsFocus) {
+        if (!showOptions && restoreOptionsFocus) {
+            repeat(3) {
+                withFrameNanos { }
+                if (runCatching { optionsFocus.requestFocus() }.getOrDefault(false)) {
+                    restoreOptionsFocus = false
+                    return@LaunchedEffect
                 }
-                SortOrderToggle(
-                    orders = browseSortOrders(value.sort),
-                    selectedKey = if (value.sortDescending) "DESCENDING" else "ASCENDING",
-                    onSelect = { viewModel.setSortDescending(it == "DESCENDING") },
-                    modifier = Modifier.padding(horizontal = screenGutter()),
-                    showTitle = true,
-                    up = focusChain.actions,
-                    focusRequester = orderFocus,
-                )
-                if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
-                } else Box(Modifier.fillMaxSize().pageContentUp(focusChain) { orderFocus }.focusGroup()) {
-                    SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
-                        if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
-                        else BrowseList(value, { onItemClick(it, value.sort) }, viewModel::onItemFocused)
+            }
+        }
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (restoreSettingsFocus) {
+                repeat(3) {
+                    withFrameNanos { }
+                    if (runCatching { settingsFocus.requestFocus() }.getOrDefault(false)) {
+                        restoreSettingsFocus = false
+                        return@repeatOnLifecycle
                     }
                 }
             }
         }
-        PageUtilityBar(
-            onBack = onBack,
-            onSettings = onOpenSettings,
-            leftNavigatesBack = leftNavigatesBack,
-            modifier = Modifier.align(Alignment.TopCenter),
-        )
+    }
+    val sorts = listOf(
+        PanelOption(BrowseSort.TITLE.name, stringResource(R.string.browse_sort_title)),
+        PanelOption(BrowseSort.YEAR.name, stringResource(R.string.browse_sort_year)),
+    )
+    val selectSort: (String) -> Unit = {
+        filterFocusState.keepControls()
+        viewModel.setSort(BrowseSort.valueOf(it))
+    }
+    val selectSortOrder: (String) -> Unit = {
+        filterFocusState.keepControls()
+        viewModel.setSortDescending(it == "DESCENDING")
+    }
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                PageHeader(
+                    focusChain = focusChain,
+                    modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), top = pageHeaderTop(24.dp), bottom = 10.dp),
+                    actions = {
+                        TvChip(
+                            text = stringResource(R.string.back),
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            iconOnly = true,
+                            modifier = if (leftNavigatesBack) Modifier.leftKeyAction(onBack) else Modifier,
+                            onClick = onBack,
+                        )
+                        TvChip(
+                            text = stringResource(R.string.nav_settings),
+                            icon = Icons.Filled.Settings,
+                            iconOnly = true,
+                            modifier = Modifier.focusRequester(settingsFocus),
+                            onClick = { filterFocusState.keepControls(); restoreSettingsFocus = true; onOpenSettings() },
+                        )
+                        TvChip(
+                            text = stringResource(R.string.action_reload),
+                            icon = Icons.Filled.Refresh,
+                            iconOnly = true,
+                            loading = refreshing || state is FilteredBrowseUiState.Loading,
+                            onClick = { filterFocusState.keepControls(); viewModel.refresh() },
+                        )
+                        if (loaded != null) ViewOptionsChip(
+                            activeCount = 0,
+                            modifier = Modifier.focusRequester(optionsFocus),
+                            onClick = {
+                                filterFocusState.keepControls()
+                                restoreOptionsFocus = true
+                                showOptions = true
+                            },
+                        )
+                    },
+                ) {
+                    Text(loaded?.title ?: viewModel.title, style = MaterialTheme.typography.headlineMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (loaded != null) Text(stringResource(R.string.library_item_count, loaded.items.size),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (refreshError != null && loaded != null) Text(
+                    stringResource(R.string.library_load_failed),
+                    modifier = Modifier.padding(horizontal = screenGutter(), vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                if (loaded != null && filterBarShown) FilterBar(
+                    groups = emptyList(),
+                    onSelect = { _, _ -> },
+                    sorts = sorts,
+                    selectedSort = loaded.sort.name,
+                    onSort = selectSort,
+                    sortOrders = browseSortOrders(loaded.sort),
+                    selectedSortOrder = if (loaded.sortDescending) "DESCENDING" else "ASCENDING",
+                    onSortOrder = selectSortOrder,
+                    modifier = Modifier.padding(horizontal = screenGutter()),
+                    focusRequester = filterFocus,
+                    up = focusChain.actions,
+                )
+                when (val value = state) {
+                    FilteredBrowseUiState.Loading -> LazyVerticalGrid(
+                        columns = GridCells.Adaptive(deviceDp(184.dp, 144.dp) * uhdScale),
+                        contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 14.dp, bottom = 36.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) { items(18) { SkeletonTile() } }
+                    is FilteredBrowseUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        StatePanel(
+                            title = stringResource(R.string.library_load_failed),
+                            body = value.message.ifBlank { stringResource(R.string.error_generic) },
+                            actionLabel = stringResource(R.string.home_retry),
+                            onAction = viewModel::load,
+                        )
+                    }
+                    is FilteredBrowseUiState.Loaded -> {
+                        BrowseFocusContentIdentity(listOf(viewModel, value.viewMode, value.sort, value.sortDescending))
+                        BrowseFocusInitialTarget(value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
+                            ?: value.items.firstOrNull()?.ratingKey)
+                        if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+                        } else Box(Modifier.fillMaxSize()
+                            .focusRestorer()
+                            .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.actions }
+                            .focusGroup()) {
+                            val onFocused: (MediaItem) -> Unit = {
+                                if (!showOptions) filterFocusState.enterContent()
+                                viewModel.onItemFocused(it)
+                            }
+                            SoftViewChange(value.viewMode, Modifier.fillMaxSize()) {
+                                if (value.viewMode == BrowseViewMode.GRID) BrowseGrid(value, { onItemClick(it, value.sort) }, onFocused)
+                                else BrowseList(value, { onItemClick(it, value.sort) }, onFocused)
+                            }
+                        }
+                    }
+                }
+            }
+            if (showOptions && loaded != null) {
+                Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+                Box(Modifier.align(Alignment.TopEnd)) {
+                    ViewOptionsPanel(
+                        views = listOf(
+                            ViewOption(BrowseViewMode.GRID.name, stringResource(R.string.browse_view_grid), ViewPreview.GRID),
+                            ViewOption(BrowseViewMode.LIST.name, stringResource(R.string.browse_view_list), ViewPreview.LIST),
+                        ),
+                        selectedView = loaded.viewMode.name,
+                        onView = { filterFocusState.keepControls(); viewModel.setViewMode(BrowseViewMode.valueOf(it)) },
+                        showDensity = false,
+                        gridColumns = 6, listRows = 6,
+                        onGridColumns = {}, onListRows = {},
+                        sorts = sorts,
+                        selectedSort = loaded.sort.name,
+                        onSort = selectSort,
+                        sortOrders = browseSortOrders(loaded.sort),
+                        selectedSortOrder = if (loaded.sortDescending) "DESCENDING" else "ASCENDING",
+                        onSortOrder = selectSortOrder,
+                        onClose = { showOptions = false },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -170,8 +299,9 @@ private fun BrowseGrid(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     val index = remember(state.items, restoreKey) { state.items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = index)
     RegisterBrowseFocusGrid(gridState, remember(state.items) { state.items.map { it.ratingKey } })
+    val filterFocus = LocalFilterFocusState.current
     LaunchedEffect(restoreKey, state.items) {
-        if (restoreKey != null && index in state.items.indices && state.items[index].ratingKey == restoreKey) {
+        if (filterFocus?.allowContentAutoFocus != false && restoreKey != null && index in state.items.indices && state.items[index].ratingKey == restoreKey) {
             gridState.scrollToItem(index)
         }
     }
@@ -203,9 +333,10 @@ private fun BrowseList(state: FilteredBrowseUiState.Loaded, onClick: (String) ->
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = index)
     RegisterBrowseFocusList(listState, remember(state.items) { state.items.map { it.ratingKey } })
     val sharedFocusOwner = LocalBrowseFocusReturnState.current != null
+    val filterFocus = LocalFilterFocusState.current
     LaunchedEffect(sharedFocusOwner) {
         if (sharedFocusOwner) return@LaunchedEffect
-        if (initialFocusedKey != null && index in state.items.indices && state.items[index].ratingKey == initialFocusedKey) {
+        if (filterFocus?.allowContentAutoFocus != false && initialFocusedKey != null && index in state.items.indices && state.items[index].ratingKey == initialFocusedKey) {
             runCatching { requester.requestFocus() }
         }
     }

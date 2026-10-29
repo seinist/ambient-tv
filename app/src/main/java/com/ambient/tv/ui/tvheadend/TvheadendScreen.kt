@@ -22,6 +22,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import com.ambient.tv.ui.common.browseFocusTarget
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -137,11 +139,29 @@ fun TvheadendScreen(
     val recordingArt: (TvhDvrEntry) -> LiveTvArt? = { liveTvRecordingArt(it, events, channels, titleArt) }
     val seriesArt: (TvhAutoRec) -> LiveTvArt? = { liveTvSeriesArt(it, events, channels, titleArt) }
     val canEditTimers = state.capabilities.editTimers && !state.offline
+    val channelBrowser = state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE
+    val channelControls = rememberLiveTvBrowseControls(viewModel.browseState, "channels")
+    val guideControls = rememberLiveTvBrowseControls(viewModel.browseState, "guide")
+    val browseControls = if (state.tab == TvheadendTab.LIVE) channelControls else guideControls
+    val channelListing = rememberLiveTvChannelListing(channels, events, state.guideOptions)
+    val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
+    val filterModel = guideFilterModel(state.guideOptions, tags, viewModel::setGuideOptions)
+    // Crossfade keeps the previous tab mounted briefly. Each tab owns its requesters so
+    // an outgoing channel row cannot register the incoming page's Up target or filter field.
+    val pageFocusChains = remember(viewModel.browseState) {
+        TvheadendTab.entries.associateWith { com.ambient.tv.ui.common.PageFocusChain() }
+    }
+    val pageFocusChain = pageFocusChains.getValue(state.tab)
+    val showBrowseOptions = channelBrowser && state.configured && browseControls.showOptions
+    LaunchedEffect(state.tab) {
+        if (state.tab != TvheadendTab.LIVE) channelControls.leavePage()
+        if (state.tab != TvheadendTab.GUIDE) guideControls.leavePage()
+    }
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
     ReportSidebarContentReady(!state.loading)
     if (onBack != null) {
-        BackHandler(enabled = state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
+        BackHandler(enabled = !showBrowseOptions && state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
     }
     val tokens = LocalUiTokens.current
     val tabFocusRequesters = remember {
@@ -194,11 +214,16 @@ fun TvheadendScreen(
         }
     }
 
-    CompositionLocalProvider(LocalTvhPlaybackSource provides state.source.id) {
+    CompositionLocalProvider(
+        LocalTvhPlaybackSource provides state.source.id,
+        com.ambient.tv.ui.common.LocalFilterFocusState provides browseControls.filterFocusState,
+    ) {
     Box(Modifier.fillMaxSize()) {
         PageBackground(Modifier.fillMaxSize())
         Column(
-            modifier = Modifier.fillMaxSize().padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
+            modifier = Modifier.fillMaxSize()
+                .focusProperties { onEnter = { if (showBrowseOptions) cancelFocusChange() } }.focusGroup()
+                .padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
             verticalArrangement = Arrangement.spacedBy(tokens.itemGap * 1.5f),
         ) {
         TvheadendHeader(
@@ -206,6 +231,10 @@ fun TvheadendScreen(
             tabFocusRequesters = tabFocusRequesters,
             onTab = onSelectTab ?: viewModel::selectTab,
             onRefresh = viewModel::refresh,
+            focusChain = pageFocusChain,
+            browseControls = browseControls.takeIf { channelBrowser && state.configured },
+            activeFilterCount = filterModel.activeCount,
+            visibleChannelCount = channelListing.visibleChannels.size.takeIf { channelBrowser },
         )
 
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
@@ -258,6 +287,9 @@ fun TvheadendScreen(
                         browseState = viewModel.browseState,
                         options = state.guideOptions,
                         onOptions = viewModel::setGuideOptions,
+                        controls = channelControls,
+                        pageFocusChain = pageFocusChains.getValue(tab),
+                        listing = channelListing,
                         channelList = true,
                         canWatch = !state.offline,
                         refreshing = state.refreshing,
@@ -276,6 +308,9 @@ fun TvheadendScreen(
                     TvheadendTab.GUIDE -> Guide(
                         options = state.guideOptions,
                         onOptions = viewModel::setGuideOptions,
+                        controls = guideControls,
+                        pageFocusChain = pageFocusChains.getValue(tab),
+                        listing = channelListing,
                         onWatch = watchChannel,
                         canWatch = !state.offline,
                         refreshing = state.refreshing,
@@ -326,6 +361,7 @@ fun TvheadendScreen(
             }
         }
         }
+        if (showBrowseOptions) LiveTvBrowseOptionsPanel(browseControls, filterModel)
     }
 
     val reminders by viewModel.reminders.collectAsState()
@@ -434,13 +470,16 @@ fun TvheadendScreen(
 }
 
 @Composable
-private fun TvheadendHeader(
+internal fun TvheadendHeader(
     state: TvheadendUiState,
     tabFocusRequesters: Map<TvheadendTab, FocusRequester>,
     onTab: (TvheadendTab) -> Unit,
     onRefresh: () -> Unit,
+    focusChain: com.ambient.tv.ui.common.PageFocusChain,
+    browseControls: LiveTvBrowseControls? = null,
+    activeFilterCount: Int = 0,
+    visibleChannelCount: Int? = null,
 ) {
-    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     @Composable fun Tab(tab: TvheadendTab, label: Int, icon: androidx.compose.ui.graphics.vector.ImageVector) {
         val requester = tabFocusRequesters.getValue(tab)
         TvChip(stringResource(label), selected = state.tab == tab, modifier = Modifier.focusRequester(requester).then(if (state.tab == tab) Modifier.focusRequester(focusChain.selectedChip) else Modifier), icon = icon, onClick = { onTab(tab) })
@@ -448,7 +487,14 @@ private fun TvheadendHeader(
     // The tabs sit in a chip row under the title like every other provider page; Reload stays a header action.
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     PageHeader(focusChain = focusChain, actions = {
-        TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh, loading = state.loading || state.refreshing, iconOnly = true, onClick = onRefresh)
+        TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
+            loading = state.loading || state.refreshing, enabled = !state.actionInProgress, iconOnly = true,
+            onClick = { browseControls?.filterFocusState?.keepControls(); onRefresh() })
+        if (browseControls != null) com.ambient.tv.ui.common.ViewOptionsChip(
+            activeCount = if (com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown) 0 else activeFilterCount,
+            onClick = browseControls::openOptions,
+            modifier = Modifier.focusRequester(browseControls.optionsFocus),
+        )
     }) {
         val tabTitle = stringResource(
             when (state.tab) {
@@ -463,7 +509,9 @@ private fun TvheadendHeader(
         else com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.entries.firstOrNull { it.name.equals(state.source.system, true) } ?: com.ambient.tv.ui.common.MediaSystem.TVHEADEND, title = tabTitle)
         state.dashboard?.let {
             Text(
-                stringResource(R.string.tvh_server_status, it.serverInfo.name, it.channels.size),
+                if (visibleChannelCount != null && visibleChannelCount != it.channels.size)
+                    "${it.serverInfo.name} · ${stringResource(R.string.guide_count_filtered, visibleChannelCount, it.channels.size)}"
+                else stringResource(R.string.tvh_server_status, it.serverInfo.name, visibleChannelCount ?: it.channels.size),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -700,15 +700,17 @@ fun TvChip(
     val uiSounds = LocalUiSoundPlayer.current
     val activate = rememberUiSoundAction(enabled = clickable, onClick = onClick)
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        if (iconOnly && icon != null) {
+        if (iconOnly && (icon != null || leadingContent != null)) {
             val buttonModifier = modifier
                 .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
                 .semantics { contentDescription = text }
             val glyph: @Composable () -> Unit = {
                 if (loading) {
                     ButtonProgress(androidx.compose.material3.LocalContentColor.current, Modifier.size(20.dp))
+                } else if (leadingContent != null) {
+                    leadingContent()
                 } else {
-                    androidx.compose.material3.Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                    androidx.compose.material3.Icon(checkNotNull(icon), contentDescription = null, modifier = Modifier.size(20.dp))
                 }
             }
             if (selected) {

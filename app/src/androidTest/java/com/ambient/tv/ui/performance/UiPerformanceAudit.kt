@@ -346,7 +346,8 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
             fun draw(bounded: Boolean): android.graphics.Bitmap {
                 main { activity.setContent {
                     Box(Modifier.fillMaxSize().homeHeroAmbient(Color(0xFFFFB000), Color(0xFF5080FF),
-                        { Color(0xFFCC4488) }, style, { phase }, 1f, 1f, 1.32f, boundedPaint = bounded))
+                        { Color(0xFFCC4488) }, style, { phase }, 1f, 1f, 1.32f,
+                        heroHeight = 190.dp, boundedPaint = bounded))
                 } }
                 instrumentation.waitForIdleSync()
                 Thread.sleep(250)
@@ -385,7 +386,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
         val childDraws = AtomicInteger()
         main { activity.setContent {
             Box(Modifier.fillMaxSize().drawWithContent { passes.incrementAndGet(); drawContent() }
-                .fadeRowsBehindHomeHero(true).drawWithContent { childDraws.incrementAndGet(); drawContent(); drawRect(Color.Blue) })
+                .fadeRowsBehindHomeHero(true, heroHeight = 190.dp).drawWithContent { childDraws.incrementAndGet(); drawContent(); drawRect(Color.Blue) })
         } }
         await("mask frame") { passes.get() > 0 }
         main { check(passes.get() == childDraws.get()) { "Mask drew its child tree multiple times" } }
@@ -400,7 +401,7 @@ internal class UiPerformanceAudit(private val instrumentation: Instrumentation, 
                     Box(Modifier.fillMaxSize().drawWithContent {
                         drawRect(Color.Black)
                         drawContent()
-                    }.fadeRowsBehindHomeHero(true).drawWithContent {
+                    }.fadeRowsBehindHomeHero(true, heroHeight = 190.dp).drawWithContent {
                         parentDraws.incrementAndGet()
                         drawContent()
                     }) {
