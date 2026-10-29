@@ -2,6 +2,9 @@ package com.ambient.tv.data.radio
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class RadioBrowserStationDto(
@@ -80,5 +83,31 @@ internal fun RadioBrowserStationDto.toRadioStation(): RadioStation? {
         isHls = hls != 0,
         votes = votes.coerceAtLeast(0),
         clickCount = clickCount.coerceAtLeast(0),
+    )
+}
+
+@Serializable
+data class RadioBrowserFacetDto(
+    val name: String = "",
+    @SerialName("stationcount") val stationCount: JsonElement? = null,
+    @SerialName("iso_639") val languageCode: String? = null,
+)
+
+data class RadioFacet(
+    val value: String,
+    val label: String,
+    val stationCount: Int,
+)
+
+internal fun RadioBrowserFacetDto.toRadioFacet(label: String = name): RadioFacet? {
+    val value = name.trim()
+    if (value.isBlank()) return null
+    val count = stationCount?.jsonPrimitive?.let { primitive ->
+        primitive.intOrNull ?: primitive.content.toIntOrNull()
+    } ?: 0
+    return RadioFacet(
+        value = value,
+        label = label.trim().ifBlank { value },
+        stationCount = count.coerceAtLeast(0),
     )
 }
