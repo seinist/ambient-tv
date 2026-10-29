@@ -297,7 +297,41 @@ private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String = 
             .takeIf(String::isNotBlank)
     }.getOrNull() ?: facet.name
     RadioSection.LANGUAGES -> facet.name.replaceFirstChar { it.titlecase() }
+    RadioSection.GENRES -> radioGenreDisplayName(facet.name)
     else -> facet.name
+}
+
+internal fun radioGenreDisplayName(raw: String): String {
+    val compact = raw.trim().replace(Regex("\\s+"), " ")
+    if (compact.isBlank()) return compact
+    val known = mapOf(
+        "r&b" to "R&B",
+        "rnb" to "R&B",
+        "edm" to "EDM",
+        "dnb" to "DnB",
+        "drum and bass" to "Drum & Bass",
+        "hip hop" to "Hip-Hop",
+        "hip-hop" to "Hip-Hop",
+        "rock n roll" to "Rock ’n’ Roll",
+        "rock'n'roll" to "Rock ’n’ Roll",
+        "rock and roll" to "Rock & Roll",
+        "lofi" to "Lo-Fi",
+        "lo-fi" to "Lo-Fi",
+        "kpop" to "K-Pop",
+        "k-pop" to "K-Pop",
+        "jpop" to "J-Pop",
+        "j-pop" to "J-Pop",
+    )
+    known[compact.lowercase()]?.let { return it }
+    return compact.split(' ').joinToString(" ") { word ->
+        if (word.length <= 4 && word.all { it.isDigit() || it == 's' || it == 'S' }) {
+            word.lowercase()
+        } else {
+            word.split('-').joinToString("-") { part ->
+                part.replaceFirstChar { it.titlecase() }
+            }
+        }
+    }
 }
 
 @Composable
