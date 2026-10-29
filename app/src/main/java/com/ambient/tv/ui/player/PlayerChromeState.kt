@@ -26,12 +26,13 @@ import com.ambient.tv.ui.common.PlayerPanelNavigation
 
 /** UI lifetime is the fullscreen player, not its current decoder or media item. */
 class PlayerChromeState(initialZapOsd: Boolean = false) {
-    val visible = mutableStateOf(true)
+    internal val osd = PlayerOsdController(initialZapOsd)
+    val visible = osd.visible
     /**
      * The OSD was opened by entering live TV or by a channel change. Up/Down keep changing channels until another key
      * is pressed or the OSD hides, so zapping through channels shows each one's info.
      */
-    val shownByZap = mutableStateOf(initialZapOsd)
+    val shownByZap = osd.shownByZap
     /** The active engine's OSD and panel content and remote handling; see [PersistentPlayerOverlays]. */
     internal val panelModel = mutableStateOf<PlayerPanelModel?>(null)
     internal val osdModel = mutableStateOf<PlayerOsdSpec?>(null)
@@ -78,7 +79,10 @@ fun PersistentPlayerChrome(
                     }
                     return@onPreviewKeyEvent true
                 }
-                if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && it.key !in ZAP_KEYS) chrome.shownByZap.value = false
+                // OK must see the zap flag before claiming the compact controls; otherwise
+                // that first press would reach Play/Pause on the timeline/info target.
+                if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                    it.key !in ZAP_KEYS && it.key !in CONFIRM_KEYS) chrome.shownByZap.value = false
                 changingItem && it.key != Key.Back && it.key != Key.MediaStop
             }
             .pointerInput(changingItem) {
@@ -112,3 +116,4 @@ fun rememberPlayerSeekFocus(): FocusRequester =
 
 /** Keys that change the live channel while the OSD is hidden or was opened by a channel change. */
 private val ZAP_KEYS = setOf(Key.DirectionUp, Key.DirectionDown, Key.ChannelUp, Key.ChannelDown, Key.MediaNext, Key.MediaPrevious)
+private val CONFIRM_KEYS = setOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter)

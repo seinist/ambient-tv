@@ -170,11 +170,18 @@ private fun ChapterNotice(timeline: PlaybackTimeline, chapter: VideoChapter, onD
 internal fun CurrentChapterLabel(positionMs: Long, modifier: Modifier = Modifier) {
     val navigation = LocalPlaybackNavigation.current ?: return
     if (navigation.timeline.chapters.none { it.meaningfulTitle != null }) return
+    val osd = LocalPlayerChromeState.current?.osd
+    val handheld = LocalHandheldUi.current
     val title = navigation.timeline.chapterAt(positionMs)?.meaningfulTitle
     Text(title?.let { "● $it" }.orEmpty(), color = Color.White.copy(alpha = 0.9f), maxLines = 1, style = MaterialTheme.typography.bodyMedium,
         modifier = modifier.clip(RoundedCornerShape(6.dp))
             .focusProperties { canFocus = false }
-            .then(if (title != null) Modifier.clickable(role = Role.Button) { navigation.interact(); navigation.chaptersOpen = true } else Modifier)
+            .then(if (title != null) Modifier.clickable(role = Role.Button) {
+                navigation.interact()
+                // The chapter strip lives below the action bar and must be visible before focus enters it.
+                if (!handheld) osd?.expand()
+                navigation.chaptersOpen = true
+            } else Modifier)
             .padding(horizontal = 2.dp, vertical = 1.dp))
 }
 
@@ -194,7 +201,12 @@ fun ChapterButton() {
 @Composable
 internal fun ChapterStrip() {
     val navigation = LocalPlaybackNavigation.current ?: return
+    val osd = LocalPlayerChromeState.current?.osd
+    val acceptsInput = osd?.let { it.expanded && it.show } ?: true
     val open = navigation.chaptersOpen && navigation.timeline.chapters.isNotEmpty()
+    LaunchedEffect(acceptsInput) {
+        if (!acceptsInput) navigation.chaptersOpen = false
+    }
     // Retained through the fold-up so the row does not empty mid-animation.
     var shownChapters by remember { mutableStateOf(navigation.timeline.chapters) }
     if (open) shownChapters = navigation.timeline.chapters
@@ -242,14 +254,17 @@ internal fun ChapterStrip() {
                 val title = chapter.meaningfulTitle ?: stringResource(R.string.player_chapter_number, index + 1)
                 val frame = timeline.chapterFrame(chapter)
                 val choose = {
-                    navigation.interact()
-                    navigation.onChapterSeek(chapter.startMs)
-                    runCatching { controlFocus?.seekTarget()?.requestFocus() }
-                    navigation.chaptersOpen = false
+                    if (acceptsInput) {
+                        navigation.interact()
+                        navigation.onChapterSeek(chapter.startMs)
+                        runCatching { controlFocus?.seekTarget()?.requestFocus() }
+                        navigation.chaptersOpen = false
+                    }
                 }
                 Column(
                     Modifier.width(200.dp)
                         .then(if (index == selected) Modifier.focusRequester(initialFocus) else Modifier)
+                        .focusProperties { canFocus = acceptsInput }
                         .graphicsLayer { scaleX = scale; scaleY = scale }
                         .onFocusChanged { focused = it.isFocused }
                         .clip(shape).background(Color.Black.copy(alpha = if (focused) 0.72f else 0.5f))
@@ -258,7 +273,7 @@ internal fun ChapterStrip() {
                             index == selected -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
                             else -> Color.White.copy(alpha = 0.12f)
                         }, shape)
-                        .activateOnTvKey { choose() }.clickable(role = Role.Button) { choose() },
+                        .activateOnTvKey { choose() }.clickable(enabled = acceptsInput, role = Role.Button) { choose() },
                 ) {
                     if (frame != null) TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                     Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -272,7 +287,9 @@ internal fun ChapterStrip() {
         }
         LaunchedEffect(Unit) {
             delay(60)
-            runCatching { initialFocus.requestFocus() }
+            if (navigation.chaptersOpen && (osd == null || osd.show && osd.expanded)) {
+                runCatching { initialFocus.requestFocus() }
+            }
         }
     }
 }

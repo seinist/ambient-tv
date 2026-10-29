@@ -568,6 +568,21 @@ This applies to TVHeadend and IPTV with continuous MPEG-TS streams; HLS (`.m3u8`
 
 The panel opens from the player's settings button. Changes are remembered for the current video automatically; "Save / load configuration" stores them for all videos or all videos of the same width. Rows hide when the running engine cannot apply them.
 
+**Compact OSD on television:** Playback starts and the first OK opens the shared title/artwork, timing and seek-bar display with its button bar collapsed. Seeking uses the same display with the brief position preview. The clock and technical information follow their existing settings.
+
+| Input | Behaviour |
+| --- | --- |
+| OK while the OSD is hidden | Open compact controls without also pausing. |
+| OK on the seek bar | Play/pause; first confirm and resume an active seek preview. |
+| Left/Right on the seek bar | Seek with preview and acceleration while held. |
+| Down from the seek bar or channel information | Expand the button bar and restore its last-used action, initially Play/Pause. |
+| Up from the button bar | Return to compact controls. Up on the seek bar keeps focus there. |
+| Back | Dismiss the OSD; another press during its animation only finishes dismissal. Once fully hidden, the Stop/Minimize preference applies. |
+
+Closing an expanded bar slides it down for about 250 ms. Information stops at the compact position, remains briefly and then fades; an already compact display fades directly. New input can interrupt dismissal. The configured OSD timeout applies to controls and seek feedback, and paused playback keeps the OSD visible. Closing a settings panel restores the expanded bar and its originating button.
+
+Live TV without a seekable timeline uses channel information as its focus target. Automatic channel information keeps Up/Down available for zapping until OK claims the OSD. Touch controls retain directly accessible buttons; tapping the timeline still seeks to the selected position.
+
 ### 7.1 Playback settings menu
 
 | Entry | Options / values | Shown when |

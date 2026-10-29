@@ -29,7 +29,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.focusable
 import androidx.activity.compose.BackHandler
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -56,9 +55,7 @@ import com.ambient.tv.ui.common.PlayerPanelEntry
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
-import com.ambient.tv.ui.common.PLAYER_CONTROLS_TIMEOUT_MS
 import com.ambient.tv.ui.player.TvPlayerSeekBar
-import com.ambient.tv.ui.player.PlayerSeekModeBar
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
@@ -73,6 +70,13 @@ import com.ambient.tv.ui.player.OsdKeyTarget
 
 @Composable
 fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = hiltViewModel()) {
+    com.ambient.tv.ui.player.PersistentPlayerChrome(viewModel) {
+        SpotifyPlayerContent(onBack, viewModel)
+    }
+}
+
+@Composable
+private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by viewModel.state.collectAsState()
@@ -109,18 +113,16 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
         audioReactive && !pcmTapAvailable -> "cover"
         else -> configuredVisualizer
     }
-    var controlsVisible by remember { mutableStateOf(true) }
-    com.ambient.tv.ui.player.SleepWarningKeyGate.ReportPlayerChrome(controlsVisible)
-    var seekModeVersion by remember { mutableIntStateOf(0) }
-    var seekModeVisible by remember { mutableStateOf(false) }
+    var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
+    val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
     com.ambient.tv.ui.common.OperationFeedbackScope(
         viewModel.feedback, "spotify:player", controlsVisible && panel == UnifiedPlayerPanel.NONE,
     )
-    val seekFocusRequester = remember { FocusRequester() }
-    val primaryFocusRequester = remember { FocusRequester() }
-    val rootFocusRequester = remember { FocusRequester() }
+    val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
+    val primaryFocusRequester = com.ambient.tv.ui.player.rememberPlayerPlayFocus()
+    val rootFocusRequester = com.ambient.tv.ui.player.rememberPlayerEngineFocus()
     BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {
         when {
             handheld -> onBack()
@@ -145,16 +147,13 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
     )
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, state.durationMs)
-    fun seekInMode(deltaMs: Long) {
+    fun seekBy(deltaMs: Long) {
+        osd.interact()
         viewModel.seek(deltaMs)
-        seekModeVersion++
     }
-    LaunchedEffect(seekModeVersion) {
-        if (seekModeVersion > 0) {
-            seekModeVisible = true
-            kotlinx.coroutines.delay(PLAYER_CONTROLS_TIMEOUT_MS)
-            seekModeVisible = false
-        }
+    fun seekInMode(deltaMs: Long) {
+        seekBy(deltaMs)
+        osd.showSeekFeedback()
     }
     val projectMBrowser = rememberProjectMBrowser(viewModel.projectmPresetCategoryKey)
     CompositionLocalProvider(LocalProjectMBrowser provides projectMBrowser, LocalPlayerPanelNavigation provides panelNavigation) {
@@ -162,7 +161,7 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
         // Shared remote handling (PlayerOsdKeys) for music: −10 s / +30 s jumps, tracks for next/previous.
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.MUSIC, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekModeVisible),
+            OsdKeyState(OsdContent.MUSIC, controlsVisible && !osd.seekFeedback && !osd.closing, panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(viewModel.seekJumpMs, backMs = 10_000, forwardMs = 30_000, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun isPlaying() = state.playing
@@ -172,10 +171,10 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                 // Without a picture there is nothing left to show: Stop also leaves the player.
                 override fun stop() { viewModel.stop(); onBack() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
-                    if (revealOsd) { viewModel.seek(deltaMs); controlsVisible = true } else seekInMode(deltaMs)
+                    if (revealOsd) { seekBy(deltaMs); osd.reveal() } else seekInMode(deltaMs)
                 }
-                override fun showOsd() { controlsVisible = true }
-                override fun hideSeekFeedback() { seekModeVisible = false }
+                override fun showOsd() { osd.reveal() }
+                override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() = Unit
                 override fun next() { viewModel.next() }
                 override fun previousTrack() { viewModel.previous() }
@@ -209,14 +208,15 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
         }
         if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
             com.ambient.tv.ui.common.PlayerTouchLayer(
-                onToggleControls = { if (panel == UnifiedPlayerPanel.NONE) controlsVisible = !controlsVisible },
+                onToggleControls = {
+                    if (panel == UnifiedPlayerPanel.NONE) {
+                        if (!controlsVisible || osd.closing) osd.reveal() else osd.close()
+                    }
+                },
                 onTogglePlayback = viewModel::toggle,
-                onSeekBack = { viewModel.seek(-viewModel.seekJumpMs) },
-                onSeekForward = { viewModel.seek(viewModel.seekJumpMs) },
+                onSeekBack = { seekBy(-viewModel.seekJumpMs) },
+                onSeekForward = { seekBy(viewModel.seekJumpMs) },
             )
-        }
-        if (!controlsVisible && seekModeVisible && state.durationMs > 0L) {
-            PlayerSeekModeBar(state.positionMs, state.durationMs, Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp))
         }
         PlayerOverlayVisibility(visible = controlsVisible) {
             ReferencePlayerOverlayBackground()
@@ -224,7 +224,7 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                 liveLabel = null,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 34.dp, end = deviceDp(48.dp, 16.dp)),
             )
-            ReferencePlayerBottomContent {
+            ReferencePlayerBottomContent(onTogglePlayback = viewModel::toggle) {
                 ReferencePlayerHeader(
                     title = track?.name ?: stringResource(R.string.spotify_connect_default_title),
                     artworkUrl = art,
@@ -240,8 +240,8 @@ fun SpotifyPlayerScreen(onBack: () -> Unit, viewModel: SpotifyPlayerViewModel = 
                     TvPlayerSeekBar(
                         state.positionMs,
                         state.durationMs,
-                        onSeekBy = viewModel::seek,
-                        onInteraction = { controlsVisible = true },
+                        onSeekBy = ::seekBy,
+                        onInteraction = osd::interact,
                         onTogglePlayback = viewModel::toggle,
                         onPlay = viewModel::play,
                         modifier = Modifier.focusRequester(seekFocusRequester),

@@ -71,13 +71,11 @@ import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerDropUpSelector
 import com.ambient.tv.ui.common.PlayerTouchLayer
 import com.ambient.tv.ui.player.PlayerBufferingSpinner
-import com.ambient.tv.ui.player.PlayerSeekModeBar
 import com.ambient.tv.ui.player.waitingForPlaybackPicture
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerIconButton
-import com.ambient.tv.ui.common.PLAYER_CONTROLS_TIMEOUT_MS
 import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.SleepTimerConfig
@@ -185,6 +183,7 @@ internal fun MpvTvheadendPlaybackSurface(
     LaunchedEffect(controller, audioOnlyContent) {
         if (audioOnlyContent) controller.audioSession.updateAudioOnly(true)
     }
+    val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val chromeState = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
@@ -202,8 +201,6 @@ internal fun MpvTvheadendPlaybackSurface(
     }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         com.ambient.tv.ui.player.acceleratedSeekStepMs(baseMs, event.nativeKeyEvent.repeatCount, snapshot.durationMs)
-    var seekFeedbackVersion by remember(controller) { mutableStateOf(0) }
-    var seekFeedbackVisible by remember(controller) { mutableStateOf(false) }
     var resizeKey by remember(playbackKey) { mutableStateOf("fit") }
     var aspectKey by remember(playbackKey) { mutableStateOf("auto") }
     var zoomFactor by remember(playbackKey) { mutableStateOf(1f) }
@@ -263,7 +260,6 @@ internal fun MpvTvheadendPlaybackSurface(
         playbackStarted = snapshot.isPlaying,
         panelNavigation = panelNavigation,
     )
-    LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controlsVisible, snapshot.isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem,
     ) { controlsVisible = it }
@@ -272,17 +268,18 @@ internal fun MpvTvheadendPlaybackSurface(
     val chapterNavigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     val osdKeys: (androidx.compose.ui.input.key.KeyEvent) -> Boolean = osdKeys@{ event ->
         // Timeshift owns Rewind/Forward while it buffers a live channel; media keys act with a panel open too.
-        if (source.isLive && handleTimeshiftMediaKey(event, snapshot.positionMs, seekJumpMs) { controlsVisible = true }) return@osdKeys true
+        if (source.isLive && handleTimeshiftMediaKey(event, snapshot.positionMs, seekJumpMs) { osd.reveal() }) return@osdKeys true
         // Shared remote handling (PlayerOsdKeys); only the actions below are MPV's own.
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
             OsdKeyState(
                 content = if (source.isLive) OsdContent.LIVE else OsdContent.RECORDING,
-                osdVisible = controlsVisible,
+                osdVisible = controlsVisible && !osd.seekFeedback && !osd.closing,
                 panelOpen = panel != UnifiedPlayerPanel.NONE,
-                seekFeedbackVisible = seekFeedbackVisible,
+                seekFeedbackVisible = osd.seekFeedback,
                 zapOsd = chromeState?.shownByZap?.value == true,
                 canSeekForward = true,
+                closing = osd.closing,
             ),
             OsdSeekSteps(seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
@@ -294,10 +291,10 @@ internal fun MpvTvheadendPlaybackSurface(
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     controller.seekBy(deltaMs)
-                    if (revealOsd) controlsVisible = true else seekFeedbackVersion++
+                    if (revealOsd) osd.reveal() else osd.showSeekFeedback()
                 }
-                override fun showOsd() { controlsVisible = true }
-                override fun hideSeekFeedback() { seekFeedbackVisible = false }
+                override fun showOsd() { osd.reveal() }
+                override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() { controller.seekTo(0L) }
                 override fun next() = Unit
                 override fun previousTrack() = Unit
@@ -320,7 +317,6 @@ internal fun MpvTvheadendPlaybackSurface(
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        if (!controlsVisible && !source.isLive && seekFeedbackVisible) PlayerSeekModeBar(snapshot.positionMs, snapshot.durationMs, Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp))
         PlayerTouchLayer(
             onToggleControls = { if (panel == UnifiedPlayerPanel.NONE) controlsVisible = !controlsVisible },
             onTogglePlayback = { controller.playPause(); controlsVisible = true },

@@ -568,6 +568,21 @@ Das gilt für TVHeadend und IPTV mit fortlaufenden MPEG-TS-Streams; HLS (`.m3u8`
 
 Das Panel öffnet über die Einstellungstaste im Player. Änderungen werden für das aktuelle Video automatisch gemerkt; „Konfiguration speichern / laden“ speichert sie für alle Videos oder alle Videos derselben Breite. Zeilen, die die laufende Engine nicht anwenden kann, sind ausgeblendet.
 
+**Kompaktes OSD auf dem Fernseher:** Beim Wiedergabestart und beim ersten OK erscheint die gemeinsame Anzeige mit Titel/Cover, Zeiten und Seekbar, zunächst ohne Buttonleiste. Spulen nutzt dieselbe Anzeige mit der kurzen Positionsvorschau. Die Uhr und technischen Informationen folgen ihren vorhandenen Einstellungen.
+
+| Eingabe | Verhalten |
+| --- | --- |
+| OK bei ausgeblendetem OSD | Kompakte Anzeige öffnen, ohne gleichzeitig zu pausieren. |
+| OK auf der Seekbar | Play/Pause; eine aktive Spulvorschau zuerst bestätigen und fortsetzen. |
+| Links/Rechts auf der Seekbar | Spulen mit Vorschau und Beschleunigung beim Gedrückthalten. |
+| Runter von der Seekbar oder Senderinfo | Buttonleiste ausfahren; zum zuletzt benutzten Button, anfangs Play/Pause. |
+| Hoch aus der Buttonleiste | Zur kompakten Anzeige zurück. Hoch auf der Seekbar lässt den Fokus dort. |
+| Zurück | OSD schließen; ein weiterer Druck während der Animation beendet nur das Ausblenden. Bei ganz ausgeblendetem OSD gilt die Einstellung Stoppen/Minimieren. |
+
+Beim Schließen der ausgefahrenen Leiste gleitet sie rund 250 ms nach unten. Der Infoblock bleibt an der kompakten Position kurz stehen und blendet danach aus; eine bereits kompakte Anzeige wird direkt ausgeblendet. Neue Eingaben können das Schließen unterbrechen. Die eingestellte OSD-Anzeigedauer gilt gemeinsam für die Anzeige und Spulrückmeldungen; bei Pause bleibt das OSD stehen. Einstellungs-Panels kehren zur ausgefahrenen Leiste und ihrem ursprünglichen Button zurück.
+
+Live-TV ohne spulbare Timeline nutzt die Senderinfo als Fokusziel. Automatische Senderinfos lassen Hoch/Runter weiter zappen, bis OK die OSD-Bedienung übernimmt. Die Touch-Bedienung behält direkt erreichbare Buttons; ein Tippen auf die Zeitleiste springt weiterhin zur gewählten Position.
+
 ### 7.1 Menü Wiedergabeeinstellungen
 
 | Eintrag | Optionen / Werte | Sichtbar wenn |

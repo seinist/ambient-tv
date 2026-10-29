@@ -74,7 +74,7 @@ class PlayerControlsAutoHideTest {
         rule.runOnIdle { navigation.close() }
         advance(4_000)
         rule.onNodeWithText("OSD").assertIsDisplayed()
-        // Dismissal stows the button bar first (380 ms), then fades out (220 ms).
+        // Allow the complete stow, hold and fade after the five-second deadline.
         advance(2_000)
         rule.onNodeWithText("OSD").assertDoesNotExist()
         rule.runOnIdle {
@@ -125,8 +125,27 @@ class PlayerControlsAutoHideTest {
         rule.runOnIdle { input.intValue++ }
         advance(4_000)
         rule.onNodeWithText("OSD").assertIsDisplayed()
-        // Dismissal stows the button bar first (380 ms), then fades out (220 ms).
+        // Allow the complete stow, hold and fade after the five-second deadline.
         advance(2_000)
         rule.onNodeWithText("OSD").assertDoesNotExist()
+    }
+
+    @Test fun compactInputRestartsSharedTimeoutAndExitReleasesLogicalVisibility() {
+        PlayerOsdTimeout.seconds = 5
+        val chrome = PlayerChromeState()
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            CompositionLocalProvider(LocalPlayerChromeState provides chrome) {
+                PlayerControlsAutoHide(chrome.visible.value, true, false) { chrome.visible.value = it }
+                PlayerOverlayVisibility(chrome.visible.value) { BasicText("OSD") }
+            }
+        }
+        advance(4_000)
+        rule.runOnIdle { chrome.osd.interact() }
+        advance(4_000)
+        rule.onNodeWithText("OSD").assertIsDisplayed()
+        advance(2_000)
+        rule.onNodeWithText("OSD").assertDoesNotExist()
+        rule.runOnIdle { assertEquals(false, chrome.visible.value) }
     }
 }

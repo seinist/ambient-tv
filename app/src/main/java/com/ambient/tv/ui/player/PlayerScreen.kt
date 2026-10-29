@@ -123,7 +123,6 @@ import com.ambient.tv.ui.common.RightPanelSectionTitle
 import com.ambient.tv.ui.common.RightPanelChoice
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
-import com.ambient.tv.ui.common.PLAYER_CONTROLS_TIMEOUT_MS
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.focusOnTvPointer
 import com.ambient.tv.ui.common.onTvPointerScroll
@@ -306,9 +305,9 @@ private fun PlayerContent(
     val videoDecoderErrorMessage = stringResource(R.string.player_error_video_decoder)
     val noUsableAudioMessage = stringResource(R.string.player_error_direct_play_no_audio)
 
+    val osd = rememberPlayerOsdController()
     var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
-    var seekFeedbackVisible by remember(exoPlayer) { mutableStateOf(false) }
     val panelNavigation = rememberPlayerPanelNavigation(exoPlayer)
     var panel by panelNavigation
     val audioSession = com.ambient.tv.ui.player.Media3AudioProcessing.session(exoPlayer)
@@ -343,7 +342,7 @@ private fun PlayerContent(
     }
     var currentTracks by remember(exoPlayer) { mutableStateOf(exoPlayer.currentTracks) }
     val performance = LocalPerformanceProfile.current
-    val chromeVisible = controlsVisible || seekFeedbackVisible || panel != UnifiedPlayerPanel.NONE
+    val chromeVisible = controlsVisible || panel != UnifiedPlayerPanel.NONE
     val segmentNavigation = LocalPlaybackNavigation.current
     androidx.compose.runtime.SideEffect {
         segmentNavigation?.chromeVisible = chromeVisible
@@ -373,7 +372,6 @@ private fun PlayerContent(
     var playerResizeMode by remember(exoPlayer) { mutableStateOf(initialVideoPresentation.playerResizeMode()) }
     var aspectPreset by remember(exoPlayer) { mutableStateOf(initialVideoPresentation.playerAspectPreset()) }
     var videoZoom by remember(exoPlayer) { mutableStateOf(initialVideoPresentation.zoom) }
-    var seekFeedbackVersion by remember(exoPlayer) { mutableIntStateOf(0) }
     var sleepTimer by com.ambient.tv.ui.player.rememberPlaybackSleepTimer(exoPlayer)
     val coroutineScope = rememberCoroutineScope()
 
@@ -417,7 +415,7 @@ private fun PlayerContent(
             else -> Long.MAX_VALUE
         }
         seek.seekBy(deltaMs, absoluteMax)
-        if (reveal) revealControls() else seekFeedbackVersion++
+        if (reveal) revealControls() else osd.showSeekFeedback()
     }
 
     val seekAcceleration = remember(seek) { SeekKeyAcceleration() }
@@ -426,7 +424,6 @@ private fun PlayerContent(
         return seekAcceleration.step(baseMs, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, durationMs)
     }
 
-    LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
 
     Media3VideoTrackGuard(exoPlayer) {
         viewModel.requestVideoFallback(exoPlayer.currentPosition, videoDecoderErrorMessage)
@@ -665,7 +662,8 @@ private fun PlayerContent(
         val restartTitle = { seek.seekTo(0L) }
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekFeedbackVisible),
+            OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
+                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
@@ -679,7 +677,7 @@ private fun PlayerContent(
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) { seekBy(deltaMs, reveal = revealOsd) }
                 override fun showOsd() { revealControls() }
-                override fun hideSeekFeedback() { seekFeedbackVisible = false }
+                override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() { restartTitle() }
                 override fun next() { (state.nextAudioTrack ?: state.nextVideoItem)?.ratingKey?.let(onPlayNext) }
                 override fun previousTrack() = Unit
@@ -732,7 +730,7 @@ private fun PlayerContent(
                 // A tap on the picture beside an open panel closes the panel first.
                 if (panel != UnifiedPlayerPanel.NONE) panelNavigation.close()
                 else {
-                    controlsVisible = !controlsVisible
+                    if (osd.closing) revealControls() else controlsVisible = !controlsVisible
                     if (controlsVisible) controlsGeneration++
                 }
             },
@@ -743,10 +741,6 @@ private fun PlayerContent(
             onSeekBack = { seekBy(-state.seekJumpMs); revealControls() },
             onSeekForward = { seekBy(state.seekJumpMs); revealControls() },
         )
-
-        if (!controlsVisible && seekFeedbackVisible) {
-            PlayerSeekModeBar(positionMs, durationMs, Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp))
-        }
 
         PlayerBufferingSpinner(
             visible = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
@@ -883,6 +877,7 @@ private fun PlayerControlsOverlay(
 ) {
     val context = LocalContext.current
     val playFocusRequester = rememberPlayerPlayFocus()
+    val osd = LocalPlayerChromeState.current?.osd
     val displayLocale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
     val audioOptions = remember(currentTracks, displayLocale) { trackOptions(currentTracks, C.TRACK_TYPE_AUDIO, displayLocale) }
     val subtitleOptions = remember(currentTracks) { trackOptions(currentTracks, C.TRACK_TYPE_TEXT) }
@@ -908,7 +903,7 @@ private fun PlayerControlsOverlay(
         loading = isBuffering,
         seekState = seekState,
         onSeekBarSeek = { deltaMs -> onSeekBy(deltaMs); onInteraction() },
-        onSeekBarInteraction = onInteraction,
+        onSeekBarInteraction = { if (osd != null) osd.interact() else onInteraction() },
         onSeekBarToggle = onTogglePlayback,
         onSeekBarPlay = { exoPlayer.play() },
         onSeekButton = { deltaMs -> onSeekBy(deltaMs); onInteraction() },
@@ -1075,6 +1070,9 @@ internal fun TvPlayerSeekBar(
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
 ) {
     val seekable = interactive && durationMs > 0L
+    val osd = LocalPlayerChromeState.current?.osd
+    val expandControls = rememberExpandPlayerControls()
+    val acceptsInput = seekable && osd?.show != false
     val playPauseFocus = LocalPlayerPlayPauseFocus.current
     val controlFocus = LocalPlayerControlFocus.current
     val timelineFocus = remember { FocusRequester() }
@@ -1087,8 +1085,8 @@ internal fun TvPlayerSeekBar(
     val verticalReturn = if (seekable && playPauseFocus != null) {
         Modifier.focusProperties {
             val button = controlFocus?.buttonTarget(playPauseFocus) ?: playPauseFocus
-            up = button
-            down = button
+            up = if (osd != null) FocusRequester.Cancel else button
+            down = if (osd != null) FocusRequester.Cancel else button
         }
     } else {
         Modifier
@@ -1111,18 +1109,29 @@ internal fun TvPlayerSeekBar(
     }
     val seekAcceleration = remember(seekState) { SeekKeyAcceleration() }
     var pendingTarget by remember { mutableStateOf<Long?>(null) }
+    var pendingDirection by remember { mutableIntStateOf(0) }
     var pointerTarget by remember { mutableStateOf<Long?>(null) }
     var lastPreview by remember { mutableStateOf<Long?>(null) }
     var previewVersion by remember { mutableIntStateOf(0) }
+    LaunchedEffect(acceptsInput) {
+        if (!acceptsInput) {
+            pendingTarget = null
+            pendingDirection = 0
+            pointerTarget = null
+            lastPreview = null
+        }
+    }
     LaunchedEffect(previewVersion) { if (pendingTarget == null) { kotlinx.coroutines.delay(1_100); lastPreview = null } }
     val displayedPosition = pointerTarget ?: pendingTarget ?: positionMs
     // Seek feedback: the preview only accompanies a jump. It opens with the bar (a jump showed it),
     // reopens on every further jump and closes 1.1 s after the last one; the bar itself stays.
-    var feedbackPreview by remember { mutableStateOf(!interactive) }
+    val passiveFeedback = !interactive || osd?.seekFeedback == true
+    var feedbackPreview by remember { mutableStateOf(passiveFeedback) }
     var feedbackJumps by remember { mutableIntStateOf(0) }
     var feedbackAnchor by remember { mutableLongStateOf(positionMs) }
-    if (!interactive && kotlin.math.abs(positionMs - feedbackAnchor) > SEEK_FEEDBACK_JUMP_MS) { feedbackPreview = true; feedbackJumps++ }
+    if (passiveFeedback && kotlin.math.abs(positionMs - feedbackAnchor) > SEEK_FEEDBACK_JUMP_MS) { feedbackPreview = true; feedbackJumps++ }
     feedbackAnchor = positionMs
+    LaunchedEffect(passiveFeedback) { if (passiveFeedback) { feedbackPreview = true; feedbackJumps++ } }
     LaunchedEffect(feedbackPreview, feedbackJumps) {
         if (feedbackPreview) { kotlinx.coroutines.delay(1_100); feedbackPreview = false }
     }
@@ -1131,17 +1140,25 @@ internal fun TvPlayerSeekBar(
     var focused by remember { mutableStateOf(false) }
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
-    val highlighted = focused || pointerTarget != null || !interactive
+    val highlighted = focused || pointerTarget != null || passiveFeedback
 
-    val interactionModifier = if (seekable) {
+    val interactionModifier = if (acceptsInput) {
         Modifier
             .focusRequester(timelineFocus)
             .onFocusChanged {
                 focused = it.isFocused
                 controlFocus?.focused("seek-bar", timelineOwner, it.isFocused)
-                if (!it.isFocused) { pendingTarget = null; lastPreview = null }
+                if (it.isFocused && osd?.expanded == true) osd.collapse()
+                if (!it.isFocused) { pendingTarget = null; pendingDirection = 0; lastPreview = null }
             }
             .onPreviewKeyEvent { event ->
+                if (osd != null && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
+                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
+                        navigation?.interact(); osd.interact()
+                        if (event.key == Key.DirectionDown) expandControls()
+                    }
+                    return@onPreviewKeyEvent true
+                }
                 val confirmKey = event.key == Key.Enter || event.key == Key.NumPadEnter || event.key == Key.DirectionCenter
                 if (confirmKey) {
                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) {
@@ -1149,6 +1166,7 @@ internal fun TvPlayerSeekBar(
                         val confirm = confirmSeekBarOk(pendingTarget, lastPreview, currentPosition())
                         confirm.seekDeltaMs?.let { submitTarget(currentPosition() + it) }
                         pendingTarget = null
+                        pendingDirection = 0
                         lastPreview = null
                         if (confirm.resumePlayback) onPlay()
                         if (confirm.togglePlayback) onTogglePlayback()
@@ -1158,9 +1176,15 @@ internal fun TvPlayerSeekBar(
                 }
                 val direction = when (event.key) { Key.DirectionLeft -> -1; Key.DirectionRight -> 1; else -> 0 }
                 if (direction == 0 || durationMs <= 0) return@onPreviewKeyEvent false
+                // The hidden/passive player may have consumed KeyDown before this bar gained
+                // focus. Its KeyUp must not claim feedback, commit a stale target or restart it.
+                if (event.type == KeyEventType.KeyUp && (pendingTarget == null || pendingDirection != direction)) {
+                    return@onPreviewKeyEvent true
+                }
                 navigation?.interact(); onInteraction()
                 when (event.type) {
                     KeyEventType.KeyDown -> {
+                        pendingDirection = direction
                         val base = pendingTarget ?: currentPosition()
                         pendingTarget = (base + direction * seekAcceleration.step(10_000L, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, durationMs)).coerceIn(0, durationMs)
                         lastPreview = pendingTarget
@@ -1168,6 +1192,7 @@ internal fun TvPlayerSeekBar(
                     KeyEventType.KeyUp -> {
                         pendingTarget?.let(::submitTarget)
                         pendingTarget = null
+                        pendingDirection = 0
                     }
                 }
                 previewVersion++
@@ -1227,7 +1252,7 @@ internal fun TvPlayerSeekBar(
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         timelineContext?.invoke(displayedPosition)
-        SeekPreview(if (stowing) null else if (!interactive) positionMs.takeIf { feedbackPreview } else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
+        SeekPreview(if (stowing) null else if (passiveFeedback) positionMs.takeIf { feedbackPreview } else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
         if (timelineContext == null) CurrentChapterLabel(displayedPosition)
         Box(
             modifier = Modifier
@@ -1310,23 +1335,13 @@ internal fun TvPlayerSeekBar(
         }
     }
 
-    LaunchedEffect(focused, interactive) { if (seekable && focused) onInteraction() }
-}
-
-@Composable
-internal fun PlayerSeekModeBar(
-    positionMs: Long,
-    durationMs: Long,
-    modifier: Modifier = Modifier,
-) {
-    TvPlayerSeekBar(
-        positionMs = positionMs,
-        durationMs = durationMs,
-        onSeekBy = {},
-        onInteraction = {},
-        modifier = modifier.padding(horizontal = 58.dp),
-        interactive = false,
-    )
+    LaunchedEffect(focused, interactive) {
+        if (seekable && focused) {
+            // Acquiring focus for passive jump feedback must not turn that feedback into
+            // an OK/play-pause action before the user explicitly claims the compact OSD.
+            if (osd != null) osd.interact() else onInteraction()
+        }
+    }
 }
 
 @Composable

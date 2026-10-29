@@ -5,7 +5,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PlayerControlFocusTest {
-    @Test fun closingOsdResetsBothTargetsWithoutRemovingMountedControls() {
+    @Test fun closingOsdResetsEntryAndRetainsLastButtonWithoutRemovingMountedControls() {
         val focus = PlayerControlFocus()
         val play = FocusRequester()
         val settings = FocusRequester()
@@ -22,14 +22,59 @@ class PlayerControlFocusTest {
         assertFalse(focus.hasFocus)
         assertNull(focus.lastKey)
         assertSame(play, focus.target(play))
-        assertSame(play, focus.buttonTarget(play))
+        assertSame(settings, focus.buttonTarget(play))
         assertSame(timeline, focus.seekTarget())
+        assertSame(timeline, focus.compactTarget())
 
         // Normal navigation resumes with the existing registrations after reopening.
         focus.focused("settings", settingsOwner, true)
         assertTrue(focus.hasFocus)
         assertSame(settings, focus.target(play))
         assertSame(settings, focus.buttonTarget(play))
+    }
+
+    @Test fun compactFocusFollowsTimelineAvailabilityWithoutReplacingTheLastButton() {
+        val focus = PlayerControlFocus()
+        val button = FocusRequester()
+        val info = FocusRequester()
+        val timeline = FocusRequester()
+        val buttonOwner = Any()
+        val infoOwner = Any()
+        val timelineOwner = Any()
+        focus.register("settings", button, buttonOwner)
+        focus.register("compact-info", info, infoOwner)
+        focus.focused("settings", buttonOwner, true)
+        focus.focused("compact-info", infoOwner, true)
+        assertSame(info, focus.compactTarget())
+        assertTrue(focus.isFocused(info))
+        assertTrue(focus.compactFocused)
+        assertSame(button, focus.buttonTarget(FocusRequester()))
+
+        // A recording duration or live timeshift range can become available after opening.
+        focus.register("seek-bar", timeline, timelineOwner)
+        assertSame(timeline, focus.compactTarget())
+        assertFalse(focus.isFocused(focus.compactTarget()))
+        focus.focused("seek-bar", timelineOwner, true)
+        assertTrue(focus.isFocused(focus.compactTarget()))
+        focus.unregister("seek-bar", timelineOwner)
+        assertSame(info, focus.compactTarget())
+        assertFalse(focus.hasFocus)
+        assertSame(button, focus.buttonTarget(FocusRequester()))
+    }
+
+    @Test fun replacementRegistrationDoesNotInheritTheOutgoingOwnersActiveFocus() {
+        val focus = PlayerControlFocus()
+        val outgoing = Any()
+        val incoming = Any()
+        focus.register("seek-bar", FocusRequester(), outgoing)
+        focus.focused("seek-bar", outgoing, true)
+        val replacement = FocusRequester()
+        focus.register("seek-bar", replacement, incoming)
+        assertFalse(focus.hasFocus)
+        assertFalse(focus.isFocused(replacement))
+        focus.focused("seek-bar", incoming, true)
+        focus.unregister("seek-bar", outgoing)
+        assertTrue(focus.isFocused(replacement))
     }
 
     @Test fun timelineReturnsToLastButtonAndFallsBackAfterItsRemoval() {

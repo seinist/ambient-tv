@@ -61,7 +61,6 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.PlayerSleepTimerButton
-import com.ambient.tv.ui.common.PLAYER_CONTROLS_TIMEOUT_MS
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
@@ -126,9 +125,9 @@ internal fun VlcPlayerContent(
         controller.updateSourceCodec(state.audioCodec)
     }
     val isAudioItem = state.mediaType.equals("track", true) || state.mediaType.equals("audio", true)
+    val osd = rememberPlayerOsdController()
     var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
-    var seekFeedbackVisible by remember(controller) { mutableStateOf(false) }
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // Back stops; only the exit-fullscreen button keeps playback in the background (TV).
     val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
@@ -142,7 +141,7 @@ internal fun VlcPlayerContent(
     }
     val timelineDurationMs = state.durationMs ?: snapshot.durationMs.takeIf { it > 0L }?.plus(state.timelineOffsetMs) ?: 0L
     val performance = LocalPerformanceProfile.current
-    val chromeVisible = controlsVisible || seekFeedbackVisible || panel != UnifiedPlayerPanel.NONE
+    val chromeVisible = controlsVisible || panel != UnifiedPlayerPanel.NONE
     val segmentNavigation = LocalPlaybackNavigation.current
     androidx.compose.runtime.SideEffect {
         segmentNavigation?.chromeVisible = chromeVisible
@@ -163,7 +162,6 @@ internal fun VlcPlayerContent(
     val seekAcceleration = remember(seek) { SeekKeyAcceleration() }
     fun heldSeekStep(baseMs: Long, event: androidx.compose.ui.input.key.KeyEvent) =
         seekAcceleration.step(baseMs, event.nativeKeyEvent.keyCode, event.nativeKeyEvent.eventTime, event.nativeKeyEvent.repeatCount, timelineDurationMs)
-    var seekFeedbackVersion by remember(controller) { mutableStateOf(0) }
     var appliedVideoVisualGate by remember(controller) { mutableStateOf<Boolean?>(null) }
     LaunchedEffect(performance.gateExpensiveVideoVisuals, controller) {
         val gate = performance.gateExpensiveVideoVisuals
@@ -231,7 +229,6 @@ internal fun VlcPlayerContent(
         if (BackgroundPlaybackSession.owns(controller) && viewModel.acceptsPlaybackEvents("vlc"))
             controller.errorMessage?.let(viewModel::reportPlaybackError)
     }
-    LaunchedEffect(seekFeedbackVersion) { if (seekFeedbackVersion > 0) { seekFeedbackVisible = true; delay(PLAYER_CONTROLS_TIMEOUT_MS); seekFeedbackVisible = false } }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
         controlsVisible, snapshot.isPlaying, panel != UnifiedPlayerPanel.NONE, changingItem,
@@ -244,7 +241,8 @@ internal fun VlcPlayerContent(
         val restartTitle = { seek.seekTo(0L) }
         handlePlayerOsdKey(
             event.key, event.type == KeyEventType.KeyDown,
-            OsdKeyState(OsdContent.VIDEO, controlsVisible, panel != UnifiedPlayerPanel.NONE, seekFeedbackVisible),
+            OsdKeyState(OsdContent.VIDEO, controlsVisible && !osd.seekFeedback && !osd.closing,
+                panel != UnifiedPlayerPanel.NONE, osd.seekFeedback, closing = osd.closing),
             OsdSeekSteps(state.seekJumpMs, held = { heldSeekStep(it, event) }),
             object : OsdKeyTarget {
                 override fun chapterSeekDelta(direction: Int) = chapterNavigation?.chapterStep(seek.positionMs, direction)
@@ -255,10 +253,10 @@ internal fun VlcPlayerContent(
                 override fun stop() { BackgroundPlaybackSession.stop() }
                 override fun seek(deltaMs: Long, revealOsd: Boolean) {
                     seekBy(deltaMs)
-                    if (revealOsd) controlsVisible = true else seekFeedbackVersion++
+                    if (revealOsd) osd.reveal() else osd.showSeekFeedback()
                 }
-                override fun showOsd() { controlsVisible = true }
-                override fun hideSeekFeedback() { seekFeedbackVisible = false }
+                override fun showOsd() { osd.reveal() }
+                override fun hideSeekFeedback() { osd.reveal() }
                 override fun restart() { restartTitle() }
                 override fun next() { (state.nextAudioTrack ?: state.nextVideoItem)?.ratingKey?.let(onPlayNext) }
                 override fun previousTrack() = Unit
@@ -286,9 +284,8 @@ internal fun VlcPlayerContent(
             visible = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             modifier = Modifier.align(Alignment.Center),
         )
-        if (!controlsVisible && seekFeedbackVisible) PlayerSeekModeBar(seek.positionMs, timelineDurationMs, Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp))
         PlayerTouchLayer(
-            onToggleControls = { controlsVisible = !controlsVisible },
+            onToggleControls = { if (osd.closing) osd.reveal() else controlsVisible = !controlsVisible },
             onTogglePlayback = { controller.playPause(); controlsVisible = true },
             onSeekBack = { seekBy(-state.seekJumpMs); controlsVisible = true },
             onSeekForward = { seekBy(state.seekJumpMs); controlsVisible = true },
@@ -330,7 +327,7 @@ internal fun VlcPlayerContent(
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
             seekState = seek,
             onSeekBarSeek = { seekBy(it) },
-            onSeekBarInteraction = { controlsVisible = true },
+            onSeekBarInteraction = { osd.interact() },
             onSeekBarToggle = controller::playPause,
             onSeekBarPlay = controller::play,
             onSeekButton = { seekBy(it) },
