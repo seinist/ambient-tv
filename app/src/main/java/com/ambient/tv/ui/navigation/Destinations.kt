@@ -33,6 +33,7 @@ object Destinations {
     fun tmdbTrailers(mediaType: String, tmdbId: Int) = "trailers/tmdb/${Uri.encode(mediaType)}/$tmdbId"
     const val YOUTUBE_FEED = "youtube_feed/{feedKey}"
     const val SPOTIFY = "spotify"
+    const val RADIO = "radio"
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
