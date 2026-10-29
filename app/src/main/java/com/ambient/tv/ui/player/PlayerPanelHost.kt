@@ -48,6 +48,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalDensity
@@ -192,7 +193,8 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = model.scrimAlpha * motion.scrimProgress)),
+                        .graphicsLayer { alpha = model.scrimAlpha * motion.scrimProgress.value }
+                        .background(Color.Black),
                 )
                 AnimatedContent(
                     targetState = target,
