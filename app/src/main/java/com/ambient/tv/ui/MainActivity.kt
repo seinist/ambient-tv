@@ -1938,13 +1938,10 @@ private fun AmbientTvApp(
                     }
                     composable(Destinations.SEARCH) {
                         RestorableSidebarContent {
-                            val searchViewModel: com.ambient.tv.ui.search.SearchViewModel = hiltViewModel()
                             SearchScreen(
                                 onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
                                 onYouTubeClick = { videoId -> handleYouTubeSelection(videoId) },
                                 onSpotifyClick = { item -> if (item.type.name == "TRACK") playOnSelectedTarget(Destinations.spotifyPlayer(item.uri)) else navController.navigate(Destinations.spotifyDetail(item.type.name.lowercase(), item.id)) },
-                                onRadioClick = searchViewModel::playRadio,
-                                viewModel = searchViewModel,
                                 onTvheadendChannelClick = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onTvheadendProgramClick = { event ->
                                     if (event.isLive(System.currentTimeMillis() / 1000L)) {
