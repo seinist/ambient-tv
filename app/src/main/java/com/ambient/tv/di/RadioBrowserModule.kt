@@ -1,6 +1,7 @@
 package com.ambient.tv.di
 
 import com.ambient.tv.BuildConfig
+import com.ambient.tv.util.withoutUrlQueries
 import com.ambient.tv.data.radio.RadioBrowserApiService
 import com.ambient.tv.data.radio.RadioBrowserClient
 import com.ambient.tv.data.radio.RadioBrowserFailoverInterceptor
@@ -43,7 +44,7 @@ object RadioBrowserModule {
                 if (BuildConfig.DEBUG) {
                     addInterceptor(
                         HttpLoggingInterceptor { message ->
-                            timber.log.Timber.tag("RadioBrowser").d(message)
+                            timber.log.Timber.tag("RadioBrowser").d(message.withoutUrlQueries())
                         }.apply { level = HttpLoggingInterceptor.Level.BASIC },
                     )
                 }
