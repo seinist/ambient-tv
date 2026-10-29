@@ -18,13 +18,17 @@ import javax.inject.Inject
 
 enum class RadioViewMode { GRID, LIST }
 
-enum class RadioSection {
-    POPULAR,
-    FAVORITES,
-    RECENT,
-    GENRES,
-    COUNTRIES,
-    LANGUAGES,
+enum class RadioSection(val key: String) {
+    POPULAR("popular"),
+    FAVORITES("favorites"),
+    RECENT("recent"),
+    GENRES("genres"),
+    COUNTRIES("countries"),
+    LANGUAGES("languages");
+
+    companion object {
+        fun fromKey(key: String?): RadioSection? = entries.firstOrNull { it.key == key?.lowercase() }
+    }
 }
 
 internal val RadioSection.isFacetSection: Boolean
@@ -88,10 +92,15 @@ class RadioViewModel @Inject constructor(
         }
     }
 
-    fun enter() {
-        if (entered) return
+    fun enter(initialSection: RadioSection? = null) {
+        if (entered) {
+            initialSection?.let(::selectSection)
+            return
+        }
         entered = true
+        val section = initialSection ?: _state.value.section
         _state.value = _state.value.copy(
+            section = section,
             viewMode = runCatching {
                 RadioViewMode.valueOf(preferences.sectionViewMode(RADIO_VIEW_STATE_KEY) ?: RadioViewMode.GRID.name)
             }.getOrDefault(RadioViewMode.GRID),
@@ -99,7 +108,11 @@ class RadioViewModel @Inject constructor(
             listRows = preferences.libraryListRows,
         )
         refreshLocalState()
-        loadStations(reset = true)
+        when {
+            section == RadioSection.POPULAR -> loadStations(reset = true)
+            section.isFacetSection -> loadFacets(section)
+            else -> showLocalSection(section)
+        }
     }
 
     fun refresh() {
