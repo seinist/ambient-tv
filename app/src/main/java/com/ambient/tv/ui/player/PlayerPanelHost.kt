@@ -184,6 +184,7 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
     CompositionLocalProvider(LocalProjectMBrowser provides model.projectMBrowser) {
         PlayerPanelVisibility(panel) { displayedPanel ->
             val motion = LocalPlayerPanelMotion.current
+            val outerInteractive = LocalPlayerPanelInteractive.current
             val stateHolder = LocalPlayerPanelStateHolder.current
             val offsetPx = with(LocalDensity.current) { PLAYER_PANEL_CONTENT_OFFSET_DP.dp.roundToPx() }
             val target = PlayerPanelVisualTarget(displayedPanel, motion.visualDepth)
@@ -228,7 +229,9 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                     },
                     label = "playerPanelLevel",
                 ) { visual ->
-                    Box(Modifier.fillMaxSize()) {
+                    val childInteractive = outerInteractive && visual == target
+                    CompositionLocalProvider(LocalPlayerPanelInteractive provides childInteractive) {
+                    Box(Modifier.fillMaxSize().playerPanelInteractionGuard(childInteractive)) {
                         val drawPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
                             UnifiedBackendPlayerPanel(
                                 panel = visual.panel,
@@ -279,6 +282,7 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                         } else {
                             drawPanel()
                         }
+                    }
                     }
                 }
             }
