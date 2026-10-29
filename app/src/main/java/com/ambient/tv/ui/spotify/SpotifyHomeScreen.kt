@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,6 +120,10 @@ fun SpotifyHomeScreen(
                 onClick = if (state.webAuthorized) viewModel::logout else viewModel::login,
             )
             TvChip(stringResource(R.string.action_now_playing), modifier = Modifier.focusRequester(nowPlayingFocusRequester), icon = Icons.Default.PlayArrow, iconOnly = true, onClick = onNowPlaying)
+            TvChip(stringResource(R.string.action_reload), icon = Icons.Filled.Refresh,
+                iconOnly = true, loading = state.loading || state.refreshing,
+                enabled = state.webAuthorized && !state.authBusy,
+                onClick = { initialContentFocusPending = false; viewModel.reload() })
         }) {
             com.ambient.tv.ui.common.SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.SPOTIFY)
             val webStatus = if (state.webAuthorized) stringResource(R.string.spotify_web_authorized, state.accountName ?: stringResource(R.string.spotify_title)) else stringResource(R.string.spotify_web_unauthorized)

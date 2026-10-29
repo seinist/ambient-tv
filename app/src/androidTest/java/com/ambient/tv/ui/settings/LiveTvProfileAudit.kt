@@ -69,7 +69,7 @@ internal class LiveTvProfileAudit(private val instrumentation: Instrumentation, 
             click(label(R.string.player_backend_auto))
             click(label(R.string.renderer_output_direct))
             click(label(R.string.live_profiles_section)); click(label(R.string.player_audio))
-            click(label(R.string.audio_source_default)); click("PCM")
+            click(label(R.string.audio_output)); click("PCM")
             Thread.sleep(1_000) // saved on change (debounced); no Save button anymore
             val live = checkNotNull(prefs.resolutionVideoProfiles["live:720"])
             check(live.rendererKey == "mpv" && live.mpvOutput == "direct")

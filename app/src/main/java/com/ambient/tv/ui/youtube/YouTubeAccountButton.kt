@@ -52,6 +52,7 @@ internal fun YouTubeAccountButton(
             text = name,
             modifier = Modifier.widthIn(max = 240.dp).focusRequester(accountFocus),
             loading = state.authBusy,
+            iconOnly = true,
             textMaxLines = 1,
             leadingContent = {
                 // Keep a fallback visible for missing URLs, pending loads and image failures.
@@ -74,7 +75,7 @@ internal fun YouTubeAccountButton(
             text = stringResource(if (state.authBusy) R.string.action_signing_in else R.string.action_sign_in),
             modifier = Modifier.focusRequester(accountFocus),
             icon = Icons.AutoMirrored.Filled.Login,
-            // Round like search and view on phones, so all three fit beside the title.
+            // Keep the header action group compact on phones.
             iconOnly = com.ambient.tv.ui.mobile.LocalHandheldUi.current,
             loading = state.authBusy,
             onClick = onSignIn,

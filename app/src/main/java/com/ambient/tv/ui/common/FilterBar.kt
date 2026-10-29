@@ -146,11 +146,17 @@ fun FilterBar(
 
 /** The panel holding only the filter bar switch, or sort and filters while the bar is hidden. */
 @Composable
-fun FilterOptionsPanel(title: String, model: FilterBarModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun FilterOptionsPanel(
+    title: String,
+    model: FilterBarModel,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    hint: String = stringResource(R.string.browse_filter_options_hint),
+) {
     ViewOptionsPanel(
         views = emptyList(), selectedView = "", onView = {},
         gridColumns = 0, listRows = 0, onGridColumns = {}, onListRows = {},
-        onClose = onClose, modifier = modifier, showDensity = false, title = title,
+        onClose = onClose, modifier = modifier, showDensity = false, title = title, hint = hint,
         sorts = model.sorts, selectedSort = model.selectedSort, onSort = model.onSort,
         sortOrders = model.sortOrders, selectedSortOrder = model.selectedSortOrder, onSortOrder = model.onSortOrder,
         filterGroups = model.groups, onFilterGroup = model.onSelect,

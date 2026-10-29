@@ -176,6 +176,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     val nodes = remember(state.page) { state.page?.nodes.orEmpty().sortedBy { !it.container } }
     val context = LocalContext.current
     val locationKey = com.ambient.tv.data.dlna.DlnaKeys.key(state.server?.id.orEmpty(), state.path.lastOrNull()?.objectId ?: "0")
+    var keepHeaderFocus by remember(locationKey) { mutableStateOf(false) }
     val contentGrid = remember(locationKey) {
         val (index, offset) = viewModel.scroll(locationKey)
         LazyGridState(index, offset)
@@ -207,14 +208,15 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
     var initialContentFocusPending by remember(focusKey, state.viewMode, restoreRevision) { mutableStateOf(true) }
     fun closeOptions() {
         showOptions = false
+        keepHeaderFocus = true
         initialContentFocusPending = false
         restoreOptionsFocus = true
     }
     ReportSidebarContentReady(!state.loading)
     BackHandler(enabled = !showOptions) { restoreOptionsFocus = false; if (!viewModel.up()) onBack() }
     val targetKey = focusedKey?.takeIf { key -> nodes.any { it.key == key } } ?: nodes.firstOrNull()?.key
-    LaunchedEffect(state.loading, initialContentFocusPending, focusKey, showOptions, state.viewMode, restoreRevision) {
-        if (showOptions || state.loading || nodes.isEmpty() || !initialContentFocusPending) return@LaunchedEffect
+    LaunchedEffect(state.loading, initialContentFocusPending, focusKey, showOptions, state.viewMode, restoreRevision, keepHeaderFocus) {
+        if (showOptions || keepHeaderFocus || state.loading || nodes.isEmpty() || !initialContentFocusPending) return@LaunchedEffect
         val index = nodes.indexOfFirst { it.key == targetKey }.coerceAtLeast(0)
         if (contentGrid.layoutInfo.visibleItemsInfo.none { it.index == index }) contentGrid.scrollToItem(index)
         delay(100)
@@ -230,7 +232,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         snapshotFlow {
             val layout = contentGrid.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
-            state.hasMore && !state.loading && !state.loadingMore &&
+            state.hasMore && !state.loading && !state.refreshing && !state.loadingMore &&
                 layout.totalItemsCount > 0 && lastVisible >= layout.totalItemsCount - maxOf(9, layout.visibleItemsInfo.size)
         }.distinctUntilChanged().collect { nearEnd ->
             if (nearEnd) viewModel.more()
@@ -241,9 +243,11 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (showOptions) cancelFocusChange() } }.focusGroup().padding(start = screenGutter(), end = screenGutter(), bottom = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(screenGutter())), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             PageHeader(focusChain = focusChain, actions = {
                 TvChip(stringResource(R.string.files_back), modifier = Modifier.leftKeyAction { if (!viewModel.up()) onBack() }, icon = Icons.AutoMirrored.Filled.ArrowBack, iconOnly = true, onClick = { if (!viewModel.up()) onBack() })
-                TvChip(stringResource(R.string.library_options), icon = Icons.Filled.Tune, iconOnly = true, onClick = { showOptions = true }, modifier = Modifier.focusRequester(optionsFocus))
                 TvChip(stringResource(R.string.dlna_servers), icon = Icons.Default.Storage, iconOnly = true, onClick = onManage)
-                TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh, loading = state.loading, iconOnly = true, onClick = viewModel::refresh)
+                TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
+                    loading = state.loading || state.refreshing, iconOnly = true,
+                    onClick = { keepHeaderFocus = true; viewModel.refresh() })
+                com.ambient.tv.ui.common.ViewOptionsChip(0, { keepHeaderFocus = true; showOptions = true }, Modifier.focusRequester(optionsFocus))
             }) {
                 SystemPageTitle(MediaSystem.DLNA, title = state.server?.name)
             }
@@ -252,7 +256,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             DlnaBreadcrumb(
                 root = stringResource(R.string.dlna_root),
                 path = state.path,
-                requestedFocusIndex = if (failedOrEmptyFolder && state.error == null && !showOptions) dlnaParentBreadcrumbIndex(state.path.size) else null,
+                requestedFocusIndex = if (failedOrEmptyFolder && state.error == null && !showOptions && !keepHeaderFocus) dlnaParentBreadcrumbIndex(state.path.size) else null,
                 focusChain = focusChain,
                 onSelect = viewModel::breadcrumb,
             )
@@ -265,7 +269,9 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     Modifier.fillMaxWidth(), actionLabel = stringResource(R.string.home_retry),
                     onAction = { restoreAfterRetry = true; viewModel.retryMore() }, actionLoading = state.loadingMore)
             }
-            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain).focusGroup()) {
+            BoxWithConstraints(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain)
+                .onFocusChanged { if (it.hasFocus) { keepHeaderFocus = false; initialContentFocusPending = false } }
+                .focusGroup()) {
                 val style = if (state.viewMode == DlnaViewMode.POSTER) MediaTileStyle.POSTER else MediaTileStyle.LANDSCAPE
                 val scale = rememberUhdScale()
                 val handheld = LocalHandheldUi.current
@@ -333,7 +339,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     OperationFeedbackContent(it, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                         actionLabel = stringResource(if (state.server == null) R.string.dlna_servers else R.string.home_retry),
                         onAction = if (state.server == null) onManage else viewModel::refresh,
-                        requestActionFocus = !showOptions)
+                        requestActionFocus = !showOptions && !keepHeaderFocus)
                 }
                 if (state.loadingMore && state.pageError == null) {
                     Row(

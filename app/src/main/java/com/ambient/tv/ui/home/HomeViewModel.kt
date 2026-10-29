@@ -185,6 +185,9 @@ class HomeViewModel @Inject constructor(
     private var embyCollectionJob: Job? = null
     private var loadJob: Job? = null
     private var loadGeneration = 0
+    private val _refreshing = MutableStateFlow(false)
+    /** The current library request, independently of the initial-content placeholder state. */
+    val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
     private var libraryLoading = false
     private var tvPreviewJob: Job? = null
     private var photoJob: Job? = null
@@ -314,6 +317,7 @@ class HomeViewModel @Inject constructor(
         val keepSnapshot = _uiState.value is HomeUiState.Loaded &&
             this.plexOnly == plexOnly && this.jellyfinOnly == jellyfinOnly &&
             this.embyOnly == embyOnly && homeFocusStateKey == focusStateKey
+        loadGeneration++
         loadJob?.cancel()
         jellyfinCollectionJob?.cancel()
         jellyfinCollectionJob = null
@@ -331,7 +335,7 @@ class HomeViewModel @Inject constructor(
             activeFocusedRatingKey = null
             activeFocusedRowId = null
         }
-        loadGeneration++
+        _refreshing.value = false
         libraryLoading = false
         tvPreviewJob?.cancel()
         val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
@@ -460,18 +464,26 @@ class HomeViewModel @Inject constructor(
     private fun launchLoad(block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit) {
         val generation = ++loadGeneration
         libraryLoading = true
+        _refreshing.value = true
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
             if (_uiState.value !is HomeUiState.Loaded) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cachedRows() }?.let { libraryLoading = false; publishRows(it) }
 
-            try {
-                if (!availability.hasNetwork()) {
-                    failOrContinue(HomeUiState.Offline(activeServerName()))
-                    return@launch
-                }
-                block()
-            } finally {
+            if (!availability.hasNetwork()) {
+                failOrContinue(HomeUiState.Offline(activeServerName()))
+                return@launch
+            }
+            block()
+            // These provider jobs retain old collection rows while enriching the replacement.
+            // Their response belongs to this reload even though regular rows publish earlier.
+            jellyfinCollectionJob?.join()
+            embyCollectionJob?.join()
+        }.also { job ->
+            // Include all structured child requests, including cache hydration. A cancelled
+            // predecessor cannot make a replacement reload appear complete.
+            job.invokeOnCompletion {
                 if (generation == loadGeneration) {
+                    _refreshing.value = false
                     libraryLoading = false
                     (_uiState.value as? HomeUiState.Loaded)?.takeIf { it.loading }?.let { _uiState.value = it.copy(loading = false) }
                 }
@@ -516,8 +528,15 @@ class HomeViewModel @Inject constructor(
 
     fun refresh() = refresh(invalidateCache = true)
 
+    fun reload() {
+        if (_refreshing.value) return
+        captureFocusForReturn()
+        refresh()
+    }
+
     private fun refresh(invalidateCache: Boolean) {
         if (!hasEntered) return
+        loadGeneration++
         loadJob?.cancel()
         jellyfinCollectionJob?.cancel()
         embyCollectionJob?.cancel()

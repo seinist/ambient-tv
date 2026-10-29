@@ -15,6 +15,8 @@ import java.time.YearMonth
 import java.time.ZoneId
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +32,9 @@ data class PhotoBrowserUiState(
     val stack: List<PhotoAlbumLevel> = emptyList(),
     val entries: List<PhotoEntry> = emptyList(),
     val loading: Boolean = true,
+    /** A request is still running even while the previous album remains visible. */
+    val refreshing: Boolean = false,
+    val refreshFailed: Boolean = false,
     val failed: Boolean = false,
     val sort: PhotoSort = PhotoSort.DATE_DESC,
     val timeline: Boolean = false,
@@ -43,14 +48,19 @@ data class PhotoBrowserUiState(
 }
 
 @HiltViewModel
-class PhotoBrowserViewModel @Inject constructor(
-    private val repository: PhotoRepository,
+class PhotoBrowserViewModel internal constructor(
     private val session: PhotoViewerSession,
     private val preferences: AppPreferences,
+    private val listAlbum: suspend (String) -> Result<List<PhotoEntry>>,
+    private val listTimeline: suspend (String) -> Result<List<PhotoEntry>>,
 ) : ViewModel() {
+    @Inject constructor(repository: PhotoRepository, session: PhotoViewerSession, preferences: AppPreferences) :
+        this(session, preferences, repository::list, { repository.listRecursive(it) })
+
     private val _state = MutableStateFlow(PhotoBrowserUiState(sort = PhotoSort.fromKey(preferences.photoSortKey)))
     val state: StateFlow<PhotoBrowserUiState> = _state.asStateFlow()
     private var job: Job? = null
+    private var loadGeneration = 0L
     /** Focus to restore per album when stepping back up. */
     private val focusByAlbum = mutableMapOf<String, String>()
 
@@ -82,6 +92,11 @@ class PhotoBrowserViewModel @Inject constructor(
 
     fun retry() { if (_state.value.timeline) loadTimeline() else load() }
     fun refresh() { if (_state.value.timeline) loadTimeline(silent = true) else load(silent = true) }
+    fun reload() {
+        if (_state.value.refreshing || job?.isActive == true) return
+        if (_state.value.timeline) loadTimeline(silent = true, manual = true)
+        else load(silent = true, manual = true)
+    }
 
     fun setSort(sort: PhotoSort) {
         preferences.photoSortKey = sort.key
@@ -110,7 +125,9 @@ class PhotoBrowserViewModel @Inject constructor(
     /** Back to the album grid: a timeline error must not stay on it, and a cancelled album load is redone. */
     private fun leaveTimeline() {
         val reload = _state.value.loading || _state.value.failed
-        _state.update { it.copy(timeline = false, failed = false) }
+        ++loadGeneration
+        job?.cancel()
+        _state.update { it.copy(timeline = false, failed = false, refreshing = false, refreshFailed = false) }
         if (reload) load()
     }
 
@@ -158,35 +175,53 @@ class PhotoBrowserViewModel @Inject constructor(
         return true
     }
 
-    private fun load(silent: Boolean = false) {
+    private fun load(silent: Boolean = false, manual: Boolean = false) {
         val key = _state.value.current?.key ?: return
+        val generation = ++loadGeneration
         job?.cancel()
-        _state.update { it.copy(loading = !silent || it.loading, failed = false) }
+        _state.update { it.copy(loading = !silent || it.loading, failed = false, refreshing = true, refreshFailed = false) }
         job = viewModelScope.launch {
-            repository.list(key)
-                .onSuccess { entries -> _state.update { it.copy(loading = false, entries = entries.sortedForDisplay(it.sort)) } }
-                .onFailure { _state.update { it.copy(loading = false,
-                    failed = !silent || it.entries.isEmpty(), entries = if (silent) it.entries else emptyList()) } }
+            try {
+                val result = listAlbum(key)
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                result
+                    .onSuccess { entries -> _state.update { it.copy(loading = false, entries = entries.sortedForDisplay(it.sort)) } }
+                    .onFailure { _state.update { it.copy(loading = false,
+                        failed = !silent || it.entries.isEmpty(), entries = if (silent) it.entries else emptyList(),
+                        refreshFailed = manual && silent && it.entries.isNotEmpty()) } }
+            } finally {
+                if (generation == loadGeneration) _state.update { it.copy(refreshing = false) }
+            }
         }
     }
 
-    private fun loadTimeline(silent: Boolean = false) {
+    private fun loadTimeline(silent: Boolean = false, manual: Boolean = false) {
         val key = _state.value.current?.key ?: return
+        val generation = ++loadGeneration
         job?.cancel()
-        _state.update { it.copy(loading = !silent || it.loading, failed = false) }
+        _state.update { it.copy(loading = !silent || it.loading, failed = false, refreshing = true, refreshFailed = false) }
         job = viewModelScope.launch {
-            repository.listRecursive(key)
-                .onSuccess { photos ->
-                    val zone = ZoneId.systemDefault()
-                    val groups = photos
-                        .sortedByDescending { it.takenAt ?: it.addedAt ?: Long.MIN_VALUE }
-                        .groupBy { entry ->
-                            (entry.takenAt ?: entry.addedAt)?.let { YearMonth.from(Instant.ofEpochMilli(it).atZone(zone)) }
-                        }
-                        .map { (month, entries) -> PhotoTimelineGroup(month, entries) }
-                    _state.update { it.copy(loading = false, timelineGroups = groups) }
-                }
-                .onFailure { _state.update { it.copy(loading = false, failed = !silent || it.timelineGroups.isEmpty()) } }
+            try {
+                val result = listTimeline(key)
+                currentCoroutineContext().ensureActive()
+                if (generation != loadGeneration) return@launch
+                result
+                    .onSuccess { photos ->
+                        val zone = ZoneId.systemDefault()
+                        val groups = photos
+                            .sortedByDescending { it.takenAt ?: it.addedAt ?: Long.MIN_VALUE }
+                            .groupBy { entry ->
+                                (entry.takenAt ?: entry.addedAt)?.let { YearMonth.from(Instant.ofEpochMilli(it).atZone(zone)) }
+                            }
+                            .map { (month, entries) -> PhotoTimelineGroup(month, entries) }
+                        _state.update { it.copy(loading = false, timelineGroups = groups) }
+                    }
+                    .onFailure { _state.update { it.copy(loading = false, failed = !silent || it.timelineGroups.isEmpty(),
+                        refreshFailed = manual && silent && it.timelineGroups.isNotEmpty()) } }
+            } finally {
+                if (generation == loadGeneration) _state.update { it.copy(refreshing = false) }
+            }
         }
     }
 }

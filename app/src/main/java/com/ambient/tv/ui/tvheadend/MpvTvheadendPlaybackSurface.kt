@@ -191,12 +191,12 @@ internal fun MpvTvheadendPlaybackSurface(
     var controlsVisible by com.ambient.tv.ui.player.rememberPlayerControlsVisible()
     val chromeState = com.ambient.tv.ui.player.LocalPlayerChromeState.current
     val changingItem = com.ambient.tv.ui.player.LocalPlayerChangingItem.current
-    // Back hides the OSD, then stops - radio included. Only the exit-fullscreen button keeps
-    // playing in the background; on a handheld, leaving an audio-only screen still does.
+    // TV Back follows the minimize setting after hiding the OSD. On a handheld, live content
+    // and audio keep playing when leaving the player, even before tracks are discovered.
     val handheldUi = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val backMinimizes = com.ambient.tv.ui.player.rememberBackMinimizesPlayback()
     fun exitOnBack() {
-        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(snapshot.confirmedAudioOnly, handheldUi, backMinimizes())) onBack()
+        if (com.ambient.tv.ui.player.backLeavesPlaybackRunning(snapshot.confirmedAudioOnly, handheldUi, backMinimizes(), isLive = source.isLive)) onBack()
         else BackgroundPlaybackSession.stop()
     }
     androidx.activity.compose.BackHandler(enabled = panel == UnifiedPlayerPanel.NONE) {

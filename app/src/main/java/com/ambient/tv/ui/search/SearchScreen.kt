@@ -26,15 +26,15 @@ import com.ambient.tv.ui.common.rememberBrowseListState as rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ViewCarousel
-import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,6 +79,13 @@ import com.ambient.tv.ui.common.MediaArtworkWithStreamIcons
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SkeletonRow
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.LocalFilterFocusState
+import com.ambient.tv.ui.common.ViewOption
+import com.ambient.tv.ui.common.ViewOptionsChip
+import com.ambient.tv.ui.common.ViewOptionsPanel
+import com.ambient.tv.ui.common.ViewPreview
+import com.ambient.tv.ui.common.fillWindowHeight
+import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvActionButton
@@ -110,6 +117,26 @@ fun SearchScreen(
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val filterFocusState = rememberFilterFocusState(viewModel)
+    val optionsFocus = remember { FocusRequester() }
+    val queryFocus = remember { FocusRequester() }
+    var showOptions by remember(viewModel) { mutableStateOf(false) }
+    var restoreOptionsFocus by remember(viewModel) { mutableStateOf(false) }
+    LaunchedEffect(uiState.hasResults) {
+        if (!uiState.hasResults) showOptions = false
+    }
+    LaunchedEffect(showOptions, restoreOptionsFocus, uiState.hasResults) {
+        if (!showOptions && restoreOptionsFocus) {
+            val target = if (uiState.hasResults) optionsFocus else queryFocus
+            repeat(3) {
+                withFrameNanos { }
+                if (runCatching { target.requestFocus() }.getOrDefault(false)) {
+                    restoreOptionsFocus = false
+                    return@LaunchedEffect
+                }
+            }
+        }
+    }
     // A query from the system search, voice search or the Assistant runs as typed here.
     val externalQuery by com.ambient.tv.search.ExternalSearch.requests.collectAsState()
     var entryReady by remember(viewModel) { mutableStateOf(false) }
@@ -118,7 +145,10 @@ fun SearchScreen(
     }
     fun consumeExternalQuery(): Boolean {
         val query = com.ambient.tv.search.ExternalSearch.requests.value ?: return false
+        showOptions = false
+        restoreOptionsFocus = false
         viewModel.onQueryChanged(query)
+        filterFocusState.enterContent()
         viewModel.submitSearch()
         com.ambient.tv.search.ExternalSearch.consumed(query)
         return true
@@ -132,112 +162,135 @@ fun SearchScreen(
         if (entryReady) consumeExternalQuery()
     }
     if (onBack != null) {
-        BackHandler { onBack() }
+        BackHandler(enabled = !showOptions) { onBack() }
     }
-    Box(Modifier.fillMaxSize()) {
-        val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-        val queryFocus = remember { FocusRequester() }
-        Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
-            PageHeader(focusChain = focusChain, actions = {
-                if (uiState.hasResults) {
-                    val rows = uiState.viewMode == SearchViewMode.ROWS
-                    TvChip(
-                        text = if (rows) stringResource(R.string.search_view_list) else stringResource(R.string.search_view_rows),
-                        icon = if (rows) Icons.AutoMirrored.Filled.ViewList else Icons.Filled.ViewCarousel,
-                        iconOnly = true,
-                        onClick = viewModel::toggleViewMode,
+    BackHandler(enabled = showOptions) { showOptions = false }
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
+        Box(Modifier.fillMaxSize()) {
+            val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+            Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
+                PageHeader(focusChain = focusChain, actions = {
+                    if (uiState.hasResults) ViewOptionsChip(
+                        activeCount = 0,
+                        modifier = Modifier.focusRequester(optionsFocus),
+                        onClick = {
+                            filterFocusState.keepControls()
+                            restoreOptionsFocus = true
+                            showOptions = true
+                        },
+                    )
+                }) { Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium) }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TvTextField(
+                        value = uiState.query,
+                        onValueChange = viewModel::onQueryChanged,
+                        label = stringResource(R.string.search_placeholder),
+                        modifier = Modifier.weight(1f).focusRequester(queryFocus),
+                    )
+                    TvActionButton(
+                        text = stringResource(R.string.action_search),
+                        onClick = { filterFocusState.enterContent(); viewModel.submitSearch() },
+                        enabled = uiState.query.trim().length >= 2 && uiState.selectedSources.isNotEmpty(),
+                        loading = uiState.isSearching,
                     )
                 }
-            }) { Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium) }
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TvTextField(
-                    value = uiState.query,
-                    onValueChange = viewModel::onQueryChanged,
-                    label = stringResource(R.string.search_placeholder),
-                    modifier = Modifier.weight(1f).focusRequester(queryFocus),
-                )
-                TvActionButton(
-                    text = stringResource(R.string.action_search),
-                    onClick = viewModel::submitSearch,
-                    enabled = uiState.query.trim().length >= 2 && uiState.selectedSources.isNotEmpty(),
-                    loading = uiState.isSearching,
-                )
-            }
-            if (uiState.availableSources.isEmpty()) {
-                Text(stringResource(R.string.search_no_sources), modifier = Modifier.padding(vertical = 12.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                // Sources are a multi-select filter: entering the row starts at "All" until a chip was focused.
-                com.ambient.tv.ui.common.PageChipRow(focusChain,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                    up = queryFocus,
-                ) {
-                    item(key = "all") {
-                        TvChip(
-                            modifier = Modifier.focusRequester(focusChain.selectedChip),
-                            text = stringResource(R.string.search_all_sources),
-                            selected = uiState.selectedSources == uiState.availableSources,
-                            onClick = viewModel::selectAllSources,
-                        )
-                    }
-                    items(SearchSource.entries.filter { it in uiState.availableSources }, key = { it.name }) { source ->
-                        TvChip(
-                            text = searchSourceLabel(source),
-                            selected = source in uiState.selectedSources,
-                            onClick = { viewModel.toggleSource(source) },
-                        )
-                    }
-                }
-            }
-            // Up from the results: source chips, then the query field (no chips: straight to the field).
-            Box(Modifier.fillMaxSize().pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }.focusGroup()) {
-                when {
-                    !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
-                    uiState.hasSearched && !uiState.hasResults && !uiState.isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
-                            StatePanel(
-                                stringResource(R.string.search_no_results),
-                                if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
-                                    stringResource(R.string.search_no_results_partial_error)
-                                } else stringResource(R.string.search_no_results_body),
+                if (uiState.availableSources.isEmpty()) {
+                    Text(stringResource(R.string.search_no_sources), modifier = Modifier.padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    // Sources are a multi-select filter: entering the row starts at "All" until a chip was focused.
+                    com.ambient.tv.ui.common.PageChipRow(focusChain,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        up = queryFocus,
+                    ) {
+                        item(key = "all") {
+                            TvChip(
+                                modifier = Modifier.focusRequester(focusChain.selectedChip),
+                                text = stringResource(R.string.search_all_sources),
+                                selected = uiState.selectedSources == uiState.availableSources,
+                                onClick = viewModel::selectAllSources,
+                            )
+                        }
+                        items(SearchSource.entries.filter { it in uiState.availableSources }, key = { it.name }) { source ->
+                            TvChip(
+                                text = searchSourceLabel(source),
+                                selected = source in uiState.selectedSources,
+                                onClick = { viewModel.toggleSource(source) },
                             )
                         }
                     }
-                    else -> SoftViewChange(uiState.viewMode, Modifier.fillMaxSize()) {
-                        if (uiState.viewMode == SearchViewMode.ROWS) SearchRows(
-                            uiState,
-                            uiState.focusedRatingKey,
-                            uiState.restoreResultFocus,
-                            uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                            onItemClick,
-                            onYouTubeClick,
-                            onSpotifyClick,
-                            viewModel::playRadio,
-                            onTvheadendChannelClick,
-                            onTvheadendProgramClick,
-                            onTvheadendRecordingClick,
-                            viewModel::onItemFocused,
-                        ) else SearchList(
-                            uiState,
-                            uiState.focusedRatingKey,
-                            uiState.restoreResultFocus,
-                            uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
-                            onItemClick,
-                            onYouTubeClick,
-                            onSpotifyClick,
-                            viewModel::playRadio,
-                            onTvheadendChannelClick,
-                            onTvheadendProgramClick,
-                            onTvheadendRecordingClick,
-                            viewModel::onItemFocused,
-                        )
+                }
+                // Up from the results: source chips, then the query field (no chips: straight to the field).
+                Box(Modifier.fillMaxSize()
+                    .pageContentUp(focusChain) { if (uiState.availableSources.isEmpty()) queryFocus else focusChain.contentUp }
+                    .onFocusChanged { if (it.hasFocus && !showOptions) filterFocusState.enterContent() }
+                    .focusGroup()) {
+                    when {
+                        !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
+                        uiState.hasSearched && !uiState.hasResults && !uiState.isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
+                                StatePanel(
+                                    stringResource(R.string.search_no_results),
+                                    if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                        stringResource(R.string.search_no_results_partial_error)
+                                    } else stringResource(R.string.search_no_results_body),
+                                )
+                            }
+                        }
+                        else -> SoftViewChange(uiState.viewMode, Modifier.fillMaxSize()) {
+                            if (uiState.viewMode == SearchViewMode.ROWS) SearchRows(
+                                uiState,
+                                uiState.focusedRatingKey,
+                                uiState.restoreResultFocus,
+                                uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                                onItemClick,
+                                onYouTubeClick,
+                                onSpotifyClick,
+                                onRadioClick,
+                                onTvheadendChannelClick,
+                                onTvheadendProgramClick,
+                                onTvheadendRecordingClick,
+                                viewModel::onItemFocused,
+                            ) else SearchList(
+                                uiState,
+                                uiState.focusedRatingKey,
+                                uiState.restoreResultFocus,
+                                uiState.hasResults && !uiState.isSearching && !uiState.restoreResultFocus,
+                                onItemClick,
+                                onYouTubeClick,
+                                onSpotifyClick,
+                                onRadioClick,
+                                onTvheadendChannelClick,
+                                onTvheadendProgramClick,
+                                onTvheadendRecordingClick,
+                                viewModel::onItemFocused,
+                            )
+                        }
                     }
+                }
+            }
+            if (showOptions && uiState.hasResults) {
+                Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+                Box(Modifier.align(Alignment.TopEnd)) {
+                    ViewOptionsPanel(
+                        views = listOf(
+                            ViewOption(SearchViewMode.ROWS.name, stringResource(R.string.search_view_rows), ViewPreview.ROWS),
+                            ViewOption(SearchViewMode.LIST.name, stringResource(R.string.search_view_list), ViewPreview.LIST),
+                        ),
+                        selectedView = uiState.viewMode.name,
+                        onView = { filterFocusState.keepControls(); viewModel.setViewMode(SearchViewMode.valueOf(it)) },
+                        showDensity = false,
+                        hint = stringResource(R.string.library_view),
+                        gridColumns = 6, listRows = 6,
+                        onGridColumns = {}, onListRows = {},
+                        onClose = { showOptions = false },
+                    )
                 }
             }
         }
@@ -533,6 +586,7 @@ private fun RadioSearchRow(items: List<RadioStation>, onClick: (RadioStation) ->
         }
     }
 }
+
 
 @Composable
 private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseItem>, onClick: (SpotifyBrowseItem) -> Unit, requestInitialFocus: Boolean = false) {
@@ -996,10 +1050,14 @@ private fun initialFocusModifier(requestInitialFocus: Boolean): Modifier {
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) return Modifier
 
     val requester = remember { FocusRequester() }
-    LaunchedEffect(requestInitialFocus) {
-        if (requestInitialFocus) {
+    val filterFocus = LocalFilterFocusState.current
+    // View changes remount the results behind the panel. Their old automatic focus
+    // requests are consumed while toolbar controls own focus.
+    LaunchedEffect(requestInitialFocus, filterFocus) {
+        if (requestInitialFocus && filterFocus?.allowContentAutoFocus != false) {
             delay(120)
             repeat(4) {
+                if (filterFocus?.allowContentAutoFocus == false) return@LaunchedEffect
                 if (runCatching { requester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
                 delay(32)
             }

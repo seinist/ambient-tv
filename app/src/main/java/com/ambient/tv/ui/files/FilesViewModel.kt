@@ -39,6 +39,7 @@ data class FilesUiState(
     val more: Boolean = false, val error: OperationFeedback? = null, val focusId: String? = null,
     val revision: Int = 0, val saving: Boolean = false, val editorFeedback: OperationFeedback? = null, val editorSaved: Int = 0,
     val testing: Boolean = false,
+    val refreshing: Boolean = false,
     /** The server showed an identity the editor has to confirm (unknown) or that no longer matches (changed). */
     val keyChallenge: ServerKeyChallenge? = null,
     /** Music tags of the audio files in the open folder, by entry id; filled in the background. */
@@ -74,6 +75,7 @@ class FilesViewModel @Inject constructor(
     private val _state = MutableStateFlow(FilesUiState())
     val state = _state.asStateFlow()
     private var job: Job? = null
+    private var refreshGeneration = 0L
     private var editorJob: Job? = null
     private var sourceMutationBusy = false
     private var pendingReconnectRefresh = false
@@ -128,6 +130,10 @@ class FilesViewModel @Inject constructor(
     fun saveScroll(key: String, index: Int, offset: Int) { saved["scroll-index:$key"] = index; saved["scroll-offset:$key"] = offset }
     fun focus(id: String) { saved["focus"] = id; _state.update { it.copy(focusId = id) } }
     fun refresh() = refresh(silent = false)
+    fun reload() {
+        if (_state.value.loading || _state.value.refreshing || sourceMutationBusy) return
+        refresh()
+    }
     fun refreshOnReconnect() {
         if (sourceMutationBusy) { pendingReconnectRefresh = true; return }
         refresh(silent = true)
@@ -142,7 +148,10 @@ class FilesViewModel @Inject constructor(
     }
 
     private fun refresh(silent: Boolean) {
-        job?.cancel(); updateStored()
+        val generation = ++refreshGeneration
+        job?.cancel()
+        _state.update { it.copy(refreshing = false) }
+        updateStored()
         if (folders.isEmpty() && !restorePinnedSourceIfNeeded()) {
             showLanding(); _state.update { it.copy(focusId = saved["focus"], revision = it.revision + 1) }; return
         }
@@ -153,7 +162,7 @@ class FilesViewModel @Inject constructor(
             if (restorePinnedSourceIfNeeded()) { refresh(); return }
             showLanding(); return
         }
-        _state.update { it.copy(loading = !silent || it.folders != folders || it.loading, error = null, folders = folders,
+        _state.update { it.copy(loading = !silent || it.folders != folders || it.loading, refreshing = true, error = null, folders = folders,
             entries = it.entries.takeIf { _ -> it.folders == folders }.orEmpty(), more = false,
             tags = it.tags.takeIf { _ -> it.folders == folders }.orEmpty(), folderCover = it.folderCover.takeIf { _ -> it.folders == folders }) }
         job = viewModelScope.launch {
@@ -182,6 +191,10 @@ class FilesViewModel @Inject constructor(
                 // Class and message only; paths/hosts are fine, credentials never reach exceptions.
                 timber.log.Timber.w(error, "Files listing failed")
                 _state.update { it.copy(loading = false, error = fileError(errorMessage(error)), revision = it.revision + 1) }
+            }
+        }.also { request ->
+            request.invokeOnCompletion {
+                if (generation == refreshGeneration) _state.update { it.copy(refreshing = false) }
             }
         }
     }
@@ -299,6 +312,7 @@ class FilesViewModel @Inject constructor(
         limit = folders.lastOrNull()?.visibleLimit?.coerceAtLeast(300) ?: 300; rememberFolders(); refresh()
     }
     fun more() {
+        if (_state.value.loading || _state.value.refreshing || !_state.value.more) return
         limit += 300
         if (folders.isNotEmpty()) { folders = folders.dropLast(1) + folders.last().copy(visibleLimit = limit); rememberFolders() }
         refresh()
@@ -498,7 +512,7 @@ class FilesViewModel @Inject constructor(
             }
         }
     }
-    fun cancelLoading() { job?.cancel(); _state.update { it.copy(loading = false, error = null, revision = it.revision + 1) } }
+    fun cancelLoading() { job?.cancel(); _state.update { it.copy(loading = false, refreshing = false, error = null, revision = it.revision + 1) } }
     companion object {
         /** Larger folders are not album folders; their files keep their names. */
         private const val MAX_TAGGED_FILES = 300

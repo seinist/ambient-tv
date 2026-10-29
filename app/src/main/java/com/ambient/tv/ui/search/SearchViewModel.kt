@@ -257,10 +257,10 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(recentSearches = emptyList()) }
     }
 
-    fun toggleViewMode() {
-        val next = if (_uiState.value.viewMode == SearchViewMode.ROWS) SearchViewMode.LIST else SearchViewMode.ROWS
-        preferences.setSectionViewMode(SEARCH_STATE_KEY, next.name)
-        _uiState.update { it.copy(viewMode = next) }
+    fun setViewMode(mode: SearchViewMode) {
+        if (_uiState.value.viewMode == mode) return
+        preferences.setSectionViewMode(SEARCH_STATE_KEY, mode.name)
+        _uiState.update { it.copy(viewMode = mode) }
     }
 
     fun onItemFocused(item: MediaItem) {
