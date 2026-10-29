@@ -163,6 +163,14 @@ private fun drift(t: Float, period: Float, offset: Float = 0f) = sin(t * 2f * PI
  */
 internal fun introBloomPeakMorph(t: Float) = soft(phase(t, 2.3f, 2.4f))
 
+/** Vertical correction that puts the retained icon-A feet on the wordmark baseline. */
+internal fun introBloomBaselineShiftInWordmarkUnits(): Float {
+    val endUnit = 16f / 18f
+    val apexAlignedFootY = WORDMARK_PEAK[1].y +
+        (ICON_PEAK[0].y - ICON_PEAK[1].y) * endUnit
+    return WORDMARK_PEAK[0].y - apexAlignedFootY
+}
+
 /**
  * Full-screen intro in the current accent (and playback accent when a pair is set). The app
  * composes underneath. Light is the subject: it gathers, the brand wordmark settles into it, and
@@ -383,13 +391,15 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
     val peak: List<Offset>
     val peakStroke: Float
     if (fromIcon) {
-        // Preserve the original Bloom travel and scale, but keep the A locked to the TV frame.
-        // The previous implementation interpolated the A a second time toward the final wordmark,
-        // so it arrived early and made the frame look as if it kept flying left on its own.
+        // Preserve the original Bloom travel and scale, keep the A locked to the TV frame, and
+        // settle the complete mark on the same baseline as "mbient". Aligning by the apex alone
+        // leaves the icon-A feet too high because the icon and wordmark A have different proportions.
         val bigUnit = width * 0.30f / 48f
         val bigOrigin = at - Offset(24f, 24f) * bigUnit
         val endUnit = unit * 16f / 18f
-        val endOrigin = mark(WORDMARK_PEAK[1]) - ICON_PEAK[1] * endUnit
+        val apexAlignedOrigin = mark(WORDMARK_PEAK[1]) - ICON_PEAK[1] * endUnit
+        val endOrigin = apexAlignedOrigin +
+            Offset(0f, introBloomBaselineShiftInWordmarkUnits() * unit)
         val iconUnit = mix(bigUnit, endUnit, move)
         val iconOrigin = mix(bigOrigin, endOrigin, move)
         val iconPeak = ICON_PEAK.map { iconOrigin + it * iconUnit }
