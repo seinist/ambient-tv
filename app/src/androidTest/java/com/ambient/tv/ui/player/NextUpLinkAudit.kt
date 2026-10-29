@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import com.ambient.tv.R
 import com.ambient.tv.domain.model.PlaybackSegment
 import com.ambient.tv.domain.model.PlaybackTimeline
 import com.ambient.tv.ui.catalog.UiCatalogActivity
@@ -69,9 +70,9 @@ class NextUpLinkAudit(private val instrumentation: Instrumentation, private val 
             main { clock.position = 75_000; BackgroundPlaybackSession.tick() }
             settle()
             main { check(!playerFocused) { "Next Up did not appear at the credits marker" }; check(advances == 0) }
-            // Primary action is at the lower-right; pass Close to reach Skip credits at the left.
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
-            key(KeyEvent.KEYCODE_DPAD_LEFT)
+            val footerFocus = NextUpAuditFocus(instrumentation)
+            footerFocus.assertFocused(R.string.next_up_play_now)
+            footerFocus.focus(R.string.player_skip_credits)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main {
                 check(clock.seeks.lastOrNull() == 80_000L) { "Integrated credits action missed its end: ${clock.seeks}" }

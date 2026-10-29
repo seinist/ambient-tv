@@ -93,7 +93,8 @@ class NextUpPresentationAudit(private val instrumentation: Instrumentation, priv
                     Box(Modifier.fillMaxSize()) {
                         NextUpOverlay(candidate.value, 24, 40, autoplay.value, confirmation.value,
                             onPlayNow = { plays++ }, onDismiss = { dismisses++ },
-                            modifier = Modifier.align(Alignment.BottomEnd).padding(32.dp), onSkipCredits = {})
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(32.dp), onSkipCredits = {},
+                            onAutoplayChanged = { autoplay.value = it })
                     }
                 }
             } }

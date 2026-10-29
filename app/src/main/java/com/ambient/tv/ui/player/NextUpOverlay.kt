@@ -4,10 +4,14 @@ import com.ambient.tv.ui.common.requestHeaders
 import coil3.request.crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -16,6 +20,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -28,7 +33,9 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -44,9 +51,12 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.ui.common.DialogButtonFocusScope
+import com.ambient.tv.ui.common.LocalDialogButtonFocus
 import com.ambient.tv.ui.common.TvActionButton
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun NextUpOverlay(
     candidate: NextUpCandidate,
@@ -63,6 +73,7 @@ internal fun NextUpOverlay(
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val playFocus = remember(candidate.source, candidate.mediaId) { FocusRequester() }
+    val footerButtons = remember { DialogButtonFocusScope(containSingleButton = true) }
     LaunchedEffect(playFocus) {
         delay(100)
         runCatching { playFocus.requestFocus() }
@@ -80,7 +91,7 @@ internal fun NextUpOverlay(
         val countdown = nextUpCountdown(autoplay, stillWatching, secondsRemaining)
         val countdownText = when (countdown) {
             NextUpCountdown.CONFIRMATION -> stringResource(R.string.next_up_confirm)
-            // The header toggle already says that autoplay is off.
+            // The footer toggle already says that autoplay is off.
             NextUpCountdown.DISABLED -> if (onAutoplayChanged != null) "" else stringResource(R.string.next_up_autoplay_off)
             NextUpCountdown.READY -> stringResource(R.string.next_up_ready)
             NextUpCountdown.COUNTDOWN -> stringResource(
@@ -94,24 +105,13 @@ internal fun NextUpOverlay(
                 modifier = if (handheld) Modifier.weight(1f) else Modifier,
                 color = Color.White.copy(alpha = 0.72f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
             )
-            // Portrait phones are too narrow for title, countdown and toggle in one row; the countdown moves below.
+            // Keep the countdown on its own line on narrow phones.
             if (!handheld) {
                 Text(
                     text = countdownText,
                     modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.primary,
                     fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                )
-            }
-            onAutoplayChanged?.let { change ->
-                TvActionButton(
-                    stringResource(if (autoplay) R.string.next_up_autoplay_on else R.string.next_up_autoplay_off),
-                    { change(!autoplay) },
-                    modifier = Modifier.semantics {
-                        role = Role.Switch
-                        toggleableState = ToggleableState(autoplay)
-                    },
-                    selected = autoplay,
                 )
             }
         }
@@ -145,41 +145,56 @@ internal fun NextUpOverlay(
                 if (metadata.isNotBlank()) Text(metadata, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        // Keep destructive/secondary actions at the outside edge and the selected
-        // continuation action at the lower-right, where it is easy to find again.
-        if (handheld) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                onSkipCredits?.let {
-                    TvActionButton(stringResource(R.string.player_skip_credits), it, fillWidth = true)
+        // Autoplay and Close stay together at the left. Long labels and optional
+        // credits controls wrap; the primary action stays at the end of its line.
+        CompositionLocalProvider(LocalDialogButtonFocus provides footerButtons) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth()
+                    .focusProperties {
+                        onExit = {
+                            // Keep D-pad navigation in the overlay, including a one-button
+                            // wrapped line. Explicit focus returns after an action still work.
+                            when (requestedFocusDirection) {
+                                FocusDirection.Left, FocusDirection.Right,
+                                FocusDirection.Up, FocusDirection.Down -> cancelFocusChange()
+                                else -> Unit
+                            }
+                        }
+                    }.focusGroup(),
+                horizontalArrangement = Arrangement.spacedBy(if (handheld) 8.dp else 10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                onAutoplayChanged?.let { change ->
+                    TvActionButton(
+                        stringResource(if (autoplay) R.string.next_up_autoplay_on else R.string.next_up_autoplay_off),
+                        { change(!autoplay) },
+                        modifier = Modifier.align(Alignment.CenterVertically).semantics {
+                            role = Role.Switch
+                            toggleableState = ToggleableState(autoplay)
+                        },
+                        selected = autoplay,
+                    )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                TvActionButton(
+                    stringResource(if (creditsCountdown) R.string.next_up_keep_watching else R.string.next_up_close),
+                    onDismiss,
+                    Modifier.align(Alignment.CenterVertically),
+                )
+                onSkipCredits?.let {
+                    TvActionButton(stringResource(R.string.player_skip_credits), it, Modifier.align(Alignment.CenterVertically))
+                }
+                Box(
+                    // FlowRow uses intrinsic width to decide where a weighted child wraps.
+                    // Reserve the full label before taking the remaining space on that line.
+                    modifier = Modifier.weight(1f).width(IntrinsicSize.Max).align(Alignment.CenterVertically),
+                    contentAlignment = Alignment.CenterEnd,
                 ) {
-                    TvActionButton(stringResource(if (creditsCountdown) R.string.next_up_keep_watching else R.string.next_up_close), onDismiss, Modifier.weight(1f), fillWidth = true)
                     TvActionButton(
                         stringResource(if (stillWatching) R.string.next_up_continue else R.string.next_up_play_now),
                         onPlayNow,
-                        Modifier.weight(1f).focusRequester(playFocus),
-                        fillWidth = true,
+                        Modifier.focusRequester(playFocus),
                     )
                 }
-            }
-        } else {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                onSkipCredits?.let { TvActionButton(stringResource(R.string.player_skip_credits), it) }
-                Spacer(Modifier.weight(1f))
-                TvActionButton(stringResource(if (creditsCountdown) R.string.next_up_keep_watching else R.string.next_up_close), onDismiss)
-                TvActionButton(
-                    stringResource(if (stillWatching) R.string.next_up_continue else R.string.next_up_play_now),
-                    onPlayNow,
-                    Modifier.focusRequester(playFocus),
-                )
             }
         }
     }

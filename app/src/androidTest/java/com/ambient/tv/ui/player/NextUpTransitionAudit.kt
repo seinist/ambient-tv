@@ -11,6 +11,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import com.ambient.tv.R
 import com.ambient.tv.ui.catalog.UiCatalogActivity
 import com.ambient.tv.ui.theme.AmbientTvTheme
 
@@ -90,8 +91,9 @@ class NextUpTransitionAudit(private val instrumentation: Instrumentation, privat
             }
             settle()
             val originalChrome = chrome
-            // Initial focus is Play now. Up reaches the full-width autoplay switch.
-            key(KeyEvent.KEYCODE_DPAD_UP)
+            val footerFocus = NextUpAuditFocus(instrumentation)
+            footerFocus.assertFocused(R.string.next_up_play_now)
+            footerFocus.focus(R.string.next_up_autoplay_on)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main {
                 check(!persisted) { "Autoplay switch did not persist Off" }
@@ -102,6 +104,7 @@ class NextUpTransitionAudit(private val instrumentation: Instrumentation, privat
             }
             settle()
             main { check(advances == 0 && stops == 0) { "Disabled autoplay advanced or closed the player" } }
+            footerFocus.assertFocused(R.string.next_up_autoplay_off)
             key(KeyEvent.KEYCODE_DPAD_CENTER)
             main {
                 check(persisted && advances == 1) { "Enabling autoplay at EOF must advance once" }
