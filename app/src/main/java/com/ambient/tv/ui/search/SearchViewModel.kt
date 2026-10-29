@@ -5,6 +5,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.connectivity.UnreachableServerGate
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.radio.RadioBrowserRepository
+import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.ui.radio.RadioPlaybackLauncher
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.data.jellyfin.JellyfinRepository
@@ -30,7 +33,7 @@ import kotlinx.coroutines.launch
 
 enum class SearchViewMode { ROWS, LIST }
 enum class SearchSourceState { IDLE, DISABLED, LOADING, READY, PARTIAL, ERROR }
-enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, TRAILERS, YOUTUBE, SPOTIFY }
+enum class SearchSource { PLEX, JELLYFIN, EMBY, LIVE_TV, TRAILERS, YOUTUBE, SPOTIFY, RADIO }
 
 private val LOCAL_SEARCH_SOURCES = setOf(SearchSource.PLEX, SearchSource.JELLYFIN, SearchSource.EMBY, SearchSource.LIVE_TV)
 internal fun defaultSearchSources(available: Set<SearchSource>): Set<SearchSource> =
@@ -78,6 +81,7 @@ data class SearchUiState(
     val trailerResults: List<MediaItem> = emptyList(),
     val youtubeResults: List<YouTubeItem> = emptyList(),
     val spotifyResults: List<SpotifyBrowseItem> = emptyList(),
+    val radioResults: List<RadioStation> = emptyList(),
     val tvheadendResults: TvhSearchResults = TvhSearchResults(),
     val liveTvSources: Map<String, com.ambient.tv.livetv.LiveTvSource> = emptyMap(),
     val liveTvHeaders: Map<String, Map<String, String>> = emptyMap(),
@@ -89,15 +93,16 @@ data class SearchUiState(
     val trailerState: SearchSourceState = SearchSourceState.IDLE,
     val youtubeState: SearchSourceState = SearchSourceState.IDLE,
     val spotifyState: SearchSourceState = SearchSourceState.IDLE,
+    val radioState: SearchSourceState = SearchSourceState.IDLE,
     val tvheadendState: SearchSourceState = SearchSourceState.IDLE,
     val tvheadendImageHeaders: Map<String, String> = emptyMap(),
     val viewMode: SearchViewMode = SearchViewMode.ROWS,
     val focusedRatingKey: String? = null,
     val restoreResultFocus: Boolean = false,
 ) {
-    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + trailerResults.size + youtubeResults.size + spotifyResults.size + tvheadendResults.size
+    val resultCount: Int get() = results.size + jellyfinResults.size + embyResults.size + trailerResults.size + youtubeResults.size + spotifyResults.size + radioResults.size + tvheadendResults.size
     val hasResults: Boolean get() = resultCount > 0
-    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, trailerState, youtubeState, spotifyState, tvheadendState).any { it == SearchSourceState.LOADING }
+    val isSearching: Boolean get() = listOf(plexState, jellyfinState, embyState, trailerState, youtubeState, spotifyState, radioState, tvheadendState).any { it == SearchSourceState.LOADING }
 }
 
 private const val MIN_QUERY_LENGTH = 2
@@ -112,6 +117,8 @@ class SearchViewModel @Inject constructor(
     private val preferences: AppPreferences,
     private val smartTubeEngine: SmartTubeEngine,
     private val spotifyRepository: SpotifyRepository,
+    private val radioRepository: RadioBrowserRepository,
+    private val radioPlaybackLauncher: RadioPlaybackLauncher,
     private val tvheadendRepository: TvheadendRepository,
     private val liveTvRegistry: com.ambient.tv.livetv.LiveTvRegistry,
     private val unreachableServers: UnreachableServerGate,
@@ -128,6 +135,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.trailersEnabled && trailerRepository.configured) add("trailers")
             if (preferences.youtubeEnabled) add("youtube")
             if (preferences.spotifyEnabled) add("spotify")
+            if (preferences.radioEnabled) add("radio")
         }
 
     private fun availableSearchSources(): Set<SearchSource> {
@@ -141,6 +149,7 @@ class SearchViewModel @Inject constructor(
             if (preferences.trailersEnabled && trailerRepository.configured) add(SearchSource.TRAILERS)
             if (preferences.youtubeEnabled && smartTubeEngine.available && youtubeSignedIn) add(SearchSource.YOUTUBE)
             if (preferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized) add(SearchSource.SPOTIFY)
+            if (preferences.radioEnabled) add(SearchSource.RADIO)
         }
     }
 
@@ -217,11 +226,11 @@ class SearchViewModel @Inject constructor(
 
     private fun clearResults(state: SearchUiState) = state.copy(
         results = emptyList(), jellyfinResults = emptyList(), embyResults = emptyList(),
-        trailerResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(),
+        trailerResults = emptyList(), youtubeResults = emptyList(), spotifyResults = emptyList(), radioResults = emptyList(),
         tvheadendResults = TvhSearchResults(), hasSearched = false, restoreResultFocus = false,
         plexState = SearchSourceState.IDLE, jellyfinState = SearchSourceState.IDLE,
         embyState = SearchSourceState.IDLE, trailerState = SearchSourceState.IDLE,
-        youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE,
+        youtubeState = SearchSourceState.IDLE, spotifyState = SearchSourceState.IDLE, radioState = SearchSourceState.IDLE,
         tvheadendState = SearchSourceState.IDLE,
     )
 
@@ -269,6 +278,7 @@ class SearchViewModel @Inject constructor(
         val trailersEnabled = SearchSource.TRAILERS in enabled
         val youtubeEnabled = SearchSource.YOUTUBE in enabled
         val spotifyEnabled = SearchSource.SPOTIFY in enabled
+        val radioEnabled = SearchSource.RADIO in enabled
         val tvRepositories = liveTvRegistry.configured().filter { repo ->
             liveTvSearchSource(repo.source.system)?.let { it in enabled } == true
         }
@@ -284,6 +294,7 @@ class SearchViewModel @Inject constructor(
                 trailerResults = if (preserveResults && trailersEnabled) it.trailerResults else emptyList(),
                 youtubeResults = if (preserveResults && youtubeEnabled) it.youtubeResults else emptyList(),
                 spotifyResults = if (preserveResults && spotifyEnabled) it.spotifyResults else emptyList(),
+                radioResults = if (preserveResults && radioEnabled) it.radioResults else emptyList(),
                 tvheadendResults = if (preserveResults && tvheadendEnabled) it.tvheadendResults else TvhSearchResults(),
                 hasSearched = true,
                 plexState = if (plexEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
@@ -292,6 +303,7 @@ class SearchViewModel @Inject constructor(
                 trailerState = if (trailersEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 youtubeState = if (youtubeEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 spotifyState = if (spotifyEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
+                radioState = if (radioEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 tvheadendState = if (tvheadendEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 tvheadendImageHeaders = tvheadendRepository.authHeaders(),
             )
@@ -374,6 +386,15 @@ class SearchViewModel @Inject constructor(
                     )
                 }
             }
+            if (radioEnabled) launch {
+                val result = suspendResult { radioRepository.search(query = query, limit = 24).items }
+                updateForQuery(query, revision) { state ->
+                    result.fold(
+                        onSuccess = { state.copy(radioResults = it, radioState = SearchSourceState.READY) },
+                        onFailure = { state.copy(radioState = SearchSourceState.ERROR) },
+                    )
+                }
+            }
             if (tvheadendEnabled) launch {
                 val result = suspendResult { searchLiveTvRepositories(tvRepositories, query) }
                 updateForQuery(query, revision) { state ->
@@ -387,6 +408,12 @@ class SearchViewModel @Inject constructor(
         if (_uiState.value.query.trim() == query && searchRevision == revision) {
             preferences.rememberSearch(query)
             _uiState.update { it.copy(recentSearches = preferences.recentSearches()) }
+        }
+    }
+
+    fun playRadio(station: RadioStation) {
+        viewModelScope.launch {
+            radioPlaybackLauncher.play(station, _uiState.value.radioResults)
         }
     }
 
