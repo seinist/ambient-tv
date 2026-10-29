@@ -182,20 +182,21 @@ class RadioViewModel @Inject constructor(
         val current = _state.value
         val index = current.stations.indexOfFirst { it.id == stationId }
         if (!radioShouldLoadOnFocus(index, current.stations.size, current.hasMore, current.loading, current.loadingMore)) {
-            if (focusLoadStationId != stationId) focusLoadJob?.cancel()
+            focusLoadJob?.cancel()
+            focusLoadJob = null
+            focusLoadStationId = null
             return
         }
-        // SmartTube keeps one settle timer while focus moves inside the same pending row.
-        if (focusLoadJob?.isActive == true && focusLoadStationId == stationId) return
-        focusLoadJob?.cancel()
+        // Like SmartTube: moving inside the pending end region keeps the same settle timer.
+        if (focusLoadJob?.isActive == true) return
         focusLoadStationId = stationId
         focusLoadJob = viewModelScope.launch {
             delay(RADIO_FOCUS_SETTLE_MS)
             while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
             val latest = _state.value
-            val latestIndex = latest.stations.indexOfFirst { it.id == stationId }
-            if (focusedStationId != stationId ||
-                !radioShouldLoadOnFocus(
+            val latestFocusedId = focusedStationId ?: return@launch
+            val latestIndex = latest.stations.indexOfFirst { it.id == latestFocusedId }
+            if (!radioShouldLoadOnFocus(
                     latestIndex,
                     latest.stations.size,
                     latest.hasMore,
