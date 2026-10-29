@@ -18,12 +18,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.saveable.SaveableStateHolder
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.focusProperties
@@ -75,6 +78,7 @@ internal data class PlayerPanelMotionState(
 internal val LocalPlayerPanelMotion = staticCompositionLocalOf { PlayerPanelMotionState() }
 /** False only while the already-dismissed panel finishes its visual exit. */
 internal val LocalPlayerPanelInteractive = staticCompositionLocalOf { true }
+internal val LocalPlayerPanelStateHolder = staticCompositionLocalOf<SaveableStateHolder?> { null }
 
 /**
  * Navigation is dismissed immediately, but the last visual level stays composed until its exit
@@ -92,6 +96,7 @@ fun PlayerPanelVisibility(
     val currentDepth = navigation?.depth ?: if (panel == UnifiedPlayerPanel.NONE) 0 else 1
     var visualPanel by remember { mutableStateOf(panel) }
     var visualDepth by remember { mutableIntStateOf(currentDepth) }
+    var stateGeneration by remember { mutableIntStateOf(0) }
     val panelProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
     val scrimProgress = remember { Animatable(if (panel == UnifiedPlayerPanel.NONE) 0f else 1f) }
     val interactive = panel != UnifiedPlayerPanel.NONE
@@ -137,6 +142,9 @@ fun PlayerPanelVisibility(
             if (panel == UnifiedPlayerPanel.NONE) {
                 visualPanel = UnifiedPlayerPanel.NONE
                 visualDepth = 0
+                // A complete dismissal starts a fresh panel session next time, matching the
+                // old immediate-unmount behavior while still allowing this exit to finish.
+                stateGeneration++
             }
         }
     }
@@ -160,22 +168,26 @@ fun PlayerPanelVisibility(
             .clearAndSetSemantics { }
     }
 
-    CompositionLocalProvider(
-        LocalPlayerPanelInteractive provides interactive,
-        LocalPlayerPanelMotion provides PlayerPanelMotionState(
-            panelProgress = panelProgress.value,
-            scrimProgress = scrimProgress.value,
-            visualDepth = visualDepth,
-            reducedEffects = reducedEffects,
-        ),
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
-                .then(input),
+    key(stateGeneration) {
+        val levels = rememberSaveableStateHolder()
+        CompositionLocalProvider(
+            LocalPlayerPanelInteractive provides interactive,
+            LocalPlayerPanelStateHolder provides levels,
+            LocalPlayerPanelMotion provides PlayerPanelMotionState(
+                panelProgress = panelProgress.value,
+                scrimProgress = scrimProgress.value,
+                visualDepth = visualDepth,
+                reducedEffects = reducedEffects,
+            ),
         ) {
-            content(visualPanel)
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .zIndex(PLAYER_SETTINGS_PANEL_Z_INDEX)
+                    .then(input),
+            ) {
+                content(visualPanel)
+            }
         }
     }
 }
