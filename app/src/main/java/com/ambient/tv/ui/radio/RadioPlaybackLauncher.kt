@@ -13,6 +13,8 @@ import com.ambient.tv.ui.player.PlaybackMetadata
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class RadioPlaybackLauncher @Inject constructor(
@@ -21,10 +23,13 @@ class RadioPlaybackLauncher @Inject constructor(
     private val preferences: AppPreferences,
     private val queue: RadioPlaybackQueue,
 ) {
+    private val playMutex = Mutex()
+
     suspend fun play(
         station: RadioStation,
         stations: List<RadioStation>? = null,
-    ): Result<Unit> = runCatching {
+    ): Result<Unit> = playMutex.withLock {
+        runCatching {
         val streamUrl = repository.playbackUrl(station)
         if (stations != null) queue.replace(stations, station.id) else queue.select(station.id)
         preferences.recordRadioStation(station)
@@ -63,6 +68,7 @@ class RadioPlaybackLauncher @Inject constructor(
         })
         // Some streams expose the first ICY title before the listener is attached.
         publishNowPlaying(player.mediaMetadata.title)
+        }
     }
 }
 
