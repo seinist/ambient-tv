@@ -148,6 +148,23 @@ class PlayerPanelAutoHideTest {
         rule.onNodeWithText("OSD").assertDoesNotExist()
     }
 
+    @Test fun manualCloseFinishesItsVisualExitButStopsPanelInteractionImmediately() {
+        val fixture = mount()
+        rule.runOnIdle {
+            assertTrue(fixture.visualPanelComposed)
+            assertTrue(fixture.panelInteractive)
+            fixture.chrome.panels.close()
+        }
+        advance(16)
+        rule.runOnIdle {
+            assertEquals(UnifiedPlayerPanel.NONE, fixture.chrome.panels.panel)
+            assertTrue(fixture.visualPanelComposed)
+            assertFalse(fixture.panelInteractive)
+        }
+        advance(PLAYER_PANEL_EXIT_MS + 32L)
+        rule.runOnIdle { assertFalse(fixture.visualPanelComposed) }
+    }
+
     @Test fun idleClosesEverythingAndRendererStatsOrProgrammaticFocusDoNotRestartDeadline() {
         val fixture = mount()
         advance(28_000)
