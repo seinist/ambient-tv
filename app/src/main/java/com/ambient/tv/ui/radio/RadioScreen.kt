@@ -35,7 +35,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -61,11 +60,8 @@ import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDp
-import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
-import com.ambient.tv.ui.player.PlaybackEngineFactory
-import com.ambient.tv.ui.player.PlaybackMetadata
 import com.ambient.tv.ui.theme.screenGutter
 
 @Composable
@@ -74,58 +70,11 @@ fun RadioScreen(
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val playbackRequest by viewModel.playbackRequest.collectAsState()
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
-    val context = LocalContext.current
 
     LaunchedEffect(viewModel) { viewModel.enter() }
     ReportSidebarContentReady(!state.loading)
     if (onBack != null) BackHandler { onBack() }
-
-    LaunchedEffect(playbackRequest?.requestId) {
-        val request = playbackRequest ?: return@LaunchedEffect
-        val station = request.station
-        val subtitle = stationMeta(station)
-        runCatching {
-            val player = PlaybackEngineFactory.create(
-                context = context,
-                streamUrl = request.streamUrl,
-                startPositionMs = 0L,
-                metadata = PlaybackMetadata(
-                    route = Destinations.RADIO,
-                    title = station.name,
-                    subtitle = subtitle,
-                    source = "radio",
-                    mediaId = station.id,
-                    hasVideo = false,
-                    artworkUrl = station.artworkUrl,
-                    artworkAspectRatio = 1f,
-                    isLive = true,
-                ),
-                audioOnly = true,
-                liveStream = true,
-            )
-            fun publishNowPlaying(value: CharSequence?) {
-                val nowPlaying = radioNowPlayingTitle(value, station.name) ?: return
-                val current = BackgroundPlaybackSession.snapshot.value.metadata ?: return
-                // A delayed callback from the previous stream must never relabel the new station.
-                if (current.source != "radio" || current.mediaId != station.id || current.subtitle == nowPlaying) return
-                BackgroundPlaybackSession.refreshMetadata(current.copy(subtitle = nowPlaying))
-            }
-            player.addListener(object : androidx.media3.common.Player.Listener {
-                override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) {
-                    publishNowPlaying(mediaMetadata.title)
-                }
-            })
-            // Some streams expose their first ICY title before the listener is attached.
-            publishNowPlaying(player.mediaMetadata.title)
-            player
-        }.onSuccess {
-            viewModel.playbackStarted(request.requestId)
-        }.onFailure {
-            viewModel.playbackFailed(request.requestId)
-        }
-    }
 
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
@@ -317,7 +266,7 @@ private fun RadioStationTile(
             }
             CenteredMarqueeTitle(station.name, focused = focused)
             Text(
-                stationMeta(station),
+                radioStationSubtitle(station),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -336,14 +285,3 @@ private fun RadioStationTile(
         )
     }
 }
-
-private fun stationMeta(station: RadioStation): String = listOfNotNull(
-    station.country,
-    station.codec,
-    station.bitrateKbps?.let { "$it kbps" },
-).joinToString(" • ")
-
-
-internal fun radioNowPlayingTitle(value: CharSequence?, stationName: String): String? =
-    value?.toString()?.trim()
-        ?.takeIf { it.isNotBlank() && !it.equals(stationName.trim(), ignoreCase = true) }
