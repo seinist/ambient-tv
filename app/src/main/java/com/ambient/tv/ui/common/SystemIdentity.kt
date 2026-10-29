@@ -58,6 +58,7 @@ enum class MediaSystem(
         coloredLogo = R.drawable.logo_youtube, brandColor = Color(0xFFFF0000), brand = "SmartTube",
     ),
     SPOTIFY("spotify", R.string.spotify_title, R.drawable.system_spotify, R.drawable.wordmark_spotify, brand = "Spotify"),
+    RADIO("radio", R.string.radio_title, R.drawable.system_radio),
     DLNA("dlna", R.string.dlna_title, R.drawable.system_dlna, R.drawable.wordmark_dlna),
     TRAILERS("trailers", R.string.trailers_title, R.drawable.system_tmdb, R.drawable.wordmark_tmdb),
     IPTV("iptv", R.string.iptv_title, R.drawable.system_iptv),
@@ -83,7 +84,7 @@ enum class MediaSystem(
 
         /** Logo catalog on first launch and on Settings › Add system. */
         val addOrder: List<MediaSystem> = listOf(
-            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, SPOTIFY, TRAILERS, FILES,
+            PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, SPOTIFY, RADIO, TRAILERS, FILES,
         )
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
