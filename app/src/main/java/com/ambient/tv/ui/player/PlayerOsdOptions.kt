@@ -51,6 +51,8 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
         OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV) + toolButtons),
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
+    RADIO(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.FAVORITE, OsdButton.AUDIO,
+        OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.STATS, OsdButton.FPS, OsdButton.TOOLS)),
 }
 
 /**
@@ -61,7 +63,7 @@ enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
     SEEK(R.string.osd_button_seek), STOP(R.string.player_stop), NEXT(R.string.osd_button_next),
     ZAP(R.string.osd_button_zap), RECORD(R.string.tvh_record), GO_LIVE(R.string.timeshift_go_live),
     EXIT(R.string.osd_button_exit), CHAPTERS(R.string.player_chapters), CHANNEL(R.string.youtube_channel_open),
-    SUBSCRIBE(R.string.youtube_subscribe), AUDIO(R.string.player_audio), SUBTITLES(R.string.player_subtitles),
+    SUBSCRIBE(R.string.youtube_subscribe), FAVORITE(R.string.radio_favorite), AUDIO(R.string.player_audio), SUBTITLES(R.string.player_subtitles),
     VIDEO(R.string.player_video), VISUALIZER(R.string.player_visualizer), SLEEP(R.string.player_sleep_timer),
     SHUFFLE(R.string.spotify_shuffle), REPEAT(R.string.osd_button_repeat), VOLUME(R.string.osd_button_volume),
     STATS(R.string.player_stats_for_nerds, optIn = true), FPS(R.string.player_fps_overlay, optIn = true),
