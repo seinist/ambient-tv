@@ -2157,4 +2157,5 @@
     <string name="radio_languages">Sprachen</string>
     <string name="radio_no_facets">Keine Kategorien gefunden</string>
     <string name="radio_facet_station_count">%1$s · %2$d Sender</string>
+    <string name="radio_now_playing">Aktuelle Wiedergabe</string>
 </resources>
