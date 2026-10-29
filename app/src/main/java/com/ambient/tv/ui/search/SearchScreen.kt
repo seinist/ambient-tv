@@ -570,7 +570,7 @@ private fun RadioSearchRow(
     requestInitialFocus: Boolean = false,
 ) {
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SearchGroupTitle(MediaSystem.RADIO, R.string.radio_title)
+        SearchGroupTitle(MediaSystem.RADIO, R.string.radio_stations)
         LazyRow(
             state = rememberLazyListState(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
@@ -914,7 +914,7 @@ private fun SearchList(
         }
         sourceStatusItem("radio-list-status", MediaSystem.RADIO, state.radioState)
         if (state.radioResults.isNotEmpty()) {
-            item(key = "radio-list-header") { SearchListGroupHeader(MediaSystem.RADIO, R.string.radio_title) }
+            item(key = "radio-list-header") { SearchListGroupHeader(MediaSystem.RADIO, R.string.radio_stations) }
             items(state.radioResults, key = { "radio:${it.id}" }) { station ->
                 ExternalSearchListItem(
                     imageUrl = station.artworkUrl,
