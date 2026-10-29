@@ -1620,7 +1620,7 @@ class HomeViewModel @Inject constructor(
         providerLabel = when (system) {
             HomeRowDefinition.SYSTEM_YOUTUBE -> "SmartTube"
             HomeRowDefinition.SYSTEM_SPOTIFY -> "Spotify"
-            HomeRowDefinition.SYSTEM_RADIO -> "RadioBrowser"
+            HomeRowDefinition.SYSTEM_RADIO -> MediaSystem.RADIO.customName ?: context.getString(MediaSystem.RADIO.label)
             HomeRowDefinition.SYSTEM_TVHEADEND -> "TV"
             HomeRowDefinition.SYSTEM_PLEX -> "Plex"
             HomeRowDefinition.SYSTEM_EMBY -> "Emby"
