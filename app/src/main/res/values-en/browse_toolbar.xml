@@ -1,0 +1,4 @@
+<resources>
+    <string name="browse_filter_options_hint">Adjust sorting and filters.</string>
+    <string name="guide_count_filtered">%1$d of %2$d channels</string>
+</resources>

@@ -88,6 +88,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
         onDispose { }
     }
     val locationKey = state.folders.lastOrNull()?.let { "${it.sourceId}:${it.path}" } ?: viewModel.tab
+    var keepHeaderFocus by remember(locationKey, contentActive) { mutableStateOf(false) }
     val initialScroll = remember(locationKey) { viewModel.scroll(locationKey) }
     val list = remember(locationKey) { LazyListState(initialScroll.first, initialScroll.second) }
     DisposableEffect(list) { onDispose { viewModel.saveScroll(locationKey, list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset) } }
@@ -112,8 +113,8 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     val canUp = state.folders.isNotEmpty() && !(viewModel.pinnedSource && state.folders.size == 1)
     val upFocus = remember { FocusRequester() }
     val retryFocus = remember { FocusRequester() }
-    LaunchedEffect(state.revision, locationKey, contentActive, dialogOpen, ids, state.loading, state.error.takeIf { ids.isEmpty() }) {
-        if (handheld || !contentActive || dialogOpen || state.loading) return@LaunchedEffect
+    LaunchedEffect(state.revision, locationKey, contentActive, dialogOpen, ids, state.loading, state.error.takeIf { ids.isEmpty() }, keepHeaderFocus) {
+        if (handheld || !contentActive || dialogOpen || state.loading || keepHeaderFocus) return@LaunchedEffect
         val id = state.focusId?.takeIf { it in ids } ?: ids.firstOrNull()
         // The ".." row leads the list: it shifts the entry indices and is the focus of an empty folder.
         val onUp = canUp && (id == null || state.focusId == UP_ID)
@@ -133,7 +134,9 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             }
             TvChip(stringResource(R.string.action_folder), icon = Icons.Default.CreateNewFolder, iconOnly = true) { pickFolder() }
             TvChip(stringResource(R.string.action_nas), icon = Icons.Default.Storage, iconOnly = true) { viewModel.resetEditor(); editor = FileSource(name = "", kind = "smb") }
-            TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh, loading = state.loading, iconOnly = true, onClick = viewModel::refresh)
+            TvChip(stringResource(R.string.action_reload), icon = Icons.Default.Refresh,
+                loading = state.loading || state.refreshing, iconOnly = true,
+                onClick = { keepHeaderFocus = true; viewModel.reload() })
             // Folder slideshow (optionally with subfolders, see photo settings).
             if (state.entries.any { it.image }) {
                 TvChip(stringResource(R.string.photos_slideshow), icon = Icons.Default.Slideshow, iconOnly = true) { if (viewModel.preparePhotos(null)) onOpenPhotos() }
@@ -156,12 +159,13 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
             OperationFeedbackContent(message, Modifier.fillMaxWidth())
         }
         // Up from the list: breadcrumb (parent folder), then the header actions.
-        Box(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain).focusGroup()) {
+        Box(Modifier.fillMaxWidth().weight(1f).pageContentUp(focusChain)
+            .onFocusChanged { if (it.hasFocus) keepHeaderFocus = false }.focusGroup()) {
             if (state.error != null && ids.isEmpty()) {
                 OperationFeedbackContent(state.error!!, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
                     onAction = if (state.folders.isEmpty()) onBack else viewModel::refresh,
-                    actionModifier = Modifier.focusRequester(retryFocus))
+                    actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus)
             } else if (state.loading && ids.isEmpty()) {
                 FullscreenSpinner(Modifier.align(Alignment.Center))
             } else {
@@ -258,7 +262,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                         )
                     }
                     }
-                    if (state.more) item("more") { TvActionButton(stringResource(R.string.files_more), viewModel::more) }
+                    if (state.more) item("more") { TvActionButton(stringResource(R.string.files_more), viewModel::more, loading = state.loading || state.refreshing) }
                 }
             }
         }
