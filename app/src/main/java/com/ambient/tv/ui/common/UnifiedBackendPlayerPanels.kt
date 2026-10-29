@@ -21,15 +21,11 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.HighQuality
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
-import androidx.compose.material.icons.filled.ViewWeek
-import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import com.ambient.tv.ui.common.projectm.LocalProjectMBrowser
 import com.ambient.tv.ui.common.projectm.ProjectMPresetPanel
@@ -54,12 +50,12 @@ import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelControls
 import com.ambient.tv.ui.player.LiveTvPlayerPanelEntry
+import com.ambient.tv.ui.player.PlayerOsdInfoPanelControls
+import com.ambient.tv.ui.player.PlayerOsdInfoPanelEntry
 import com.ambient.tv.ui.player.PlayerTool
 import com.ambient.tv.ui.player.availablePlayerTools
 import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.playbackSubtitleSelection
-import com.ambient.tv.ui.player.playerTechBadgesVisible
-import com.ambient.tv.ui.player.setPlayerTechBadgesVisible
 import com.ambient.tv.ui.player.teletextSubtitleChoice
 import com.ambient.tv.ui.player.teletext.ProbeTeletextSubtitlePages
 import com.ambient.tv.ui.player.teletext.TeletextUi
@@ -143,14 +139,15 @@ fun UnifiedBackendPlayerPanel(
     }.collectAsState(initial = com.ambient.tv.ui.player.BackgroundPlaybackSession.snapshot.value.metadata)
     val toolBookmarkKey = com.ambient.tv.ui.player.PlaybackBookmarks.keyFor(toolMetadata)
     val tools = availablePlayerTools(hasVideo, isLive, toolHandle != null, toolBookmarkKey != null)
-    val techBadgesVisible = playerTechBadgesVisible()
-    val nerdStatsVisible = audioSession?.performanceHint == true
-    val fpsOverlayVisible = audioSession?.showFpsOverlay == true
     val navigation = LocalPlayerPanelNavigation.current
     val segmentSkip = LocalSegmentSkipControls.current
     // Back follows the click path: a level opened straight from the action bar closes the panel.
     val back: () -> Unit = {
-        navigation?.back(panel) ?: onPanelChange(if (panel == UnifiedPlayerPanel.SETTINGS) UnifiedPlayerPanel.NONE else UnifiedPlayerPanel.SETTINGS)
+        navigation?.back(panel) ?: onPanelChange(when (panel) {
+            UnifiedPlayerPanel.SETTINGS -> UnifiedPlayerPanel.NONE
+            UnifiedPlayerPanel.OSD_BUTTONS -> UnifiedPlayerPanel.OSD_INFO
+            else -> UnifiedPlayerPanel.SETTINGS
+        })
     }
     when (panel) {
         UnifiedPlayerPanel.NONE -> Unit
@@ -212,6 +209,10 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { onPanelChange(UnifiedPlayerPanel.TOOLS) },
                 )
             }
+            PlayerOsdInfoPanelEntry(
+                audioSession = audioSession,
+                onOpen = { onPanelChange(UnifiedPlayerPanel.OSD_INFO) },
+            )
             if (hasVideo) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Save,
@@ -261,37 +262,16 @@ fun UnifiedBackendPlayerPanel(
                 }
             settingsExtrasTitle?.let { RightPanelSectionTitle(it) }
             settingsExtras()
-            PlayerPanelEntry(
-                icon = Icons.Filled.Visibility,
-                title = stringResource(R.string.player_tech_badges),
-                value = stringResource(if (techBadgesVisible) R.string.player_on else R.string.player_off),
-                onClick = { setPlayerTechBadgesVisible(videoImagePreferences(context), !techBadgesVisible) },
+        }
+        UnifiedPlayerPanel.OSD_INFO -> UnifiedPlayerSidePanel(
+            title = stringResource(R.string.player_osd_info),
+            modifier = modifier,
+            onBack = back,
+        ) {
+            PlayerOsdInfoPanelControls(
+                audioSession = audioSession,
+                onOpenButtons = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
             )
-            com.ambient.tv.ui.player.activeOsdPlayer?.let { player ->
-                val hidden = com.ambient.tv.ui.player.osdHiddenButtons()
-                val offered = player.offeredButtons()
-                PlayerPanelEntry(
-                    icon = Icons.Filled.ViewWeek,
-                    title = stringResource(R.string.osd_buttons),
-                    value = stringResource(R.string.osd_buttons_summary,
-                        offered.count { com.ambient.tv.ui.player.osdButtonVisible(it, player, hidden) }, offered.size),
-                    onClick = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
-                )
-            }
-            audioSession?.let { session ->
-                PlayerPanelEntry(
-                    icon = Icons.Filled.Info,
-                    title = stringResource(R.string.player_stats_for_nerds),
-                    value = stringResource(if (nerdStatsVisible) R.string.player_on else R.string.player_off),
-                    onClick = { session.performanceHint = !session.performanceHint },
-                )
-                PlayerPanelEntry(
-                    icon = Icons.Filled.Speed,
-                    title = stringResource(R.string.player_fps_overlay),
-                    value = stringResource(if (fpsOverlayVisible) R.string.player_on else R.string.player_off),
-                    onClick = { session.showFpsOverlay = !session.showFpsOverlay },
-                )
-            }
         }
         UnifiedPlayerPanel.LIVE_TV -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.settings_live_tv_title),

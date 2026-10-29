@@ -274,7 +274,7 @@
     <string name="player_playback_info">Wiedergabe</string>
     <string name="player_stats_for_nerds">Stats für Nerds</string>
     <string name="player_fps_overlay">FPS / Bildwiederholrate / Auflösung</string>
-    <string name="player_tech_badges">Renderer und Codec</string>
+    <string name="player_tech_badges">Renderer- und Codec-Leiste</string>
     <string name="osd_buttons">OSD-Buttons</string>
     <string name="osd_buttons_summary">%1$d von %2$d sichtbar</string>
     <string name="osd_buttons_hint">Gilt nur für diesen Player.</string>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_osd_info">OSD &amp; Info</string>
+    <string name="player_osd_info_controls">Controls</string>
+    <string name="player_osd_info_information">Information</string>
+    <string name="player_osd_info_buttons_summary">Buttons</string>
+    <string name="player_osd_info_duration">Display time</string>
+    <string name="player_osd_info_codecs_summary">Codec strip</string>
+    <string name="player_osd_info_fps_summary">FPS</string>
+    <string name="player_osd_info_stats_summary">Stats</string>
+</resources>

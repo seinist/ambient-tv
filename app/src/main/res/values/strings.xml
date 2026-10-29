@@ -274,7 +274,7 @@
     <string name="player_playback_info">Playback</string>
     <string name="player_stats_for_nerds">Stats for Nerds</string>
     <string name="player_fps_overlay">FPS / refresh rate / resolution</string>
-    <string name="player_tech_badges">Renderer and codec</string>
+    <string name="player_tech_badges">Renderer and codec strip</string>
     <string name="osd_buttons">OSD buttons</string>
     <string name="osd_buttons_summary">%1$d of %2$d shown</string>
     <string name="osd_buttons_hint">This player only.</string>

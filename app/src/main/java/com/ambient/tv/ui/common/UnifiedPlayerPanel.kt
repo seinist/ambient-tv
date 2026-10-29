@@ -87,6 +87,8 @@ enum class UnifiedPlayerPanel {
     /** Channel services, timeshift and recording controls of live TV. */
     LIVE_TV,
     SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
+    /** Control-bar appearance and playback information overlays. */
+    OSD_INFO,
     /** Which action-bar buttons the current player shows. */
     OSD_BUTTONS,
     /** A-B repeat, frame step and screenshot. */
@@ -307,7 +309,7 @@ fun rememberPlayerPanelNavigation(vararg keys: Any?): PlayerPanelNavigation {
     return navigation
 }
 
-/** How long the player OSD stays up without input; Settings › Playback, applied right away. */
+/** How long the player OSD stays up without input; shared by app and player settings. */
 object PlayerOsdTimeout {
     val SECONDS = listOf(3, 5, 8, 15)
     const val DEFAULT_SECONDS = 5
