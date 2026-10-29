@@ -65,6 +65,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -103,6 +104,10 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.ui.common.AppDialog
 import com.ambient.tv.ui.common.containRowFocusExit
+import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.RegisterRowColumnFocus
+import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.rowColumnFocusNavigation
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.noSurfaceBorder
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -174,39 +179,43 @@ fun DetailScreen(
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
             }
-            is DetailUiState.Loaded -> androidx.compose.runtime.key(state.item.ratingKey) {
-                DetailContent(
-                    fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
-                    onTrailer = onTrailer,
-                    item = state.item,
-                    playbackAvailable = !state.offline && !state.removed,
-                    availabilityMessage = if (state.removed) R.string.browse_item_removed else if (state.offline) R.string.browse_offline else null,
-                    children = state.children,
-                    childrenLoading = state.childrenLoading,
-                    childrenLoadFailed = state.childrenLoadFailed,
-                    seasons = state.seasons,
-                    onRetryChildren = viewModel::load,
-                    nextEpisode = state.nextEpisode,
-                    similar = state.similar,
-                    similarLoading = state.similarLoading,
-                    actorRows = state.actorRows,
-                    actionInProgress = state.actionInProgress,
-                    autoSelectDisplayVersion = state.autoSelectDisplayVersion,
-                    onPlay = onPlay,
-                    onOpenChild = onOpenChild,
-                    onOpenEpisode = onOpenEpisode,
-                    onOpenSeason = onOpenSeason,
-                    onOpenSeries = onOpenSeries,
-                    onBack = onBack,
-                    onOpenSettings = onOpenSettings,
-                    onBrowseActor = onBrowseActor,
-                    onBrowseCollection = onBrowseCollection,
-                    onSetWatched = viewModel::setWatched,
-                    onRemoveFromContinue = viewModel::removeFromContinueWatching,
-                    editSupport = viewModel.editSupport.collectAsState().value.takeIf { !state.offline && !state.removed }
-                        ?: com.ambient.tv.domain.model.MetadataEditSupport.NONE,
-                    onMetadataEdited = viewModel::onMetadataEdited,
-                )
+            is DetailUiState.Loaded -> {
+                val focusScope = viewModel.focusScope
+                androidx.compose.runtime.key(focusScope, state.item.ratingKey) {
+                    DetailContent(
+                        fallbackBackdrop = viewModel.fallbackBackdrop.collectAsState().value,
+                        onTrailer = onTrailer,
+                        item = state.item,
+                        focusScope = focusScope,
+                        playbackAvailable = !state.offline && !state.removed,
+                        availabilityMessage = if (state.removed) R.string.browse_item_removed else if (state.offline) R.string.browse_offline else null,
+                        children = state.children,
+                        childrenLoading = state.childrenLoading,
+                        childrenLoadFailed = state.childrenLoadFailed,
+                        seasons = state.seasons,
+                        onRetryChildren = viewModel::load,
+                        nextEpisode = state.nextEpisode,
+                        similar = state.similar,
+                        similarLoading = state.similarLoading,
+                        actorRows = state.actorRows,
+                        actionInProgress = state.actionInProgress,
+                        autoSelectDisplayVersion = state.autoSelectDisplayVersion,
+                        onPlay = onPlay,
+                        onOpenChild = onOpenChild,
+                        onOpenEpisode = onOpenEpisode,
+                        onOpenSeason = onOpenSeason,
+                        onOpenSeries = onOpenSeries,
+                        onBack = onBack,
+                        onOpenSettings = onOpenSettings,
+                        onBrowseActor = onBrowseActor,
+                        onBrowseCollection = onBrowseCollection,
+                        onSetWatched = viewModel::setWatched,
+                        onRemoveFromContinue = viewModel::removeFromContinueWatching,
+                        editSupport = viewModel.editSupport.collectAsState().value.takeIf { !state.offline && !state.removed }
+                            ?: com.ambient.tv.domain.model.MetadataEditSupport.NONE,
+                        onMetadataEdited = viewModel::onMetadataEdited,
+                    )
+                }
             }
         }
     }
@@ -290,6 +299,7 @@ private fun DetailContent(
     availabilityMessage: Int?,
     onTrailer: ((MediaItem) -> Unit)?,
     item: MediaItem,
+    focusScope: String,
     children: List<MediaItem>,
     childrenLoading: Boolean,
     childrenLoadFailed: Boolean,
@@ -317,28 +327,30 @@ private fun DetailContent(
 ) {
     var showMore by remember(item.ratingKey) { mutableStateOf(false) }
     var showEdit by remember(item.ratingKey) { mutableStateOf(false) }
-    // Remember the last focused child without invalidating this whole, expensive detail tree on
-    // every D-pad step. The saved holder is recreated when this back-stack entry is composed
-    // again; only that first composition needs to request the remembered focus.
-    val focusMemory = androidx.compose.runtime.saveable.rememberSaveable(
-        item.ratingKey,
-        saver = DetailFocusMemorySaver,
-    ) { DetailFocusMemory() }
-    var restoreFocusPending by remember(item.ratingKey) { mutableStateOf(focusMemory.key != null) }
-    // New seasons and collections start at their first unwatched child. Returning
-    // from a child keeps this page's own focus; other pages have their own keyed state.
-    var childFocusPending by remember(item.ratingKey) {
+    // One process-session memory per source and detail. Only string identifiers survive a
+    // popped route; the controller and its requesters remain owned by this composition.
+    val focusMemory = remember(focusScope, item.ratingKey) { DetailFocusSessions.page(focusScope, item.ratingKey) }
+    val columnFocus = remember(focusScope, item.ratingKey) { RowColumnFocus(focusMemory.rowItems()) }
+    var restoreFocusPending by remember(focusScope, item.ratingKey) { mutableStateOf(focusMemory.key != null) }
+    var childFocusPending by remember(focusScope, item.ratingKey) {
         mutableStateOf(item.type in setOf("season", "collection") && focusMemory.key == null)
     }
+    val preferredChild = detailPreferredChildKey(item, children, nextEpisode)
+    val childKeys = children.map { "children:${it.ratingKey}" }
     val childFocusKey = if (childFocusPending) {
-        (children.firstOrNull { !it.isWatched } ?: children.firstOrNull())
-            ?.let { "children:${it.ratingKey}" }
+        (columnFocus.rememberedItem("children") as? String)?.takeIf { it in childKeys } ?: preferredChild
     } else null
     val restoreFocusKey = focusMemory.key.takeIf { restoreFocusPending } ?: childFocusKey
+    var enterPrimaryPending by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
+    var initialFocusHandled by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
+    var requestUtilityFocus by remember(focusScope, item.ratingKey) { mutableStateOf(false) }
     fun rememberFocused(key: String?) {
-        focusMemory.key = key
+        initialFocusHandled = true
+        requestUtilityFocus = false
+        focusMemory.record(key)
         childFocusPending = false
         if (restoreFocusPending) restoreFocusPending = false
+        enterPrimaryPending = false
     }
     var restoreTrailer by androidx.compose.runtime.saveable.rememberSaveable(item.ratingKey) { mutableStateOf(false) }
     val trailerAvailable = rememberTrailerAvailable(item, playbackAvailable && onTrailer != null)
@@ -428,52 +440,104 @@ private fun DetailContent(
         )
 
         val listState = rememberLazyListState()
+        val childrenSectionVisible = children.isNotEmpty() || detailShowsChildrenSection(item.type)
+        val seasonStripVisible = item.type in setOf("season", "episode") && seasons.isNotEmpty() &&
+            seriesKeyForSeasonStrip(item.type, item.parentRatingKey, item.grandparentRatingKey) != null
+        // These are physical LazyColumn positions, including the optional strip above episodes.
         val sectionKeys = buildList {
             add("hero")
-            if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) add("children")
+            if (seasonStripVisible) add("season-strip")
+            if (childrenSectionVisible) add("children")
             if (item.cast.isNotEmpty()) add("cast")
             if (similar.isNotEmpty() || similarLoading) add("similar")
             actorRows.forEach { add("actor:${it.actorId}") }
             if (item.collections.isNotEmpty()) add("collections")
         }
+        val castItems = item.cast.dedupeCastMembers().take(16)
+        val rowDefaults = buildMap {
+            preferredChild?.let { put("children", it) }
+            castItems.firstOrNull { it.id != null }?.let { put("cast", "cast:${it.id ?: it.name}") }
+            item.collections.firstOrNull { it.id != null }?.let { put("collections", "collection:${it.id ?: it.name}") }
+        }
+        // Decorative/disabled cards and loading placeholders are not navigation destinations.
+        val rowOrder = buildList {
+            if (heroHasFocusTarget) add("hero")
+            if (seasonStripVisible) add("season-strip")
+            if (childrenSectionVisible && (children.isNotEmpty() || (childrenLoadFailed && !childrenLoading))) add("children")
+            if (castItems.any { it.id != null }) add("cast")
+            if (similar.isNotEmpty()) add("similar")
+            actorRows.filter { it.items.isNotEmpty() }.forEach { add("actor:${it.actorId}") }
+            if (item.collections.any { it.id != null }) add("collections")
+        }
         val scrollScope = rememberCoroutineScope()
+        suspend fun focusRow(rowKey: String, stillRequested: () -> Boolean): Boolean {
+            if (!stillRequested()) return false
+            if (columnFocus.focusEntry(rowKey)) return true
+            sectionKeys.indexOf(rowKey).takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+            var frames = 0
+            while (!columnFocus.canScrollToEntry(rowKey) && frames++ < 12) {
+                withFrameNanos { }
+                if (!stillRequested()) return false
+            }
+            if (!stillRequested()) return false
+            if (columnFocus.canScrollToEntry(rowKey)) columnFocus.scrollToEntry(rowKey)
+            repeat(12) {
+                withFrameNanos { }
+                if (!stillRequested()) return false
+                if (columnFocus.focusEntry(rowKey)) return true
+            }
+            return false
+        }
+        LaunchedEffect(enterPrimaryPending, childrenLoading, childrenLoadFailed, rowOrder) {
+            if (!enterPrimaryPending) return@LaunchedEffect
+            // Down is an explicit request, so a not-yet-loaded primary row can finish before
+            // focus moves. Any other navigation cancels this intent; refresh alone never arms it.
+            if (detailShowsChildrenSection(item.type) && childrenLoading && children.isEmpty()) return@LaunchedEffect
+            val destination = "children".takeIf { it in rowOrder }
+                ?: rowOrder.firstOrNull { it != "hero" }
+            if (destination != null) focusRow(destination) { enterPrimaryPending }
+            enterPrimaryPending = false
+        }
         // Resolve initial focus once per page, waiting for asynchronous rows when needed.
         // Later metadata updates must not steal focus from Back/Settings or another row.
-        var initialFocusHandled by remember(item.ratingKey) { mutableStateOf(false) }
-        LaunchedEffect(item.ratingKey, childFocusKey, childrenLoading, childrenLoadFailed, sectionKeys) {
+        LaunchedEffect(focusScope, item.ratingKey, childFocusKey, childrenLoading, childrenLoadFailed, similarLoading, sectionKeys, rowOrder) {
             if (initialFocusHandled) return@LaunchedEffect
             if (childFocusPending && childFocusKey != null) {
                 // Compose the child row before its tile requests focus (it may be below
                 // a tall hero). The row starts with the destination already visible.
-                initialFocusHandled = true
-                listState.scrollToItem(1)
-                return@LaunchedEffect
+                if (focusRow("children") { !initialFocusHandled } || initialFocusHandled) {
+                    initialFocusHandled = true
+                    childFocusPending = false
+                    return@LaunchedEffect
+                }
             }
             if (childFocusPending && childrenLoading) return@LaunchedEffect
             if (restoreFocusPending) {
-                val section = when (restoreFocusKey?.substringBefore(':')) {
-                    "collection" -> "collections"
-                    "actor" -> sectionKeys.firstOrNull { restoreFocusKey.startsWith("$it\u0000") }
-                    else -> restoreFocusKey?.substringBefore(':')
-                }
+                val section = detailRowForFocusKey(restoreFocusKey)
                 val sectionIndex = sectionKeys.indexOf(section)
-                // Children and related items can load after the metadata/hero.
-                if (sectionIndex < 0 && childrenLoading) return@LaunchedEffect
-                if (sectionIndex >= 0) {
-                    initialFocusHandled = true
-                    listState.scrollToItem(sectionIndex)
-                    return@LaunchedEffect
+                // Restore through the same row-entry policy as D-pad navigation. A deleted
+                // saved card falls back to the row default rather than leaving focus nowhere.
+                if (section !in rowOrder && (childrenLoading || similarLoading)) return@LaunchedEffect
+                if (sectionIndex >= 0 && section != null && section in rowOrder) {
+                    if (focusRow(section) { !initialFocusHandled } || initialFocusHandled) {
+                        initialFocusHandled = true
+                        restoreFocusPending = false
+                        return@LaunchedEffect
+                    }
                 }
                 restoreFocusPending = false
             }
-            initialFocusHandled = true
             childFocusPending = false
             // Detail pages always open at their real beginning. Requesting focus can make the
             // LazyColumn reveal the action geometrically, so restore offset zero once after the
             // focus transaction as well.
             if (!restoreFocusPending) {
                 listState.scrollToItem(0)
-                runCatching { initialActionFocus.requestFocus() }
+                withFrameNanos { }
+                if (initialFocusHandled) return@LaunchedEffect
+                if (heroHasFocusTarget) runCatching { initialActionFocus.requestFocus() }
+                else requestUtilityFocus = true
+                initialFocusHandled = true
                 withFrameNanos { }
                 listState.scrollToItem(0)
             }
@@ -568,13 +632,33 @@ private fun DetailContent(
                 ) { content() }
             }
         }
-        CompositionLocalProvider(LocalBringIntoViewSpec provides detailBringIntoViewSpec) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides detailBringIntoViewSpec,
+            LocalDetailRowFocus provides DetailRowFocusContext(columnFocus, rowDefaults),
+        ) {
         LazyColumn(
             wrapVerticalFocus = false,
             allowUpExit = true,
             focusActionsOnRight = false,
             state = listState,
-            modifier = Modifier.fillMaxSize().focusProperties {
+            modifier = Modifier.fillMaxSize()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (event.key == Key.DirectionDown && heroHasFocus.value) {
+                        enterPrimaryPending = true
+                        true
+                    } else {
+                        enterPrimaryPending = false
+                        false
+                    }
+                }
+                .rowColumnFocusNavigation(
+                    columnFocus,
+                    scrollToRow = { rowKey ->
+                        sectionKeys.indexOf(rowKey).takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+                    },
+                ) { rowOrder }
+                .focusProperties {
                 onExit = {
                     if (requestedFocusDirection == FocusDirection.Left || requestedFocusDirection == FocusDirection.Right) cancelFocusChange()
                 }
@@ -587,6 +671,7 @@ private fun DetailContent(
             item(key = "hero") {
                 Box(
                     Modifier
+                        .rowColumnFocusTarget(columnFocus, "hero", "hero", soundsOnFocus = true)
                         .onSizeChanged { heroHeightPx.intValue = it.height }
                         .onFocusChanged { heroHasFocus.value = it.hasFocus },
                 ) {
@@ -629,7 +714,7 @@ private fun DetailContent(
                 }
             }
 
-            if (children.isNotEmpty() || detailShowsChildrenSection(item.type)) {
+            if (childrenSectionVisible) {
                 item(key = "children") {
                     Section("children") {
                         if (item.type == "collection") {
@@ -696,11 +781,11 @@ private fun DetailContent(
                 rememberFocused(null)
                 onOpenSettings()
             },
-            onDown = if (heroHasFocusTarget) ({
+            onDown = {
                 rememberFocused(null)
-                focusContentFromUtility()
-            }) else null,
-            requestInitialFocus = !heroHasFocusTarget && !restoreFocusPending && !childFocusPending,
+                if (heroHasFocusTarget) focusContentFromUtility() else enterPrimaryPending = true
+            },
+            requestInitialFocus = requestUtilityFocus,
             leftNavigatesBack = false,
             // Part of the page, not a sticky bar: it scrolls away with the hero above it.
             modifier = Modifier.align(Alignment.TopCenter).graphicsLayer {
@@ -756,12 +841,8 @@ private class DetailBringIntoViewSpec(
         distance(offset, size, containerSize)
 }
 
-private class DetailFocusMemory(var key: String? = null)
-
-private val DetailFocusMemorySaver = androidx.compose.runtime.saveable.Saver<DetailFocusMemory, String>(
-    save = { it.key.orEmpty() },
-    restore = { DetailFocusMemory(it.takeIf(String::isNotEmpty)) },
-)
+private data class DetailRowFocusContext(val focus: RowColumnFocus, val defaults: Map<String, String>)
+private val LocalDetailRowFocus = staticCompositionLocalOf<DetailRowFocusContext?> { null }
 
 @Composable
 private fun DetailHero(
@@ -1027,7 +1108,9 @@ private fun PrimaryPlaybackActions(
     val current = com.ambient.tv.companion.playbackIndicator(item)?.takeIf { it.media.id in item.allRatingKeys || it.media.kind in setOf("file", "dlna", "device-local") }
     val openCurrent = com.ambient.tv.companion.LocalOpenActivePlayback.current
     if (item.mediaVersions.isEmpty() && current == null) {
-        Text(stringResource(R.string.detail_no_stream), style = MaterialTheme.typography.bodySmall)
+        if (detailShowsMissingPlaybackSource(item.type, hasMediaVersions = false, hasActivePlayback = false)) {
+            Text(stringResource(R.string.detail_no_stream), style = MaterialTheme.typography.bodySmall)
+        }
         return
     }
     val hasProgress = (item.progressFraction ?: 0f) in 0.01f..0.94f
@@ -1125,19 +1208,28 @@ private fun RestoreDetailFocus(requested: Boolean, requester: FocusRequester) {
 /** Reveal a saved target before its tile/chip requests focus, including late-loaded rows. */
 @Composable
 private fun rememberDetailRowState(
+    rowKey: String,
     focusKeys: List<String>,
     restoreFocusKey: String?,
-    defaultIndex: Int = 0,
 ): androidx.compose.foundation.lazy.LazyListState {
-    val targetIndex = focusKeys.indexOf(restoreFocusKey)
-    val state = rememberLazyListState(
-        initialFirstVisibleItemIndex = if (targetIndex >= 0) targetIndex else defaultIndex,
-    )
+    val navigation = LocalDetailRowFocus.current
+    val remembered = navigation?.focus?.rememberedItem(rowKey) as? String
+    val defaultKey = navigation?.defaults?.get(rowKey)
+    val entryKey = remembered?.takeIf { it in focusKeys }
+        ?: restoreFocusKey?.takeIf { it in focusKeys }
+        ?: defaultKey?.takeIf { it in focusKeys }
+    val initialIndex = focusKeys.indexOf(entryKey).coerceAtLeast(0)
+    val state = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    RegisterRowColumnFocus(navigation?.focus, rowKey, state, focusKeys, defaultItemKey = defaultKey)
     LaunchedEffect(restoreFocusKey, focusKeys) {
+        val targetIndex = focusKeys.indexOf(restoreFocusKey)
         if (targetIndex >= 0) state.scrollToItem(targetIndex)
     }
     return state
 }
+
+private fun Modifier.detailRowTarget(row: String, key: String, focus: RowColumnFocus?, soundsOnFocus: Boolean = true): Modifier =
+    rowColumnFocusTarget(focus, row, key, soundsOnFocus)
 
 @Composable
 private fun CollectionItemsSection(
@@ -1149,6 +1241,7 @@ private fun CollectionItemsSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(
             stringResource(R.string.collection_items_title),
@@ -1157,7 +1250,7 @@ private fun CollectionItemsSection(
         )
         if (children.isNotEmpty()) {
             LazyRow(
-                state = rememberDetailRowState(children.map { "children:${it.ratingKey}" }, restoreFocusKey),
+                state = rememberDetailRowState("children", children.map { "children:${it.ratingKey}" }, restoreFocusKey),
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.containRowFocusExit(),
@@ -1165,6 +1258,7 @@ private fun CollectionItemsSection(
                 items(children, key = { it.ratingKey }) { child ->
                     val focusKey = "children:${child.ratingKey}"
                     MediaTile(
+                        modifier = Modifier.detailRowTarget("children", focusKey, columnFocus),
                         item = child,
                         style = MediaTileStyle.AUTO,
                         onClick = { onOpenChild(child) },
@@ -1189,7 +1283,11 @@ private fun CollectionItemsSection(
                     }),
                     color = if (failed && !loading) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (failed && !loading) TvActionButton(stringResource(R.string.home_retry), onRetry)
+                if (failed && !loading) TvActionButton(
+                    stringResource(R.string.home_retry), onRetry,
+                    modifier = Modifier.detailRowTarget("children", "children:retry", columnFocus)
+                        .onFocusChanged { if (it.isFocused) onFocused("children:retry") },
+                )
             }
         }
     }
@@ -1204,14 +1302,12 @@ private fun SeasonStrip(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     val seriesFocus = "season-strip:series"
-    val currentIndex = seasons.indexOfFirst { currentSeasonKey != null && currentSeasonKey in it.allRatingKeys }
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         LazyRow(
             state = rememberDetailRowState(
-                listOf(seriesFocus) + seasons.map { "season-strip:${it.ratingKey}" },
-                restoreFocusKey,
-                defaultIndex = if (currentIndex >= 0) currentIndex + 1 else 0,
+                "season-strip", listOf(seriesFocus) + seasons.map { "season-strip:${it.ratingKey}" }, restoreFocusKey,
             ),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1224,7 +1320,7 @@ private fun SeasonStrip(
                 TvChip(
                     text = stringResource(R.string.detail_series),
                     onClick = onOpenSeries,
-                    modifier = Modifier
+                    modifier = Modifier.detailRowTarget("season-strip", seriesFocus, columnFocus)
                         .onFocusChanged { if (it.isFocused) onFocused(seriesFocus) }
                         .then(if (restore) Modifier.focusRequester(requester) else Modifier),
                 )
@@ -1240,7 +1336,7 @@ private fun SeasonStrip(
                     selected = selected,
                     textMaxLines = 1,
                     onClick = { if (!selected) onOpenSeason(season) },
-                    modifier = Modifier
+                    modifier = Modifier.detailRowTarget("season-strip", focusKey, columnFocus)
                         .onFocusChanged { if (it.isFocused) onFocused(focusKey) }
                         .then(if (restore) Modifier.focusRequester(requester) else Modifier),
                 )
@@ -1263,18 +1359,27 @@ private fun ChildrenSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
-        val seasons = children.firstOrNull()?.type == "season" || (children.isEmpty() && item.type == "show")
-        Text(
-            stringResource(if (seasons) R.string.detail_seasons else R.string.detail_episodes),
-            style = MaterialTheme.typography.titleLarge,
-            modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
-        )
-        if (seasons) {
+        if (item.type == "show" && children.isEmpty() && loading) {
+            Box(Modifier.fillMaxWidth().height(160.dp).padding(horizontal = screenGutter()), contentAlignment = Alignment.CenterStart) {
+                Text(stringResource(R.string.player_loading), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            return@Column
+        }
+        val seasons = children.firstOrNull()?.type == "season"
+        if (children.isNotEmpty() || item.type != "show") {
+            Text(
+                stringResource(if (seasons) R.string.detail_seasons else R.string.detail_episodes),
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp),
+            )
+        }
+        if (seasons && children.isNotEmpty()) {
             // contentPadding (not an outer Modifier.padding) so a focused item's scale-up can
             // render into that margin instead of being clipped by the row's own layout bounds.
             LazyRow(
-                state = rememberDetailRowState(children.map { "children:${it.ratingKey}" }, restoreFocusKey),
+                state = rememberDetailRowState("children", children.map { "children:${it.ratingKey}" }, restoreFocusKey),
                 contentPadding = PaddingValues(horizontal = screenGutter()),
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.containRowFocusExit(),
@@ -1283,6 +1388,7 @@ private fun ChildrenSection(
                     val focusKey = "children:${season.ratingKey}"
                     // The poster tile carries the season cover plus its own watched/unwatched badge.
                     MediaTile(
+                        modifier = Modifier.detailRowTarget("children", focusKey, columnFocus),
                         item = season,
                         style = MediaTileStyle.POSTER,
                         onClick = { onOpenChild(season) },
@@ -1291,13 +1397,13 @@ private fun ChildrenSection(
                     )
                 }
             }
-        } else {
+        } else if (children.isNotEmpty()) {
             val currentEpisodeIndex = children.indexOfFirst {
                 "children:${it.ratingKey}" == restoreFocusKey ||
                     (restoreFocusKey == null && item.type == "episode" && it.ratingKey == item.ratingKey)
             }.coerceAtLeast(0)
             val episodeListState = rememberDetailRowState(
-                children.map { "children:${it.ratingKey}" }, restoreFocusKey, currentEpisodeIndex,
+                "children", children.map { "children:${it.ratingKey}" }, restoreFocusKey,
             )
             val scope = rememberCoroutineScope()
             val requesters = remember(children.map { it.ratingKey }) { children.map { FocusRequester() } }
@@ -1333,7 +1439,8 @@ private fun ChildrenSection(
                     val child = children[index]
                     val focusKey = "children:${child.ratingKey}"
                     MediaTile(
-                        modifier = Modifier.focusRequester(requesters[index]).onFocusChanged { if (it.isFocused) focusedIndex = index },
+                        modifier = Modifier.detailRowTarget("children", focusKey, columnFocus)
+                            .focusRequester(requesters[index]).onFocusChanged { if (it.isFocused) focusedIndex = index },
                         item = child,
                         style = MediaTileStyle.EPISODE,
                         showDescription = false,
@@ -1362,7 +1469,11 @@ private fun ChildrenSection(
                     }),
                     color = if (failed && !loading) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (failed && !loading) TvActionButton(stringResource(R.string.home_retry), onRetry)
+                if (failed && !loading) TvActionButton(
+                    stringResource(R.string.home_retry), onRetry,
+                    modifier = Modifier.detailRowTarget("children", "children:retry", columnFocus)
+                        .onFocusChanged { if (it.isFocused) onFocused("children:retry") },
+                )
             }
         }
         if (item.type == "season" && children.isNotEmpty()) {
@@ -1399,6 +1510,7 @@ private fun SimilarSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(
             stringResource(R.string.detail_more_like_this),
@@ -1410,7 +1522,7 @@ private fun SimilarSection(
             return@Column
         }
         LazyRow(
-            state = rememberDetailRowState(items.map { "similar:${it.ratingKey}" }, restoreFocusKey),
+            state = rememberDetailRowState("similar", items.map { "similar:${it.ratingKey}" }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1418,6 +1530,7 @@ private fun SimilarSection(
             items(items, key = { it.ratingKey }) { related ->
                 val focusKey = "similar:${related.ratingKey}"
                 MediaTile(
+                    modifier = Modifier.detailRowTarget("similar", focusKey, columnFocus),
                     item = related,
                     style = MediaTileStyle.POSTER,
                     onClick = { onOpenChild(related) },
@@ -1436,6 +1549,7 @@ private fun ActorRowSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(
             stringResource(R.string.detail_more_with, row.name),
@@ -1444,7 +1558,7 @@ private fun ActorRowSection(
         )
         val prefix = "actor:${row.actorId}\u0000"
         LazyRow(
-            state = rememberDetailRowState(row.items.map { prefix + it.ratingKey }, restoreFocusKey),
+            state = rememberDetailRowState("actor:${row.actorId}", row.items.map { prefix + it.ratingKey }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1452,6 +1566,7 @@ private fun ActorRowSection(
             items(row.items, key = { it.ratingKey }) { media ->
                 val focusKey = prefix + media.ratingKey
                 MediaTile(
+                    modifier = Modifier.detailRowTarget("actor:${row.actorId}", focusKey, columnFocus),
                     item = media,
                     style = MediaTileStyle.POSTER,
                     onClick = { onOpenChild(media) },
@@ -1648,10 +1763,11 @@ private fun CollectionsSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_collections), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 10.dp))
         LazyRow(
-            state = rememberDetailRowState(item.collections.map { "collection:${it.id ?: it.name}" }, restoreFocusKey),
+            state = rememberDetailRowState("collections", item.collections.map { "collection:${it.id ?: it.name}" }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1664,7 +1780,8 @@ private fun CollectionsSection(
                     text = collection.name,
                     onClick = { collection.id?.let { onBrowseCollection(it, collection.name) } },
                     enabled = collection.id != null,
-                    modifier = Modifier.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(focusKey) },
+                    modifier = Modifier.detailRowTarget("collections", focusKey, columnFocus)
+                        .focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(focusKey) },
                 )
             }
         }
@@ -1678,10 +1795,11 @@ private fun CastSection(
     restoreFocusKey: String?,
     onFocused: (String) -> Unit,
 ) {
+    val columnFocus = LocalDetailRowFocus.current?.focus
     Column(modifier = Modifier.fillMaxWidth().bringFocusedContextIntoView()) {
         Text(stringResource(R.string.detail_cast), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = screenGutter(), end = screenGutter(), bottom = 12.dp))
         LazyRow(
-            state = rememberDetailRowState(item.cast.dedupeCastMembers().take(16).map { "cast:${it.id ?: it.name}" }, restoreFocusKey),
+            state = rememberDetailRowState("cast", item.cast.dedupeCastMembers().take(16).map { "cast:${it.id ?: it.name}" }, restoreFocusKey),
             contentPadding = PaddingValues(horizontal = screenGutter()),
             horizontalArrangement = Arrangement.spacedBy(20.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -1708,7 +1826,8 @@ private fun CastSection(
                     // with a border around the portrait instead, like the rest of the app.
                     scale = noSurfaceScale(),
                     border = noSurfaceBorder(),
-                    modifier = Modifier.width(112.dp).focusRequester(requester)
+                    modifier = Modifier.width(112.dp).detailRowTarget("cast", focusKey, columnFocus, soundsOnFocus = false)
+                        .focusRequester(requester)
                         .activateOnTvKey(enabled = member.id != null, onClick = { member.id?.let { onBrowseActor(it, member.name) } })
                         .onFocusChanged {
                             isFocused = it.isFocused

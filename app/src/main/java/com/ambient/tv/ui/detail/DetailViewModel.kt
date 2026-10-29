@@ -7,6 +7,8 @@ import com.ambient.tv.notifications.notifyResult
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ambient.tv.data.browse.BrowseScopes
+import com.ambient.tv.data.browse.mediaProvider
 import com.ambient.tv.data.emby.EmbyBackend
 import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.data.jellyfin.JellyfinBackend
@@ -69,7 +71,6 @@ internal fun metadataEditVisible(before: MediaItem, after: MediaItem): Boolean =
         before.summary != after.summary || before.thumbUrl != after.thumbUrl || before.artUrl != after.artUrl
 private const val ACTOR_ROW_MIN_ITEMS = 2
 
-private val BROWSABLE_TYPES = setOf("show", "season", "collection")
 private val RELATED_TYPES = setOf("movie", "show")
 private val THEME_MUSIC_TYPES = setOf("movie", "show", "season", "episode")
 
@@ -80,10 +81,13 @@ class DetailViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     val themeMusicPlayer: ThemeMusicPlayer,
     val availability: com.ambient.tv.data.browse.SourceAvailability,
+    private val browseScopes: BrowseScopes,
     private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val refreshBus: com.ambient.tv.ui.common.PlexRefreshBus,
 ) : ViewModel() {
     private val ratingKey: String = checkNotNull(savedStateHandle["ratingKey"])
+    /** Match the cache's server/account identity without retaining credentials in focus memory. */
+    val focusScope: String get() = browseScopes.forProvider(mediaProvider(ratingKey))
     val reconnectSources: Set<String> = setOf(when {
         FileKeys.owns(ratingKey) -> runCatching { "files:${FileKeys.parse(ratingKey).first}" }.getOrDefault("files")
         com.ambient.tv.data.dlna.DlnaKeys.owns(ratingKey) -> runCatching {
@@ -96,7 +100,8 @@ class DetailViewModel @Inject constructor(
         cachedItem?.let {
             DetailUiState.Loaded(
                 item = it,
-                childrenLoading = it.type in BROWSABLE_TYPES || it.type == "episode",
+                children = cachedDetailChildren(it, ratingKey, mediaRepository::cachedChildren),
+                childrenLoading = detailChildrenKey(it, ratingKey) != null,
                 seasons = cachedSeasonStrip(it),
                 autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
                 offline = sourceOffline(),
@@ -200,9 +205,10 @@ class DetailViewModel @Inject constructor(
             mediaRepository.restoreCache()
             if (_uiState.value !is DetailUiState.Loaded) cachedItem?.let { item ->
                 _uiState.value = DetailUiState.Loaded(
-                    item = item, children = mediaRepository.cachedChildren(if (item.type == "episode") item.parentRatingKey ?: ratingKey else ratingKey).orEmpty(),
+                    item = item,
+                    children = cachedDetailChildren(item, ratingKey, mediaRepository::cachedChildren),
                     similar = mediaRepository.cachedSimilar(ratingKey).orEmpty(),
-                    childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
+                    childrenLoading = detailChildrenKey(item, ratingKey) != null,
                     seasons = cachedSeasonStrip(item),
                     autoSelectDisplayVersion = appPreferences.autoSelectDisplayVersion,
                     offline = sourceOffline(),
@@ -227,7 +233,7 @@ class DetailViewModel @Inject constructor(
                     _uiState.value = DetailUiState.Loaded(
                         item = item,
                         children = previous?.children.orEmpty(),
-                        childrenLoading = item.type in BROWSABLE_TYPES || item.type == "episode",
+                        childrenLoading = detailChildrenKey(item, ratingKey) != null,
                         seasons = previous?.seasons ?: cachedSeasonStrip(item),
                         nextEpisode = previous?.nextEpisode,
                         similar = previous?.similar.orEmpty(),
@@ -256,7 +262,10 @@ class DetailViewModel @Inject constructor(
                         val current = _uiState.value as DetailUiState.Loaded
                         val offline = detailOfflineAfterFailure(removed, availability.mediaState(ratingKey), retrying)
                         _uiState.value = current.copy(removed = removed, offline = offline,
-                            childrenLoading = false, themeMusic = current.themeMusic.takeUnless { offline || removed })
+                            childrenLoading = false,
+                            childrenLoadFailed = current.childrenLoadFailed ||
+                                (!removed && current.childrenLoading && current.children.isEmpty()),
+                            themeMusic = current.themeMusic.takeUnless { offline || removed })
                     }
                 },
             )
@@ -283,16 +292,10 @@ class DetailViewModel @Inject constructor(
             }
         }
         launch {
-            val childKey = when {
-                item.type in BROWSABLE_TYPES -> ratingKey
-                item.type == "episode" -> item.parentRatingKey
-                else -> null
-            }
+            val childKey = detailChildrenKey(item, ratingKey)
             if (childKey != null) {
                 updateCurrent { it.copy(childrenLoading = true, childrenLoadFailed = false) }
-                val initialChildren = mediaRepository.getChildren(childKey)
-                val onlySeason = initialChildren.getOrNull()?.singleOrNull()?.takeIf { item.type == "show" && it.type == "season" }
-                val result = if (onlySeason != null) mediaRepository.getChildren(onlySeason.ratingKey) else initialChildren
+                val result = loadDetailChildren(item, childKey, mediaRepository::getChildren)
                 currentCoroutineContext().ensureActive()
                 if (!refreshPolicy.isCurrent(generation)) return@launch
                 val children = result.getOrElse {

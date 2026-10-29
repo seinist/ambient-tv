@@ -766,6 +766,10 @@ Chrome's Google Cast button cannot reach this app (Google Cast is tied to certif
 
 When picking items in Plex/Jellyfin/Emby: detail page, play immediately, or chooser. SmartTube has its own setting in view customization.
 
+**Detail navigation with the D-pad:** Down from the hero enters the content row. For shows and seasons, the initial target is the next episode to resume or watch; when a show lists several seasons, the corresponding season is selected. Collections start at the next unwatched movie, with titles already in progress taking priority. Other rows start at their first reachable item (item 0). Each visited row remembers its own item, and that position takes priority over the suggested entry when returning. Positions survive leaving and reopening a detail page until the app process restarts, separated by media source and sign-in. Background loading does not pull focus away from a row already being used. The additional season strip remains reachable with Up from the episode row.
+
+Shows with a single season display its episodes directly. While the final row type is still unknown, a neutral loading state is shown; a temporary season row is not displayed from cached data either. Shows, seasons and collections without their own playable file do not display a misleading “No playback source found” message. An individual movie or episode without a source still shows it.
+
 ### 11.3a Picture settings per title
 
 Picture and filter settings (upscaler, sharpening, deband, denoise, SVP, deinterlacing, video output/decoder) are remembered per title when they differ from the defaults and applied immediately the next time that title plays (MPV, VLC, Media3). The last 200 titles are kept; live TV and trailers are not. **Save as default** still applies to every title without its own values.

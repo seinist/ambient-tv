@@ -766,6 +766,10 @@ Der Cast-Button von Chrome/Google Cast kann diese App nicht ansprechen (Google C
 
 Beim Auswählen in Plex/Jellyfin/Emby: Detailseite, sofort abspielen oder Auswahlfenster. SmartTube hat eine eigene Einstellung in der Ansichtsanpassung.
 
+**Detailansicht mit dem D-Pad:** Nach unten aus dem Hero führt in die Inhaltszeile. Bei Serien und Staffeln ist das die nächste fortzusetzende beziehungsweise ungesehene Folge; zeigt die Serie mehrere Staffeln, wird die dazugehörige Staffel gewählt. Sammlungen beginnen beim nächsten ungesehenen Film, angefangene Titel haben Vorrang. Weitere Zeilen beginnen beim ersten erreichbaren Element (Item 0). Jede bereits besuchte Zeile merkt ihr eigenes Element: Beim erneuten Betreten hat diese Position Vorrang vor dem vorgeschlagenen Einstieg. Die Positionen bleiben auch nach dem Verlassen und erneuten Öffnen einer Detailseite bis zum App-Neustart erhalten und sind nach Medienquelle und Anmeldung getrennt. Asynchrones Nachladen zieht den Fokus nicht aus einer bereits bedienten Zeile weg. Die zusätzliche Staffelleiste bleibt aus der Episodenzeile nach oben erreichbar.
+
+Serien mit nur einer Staffel zeigen direkt deren Episoden. Solange noch nicht feststeht, welche Inhaltszeile geladen wird, bleibt der Ladezustand neutral; eine vorläufige Staffelzeile erscheint auch aus dem Cache nicht. Serien, Staffeln und Sammlungen ohne eigene abspielbare Datei zeigen keine irreführende Meldung „Keine Wiedergabequelle gefunden“. Bei einem einzelnen Film oder einer Folge ohne Quelle bleibt die Meldung erhalten.
+
 ### 11.3a Bildeinstellungen pro Titel
 
 Bild- und Filtereinstellungen (Upscaler, Schärfe, Deband, Entrauschen, SVP, Deinterlacing, Videoausgabe/Decoder) werden pro Titel gemerkt, wenn sie vom Standard abweichen, und beim nächsten Abspielen desselben Titels sofort angewendet (MPV, VLC, Media3). Gemerkt werden die letzten 200 Titel; Live-TV und Trailer nicht. **Als Standard speichern** gilt weiterhin für alle Titel ohne eigene Werte.

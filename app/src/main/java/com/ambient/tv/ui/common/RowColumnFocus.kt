@@ -46,7 +46,11 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
     }
 
     /** A row able to scroll its own list, so an entry tile not composed yet can be reached. */
-    private class RowHandle(var itemKeys: () -> List<Any>, val state: LazyListState)
+    private class RowHandle(
+        val itemKeys: () -> List<Any>,
+        val state: LazyListState,
+        val defaultItemKey: () -> Any?,
+    )
 
     private val rows = HashMap<Any, LinkedHashMap<Any, Target>>()
     private val handles = HashMap<Any, RowHandle>()
@@ -73,11 +77,12 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
 
     internal fun isFirstRow(rowOrder: List<Any>): Boolean = focusedRow != null && focusedRow == rowOrder.firstOrNull()
 
-    /** Remembered tile while the row still holds it, else its first one. */
+    /** Remembered tile, the row's suggested first entry, or its first tile. */
     private fun entry(rowKey: Any): Pair<Any, Int>? {
-        val keys = handles[rowKey]?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
-        val index = memory[rowKey]?.let { keys.indexOf(it) }?.takeIf { it >= 0 } ?: 0
-        return keys.getOrNull(index)?.let { it to index }
+        val handle = handles[rowKey]
+        val keys = handle?.itemKeys?.invoke() ?: rows[rowKey]?.keys?.toList() ?: return null
+        val index = rowColumnEntryIndex(keys, memory[rowKey], handle?.defaultItemKey?.invoke()) ?: return null
+        return keys[index] to index
     }
 
     /** Focuses [rowKey]'s entry tile if it is composed. */
@@ -103,8 +108,13 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
         return runCatching { target.requester.requestFocus() }.getOrDefault(false)
     }
 
-    internal fun registerRow(rowKey: Any, state: LazyListState, itemKeys: () -> List<Any>): () -> Unit {
-        val handle = RowHandle(itemKeys, state)
+    internal fun registerRow(
+        rowKey: Any,
+        state: LazyListState,
+        itemKeys: () -> List<Any>,
+        defaultItemKey: () -> Any?,
+    ): () -> Unit {
+        val handle = RowHandle(itemKeys, state, defaultItemKey)
         handles[rowKey] = handle
         return { if (handles[rowKey] === handle) handles.remove(rowKey) }
     }
@@ -150,13 +160,20 @@ class RowColumnFocus(initialMemory: Map<String, String> = emptyMap()) {
 @Composable
 fun rememberRowColumnFocus(): RowColumnFocus = rememberSaveable(saver = RowColumnFocus.Saver) { RowColumnFocus() }
 
-/** Lets [focus] scroll this row to its remembered tile when that tile is not composed. */
+/** Scrolls to a remembered tile, or [defaultItemKey] on first entry, even before it is composed. */
 @Composable
-fun RegisterRowColumnFocus(focus: RowColumnFocus?, rowKey: Any, state: LazyListState, itemKeys: List<Any>) {
+fun RegisterRowColumnFocus(
+    focus: RowColumnFocus?,
+    rowKey: Any,
+    state: LazyListState,
+    itemKeys: List<Any>,
+    defaultItemKey: Any? = null,
+) {
     if (focus == null) return
     val keys by rememberUpdatedState(itemKeys)
+    val defaultKey by rememberUpdatedState(defaultItemKey)
     DisposableEffect(focus, rowKey, state) {
-        val unregister = focus.registerRow(rowKey, state) { keys }
+        val unregister = focus.registerRow(rowKey, state, { keys }, { defaultKey })
         onDispose { unregister() }
     }
 }
