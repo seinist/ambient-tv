@@ -203,13 +203,19 @@ private fun TeletextSubtitleOverlay() {
     }
 }
 
-/** Settings panel rows of a live player: open teletext and the broadcaster's HbbTV application. */
+/** Live-TV panel rows: open teletext and the broadcaster's HbbTV application. */
 @Composable
 fun TeletextPanelEntries() {
     if (!TeletextUi.hostActive) return
     val context = LocalContext.current
     val status by LiveTeletext.status.collectAsState()
     val navigation = LocalPlayerPanelNavigation.current
+    if (status.hasTeletext) PlayerPanelEntry(
+        icon = Icons.AutoMirrored.Filled.Article,
+        title = stringResource(R.string.player_teletext),
+        value = stringResource(R.string.player_teletext_open),
+        onClick = { navigation?.close(); TeletextUi.viewerOpen = true },
+    )
     status.hbbtv?.let { app ->
         PlayerPanelEntry(
             icon = Icons.Filled.ConnectedTv,
@@ -218,14 +224,6 @@ fun TeletextPanelEntries() {
             onClick = { navigation?.close(); HbbtvUi.request(context, app) },
         )
     }
-    // Shown only when the stream carries teletext.
-    if (!status.hasTeletext) return
-    PlayerPanelEntry(
-        icon = Icons.AutoMirrored.Filled.Article,
-        title = stringResource(R.string.player_teletext),
-        value = stringResource(R.string.player_teletext_open),
-        onClick = { navigation?.close(); TeletextUi.viewerOpen = true },
-    )
 }
 
 /** Continue discovering subtitle pages while the shared subtitle panel is open, even when off. */

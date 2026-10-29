@@ -50,6 +50,8 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.player.SleepTimerConfig
 import com.ambient.tv.ui.player.SleepTimerKind
 import com.ambient.tv.ui.player.LocalSegmentSkipControls
+import com.ambient.tv.ui.player.LiveTvPlayerPanelControls
+import com.ambient.tv.ui.player.LiveTvPlayerPanelEntry
 import com.ambient.tv.ui.player.offeredButtons
 import com.ambient.tv.ui.player.playbackSubtitleSelection
 import com.ambient.tv.ui.player.playerTechBadgesVisible
@@ -147,12 +149,6 @@ fun UnifiedBackendPlayerPanel(
             modifier = modifier,
             onBack = back,
         ) {
-            if (isLive && com.ambient.tv.ui.tvheadend.LocalLiveTimeshiftChanged.current != null) {
-                com.ambient.tv.ui.settings.LiveTvFeatureSwitches(
-                    onTimeshiftChanged = com.ambient.tv.ui.tvheadend.LocalLiveTimeshiftChanged.current,
-                )
-            }
-            if (isLive) com.ambient.tv.ui.player.teletext.TeletextPanelEntries()
             if (showVideo && hasVideo) {
                 PlayerPanelEntry(
                     icon = Icons.Filled.Movie,
@@ -194,6 +190,9 @@ fun UnifiedBackendPlayerPanel(
                     value = subtitleSummary,
                     onClick = { onPanelChange(UnifiedPlayerPanel.SUBTITLES) },
                 )
+            }
+            if (isLive) {
+                LiveTvPlayerPanelEntry(onOpen = { onPanelChange(UnifiedPlayerPanel.LIVE_TV) })
             }
             if (hasVideo || !isLive) {
                 PlayerPanelEntry(
@@ -287,6 +286,13 @@ fun UnifiedBackendPlayerPanel(
                     onClick = { session.showFpsOverlay = !session.showFpsOverlay },
                 )
             }
+        }
+        UnifiedPlayerPanel.LIVE_TV -> UnifiedPlayerSidePanel(
+            title = stringResource(R.string.settings_live_tv_title),
+            modifier = modifier,
+            onBack = back,
+        ) {
+            if (isLive) LiveTvPlayerPanelControls()
         }
         UnifiedPlayerPanel.CONFIGURATION -> UnifiedPlayerSidePanel(
             title = stringResource(R.string.playback_profile_actions),

@@ -84,6 +84,28 @@ class PlayerPanelNavigationTest {
         nav.back()
         assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
     }
+
+    @Test fun liveTvBackReturnsToItsSettingsEntryThenTheActionBar() {
+        val nav = PlayerPanelNavigation()
+        nav.fromOrigin("bar:settings", root = true) { nav.open(UnifiedPlayerPanel.SETTINGS) }
+        nav.fromOrigin("entry:Live-TV", root = false) { nav.open(UnifiedPlayerPanel.LIVE_TV) }
+
+        assertEquals(UnifiedPlayerPanel.LIVE_TV, nav.panel)
+        nav.back(UnifiedPlayerPanel.LIVE_TV)
+        assertEquals(UnifiedPlayerPanel.SETTINGS, nav.panel)
+        assertEquals("entry:Live-TV", nav.restoreKey)
+
+        nav.back(UnifiedPlayerPanel.SETTINGS)
+        assertEquals(UnifiedPlayerPanel.NONE, nav.panel)
+        assertEquals("bar:settings", nav.restoreKey)
+    }
+
+    @Test fun liveTvDoesNotSelectVideoAudioOrVisualizerControls() {
+        assertFalse(UnifiedPlayerPanel.LIVE_TV.isVideo)
+        assertFalse(UnifiedPlayerPanel.LIVE_TV.isAudio)
+        assertFalse(UnifiedPlayerPanel.LIVE_TV.isVisualizer)
+    }
+
     @Test fun directPanelClosesWithoutInventingASettingsParent() {
         val nav = PlayerPanelNavigation()
         nav.fromOrigin("bar:video", true) { nav.open(UnifiedPlayerPanel.VIDEO) }

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_live_tv_summary">Senderfunktionen und Wiedergabe</string>
+    <string name="player_live_tv_timeshift_active">Timeshift aktiv</string>
+    <string name="player_live_tv_timeshift_unavailable">Timeshift ist für diesen Stream nicht verfügbar.</string>
+    <string name="player_live_tv_timeshift_inactive">Timeshift ist eingeschaltet, für diesen Stream aber nicht aktiv.</string>
+    <string name="player_live_tv_timeshift_recording">Du spielst eine Aufnahme ab. Timeshift lässt sich hier nicht umschalten.</string>
+    <string name="player_live_tv_switching">Sender wird gewechselt…</string>
+    <string name="player_live_tv_buffer_size">Puffergröße</string>
+    <string name="player_live_tv_buffer_hint">Eine Größenänderung startet den Timeshift-Puffer neu.</string>
+    <string name="player_live_tv_record_now">Aktuelle Sendung aufnehmen</string>
+    <string name="player_live_tv_record_unavailable">Für die aktuelle Sendung ist keine Aufnahme verfügbar.</string>
+</resources>

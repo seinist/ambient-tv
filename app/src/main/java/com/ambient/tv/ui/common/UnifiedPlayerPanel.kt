@@ -83,7 +83,10 @@ enum class UnifiedPlayerPanel {
     VIDEO_SECTION,
     /** SVP motion smoothing below Motion, and its advanced level. */
     VIDEO_SVP, VIDEO_SVP_ADVANCED,
-    AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES, SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
+    AUDIO, AUDIO_SECTION, AUDIO_CODECS, SUBTITLES,
+    /** Channel services, timeshift and recording controls of live TV. */
+    LIVE_TV,
+    SLEEP, VISUALIZER, VISUALIZER_SETTINGS,
     /** Which action-bar buttons the current player shows. */
     OSD_BUTTONS,
     /** A-B repeat, frame step and screenshot. */

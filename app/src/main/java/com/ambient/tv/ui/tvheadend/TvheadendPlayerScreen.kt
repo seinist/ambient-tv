@@ -192,8 +192,11 @@ fun TvheadendPlayerScreen(
     )
     val recordingControl by viewModel.recordingControl.collectAsState()
     CompositionLocalProvider(
-        LocalLiveRecordingControl provides recordingControl.copy(available = recordingControl.available && viewModel.directRecordingEnabled),
+        LocalLiveRecordingControl provides recordingControl.copy(
+            available = recordingControl.available && viewModel.directRecordingEnabled && !viewModel.changingChannel,
+        ),
         LocalLiveTimeshiftChanged provides viewModel::applyTimeshiftSetting,
+        LocalLiveTimeshiftConfigurable provides viewModel.timeshiftConfigurable,
     ) {
     com.ambient.tv.ui.player.PersistentPlayerChrome(
         viewModel, viewModel.changingChannel, initialZapOsd = viewModel.startsWithLiveChannel,

@@ -12,6 +12,10 @@ internal data class LiveRecordingControl(
     val scheduled: Boolean = false,
     val busy: Boolean = false,
     val record: () -> Unit = {},
+    /** Backend permission, independent of the feature switch and whether EPG is available. */
+    val canManageRecordings: Boolean = false,
+    /** A matching recording is currently reported as active by the backend. */
+    val isRecordingConfirmed: Boolean = false,
 )
 internal val LocalLiveRecordingControl = staticCompositionLocalOf { LiveRecordingControl() }
 
@@ -30,6 +34,7 @@ internal fun findProgrammeRecording(event: LiveTvProgramme, timers: List<LiveTvR
     }
 
 internal val LocalLiveTimeshiftChanged = staticCompositionLocalOf<(() -> Unit)?> { null }
+internal val LocalLiveTimeshiftConfigurable = staticCompositionLocalOf { false }
 
 /** Use backend confirmation; an elapsed timer start alone does not prove recording. */
 internal fun LiveTvRecording.isActivelyRecording(): Boolean =
@@ -55,7 +60,8 @@ internal suspend fun scheduleProgrammeRecording(
 
 /** Player record button: records the running programme from now, or stops its timer. */
 internal suspend fun toggleCurrentProgrammeRecording(repository: LiveTvRepository, event: LiveTvProgramme, stopping: Boolean) {
-    check(repository.capabilities(true).manageTimers)
+    val capabilities = repository.capabilities(true)
+    check(capabilities.available && capabilities.manageTimers)
     val entry = findProgrammeRecording(event, repository.upcomingRecordings(true))
     if (stopping) {
         // Only cancel a timer still reported by the backend; EPG DVR IDs can be stale.

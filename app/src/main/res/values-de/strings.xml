@@ -1859,8 +1859,8 @@
     <string name="reminder_switch">Umschalten</string>
     <string name="reminder_dismiss">Schließen</string>
     <string name="player_record_failed">Aufnahme konnte nicht angelegt werden. Bitte Aufnahmeberechtigung und Backend prüfen.</string>
-    <string name="live_direct_record">Aufnahme</string>
-    <string name="live_direct_record_hint">Aufnahme-Taste im Player</string>
+    <string name="live_direct_record">Direktaufnahme aktivieren</string>
+    <string name="live_direct_record_hint">Schaltet die Aufnahmeaktionen im Player frei</string>
     <string name="live_timeshift_optional_hint">Live-TV pausieren und zurückspulen</string>
     <string name="live_timeshift_failed">Timeshift-Änderung fehlgeschlagen. Bitte Sender erneut starten.</string>
     <string name="timeshift_programme_position">Sendung %1$s / %2$s · Wiedergabe %3$s</string>

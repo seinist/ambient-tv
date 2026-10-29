@@ -1859,8 +1859,8 @@
     <string name="reminder_switch">Switch over</string>
     <string name="reminder_dismiss">Dismiss</string>
     <string name="player_record_failed">Could not schedule recording. Please check recording permissions and the backend.</string>
-    <string name="live_direct_record">Record</string>
-    <string name="live_direct_record_hint">Record button in player</string>
+    <string name="live_direct_record">Enable direct recording</string>
+    <string name="live_direct_record_hint">Enables recording actions in the player</string>
     <string name="live_timeshift_optional_hint">Pause and rewind live TV</string>
     <string name="live_timeshift_failed">Could not apply timeshift change. Please restart the channel.</string>
     <string name="timeshift_programme_position">Programme %1$s / %2$s · Playing %3$s</string>

@@ -293,7 +293,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                         if (recording.scheduled) Icons.Filled.Stop else Icons.Filled.FiberManualRecord,
                         stringResource(if (recording.scheduled) R.string.player_record_stop else R.string.tvh_record),
                         recording.record,
-                        selected = recording.scheduled,
+                        selected = recording.isRecordingConfirmed,
                         loading = recording.busy,
                         osd = com.ambient.tv.ui.player.OsdButton.RECORD,
                     )

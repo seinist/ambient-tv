@@ -146,11 +146,22 @@ class TvheadendPlayerViewModel @Inject constructor(
     private var recordingRequestBusy = false
 
     internal val directRecordingEnabled get() = preferences.liveDirectRecordEnabled
+    internal val timeshiftConfigurable: Boolean
+        get() {
+            val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return false
+            return liveTimeshiftConfigurable(
+                isLive = ready.source.isLive,
+                hasChannel = kind == "channel" && ready.channel != null,
+                playingRecording = ready.playingRecording != null,
+                changingChannel = changingChannel,
+                url = ready.source.url,
+            )
+        }
 
     internal fun applyTimeshiftSetting() {
         val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return
         val channel = ready.channel ?: return
-        if (!ready.source.isLive || changingChannel || ready.playingRecording != null) return
+        if (!timeshiftConfigurable) return
         changingChannel = true
         viewModelScope.launch {
             try {
@@ -171,7 +182,8 @@ class TvheadendPlayerViewModel @Inject constructor(
         val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return
         val event = ready.nowEvent ?: return
         val control = _recordingControl.value
-        if (!preferences.liveDirectRecordEnabled || !ready.source.isLive || !control.available || control.eventId != event.eventId ||
+        if (!preferences.liveDirectRecordEnabled || !ready.source.isLive || changingChannel ||
+            !control.canManageRecordings || !control.available || control.eventId != event.eventId ||
             recordingRequestBusy || !event.isLive(System.currentTimeMillis() / 1000)) return
         val stopping = control.scheduled
         recordingRequestBusy = true
@@ -179,9 +191,15 @@ class TvheadendPlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = suspendResult { toggleCurrentProgrammeRecording(repository, event, stopping) }
-                if (_recordingControl.value.eventId == event.eventId) {
-                    _recordingControl.value = _recordingControl.value.copy(busy = false,
-                        scheduled = if (result.isSuccess) !stopping else _recordingControl.value.scheduled)
+                val timers = suspendResult { repository.upcomingRecordings(true) }.getOrNull()
+                val entry = timers?.let { findProgrammeRecording(event, it) }
+                val latest = _uiState.value as? TvheadendPlayerState.Ready
+                if (_recordingControl.value.eventId == event.eventId && latest?.channel?.uuid == ready.channel?.uuid) {
+                    _recordingControl.value = _recordingControl.value.copy(
+                        scheduled = if (timers != null) entry != null
+                            else if (result.isSuccess) !stopping else _recordingControl.value.scheduled,
+                        isRecordingConfirmed = entry?.isActivelyRecording() == true,
+                    )
                 }
                 android.widget.Toast.makeText(context, context.getString(
                     if (result.isSuccess) {
@@ -190,6 +208,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     else com.ambient.tv.R.string.player_record_failed), android.widget.Toast.LENGTH_LONG).show()
             } finally {
                 recordingRequestBusy = false
+                if (_recordingControl.value.busy) _recordingControl.value = _recordingControl.value.copy(busy = false)
             }
         }
     }
@@ -230,21 +249,31 @@ class TvheadendPlayerViewModel @Inject constructor(
         }
         viewModelScope.launch {
             uiState.map { state -> (state as? TvheadendPlayerState.Ready)
-                ?.takeIf { it.source.isLive }?.nowEvent }
-                .distinctUntilChanged().collectLatest { event ->
-                    _recordingControl.value = LiveRecordingControl()
-                    if (event == null) return@collectLatest
+                ?.takeIf { it.source.isLive && it.channel != null }?.let { it.channel?.uuid to it.nowEvent } }
+                .distinctUntilChanged().collectLatest { selection ->
+                    _recordingControl.value = LiveRecordingControl(busy = recordingRequestBusy)
+                    if (selection == null) return@collectLatest
+                    val event = selection.second
                     while (true) {
                         val previous = _recordingControl.value
                         val capabilities = suspendResult { repository.capabilities() }.getOrNull()
+                        val canManageRecordings = capabilities?.let { it.available && it.manageTimers } == true
                         val available = capabilities != null && canRecordProgramme(capabilities, event, System.currentTimeMillis() / 1000)
-                        val timers = if (available) suspendResult { repository.upcomingRecordings(true) }.getOrNull() else null
-                        val scheduled = timers?.let { findProgrammeRecording(event, it) != null }
-                            ?: previous.scheduled
+                        val timers = if (canManageRecordings && event != null)
+                            suspendResult { repository.upcomingRecordings(true) }.getOrNull() else null
+                        val entry = if (event != null && timers != null) findProgrammeRecording(event, timers) else null
+                        val scheduled = if (timers != null) entry != null else previous.scheduled
                         // A request may complete while the backend refresh is in flight.
-                        if (!recordingRequestBusy && _recordingControl.value === previous) {
-                            _recordingControl.value = LiveRecordingControl(event.eventId, available, scheduled,
-                                false, ::recordCurrentProgramme)
+                        if (_recordingControl.value === previous) {
+                            _recordingControl.value = LiveRecordingControl(
+                                eventId = event?.eventId,
+                                available = available,
+                                scheduled = scheduled,
+                                busy = recordingRequestBusy,
+                                record = ::recordCurrentProgramme,
+                                canManageRecordings = canManageRecordings,
+                                isRecordingConfirmed = entry?.isActivelyRecording() == true,
+                            )
                         }
                         delay(30_000L)
                     }

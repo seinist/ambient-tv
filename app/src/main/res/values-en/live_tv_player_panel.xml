@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="player_live_tv_summary">Channel services and playback</string>
+    <string name="player_live_tv_timeshift_active">Timeshift active</string>
+    <string name="player_live_tv_timeshift_unavailable">Timeshift is not available for this stream.</string>
+    <string name="player_live_tv_timeshift_inactive">Timeshift is enabled, but is not active for this stream.</string>
+    <string name="player_live_tv_timeshift_recording">You are playing a recording. Timeshift cannot be changed here.</string>
+    <string name="player_live_tv_switching">Changing channel…</string>
+    <string name="player_live_tv_buffer_size">Buffer size</string>
+    <string name="player_live_tv_buffer_hint">Changing the size restarts the timeshift buffer.</string>
+    <string name="player_live_tv_record_now">Record current programme</string>
+    <string name="player_live_tv_record_unavailable">Recording is not available for the current programme.</string>
+</resources>
