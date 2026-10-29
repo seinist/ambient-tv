@@ -100,7 +100,7 @@ fun PlayerToolButtons() {
         if (!PlayerToolsWork.savingScreenshot) {
             PlayerToolsWork.savingScreenshot = true
             PlayerToolsWork.scope.launch {
-                try { saveVideoScreenshot(context.applicationContext, metadata?.title) }
+                try { saveVideoScreenshot(context.applicationContext, metadata.title) }
                 finally { PlayerToolsWork.savingScreenshot = false }
             }
         }

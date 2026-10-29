@@ -187,7 +187,7 @@ internal fun PlaybackFrameDropOverlay(visible: Boolean) {
 private fun PlaybackFrameDropHistory(points: List<FrameDropHistoryPoint>, locale: Locale) {
     val latest = points.lastOrNull()
     val estimated = latest?.estimated == true
-    val value = (if (estimated && latest?.percent != null) "≈" else "") + formatFramePercent(latest?.percent, locale)
+    val value = (if (estimated && latest.percent != null) "≈" else "") + formatFramePercent(latest?.percent, locale)
     val axisColor = Color.White.copy(alpha = 0.6f)
     val axisFormat = remember(locale) { NumberFormat.getIntegerInstance(locale) }
     val axisWidth = 42.dp

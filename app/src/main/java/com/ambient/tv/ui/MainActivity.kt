@@ -572,20 +572,20 @@ open class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
-    override fun onCreate(restoredState: Bundle?) {
+    override fun onCreate(savedInstanceState: Bundle?) {
         // A redirecting TV/phone Activity does not own the UI session. It may merely forward a
         // launcher intent to an already running Activity, whose focus must remain untouched.
         val television = com.ambient.tv.ui.mobile.isTelevision(this)
         ownsBrowseUiSession = television == (this !is com.ambient.tv.ui.mobile.HandheldActivity)
-        val restoreBrowseState = ownsBrowseUiSession && browseUiSessionPolicy.create(browseUiOwner, restoredState != null)
+        val restoreBrowseState = ownsBrowseUiSession && browseUiSessionPolicy.create(browseUiOwner, savedInstanceState != null)
         // Only a configuration recreation resumes saved focus/scroll/back-stack state. A new
         // UI starts fresh even if a background service kept the old process alive.
-        val savedInstanceState = restoredState.takeIf { restoreBrowseState }
-        super.onCreate(savedInstanceState)
+        val restoredState = savedInstanceState.takeIf { restoreBrowseState }
+        super.onCreate(restoredState)
         // After super.onCreate: Hilt injects the preferences there.
         com.ambient.tv.ui.common.PlayerOsdTimeout.seconds = appPreferences.playerOsdSeconds
         browseReconnects.start()
-        companionIntentPending = savedInstanceState?.getBoolean("companion.intent.pending", false) ?: true
+        companionIntentPending = restoredState?.getBoolean("companion.intent.pending", false) ?: true
         if (this is com.ambient.tv.ui.mobile.HandheldActivity && com.ambient.tv.ui.mobile.isTelevision(this)) {
             startActivity(Intent(intent).setClass(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -600,7 +600,7 @@ open class MainActivity : ComponentActivity() {
             finish()
             return
         }
-        if (savedInstanceState == null) resetBrowseSessionPositions()
+        if (restoredState == null) resetBrowseSessionPositions()
         // Set here, not in the manifest: a manifest orientation also applies to the phone launch
         // before the handheld trampoline, which made portrait phones start in landscape.
         if (com.ambient.tv.ui.mobile.isTelevision(this)) requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -614,16 +614,16 @@ open class MainActivity : ComponentActivity() {
             displayWidth = startupMode?.physicalWidth ?: 0,
             displayHeight = startupMode?.physicalHeight ?: 0,
         )
-        if (savedInstanceState == null) requestNotificationPermissionOnce()
+        if (restoredState == null) requestNotificationPermissionOnce()
         // A launcher row (Watch Next / preview channel) opened the app on a title. After the
         // handheld hand-off, so the activity that stays connects once.
-        if (savedInstanceState == null) {
+        if (restoredState == null) {
             launcherOpener.open(intent)
             com.ambient.tv.search.ExternalSearch.offer(intent)
         }
         if (intent?.action == PlaybackService.ACTION_OPEN) registerUserInteraction()
         // Launcher cold start only: a launcher row or playback notification goes straight to its target.
-        val startIntro = if (savedInstanceState == null && intent?.action == Intent.ACTION_MAIN) {
+        val startIntro = if (restoredState == null && intent?.action == Intent.ACTION_MAIN) {
             appPreferences.introAnimationKey
         } else com.ambient.tv.data.local.IntroAnimation.OFF
         if (android.os.Build.VERSION.SDK_INT >= 31) {

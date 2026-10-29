@@ -242,7 +242,7 @@ fun PlayerOverlayVisibility(
         }
     }
     // A second Back completes dismissal immediately; a later opening starts compact again.
-    if (hidden && osd?.closing != true) return
+    if (hidden && osd.closing != true) return
     AnimatedVisibility(
         visibleState = visibility,
         // Above the nerd stats sibling: zIndex only orders siblings, so the panel's own

@@ -236,7 +236,7 @@ class IptvLiveTvRepository(
         val call = client.newCall(request(url))
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
-            override fun onFailure(call: Call, error: IOException) { continuation.resumeWith(Result.failure(error)) }
+            override fun onFailure(call: Call, e: IOException) { continuation.resumeWith(Result.failure(e)) }
             override fun onResponse(call: Call, response: Response) {
                 if (!continuation.isActive) { response.close(); return }
                 continuation.resumeWith(runCatching { response.use(consume) })

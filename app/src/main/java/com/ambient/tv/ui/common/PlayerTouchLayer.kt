@@ -73,7 +73,7 @@ fun PlayerTouchLayer(
     val currentSeekForward by rememberUpdatedState(onSeekForward)
     val currentPinch by rememberUpdatedState(pinchZoom)
     val pinchAvailable = LocalHandheldUi.current && pinchZoom != null
-    val pinchEnabled = pinchAvailable && pinchZoom?.enabled == true
+    val pinchEnabled = pinchAvailable && pinchZoom.enabled == true
     var viewport by remember(pinchZoom?.key) { mutableStateOf(IntSize.Zero) }
     var lastPinchPresentation by remember(pinchZoom?.key) { mutableStateOf<VideoPresentation?>(null) }
     Box(

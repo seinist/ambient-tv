@@ -462,7 +462,7 @@ object BackgroundPlaybackSession {
         checkThread()
         val current = snapshot.value
         if (handle == null || current.replacingSource || current.metadata?.route != fromRoute) return false
-        val finishedDuration = current.status.durationMs.takeIf { it > 0 } ?: current.metadata?.durationMs ?: 0L
+        val finishedDuration = current.status.durationMs.takeIf { it > 0 } ?: current.metadata.durationMs
         completed.addLast(current.copy(status = current.status.copy(positionMs = finishedDuration, ended = true, playing = false),
             requestedTimelinePositionMs = null))
         // Like a normal item change: the finished title keeps its own edits, the next one starts
@@ -683,7 +683,7 @@ object BackgroundPlaybackSession {
         val eligible = player != null && resumeCapabilities().pauseRewind
         if (wasPlaying && eligible) {
             pauseRewindOwner = player
-            pauseReopenGeneration = player!!.reopenGeneration()
+            pauseReopenGeneration = player.reopenGeneration()
         }
         pauseRewind.userPaused(SystemClock.elapsedRealtime(),
             player?.let { resumeTimelinePosition(it, snapshot.value.metadata) } ?: 0L,
