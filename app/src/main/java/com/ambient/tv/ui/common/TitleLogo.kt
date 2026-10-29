@@ -31,8 +31,8 @@ import coil3.request.ImageRequest
 /**
  * Title text that swaps in a provider ClearLogo when one loads.
  *
- * The occupied height is taken from [textStyle] so Home's three-slot hero (badge, title, meta)
- * does not shift when some items have a logo and others only have a string.
+ * A fixed slot keeps metadata steady when items switch between logos and title text.
+ * A minimum slot keeps logos bounded while allowing longer text to use the available height.
  * Failed or missing logos keep the original text; there is no placeholder tile.
  */
 @Composable
@@ -49,10 +49,16 @@ fun TitleLogo(
     lockSlotToSingleLine: Boolean = false,
     /** Fixed slot height for logo and text alike, so hero content below never moves. Text drops to the lines that fit. */
     fixedSlotHeight: Dp? = null,
+    /** The logo keeps this target height; fallback text can grow within its parent's measured height. */
+    minSlotHeight: Dp? = null,
 ) {
     val density = LocalDensity.current
     val lineHeight = remember(textStyle, density) { textStyle.lineHeightDp(density) }
-    val slotHeight = fixedSlotHeight ?: if (lockSlotToSingleLine) lineHeight else lineHeight * maxLines.coerceAtLeast(1)
+    val slotHeight = fixedSlotHeight ?: when {
+        lockSlotToSingleLine -> lineHeight
+        minSlotHeight != null -> minSlotHeight
+        else -> lineHeight * maxLines.coerceAtLeast(1)
+    }
     val textLines = when {
         lockSlotToSingleLine -> 1
         fixedSlotHeight != null -> (fixedSlotHeight.value / lineHeight.value).toInt().coerceIn(1, maxLines.coerceAtLeast(1))
@@ -89,6 +95,7 @@ fun TitleLogo(
             when {
                 lockSlotToSingleLine -> Modifier.height(lineHeight)
                 fixedSlotHeight != null -> Modifier.height(fixedSlotHeight)
+                minSlotHeight != null -> Modifier.heightIn(min = minSlotHeight)
                 else -> Modifier.heightIn(min = lineHeight)
             },
         ),
@@ -117,7 +124,7 @@ fun TitleLogo(
     }
 }
 
-private fun TextStyle.lineHeightDp(density: Density): Dp = with(density) {
+internal fun TextStyle.lineHeightDp(density: Density): Dp = with(density) {
     val lh = lineHeight
     when (lh.type) {
         TextUnitType.Sp -> lh.toDp()

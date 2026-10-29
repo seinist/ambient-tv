@@ -2,6 +2,7 @@ package com.ambient.tv.ui.home
 
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.common.requestHeaders
+import com.ambient.tv.ui.common.lineHeightDp
 import coil3.request.crossfade
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import androidx.activity.compose.BackHandler
@@ -1303,6 +1304,7 @@ internal fun HomeHero(
     val horizontalPadding = screenGutter()
     val artworkGap = deviceDp(32.dp, 16.dp)
     val heroHeight = height ?: homeHeroHeight()
+    val showSummary = heroHeight > HomeHeroMinHeight
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1354,155 +1356,163 @@ internal fun HomeHero(
                 ),
                 label = "homeHeroMetadata",
             ) { heroItem ->
-                Column(
-                    modifier = Modifier.fillMaxWidth().clipToBounds(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val metadataShadow = if (performance.allowComplexHero) {
-                        Shadow(
-                            color = Color.Black.copy(alpha = 0.92f),
-                            offset = Offset(0f, 2f),
-                            blurRadius = 5f,
-                        )
+                val metadataShadow = if (performance.allowComplexHero) {
+                    Shadow(
+                        color = Color.Black.copy(alpha = 0.92f),
+                        offset = Offset(0f, 2f),
+                        blurRadius = 5f,
+                    )
+                } else {
+                    Shadow(color = Color.Transparent, offset = Offset.Zero, blurRadius = 0f)
+                }
+                val mediaItem = heroItem.mediaItem
+                val episode = mediaItem?.takeIf { it.type == "episode" }
+                // Like Plex, an episode's own title gets the line under the series name in
+                // place of the genres; its S/E marker leads the metadata row below.
+                val episodeTitle = episode?.takeIf { !it.grandparentTitle.isNullOrBlank() }
+                    ?.let { heroItem.title.takeIf { title -> title.isNotBlank() } }
+                val emphasizedContext = episodeTitle ?: heroItem.subtitle
+                val contextLabel = if (heroItem.subtitle != null) heroItem.subtitle else buildList {
+                    addAll(heroItem.metadata)
+                    if (episode != null) {
+                        episodeTitle?.let(::add)
+                    } else if (mediaItem?.type == "season") {
+                        mediaItem.parentTitle?.takeIf { it.isNotBlank() }?.let(::add)
                     } else {
-                        Shadow(color = Color.Transparent, offset = Offset.Zero, blurRadius = 0f)
+                        addAll(mediaItem?.genres.orEmpty().take(2))
                     }
-                    // Reserve title, context and metadata slots for every provider, including missing data.
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (showSystemBadge) com.ambient.tv.ui.common.MediaSystem.fromKey(heroItem.providerLabel)?.let {
-                            com.ambient.tv.ui.common.SystemBadge(it, showName = false)
-                        }
-                        // Episodes lead with the series name; the episode title moves to the context line.
-                        val heroSeriesTitle = heroItem.mediaItem
-                            ?.takeIf { it.type == "episode" }
-                            ?.grandparentTitle
-                            ?.takeIf { it.isNotBlank() }
-                        Text(
-                            text = heroSeriesTitle ?: heroItem.title,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.headlineMedium.copy(shadow = metadataShadow),
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        )
+                }.joinToString("  ·  ")
+                val contextStyle = if (emphasizedContext != null) {
+                    MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, shadow = metadataShadow)
+                } else {
+                    MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow)
+                }
+                val live = heroItem.live
+                val metaBeforeRating = live?.timeLabel ?: mediaItem?.year?.toString().orEmpty()
+                val durationLabel = formatDuration(
+                    live?.let { (it.stopEpochSeconds - it.startEpochSeconds) * 1000L } ?: mediaItem?.durationMs,
+                )
+                val liveProgress = live?.let {
+                    val now = System.currentTimeMillis() / 1000L
+                    ((now - it.startEpochSeconds).toFloat() / (it.stopEpochSeconds - it.startEpochSeconds).coerceAtLeast(1L)).coerceIn(0f, 1f)
+                }
+                val heroScore = mediaItem?.rating ?: mediaItem?.audienceRating ?: mediaItem?.criticRating
+                val heroScoreMax = when {
+                    mediaItem?.rating != null -> 10.0
+                    mediaItem?.audienceRating != null -> 10.0
+                    mediaItem?.criticRating != null -> 100.0
+                    else -> 10.0
+                }
+                val remainingLabel = (live?.let { (it.stopEpochSeconds - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) * 1000L }
+                    ?: mediaItem?.remainingMs?.takeIf { (mediaItem.progressFraction ?: 0f) in 0.01f..0.94f })
+                    ?.let { remaining ->
+                        formatDuration(remaining)?.let { stringResource(R.string.media_remaining, it) }
                     }
-                    val mediaItem = heroItem.mediaItem
-                    val episode = mediaItem?.takeIf { it.type == "episode" }
-                    // Like Plex, an episode's own title gets the line under the series name in
-                    // place of the genres; its S/E marker leads the metadata row below.
-                    val episodeTitle = episode?.takeIf { !it.grandparentTitle.isNullOrBlank() }
-                        ?.let { heroItem.title.takeIf { title -> title.isNotBlank() } }
-                    val emphasizedContext = episodeTitle ?: heroItem.subtitle
-                    val contextLabel = if (heroItem.subtitle != null) heroItem.subtitle else buildList {
-                        addAll(heroItem.metadata)
-                        if (episode != null) {
-                            episodeTitle?.let(::add)
-                        } else if (mediaItem?.type == "season") {
-                            mediaItem.parentTitle?.takeIf { it.isNotBlank() }?.let(::add)
-                        } else {
-                            addAll(mediaItem?.genres.orEmpty().take(2))
-                        }
-                    }.joinToString("  ·  ")
-                    Text(
-                        text = contextLabel,
-                        style = if (emphasizedContext != null) {
-                            MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold, shadow = metadataShadow)
-                        } else {
-                            MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow)
-                        },
-                        color = if (emphasizedContext != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 22.dp),
-                    )
-                    val live = heroItem.live
-                    val metaBeforeRating = live?.timeLabel ?: mediaItem?.year?.toString().orEmpty()
-                    val durationLabel = formatDuration(
-                        live?.let { (it.stopEpochSeconds - it.startEpochSeconds) * 1000L } ?: mediaItem?.durationMs,
-                    )
-                    val liveProgress = live?.let {
-                        val now = System.currentTimeMillis() / 1000L
-                        ((now - it.startEpochSeconds).toFloat() / (it.stopEpochSeconds - it.startEpochSeconds).coerceAtLeast(1L)).coerceIn(0f, 1f)
-                    }
-                    val heroScore = mediaItem?.rating ?: mediaItem?.audienceRating ?: mediaItem?.criticRating
-                    val heroScoreMax = when {
-                        mediaItem?.rating != null -> 10.0
-                        mediaItem?.audienceRating != null -> 10.0
-                        mediaItem?.criticRating != null -> 100.0
-                        else -> 10.0
-                    }
-                    val remainingLabel = (live?.let { (it.stopEpochSeconds - System.currentTimeMillis() / 1000L).coerceAtLeast(0L) * 1000L }
-                        ?: mediaItem?.remainingMs?.takeIf { (mediaItem.progressFraction ?: 0f) in 0.01f..0.94f })
-                        ?.let { remaining ->
-                            formatDuration(remaining)?.let { stringResource(R.string.media_remaining, it) }
-                        }
-                    // Keep the year and badges on one stable baseline.
-                    Row(
-                        modifier = Modifier.heightIn(min = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (live != null) LiveBadge()
-                        episode?.index?.let { number ->
-                            val marker = episode.parentIndex?.let { season -> "S$season · E$number" }
-                                ?: stringResource(R.string.media_episode_short_label, number)
-                            Text(marker, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
-                        }
-                        if (metaBeforeRating.isNotBlank()) {
-                            Text(metaBeforeRating, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
-                        }
-                        mediaItem?.contentRating?.takeIf { it.isNotBlank() }?.let { ContentRatingBadge(it) }
-                        heroScore?.let { RatingScoreBadge(score = it, maxScore = heroScoreMax) }
-                        if (mediaItem?.isWatched == true) com.ambient.tv.ui.common.WatchedBadge()
-                    }
-                    // Runtime and playback progress get their own line, which leaves the badge
-                    // row readable and gives continuing items a small visual progress cue.
-                    Row(
-                        modifier = Modifier.heightIn(min = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        durationLabel?.let { duration ->
+                val summaryText = (heroItem.summary ?: mediaItem?.summary)?.takeIf { it.isNotBlank() }
+                val density = LocalDensity.current
+                com.ambient.tv.ui.common.HeroTextLayout(
+                    modifier = Modifier.fillMaxWidth()
+                        .then(if (showSummary) Modifier.fillMaxHeight() else Modifier)
+                        .clipToBounds(),
+                    titleMinHeight = MaterialTheme.typography.headlineMedium.lineHeightDp(density),
+                    contextMinHeight = contextStyle.lineHeightDp(density).coerceAtLeast(22.dp),
+                    summaryMinHeight = MaterialTheme.typography.bodyMedium.lineHeightDp(density) + 4.dp,
+                    title = {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (showSystemBadge) com.ambient.tv.ui.common.MediaSystem.fromKey(heroItem.providerLabel)?.let {
+                                com.ambient.tv.ui.common.SystemBadge(it, showName = false)
+                            }
+                            // Episodes lead with the series name; the episode title moves to the context line.
+                            val heroSeriesTitle = heroItem.mediaItem
+                                ?.takeIf { it.type == "episode" }
+                                ?.grandparentTitle
+                                ?.takeIf { it.isNotBlank() }
                             Text(
-                                text = duration,
-                                style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                        remainingLabel?.let { label ->
-                            val progress = liveProgress ?: mediaItem?.progressFraction ?: 0f
-                            com.ambient.tv.ui.common.PlaybackStatusBar(
-                                progress = progress,
-                                modifier = Modifier.width(112.dp),
-                                trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
-                            )
-                            Text(
-                                text = label,
+                                text = heroSeriesTitle ?: heroItem.title,
                                 modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.headlineMedium.copy(shadow = metadataShadow),
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
-                                color = MaterialTheme.colorScheme.primary,
-                                maxLines = 1,
                             )
                         }
-                    }
-                    // Only the tall TV hero has room for the summary; the slot stays reserved
-                    // so the metadata does not jump between items with and without one.
-                    if (heroHeight > HomeHeroMinHeight) {
+                    },
+                    context = {
                         Text(
-                            text = (heroItem.summary ?: mediaItem?.summary)?.takeIf { it.isNotBlank() }.orEmpty(),
+                            text = contextLabel,
+                            style = contextStyle,
+                            color = if (emphasizedContext != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 22.dp),
+                        )
+                    },
+                    metadata = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Keep the year and badges on one stable baseline.
+                            Row(
+                                modifier = Modifier.heightIn(min = 24.dp),
+                                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (live != null) LiveBadge()
+                                episode?.index?.let { number ->
+                                    val marker = episode.parentIndex?.let { season -> "S$season · E$number" }
+                                        ?: stringResource(R.string.media_episode_short_label, number)
+                                    Text(marker, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
+                                }
+                                if (metaBeforeRating.isNotBlank()) {
+                                    Text(metaBeforeRating, style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow), maxLines = 1)
+                                }
+                                mediaItem?.contentRating?.takeIf { it.isNotBlank() }?.let { ContentRatingBadge(it) }
+                                heroScore?.let { RatingScoreBadge(score = it, maxScore = heroScoreMax) }
+                                if (mediaItem?.isWatched == true) com.ambient.tv.ui.common.WatchedBadge()
+                            }
+                            // Runtime and playback progress get their own line, which leaves the badge
+                            // row readable and gives continuing items a small visual progress cue.
+                            Row(
+                                modifier = Modifier.heightIn(min = 24.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                durationLabel?.let { duration ->
+                                    Text(
+                                        text = duration,
+                                        style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                }
+                                remainingLabel?.let { label ->
+                                    val progress = liveProgress ?: mediaItem?.progressFraction ?: 0f
+                                    com.ambient.tv.ui.common.PlaybackStatusBar(
+                                        progress = progress,
+                                        modifier = Modifier.width(112.dp),
+                                        trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f),
+                                    )
+                                    Text(
+                                        text = label,
+                                        modifier = Modifier.weight(1f),
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    // A fixed hero boundary keeps the rows below clear; only real overflow is shortened.
+                    summary = if (showSummary && summaryText != null) { {
+                        Text(
+                            text = summaryText,
                             style = MaterialTheme.typography.bodyMedium.copy(shadow = metadataShadow),
-                            maxLines = 3,
-                            minLines = 3,
                             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                             // Plex-like measure: long lines across the whole TV are hard to read.
                             modifier = Modifier.widthIn(max = 600.dp).padding(top = 4.dp),
                         )
-                    }
-                }
+                    } } else null,
+                )
             }
             if (titleActions != null) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, content = titleActions)
           }

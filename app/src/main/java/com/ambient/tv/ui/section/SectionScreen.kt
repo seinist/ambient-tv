@@ -127,6 +127,8 @@ import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CrossfadeBackdropImage
 import com.ambient.tv.ui.common.TitleLogo
+import com.ambient.tv.ui.common.HeroTextLayout
+import com.ambient.tv.ui.common.lineHeightDp
 import com.ambient.tv.ui.common.acceleratedDpadNavigation
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.ContentRow
@@ -1277,7 +1279,7 @@ private fun RecommendationCinematicSection(
         ContentSectionHeader(title = row.title)
         Box(Modifier.fillMaxWidth().then(if (handheld) Modifier.height(deviceHeroHeight(500.dp, 390.dp)) else Modifier.weight(1f))) {
             CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent, fadeBottom = true)
-            CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, summaryMaxLines = 3, showStreamProperties = false) {
+            CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, showStreamProperties = false) {
                 LazyRow(
                     contentPadding = cinematicTileRowPadding(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1298,8 +1300,8 @@ private fun RecommendationCinematicSection(
 }
 
 /**
- * Shared hero layout for the cinematic modes. The logo slot scales with the available height and
- * the summary only takes what is left, so logo, text and tile row always fit with fixed gaps:
+ * Shared hero layout for the cinematic modes. The logo scales with the available height; title
+ * text can grow after reserving the metadata and a summary line. The tile row keeps fixed gaps:
  * one between summary and tiles, one below the tiles.
  */
 @Composable
@@ -1307,33 +1309,41 @@ private fun CinematicHeroContent(
     hero: MediaItem,
     poster: Boolean,
     infoWidthFraction: Float,
-    summaryMaxLines: Int,
     showStreamProperties: Boolean,
     tiles: @Composable () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val logoHeight = (maxHeight * if (poster) 0.13f else 0.15f).coerceIn(deviceDp(48.dp, 36.dp), deviceDp(92.dp, 64.dp))
+        val summaryText = hero.summary?.takeIf { it.isNotBlank() }
+        val summaryContent: (@Composable () -> Unit)? = if (summaryText != null) {
+            { Text(summaryText, style = MaterialTheme.typography.bodyMedium, overflow = TextOverflow.Ellipsis) }
+        } else null
         Column(Modifier.fillMaxSize()) {
-            Column(
-                Modifier.weight(1f).fillMaxWidth(infoWidthFraction).padding(start = screenGutter(), top = deviceDp(22.dp, 14.dp)),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TitleLogo(
-                    title = hero.title,
-                    logoUrl = hero.logoUrl,
-                    textStyle = MaterialTheme.typography.headlineMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    maxLogoWidth = deviceDp(440.dp, 240.dp),
-                    fixedSlotHeight = logoHeight,
-                )
-                CinematicHeroMetaRow(hero)
-                // Poster tiles leave less height, so keep the stream badges on one line there.
-                if (showStreamProperties) StreamPropertyAdaptiveRows(hero, maxItems = 5, itemsPerRow = if (poster) 5 else 3)
-                hero.summary?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = summaryMaxLines, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                }
-            }
+            HeroTextLayout(
+                modifier = Modifier.weight(1f).fillMaxWidth(infoWidthFraction).padding(start = screenGutter(), top = deviceDp(22.dp, 14.dp)),
+                spacing = 10.dp,
+                titleMinHeight = logoHeight,
+                summaryMinHeight = MaterialTheme.typography.bodyMedium.lineHeightDp(LocalDensity.current),
+                title = {
+                    TitleLogo(
+                        title = hero.title,
+                        logoUrl = hero.logoUrl,
+                        textStyle = MaterialTheme.typography.headlineMedium,
+                        maxLines = Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis,
+                        maxLogoWidth = deviceDp(440.dp, 240.dp),
+                        minSlotHeight = logoHeight,
+                    )
+                },
+                metadata = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        CinematicHeroMetaRow(hero)
+                        // Poster tiles leave less height, so keep the stream badges on one line there.
+                        if (showStreamProperties) StreamPropertyAdaptiveRows(hero, maxItems = 5, itemsPerRow = if (poster) 5 else 3)
+                    }
+                },
+                summary = summaryContent,
+            )
             Spacer(Modifier.height(deviceDp(18.dp, 12.dp)))
             tiles()
         }
@@ -1825,7 +1835,7 @@ private fun CinematicView(
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     Box(Modifier.fillMaxSize()) {
         CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent)
-        CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.58f, summaryMaxLines = 4, showStreamProperties = true) {
+        CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.58f, showStreamProperties = true) {
             LazyRow(
                 state = rowState,
                 contentPadding = cinematicTileRowPadding(),
