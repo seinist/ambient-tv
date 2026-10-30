@@ -168,6 +168,26 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 Text(stringResource(R.string.settings_link_instructions))
                                 uiState.linkCode?.let { Text(it, style = MaterialTheme.typography.headlineMedium) }
                                     ?: CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                val qrUrl = uiState.linkQrUrl
+                                val linkCode = uiState.linkCode
+                                if (!qrUrl.isNullOrBlank() && !linkCode.isNullOrBlank()) {
+                                    var dismissedQr by remember(qrUrl) { mutableStateOf(false) }
+                                    if (!dismissedQr) {
+                                        com.ambient.tv.ui.common.QrCodeDialog(
+                                            title = stringResource(R.string.action_sign_in),
+                                            hint = stringResource(R.string.settings_link_instructions),
+                                            payload = qrUrl,
+                                            code = linkCode,
+                                            onDismiss = { dismissedQr = true },
+                                            footer = {
+                                                TvActionButton(
+                                                    text = stringResource(R.string.action_close),
+                                                    onClick = { dismissedQr = true },
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
                             }
                             // Keep this action in the same composition slot when linking starts or
                             // stops. Replacing the entire subtree discarded DPAD focus.
