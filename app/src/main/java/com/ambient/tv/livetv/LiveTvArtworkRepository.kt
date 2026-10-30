@@ -61,7 +61,7 @@ class LiveTvArtworkRepository @Inject constructor(
                     if (stillMissing || titleKey in _titleArt.value) false else pending.add(key)
                 }
                 if (!scheduled) return@forEach
-                scope.launch(Dispatchers.IO) {
+                val job = scope.launch(Dispatchers.IO) {
                     try {
                         val cached = decodeEntry(prefs.getString(key, null), System.currentTimeMillis())
                         if (cached != null) {
@@ -85,6 +85,8 @@ class LiveTvArtworkRepository @Inject constructor(
                         synchronized(lock) { pending.remove(key) }
                     }
                 }
+                // Cancellation can happen before a dispatched coroutine enters its try/finally.
+                job.invokeOnCompletion { synchronized(lock) { pending.remove(key) } }
             }
     }
 
