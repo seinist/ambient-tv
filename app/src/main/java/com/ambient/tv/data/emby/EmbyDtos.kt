@@ -41,7 +41,7 @@ data class EmbyConnectAuth(
 
 @Serializable
 data class EmbyConnectServer(
-    @SerialName("AccessKey") val accessKey: String,
+    @SerialName("ExchangeToken") val exchangeToken: String,
     @SerialName("SystemId") val systemId: String,
     @SerialName("Name") val name: String = "",
     @SerialName("Url") val url: String? = null,
