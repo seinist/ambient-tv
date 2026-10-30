@@ -96,7 +96,8 @@ internal fun tvhChannelMetadata(
         else -> taggedAccess ?: LiveTvChannelAccess.UNKNOWN
     }
     val hbbtv = serviceIds.asSequence()
-        .flatMap { tvhHbbtvApplications(hbbtvServices[it] ?: return@flatMap emptySequence()).asSequence() }
+        .mapNotNull(hbbtvServices::get)
+        .flatMap { tvhHbbtvApplications(it).asSequence() }
         .distinctBy { it.url }
         .firstOrNull()
     return TvhChannelMetadata(tags, kind, access, hbbtv?.url, hbbtv?.name)
