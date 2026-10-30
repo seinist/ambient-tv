@@ -92,7 +92,7 @@ fun TvLazyColumn(
     userScrollEnabled: Boolean = true,
     allowUpExit: Boolean = false,
     wrapVerticalFocus: Boolean = true,
-    focusActionsOnRight: Boolean = true,
+    focusActionsOnRight: Boolean = false,
     content: LazyListScope.() -> Unit,
 ) {
     BrowseScrollBudget(state)
@@ -133,6 +133,7 @@ fun TvLazyVerticalGrid(
     horizontalArrangement: Arrangement.Horizontal = Arrangement.Start,
     flingBehavior: FlingBehavior = ScrollableDefaults.flingBehavior(),
     userScrollEnabled: Boolean = true,
+    focusActionsOnRight: Boolean = false,
     content: LazyGridScope.() -> Unit,
 ) {
     BrowseScrollBudget(state)
@@ -150,7 +151,7 @@ fun TvLazyVerticalGrid(
                 scrollToEnd = {
                     if (state.layoutInfo.totalItemsCount > 0) state.glideToItem(animate, if (reverseLayout) 0 else state.layoutInfo.totalItemsCount - 1)
                 },
-                focusActionsOnRight = true,
+                focusActionsOnRight = focusActionsOnRight,
                 reverseTraversal = reverseLayout,
                 scrollPastEmptyEdge = { state.scrollPastUnfocusableEdge(it != reverseLayout) },
             )),
