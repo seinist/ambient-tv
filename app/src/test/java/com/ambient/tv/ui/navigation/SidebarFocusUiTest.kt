@@ -18,6 +18,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -98,6 +99,14 @@ class SidebarFocusUiTest {
     }
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
+
+    @Test fun inlineSingleSystemKeepsBothProviderConfigurationAndGlobalSettings() {
+        state = SidebarUiState(trailersEnabled = true, trailersConfigured = true)
+        setUp(Destinations.TRAILERS)
+        key(Key.DirectionLeft)
+        rule.onNodeWithTag("sidebar:system-settings:trailers", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("sidebar:settings", useUnmergedTree = true).assertExists()
+    }
 
     @Test fun leftFromContentOpensOnTheActiveEntryOfTheActiveSystem() {
         setUp(Destinations.liveTvSection("guide"))
