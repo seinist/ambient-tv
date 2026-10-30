@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -80,6 +81,7 @@ import com.ambient.tv.ui.player.rememberPlayerControlsVisible
 import com.ambient.tv.ui.player.rememberPlayerEngineFocus
 import com.ambient.tv.ui.player.rememberPlayerPlayFocus
 import com.ambient.tv.ui.player.rememberPlayerSeekFocus
+import com.ambient.tv.ui.mobile.deviceDp
 
 @Composable
 fun RadioPlayerScreen(
@@ -233,8 +235,8 @@ private fun RadioPlayerContent(
                 PublishPlayerOsd(
                     RadioOsdModel(
                         station = station,
-                        title = metadata.title,
-                        subtitle = metadata.subtitle,
+                        stationName = metadata.title,
+                        nowPlaying = metadata.subtitle,
                         artworkUrl = metadata.artworkUrl,
                         artworkFallbackUrls = metadata.artworkFallbackUrls,
                         artworkHeaders = metadata.artworkHeaders,
@@ -350,8 +352,8 @@ internal fun radioSeekTarget(positionMs: Long, durationMs: Long, deltaMs: Long):
 
 internal data class RadioOsdModel(
     val station: RadioStation?,
-    val title: String,
-    val subtitle: String?,
+    val stationName: String,
+    val nowPlaying: String?,
     val artworkUrl: String?,
     val artworkFallbackUrls: List<String>,
     val artworkHeaders: Map<String, String>,
@@ -380,6 +382,7 @@ internal data class RadioOsdModel(
         val playFocusRequester = rememberPlayerPlayFocus()
         val seekFocusRequester = rememberPlayerSeekFocus()
         val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
+        val header = radioHeaderPresentation(stationName, nowPlaying, systemName(MediaSystem.RADIO))
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
@@ -390,9 +393,12 @@ internal data class RadioOsdModel(
             )
             ReferencePlayerBottomContent(onTogglePlayback = onToggle) {
                 ReferencePlayerHeader(
-                    title = title,
-                    contextLine = systemName(MediaSystem.RADIO),
-                    subtitle = subtitle,
+                    // Radio matches TVHeadend: station and live status are context,
+                    // the current track is the headline and the artist is its subtitle.
+                    modifier = Modifier.heightIn(min = deviceDp(104.dp, 56.dp)),
+                    title = header.title,
+                    contextLine = header.contextLine + "  •  " + stringResource(R.string.tvh_live).uppercase(),
+                    subtitle = header.subtitle,
                     artworkUrl = artworkUrl,
                     artworkFallbackUrls = artworkFallbackUrls,
                     artworkHeaders = artworkHeaders,
