@@ -642,15 +642,19 @@ private fun SearchGroupTitle(system: MediaSystem, groupRes: Int) {
 
 
 @Composable
-private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) -> Unit, requestInitialFocus: Boolean = false) {
+private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) -> Unit, requestInitialFocus: Boolean = false, rowFocus: RowColumnFocus) {
+    val rowKey = "search:youtube"
+    val keys = youtubeItems.map { "search:youtube:${it.videoId}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.YOUTUBE, R.string.search_videos)
-        BrowseFocusRow("search:youtube") {
-        LazyRow(state = rememberLazyListState(itemKeys = youtubeItems.map { "search:youtube:${it.videoId}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow(rowKey) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(youtubeItems, key = { it.videoId }) { item ->
                 var focused by remember(item.videoId) { mutableStateOf(false) }
                 val cardShape = RoundedCornerShape(10.dp)
-                Surface(onClick = { onClick(item.videoId) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == youtubeItems.firstOrNull()).width(250.dp).browseFocusTarget("search:youtube:${item.videoId}").mediaFocusMotion(focused).activateOnTvKey { onClick(item.videoId) }.onFocusChanged { focused = it.isFocused }) {
+                Surface(onClick = { onClick(item.videoId) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == youtubeItems.firstOrNull()).width(250.dp).rowColumnFocusTarget(rowFocus, rowKey, "search:youtube:${item.videoId}").browseFocusTarget("search:youtube:${item.videoId}").mediaFocusMotion(focused).activateOnTvKey { onClick(item.videoId) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
                         Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
                             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
@@ -680,12 +684,17 @@ private fun RadioSearchRow(
     items: List<RadioStation>,
     onClick: (RadioStation) -> Unit,
     requestInitialFocus: Boolean = false,
+    rowFocus: RowColumnFocus,
 ) {
+    val rowKey = "search:radio"
+    val keys = items.map { "search:radio:${it.id}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.RADIO, R.string.radio_stations)
-        BrowseFocusRow("search:radio") {
+        BrowseFocusRow(rowKey) {
         LazyRow(
-            state = rememberLazyListState(itemKeys = items.map { "search:radio:${it.id}" }),
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -698,6 +707,7 @@ private fun RadioSearchRow(
                     squareArtwork = true,
                     onClick = { onClick(station) },
                     focusKey = "search:radio:${station.id}",
+                    focusModifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, "search:radio:${station.id}"),
                     requestInitialFocus = requestInitialFocus && station == items.firstOrNull(),
                 )
             }
@@ -707,16 +717,20 @@ private fun RadioSearchRow(
 }
 
 @Composable
-private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseItem>, onClick: (SpotifyBrowseItem) -> Unit, requestInitialFocus: Boolean = false) {
+private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseItem>, onClick: (SpotifyBrowseItem) -> Unit, requestInitialFocus: Boolean = false, rowFocus: RowColumnFocus) {
     val titleRes = spotifyTypeTitleRes(type)
+    val rowKey = "search:spotify:$type"
+    val keys = items.map { "search:spotify:${it.type}:${it.id}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.SPOTIFY, titleRes)
-        BrowseFocusRow("search:spotify:$type") {
-        LazyRow(state = rememberLazyListState(itemKeys = items.map { "search:spotify:${it.type}:${it.id}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow(rowKey) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(items, key = { "${it.type}:${it.id}" }) { item ->
                 var focused by remember(item.type, item.id) { mutableStateOf(false) }
                 val cardShape = RoundedCornerShape(10.dp)
-                Surface(onClick = { onClick(item) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == items.firstOrNull()).width(220.dp).browseFocusTarget("search:spotify:${item.type}:${item.id}").mediaFocusMotion(focused).activateOnTvKey { onClick(item) }.onFocusChanged { focused = it.isFocused }) {
+                Surface(onClick = { onClick(item) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == items.firstOrNull()).width(220.dp).rowColumnFocusTarget(rowFocus, rowKey, "search:spotify:${item.type}:${item.id}").browseFocusTarget("search:spotify:${item.type}:${item.id}").mediaFocusMotion(focused).activateOnTvKey { onClick(item) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
                         Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
                             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
