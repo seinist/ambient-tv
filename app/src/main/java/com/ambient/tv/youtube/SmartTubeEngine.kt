@@ -1,6 +1,7 @@
 package com.ambient.tv.youtube
 
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.Mutex
 import android.content.Context
 import android.os.Build
 import com.ambient.tv.data.local.AppPreferences
@@ -40,6 +41,20 @@ class SmartTubeEngine @Inject constructor(
     private val playbackMetadata = YouTubePlaybackMetadataCache()
     /** scope (feed/search key) -> row title -> latest SmartTube MediaGroup of that row. */
     private val rowContinuations = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ConcurrentHashMap<String, Any>>()
+    private val rowContinuationLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+    /** Freeze a row's upstream page handle for one player session, even if Home refreshes. */
+    fun forkRowContinuation(sourceScope: String, playerScope: String, rowId: String): Boolean {
+        val group = rowContinuations[sourceScope]?.get(rowId) ?: return false
+        rowContinuations[playerScope] = java.util.concurrent.ConcurrentHashMap<String, Any>().apply {
+            put(rowId, group)
+        }
+        return true
+    }
+
+    fun discardRowContinuation(scope: String) {
+        rowContinuations.remove(scope)
+    }
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
     private val backgroundScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
@@ -329,7 +344,8 @@ class SmartTubeEngine @Inject constructor(
      * the call behind SmartTube's own row scrolling). Null: no continuable group is known, so the
      * row ends. Upstream returns null at the end and skips pages that filtering emptied.
      */
-    suspend fun continueRow(scope: String, rowId: String): YouTubeRowPage? = io {
+    suspend fun continueRow(scope: String, rowId: String): YouTubeRowPage? =
+        rowContinuationLocks.computeIfAbsent("$scope|$rowId") { Mutex() }.withLock { io {
         if (!available) return@io null
         val groups = rowContinuations[scope] ?: return@io null
         val group = groups[rowId] ?: return@io null
@@ -355,7 +371,7 @@ class SmartTubeEngine @Inject constructor(
             if (hasMore) groups.replace(rowId, group, next) else groups.remove(rowId, group)
         }
         YouTubeRowPage(items, hasMore)
-    }
+    } }
 
     private suspend fun feedRows(key: String, onRows: suspend (List<YouTubeRow>) -> Unit): List<YouTubeRow> = when (key) {
         "home" -> home(onRows)
