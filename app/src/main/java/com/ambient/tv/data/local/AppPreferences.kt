@@ -382,6 +382,14 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
 
+    var radioSubmenuKeys: List<String>
+        get() {
+            val raw = prefs.getString(KEY_RADIO_SUBMENU_KEYS, null) ?: return DEFAULT_RADIO_SUBMENU_KEYS
+            return raw.split(',').map(String::trim).filter { it in RADIO_SUBMENU_KEYS }.distinct()
+        }
+        set(value) = prefs.edit {
+            putString(KEY_RADIO_SUBMENU_KEYS, value.filter { it in RADIO_SUBMENU_KEYS }.distinct().joinToString(","))
+        }
 
     val radioFavorites: List<com.ambient.tv.data.radio.RadioStation>
         get() = runCatching {
@@ -2192,6 +2200,9 @@ class AppPreferences @Inject constructor(
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
         const val KEY_RADIO_ENABLED = "radio_enabled"
+        const val KEY_RADIO_SUBMENU_KEYS = "radio_submenu_keys"
+        val RADIO_SUBMENU_KEYS = setOf("popular", "favorites", "recent", "genres", "countries", "languages")
+        val DEFAULT_RADIO_SUBMENU_KEYS = listOf("popular", "favorites", "recent", "genres", "countries", "languages")
         const val KEY_RADIO_FAVORITES = "radio_favorites"
         const val KEY_RADIO_RECENT = "radio_recent"
         const val RADIO_FAVORITES_LIMIT = 200
