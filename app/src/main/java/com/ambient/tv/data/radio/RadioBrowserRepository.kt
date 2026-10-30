@@ -1,5 +1,6 @@
 package com.ambient.tv.data.radio
 
+import com.ambient.tv.util.suspendResult
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -80,7 +81,9 @@ class RadioBrowserRepository @Inject constructor(
             .firstNotNullOfOrNull(RadioBrowserStationDto::toRadioStation)
 
     suspend fun playbackUrl(station: RadioStation): String {
-        val resolved = runCatching {
+        // Network failures may fall back to the catalog URL, but coroutine cancellation is control
+        // flow: a superseded station selection must never continue by starting its fallback stream.
+        val resolved = suspendResult {
             api.resolveAndCountClick(station.id).url.trim()
         }.getOrDefault("")
         return resolved.ifBlank { station.streamUrl }
