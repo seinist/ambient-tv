@@ -13,7 +13,7 @@ internal fun settingsShortcutCategory(key: String?): SettingsCategory? =
 internal fun settingsShortcutWakeTarget(key: String?): String? {
     if (settingsShortcutCategory(key) != SettingsCategory.WAKE) return null
     return key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT)
-        ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend") }
+        ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend", "files", "dlna") }
 }
 
 /** A small, explicit allowlist of stable lazy-list anchors for external Settings shortcuts.
