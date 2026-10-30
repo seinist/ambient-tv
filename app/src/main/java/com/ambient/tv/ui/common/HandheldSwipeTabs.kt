@@ -54,7 +54,13 @@ fun <T> Modifier.handheldSwipeTabs(
 
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Final)
-                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    // Pinch/zoom or any other multi-touch gesture is never a tab swipe.
+                    if (event.changes.count { it.pressed } > 1) consumedByChild = true
+                    val change = event.changes.firstOrNull { it.id == down.id }
+                    if (change == null) {
+                        consumedByChild = true
+                        break
+                    }
                     if (change.position != change.previousPosition) {
                         if (change.isConsumed) {
                             consumedByChild = true
