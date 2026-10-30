@@ -105,6 +105,17 @@ class Media3Anime4kTest {
         }
     }
 
+    @Test fun scalerMenuGroupsMirrorMpvWithoutDuplicates() {
+        val builtin = media3BuiltinScalerChoices()
+        val shaders = media3ShaderScalerChoices()
+        val all = (builtin + shaders).map { it.first }
+        assertEquals(VideoImageCatalog.media3Scalers.keys.size, all.size)
+        assertEquals(all.size, all.distinct().size)
+        assertEquals(VideoImageCatalog.media3Scalers.keys, all.toSet())
+        assertTrue(shaders.map { it.first }.containsAll(MEDIA3_ANIME4K_SCALERS))
+        assertTrue(builtin.map { it.first }.containsAll(VideoImageCatalog.mpvBuiltins.keys))
+    }
+
     @Test fun savedImageOptionsRemainCompatibleWithPreviousProfiles() {
         val old = Json.decodeFromString<Media3ImageOptions>(
             """{"enabled":true,"scaler":"spline36","superResolution":true}""",

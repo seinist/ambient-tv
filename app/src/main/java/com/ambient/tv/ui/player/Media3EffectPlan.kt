@@ -179,6 +179,14 @@ internal fun media3ScalerLabel(key: String): String = VideoImageCatalog.media3Sc
 
 internal fun media3ScalerChoices(): List<Pair<String, String>> = VideoImageCatalog.media3Scalers.toList()
 
+/** Mirror MPV's built-in vs GPU shader groups rather than presenting CNN as a basic kernel. */
+internal val MEDIA3_SHADER_SCALERS: Set<String> =
+    MEDIA3_ANIME4K_SCALERS + MEDIA3_RAVU_SCALERS + setOf("fsr", "nis")
+internal fun media3BuiltinScalerChoices(): List<Pair<String, String>> =
+    media3ScalerChoices().filterNot { it.first in MEDIA3_SHADER_SCALERS }
+internal fun media3ShaderScalerChoices(): List<Pair<String, String>> =
+    media3ScalerChoices().filter { it.first in MEDIA3_SHADER_SCALERS }
+
 /** A planned stage plus the gamma fused into its pass (0 = none). */
 internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)
 

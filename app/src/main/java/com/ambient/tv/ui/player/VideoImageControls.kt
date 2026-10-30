@@ -309,7 +309,10 @@ internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3Imag
     ImageHint(stringResource(R.string.image_media3_hint))
     if (o.enabled) {
         // As in MPV: scaling controls share one group, before filters and color controls.
-        ImageChoice(R.string.player_upscaler, o.scaler, media3ScalerChoices()) { change(o.copy(scaler = it)) }
+        GroupedImageChoice(R.string.player_upscaler, o.scaler, listOf(
+            PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), media3BuiltinScalerChoices()),
+            PlayerDropUpSection(stringResource(R.string.image_scaler_shader), media3ShaderScalerChoices()),
+        )) { change(o.copy(scaler = it)) }
         ImageChoice(R.string.image_downscaler, o.downscaler,
             VideoImageCatalog.media3Downscalers.toList()) { change(o.copy(downscaler = it)) }
         if (media3AntiRingRowVisible(o, upscalerVisible = true, downscalerVisible = true)) {
