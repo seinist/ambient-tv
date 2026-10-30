@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tvh_hbbtv_browse_hint">Von TVHeadend gemeldete HbbTV-Anwendungen lassen sich ohne vorherigen TV-Stream öffnen. Manche benötigen dennoch den laufenden Sender: Falls nötig, Sender ansehen und HbbTV im Player öffnen.</string>
+    <string name="tvh_hbbtv_browse_empty">Für diese Sender wurden keine HbbTV-Anwendungen gemeldet. TVHeadend-Metadaten prüfen und neu laden.</string>
+    <string name="tvh_hbbtv_watch_channel">Sender ansehen</string>
+</resources>
