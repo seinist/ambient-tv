@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Use only on AppDialog's own window. Android keeps windowExitAnimation alive after the
+         caller removes the composable, unlike a Compose-only AnimatedVisibility exit. -->
+    <style name="AmbientDialogZoomFadeExit">
+        <item name="android:windowExitAnimation">@anim/app_dialog_exit</item>
+    </style>
+    <style name="AmbientDialogFadeExit">
+        <item name="android:windowExitAnimation">@anim/app_dialog_exit_reduced</item>
+    </style>
+</resources>
