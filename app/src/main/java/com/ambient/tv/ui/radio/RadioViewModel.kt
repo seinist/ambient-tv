@@ -65,9 +65,14 @@ internal fun RadioUiState.isFacetOverview(): Boolean =
 internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
     if (isFacetOverview()) RadioViewMode.LIST else viewMode
 
+/** An empty response is not proven until the first request for this exact page settles. */
+internal fun RadioUiState.awaitingInitialContent(): Boolean =
+    stations.isEmpty() && facets.isEmpty() && (loading || !contentReady)
+
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
-    val loading: Boolean = false,
+    /** First composition is pending even before the enter() effect has launched the API request. */
+    val loading: Boolean = true,
     val loadingMore: Boolean = false,
     val query: String = "",
     val submittedQuery: String = "",
@@ -206,6 +211,7 @@ class RadioViewModel @Inject constructor(
             hasMore = false,
             nextOffset = 0,
             error = false,
+            loading = section == RadioSection.POPULAR || section.isFacetSection,
             contentReady = false,
         )
         when {
@@ -226,6 +232,7 @@ class RadioViewModel @Inject constructor(
             hasMore = false,
             nextOffset = 0,
             error = false,
+            loading = true,
             contentReady = false,
         )
         loadStations(reset = true)
@@ -243,6 +250,7 @@ class RadioViewModel @Inject constructor(
             selectedFacet = null,
             hasMore = false,
             error = false,
+            loading = true,
             contentReady = false,
         )
         loadFacets(section)
@@ -260,14 +268,27 @@ class RadioViewModel @Inject constructor(
             return
         }
         resetFocusPaging()
-        _state.value = _state.value.copy(submittedQuery = query, contentReady = false)
+        _state.value = _state.value.copy(
+            submittedQuery = query,
+            stations = emptyList(),
+            facets = emptyList(),
+            loading = true,
+            contentReady = false,
+        )
         loadStations(reset = true)
     }
 
     fun clearSearch() {
         resetFocusPaging()
         val current = _state.value
-        _state.value = current.copy(query = "", submittedQuery = "", contentReady = false)
+        _state.value = current.copy(
+            query = "",
+            submittedQuery = "",
+            stations = emptyList(),
+            facets = emptyList(),
+            loading = true,
+            contentReady = false,
+        )
         when {
             current.selectedFacet != null -> loadStations(reset = true)
             current.section == RadioSection.POPULAR -> loadStations(reset = true)
