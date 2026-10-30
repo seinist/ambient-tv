@@ -38,6 +38,111 @@ class JellyfinAuthRepository @Inject constructor(
         }
     }
 
+    suspend fun quickConnectEnabled(
+        host: String,
+        port: Int,
+        useHttps: Boolean,
+        basePath: String,
+    ): Result<Boolean> = withContext(Dispatchers.IO) {
+        suspendResult {
+            val normalizedHost = NetworkEndpoint.normalizeHost(host)
+            require(normalizedHost.isNotBlank()) { "Jellyfin host is required" }
+            if (preferences.localNetworkOnly && !LocalNetworkPolicy.isLocalHost(normalizedHost)) {
+                error("Blocked non-local Jellyfin server while LAN-only mode is enabled")
+            }
+            candidateApi(normalizedHost, port, useHttps, normalizeBasePath(basePath)).quickConnectEnabled()
+        }
+    }
+
+    suspend fun initiateQuickConnect(
+        host: String,
+        port: Int,
+        useHttps: Boolean,
+        basePath: String,
+    ): Result<JellyfinQuickConnectResult> = withContext(Dispatchers.IO) {
+        suspendResult {
+            val normalizedHost = NetworkEndpoint.normalizeHost(host)
+            require(normalizedHost.isNotBlank()) { "Jellyfin host is required" }
+            if (preferences.localNetworkOnly && !LocalNetworkPolicy.isLocalHost(normalizedHost)) {
+                error("Blocked non-local Jellyfin server while LAN-only mode is enabled")
+            }
+            val api = candidateApi(normalizedHost, port, useHttps, normalizeBasePath(basePath))
+            check(api.quickConnectEnabled()) { "Jellyfin Quick Connect is disabled on this server" }
+            api.initiateQuickConnect().also {
+                require(it.secret.isNotBlank() && it.code.isNotBlank()) { "Jellyfin returned an invalid Quick Connect session" }
+            }
+        }
+    }
+
+    suspend fun quickConnectState(
+        host: String,
+        port: Int,
+        useHttps: Boolean,
+        basePath: String,
+        secret: String,
+    ): Result<JellyfinQuickConnectResult> = withContext(Dispatchers.IO) {
+        suspendResult {
+            candidateApi(
+                NetworkEndpoint.normalizeHost(host),
+                port,
+                useHttps,
+                normalizeBasePath(basePath),
+            ).quickConnectState(secret)
+        }
+    }
+
+    suspend fun completeQuickConnect(
+        host: String,
+        port: Int,
+        useHttps: Boolean,
+        basePath: String,
+        secret: String,
+        macAddress: String?,
+        autoWake: Boolean,
+    ): Result<JellyfinServerProfile> = withContext(Dispatchers.IO) {
+        suspendResult {
+            val normalizedHost = NetworkEndpoint.normalizeHost(host)
+            val normalizedBasePath = normalizeBasePath(basePath)
+            require(normalizedHost.isNotBlank()) { "Jellyfin host is required" }
+            if (preferences.localNetworkOnly && !LocalNetworkPolicy.isLocalHost(normalizedHost)) {
+                error("Blocked non-local Jellyfin server while LAN-only mode is enabled")
+            }
+            val api = candidateApi(normalizedHost, port, useHttps, normalizedBasePath)
+            val info = api.getPublicSystemInfo()
+            val auth = api.authenticateQuickConnect(JellyfinQuickConnectRequest(secret))
+            val existing = preferences.jellyfinServerProfiles.firstOrNull {
+                (!info.id.isBlank() && it.serverId == info.id) ||
+                    (
+                        it.host.equals(normalizedHost, true) &&
+                            it.port == port &&
+                            it.useHttps == useHttps &&
+                            it.basePath == normalizedBasePath
+                    )
+            }
+            val profile = JellyfinServerProfile(
+                id = existing?.id ?: UUID.randomUUID().toString(),
+                name = info.serverName.ifBlank { normalizedHost },
+                host = normalizedHost,
+                port = port,
+                useHttps = useHttps,
+                basePath = normalizedBasePath,
+                serverId = auth.serverId ?: info.id,
+                userId = auth.user.id,
+                username = auth.user.name,
+                authenticated = true,
+                macAddress = macAddress,
+                autoWakeEnabled = autoWake,
+            )
+            currentCoroutineContext().ensureActive()
+            preferences.upsertJellyfinServerProfile(profile, makeActive = true)
+            preferences.setLoginRejected("jellyfin:${profile.id}", false)
+            tokenStore.setJellyfinTokenForServer(profile.id, auth.accessToken)
+            tokenStore.setJellyfinPasswordForServer(profile.id, null)
+            preferences.jellyfinEnabled = true
+            profile
+        }
+    }
+
     suspend fun signIn(
         host: String,
         port: Int,
