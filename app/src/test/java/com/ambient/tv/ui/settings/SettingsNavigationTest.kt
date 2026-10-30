@@ -164,6 +164,12 @@ class SettingsNavigationTest {
         val sourcePage = SettingsHubNav(page = opened)
         assertTrue(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = false))
         assertFalse(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = true))
+        assertFalse(settingsDirectEntryReturnsToCaller(
+            opened, SettingsHubNav(page = opened, returnToSearch = true), hasLinkedOrigin = false,
+        ))
+        assertFalse(settingsDirectEntryReturnsToCaller(
+            opened, SettingsHubNav(page = opened, returnToAdd = true), hasLinkedOrigin = false,
+        ))
         assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(page = SettingsCategory.WAKE), false))
         assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(), false))
         assertFalse(settingsDirectEntryReturnsToCaller(null, sourcePage, false))
