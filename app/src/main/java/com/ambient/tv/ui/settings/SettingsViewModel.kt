@@ -236,6 +236,7 @@ class SettingsViewModel @Inject constructor(
 
     fun discardChanges() {
         cancelAccountLinking()
+        cancelJellyfinQuickConnect()
         youtubeSignInWatchJob?.cancel()
         pageJob?.cancel()
         _uiState.value = loadInitialState()
@@ -260,6 +261,7 @@ class SettingsViewModel @Inject constructor(
         pageJob?.cancel()
         openedPage = page
         if (page != SettingsCategory.PLEX) cancelAccountLinking()
+        if (page != SettingsCategory.JELLYFIN) cancelJellyfinQuickConnect()
         if (page == SettingsCategory.YOUTUBE || page == SettingsCategory.HOME) loadYouTubeSettings()
         pageJob = viewModelScope.launch {
             when (page) {
@@ -284,6 +286,7 @@ class SettingsViewModel @Inject constructor(
     val savedAppearance: SettingsUiState get() = loadInitialState()
     private var linkingJob: Job? = null
     private var youtubeSignInWatchJob: Job? = null
+    private var jellyfinQuickConnectJob: Job? = null
 
     private val mutableUiLanguageChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     /** Emitted after a saved change of the UI language; the screen recreates the activity. */
