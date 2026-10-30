@@ -79,7 +79,7 @@ class RadioViewModel @Inject constructor(
     private var focusedStationId: String? = null
     private val lastFocusedByScope = mutableMapOf<RadioFocusScope, String>()
 
-    fun lastFocusedContent(scope: RadioFocusScope): String? = lastFocusedByScope[scope]
+    internal fun lastFocusedContent(scope: RadioFocusScope): String? = lastFocusedByScope[scope]
 
     fun onFacetFocused(facetId: String) {
         lastFocusedByScope[_state.value.focusScope()] = facetId
