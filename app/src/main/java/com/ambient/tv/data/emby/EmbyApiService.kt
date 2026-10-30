@@ -22,12 +22,12 @@ interface EmbyApiService {
     suspend fun exchangeConnect(
         @Query("format") format: String = "json",
         @Query("ConnectUserId") connectUserId: String,
-        @Header("X-Emby-Token") accessKey: String,
+        @Header("X-MediaBrowser-Token") exchangeToken: String,
     ): EmbyConnectExchange
     @GET("Users/{userId}")
     suspend fun getAuthenticatedUser(
         @Path("userId") userId: String,
-        @Header("X-Emby-Token") accessToken: String,
+        @Header("X-MediaBrowser-Token") accessToken: String,
     ): EmbyUser
 
     @GET("Users/{userId}/Views")
