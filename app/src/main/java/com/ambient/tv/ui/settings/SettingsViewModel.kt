@@ -1211,14 +1211,14 @@ class SettingsViewModel @Inject constructor(
 
     fun signInEmby() {
         val state = _uiState.value
-        if (state.isSigningInEmby) return
+        if (state.embyAuth.busy) return
         if (state.embyHost.isBlank() || state.embyUsername.isBlank()) {
             _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_emby_missing_credentials)) }
             return
         }
         viewModelScope.launch {
             notifyLogin("emby", NoticePhase.WORKING, state.embyHost)
-            _uiState.update { it.copy(isSigningInEmby = true, statusMessage = null) }
+            _uiState.update { it.copy(embyAuth = it.embyAuth.copy(busy = true, code = null), statusMessage = null) }
             embyAuthRepository.signIn(
                 host = state.embyHost,
                 port = state.embyPort.toIntOrNull() ?: AppPreferences.DEFAULT_EMBY_PORT,
@@ -1246,21 +1246,21 @@ class SettingsViewModel @Inject constructor(
                         embyConfigured = true, embyEnabled = true,
                         embyLibrarySections = sections,
                         homeRows = if (current.homeRows != savedState.value.homeRows) current.homeRows else appPreferences.homeRows,
-                        isSigningInEmby = false,
+                        embyAuth = current.embyAuth.copy(busy = false, code = null),
                         savedEmbyServers = appPreferences.embyServerProfiles,
                         activeEmbyServerId = appPreferences.activeEmbyServerId,
                         statusMessage = null,
                     ) }
                     refreshSavedValues()
                 },
-                onFailure = { notifyLogin("emby", NoticePhase.ERROR, state.embyHost, reason = failureReasonText(context, it, state.embyHost)); _uiState.update { current -> current.copy(isSigningInEmby = false, statusMessage = it.message ?: context.getString(R.string.settings_status_error)) } },
+                onFailure = { notifyLogin("emby", NoticePhase.ERROR, state.embyHost, reason = failureReasonText(context, it, state.embyHost)); _uiState.update { current -> current.copy(embyAuth = current.embyAuth.copy(busy = false, code = null), statusMessage = it.message ?: context.getString(R.string.settings_status_error)) } },
             )
         }
     }
 
     fun startEmbyConnect() {
         val state = _uiState.value
-        if (state.isSigningInEmby) return
+        if (state.embyAuth.busy) return
         if (state.embyHost.isBlank()) {
             _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_emby_connect_server)) }
             return
@@ -1270,8 +1270,7 @@ class SettingsViewModel @Inject constructor(
             notifyLogin("emby", NoticePhase.WORKING, state.embyHost)
             _uiState.update {
                 it.copy(
-                    isSigningInEmby = true,
-                    embyConnectPin = null,
+                    embyAuth = it.embyAuth.copy(busy = true, code = null),
                     statusMessage = null,
                 )
             }
@@ -1279,15 +1278,14 @@ class SettingsViewModel @Inject constructor(
                 notifyLogin("emby", NoticePhase.ERROR, state.embyHost, reason = failureReasonText(context, error, "connect.emby.media"))
                 _uiState.update {
                     it.copy(
-                        isSigningInEmby = false,
-                        embyConnectPin = null,
+                        embyAuth = it.embyAuth.copy(busy = false, code = null),
                         statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                     )
                 }
                 embyConnectJob = null
                 return@launch
             }
-            _uiState.update { it.copy(embyConnectPin = pin.pin) }
+            _uiState.update { it.copy(embyAuth = it.embyAuth.copy(code = pin.pin)) }
             val deadline = System.currentTimeMillis() + LINK_TIMEOUT_MS
             var currentPin = pin
             while (System.currentTimeMillis() < deadline) {
@@ -1296,8 +1294,7 @@ class SettingsViewModel @Inject constructor(
                     notifyLogin("emby", NoticePhase.ERROR, state.embyHost, reason = failureReasonText(context, error, "connect.emby.media"))
                     _uiState.update {
                         it.copy(
-                            isSigningInEmby = false,
-                            embyConnectPin = null,
+                            embyAuth = it.embyAuth.copy(busy = false, code = null),
                             statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                         )
                     }
@@ -1337,8 +1334,7 @@ class SettingsViewModel @Inject constructor(
                                 embyPassword = "",
                                 embyLibrarySections = sections,
                                 homeRows = if (currentState.homeRows != savedState.value.homeRows) currentState.homeRows else appPreferences.homeRows,
-                                isSigningInEmby = false,
-                                embyConnectPin = null,
+                                embyAuth = currentState.embyAuth.copy(busy = false, code = null),
                                 savedEmbyServers = appPreferences.embyServerProfiles,
                                 activeEmbyServerId = appPreferences.activeEmbyServerId,
                                 statusMessage = null,
@@ -1350,8 +1346,7 @@ class SettingsViewModel @Inject constructor(
                         notifyLogin("emby", NoticePhase.ERROR, state.embyHost, reason = failureReasonText(context, error, state.embyHost))
                         _uiState.update {
                             it.copy(
-                                isSigningInEmby = false,
-                                embyConnectPin = null,
+                                embyAuth = it.embyAuth.copy(busy = false, code = null),
                                 statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                             )
                         }
@@ -1364,8 +1359,7 @@ class SettingsViewModel @Inject constructor(
             notifyLogin("emby", NoticePhase.ERROR, message = R.string.settings_emby_connect_expired)
             _uiState.update {
                 it.copy(
-                    isSigningInEmby = false,
-                    embyConnectPin = null,
+                    embyAuth = it.embyAuth.copy(busy = false, code = null),
                     statusMessage = context.getString(R.string.settings_emby_connect_expired),
                 )
             }
@@ -1374,22 +1368,21 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun cancelEmbyConnect() {
-        val active = embyConnectJob != null || _uiState.value.embyConnectPin != null
+        val active = embyConnectJob != null || _uiState.value.embyAuth.code != null
         embyConnectJob?.cancel()
         embyConnectJob = null
         if (active) {
             AppNotifications.dismiss("login:emby")
             _uiState.update {
                 it.copy(
-                    isSigningInEmby = false,
-                    embyConnectPin = null,
+                    embyAuth = it.embyAuth.copy(busy = false, code = null),
                 )
             }
         }
     }
 
     fun signOutEmby() {
-        if (_uiState.value.isSigningInEmby) return
+        if (_uiState.value.embyAuth.busy) return
         val active = appPreferences.activeEmbyServerProfile()
         if (active != null) {
             tokenStore.removeEmbyTokenForServer(active.id)
