@@ -166,8 +166,8 @@ fun HomeScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val wakeState by viewModel.startupWakeState.collectAsState()
-    val canCancelStartupWake = wakeState.waking &&
-        (uiState == HomeUiState.LoadingLibrary || uiState is HomeUiState.Waking)
+    // Even with cached rows already visible, an app-scoped cold-start wake can still run.
+    val canCancelStartupWake = wakeState.waking
     val refreshing by viewModel.refreshing.collectAsState()
     val homeHeroStyleKey = viewModel.homeHeroStyleKey
     val homeHeroIntensityPercent = viewModel.homeHeroIntensityPercent
