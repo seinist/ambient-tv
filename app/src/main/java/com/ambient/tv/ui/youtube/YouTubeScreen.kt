@@ -83,7 +83,7 @@ import com.ambient.tv.youtube.YouTubeRow
 import kotlinx.coroutines.delay
 
 @Composable fun YouTubeScreen(
-    onVideoClick:(String)->Unit,
+    onVideoClick:(String, Long?)->Unit,
     initialFeedKey:String?=null,
     /** Feed root: focus sidebar like Files instead of popping to Home. */
     onBack:(()->Unit)?=null,
@@ -111,7 +111,7 @@ import kotlinx.coroutines.delay
     val searchFieldFocusRequester=remember { FocusRequester() }
     val searchCloseFocusRequester=remember { FocusRequester() }
     val contentItemFocusRequester=remember { FocusRequester() }
-    val contentFocusTarget = remember(state.feed, populatedRows) {
+    val contentFocusTarget = remember(state.feed, populatedRows, state.returnFocusRevision) {
         resolveContentFocusTarget(
             savedItemId = viewModel.focusedVideoId(state.feed),
             savedRowId = viewModel.focusedRowId(state.feed),
@@ -121,7 +121,8 @@ import kotlinx.coroutines.delay
         )
     }
     com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.feed, state.channel?.channelId,
-        state.query, state.filter, state.sort, state.sortDescending, state.viewMode))
+        state.query, state.filter, state.sort, state.sortDescending, state.viewMode, state.returnFocusRevision),
+        restoreInitialTarget = true)
     com.ambient.tv.ui.common.BrowseFocusInitialTarget(contentFocusTarget.itemId,
         contentFocusTarget.rowId.takeIf { populatedRows.hasSubsections() })
     // The search row is also shown for a restored query; Back closes it before leaving the page.
@@ -273,10 +274,13 @@ import kotlinx.coroutines.delay
                 else -> SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                     Content(
                         rows = visibleRows,
+                        // A feed is sectioned from its FIRST partial emission, not only once
+                        // a second row happens to arrive and replaces the whole grid.
+                        keepSections = state.query.isBlank(),
                         mode = state.viewMode,
                         gridColumns = state.gridColumns,
                         listRows = state.listRows,
-                        click = onVideoClick,
+                        click = { videoId -> onVideoClick(videoId, viewModel.playbackToken(videoId)) },
                         initialFocusRequester = contentItemFocusRequester,
                         focusTarget = contentFocusTarget,
                         onItemFocused = { rowId, videoId ->
@@ -469,6 +473,7 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
 @Composable
 private fun Content(
     rows: List<YouTubeRow>,
+    keepSections: Boolean,
     mode: YouTubeViewMode,
     gridColumns: Int,
     listRows: Int,
@@ -479,7 +484,7 @@ private fun Content(
     loadingRows: Set<String> = emptySet(),
 ) {
     val populatedRows = rows.filter { it.items.isNotEmpty() }
-    if (populatedRows.hasSubsections()) {
+    if (keepSections || populatedRows.hasSubsections()) {
         SectionedYouTubeContent(populatedRows, mode, gridColumns, listRows, click, initialFocusRequester, focusTarget, onItemFocused, loadingRows)
         return
     }
@@ -693,7 +698,7 @@ private fun SectionedYouTubeList(
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
     ) {
         rows.forEachIndexed { sectionIndex, row ->
-            item(key = "youtube-list-header:$sectionIndex:${row.title}") {
+            item(key = "youtube-list-header:${row.id}") {
                 ContentSectionHeader(
                     title = row.title,
                     modifier = Modifier.padding(top = if (sectionIndex == 0) 0.dp else 12.dp),
@@ -701,7 +706,7 @@ private fun SectionedYouTubeList(
                     bottomPadding = 2.dp,
                 )
             }
-            itemsIndexed(row.items, key = { itemIndex, item -> "youtube-list:$sectionIndex:$itemIndex:${item.videoId}" }) { itemIndex, item ->
+            itemsIndexed(row.items, key = { itemIndex, item -> "youtube-list:${row.id}:${item.videoId}" }) { itemIndex, item ->
                 val rowId = youtubeRowId(sectionIndex, row)
                 BrowseFocusRow(rowId) {
                 YouTubeListItem(
@@ -806,7 +811,7 @@ private fun SectionedYouTubeWall(
     ) {
         rows.forEachIndexed { sectionIndex, row ->
             item(
-                key = "youtube-wall-header:$sectionIndex:${row.title}",
+                key = "youtube-wall-header:${row.id}",
                 span = { GridItemSpan(maxLineSpan) },
             ) {
                 ContentSectionHeader(
@@ -816,7 +821,7 @@ private fun SectionedYouTubeWall(
                     bottomPadding = 4.dp,
                 )
             }
-            gridItemsIndexed(row.items, key = { itemIndex, item -> "youtube-wall:$sectionIndex:$itemIndex:${item.videoId}" }) { itemIndex, item ->
+            gridItemsIndexed(row.items, key = { itemIndex, item -> "youtube-wall:${row.id}:${item.videoId}" }) { itemIndex, item ->
                 val rowId = youtubeRowId(sectionIndex, row)
                 BrowseFocusRow(rowId) {
                 Card(
