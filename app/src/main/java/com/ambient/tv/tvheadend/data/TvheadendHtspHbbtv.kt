@@ -53,11 +53,7 @@ internal object TvheadendHtspHbbtv {
                 when (message["method"]) {
                     "channelAdd", "channelUpdate" -> {
                         val id = (message["channelIdStr"] as? String)?.takeIf(String::isNotBlank) ?: return@repeat
-                        val services = message["services"] as? List<*> ?: return@repeat
-                        val applications = services.flatMap { service ->
-                            val hbbtv = (service as? Map<*, *>)?.get("hbbtv")
-                            tvhHbbtvApplications(tvhHtspServiceJson(hbbtv))
-                        }.distinctBy { it.url }
+                        val applications = tvhHtspChannelApps(message)
                         if (applications.isNotEmpty()) appsByChannel[id] = applications
                     }
                     "channelDelete" -> (message["channelIdStr"] as? String)?.let(appsByChannel::remove)
@@ -108,7 +104,7 @@ internal fun tvhHtspDecode(input: DataInputStream): Map<String, Any> {
 
 /** DataInputStream.readNBytes() is not available on older Android versions. */
 private fun DataInputStream.readHtspBytes(length: Int): ByteArray =
-    ByteArray(length).also(::readFully)
+    ByteArray(length).also { readFully(it) }
 
 @Suppress("UNCHECKED_CAST")
 private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
@@ -152,3 +148,10 @@ private fun tvhHtspServiceJson(hbbtv: Any?): kotlinx.serialization.json.JsonObje
     }
     return kotlinx.serialization.json.JsonObject(mapOf("hbbtv" to toJson(hbbtv)))
 }
+
+/** Exposed for unit tests: HTSP service metadata is nested under channelAdd.services[].hbbtv. */
+internal fun tvhHtspChannelApps(channel: Map<String, Any>): List<TvhHbbtvApplication> =
+    (channel["services"] as? List<*>).orEmpty().flatMap { service ->
+        val hbbtv = (service as? Map<*, *>)?.get("hbbtv")
+        tvhHbbtvApplications(tvhHtspServiceJson(hbbtv))
+    }.distinctBy { it.url }
