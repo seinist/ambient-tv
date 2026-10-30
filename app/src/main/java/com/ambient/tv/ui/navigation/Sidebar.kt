@@ -412,8 +412,11 @@ internal fun SidebarContent(
                 "system-settings:${single.id}", configurationLabel, Icons.Filled.Settings,
                 Destinations.SETTINGS, settingsCategory = single.id,
             )
+            // The configuration shortcut precedes the inlined content rows. In particular,
+            // Down from the last source row must still reach the permanent global Settings
+            // footer (and Right from there the menu editor), as before this addition.
             sidebarMainRows(globals, emptyList(), activeRoute) +
-                sidebarPageRows(single.id, single.entries, sourceSettings, activeRoute)
+                sidebarPageRows(single.id, listOfNotNull(sourceSettings) + single.entries, null, activeRoute)
         } else {
             sidebarMainRows(globals, systems.map { system ->
                 SidebarNavSystem(system.id, if (system.id == "files") filesLabel else system.label, system.entries, system.id == activeSystem?.id, system.icon)
