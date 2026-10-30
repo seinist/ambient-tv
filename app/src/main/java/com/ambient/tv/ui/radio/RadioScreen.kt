@@ -120,18 +120,15 @@ fun RadioScreen(
     ReportSidebarContentReady(state.contentReady && !state.loading)
 
     val focusScope = state.focusScope()
-    val showingFacets = state.section.isFacetSection &&
-        state.selectedFacet == null && state.submittedQuery.isBlank()
+    val showingFacets = state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
     // Alphabetical order uses the localized display names, not raw Radio Browser codes.
     val sortedFacets = remember(state.section, state.facets, locale) {
         radioAlphabetFacets(state.section, state.facets, locale)
     }
-    val alphabetJumps = remember(sortedFacets) {
-        radioAlphabetJumps(sortedFacets).filter { it.index != null }
-    }
+    val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
-    val effectiveViewMode = if (showingFacets) RadioViewMode.LIST else state.viewMode
+    val effectiveViewMode = state.effectiveViewMode()
     val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
