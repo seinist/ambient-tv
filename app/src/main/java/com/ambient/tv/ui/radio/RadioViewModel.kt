@@ -7,6 +7,7 @@ import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.browse.BrowseWorkBudget
+import com.ambient.tv.util.suspendResult
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -314,7 +315,7 @@ class RadioViewModel @Inject constructor(
                 hasMore = false,
                 error = false,
             )
-            runCatching {
+            suspendResult {
                 when (section) {
                     RadioSection.GENRES -> repository.tags(FACET_LIMIT)
                     RadioSection.COUNTRIES -> repository.countries(FACET_LIMIT)
@@ -354,7 +355,7 @@ class RadioViewModel @Inject constructor(
             )
             val facet = _state.value.selectedFacet
             val section = _state.value.section
-            runCatching {
+            suspendResult {
                 repository.search(
                     query = _state.value.submittedQuery.takeIf(String::isNotBlank),
                     countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
