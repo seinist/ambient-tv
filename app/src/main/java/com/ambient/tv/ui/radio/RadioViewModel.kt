@@ -19,6 +19,15 @@ import javax.inject.Inject
 
 enum class RadioViewMode { GRID, LIST }
 
+/** Selection is scoped to the exact Radio Browser page, not shared across facets or searches. */
+internal data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
+
+internal fun RadioUiState.focusScope(): RadioFocusScope = RadioFocusScope(section, selectedFacet?.id, submittedQuery)
+
+/** Last browsed item, then the playing station if present, otherwise the first visible card. */
+internal fun radioInitialFocusId(savedId: String?, playingId: String?, ids: List<String>): String? =
+    savedId?.takeIf { it in ids } ?: playingId?.takeIf { it in ids } ?: ids.firstOrNull()
+
 enum class RadioSection(val key: String) {
     POPULAR("popular"),
     FAVORITES("favorites"),
@@ -51,6 +60,8 @@ data class RadioUiState(
     val viewMode: RadioViewMode = RadioViewMode.GRID,
     val gridColumns: Int = 8,
     val listRows: Int = 7,
+    /** Prevent the sidebar from focusing header actions before the asynchronous results arrive. */
+    val contentReady: Boolean = false,
 )
 
 @HiltViewModel
@@ -66,6 +77,13 @@ class RadioViewModel @Inject constructor(
     private var playJob: Job? = null
     private var focusLoadJob: Job? = null
     private var focusedStationId: String? = null
+    private val lastFocusedByScope = mutableMapOf<RadioFocusScope, String>()
+
+    fun lastFocusedContent(scope: RadioFocusScope): String? = lastFocusedByScope[scope]
+
+    fun onFacetFocused(facetId: String) {
+        lastFocusedByScope[_state.value.focusScope()] = facetId
+    }
     private var focusLoadStationId: String? = null
     private var entered = false
 
@@ -146,6 +164,7 @@ class RadioViewModel @Inject constructor(
             selectedFacet = null,
             hasMore = false,
             error = false,
+            contentReady = false,
         )
         when {
             section == RadioSection.POPULAR -> loadStations(reset = true)
@@ -164,6 +183,7 @@ class RadioViewModel @Inject constructor(
             stations = emptyList(),
             hasMore = false,
             error = false,
+            contentReady = false,
         )
         loadStations(reset = true)
     }
@@ -180,6 +200,7 @@ class RadioViewModel @Inject constructor(
             selectedFacet = null,
             hasMore = false,
             error = false,
+            contentReady = false,
         )
         loadFacets(section)
     }
@@ -196,14 +217,14 @@ class RadioViewModel @Inject constructor(
             return
         }
         resetFocusPaging()
-        _state.value = _state.value.copy(submittedQuery = query)
+        _state.value = _state.value.copy(submittedQuery = query, contentReady = false)
         loadStations(reset = true)
     }
 
     fun clearSearch() {
         resetFocusPaging()
         val current = _state.value
-        _state.value = current.copy(query = "", submittedQuery = "")
+        _state.value = current.copy(query = "", submittedQuery = "", contentReady = false)
         when {
             current.selectedFacet != null -> loadStations(reset = true)
             current.section == RadioSection.POPULAR -> loadStations(reset = true)
@@ -243,6 +264,7 @@ class RadioViewModel @Inject constructor(
     }
 
     fun onStationFocused(stationId: String) {
+        lastFocusedByScope[_state.value.focusScope()] = stationId
         focusedStationId = stationId
         val current = _state.value
         val index = current.stations.indexOfFirst { it.id == stationId }
@@ -299,6 +321,7 @@ class RadioViewModel @Inject constructor(
             facets = emptyList(),
             hasMore = false,
             error = false,
+            contentReady = true,
         )
     }
 
@@ -314,6 +337,7 @@ class RadioViewModel @Inject constructor(
                 selectedFacet = null,
                 hasMore = false,
                 error = false,
+                contentReady = false,
             )
             suspendResult {
                 when (section) {
@@ -328,6 +352,7 @@ class RadioViewModel @Inject constructor(
                         loading = false,
                         facets = facets,
                         error = false,
+                        contentReady = true,
                     )
                 }
             }.onFailure {
@@ -336,6 +361,7 @@ class RadioViewModel @Inject constructor(
                         loading = false,
                         facets = emptyList(),
                         error = true,
+                        contentReady = true,
                     )
                 }
             }
@@ -352,6 +378,7 @@ class RadioViewModel @Inject constructor(
                 loadingMore = !reset,
                 stations = if (reset) emptyList() else before.stations,
                 error = false,
+                contentReady = if (reset) false else before.contentReady,
             )
             val facet = _state.value.selectedFacet
             val section = _state.value.section
@@ -372,12 +399,14 @@ class RadioViewModel @Inject constructor(
                     stations = (existing + page.items).distinctBy(RadioStation::id),
                     hasMore = page.hasMore,
                     error = false,
+                    contentReady = true,
                 )
             }.onFailure {
                 _state.value = _state.value.copy(
                     loading = false,
                     loadingMore = false,
                     error = true,
+                    contentReady = true,
                 )
             }
         }
