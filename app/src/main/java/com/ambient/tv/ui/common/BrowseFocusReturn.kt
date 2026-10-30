@@ -162,15 +162,15 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
             val sources = collections.values.toList()
             if (!active || generation != recoveryGeneration || identity != contentIdentity ||
                 NavReselect.restoreTop.value) return@launch
-            // The outer collection is authoritative for nested rows: a recycled inner
-            // LazyRow may still report an old key for a frame after the outer list updated.
-            val source = sources.firstOrNull { it.slots().any { slot -> slot.key.content } } ?: return@launch
-            if (!source.allowRecovery() || source.slots().any { it.key == lost }) return@launch
-            val destination = missingBrowseFocusFallback(lost, source.slots()) ?: return@launch
+            // A page may register many independent Rows (Search) or an outer list plus
+            // nested Rows (Home/SmartTube). Match the entire visible registry first.
+            val available = sources.flatMap { it.slots() }
+            if (available.any { it.key == lost } || sources.any { !it.allowRecovery() }) return@launch
+            val destination = missingBrowseFocusFallback(lost, available) ?: return@launch
             repeat(12) {
                 if (!active || generation != recoveryGeneration || identity != contentIdentity ||
-                    NavReselect.restoreTop.value || !source.allowRecovery() ||
-                    source.slots().any { slot -> slot.key == lost }
+                    NavReselect.restoreTop.value || collections.values.any { !it.allowRecovery() } ||
+                    collections.values.any { collection -> collection.slots().any { slot -> slot.key == lost } }
                 ) return@launch
                 // Nested horizontal rows need their outer row and inner tile both composed.
                 try {
