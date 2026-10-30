@@ -79,7 +79,6 @@ import com.ambient.tv.ui.common.*
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.youtube.YouTubeItem
-import com.ambient.tv.youtube.YouTubeSignInLink
 import com.ambient.tv.youtube.YouTubeRow
 import kotlinx.coroutines.delay
 
@@ -292,25 +291,8 @@ import kotlinx.coroutines.delay
     }
     val signInCode = state.signInCode
     var dismissedSignInQr by remember { mutableStateOf<String?>(null) }
-    if (signInCode != null && dismissedSignInQr != signInCode && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        YouTubeSignInDialog(signInCode, onDismiss = { dismissedSignInQr = signInCode })
-    } else if (signInCode != null && dismissedSignInQr != signInCode) {
-        QrCodeDialog(
-            title = stringResource(R.string.action_sign_in),
-            hint = stringResource(
-                if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) R.string.youtube_activate_handheld
-                else R.string.youtube_activate,
-            ),
-            payload = YouTubeSignInLink.qrPayload(signInCode),
-            code = signInCode,
-            onDismiss = { dismissedSignInQr = signInCode },
-            footer = {
-                TvActionButton(
-                    text = stringResource(R.string.action_close),
-                    onClick = { dismissedSignInQr = signInCode },
-                )
-            },
-        )
+    if (signInCode != null && dismissedSignInQr != signInCode) {
+        YouTubeSignInPrompt(signInCode, onDismiss = { dismissedSignInQr = signInCode })
     }
 }
 
