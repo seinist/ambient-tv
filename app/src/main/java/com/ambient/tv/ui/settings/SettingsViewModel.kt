@@ -429,8 +429,10 @@ class SettingsViewModel @Inject constructor(
         spotifyDeviceName = spotifyRepository.deviceName(),
         spotifyBitrateKbps = appPreferences.spotifyBitrateKbps,
         spotifyVisualizerModeKey = appPreferences.spotifyVisualizerModeKey,
-        spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
-        radioSubmenuKeys = appPreferences.radioSubmenuKeys,
+        mediaSubmenus = MediaSubmenuDraft(
+            spotify = appPreferences.spotifySubmenuKeys,
+            radio = appPreferences.radioSubmenuKeys,
+        ),
         host = appPreferences.host,
         port = appPreferences.port.toString(),
         plexUseHttps = appPreferences.plexUseHttps,
@@ -1523,15 +1525,22 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onSpotifySubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
-        if (key !in AppPreferences.SPOTIFY_SUBMENU_KEYS) state else state.copy(spotifySubmenuKeys = if (enabled) (state.spotifySubmenuKeys + key).distinct() else state.spotifySubmenuKeys.filterNot { it == key })
+        if (key !in AppPreferences.SPOTIFY_SUBMENU_KEYS) state else state.copy(
+            mediaSubmenus = state.mediaSubmenus.copy(
+                spotify = if (enabled) (state.spotifySubmenuKeys + key).distinct()
+                else state.spotifySubmenuKeys.filterNot { it == key },
+            ),
+        )
     }
     fun onTvheadendSubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
         if (key !in AppPreferences.TVH_SUBMENU_KEYS) state else state.copy(tvheadendSubmenuKeys = if (enabled) (state.tvheadendSubmenuKeys + key).distinct() else state.tvheadendSubmenuKeys.filterNot { it == key })
     }
     fun onRadioSubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
         if (key !in AppPreferences.RADIO_SUBMENU_KEYS) state else state.copy(
-            radioSubmenuKeys = if (enabled) (state.radioSubmenuKeys + key).distinct()
-            else state.radioSubmenuKeys.filterNot { it == key },
+            mediaSubmenus = state.mediaSubmenus.copy(
+                radio = if (enabled) (state.radioSubmenuKeys + key).distinct()
+                else state.radioSubmenuKeys.filterNot { it == key },
+            ),
         )
     }
     fun onPlexSectionVisibilityChanged(key: String, visible: Boolean) = _uiState.update { state ->
@@ -2578,8 +2587,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.spotifyDeviceName = state.spotifyDeviceName
         appPreferences.spotifyBitrateKbps = state.spotifyBitrateKbps
         appPreferences.spotifyVisualizerModeKey = state.spotifyVisualizerModeKey
-        appPreferences.spotifySubmenuKeys = state.spotifySubmenuKeys
-        appPreferences.radioSubmenuKeys = state.radioSubmenuKeys
+        appPreferences.spotifySubmenuKeys = state.mediaSubmenus.spotify
+        appPreferences.radioSubmenuKeys = state.mediaSubmenus.radio
         appPreferences.plexHiddenSectionKeys = state.plexHiddenSectionKeys
         appPreferences.jellyfinHiddenSectionKeys = state.jellyfinHiddenSectionKeys
         appPreferences.embyHiddenSectionKeys = state.embyHiddenSectionKeys
