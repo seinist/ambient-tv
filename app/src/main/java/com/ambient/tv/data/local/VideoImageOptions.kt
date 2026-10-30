@@ -81,6 +81,22 @@ object VideoImageCatalog {
         // FSRCNNX luma CNN weights are loaded from MPV resources and evaluated via FP16.
         "fsrcnnx8" to "FSRCNNX · 8",
         "fsrcnnx16" to "FSRCNNX · 16",
+        // ArtCNN and CuNNy non-quantized models need GLES3.1 compute.
+        "artcnn16" to "ArtCNN · C4F16",
+        "artcnn32" to "ArtCNN · C4F32",
+        "artcnn16_ds" to "ArtCNN · C4F16 · DS",
+        "artcnn16_dn" to "ArtCNN · C4F16 · DN",
+        "artcnn32_ds" to "ArtCNN · C4F32 · DS",
+        "artcnn32_dn" to "ArtCNN · C4F32 · DN",
+        "cunny_fast_ds" to "CuNNy · Fast DS",
+        "cunny_faster_ds" to "CuNNy · Faster DS",
+        "cunny_fast_soft" to "CuNNy · Fast SOFT",
+        "cunny_faster_soft" to "CuNNy · Faster SOFT",
+        "cunny_veryfast_soft" to "CuNNy · Veryfast SOFT",
+        // Packed 4x8 signed dot products exactly emulated using GLES3.1 integer arithmetic.
+        "cunny_fast_soft_q" to "CuNNy · Fast SOFT · packed 8-bit (GLES)",
+        "cunny_faster_soft_q" to "CuNNy · Faster SOFT · packed 8-bit (GLES)",
+        "cunny_veryfast_soft_q" to "CuNNy · Veryfast SOFT · packed 8-bit (GLES)",
     ).apply {
         // Same NNEDI3 quality presets and source labels as the bundled MPV renderer.
         Nnedi3QualityCatalog.presets.forEach { preset -> put(preset.key, preset.displayName) }
@@ -257,9 +273,14 @@ data class Media3ImageOptions(
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
-        superResolution = superResolution && !scaler.startsWith("nnedi3") && scaler !in
-            (setOf("bilinear", "fsr", "nis") + setOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m",
-                "fsrcnnx8", "fsrcnnx16")),
+        superResolution = superResolution && !scaler.startsWith("nnedi3") &&
+            scaler !in VideoImageCatalog.mpvShaders.keys.intersect(
+                setOf("fsr", "nis", "anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m",
+                    "fsrcnnx8", "fsrcnnx16", "artcnn16", "artcnn32", "artcnn16_ds", "artcnn16_dn",
+                    "artcnn32_ds", "artcnn32_dn", "cunny_fast_ds", "cunny_faster_ds",
+                    "cunny_fast_soft", "cunny_faster_soft", "cunny_veryfast_soft",
+                    "cunny_fast_soft_q", "cunny_faster_soft_q", "cunny_veryfast_soft_q")) &&
+            scaler != "bilinear",
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
         antiring = antiring.coerceIn(0, 100),
         deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",
