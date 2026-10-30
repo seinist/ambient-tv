@@ -3,6 +3,7 @@ package com.ambient.tv.ui.common
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
 import coil3.request.ImageRequest
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Request headers for an artwork load (server auth, Referer, …). Coil 3 replaced the per-header
@@ -17,6 +18,6 @@ internal fun ImageRequest.Builder.requestHeaders(headers: Map<String, String>): 
  * fallback chain. Never forward a TV/media-server credential to TMDB, including after a retry.
  */
 internal fun artworkHeadersForModel(model: Any?, headers: Map<String, String>): Map<String, String> {
-    val url = (model as? String)?.let { okhttp3.HttpUrl.Companion.toHttpUrlOrNull(it) }
+    val url = (model as? String)?.toHttpUrlOrNull()
     return if (url?.host == "image.tmdb.org") emptyMap() else headers
 }
