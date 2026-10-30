@@ -15,7 +15,7 @@ import java.nio.ByteBuffer
  * a known constant-gray input and checks GLSL compilation, FP16 FBOs and readback.
  * Android/JVM unit tests cannot guarantee shader compilation on the target GPU.
  */
-internal fun auditMedia3SsimShaders(context: Context, log: (String) -> Unit) {
+internal fun auditMedia3Anime4kShaders(context: Context, log: (String) -> Unit) {
     val egl = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
     check(egl != EGL14.EGL_NO_DISPLAY)
     check(EGL14.eglInitialize(egl, IntArray(2), 0, IntArray(2), 0))
