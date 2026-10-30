@@ -2,6 +2,7 @@ package com.ambient.tv.ui.player
 
 import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.data.local.VideoImageCatalog
+import com.ambient.tv.ui.player.backend.media3ImageOptionsAfterOverload
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -89,6 +90,15 @@ class Media3SsimProcessingTest {
         val downgraded = media3AppliedProcessing(true, null,
             listOf(Media3Stage.Downscale("lanczos")))
         assertEquals("Down: Lanczos · 3", downgraded.upscaler)
+    }
+
+    @Test fun overloadingRemovesSsimSuperBeforeDestroyingTheSelectedScaler() {
+        val saved = Media3ImageOptions(enabled = true, scaler = "spline36",
+            superResolution = true, sharpening = "cas")
+        val reduced = media3ImageOptionsAfterOverload(saved)
+        assertEquals("spline36", reduced?.scaler)
+        assertEquals(false, reduced?.superResolution)
+        assertEquals("cas", reduced?.sharpening)
     }
 
     @Test fun kernelsUseFourSourceMomentsWithoutTemporalTextureCaches() {
