@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -391,7 +392,7 @@ fun RadioScreen(
                                     runCatching { facetListFocus.requestFocus() }
                                 }
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier.fillMaxHeight(),
                         )
                     }
                 }
@@ -539,14 +540,15 @@ internal fun radioGenreDisplayName(raw: String): String {
 
 @Composable
 private fun RadioFacetList(
-    section: RadioSection,
-    facets: List<RadioFacet>,
+    facets: List<RadioAlphabetFacet>,
     listRows: Int,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioFacet) -> Unit,
     onFocused: (RadioFacet) -> Unit,
     initialFocusId: String?,
     initialFocusRequester: FocusRequester,
+    alphabetJumpId: String?,
+    alphabetReturnRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
@@ -557,15 +559,21 @@ private fun RadioFacetList(
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
     ) {
-        lazyItems(facets, key = { it.id }) { facet ->
+        lazyItems(facets, key = { it.facet.id }) { entry ->
+            val facet = entry.facet
             var focused by remember(facet.id) { mutableStateOf(false) }
             val shape = RoundedCornerShape(10.dp)
+            val focusModifier = when (facet.id) {
+                alphabetJumpId -> Modifier.focusRequester(alphabetReturnRequester)
+                initialFocusId -> Modifier.focusRequester(initialFocusRequester)
+                else -> Modifier
+            }
             Surface(
                 onClick = { onClick(facet) },
                 colors = transparentSurfaceColors(),
                 scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = (if (facet.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
+                modifier = focusModifier
                     .fillMaxWidth()
                     .browseFocusTarget(facet.id)
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
@@ -584,7 +592,7 @@ private fun RadioFacetList(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MarqueeTitle(radioFacetLabel(section, facet), focused = focused, style = MaterialTheme.typography.titleMedium)
+                        MarqueeTitle(entry.title, focused = focused, style = MaterialTheme.typography.titleMedium)
                         Text(
                             stringResource(R.string.radio_station_count, facet.stationCount),
                             style = MaterialTheme.typography.bodySmall,
