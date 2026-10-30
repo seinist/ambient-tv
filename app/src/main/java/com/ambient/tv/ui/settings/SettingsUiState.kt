@@ -509,7 +509,10 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     spotifyDeviceName = if (draft.spotifyDeviceName != baseline.spotifyDeviceName) draft.spotifyDeviceName else stored.spotifyDeviceName,
     spotifyBitrateKbps = if (draft.spotifyBitrateKbps != baseline.spotifyBitrateKbps) draft.spotifyBitrateKbps else stored.spotifyBitrateKbps,
     spotifyVisualizerModeKey = if (draft.spotifyVisualizerModeKey != baseline.spotifyVisualizerModeKey) draft.spotifyVisualizerModeKey else stored.spotifyVisualizerModeKey,
-    spotifySubmenuKeys = if (draft.spotifySubmenuKeys != baseline.spotifySubmenuKeys) draft.spotifySubmenuKeys else stored.spotifySubmenuKeys,
+    mediaSubmenus = MediaSubmenuDraft(
+        spotify = if (draft.spotifySubmenuKeys != baseline.spotifySubmenuKeys) draft.spotifySubmenuKeys else stored.spotifySubmenuKeys,
+        radio = if (draft.radioSubmenuKeys != baseline.radioSubmenuKeys) draft.radioSubmenuKeys else stored.radioSubmenuKeys,
+    ),
     host = if (draft.host != baseline.host) draft.host else stored.host,
     port = if (draft.port != baseline.port) draft.port else stored.port,
     plexUseHttps = if (draft.plexUseHttps != baseline.plexUseHttps) draft.plexUseHttps else stored.plexUseHttps,
