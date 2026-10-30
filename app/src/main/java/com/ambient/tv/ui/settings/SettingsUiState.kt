@@ -55,6 +55,7 @@ data class SettingsUiState(
     val jellyfinLibrarySections: List<LibrarySection> = emptyList(),
     val jellyfinHiddenSectionKeys: Set<String> = emptySet(),
     val isSigningInJellyfin: Boolean = false,
+    val jellyfinQuickConnectCode: String? = null,
     val isTestingJellyfin: Boolean = false,
     val isResolvingJellyfinMac: Boolean = false,
     val savedJellyfinServers: List<JellyfinServerProfile> = emptyList(),
