@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -71,11 +73,13 @@ import com.ambient.tv.ui.player.ReferencePlayerBottomContent
 import com.ambient.tv.ui.player.ReferencePlayerClock
 import com.ambient.tv.ui.player.ReferencePlayerHeader
 import com.ambient.tv.ui.player.ReferencePlayerOverlayBackground
+import com.ambient.tv.ui.player.TvPlayerSeekBar
 import com.ambient.tv.ui.player.RequestPlayerOverlayFocus
 import com.ambient.tv.ui.player.handlePlayerOsdKey
 import com.ambient.tv.ui.player.rememberPlayerControlsVisible
 import com.ambient.tv.ui.player.rememberPlayerEngineFocus
 import com.ambient.tv.ui.player.rememberPlayerPlayFocus
+import com.ambient.tv.ui.player.rememberPlayerSeekFocus
 
 @Composable
 fun RadioPlayerScreen(
@@ -102,6 +106,7 @@ private fun RadioPlayerContent(
     val rootFocusRequester = rememberPlayerEngineFocus()
     val playFocusRequester = rememberPlayerPlayFocus()
     val audioSession = BackgroundPlaybackSession.currentAudioSession()
+    val radioSeekable = BackgroundPlaybackSession.canSeekCurrentRadioStream()
     val projectMBrowser = rememberProjectMBrowser(viewModel.projectmPresetCategoryKey)
 
     LaunchedEffect(metadata?.source) {
@@ -234,11 +239,23 @@ private fun RadioPlayerContent(
                         artworkFallbackUrls = metadata.artworkFallbackUrls,
                         artworkHeaders = metadata.artworkHeaders,
                         playing = session.playing,
+                        positionMs = session.status.positionMs,
+                        durationMs = session.status.durationMs,
+                        seekable = radioSeekable,
                         favorite = viewModel.favorite,
                         hasPrevious = viewModel.hasPrevious(),
                         hasNext = viewModel.hasNext(),
                         showAudio = audioSession != null,
                         onToggle = BackgroundPlaybackSession::userToggle,
+                        onSeekBy = { deltaMs ->
+                            // A duration without a seekable Media3 window is not permission to seek.
+                            if (BackgroundPlaybackSession.canSeekCurrentRadioStream()) {
+                                val current = BackgroundPlaybackSession.snapshot.value.status
+                                BackgroundPlaybackSession.seekTo(
+                                    radioSeekTarget(current.positionMs, current.durationMs, deltaMs),
+                                )
+                            }
+                        },
                         onPrevious = viewModel::previous,
                         onNext = viewModel::next,
                         onFavorite = viewModel::toggleFavorite,
@@ -310,6 +327,27 @@ private fun RadioPlayerContent(
     }
 }
 
+/** Station streams are usually unbounded; only actual seekable windows get interactive controls. */
+internal enum class RadioTimelineMode { LIVE, PROGRESS, SEEK }
+
+internal fun radioTimelineMode(durationMs: Long, seekable: Boolean): RadioTimelineMode = when {
+    durationMs <= 0L -> RadioTimelineMode.LIVE
+    seekable -> RadioTimelineMode.SEEK
+    else -> RadioTimelineMode.PROGRESS
+}
+
+internal fun radioTimelineFraction(positionMs: Long, durationMs: Long): Float =
+    if (durationMs > 0L) (positionMs.coerceIn(0L, durationMs).toDouble() / durationMs.toDouble()).toFloat()
+    else 0f
+
+/** Saturate before addition to avoid overflow from large seek deltas. */
+internal fun radioSeekTarget(positionMs: Long, durationMs: Long, deltaMs: Long): Long {
+    if (durationMs <= 0L) return 0L
+    val position = positionMs.coerceIn(0L, durationMs)
+    return if (deltaMs >= 0L) position + deltaMs.coerceAtMost(durationMs - position)
+    else position + deltaMs.coerceAtLeast(-position)
+}
+
 internal data class RadioOsdModel(
     val station: RadioStation?,
     val title: String,
@@ -318,11 +356,15 @@ internal data class RadioOsdModel(
     val artworkFallbackUrls: List<String>,
     val artworkHeaders: Map<String, String>,
     val playing: Boolean,
+    val positionMs: Long,
+    val durationMs: Long,
+    val seekable: Boolean,
     val favorite: Boolean,
     val hasPrevious: Boolean,
     val hasNext: Boolean,
     val showAudio: Boolean,
     val onToggle: () -> Unit,
+    val onSeekBy: (Long) -> Unit,
     val onPrevious: () -> Unit,
     val onNext: () -> Unit,
     val onFavorite: () -> Unit,
@@ -336,6 +378,8 @@ internal data class RadioOsdModel(
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
         val playFocusRequester = rememberPlayerPlayFocus()
+        val seekFocusRequester = rememberPlayerSeekFocus()
+        val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
@@ -354,6 +398,27 @@ internal data class RadioOsdModel(
                     artworkHeaders = artworkHeaders,
                     artworkAspectRatio = 1f,
                 )
+                // Match Live-TV radio: the timeline is always present under the header.
+                // No EPG/duration for an ordinary internet radio stream means a passive
+                // live indicator, not a fake zero-length, interactive seek control.
+                if (radioTimelineMode(durationMs, seekable) == RadioTimelineMode.SEEK) {
+                    TvPlayerSeekBar(
+                        positionMs = positionMs.coerceIn(0L, durationMs),
+                        durationMs = durationMs,
+                        onSeekBy = onSeekBy,
+                        onInteraction = osd::interact,
+                        onTogglePlayback = onToggle,
+                        onPlay = { if (!playing) BackgroundPlaybackSession.userPlay() },
+                        showEndTime = false,
+                        modifier = Modifier.focusRequester(seekFocusRequester),
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        progress = { radioTimelineFraction(positionMs, durationMs) },
+                        color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 PlayerTechBadgeRow {
                     MetaBadge(systemName(MediaSystem.RADIO), emphasized = true)
                     MetaBadge("LIVE", emphasized = true)
