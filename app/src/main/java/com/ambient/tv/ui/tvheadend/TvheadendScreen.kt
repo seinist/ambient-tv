@@ -145,7 +145,8 @@ fun TvheadendScreen(
     val browseControls = if (state.tab == TvheadendTab.LIVE) channelControls else guideControls
     val channelListing = rememberLiveTvChannelListing(channels, events, state.guideOptions)
     val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
-    val filterModel = guideFilterModel(state.guideOptions, tags, viewModel::setGuideOptions)
+    val hasHbbtvCategory = remember(channels) { channels.any { !it.hbbtvUrl.isNullOrBlank() } }
+    val filterModel = guideFilterModel(state.guideOptions, tags, hasHbbtvCategory, viewModel::setGuideOptions)
     // Crossfade keeps the previous tab mounted briefly. Each tab owns its requesters so
     // an outgoing channel row cannot register the incoming page's Up target or filter field.
     val pageFocusChains = remember(viewModel.browseState) {
