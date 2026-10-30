@@ -3,4 +3,5 @@
     <string name="tvh_hbbtv_browse_hint">TVHeadend-reported HbbTV applications can be opened without first starting the TV stream. Some applications still require a broadcast channel: use Watch channel and the HbbTV control in the player if needed.</string>
     <string name="tvh_hbbtv_browse_empty">No HbbTV applications were reported for these channels. Check TVHeadend metadata and refresh.</string>
     <string name="tvh_hbbtv_watch_channel">Watch channel</string>
+    <string name="settings_tvh_htsp_port">HTSP port (HbbTV discovery)</string>
 </resources>
