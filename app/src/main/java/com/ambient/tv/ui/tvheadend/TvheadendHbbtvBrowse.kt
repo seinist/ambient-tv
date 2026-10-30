@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -51,6 +52,8 @@ internal fun tvheadendHbbtvEntries(channels: List<LiveTvChannel>): List<Tvheaden
 internal fun TvheadendHbbtvBrowse(
     channels: List<LiveTvChannel>,
     firstFocus: FocusRequester,
+    selectedKey: String?,
+    onFocused: (String) -> Unit,
     onWatchChannel: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -79,7 +82,8 @@ internal fun TvheadendHbbtvBrowse(
                             verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             TvChip(stringResource(R.string.player_hbbtv_open),
                                 icon = Icons.Filled.ConnectedTv,
-                                modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                                modifier = (if (entry.key == selectedKey || (selectedKey == null && index == 0)) Modifier.focusRequester(firstFocus) else Modifier)
+                                    .onFocusChanged { if (it.isFocused) onFocused(entry.key) },
                                 onClick = {
                                     launched = entry
                                     HbbtvUi.request(context, HbbtvApplication(entry.app.url, entry.app.name, 2))
