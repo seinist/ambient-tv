@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,7 +54,7 @@ internal fun Guide(
     pageFocusChain: PageFocusChain? = null,
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
     titleArt: Map<String, String> = emptyMap(),
-    onArtworkNeeded: (String) -> Unit = {},
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
     firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, controls,
     refreshing = refreshing, restoreFocus = restoreFocus, onFocusRestored = onFocusRestored,
@@ -86,7 +85,7 @@ internal fun LiveTvChannelBrowser(
     pageFocusChain: PageFocusChain? = null,
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
     titleArt: Map<String, String> = emptyMap(),
-    onArtworkNeeded: (String) -> Unit = {},
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
 ) {
     val now = listing.now
     val eventsByChannel = listing.eventsByChannel
@@ -268,7 +267,7 @@ internal fun LiveTvChannelBrowser(
                             val recording = current?.let { event -> findProgrammeRecording(event, upcoming) != null } == true
                             // Only laid-out rows trigger TMDB work. Art updates never change row keys or size.
                             LaunchedEffect(current?.eventId, current?.title) {
-                                current?.let { onArtworkNeeded(it.title) }
+                                current?.let { onArtworkNeeded(it.title, this) }
                             }
                             val currentArt = current?.let { liveTvProgrammeArt(it, listOf(channel), titleArt) }
                             ChannelRow(channel, current, next, recording, imageHeaders,
@@ -326,7 +325,7 @@ internal fun LiveTvChannelBrowser(
                                         GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
                                             art = liveTvProgrammeArt(event, listOf(channel), titleArt),
                                             imageHeaders = imageHeaders,
-                                            onArtworkNeeded = { onArtworkNeeded(event.title) },
+                                            onArtworkNeeded = { onArtworkNeeded(event.title, it) },
                                             modifier = if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)
                                     }
