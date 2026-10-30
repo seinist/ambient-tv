@@ -380,9 +380,14 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
                 media3FsrcnnxBudgetAllows(effective.scaler, source.width, source.height,
                     outputWidth, outputHeight, fps)
         } == true
+        val nnedi3Allowed = !upscaling || format?.let { source ->
+            source.rotationDegrees % 180 == 0 && source.pixelWidthHeightRatio == 1f &&
+                media3Nnedi3BudgetAllows(effective.scaler, source.width, source.height,
+                    outputWidth, outputHeight, fps)
+        } == true
         val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
             heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed,
-            ssimSuperAllowed, anime4kAllowed, fsrcnnxAllowed) else emptyList()
+            ssimSuperAllowed, anime4kAllowed, fsrcnnxAllowed, nnedi3Allowed) else emptyList()
         filtersOverBudget = enabled && stages != configuredStages
         val userChange = userChangePending
         userChangePending = false
@@ -498,6 +503,7 @@ private fun media3ScalerEffect(stage: Media3Stage.Scale, outputWidth: Int, outpu
     "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
     in MEDIA3_ANIME4K_SCALERS -> Media3Anime4kEffect(stage.scaler, outputWidth, outputHeight)
     in MEDIA3_FSRCNNX_SCALERS -> Media3FsrcnnxEffect(stage.scaler, outputWidth, outputHeight)
+    in MEDIA3_NNEDI3_SCALERS -> Media3Nnedi3Effect(stage.scaler, outputWidth, outputHeight)
     in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
     "nis" -> Media3NisEffect(outputWidth, outputHeight)
     in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,

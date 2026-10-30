@@ -326,6 +326,14 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     })
                     return@thread
                 }
+                if (arguments.getString("media3Nnedi3Shaders") == "true") {
+                    auditMedia3Nnedi3Shaders(targetContext, ::log,
+                        full = arguments.getString("nnediFull") == "true")
+                    finish(Activity.RESULT_OK, Bundle().apply {
+                        putString("stream", "MEDIA3 NNEDI3 GPU AUDIT FINISHED\n" + results)
+                    })
+                    return@thread
+                }
                 if (arguments.getString("textInputs") == "true") {
                     com.ambient.tv.ui.common.TextInputFocusAudit(this, ::log).run()
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "TEXT INPUT FOCUS AUDIT PASSED\n$results") })
