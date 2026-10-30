@@ -478,6 +478,7 @@ internal fun SectionContent(
                             gridFocus = libraryFocusRequester,
                             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
+                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
