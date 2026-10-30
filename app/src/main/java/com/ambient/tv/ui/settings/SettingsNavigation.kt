@@ -141,11 +141,9 @@ internal fun settingsSearchMatches(query: String, text: String): Boolean {
 }
 
 /**
- * Hub stack, one Left/Back each: input page → area index → area rail → global Settings.
- * A system opened from the logo catalog returns there before the area index.
- * The item that opened the next view stays selected and takes focus again on the way back.
- *
- * Directly opened pages also return to their parent area index.
+ * Hierarchical Back: page → area index → area rail → caller. Search returns to the
+ * area rail; an added system returns to the add catalog. Previously visited sibling pages
+ * are never replayed. A direct page shortcut instead returns straight to its caller.
  */
 internal data class SettingsHubNav(
     val page: SettingsCategory? = null,
@@ -154,8 +152,10 @@ internal data class SettingsHubNav(
     val areaMenu: Boolean = false,
     val addingSystems: Boolean = false,
     val returnToAdd: Boolean = false,
+    val directEntry: Boolean = false,
 ) {
     fun pop(): SettingsHubNav? = when {
+        page != null && directEntry -> null
         page != null -> when {
             returnToSearch -> copy(
                 page = null,
@@ -167,7 +167,7 @@ internal data class SettingsHubNav(
             returnToAdd -> copy(page = null, search = false, areaMenu = false, addingSystems = true)
             else -> copy(page = null, search = false, areaMenu = false, addingSystems = false, returnToAdd = false)
         }
-        search -> copy(search = false, returnToSearch = false, areaMenu = false)
+        search -> copy(search = false, returnToSearch = false, areaMenu = true)
         addingSystems -> copy(addingSystems = false, returnToAdd = false, areaMenu = false)
         !areaMenu -> copy(areaMenu = true)
         else -> null
@@ -175,6 +175,10 @@ internal data class SettingsHubNav(
 
     fun leftClosesPage(): Boolean = page != null
 }
+
+/** A normal Settings entry starts on the left area rail; shortcuts start on their page. */
+internal fun settingsEntryNav(initialPage: SettingsCategory?): SettingsHubNav =
+    SettingsHubNav(page = initialPage, areaMenu = initialPage == null, directEntry = initialPage != null)
 
 /** Registered only while Settings is composed, including sidebar/miniplayer exits. */
 typealias SettingsExitGuard = (action: () -> Unit) -> Unit
