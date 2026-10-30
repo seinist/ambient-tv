@@ -78,6 +78,9 @@ object VideoImageCatalog {
         "anime4k_denoise" to "Anime4K · Denoise CNN x2 S",
         "anime4k_m" to "Anime4K · CNN x2 M",
         "anime4k_denoise_m" to "Anime4K · Denoise CNN x2 M",
+        // FSRCNNX luma CNN weights are loaded from MPV resources and evaluated via FP16.
+        "fsrcnnx8" to "FSRCNNX · 8",
+        "fsrcnnx16" to "FSRCNNX · 16",
     )
     /** Explicit downsampling is opt-in; "display" preserves the existing direct display scaling.
      * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
@@ -252,7 +255,8 @@ data class Media3ImageOptions(
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
         superResolution = superResolution && scaler !in
-            (setOf("bilinear", "fsr", "nis") + setOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m")),
+            (setOf("bilinear", "fsr", "nis") + setOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m",
+                "fsrcnnx8", "fsrcnnx16")),
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
         antiring = antiring.coerceIn(0, 100),
         deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",
