@@ -203,6 +203,9 @@ void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
             GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, it, 0)
         }
         try {
+            // The final depth-to-space pass samples MAIN at 2x pixel centers: interpolate
+            // the decoded input rather than using the driver's previous NEAREST state.
+            media3LinearFilter(inputTexId)
             passes.forEachIndexed { index, pass ->
                 val last = index == passes.lastIndex
                 if (last) {
