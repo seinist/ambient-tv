@@ -683,7 +683,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             SettingsSelectOption(
                                 text = label,
                                 selected = uiState.spotifyVisualizerModeKey == mode,
-                                enabled = mode != "projectm" || com.ambient.tv.ui.common.projectm.ProjectMAvailability.isAvailable,
+                                enabled = mode != "projectm" || com.ambient.tv.ui.common.projectm.ProjectMAvailability.canConfigure,
                                 onClick = { viewModel.onSpotifyVisualizerChanged(mode) },
                             )
                         },

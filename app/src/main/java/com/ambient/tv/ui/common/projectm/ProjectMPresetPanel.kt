@@ -60,6 +60,16 @@ fun ProjectMPresetPanel(
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
     ) {
+        if (!ProjectMAvailability.isAvailable) {
+            item("runtime_unavailable") {
+                Text(
+                    stringResource(R.string.settings_projectm_unavailable),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 13.sp,
+                )
+            }
+        }
         if (!settingsView) {
             item("current") {
                 Column(
