@@ -57,9 +57,10 @@ internal object TvheadendHtspHbbtv {
                         if (applications.isNotEmpty()) appsByChannel[id] = applications
                     }
                     "channelDelete" -> (message["channelIdStr"] as? String)?.let(appsByChannel::remove)
-                    "initialSyncComplete" -> return appsByChannel
+                    "initialSyncCompleted" -> return appsByChannel
                 }
-                if (message["seq"] == 3L && message["error"] != null) error("HTSP metadata rejected")
+                if (message["seq"] == 3L && (message["error"] != null || message["noaccess"] == 1L))
+                    error("HTSP metadata access denied")
             }
             error("HTSP initial metadata limit exceeded")
         }
