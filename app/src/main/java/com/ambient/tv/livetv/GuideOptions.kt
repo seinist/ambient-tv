@@ -16,8 +16,13 @@ data class GuideOptions(
     val onlyWithEpg: Boolean = false,
     /** Reverses the chosen field only. Missing channel numbers stay at the end either way. */
     val descending: Boolean = false,
+    /**
+     * Virtual category backed only by provider/server metadata. For TVHeadend this is true only
+     * for channels whose stored service metadata exposed HbbTV without opening the live stream.
+     */
+    val onlyHbbtv: Boolean = false,
 ) {
-    val filtersActive: Boolean get() = kind != null || access != null || tag != null || onlyWithEpg
+    val filtersActive: Boolean get() = kind != null || access != null || tag != null || onlyWithEpg || onlyHbbtv
 }
 
 internal fun guideName(value: String): String = value.trim().lowercase(Locale.ROOT).replace(Regex("\\s+"), " ")
@@ -60,11 +65,15 @@ internal fun guideChannelRows(
     val programmes = eventsByChannel.mapValues { (_, events) -> guideEvents(events, now).map { it.identity() } }
     val rowFor = mutableMapOf<Any, String>()
     val shownAs = mutableMapOf<String, String>()
+    // A stale persisted HbbTV filter becomes inert when this provider can no longer report the
+    // category without opening streams. The UI then hides the category instead of showing zero rows.
+    val hbbtvCategoryAvailable = channels.any { !it.hbbtvUrl.isNullOrBlank() }
     val matching = channels.distinctBy { it.sourceId to it.uuid }.filter { channel ->
         (options.kind == null || channel.kind == options.kind) &&
             (options.access == null || channel.access == options.access) &&
             (options.tag == null || options.tag in channel.tags) &&
-            (!options.onlyWithEpg || !programmes[channel.uuid].isNullOrEmpty())
+            (!options.onlyWithEpg || !programmes[channel.uuid].isNullOrEmpty()) &&
+            (!options.onlyHbbtv || !hbbtvCategoryAvailable || !channel.hbbtvUrl.isNullOrBlank())
     }.sortedWith(compareBy<LiveTvChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.uuid })
     val rows = matching.filter { channel ->
         val schedule = programmes[channel.uuid].orEmpty()
