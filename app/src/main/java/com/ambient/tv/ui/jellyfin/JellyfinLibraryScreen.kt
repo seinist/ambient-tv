@@ -12,10 +12,12 @@ fun JellyfinLibraryScreen(
     onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     HomeScreen(
         focusStateKey = "jellyfin:home",
         onOpenSettings = onOpenSettings,
+        onOpenRelevantSettings = onOpenRelevantSettings,
         onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,

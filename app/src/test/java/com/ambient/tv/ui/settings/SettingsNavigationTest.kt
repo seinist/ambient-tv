@@ -155,6 +155,25 @@ class SettingsNavigationTest {
         assertEquals(WireGuardBrowseBack.Dismiss, wireGuardBrowseBack(0, false))
     }
 
+    @Test fun directSettingsShortcutsHaveStableScopedAnchors() {
+        assertEquals(SettingsCategory.APPEARANCE, settingsShortcutCategory("appearance:hdr"))
+        assertEquals("appearance:hdr", settingsShortcutItemKey("APPEARANCE:HDR"))
+        assertEquals("appearance:scale", settingsShortcutItemKey("appearance:scale"))
+        assertEquals("playback:renderer", settingsShortcutItemKey("playback:renderer"))
+        assertEquals("playback:test-duration", settingsShortcutItemKey("playback:test-duration"))
+        assertEquals("spotify:account", settingsShortcutItemKey("spotify:account"))
+        assertEquals("jellyfin:customization", settingsShortcutItemKey("jellyfin:customization"))
+        assertEquals("emby:customization", settingsShortcutItemKey("emby:customization"))
+        assertNull(settingsShortcutItemKey("appearance:missing"))
+        assertNull(settingsShortcutItemKey("plex:arbitrary-key"))
+        assertNull(settingsShortcutItemKey("wake:plex"))
+        assertNull(settingsShortcutItemKey("missing:account"))
+        assertEquals("plex", settingsShortcutWakeTarget("wake:plex"))
+        assertEquals("files", settingsShortcutWakeTarget("wake:files"))
+        assertEquals("dlna", settingsShortcutWakeTarget("wake:dlna"))
+        assertNull(settingsShortcutWakeTarget("wake:unknown"))
+    }
+
     @Test fun existingSetupAndSidebarAliasesKeepTheirTargets() {
         mapOf(
             "plex" to SettingsCategory.PLEX, "network" to SettingsCategory.PLEX,

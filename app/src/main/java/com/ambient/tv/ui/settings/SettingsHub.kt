@@ -213,6 +213,9 @@ internal fun SettingsHub(
     var searchLandingQuery by rememberSaveable(initialCategoryKey) {
         mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
     }
+    var shortcutItemKey by rememberSaveable(initialCategoryKey) {
+        mutableStateOf(settingsShortcutItemKey(initialCategoryKey))
+    }
     fun openPage(target: SettingsCategory, fromLink: Boolean = false) {
         val resolved = when {
             target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
@@ -819,6 +822,7 @@ internal fun SettingsHub(
                             val itemIndex = remember(current) { SettingsItemIndex() }
                             val pageSearchLanding = remember(current) { SettingsSearchLanding() }
                             val landingQuery = searchLandingQuery
+                            val externalItemKey = shortcutItemKey.takeIf { current == initialPage }
                             CompositionLocalProvider(
                                 LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
@@ -837,16 +841,20 @@ internal fun SettingsHub(
                                 if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
                                 }
-                                val targetKey = landingQuery?.let {
+                                // Consume an external stable item anchor once, without restarting page focus.
+                                val targetKey = externalItemKey ?: landingQuery?.let {
                                     if (current == SettingsCategory.WAKE) viewModel.wakeTargetKey(state, it)
                                     else settingsSearchTargetKey(current, it)
                                 }
-                                val scrollTo = itemIndex.landingPosition(targetKey, requested = landingQuery != null)
+                                val scrollTo = itemIndex.landingPosition(
+                                    targetKey, requested = landingQuery != null || externalItemKey != null,
+                                )
                                 if (scrollTo != null && scrollTo < listState.layoutInfo.totalItemsCount) {
                                     listState.scrollToItem(scrollTo)
                                 }
                                 if (handheld) {
                                     if (landingQuery != null) searchLandingQuery = null
+                                    if (externalItemKey != null) shortcutItemKey = null
                                     return@LaunchedEffect
                                 }
                                 // Scroll to this server's host group, then place TV focus on
@@ -868,6 +876,7 @@ internal fun SettingsHub(
                                 if (!focusedMac) requestPanelContentFocus()
                                 settlingPageFocus = false
                                 if (landingQuery != null) searchLandingQuery = null
+                                if (externalItemKey != null) shortcutItemKey = null
                             }
                             content(current, listState, panelModifier,
                                 { scope.launch { requestPanelContentFocus() } }, ::requestExit)

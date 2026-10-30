@@ -13,10 +13,12 @@ fun PlexLibraryScreen(
     onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     HomeScreen(
         focusStateKey = "plex:home",
         onOpenSettings = onOpenSettings,
+        onOpenRelevantSettings = onOpenRelevantSettings,
         onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,

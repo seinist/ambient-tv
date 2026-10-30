@@ -367,6 +367,12 @@ class BrowseFocusReturnTest {
         focused(fixture.tileTag("item-3"))
         rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-3" } }
         rule.waitForIdle()
+        // The missing-tile fallback crosses a lazy layout frame; wait for its actual focus.
+        rule.waitUntil(timeoutMillis = 2_000) {
+            runCatching {
+                rule.onNodeWithTag(fixture.tileTag("item-0"), useUnmergedTree = true).assertIsFocused()
+            }.isSuccess
+        }
         focused(fixture.tileTag("item-0"))
     }
 

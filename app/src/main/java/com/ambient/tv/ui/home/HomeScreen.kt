@@ -163,6 +163,8 @@ fun HomeScreen(
     jellyfinOnly: Boolean = false,
     embyOnly: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
+    /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val wakeState by viewModel.startupWakeState.collectAsState()
@@ -185,6 +187,9 @@ fun HomeScreen(
     val openSettings: () -> Unit = remember(viewModel, onOpenSettings) {
         { viewModel.captureFocusForReturn(); onOpenSettings() }
     }
+    val openRelevantSettings: (String) -> Unit = remember(viewModel, onOpenRelevantSettings) {
+        { category -> viewModel.captureFocusForReturn(); onOpenRelevantSettings(category) }
+    }
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
     // Keep entrance work separate from the pinned hero overlap. The list is drawn once into
     // a display list; only the narrow top overlap uses an offscreen alpha mask.
@@ -198,6 +203,12 @@ fun HomeScreen(
     // Keep the cancel control focusable on television during startup.
     ReportSidebarContentReady(!parkInitialFocus || canCancelStartupWake)
     val systemOverview = plexOnly || jellyfinOnly || embyOnly
+    val overviewProvider = when {
+        plexOnly -> "plex"
+        jellyfinOnly -> "jellyfin"
+        embyOnly -> "emby"
+        else -> null
+    }
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }
@@ -309,7 +320,7 @@ fun HomeScreen(
                         focusSnapshot = focusSnapshot,
                         onItemClick = openItem,
                         onItemFocused = viewModel::onItemFocused,
-                        onOpenSettings = openSettings,
+                        onOpenRelevantSettings = openRelevantSettings,
                         onWatchLiveChannel = watchLiveChannel,
                         onLiveTvFocused = viewModel::onLiveTvFocused,
                         onShortcutFocused = viewModel::onShortcutFocused,
@@ -326,7 +337,12 @@ fun HomeScreen(
                     ConnectionErrorContent(state.message, viewModel::retry, onOpenSettings)
                 }
                 is HomeUiState.WakeTimedOut -> Centered {
-                    WakeTimeoutContent(state.serverName, viewModel::retry, onOpenSettings)
+                    WakeTimeoutContent(state.serverName, viewModel::retry) {
+                        // An overview knows which machine timed out. The global Home does not:
+                        // do not guess a host from a renamed server label.
+                        if (overviewProvider != null) openRelevantSettings("wake:$overviewProvider")
+                        else openSettings()
+                    }
                 }
             }
 
@@ -511,7 +527,7 @@ internal fun LibraryContent(
     focusSnapshot: HomeFocusSnapshot,
     onItemClick: (String) -> Unit,
     onItemFocused: (String, MediaItem) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenRelevantSettings: (String) -> Unit,
     onWatchLiveChannel: (TvhChannel) -> Unit,
     onLiveTvFocused: (HomeLiveTvItem) -> Unit,
     onShortcutFocused: (HomeRowDefinition) -> Unit,
@@ -534,7 +550,7 @@ internal fun LibraryContent(
         val unreachableVm: UnreachableServerViewModel = hiltViewModel()
         val gate by unreachableVm.state.collectAsState()
         gate.offline.firstOrNull()?.let { system ->
-            OfflineSystemPage(system, gate, unreachableVm::retry, onOpenSettings)
+            OfflineSystemPage(system, gate, unreachableVm::retry, { onOpenRelevantSettings("wake:$system") })
             return
         }
         Centered {
@@ -542,7 +558,7 @@ internal fun LibraryContent(
                 title = stringResource(R.string.home_library_empty),
                 body = stringResource(R.string.home_library_empty_body),
                 actionLabel = stringResource(R.string.nav_settings),
-                onAction = onOpenSettings,
+                onAction = { onOpenRelevantSettings("library") },
             )
         }
         return

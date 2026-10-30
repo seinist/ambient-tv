@@ -13,7 +13,24 @@ internal fun settingsShortcutCategory(key: String?): SettingsCategory? =
 internal fun settingsShortcutWakeTarget(key: String?): String? {
     if (settingsShortcutCategory(key) != SettingsCategory.WAKE) return null
     return key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT)
-        ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend") }
+        ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend", "files", "dlna") }
+}
+
+/** A small, explicit allowlist of stable lazy-list anchors for external Settings shortcuts.
+ * A source-provided string never becomes an arbitrary list key or search query. */
+internal fun settingsShortcutItemKey(key: String?): String? {
+    val category = settingsShortcutCategory(key) ?: return null
+    val target = key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT).orEmpty()
+    return when (category) {
+        SettingsCategory.APPEARANCE -> target.takeIf { it in setOf("hdr", "scale", "accent", "theme") }?.let { "appearance:$it" }
+        SettingsCategory.PLAYBACK -> target.takeIf { it in setOf("renderer", "test-duration") }?.let { "playback:$it" }
+        SettingsCategory.BACKGROUND -> target.takeIf { it == "video" }?.let { "background:$it" }
+        SettingsCategory.SEEK -> target.takeIf { it == "controls" }?.let { "seek:$it" }
+        SettingsCategory.SPOTIFY -> target.takeIf { it == "account" }?.let { "spotify:$it" }
+        SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY ->
+            target.takeIf { it == "customization" }?.let { "${category.name.lowercase(Locale.ROOT)}:$it" }
+        else -> null
+    }
 }
 
 /** Keep search intent available to lazy rows after the one-shot navigation signal is consumed. */

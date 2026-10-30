@@ -99,6 +99,14 @@ class SidebarFocusUiTest {
 
     private fun focused(tag: String) = rule.onNodeWithTag(tag, useUnmergedTree = true).assertIsFocused()
 
+    @Test fun inlineSingleSystemKeepsBothProviderConfigurationAndGlobalSettings() {
+        state = SidebarUiState(trailersEnabled = true, trailersConfigured = true)
+        setUp(Destinations.TRAILERS)
+        key(Key.DirectionLeft)
+        rule.onNodeWithTag("sidebar:system-settings:trailers", useUnmergedTree = true).assertExists()
+        rule.onNodeWithTag("sidebar:settings", useUnmergedTree = true).assertExists()
+    }
+
     @Test fun leftFromContentOpensOnTheActiveEntryOfTheActiveSystem() {
         setUp(Destinations.liveTvSection("guide"))
         key(Key.DirectionLeft)
