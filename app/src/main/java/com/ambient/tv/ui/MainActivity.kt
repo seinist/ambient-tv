@@ -957,7 +957,7 @@ private fun AmbientTvApp(
             val originEntry = navController.currentBackStackEntry?.id
             mediaSelectionScope.launch {
                 val station = try {
-                    runCatching { radioBrowserRepository.station(stationId) }.getOrNull()
+                    suspendResult { radioBrowserRepository.station(stationId) }.getOrNull()
                 } finally {
                     mediaSelectionBusy = false
                 }

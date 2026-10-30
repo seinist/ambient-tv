@@ -231,10 +231,7 @@ class SidebarViewModel @Inject constructor(
         // stayed the same (for example SmartTube signing in while it was already enabled).
         com.ambient.tv.data.local.LoginStateSignal.generation.value,
         appPreferences.sidebarSystemOrder,
-        appPreferences.youtubeFeedKeys,
-        appPreferences.youtubeStartFeedKey,
-        appPreferences.spotifySubmenuKeys,
-        appPreferences.tvheadendSubmenuKeys,
+        appPreferences.sidebarSubmenuSnapshot(),
         appPreferences.sidebarSettingsShortcutHidden,
         appPreferences.sidebarDividersAfter,
         appPreferences.sidebarEntryOrder,

@@ -2,6 +2,8 @@ package com.ambient.tv.ui.navigation
 
 import com.ambient.tv.connectivity.HostHealth
 import com.ambient.tv.connectivity.HostHealthStore
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.local.memoryPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
@@ -12,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class SidebarAvailabilityTest {
@@ -82,6 +85,18 @@ class SidebarAvailabilityTest {
 
     @Test(timeout = 5_000) fun currentConfigurationIsReadEvenWithoutAnInitialPreferenceEvent() = runBlocking {
         assertEquals(listOf(true), observeSidebarAvailability(emptyFlow<Unit>()) { listOf(true) }.first())
+    }
+
+    @Test fun radioSubmenuChangeInvalidatesSidebarConfigurationSnapshot() {
+        val preferences = AppPreferences(memoryPreferences())
+        preferences.radioSubmenuKeys = listOf("popular", "favorites")
+        val before = preferences.sidebarSubmenuSnapshot()
+
+        preferences.radioSubmenuKeys = listOf("recent", "countries")
+        val after = preferences.sidebarSubmenuSnapshot()
+
+        assertNotEquals(before, after)
+        assertEquals(listOf("recent", "countries"), after.radioSubmenuKeys)
     }
 
     @Test(timeout = 5_000) fun subsequentLoginAndLogoutUpdateVisibility() = runBlocking {

@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.navigation
 
 import com.ambient.tv.connectivity.HostHealth
+import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -25,3 +26,21 @@ internal fun sidebarOfflineSources(
     configuredSources: Collection<String>,
     healthOf: (String) -> HostHealth,
 ): Set<String> = configuredSources.filterTo(linkedSetOf()) { healthOf(it) == HostHealth.OFFLINE }
+
+
+/** Preference subset whose changes alter the contents of provider pages in the sidebar. */
+internal data class SidebarSubmenuSnapshot(
+    val youtubeFeedKeys: List<String>,
+    val youtubeStartFeedKey: String,
+    val spotifySubmenuKeys: List<String>,
+    val radioSubmenuKeys: List<String>,
+    val tvheadendSubmenuKeys: List<String>,
+)
+
+internal fun AppPreferences.sidebarSubmenuSnapshot() = SidebarSubmenuSnapshot(
+    youtubeFeedKeys = youtubeFeedKeys,
+    youtubeStartFeedKey = youtubeStartFeedKey,
+    spotifySubmenuKeys = spotifySubmenuKeys,
+    radioSubmenuKeys = radioSubmenuKeys,
+    tvheadendSubmenuKeys = tvheadendSubmenuKeys,
+)
