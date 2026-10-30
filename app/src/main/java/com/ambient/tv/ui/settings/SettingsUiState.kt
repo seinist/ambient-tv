@@ -27,6 +27,12 @@ data class WireGuardLiveState(
     val testOk: Boolean = false,
 )
 
+/** Transient media-server sign-in state kept nested to preserve SettingsUiState's JVM slot budget. */
+data class MediaServerAuthLiveState(
+    val busy: Boolean = false,
+    val code: String? = null,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -54,8 +60,7 @@ data class SettingsUiState(
     val jellyfinAutoWakeEnabled: Boolean = true,
     val jellyfinLibrarySections: List<LibrarySection> = emptyList(),
     val jellyfinHiddenSectionKeys: Set<String> = emptySet(),
-    val isSigningInJellyfin: Boolean = false,
-    val jellyfinQuickConnectCode: String? = null,
+    val jellyfinAuth: MediaServerAuthLiveState = MediaServerAuthLiveState(),
     val isTestingJellyfin: Boolean = false,
     val isResolvingJellyfinMac: Boolean = false,
     val savedJellyfinServers: List<JellyfinServerProfile> = emptyList(),
