@@ -593,6 +593,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "guide" to stringResource(R.string.tvh_guide),
                             "recordings" to stringResource(R.string.tvh_recordings),
                             "timers" to stringResource(R.string.tvh_timers),
+                            "hbbtv" to stringResource(R.string.guide_hbbtv),
                         ).forEach { (key, label) ->
                             TvSettingRow(title = label, checked = key in uiState.tvheadendSubmenuKeys,
                                 onCheckedChange = { enabled -> viewModel.onTvheadendSubmenuChanged(key, enabled) },
