@@ -349,27 +349,27 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         SettingsActionRow {
                             TvActionButton(
                                 text = when {
-                                    uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null -> stringResource(R.string.action_signing_in)
+                                    uiState.jellyfinAuth.busy && uiState.jellyfinAuth.code == null -> stringResource(R.string.action_signing_in)
                                     uiState.jellyfinConfigured -> stringResource(R.string.action_sign_out)
                                     else -> stringResource(R.string.action_sign_in)
                                 },
                                 onClick = if (uiState.jellyfinConfigured) viewModel::signOutJellyfin else viewModel::signInJellyfin,
-                                enabled = uiState.jellyfinQuickConnectCode == null,
-                                loading = uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null,
+                                enabled = uiState.jellyfinAuth.code == null,
+                                loading = uiState.jellyfinAuth.busy && uiState.jellyfinAuth.code == null,
                             )
                             if (!uiState.jellyfinConfigured) {
                                 TvActionButton(
-                                    text = if (uiState.jellyfinQuickConnectCode != null) {
+                                    text = if (uiState.jellyfinAuth.code != null) {
                                         stringResource(R.string.settings_link_cancel)
                                     } else {
                                         stringResource(R.string.settings_jellyfin_quick_connect)
                                     },
-                                    onClick = if (uiState.jellyfinQuickConnectCode != null) {
+                                    onClick = if (uiState.jellyfinAuth.code != null) {
                                         viewModel::cancelJellyfinQuickConnect
                                     } else {
                                         viewModel::startJellyfinQuickConnect
                                     },
-                                    loading = uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null,
+                                    loading = uiState.jellyfinAuth.busy && uiState.jellyfinAuth.code == null,
                                 )
                             }
                             TvActionButton(
@@ -378,7 +378,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
                             )
                         }
-                        uiState.jellyfinQuickConnectCode?.let { code ->
+                        uiState.jellyfinAuth.code?.let { code ->
                             AppDialog(
                                 onDismiss = viewModel::cancelJellyfinQuickConnect,
                                 title = stringResource(R.string.settings_jellyfin_quick_connect),
