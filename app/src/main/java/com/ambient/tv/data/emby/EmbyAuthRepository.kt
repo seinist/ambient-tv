@@ -105,7 +105,7 @@ class EmbyAuthRepository @Inject constructor(
             } ?: error("This Emby server is not available to the signed-in Emby Connect account")
             val local = api.exchangeConnect(
                 connectUserId = connectAuth.userId,
-                accessKey = connectServer.accessKey,
+                exchangeToken = connectServer.exchangeToken,
             )
             require(local.localUserId.isNotBlank() && local.accessToken.isNotBlank()) {
                 "Emby Connect did not return local server credentials"
