@@ -22,6 +22,20 @@ enum class RadioViewMode { GRID, LIST }
 /** Selection is scoped to the exact Radio Browser page, not shared across facets or searches. */
 internal data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
 
+/** Session-only memory: parameterized sidebar routes replace their ViewModels on tab changes. */
+internal object RadioFocusMemory {
+    private const val MAX_ENTRIES = 64
+    private val selections = linkedMapOf<RadioFocusScope, String>()
+
+    @Synchronized fun last(scope: RadioFocusScope): String? = selections[scope]
+
+    @Synchronized fun save(scope: RadioFocusScope, itemId: String) {
+        selections.remove(scope)
+        selections[scope] = itemId
+        if (selections.size > MAX_ENTRIES) selections.remove(selections.keys.first())
+    }
+}
+
 internal fun RadioUiState.focusScope(): RadioFocusScope = RadioFocusScope(section, selectedFacet?.id, submittedQuery)
 
 /** Last browsed item, then the playing station if present, otherwise the first visible card. */
@@ -77,12 +91,10 @@ class RadioViewModel @Inject constructor(
     private var playJob: Job? = null
     private var focusLoadJob: Job? = null
     private var focusedStationId: String? = null
-    private val lastFocusedByScope = mutableMapOf<RadioFocusScope, String>()
-
-    internal fun lastFocusedContent(scope: RadioFocusScope): String? = lastFocusedByScope[scope]
+    internal fun lastFocusedContent(scope: RadioFocusScope): String? = RadioFocusMemory.last(scope)
 
     fun onFacetFocused(facetId: String) {
-        lastFocusedByScope[_state.value.focusScope()] = facetId
+        RadioFocusMemory.save(_state.value.focusScope(), facetId)
     }
     private var focusLoadStationId: String? = null
     private var entered = false
@@ -264,7 +276,7 @@ class RadioViewModel @Inject constructor(
     }
 
     fun onStationFocused(stationId: String) {
-        lastFocusedByScope[_state.value.focusScope()] = stationId
+        RadioFocusMemory.save(_state.value.focusScope(), stationId)
         focusedStationId = stationId
         val current = _state.value
         val index = current.stations.indexOfFirst { it.id == stationId }
