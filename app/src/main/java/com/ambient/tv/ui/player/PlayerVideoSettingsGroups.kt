@@ -657,9 +657,10 @@ private fun Media3ScalingRows(
     change: (com.ambient.tv.data.local.Media3ImageOptions) -> Unit,
 ) {
     if (visibility.upscaler) {
-        ImageChoice(R.string.player_upscaler, o.scaler, media3ScalerChoices()) {
-            change(o.copy(scaler = it))
-        }
+        GroupedImageChoice(R.string.player_upscaler, o.scaler, listOf(
+            PlayerDropUpSection(stringResource(R.string.image_scaler_builtin), media3BuiltinScalerChoices()),
+            PlayerDropUpSection(stringResource(R.string.image_scaler_shader), media3ShaderScalerChoices()),
+        )) { change(o.copy(scaler = it)) }
     }
     if (visibility.downscaler) {
         ImageChoice(R.string.image_downscaler, o.downscaler,

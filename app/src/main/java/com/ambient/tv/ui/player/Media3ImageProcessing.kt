@@ -368,8 +368,16 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val ssimSuperAllowed = !upscaling || format?.let { source ->
             media3SsimSuperBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
         } == true
+        val anime4kAllowed = !upscaling || format?.let { source ->
+            // The CNN's 2x feature grid assumes square pixels and an unrotated source.
+            // Keep Media3's normal geometry path for anamorphic or rotated tracks.
+            source.rotationDegrees % 180 == 0 && source.pixelWidthHeightRatio == 1f &&
+                media3Anime4kBudgetAllows(effective.scaler, source.width, source.height,
+                    outputWidth, outputHeight, fps)
+        } == true
         val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
-            heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed, ssimSuperAllowed) else emptyList()
+            heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed,
+            ssimSuperAllowed, anime4kAllowed) else emptyList()
         filtersOverBudget = enabled && stages != configuredStages
         val userChange = userChangePending
         userChangePending = false
@@ -483,6 +491,7 @@ private fun media3ScalerEffect(stage: Media3Stage.Scale, outputWidth: Int, outpu
         Media3KernelEffect("ssim_lanczos3", outputWidth, outputHeight, sigmoid = false)
         else LanczosResample.scaleToFit(outputWidth, outputHeight)
     "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
+    in MEDIA3_ANIME4K_SCALERS -> Media3Anime4kEffect(stage.scaler, outputWidth, outputHeight)
     in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
     "nis" -> Media3NisEffect(outputWidth, outputHeight)
     in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,

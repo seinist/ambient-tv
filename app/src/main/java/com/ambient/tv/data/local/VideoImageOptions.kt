@@ -73,6 +73,11 @@ object VideoImageCatalog {
         "ravu_zoom_r3" to "RAVU Zoom AR · r3",
         // NVScaler ported from MPV's compute shader to a fragment shader (Media3NisEffect).
         "nis" to "NVIDIA NIS · NVScaler",
+        // Original Anime4K 3.2 CNN weights shared with MPV, multi-pass FP16 in Media3.
+        "anime4k" to "Anime4K · CNN x2 S",
+        "anime4k_denoise" to "Anime4K · Denoise CNN x2 S",
+        "anime4k_m" to "Anime4K · CNN x2 M",
+        "anime4k_denoise_m" to "Anime4K · Denoise CNN x2 M",
     )
     /** Explicit downsampling is opt-in; "display" preserves the existing direct display scaling.
      * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
@@ -246,7 +251,8 @@ data class Media3ImageOptions(
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
-        superResolution = superResolution && scaler !in setOf("bilinear", "fsr", "nis"),
+        superResolution = superResolution && scaler !in
+            (setOf("bilinear", "fsr", "nis") + setOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m")),
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
         antiring = antiring.coerceIn(0, 100),
         deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",

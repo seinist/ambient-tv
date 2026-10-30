@@ -4,6 +4,10 @@ package com.ambient.tv.ui.common
 
 import com.ambient.tv.ui.sound.navigationSoundInput
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,6 +31,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,6 +41,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +59,7 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.mobile.isHandheldLandscape
 import com.ambient.tv.ui.mobile.isTabletUi
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalAccentModeKey
 import com.ambient.tv.ui.theme.LocalUiTokens
 
@@ -119,6 +126,10 @@ fun AppDialog(
     val handheld = LocalHandheldUi.current
     val wideHandheld = isHandheldLandscape()
     val tablet = isTabletUi()
+    // Decide once per dialog instance; changing a performance setting under an open dialog
+    // must not replay its entrance or switch its closing animation halfway through.
+    val profileReduced = LocalPerformanceProfile.current.reducedEffects
+    val reducedEffects = remember { profileReduced }
     val effectiveMaxHeightFraction = appDialogHeightFraction(maxHeightFraction, handheld, wideHandheld)
     // Measured in the page's (UI-scaled) density: Configuration.screenHeightDp is in system dp
     // and would shrink every dialog by the UI scale factor, forcing content to scroll.
@@ -131,6 +142,15 @@ fun AppDialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        // Closing is owned by the native dialog window: even a custom footer that immediately
+        // removes AppDialog (Apply, Cancel, Continue, Stop) gets the same exit transition.
+        AppDialogWindowExitMotion(reducedEffects)
+        // Only the card scales in; its layout bounds, focus requests and keyboard resize stay
+        // stable. Do not restart on data updates (progress indicators / live countdowns).
+        val appear = remember { Animatable(0f) }
+        LaunchedEffect(appear) {
+            appear.animateTo(1f, tween(appDialogEnterDurationMs(reducedEffects), easing = FastOutSlowInEasing))
+        }
         com.ambient.tv.ui.display.MatchUiHdrDialogWindow()
         // A dialog owns its own view, so the framework's D-pad clicks have to be silenced here too.
         com.ambient.tv.ui.sound.SilenceSystemMenuSounds()
@@ -177,6 +197,13 @@ fun AppDialog(
                     .fillMaxWidth(fraction)
                     .widthIn(min = minW, max = maxW)
                     .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier.heightIn(max = panelMaxHeight))
+                    .graphicsLayer {
+                        val progress = appear.value
+                        alpha = appDialogEnterAlpha(progress)
+                        val scale = appDialogEnterScale(progress, reducedEffects)
+                        scaleX = scale
+                        scaleY = scale
+                    }
                     .clip(panelShape)
                     .then(if (handheld) Modifier.pointerInput(Unit) {
                         // Blank card areas must also block the dismiss target underneath.
