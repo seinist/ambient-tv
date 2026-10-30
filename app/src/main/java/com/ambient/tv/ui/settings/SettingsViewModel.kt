@@ -1413,7 +1413,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun testEmbyConnection() {
-        if (_uiState.value.isTestingEmby) return
+        if (_uiState.value.embyAuth.testing) return
         val page = SettingsCategory.EMBY
         val ticket = beginFeedback("test:emby")
         val persisted = runCatching { persistEmby(_uiState.value); refreshSavedValues() }
@@ -1421,7 +1421,7 @@ class SettingsViewModel @Inject constructor(
             finishFeedback(ticket, page, R.string.notice_failed, false, "emby", error = persisted.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
             return
         }
-        _uiState.update { it.copy(isTestingEmby = true) }
+        _uiState.update { it.copy(embyAuth = it.embyAuth.copy(testing = true)) }
         viewModelScope.launch {
             try {
                 val result = suspendResult {
@@ -1432,7 +1432,7 @@ class SettingsViewModel @Inject constructor(
                 
                 finishFeedback(ticket, page, if (result.isSuccess) R.string.notice_test_ok else R.string.notice_failed,
                     result.isSuccess, "emby", error = result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
-            } finally { _uiState.update { it.copy(isTestingEmby = false) } }
+            } finally { _uiState.update { it.copy(embyAuth = it.embyAuth.copy(testing = false)) } }
         }
     }
 
@@ -3064,7 +3064,7 @@ class SettingsViewModel @Inject constructor(
     private fun macBusy(system: String, busy: Boolean, mac: String? = null) {
         _uiState.update { when (system) {
             "jellyfin" -> it.copy(isResolvingJellyfinMac = busy, jellyfinMacAddress = mac ?: it.jellyfinMacAddress)
-            "emby" -> it.copy(isResolvingEmbyMac = busy, embyMacAddress = mac ?: it.embyMacAddress)
+            "emby" -> it.copy(embyAuth = it.embyAuth.copy(resolvingMac = busy), embyMacAddress = mac ?: it.embyMacAddress)
             "tvheadend" -> it.copy(isResolvingTvheadendMac = busy, tvheadendMacAddress = mac ?: it.tvheadendMacAddress)
             else -> it.copy(isResolvingMac = busy, macAddress = mac ?: it.macAddress)
         } }
@@ -3074,7 +3074,7 @@ class SettingsViewModel @Inject constructor(
         val state = _uiState.value
         if (when (system) {
             "jellyfin" -> state.isResolvingJellyfinMac
-            "emby" -> state.isResolvingEmbyMac
+            "emby" -> state.embyAuth.resolvingMac
             "tvheadend" -> state.isResolvingTvheadendMac
             else -> state.isResolvingMac
         }) return
