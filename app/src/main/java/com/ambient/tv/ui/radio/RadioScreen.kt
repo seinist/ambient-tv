@@ -7,6 +7,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -350,14 +352,26 @@ fun RadioScreen(
             }
 
             when {
-                state.loading -> com.ambient.tv.ui.common.SkeletonRow(
-                    title = "",
-                    modifier = Modifier.fillMaxWidth(),
+                state.loading && state.stations.isEmpty() && state.facets.isEmpty() -> RadioLoadingContent(
+                    layout = state.loadingLayout(),
+                    gridColumns = state.gridColumns,
+                    listRows = state.listRows,
+                    modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                 )
-                state.error && state.stations.isEmpty() && state.facets.isEmpty() -> StatePanel(
-                    title = stringResource(R.string.radio_error),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                state.error && state.stations.isEmpty() && state.facets.isEmpty() -> Column(
+                    Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    StatePanel(
+                        title = stringResource(R.string.radio_error),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    TvActionButton(
+                        text = stringResource(R.string.action_reload),
+                        onClick = viewModel::refresh,
+                    )
+                }
                 showingFacets && state.facets.isEmpty() -> StatePanel(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
@@ -623,13 +637,107 @@ private fun RadioFacetList(
     }
 }
 
+internal enum class RadioLoadingLayout { FACETS, GRID, LIST }
+
+/** The loading shape follows the real content: facet overviews never use station cards. */
+internal fun RadioUiState.loadingLayout(): RadioLoadingLayout = when {
+    isFacetOverview() -> RadioLoadingLayout.FACETS
+    viewMode == RadioViewMode.GRID -> RadioLoadingLayout.GRID
+    else -> RadioLoadingLayout.LIST
+}
+
+@Composable
+private fun RadioLoadingContent(
+    layout: RadioLoadingLayout,
+    gridColumns: Int,
+    listRows: Int,
+    modifier: Modifier = Modifier,
+) {
+    val pulse = if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) null
+        else com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse)
+    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    when (layout) {
+        RadioLoadingLayout.GRID -> androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            columns = deviceDensityGridCells(gridColumns, 160.dp, 4),
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 40.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            userScrollEnabled = false,
+        ) {
+            items(24) { RadioEndPlaceholder(Modifier.fillMaxWidth(), pulse) }
+        }
+        RadioLoadingLayout.LIST, RadioLoadingLayout.FACETS -> {
+            val facets = layout == RadioLoadingLayout.FACETS
+            Row(modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
+                    userScrollEnabled = false,
+                ) {
+                    items(if (facets) 22 else 12) {
+                        RadioListPlaceholder(facets, rowScale, pulse)
+                    }
+                }
+                if (facets) {
+                    // Reserve the same width as the alphabet strip shown with real categories.
+                    Box(Modifier.width(if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) 36.dp else 28.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RadioListPlaceholder(isFacet: Boolean, rowScale: Float, pulse: State<Float>?) {
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.fillMaxWidth()
+            .border(1.dp, Color.White.copy(alpha = .06f), shape)
+            .padding(10.dp * rowScale),
+        horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!isFacet) {
+            Box(
+                Modifier.size(72.dp * rowScale)
+                    .skeletonPulseAlpha(pulse)
+                    .background(fill, RoundedCornerShape(8.dp)),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box(
+                Modifier.fillMaxWidth(if (isFacet) .48f else .64f)
+                    .height(20.dp * rowScale)
+                    .skeletonPulseAlpha(pulse)
+                    .background(fill, RoundedCornerShape(4.dp)),
+            )
+            if (!isFacet) Box(
+                Modifier.fillMaxWidth(.4f)
+                    .height(16.dp * rowScale)
+                    .skeletonPulseAlpha(pulse)
+                    .background(fill, RoundedCornerShape(4.dp)),
+            )
+        }
+        if (isFacet) {
+            Box(
+                Modifier.width(64.dp * rowScale).height(16.dp * rowScale)
+                    .skeletonPulseAlpha(pulse)
+                    .background(fill, RoundedCornerShape(4.dp)),
+            )
+        }
+    }
+}
+
 internal const val RADIO_GRID_END_PLACEHOLDERS = 2
 
 internal fun radioGridEndPlaceholderKey(index: Int) = "radio-grid-more:$index"
 
 @Composable
-private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
-    val pulse = if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) null
+private fun RadioEndPlaceholder(modifier: Modifier = Modifier, sharedPulse: State<Float>? = null) {
+    val pulse = sharedPulse ?: if (com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects) null
         else com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse)
     val fill = MaterialTheme.colorScheme.surfaceVariant
     val shape = RoundedCornerShape(10.dp)
