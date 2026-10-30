@@ -1,7 +1,11 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.ambient.tv.ui.radio
 
 import android.content.Context
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -73,10 +77,9 @@ class RadioPlaybackLauncher @Inject constructor(
                 metadata = PlaybackMetadata(
                     route = Destinations.RADIO_PLAYER,
                     title = currentStation.name,
-                    subtitle = radioStationSubtitle(
-                        currentStation,
-                        context.resources.configuration.locales[0],
-                    ),
+                    // Technical station details belong to badges and the information panel.
+                    // The subtitle is reserved exclusively for dynamic now-playing data.
+                    subtitle = "",
                     source = "radio",
                     mediaId = currentStation.id,
                     hasVideo = false,
@@ -115,7 +118,17 @@ class RadioPlaybackLauncher @Inject constructor(
 
             player.addListener(object : Player.Listener {
                 override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                    publishNowPlaying(mediaMetadata.title)
+                    publishNowPlaying(
+                        radioMetadataNowPlaying(mediaMetadata.title, mediaMetadata.artist, currentStation.name),
+                    )
+                }
+
+                // Some Icecast/Shoutcast servers send their song updates as timed ICY
+                // metadata without changing the combined MediaMetadata.title.
+                override fun onMetadata(metadata: Metadata) {
+                    (0 until metadata.length())
+                        .mapNotNull { metadata.get(it) as? IcyInfo }
+                        .lastOrNull()?.title?.let(::publishNowPlaying)
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -123,7 +136,9 @@ class RadioPlaybackLauncher @Inject constructor(
                 }
             })
             // Some streams expose the first ICY title before the listener is attached.
-            publishNowPlaying(player.mediaMetadata.title)
+            publishNowPlaying(
+                radioMetadataNowPlaying(player.mediaMetadata.title, player.mediaMetadata.artist, currentStation.name),
+            )
         }
     }
 
@@ -179,6 +194,21 @@ internal fun radioStationSubtitle(
 internal fun radioNowPlayingTitle(value: CharSequence?, stationName: String): String? =
     value?.toString()?.trim()
         ?.takeIf { it.isNotBlank() && !it.equals(stationName.trim(), ignoreCase = true) }
+
+/** Prefer a stream's full title, adding a separately supplied artist only when not already present. */
+internal fun radioMetadataNowPlaying(
+    title: CharSequence?,
+    artist: CharSequence?,
+    stationName: String,
+): String? {
+    val track = radioNowPlayingTitle(title, stationName) ?: return null
+    val performer = artist?.toString()?.trim()
+        ?.takeIf { it.isNotBlank() && !it.equals(stationName.trim(), ignoreCase = true) }
+    if (performer == null || track.contains(performer, ignoreCase = true)) return track
+    // Explicit artist and title are separate fields; combine them for the existing
+    // subtitle transport used by the playback session and notification.
+    return performer + " - " + track
+}
 
 internal const val MAX_RADIO_RECONNECT_ATTEMPTS = 3
 
