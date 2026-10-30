@@ -12,6 +12,34 @@ import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/**
+ * Preserve the displayed row and tile order while new source results arrive. New IDs are
+ * appended without dislodging the focused row; complete results still remove deleted IDs.
+ * Incoming metadata replaces old values, but indices never become the identity of an item.
+ */
+internal fun stableYouTubeRows(
+    previous: List<YouTubeRow>,
+    incoming: List<YouTubeRow>,
+    complete: Boolean,
+): List<YouTubeRow> {
+    if (previous.isEmpty()) return incoming.distinctBy { it.id }
+    val newById = incoming.associateBy { it.id }
+    val oldIds = previous.mapTo(HashSet()) { it.id }
+    val ordered = previous.filter { !complete || it.id in newById } +
+        incoming.filter { it.id !in oldIds }
+    return ordered.map { old ->
+        val fresh = newById[old.id] ?: return@map old
+        val before = previous.firstOrNull { it.id == old.id }?.items.orEmpty()
+        val freshItems = fresh.items.associateBy { it.videoId }
+        val oldVideoIds = before.mapTo(HashSet()) { it.videoId }
+        val retained = before.mapNotNull { item ->
+            freshItems[item.videoId] ?: item.takeUnless { complete }
+        }
+        fresh.copy(items = (retained + fresh.items.filter { it.videoId !in oldVideoIds })
+            .distinctBy { it.videoId })
+    }
+}
+
 /** Only a completed feed replaces disk membership. Partial responses remain process-local. */
 @Singleton
 class YouTubeContentCache() {
@@ -61,13 +89,7 @@ class YouTubeContentCache() {
     @Synchronized fun merge(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val previous = get(key).orEmpty()
-        val oldById = previous.associateBy { it.id }
-        val merged = incoming.map { fresh ->
-            val old = oldById[fresh.id]
-            val incomingIds = fresh.items.mapTo(hashSetOf()) { it.videoId }
-            fresh.copy(items = reconcileComplete(old?.items.orEmpty(), fresh.items + old?.items.orEmpty().filterNot { it.videoId in incomingIds }) { it.videoId })
-        } + previous.filter { old -> incoming.none { it.id == old.id } }
-        return storeRows(key, merged)
+        return storeRows(key, stableYouTubeRows(previous, incoming, complete = false))
     }
 
     /**
@@ -83,10 +105,13 @@ class YouTubeContentCache() {
 
     @Synchronized fun replace(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
         if (expected != generation) return emptyList()
-        val rows = storeRows(key, reconcileComplete(get(key).orEmpty(), incoming) { it.id })
+        val previous = get(key).orEmpty()
+        val rows = storeRows(key, reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
         val namespace = source
         if (namespace != null) disk?.put(namespace, "rows:$key", { generation == expected }) {
-            com.ambient.tv.data.browse.encodeBrowseJson(json, rows.map { row -> row.copy(items = row.items.map { it.copy(
+            // Persist the server's current ordering for the next cold start; the active view
+            // uses stable ordering until the user leaves, avoiding a reflow under focus.
+            com.ambient.tv.data.browse.encodeBrowseJson(json, incoming.take(MAX_ROWS).map { row -> row.copy(items = row.items.take(MAX_ITEMS_PER_ROW).map { it.copy(
                 imageUrl = com.ambient.tv.data.browse.displayArtworkUrl(it.imageUrl),
                 backgroundUrl = com.ambient.tv.data.browse.displayArtworkUrl(it.backgroundUrl),
             ) }) })
