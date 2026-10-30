@@ -83,6 +83,7 @@ import com.ambient.tv.R
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
+import com.ambient.tv.ui.player.playerPanelInteractionGuard
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.menuFocusMotion
 import androidx.compose.ui.semantics.semantics
@@ -511,7 +512,7 @@ private fun RightSidePanelChrome(
             // Back on a focused TV panel is a modal action, not a page/sidebar focus move.
             // The system BackHandler above handles Android predictive/system navigation as well.
             .onPreviewKeyEvent { event ->
-                if (standalone && rightPanelBackKey(event.key)) {
+                if (standalone && rightPanelBackKey(event.key) && !TvTextFieldFocus.anyFocused) {
                     if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) dismissBack()
                     true
                 } else {
