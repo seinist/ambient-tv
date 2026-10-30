@@ -225,6 +225,7 @@ internal fun LiveTvChannelBrowser(
                         .then(if (visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
                     focusRequester = controls.filterBarFocus,
                     up = pageFocusChain?.contentUp,
+                    focusChain = pageFocusChain,
                 ) else Spacer(Modifier.weight(1f))
                 if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet,
                     modifier = Modifier.focusRequester(alphabetActionFocus)
