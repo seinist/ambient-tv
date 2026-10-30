@@ -150,8 +150,10 @@ import kotlinx.coroutines.delay
         }
     }
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending, contentFocusTarget, filterFocusState.allowContentAutoFocus) {
-        if (sharedInitialFocus) return@LaunchedEffect
+    LaunchedEffect(state.loading, visibleRows, state.feed, initialFeedKey, initialContentFocusPending, contentFocusTarget, filterFocusState.allowContentAutoFocus, state.returnFocusRevision) {
+        // The shared sidebar restorer owns ordinary entries. A player return, however, may
+        // arrive after its first focus pass; explicitly retarget the LAST played video then.
+        if (sharedInitialFocus && state.returnFocusRevision == 0) return@LaunchedEffect
         val requestedFeedIsReady = initialFeedKey == null || state.feed.key == initialFeedKey
         if (filterFocusState.allowContentAutoFocus && !showViewOptions && initialContentFocusPending && requestedFeedIsReady && !state.loading && visibleRows.any { it.items.isNotEmpty() }) {
             delay(120)
