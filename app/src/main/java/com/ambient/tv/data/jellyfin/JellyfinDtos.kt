@@ -24,6 +24,18 @@ data class JellyfinAuthResponse(
 )
 
 @Serializable
+data class JellyfinQuickConnectResult(
+    @SerialName("Authenticated") val authenticated: Boolean = false,
+    @SerialName("Secret") val secret: String = "",
+    @SerialName("Code") val code: String = "",
+)
+
+@Serializable
+data class JellyfinQuickConnectRequest(
+    @SerialName("Secret") val secret: String,
+)
+
+@Serializable
 data class JellyfinUser(
     @SerialName("Id") val id: String,
     @SerialName("Name") val name: String,
