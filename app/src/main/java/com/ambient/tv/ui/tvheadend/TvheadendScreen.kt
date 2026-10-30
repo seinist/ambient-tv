@@ -322,7 +322,7 @@ fun TvheadendScreen(
                         upcoming = dashboard?.upcoming.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
                         titleArt = titleArt,
-                        onArtworkNeeded = { viewModel.requestTitleArt(listOf(it)) },
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onWatch = watchChannel,
                         onEvent = viewModel::selectEvent,
                         firstContentFocusRequester = firstContentFocusRequester,
@@ -345,7 +345,7 @@ fun TvheadendScreen(
                         events = dashboard?.events.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
                         titleArt = titleArt,
-                        onArtworkNeeded = { viewModel.requestTitleArt(listOf(it)) },
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onEvent = viewModel::selectEvent,
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
@@ -358,7 +358,7 @@ fun TvheadendScreen(
                         failedRecordings = dashboard?.failedRecordings.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
                         art = recordingArt,
-                        onArtworkNeeded = { viewModel.requestTitleArt(listOf(it)) },
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         canDelete = state.capabilities.deleteRecordings && !state.offline,
                         busy = state.actionInProgress,
                         onDelete = { pendingDelete = PendingDelete.Recording(it) },
@@ -377,7 +377,7 @@ fun TvheadendScreen(
                         imageHeaders = viewModel.imageHeaders,
                         art = recordingArt,
                         seriesArt = seriesArt,
-                        onArtworkNeeded = { viewModel.requestTitleArt(listOf(it)) },
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onSelect = viewModel::selectRecording,
                         onEdit = { viewModel.edit(LiveTvEditTarget.Timer(it)) },
                         onEditSeries = { viewModel.edit(LiveTvEditTarget.Series(it)) },
@@ -672,11 +672,11 @@ internal fun GuideEventCard(
     onFocused: () -> Unit,
     art: LiveTvArt? = null,
     imageHeaders: Map<String, String> = emptyMap(),
-    onArtworkNeeded: () -> Unit = {},
+    onArtworkNeeded: (kotlinx.coroutines.CoroutineScope) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // LazyRow only composes nearby events; never prefetch the full multi-day EPG.
-    LaunchedEffect(event.eventId, event.title) { onArtworkNeeded() }
+    LaunchedEffect(event.eventId, event.title) { onArtworkNeeded(this) }
     var focused by remember { mutableStateOf(false) }
     val width = (event.durationSeconds / 60f * 3.2f).roundToInt().coerceIn(150, 430).dp
     val live = event.isLive(now)
@@ -729,7 +729,7 @@ private fun RecordingList(
     failedRecordings: List<TvhDvrEntry>,
     imageHeaders: Map<String, String>,
     art: (TvhDvrEntry) -> LiveTvArt?,
-    onArtworkNeeded: (String) -> Unit,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     canDelete: Boolean,
     busy: Boolean,
     onDelete: (TvhDvrEntry) -> Unit,
@@ -752,7 +752,7 @@ private fun RecordingList(
     com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
-            LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title) }
+            LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
             DvrRow(
                 entry, completed = !failed, failed = failed, art = art(entry), imageHeaders = imageHeaders,
                 onPrimary = { if (!failed) onPlay(entry) else onSelect(entry) },
@@ -776,7 +776,7 @@ private fun TimerList(
     imageHeaders: Map<String, String>,
     art: (TvhDvrEntry) -> LiveTvArt?,
     seriesArt: (TvhAutoRec) -> LiveTvArt?,
-    onArtworkNeeded: (String) -> Unit,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     onSelect: (TvhDvrEntry) -> Unit,
     onEdit: (TvhDvrEntry) -> Unit,
     onEditSeries: (TvhAutoRec) -> Unit,
@@ -804,7 +804,7 @@ private fun TimerList(
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
-                LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title) }
+                LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
                 DvrRow(
                     entry, completed = false, failed = false, art = art(entry), imageHeaders = imageHeaders,
                     onPrimary = { onSelect(entry) }, onInfo = { onSelect(entry) },
@@ -826,7 +826,7 @@ private fun TimerList(
             }
             items(autoRecs, key = { "autorec:${it.uuid}" }) { entry ->
                 LaunchedEffect(entry.uuid, entry.title, entry.name) {
-                    onArtworkNeeded(entry.title?.takeIf(String::isNotBlank) ?: entry.name)
+                    onArtworkNeeded(entry.title?.takeIf(String::isNotBlank) ?: entry.name, this)
                 }
                 val id = "autorec:${entry.uuid}"
                 SeriesTimerRow(
