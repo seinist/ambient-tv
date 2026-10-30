@@ -23,14 +23,26 @@ class RadioBrowserFailoverInterceptor @Inject constructor(
                 .build()
             try {
                 val response = chain.proceed(request)
-                val retryable = response.code in 500..599
-                if (!retryable || index == hosts.lastIndex) return response
+                // A mirror may be alive but overloaded. Try the next one for transient failures.
+                val retryable = response.code == 408 || response.code == 429 || response.code in 500..599
+                if (!retryable) {
+                    if (response.isSuccessful) servers.markSuccessful(host)
+                    return response
+                }
+                if (index == hosts.lastIndex) {
+                    servers.clear()
+                    return response
+                }
                 response.close()
             } catch (error: IOException) {
                 lastFailure = error
-                if (index == hosts.lastIndex) throw error
+                if (index == hosts.lastIndex) {
+                    servers.clear()
+                    throw error
+                }
             }
         }
+        servers.clear()
         throw lastFailure ?: IOException("No Radio Browser API mirror available")
     }
 }

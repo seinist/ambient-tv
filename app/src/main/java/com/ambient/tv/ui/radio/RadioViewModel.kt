@@ -372,15 +372,18 @@ class RadioViewModel @Inject constructor(
         if (!section.isFacetSection) return
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
+            // Retain the last successful categories while refreshing so the list and focus
+            // do not collapse into generic placeholders if the remote catalog is slow.
+            val previousFacets = _state.value.facets
             _state.value = _state.value.copy(
                 loading = true,
                 loadingMore = false,
                 stations = emptyList(),
-                facets = emptyList(),
+                facets = previousFacets,
                 selectedFacet = null,
                 hasMore = false,
                 error = false,
-                contentReady = false,
+                contentReady = previousFacets.isNotEmpty(),
             )
             suspendResult {
                 when (section) {
@@ -398,11 +401,12 @@ class RadioViewModel @Inject constructor(
                         contentReady = true,
                     )
                 }
-            }.onFailure {
+            }.onFailure { error ->
+                timber.log.Timber.tag("RadioBrowser").w(error, "Failed to load %s categories", section.key)
                 if (_state.value.section == section && _state.value.selectedFacet == null) {
                     _state.value = _state.value.copy(
                         loading = false,
-                        facets = emptyList(),
+                        facets = previousFacets,
                         error = true,
                         contentReady = true,
                     )
@@ -419,10 +423,12 @@ class RadioViewModel @Inject constructor(
             _state.value = before.copy(
                 loading = reset,
                 loadingMore = !reset,
-                stations = if (reset) emptyList() else before.stations,
+                // A reload of an already visible page must not wipe its cards or focus.
+                // New sections/searches clear the old page before calling this method.
+                stations = before.stations,
                 nextOffset = if (reset) 0 else before.nextOffset,
                 error = false,
-                contentReady = if (reset) false else before.contentReady,
+                contentReady = before.stations.isNotEmpty() || before.contentReady,
             )
             val facet = _state.value.selectedFacet
             val section = _state.value.section
@@ -446,10 +452,14 @@ class RadioViewModel @Inject constructor(
                     error = false,
                     contentReady = true,
                 )
-            }.onFailure {
+            }.onFailure { error ->
+                timber.log.Timber.tag("RadioBrowser").w(error, "Failed to load stations for %s", section.key)
                 _state.value = _state.value.copy(
                     loading = false,
                     loadingMore = false,
+                    // Never auto-retry the same failed page on every focus movement.
+                    // Explicit refresh restores paging after the catalog returns.
+                    hasMore = false,
                     error = true,
                     contentReady = true,
                 )
