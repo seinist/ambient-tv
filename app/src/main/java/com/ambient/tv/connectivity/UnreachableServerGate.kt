@@ -31,6 +31,8 @@ data class UnreachableServerGateState(
     val names: List<String> = emptyList(),
     /** A wake/reconnect is running: the offline page shows progress instead of looking dead. */
     val retrying: Boolean = false,
+    /** At least one configured media service is actively waking or waiting after WOL. */
+    val waking: Boolean = false,
     /**
      * Servers shown as offline (see [nextOfflineSystems]). They stay in the menu and on Home as
      * an offline entry that offers to wake them; nothing is hidden or deleted.
@@ -119,6 +121,28 @@ class UnreachableServerGate @Inject constructor(
 
     private var retryJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * Cancel the real shared wake jobs rather than simply dismissing their progress view.
+     * Only pause in-flight services; healthy providers must remain connected.
+     */
+    fun cancelStartupWake() {
+        if (!current().waking) return
+        retryJob?.cancel()
+        if (com.ambient.tv.server.isInFlightConnectState(plex.state.value)) plex.cancelStartupWake()
+        if (com.ambient.tv.server.isInFlightConnectState(jellyfin.state.value)) jellyfin.cancelStartupWake()
+        if (com.ambient.tv.server.isInFlightConnectState(emby.state.value)) emby.cancelStartupWake()
+        if (com.ambient.tv.server.isInFlightConnectState(tvheadend.state.value)) tvheadend.cancelStartupWake()
+        refresh()
+    }
+
+    /** Retry/Reload re-enables wake attempts without changing persistent WOL preferences. */
+    fun allowWakeRetry() {
+        plex.allowWakeRetry()
+        jellyfin.allowWakeRetry()
+        emby.allowWakeRetry()
+        tvheadend.allowWakeRetry()
+    }
+
     fun retry() {
         if (retryJob?.isActive == true) return
         retrying.value = true
@@ -195,6 +219,9 @@ class UnreachableServerGate @Inject constructor(
             canDismiss = decision.canDismiss,
             names = names,
             retrying = retrying.value,
+            waking = listOf(plexState, jellyfinState, embyState, tvheadend.state.value).any {
+                it == ServerConnectionState.SendingWakePacket || it is ServerConnectionState.Waking
+            },
             offline = offlineNow,
             wakeUnavailable = offlineNow.isNotEmpty() && offlineNow.none(::wakeConfigured),
         )
