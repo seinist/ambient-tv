@@ -125,14 +125,14 @@ internal data class TvhFocusTarget(val contentId: String?, val rowId: String? = 
 fun TvheadendScreen(
     initialTab: TvheadendTab = TvheadendTab.LIVE,
     onOpenSettings: () -> Unit,
-    /** The live source can be TVHeadend, IPTV, Plex, Jellyfin or Emby. */
-    onOpenSourceSettings: (String) -> Unit = { onOpenSettings() },
     onBack: (() -> Unit)? = null,
     /** Tab chips update the nav route so the sidebar stays in sync. */
     onSelectTab: ((TvheadendTab) -> Unit)? = null,
     onWatchChannel: (String) -> Unit,
     onPlayRecording: (String) -> Unit,
     viewModel: TvheadendViewModel = hiltViewModel(),
+    /** The live source can be TVHeadend, IPTV, Plex, Jellyfin or Emby. */
+    onOpenSourceSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     val state by viewModel.uiState.collectAsState()
     val titleArt by viewModel.titleArt.collectAsState()
