@@ -125,7 +125,8 @@ internal class SharedConnectRun(private val scope: CoroutineScope) {
  * The state to fall back to when a connect is cancelled: the last settled state from before it,
  * never a "waking"/"checking" state nothing would ever end.
  */
-internal fun settledStateAfterCancel(before: ServerConnectionState): ServerConnectionState = when (before) {
+internal fun settledStateAfterCancel(before: ServerConnectionState, paused: Boolean = false): ServerConnectionState =
+    if (paused) ServerConnectionState.Offline else when (before) {
     ServerConnectionState.NotConfigured, ServerConnectionState.Offline, ServerConnectionState.WakeTimedOut,
     is ServerConnectionState.Online, is ServerConnectionState.Error -> before
     else -> ServerConnectionState.Offline

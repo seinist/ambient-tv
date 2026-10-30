@@ -145,7 +145,9 @@ class TvheadendConnectionManager @Inject constructor(
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
-            if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
+            if (isInFlightConnectState(_state.value)) {
+                _state.value = settledStateAfterCancel(before, paused = reconnectPause.isPaused(endpoint))
+            }
             throw cancelled
         }
     }
