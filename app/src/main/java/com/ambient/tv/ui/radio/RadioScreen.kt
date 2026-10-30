@@ -359,7 +359,7 @@ fun RadioScreen(
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                 )
                 state.error && state.stations.isEmpty() && state.facets.isEmpty() -> Column(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().pageContentUp(focusChain).focusGroup(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
