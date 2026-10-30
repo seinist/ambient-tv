@@ -32,7 +32,7 @@ class LiveTvArtworkRepository @Inject constructor(
     private val prefs = context.getSharedPreferences("livetv_tmdb_landscape_v1", Context.MODE_PRIVATE)
     private val lock = Any()
     private val pending = mutableSetOf<String>()
-    private val missing = mutableSetOf<String>()
+    private val missingUntil = mutableMapOf<String, Long>()
     private val slots = Semaphore(2)
     private var activeLanguage = artworkLanguage()
     private val _titleArt = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -52,14 +52,17 @@ class LiveTvArtworkRepository @Inject constructor(
                 val titleKey = liveTvArtKey(title)
                 val key = cacheKey(language, titleKey)
                 val scheduled = synchronized(lock) {
-                    if (key in missing || titleKey in _titleArt.value) false else pending.add(key)
+                    val now = System.currentTimeMillis()
+                    val stillMissing = (missingUntil[key] ?: 0L) > now
+                    if (!stillMissing) missingUntil.remove(key)
+                    if (stillMissing || titleKey in _titleArt.value) false else pending.add(key)
                 }
                 if (!scheduled) return@forEach
                 scope.launch(Dispatchers.IO) {
                     try {
                         val cached = decodeEntry(prefs.getString(key, null), System.currentTimeMillis())
                         if (cached != null) {
-                            if (cached.url == null) synchronized(lock) { missing.add(key) }
+                            if (cached.url == null) synchronized(lock) { missingUntil[key] = cached.expiresAtMillis }
                             else publish(language, titleKey, cached.url)
                             return@launch
                         }
@@ -68,8 +71,9 @@ class LiveTvArtworkRepository @Inject constructor(
                             // Network/auth/rate-limit failures must remain retryable, never negative-cache them.
                             if (result.isSuccess) {
                                 val url = result.getOrNull()
-                                prefs.edit().putString(key, encodeEntry(System.currentTimeMillis(), url)).apply()
-                                if (url == null) synchronized(lock) { missing.add(key) }
+                                val storedAt = System.currentTimeMillis()
+                                prefs.edit().putString(key, encodeEntry(storedAt, url)).apply()
+                                if (url == null) synchronized(lock) { missingUntil[key] = storedAt + NEGATIVE_TTL_MS }
                                 else publish(language, titleKey, url)
                                 pruneDisk()
                             }
@@ -105,7 +109,7 @@ class LiveTvArtworkRepository @Inject constructor(
             if (it.language == "de") "de-DE" else it.toLanguageTag().takeIf(String::isNotBlank) ?: "en-US"
         }
 
-        internal data class Cached(val url: String?)
+        internal data class Cached(val url: String?, val expiresAtMillis: Long)
 
         internal fun encodeEntry(timestampMillis: Long, url: String?): String = "$timestampMillis|${url.orEmpty()}"
 
@@ -116,7 +120,7 @@ class LiveTvArtworkRepository @Inject constructor(
             val url = value.substring(split + 1).ifBlank { null }
             val ttl = if (url == null) NEGATIVE_TTL_MS else POSITIVE_TTL_MS
             if (timestamp > nowMillis || nowMillis - timestamp > ttl) return null
-            return Cached(url)
+            return Cached(url, timestamp + ttl)
         }
     }
 }
