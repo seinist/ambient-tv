@@ -34,6 +34,8 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.launch
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -268,6 +270,9 @@ internal fun OverlayLazyGridScrollbar(state: LazyGridState, modifier: Modifier =
     }
 }
 
+/** Browse content may exit Right only into its adjacent scrollbar, never a distant header. */
+internal val LocalLazyScrollbarRightTarget = staticCompositionLocalOf<FocusRequester?> { null }
+
 /** Match the existing scrollbar gutter without contributing to the list's measured size. */
 @Composable
 internal fun LazyScrollbarFrame(
@@ -282,16 +287,19 @@ internal fun LazyScrollbarFrame(
         return
     }
     val contentFocus = remember { FocusRequester() }
+    val scrollbarFocus = remember { FocusRequester() }
     val visible = spec.enabled && overflow
     Box(modifier, propagateMinConstraints = true) {
-        content(Modifier.focusRequester(contentFocus).focusGroup().padding(end = if (visible && spec.gutter == null) 16.dp else 0.dp))
+        CompositionLocalProvider(LocalLazyScrollbarRightTarget provides scrollbarFocus.takeIf { visible }) {
+            content(Modifier.focusRequester(contentFocus).focusGroup().padding(end = if (visible && spec.gutter == null) 16.dp else 0.dp))
+        }
         if (visible) {
             Box(Modifier.matchParentSize().padding(
                 end = spec.gutter?.let { ((it - OverlayScrollbarWidth) / 2).coerceAtLeast(0.dp) } ?: 0.dp,
                 top = if (spec.gutter != null) 12.dp else 0.dp,
                 bottom = if (spec.gutter != null) 12.dp else 0.dp,
             ), contentAlignment = Alignment.CenterEnd) {
-                scrollbar(Modifier.fillMaxHeight(), contentFocus)
+                scrollbar(Modifier.fillMaxHeight().focusRequester(scrollbarFocus), contentFocus)
             }
         }
     }
