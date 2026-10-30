@@ -1198,7 +1198,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun testJellyfinConnection() {
-        if (_uiState.value.isTestingJellyfin) return
+        if (_uiState.value.jellyfinAuth.testing) return
         val page = SettingsCategory.JELLYFIN
         val ticket = beginFeedback("test:jellyfin")
         val persisted = runCatching { persistJellyfin(_uiState.value); refreshSavedValues() }
@@ -1206,7 +1206,7 @@ class SettingsViewModel @Inject constructor(
             finishFeedback(ticket, page, R.string.notice_failed, false, "jellyfin", error = persisted.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
             return
         }
-        _uiState.update { it.copy(isTestingJellyfin = true) }
+        _uiState.update { it.copy(jellyfinAuth = it.jellyfinAuth.copy(testing = true)) }
         viewModelScope.launch {
             try {
                 val result = suspendResult {
@@ -1217,7 +1217,7 @@ class SettingsViewModel @Inject constructor(
                 
                 finishFeedback(ticket, page, if (result.isSuccess) R.string.notice_test_ok else R.string.notice_failed,
                     result.isSuccess, "jellyfin", error = result.exceptionOrNull(), delivery = FeedbackDelivery.NOTIFICATION)
-            } finally { _uiState.update { it.copy(isTestingJellyfin = false) } }
+            } finally { _uiState.update { it.copy(jellyfinAuth = it.jellyfinAuth.copy(testing = false)) } }
         }
     }
 
@@ -3070,7 +3070,7 @@ class SettingsViewModel @Inject constructor(
 
     private fun macBusy(system: String, busy: Boolean, mac: String? = null) {
         _uiState.update { when (system) {
-            "jellyfin" -> it.copy(isResolvingJellyfinMac = busy, jellyfinMacAddress = mac ?: it.jellyfinMacAddress)
+            "jellyfin" -> it.copy(jellyfinAuth = it.jellyfinAuth.copy(resolvingMac = busy), jellyfinMacAddress = mac ?: it.jellyfinMacAddress)
             "emby" -> it.copy(isResolvingEmbyMac = busy, embyMacAddress = mac ?: it.embyMacAddress)
             "tvheadend" -> it.copy(isResolvingTvheadendMac = busy, tvheadendMacAddress = mac ?: it.tvheadendMacAddress)
             else -> it.copy(isResolvingMac = busy, macAddress = mac ?: it.macAddress)
@@ -3080,7 +3080,7 @@ class SettingsViewModel @Inject constructor(
     private fun lookupMac(system: String, verify: Boolean) {
         val state = _uiState.value
         if (when (system) {
-            "jellyfin" -> state.isResolvingJellyfinMac
+            "jellyfin" -> state.jellyfinAuth.resolvingMac
             "emby" -> state.isResolvingEmbyMac
             "tvheadend" -> state.isResolvingTvheadendMac
             else -> state.isResolvingMac
