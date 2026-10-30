@@ -103,8 +103,8 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     private fun focused(target: Target) {
         if (!active || target !in targets) return
-        // A newly focused content tile wins over a pending refresh fallback.
-        if (target.key.content) cancelRecovery()
+        // Any deliberate focus target (tile, category or action) wins over refresh recovery.
+        cancelRecovery()
         if (last !== target) {
             releasePin()
             pin = target.pinnable?.pin()
