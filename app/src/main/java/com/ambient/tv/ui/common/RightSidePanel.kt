@@ -94,10 +94,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Handheld windows can be narrower than the television panel width, above all in portrait, where
- * a fixed 500 dp panel would push its start edge off screen. Television keeps the exact width.
- */
-/**
  * Standalone browse/settings drawers share the player's slide duration and easing. The player
  * itself owns its dismissal animation and must not be animated a second time.
  *
@@ -187,6 +183,7 @@ fun Modifier.fillWindowHeight(handheldGap: Dp? = null): Modifier = composed {
         }
 }
 
+/** A portrait handheld clamps the drawer width so its left edge stays on-screen. */
 @Composable
 private fun panelWidth(width: Dp): Dp {
     if (!com.ambient.tv.ui.mobile.LocalHandheldUi.current) return width
@@ -304,6 +301,7 @@ fun RightSideLazyPanel(
         canScrollForward = listState.canScrollForward,
         header = null,
         onOutsideTap = onOutsideTap,
+        retainFocus = true,
     ) {
         LazyColumn(
             state = listState,
