@@ -47,6 +47,7 @@ data class RadioFacet(
     val id: String,
     val name: String,
     val stationCount: Int,
+    val languageCode: String? = null,
 )
 
 internal fun RadioBrowserFacetDto.count(): Int =
