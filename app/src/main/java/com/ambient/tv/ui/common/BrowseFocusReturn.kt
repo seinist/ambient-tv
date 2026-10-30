@@ -103,10 +103,11 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     private fun focused(target: Target) {
         if (!active || target !in targets) return
-        // Compose may automatically move focus to another content tile when a focused lazy
-        // item is removed. That must not cancel its pending first-survivor recovery. An explicit
-        // header/chip focus still cancels it, as does a later focus move once recovery ends.
-        if (recovery?.isActive != true || !target.key.content) cancelRecovery()
+        // When a focused lazy tile disappears, Compose can temporarily move focus even to
+        // a category chip. Do not cancel pending recovery on that automatic move: the next
+        // frame verifies whether the old item still exists. Normal user navigation keeps
+        // its destination because recovery then exits without changing focus.
+        if (recovery?.isActive != true) cancelRecovery()
         if (last !== target) {
             releasePin()
             pin = target.pinnable?.pin()
