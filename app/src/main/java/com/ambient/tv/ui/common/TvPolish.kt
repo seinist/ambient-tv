@@ -457,7 +457,7 @@ fun ArtworkImage(
         ImageRequest.Builder(context).data(currentModel).crossfade(false)
             .placeholderMemoryCacheKey(cachedKey)
             .apply {
-                requestHeaders(headers)
+                requestHeaders(artworkHeadersForModel(currentModel, headers))
                 // AsyncImage's constraints resolver decodes at the measured view size.
                 // Do not wait for onSizeChanged/recomposition before creating the painter.
                 if (constrainDecode) {
@@ -470,7 +470,7 @@ fun ArtworkImage(
     var failed by remember(candidates) { mutableStateOf(false) }
     var visibleFraction by remember(currentModel) { mutableStateOf<Float?>(null) }
     val focusModel = (currentModel as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, headers, visibleFraction) else null
+    val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
     val hdrFilter = com.ambient.tv.ui.display.rememberUiHdrBitmapColorFilter()
     Box(modifier = if (focusCrop) modifier.onSizeChanged { containerSize = it } else modifier) {
         if (hasModel) {
@@ -556,7 +556,7 @@ fun CrossfadeBackdropImage(
                 val request = remember(layer.model, context, headers, constrainDecode, decodeSize) {
                     ImageRequest.Builder(context).data(layer.model).crossfade(false)
                         .apply {
-                            requestHeaders(headers)
+                            requestHeaders(artworkHeadersForModel(layer.model, headers))
                             if (decodeSize != null) {
                                 size(decodeSize.width, decodeSize.height)
                                 scale(if (contentScale == ContentScale.Fit || contentScale == ContentScale.Inside) coil3.size.Scale.FIT else coil3.size.Scale.FILL)
@@ -569,7 +569,7 @@ fun CrossfadeBackdropImage(
                 }
                 var visibleFraction by remember { mutableStateOf<Float?>(null) }
                 val focusModel = (layer.model as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, headers, visibleFraction) else null
+                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
                 var loaded by remember { mutableStateOf(false) }
                 LaunchedEffect(loaded, focus?.ready) {
                     // With focusCrop, fade in only once the crop is final so it never shifts on screen.

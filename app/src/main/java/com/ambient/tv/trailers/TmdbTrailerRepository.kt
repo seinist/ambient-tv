@@ -251,6 +251,20 @@ class TmdbTrailerRepository internal constructor(private val tokens: TokenStore,
         matchProgrammeTitle(candidates, title)?.imageUrl
     }
 
+    /**
+     * Only return an actual TMDB landscape backdrop, never a portrait poster stretched into an
+     * EPG cell. A limited fallback to the series title handles "Series: Episode" guide names.
+     */
+    suspend fun landscapeForProgramme(title: String, language: String): Result<String?> = suspendResult {
+        if (!configured) return@suspendResult null
+        for (query in programmeArtworkQueries(title)) {
+            val candidates = search(query, language, language.substringAfter('-', "DE")).getOrThrow().map { it.title }
+            val backdrop = matchProgrammeTitle(candidates, query, backdropOnly = true)?.backdrop
+            if (!backdrop.isNullOrBlank()) return@suspendResult "https://image.tmdb.org/t/p/w780$backdrop"
+        }
+        null
+    }
+
     private fun tmdbType(item: MediaItem): String? = when (item.type) { "movie" -> "movie"; "show" -> "tv"; else -> null }
 
     /** The TMDb id: from the item's tmdb:// guid, its imdb:// guid, or a title/year search. */

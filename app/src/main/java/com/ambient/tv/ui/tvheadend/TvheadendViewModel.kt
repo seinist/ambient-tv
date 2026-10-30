@@ -70,7 +70,7 @@ class TvheadendViewModel @Inject constructor(
     private val hosts: com.ambient.tv.connectivity.HostConnectivity,
     private val reminderStore: com.ambient.tv.livetv.LiveTvReminderStore,
     private val tvheadendConnection: com.ambient.tv.server.TvheadendConnectionManager,
-    private val tmdb: com.ambient.tv.trailers.TmdbTrailerRepository,
+    private val artwork: LiveTvArtworkRepository,
 ) : ViewModel() {
     val reminders = reminderStore.reminders.also { reminderStore.refresh() }
 
@@ -168,36 +168,10 @@ class TvheadendViewModel @Inject constructor(
         _uiState.update { it.copy(editing = target, actionFeedback = null) }
     }
 
-    /**
-     * Art found on TMDb by title, for recordings, timers and programmes whose server and guide
-     * have none (DVB EPG data rarely carries images). Keyed by [liveTvArtKey].
-     */
-    private val _titleArt = MutableStateFlow<Map<String, String>>(emptyMap())
-    val titleArt: StateFlow<Map<String, String>> = _titleArt
-    private val titleArtRequested = mutableSetOf<String>()
-
-    /** Look up art for these titles once each; missing results simply leave the fallback. */
-    fun requestTitleArt(titles: Collection<String>) {
-        if (!tmdb.configured) return
-        val wanted = titles.map(::liveTvArtKey).filter { it.length >= 2 && titleArtRequested.add(it) }
-        if (wanted.isEmpty()) return
-        val originals = titles.associateBy(::liveTvArtKey)
-        val language = java.util.Locale.getDefault().let { if (it.language == "de") "de-DE" else it.toLanguageTag() }
-        viewModelScope.launch {
-            for (key in wanted) {
-                val url = tmdb.artworkForTitle(originals[key] ?: key, language).getOrNull() ?: continue
-                _titleArt.update { it + (key to url) }
-            }
-        }
-    }
-
-    private fun requestMissingArt(dashboard: LiveTvDashboard) {
-        val recordings = (dashboard.recordings + dashboard.failedRecordings + dashboard.upcoming)
-            .filter { liveTvRecordingArt(it, dashboard.events, emptyList()) == null }.map { it.title }
-        val series = dashboard.autoRecs.filter { liveTvSeriesArt(it, dashboard.events, emptyList()) == null }
-            .map { it.title?.takeIf(String::isNotBlank) ?: it.name }
-        requestTitleArt((recordings + series).distinct().take(MAX_TITLE_ART_LOOKUPS))
-    }
+    /** Shared with the player; only composed cards and opened details request their own art. */
+    val titleArt = artwork.titleArt
+    fun requestTitleArt(titles: Collection<String>, scope: kotlinx.coroutines.CoroutineScope = viewModelScope) =
+        artwork.requestTitleArt(titles, scope)
 
     private var refreshJob: Job? = null
     private val refreshPolicy = LiveTvRefreshPolicy()
@@ -271,7 +245,6 @@ class TvheadendViewModel @Inject constructor(
                     // Stored data may need another read, but says nothing about reachability.
                     refreshNeedsRetry = repository.servingCachedData
                     val offline = offlineNow()
-                    requestMissingArt(dashboard)
                     _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(), loading = false, refreshing = false,
                         dashboard = dashboard,
                         selectedEvent = it.selectedEvent?.let { selected ->
@@ -411,4 +384,3 @@ class TvheadendViewModel @Inject constructor(
         ?.let { findProgrammeRecording(event, it) }
 }
 
-private const val MAX_TITLE_ART_LOOKUPS = 60

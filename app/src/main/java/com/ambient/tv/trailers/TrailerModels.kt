@@ -103,13 +103,23 @@ fun rankTrailers(videos: List<TrailerVideo>, language: String, originalLanguage:
 
 /** Title search is deliberately conservative: ambiguous remakes never silently play another film. */
 /** A programme title without a year: only exact (case-insensitive) title matches with art, most popular first. */
-fun matchProgrammeTitle(candidates: List<TrailerTitle>, title: String): TrailerTitle? {
+fun matchProgrammeTitle(candidates: List<TrailerTitle>, title: String, backdropOnly: Boolean = false): TrailerTitle? {
     val normalized = title.trim().lowercase(java.util.Locale.ROOT)
     if (normalized.length < 2) return null
     return candidates.filter { candidate ->
-        candidate.imageUrl != null && listOf(candidate.title, candidate.name, candidate.originalTitle, candidate.originalName)
-            .any { it.trim().lowercase(java.util.Locale.ROOT) == normalized }
+        (if (backdropOnly) !candidate.backdrop.isNullOrBlank() else candidate.imageUrl != null) &&
+            listOf(candidate.title, candidate.name, candidate.originalTitle, candidate.originalName)
+                .any { it.trim().lowercase(java.util.Locale.ROOT) == normalized }
     }.maxByOrNull { it.popularity }
+}
+
+/** Try the exact EPG title first; an episode suffix or year must never be treated as the film title. */
+internal fun programmeArtworkQueries(title: String): List<String> {
+    val trimmed = title.trim()
+    val yearless = trimmed.replace(Regex("""\s*\((?:19|20)\d{2}\)$"""), "").trim()
+    val series = yearless.substringBefore(" – ").substringBefore(": ").trim()
+    return listOfNotNull(trimmed.takeIf { it.length >= 2 }, yearless.takeIf { it != trimmed && it.length >= 2 },
+        series.takeIf { it.length >= 4 && it != yearless }).distinct().take(2)
 }
 
 fun matchTrailerTitle(candidates: List<TrailerTitle>, title: String, year: Int?): TrailerTitle? {
