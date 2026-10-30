@@ -551,6 +551,7 @@ private fun RadioFacetList(
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
+        focusActionsOnRight = false, // D-pad Right enters the shared AlphabetBar, not page actions.
         modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
