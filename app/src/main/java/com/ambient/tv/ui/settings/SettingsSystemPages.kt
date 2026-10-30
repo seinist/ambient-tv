@@ -570,6 +570,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             TvTextField(value = uiState.tvheadendHost, onValueChange = viewModel::onTvheadendHostChanged, label = stringResource(R.string.settings_tvh_host), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.tvheadendPort, onValueChange = viewModel::onTvheadendPortChanged, label = stringResource(R.string.settings_tvh_port), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
+                            TvTextField(value = uiState.tvheadendHtspPort, onValueChange = viewModel::onTvheadendHtspPortChanged, label = stringResource(R.string.settings_tvh_htsp_port), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.tvheadendUsername, onValueChange = viewModel::onTvheadendUsernameChanged, label = stringResource(R.string.settings_tvh_username), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next), modifier = Modifier.fillMaxWidth())
                             TvTextField(value = uiState.tvheadendPassword, onValueChange = viewModel::onTvheadendPasswordChanged, label = stringResource(R.string.settings_tvh_password), visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
                             TvSettingRow(stringResource(R.string.settings_tvh_https), stringResource(R.string.settings_tvh_https_hint), uiState.tvheadendUseHttps, viewModel::onTvheadendHttpsChanged)
@@ -593,6 +594,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                             "guide" to stringResource(R.string.tvh_guide),
                             "recordings" to stringResource(R.string.tvh_recordings),
                             "timers" to stringResource(R.string.tvh_timers),
+                            "hbbtv" to stringResource(R.string.guide_hbbtv),
                         ).forEach { (key, label) ->
                             TvSettingRow(title = label, checked = key in uiState.tvheadendSubmenuKeys,
                                 onCheckedChange = { enabled -> viewModel.onTvheadendSubmenuChanged(key, enabled) },

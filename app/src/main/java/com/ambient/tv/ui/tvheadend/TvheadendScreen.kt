@@ -41,6 +41,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.ConnectedTv
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Timer
@@ -137,12 +138,16 @@ fun TvheadendScreen(
     val state by viewModel.uiState.collectAsState()
     val titleArt by viewModel.titleArt.collectAsState()
     val selectTab = onSelectTab ?: viewModel::selectTab
-    val swipeTabs = remember(state.capabilities) {
+    val swipeTabs = remember(state.capabilities, state.dashboard?.channels, state.tab) {
         buildList {
             add(TvheadendTab.LIVE)
             if (state.capabilities.guide) add(TvheadendTab.GUIDE)
             if (state.capabilities.recordings) add(TvheadendTab.RECORDINGS)
             if (state.capabilities.timers) add(TvheadendTab.TIMERS)
+            if (state.source.system == "tvheadend" &&
+                (state.tab == TvheadendTab.HBBTV ||
+                    state.dashboard?.channels.orEmpty().any { com.ambient.tv.livetv.liveTvHbbtvMenuApps(it).isNotEmpty() }))
+                add(TvheadendTab.HBBTV)
         }
     }
     var pendingDelete by remember { mutableStateOf<PendingDelete?>(null) }
@@ -213,6 +218,7 @@ fun TvheadendScreen(
             TvheadendTab.GUIDE -> dashboard.channels.isNotEmpty()
             TvheadendTab.RECORDINGS -> dashboard.recordings.isNotEmpty() || dashboard.failedRecordings.isNotEmpty()
             TvheadendTab.TIMERS -> dashboard.upcoming.isNotEmpty() || dashboard.autoRecs.isNotEmpty()
+            TvheadendTab.HBBTV -> tvheadendHbbtvEntries(dashboard.channels).isNotEmpty()
         }
         if (!initialContentFocusPending || state.loading || state.tab != initialTab || !hasContent) return@LaunchedEffect
         // Live TV and the Guide scroll to their target first and focus it themselves.
@@ -295,6 +301,7 @@ fun TvheadendScreen(
                 TvheadendTab.GUIDE -> state.dashboard?.channels.isNullOrEmpty()
                 TvheadendTab.RECORDINGS -> state.dashboard?.let { it.recordings.isEmpty() && it.failedRecordings.isEmpty() } ?: true
                 TvheadendTab.TIMERS -> state.dashboard?.let { it.upcoming.isEmpty() && it.autoRecs.isEmpty() } ?: true
+                TvheadendTab.HBBTV -> state.dashboard == null
             }) -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
@@ -369,6 +376,13 @@ fun TvheadendScreen(
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
+                    )
+                    TvheadendTab.HBBTV -> TvheadendHbbtvBrowse(
+                        channels = dashboard?.channels.orEmpty(),
+                        firstFocus = firstContentFocusRequester,
+                        selectedKey = contentFocusTarget.contentId,
+                        onFocused = { id -> viewModel.onContentFocused(tab, id) },
+                        onWatchChannel = watchChannel,
                     )
                     TvheadendTab.TIMERS -> TimerList(
                         timers = dashboard?.upcoming.orEmpty(),
@@ -534,6 +548,7 @@ internal fun TvheadendHeader(
                 TvheadendTab.GUIDE -> R.string.tvh_guide
                 TvheadendTab.RECORDINGS -> R.string.tvh_recordings
                 TvheadendTab.TIMERS -> R.string.tvh_timers
+                TvheadendTab.HBBTV -> R.string.guide_hbbtv
             },
         )
         // IPTV playlists have no provider mark: a plain title instead of borrowing TVHeadend's.
@@ -554,6 +569,9 @@ internal fun TvheadendHeader(
         if (state.capabilities.guide) add(TvheadendTab.GUIDE)
         if (state.capabilities.recordings) add(TvheadendTab.RECORDINGS)
         if (state.capabilities.timers) add(TvheadendTab.TIMERS)
+        if (state.source.system == "tvheadend" && (state.tab == TvheadendTab.HBBTV ||
+            state.dashboard?.channels.orEmpty().any { com.ambient.tv.livetv.liveTvHbbtvMenuApps(it).isNotEmpty() }))
+            add(TvheadendTab.HBBTV)
     }
     com.ambient.tv.ui.common.PageChipRow(
         focusChain,
@@ -563,6 +581,9 @@ internal fun TvheadendHeader(
         if (state.capabilities.guide) item { Tab(TvheadendTab.GUIDE, R.string.tvh_guide, Icons.Filled.Schedule) }
         if (state.capabilities.recordings) item { Tab(TvheadendTab.RECORDINGS, R.string.tvh_recordings, Icons.Filled.FiberManualRecord) }
         if (state.capabilities.timers) item { Tab(TvheadendTab.TIMERS, R.string.tvh_timers, Icons.Filled.Timer) }
+        if (TvheadendTab.HBBTV in visibleTabs) item {
+            Tab(TvheadendTab.HBBTV, R.string.guide_hbbtv, Icons.Filled.ConnectedTv)
+        }
     }
     }
 }

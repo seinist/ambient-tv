@@ -72,6 +72,7 @@ internal fun radioMenuIcon(key: String): ImageVector = when (key) {
 internal fun liveTvMenuIcon(key: String): ImageVector = when (key) {
     "guide", "timers" -> Icons.Filled.Schedule
     "recordings" -> Icons.Filled.FiberManualRecord
+    "hbbtv" -> Icons.Filled.ConnectedTv
     else -> Icons.Filled.Tv
 }
 

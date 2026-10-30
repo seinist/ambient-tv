@@ -13,6 +13,18 @@ enum class LiveTvChannelKind { UNKNOWN, TV, RADIO }
 @kotlinx.serialization.Serializable
 enum class LiveTvChannelAccess { UNKNOWN, FTA, ENCRYPTED }
 
+/** Applications discovered from TVHeadend channel/service metadata, not from an active stream. */
+@kotlinx.serialization.Serializable
+data class LiveTvHbbtvApp(
+    val url: String,
+    val name: String? = null,
+    val visibility: String? = null,
+)
+
+/** HbbTV AIT visibility is not proof that an application is broadcast independent. */
+fun liveTvHbbtvMenuApps(channel: LiveTvChannel): List<LiveTvHbbtvApp> =
+    channel.hbbtvApps.filter { it.visibility == "all" || it.visibility == "apps" }
+
 @kotlinx.serialization.Serializable
 data class LiveTvChannel(
     val uuid: String,
@@ -27,6 +39,8 @@ data class LiveTvChannel(
     /** Server-side HbbTV discovery fallback; the live stream's AIT remains authoritative. */
     val hbbtvUrl: String? = null,
     val hbbtvName: String? = null,
+    /** Complete TVHeadend application list; the first URL above is retained for the player. */
+    val hbbtvApps: List<LiveTvHbbtvApp> = emptyList(),
 )
 
 @kotlinx.serialization.Serializable

@@ -242,6 +242,7 @@ class TvheadendRepository @Inject constructor(
         // raw service records once so playback can fall back to them when a stream profile strips
         // AIT/PMT signalling. Permission-filtered by TVHeadend; unavailable metadata is optional.
         val hbbtvServices = async { optionalHbbtvServiceMetadata() }
+        val htspHbbtv = async { optionalHtspHbbtvMetadata() }
         val logoMap = suspendResult { channelLogoMap() }
             .onFailure { Timber.w(it, "TVHeadend channel logo playlist unavailable; falling back to channel icon field") }
             .getOrDefault(emptyMap())
@@ -249,11 +250,13 @@ class TvheadendRepository @Inject constructor(
         val names = tagNames.await()
         val serviceRows = services.await()
         val hbbtvRows = hbbtvServices.await()
+        val htspAppsByChannel = htspHbbtv.await()
         channelRows.mapNotNull { obj ->
             val uuid = obj.string("uuid") ?: return@mapNotNull null
             if (obj.boolean("enabled") == false) return@mapNotNull null
             val name = obj.string("name") ?: uuid
-            val metadata = tvhChannelMetadata(obj, names, serviceRows, hbbtvRows)
+            val metadata = tvhChannelMetadata(obj, names, serviceRows, hbbtvRows,
+                htspAppsByChannel[uuid].orEmpty())
             TvhChannel(
                 uuid = uuid,
                 name = name,
@@ -267,6 +270,7 @@ class TvheadendRepository @Inject constructor(
                 access = metadata.access,
                 hbbtvUrl = metadata.hbbtvUrl,
                 hbbtvName = metadata.hbbtvName,
+                hbbtvApps = metadata.hbbtvApps,
             )
         }.distinctBy { it.uuid }.sortedWith(compareBy<TvhChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
     } }
@@ -285,20 +289,40 @@ class TvheadendRepository @Inject constructor(
 
 
     /**
-     * Permission-filtered raw MPEG-TS service records. Newer TVHeadend versions persist their
-     * decoded HbbTV application lists here as `hbbtv.{section}`. A 401/403 or an older server is
-     * intentionally just "no fallback"; live channel loading must never depend on this metadata.
+     * The HTTP raw export is administrator-only on many installations. HTSP's channelAdd
+     * publishes the same AIT data to normal channel viewers; both sources are optional.
      */
     private suspend fun optionalHbbtvServiceMetadata(): Map<String, JsonObject> =
         withContext(Dispatchers.IO) {
             suspendResult {
-                val raw = getJson("api/raw/export", mapOf("class" to "mpegts_service"))
-                (raw as? JsonArray).orEmpty()
-                    .mapNotNull { it as? JsonObject }
-                    .filter { it["hbbtv"] is JsonObject }
-                    .mapNotNull { row -> row.string("uuid")?.let { it to row } }
-                    .toMap()
-            }.onFailure { Timber.d(it, "TVHeadend HbbTV service metadata unavailable") }
+                ensureConfiguredAndAllowed()
+                val request = Request.Builder()
+                    .url(buildUrl("api/raw/export", mapOf("class" to "mpegts_service"))).get().build()
+                client.newBuilder().callTimeout(4, TimeUnit.SECONDS).build().newCall(request)
+                    .execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Timber.d("TVHeadend HbbTV raw export returned HTTP %d; trying HTSP", response.code)
+                            emptyMap()
+                        } else {
+                            val raw = json.parseToJsonElement(response.body.string().orEmpty())
+                            (raw as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+                                .filter { it["hbbtv"] != null }
+                                .mapNotNull { row -> row.string("uuid")?.let { it to row } }.toMap()
+                        }
+                    }
+            }.onFailure { Timber.w(it, "TVHeadend HbbTV raw service metadata unavailable") }
+                .getOrDefault(emptyMap())
+        }
+
+    private suspend fun optionalHtspHbbtvMetadata(): Map<String, List<TvhHbbtvApplication>> =
+        withContext(Dispatchers.IO) {
+            suspendResult {
+                ensureConfiguredAndAllowed()
+                val host = configuredTvheadendEndpoint().host
+                val port = preferences.tvheadendHtspPort
+                TvheadendHtspHbbtv.discover(host, port,
+                    preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty())
+            }.onFailure { Timber.d(it, "TVHeadend HTSP HbbTV metadata unavailable; HTTP fallback remains active") }
                 .getOrDefault(emptyMap())
         }
 
@@ -857,7 +881,7 @@ class TvheadendRepository @Inject constructor(
 
     private fun currentCacheScope(): List<String> = listOf(
         preferences.tvheadendHost, preferences.tvheadendPort.toString(),
-        preferences.tvheadendUseHttps.toString(),
+        preferences.tvheadendHtspPort.toString(), preferences.tvheadendUseHttps.toString(),
         preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty(),
     )
 

@@ -49,6 +49,8 @@ data class SidebarUiState(
     val tvheadendEnabled: Boolean = false,
     /** Login rejected: the menu shows only "check sign-in", Home and search leave it out. */
     val tvheadendLoginRejected: Boolean = false,
+    /** Only show the HbbTV browse entry after discovering TVHeadend applications without tuning. */
+    val tvheadendHbbtvAvailable: Boolean = false,
     val youtubeFeedKeys: List<String> = listOf("home"),
     /** Section behind SmartTube's root route (see [Destinations.youtubeSection]). */
     val youtubeStartFeedKey: String = "home",
@@ -74,6 +76,7 @@ class SidebarViewModel @Inject constructor(
     private val appPreferences: AppPreferences,
     private val tokens: com.ambient.tv.data.local.TokenStore,
     private val liveTv: com.ambient.tv.livetv.LiveTvRegistry,
+    private val tvheadendRepository: com.ambient.tv.tvheadend.data.TvheadendRepository,
     private val fileStore: FileStore,
     private val dlnaStore: DlnaStore,
     private val mediaRepository: MediaRepository,
@@ -293,6 +296,7 @@ class SidebarViewModel @Inject constructor(
                 radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
+                tvheadendHbbtvAvailable = it.tvheadendHbbtvAvailable && appPreferences.isTvheadendConfigured,
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
                 radioSubmenuKeys = appPreferences.radioSubmenuKeys,
                 tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
@@ -313,6 +317,12 @@ class SidebarViewModel @Inject constructor(
             ) }
             if (deferExpensiveWorkMs > 0L) delay(deferExpensiveWorkMs)
             launch { val sources = liveTv.discover(force = forceLiveTv); _uiState.update { it.copy(liveTvSources = sources) } }
+            if (appPreferences.isTvheadendConfigured) launch {
+                val channels = com.ambient.tv.util.suspendResult { tvheadendRepository.channels(force = forceLiveTv) }.getOrNull()
+                if (channels != null) _uiState.update { it.copy(
+                    tvheadendHbbtvAvailable = channels.any { channel -> com.ambient.tv.livetv.liveTvHbbtvMenuApps(channel).isNotEmpty() }
+                ) }
+            }
             val youtubeOn = _uiState.value.youtubeEnabled
             if (youtubeOn) launch {
                 val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(setOf("home"))

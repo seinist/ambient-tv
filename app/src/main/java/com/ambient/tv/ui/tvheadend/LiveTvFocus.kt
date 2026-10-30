@@ -46,6 +46,10 @@ internal fun liveTvFocusTarget(
         val ids = dashboard?.upcoming.orEmpty().map { it.uuid } + dashboard?.autoRecs.orEmpty().map { "autorec:${it.uuid}" }
         TvhFocusTarget(savedId?.takeIf { it in ids } ?: ids.firstOrNull())
     }
+    TvheadendTab.HBBTV -> {
+        val ids = tvheadendHbbtvEntries(dashboard?.channels.orEmpty()).map { it.key }
+        TvhFocusTarget(savedId?.takeIf { it in ids } ?: ids.firstOrNull())
+    }
 }
 
 /** Channels Live TV and the Guide show with the current filters and sort. */

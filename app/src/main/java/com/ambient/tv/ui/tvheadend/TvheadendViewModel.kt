@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class TvheadendTab { LIVE, GUIDE, RECORDINGS, TIMERS }
+enum class TvheadendTab { LIVE, GUIDE, RECORDINGS, TIMERS, HBBTV }
 
 sealed interface LiveTvEditTarget {
     data class Timer(val entry: TvhDvrEntry) : LiveTvEditTarget

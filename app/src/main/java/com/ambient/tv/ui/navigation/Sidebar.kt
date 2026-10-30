@@ -340,11 +340,13 @@ internal fun SidebarContent(
                 Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))
             add(MenuSystem("tvheadend", offlineLabel(systemName(MediaSystem.TVHEADEND, "TVHeadend"), "tvheadend" in sidebarState.offlineSystems), Icons.Filled.Tv, entries, system = MediaSystem.TVHEADEND))
         } else if (tvheadendEnabled) {
-            val entries = listOf(
+            val entries = listOfNotNull(
                 Triple("live", stringResource(R.string.tvh_live), liveTvMenuIcon("live")),
                 Triple("guide", stringResource(R.string.tvh_guide), liveTvMenuIcon("guide")),
                 Triple("recordings", stringResource(R.string.tvh_recordings), liveTvMenuIcon("recordings")),
                 Triple("timers", stringResource(R.string.tvh_timers), liveTvMenuIcon("timers")),
+                Triple("hbbtv", stringResource(R.string.guide_hbbtv), liveTvMenuIcon("hbbtv"))
+                    .takeIf { sidebarState.tvheadendHbbtvAvailable },
             ).filter { it.first in tvheadendSubmenuKeys }.map { (key, label, icon) ->
                 MenuDestination("tvheadend:$key", label, icon, if (key == "live") Destinations.LIVE_TV else Destinations.liveTvSection(key))
             }.ifEmpty { listOf(MenuDestination("tvheadend:live", stringResource(R.string.tvh_live), liveTvMenuIcon("live"), Destinations.LIVE_TV)) }

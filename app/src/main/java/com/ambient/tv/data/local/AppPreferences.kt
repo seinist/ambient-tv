@@ -472,9 +472,15 @@ class AppPreferences @Inject constructor(
     var tvheadendSubmenuKeys: List<String>
         get() {
             val raw = prefs.getString(KEY_TVH_SUBMENU_KEYS, null) ?: return DEFAULT_TVH_SUBMENU_KEYS
-            return raw.split(',').map(String::trim).filter { it in TVH_SUBMENU_KEYS }.distinct()
+            val keys = raw.split(',').map(String::trim).filter { it in TVH_SUBMENU_KEYS }.distinct()
+            // Migration: a previously saved list predates the HbbTV row. Add it once by default,
+            // then honour explicit visibility edits (including hiding it).
+            return if (!prefs.getBoolean(KEY_TVH_HBBTV_MENU_MIGRATED, false) && "hbbtv" !in keys) keys + "hbbtv" else keys
         }
-        set(value) = prefs.edit { putString(KEY_TVH_SUBMENU_KEYS, value.filter { it in TVH_SUBMENU_KEYS }.distinct().joinToString(",")) }
+        set(value) = prefs.edit {
+            putString(KEY_TVH_SUBMENU_KEYS, value.filter { it in TVH_SUBMENU_KEYS }.distinct().joinToString(","))
+            putBoolean(KEY_TVH_HBBTV_MENU_MIGRATED, true)
+        }
 
     var plexHiddenSectionKeys: Set<String>
         get() = prefs.getString(KEY_PLEX_HIDDEN_SECTION_KEYS, null)?.split(',')?.map(String::trim)?.filter(String::isNotEmpty)?.toSet().orEmpty()
@@ -1514,6 +1520,11 @@ class AppPreferences @Inject constructor(
             prefs.edit { putInt(KEY_TVH_PORT, value.coerceIn(1, 65535)) }
         }
 
+    /** HTSP is a separate TCP protocol: reverse-proxied HTTP ports need not be adjacent to it. */
+    var tvheadendHtspPort: Int
+        get() = prefs.getInt(KEY_TVH_HTSP_PORT, 9982).coerceIn(1, 65535)
+        set(value) = prefs.edit { putInt(KEY_TVH_HTSP_PORT, value.coerceIn(1, 65535)) }
+
     /** Prefer HTTPS for TVHeadend (reverse proxy / TLS). Default stays HTTP; host URLs with https:// still win. */
     var tvheadendUseHttps: Boolean
         get() = prefs.getBoolean(KEY_TVH_HTTPS, false)
@@ -2173,8 +2184,9 @@ class AppPreferences @Inject constructor(
         val SPOTIFY_SUBMENU_KEYS = setOf("home", "liked", "playlists", "albums", "artists", "now_playing")
         val DEFAULT_SPOTIFY_SUBMENU_KEYS = listOf("home", "liked", "playlists", "albums", "artists", "now_playing")
         const val KEY_TVH_SUBMENU_KEYS = "tvh_submenu_keys"
-        val TVH_SUBMENU_KEYS = setOf("live", "guide", "recordings", "timers")
-        val DEFAULT_TVH_SUBMENU_KEYS = listOf("live", "guide", "recordings", "timers")
+        const val KEY_TVH_HBBTV_MENU_MIGRATED = "tvh_hbbtv_menu_migrated"
+        val TVH_SUBMENU_KEYS = setOf("live", "guide", "recordings", "timers", "hbbtv")
+        val DEFAULT_TVH_SUBMENU_KEYS = listOf("live", "guide", "recordings", "timers", "hbbtv")
         const val KEY_PLEX_HIDDEN_SECTION_KEYS = "plex_hidden_section_keys"
         const val KEY_SIDEBAR_SETTINGS_SHORTCUT_HIDDEN = "sidebar_settings_shortcut_hidden"
         const val KEY_HOME_ROWS = "home_rows_v1"
@@ -2399,6 +2411,7 @@ class AppPreferences @Inject constructor(
         const val KEY_LOGIN_REJECTED = "login_rejected_profiles"
         const val KEY_METADATA_EDITORS = "metadata_editor_logins"
         const val KEY_TVH_PORT = "tvh_port"
+        const val KEY_TVH_HTSP_PORT = "tvh_htsp_port"
         const val KEY_TVH_HTTPS = "tvh_https"
         const val KEY_TVH_USERNAME = "tvh_username"
         const val KEY_TVH_STREAM_PROFILE = "tvh_stream_profile"
