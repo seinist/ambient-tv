@@ -334,6 +334,14 @@ class PlaybackAuditInstrumentation : Instrumentation() {
                     })
                     return@thread
                 }
+                if (arguments.getString("media3NeuralComputeShaders") == "true") {
+                    auditMedia3NeuralComputeShaders(targetContext, ::log,
+                        full = arguments.getString("computeFull") == "true")
+                    finish(Activity.RESULT_OK, Bundle().apply {
+                        putString("stream", "MEDIA3 NEURAL COMPUTE GPU AUDIT FINISHED\n" + results)
+                    })
+                    return@thread
+                }
                 if (arguments.getString("textInputs") == "true") {
                     com.ambient.tv.ui.common.TextInputFocusAudit(this, ::log).run()
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "TEXT INPUT FOCUS AUDIT PASSED\n$results") })
