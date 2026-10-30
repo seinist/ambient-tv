@@ -73,6 +73,7 @@ import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
+import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
@@ -95,6 +96,7 @@ fun RadioScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
+    val selectSection = onSelectSection ?: viewModel::selectSection
     var showViewOptions by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
@@ -128,6 +130,14 @@ fun RadioScreen(
         Column(
             Modifier
                 .fillMaxSize()
+                .handheldSwipeTabs(
+                    tabs = RadioSection.entries,
+                    selected = state.section,
+                    onSelect = selectSection,
+                    enabled = !showViewOptions &&
+                        !searchVisible &&
+                        state.selectedFacet == null,
+                )
                 .padding(
                     start = screenGutter(),
                     end = screenGutter(),
@@ -166,7 +176,10 @@ fun RadioScreen(
             }
 
             if (handheld) {
-                com.ambient.tv.ui.common.PageChipRow(focusChain) {
+                com.ambient.tv.ui.common.PageChipRow(
+                    focusChain,
+                    selectedIndex = RadioSection.entries.indexOf(state.section),
+                ) {
                     lazyItems(RadioSection.entries, key = { it.key }) { section ->
                         TvChip(
                             text = radioSectionLabel(section),
@@ -174,7 +187,7 @@ fun RadioScreen(
                                 state.submittedQuery.isBlank() &&
                                 state.selectedFacet == null,
                             modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
-                            onClick = { (onSelectSection ?: viewModel::selectSection)(section) },
+                            onClick = { selectSection(section) },
                         )
                     }
                 }

@@ -95,6 +95,7 @@ import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.common.mediaFocusMotion
+import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.theme.LocalUiTokens
 import kotlinx.coroutines.delay
@@ -133,6 +134,15 @@ fun TvheadendScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val titleArt by viewModel.titleArt.collectAsState()
+    val selectTab = onSelectTab ?: viewModel::selectTab
+    val swipeTabs = remember(state.capabilities) {
+        buildList {
+            add(TvheadendTab.LIVE)
+            if (state.capabilities.guide) add(TvheadendTab.GUIDE)
+            if (state.capabilities.recordings) add(TvheadendTab.RECORDINGS)
+            if (state.capabilities.timers) add(TvheadendTab.TIMERS)
+        }
+    }
     var pendingDelete by remember { mutableStateOf<PendingDelete?>(null) }
     val events = state.dashboard?.events.orEmpty()
     val channels = state.dashboard?.channels.orEmpty()
@@ -222,15 +232,28 @@ fun TvheadendScreen(
     Box(Modifier.fillMaxSize()) {
         PageBackground(Modifier.fillMaxSize())
         Column(
-            modifier = Modifier.fillMaxSize()
-                .focusProperties { onEnter = { if (showBrowseOptions) cancelFocusChange() } }.focusGroup()
+            modifier = Modifier
+                .fillMaxSize()
+                .handheldSwipeTabs(
+                    tabs = swipeTabs,
+                    selected = state.tab,
+                    onSelect = selectTab,
+                    enabled = state.configured &&
+                        !showBrowseOptions &&
+                        state.selectedEvent == null &&
+                        state.selectedRecording == null &&
+                        state.editing == null &&
+                        pendingDelete == null,
+                )
+                .focusProperties { onEnter = { if (showBrowseOptions) cancelFocusChange() } }
+                .focusGroup()
                 .padding(start = tokens.screenPadding, end = tokens.screenPadding, bottom = tokens.screenPadding, top = com.ambient.tv.ui.common.pageHeaderTop(tokens.screenPadding)),
             verticalArrangement = Arrangement.spacedBy(tokens.itemGap * 1.5f),
         ) {
         TvheadendHeader(
             state = state,
             tabFocusRequesters = tabFocusRequesters,
-            onTab = onSelectTab ?: viewModel::selectTab,
+            onTab = selectTab,
             onRefresh = viewModel::refresh,
             focusChain = pageFocusChain,
             browseControls = browseControls.takeIf { channelBrowser && state.configured },
@@ -518,7 +541,16 @@ internal fun TvheadendHeader(
             )
         }
     }
-    com.ambient.tv.ui.common.PageChipRow(focusChain) {
+    val visibleTabs = buildList {
+        add(TvheadendTab.LIVE)
+        if (state.capabilities.guide) add(TvheadendTab.GUIDE)
+        if (state.capabilities.recordings) add(TvheadendTab.RECORDINGS)
+        if (state.capabilities.timers) add(TvheadendTab.TIMERS)
+    }
+    com.ambient.tv.ui.common.PageChipRow(
+        focusChain,
+        selectedIndex = visibleTabs.indexOf(state.tab),
+    ) {
         item { Tab(TvheadendTab.LIVE, R.string.tvh_live, Icons.Filled.Tv) }
         if (state.capabilities.guide) item { Tab(TvheadendTab.GUIDE, R.string.tvh_guide, Icons.Filled.Schedule) }
         if (state.capabilities.recordings) item { Tab(TvheadendTab.RECORDINGS, R.string.tvh_recordings, Icons.Filled.FiberManualRecord) }

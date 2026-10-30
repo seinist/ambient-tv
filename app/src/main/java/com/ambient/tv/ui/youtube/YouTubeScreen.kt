@@ -92,6 +92,7 @@ import kotlinx.coroutines.delay
     viewModel:YouTubeViewModel=hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val selectFeed = onSelectFeed ?: viewModel::selectFeed
     val filterFocusState = rememberFilterFocusState(initialFeedKey, state.feed, state.channel?.channelId)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) { viewModel.enter(initialFeedKey) }
     val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
@@ -140,7 +141,7 @@ import kotlinx.coroutines.delay
         handledSignInId = state.completedSignInId
         initialContentFocusPending = true
         if (initialFeedKey != null) {
-            (onSelectFeed ?: viewModel::selectFeed)(YouTubeFeed.HOME)
+            selectFeed(YouTubeFeed.HOME)
         }
     }
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
@@ -185,7 +186,7 @@ import kotlinx.coroutines.delay
             focusChain = focusChain,
             state,
             viewModel,
-            onSelectFeed=onSelectFeed ?: viewModel::selectFeed,
+            onSelectFeed=selectFeed,
             showSearch=searchVisible,
             viewOptionsModifier=Modifier.focusRequester(viewOptionsFocusRequester),
             searchActionModifier=Modifier.focusRequester(searchActionFocusRequester),
@@ -227,13 +228,27 @@ import kotlinx.coroutines.delay
             filterUp = if (searchVisible) searchFieldFocusRequester else focusChain.contentUp,
         )
         // Up from the feed: active filters, then the search field, then the feed chips, then the header actions.
-        Box(Modifier.fillMaxSize().pageContentUp(focusChain) {
-            when {
-                filterBarShown -> filterFocus
-                searchVisible -> searchFieldFocusRequester
-                else -> focusChain.contentUp
-            }
-        }.focusGroup()) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .handheldSwipeTabs(
+                    tabs = state.visibleFeeds,
+                    selected = state.feed,
+                    onSelect = selectFeed,
+                    enabled = state.channel == null &&
+                        !showViewOptions &&
+                        !searchVisible &&
+                        state.signInCode == null,
+                )
+                .pageContentUp(focusChain) {
+                    when {
+                        filterBarShown -> filterFocus
+                        searchVisible -> searchFieldFocusRequester
+                        else -> focusChain.contentUp
+                    }
+                }
+                .focusGroup(),
+        ) {
             when {
                 !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing))
                 state.loading -> Loading(state.gridColumns)
@@ -332,7 +347,10 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         else YouTubeChannelTitle(channel)
     }
     state.refreshError?.let { Text(it, color=MaterialTheme.colorScheme.error, maxLines=2, overflow=TextOverflow.Ellipsis) }
-    if (channel == null) com.ambient.tv.ui.common.PageChipRow(focusChain) { items(state.visibleFeeds, key={it.key}) { feed ->
+    if (channel == null) com.ambient.tv.ui.common.PageChipRow(
+        focusChain,
+        selectedIndex = state.visibleFeeds.indexOf(state.feed),
+    ) { items(state.visibleFeeds, key={it.key}) { feed ->
         val selected = state.feed==feed && state.query.isBlank()
         TvChip(feedLabel(feed), selected, modifier=if (state.feed==feed) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon=feedIcon(feed)) { onSelectFeed(feed) }
     } }
