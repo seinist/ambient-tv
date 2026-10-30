@@ -45,7 +45,7 @@ internal fun media3FsrcnnxPasses(source: String): List<Media3FsrcnnxPass>? {
         val body = lines.filterNot { it.startsWith("//!") }.joinToString("\n").trim()
         if (bindings.isEmpty() || bindings.distinct().size != bindings.size ||
             bindings.any { it !in known || !it.matches(Regex("[A-Z][A-Z0-9]*")) } ||
-            saves.size != if (i == markers.lastIndex) 0 else 1 ||
+            saves.size != (if (i == markers.lastIndex) 0 else 1) ||
             saves.any { it == "LUMA" || !it.matches(Regex("[A-Z][A-Z0-9]*")) } ||
             !body.contains("vec4 hook()") ||
             body.contains("#version") || "#extension" in body || "//!COMPUTE" in lines) return null
