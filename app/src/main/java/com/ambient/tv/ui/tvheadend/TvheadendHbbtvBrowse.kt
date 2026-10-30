@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.tvheadend
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -33,6 +34,8 @@ import com.ambient.tv.livetv.LiveTvHbbtvApp
 import com.ambient.tv.livetv.liveTvHbbtvMenuApps
 import com.ambient.tv.livetv.teletext.HbbtvApplication
 import com.ambient.tv.ui.common.TvChip
+import com.ambient.tv.ui.common.PageFocusChain
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.player.teletext.HbbtvHost
 import com.ambient.tv.ui.player.teletext.HbbtvUi
 
@@ -53,6 +56,7 @@ internal fun TvheadendHbbtvBrowse(
     channels: List<LiveTvChannel>,
     firstFocus: FocusRequester,
     selectedKey: String?,
+    focusChain: PageFocusChain,
     onFocused: (String) -> Unit,
     onWatchChannel: (String) -> Unit,
 ) {
@@ -62,7 +66,7 @@ internal fun TvheadendHbbtvBrowse(
     DisposableEffect(Unit) {
         onDispose { HbbtvUi.close() }
     }
-    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 12.dp),
+    Column(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup().padding(horizontal = 22.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.tvh_hbbtv_browse_hint),
             style = MaterialTheme.typography.bodySmall,
