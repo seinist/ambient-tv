@@ -206,7 +206,7 @@ internal fun radioMetadataNowPlaying(
     if (performer == null || track.contains(performer, ignoreCase = true)) return track
     // Explicit artist and title are separate fields; combine them for the existing
     // subtitle transport used by the playback session and notification.
-    return "$" + "{performer} - $" + "{track}"
+    return performer + " - " + track
 }
 
 internal const val MAX_RADIO_RECONNECT_ATTEMPTS = 3
