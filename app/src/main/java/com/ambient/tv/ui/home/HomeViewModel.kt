@@ -1199,27 +1199,27 @@ class HomeViewModel @Inject constructor(
                     async {
                         val stations = when {
                             definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
-                                runCatching { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
+                                suspendResult { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
                             definition.contentKey == HomeRowDefinition.RADIO_FAVORITES ->
                                 appPreferences.radioFavorites.take(HOME_ROW_LIMIT)
                             definition.contentKey == HomeRowDefinition.RADIO_RECENT ->
                                 appPreferences.recentRadioStations.take(HOME_ROW_LIMIT)
                             definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
-                                runCatching {
+                                suspendResult {
                                     radioRepository.search(
                                         tag = definition.contentKey.substringAfter(':'),
                                         limit = HOME_ROW_LIMIT,
                                     ).items
                                 }.getOrDefault(emptyList())
                             definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
-                                runCatching {
+                                suspendResult {
                                     radioRepository.search(
                                         countryCode = definition.contentKey.substringAfter(':'),
                                         limit = HOME_ROW_LIMIT,
                                     ).items
                                 }.getOrDefault(emptyList())
                             definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
-                                runCatching {
+                                suspendResult {
                                     radioRepository.search(
                                         language = definition.contentKey.substringAfter(':'),
                                         limit = HOME_ROW_LIMIT,
