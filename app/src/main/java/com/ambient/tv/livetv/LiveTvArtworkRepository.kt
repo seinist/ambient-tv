@@ -1,7 +1,6 @@
 package com.ambient.tv.livetv
 
 import android.content.Context
-import android.content.SharedPreferences
 import com.ambient.tv.trailers.TmdbTrailerRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
@@ -111,9 +110,10 @@ class LiveTvArtworkRepository @Inject constructor(
         internal fun encodeEntry(timestampMillis: Long, url: String?): String = "$timestampMillis|${url.orEmpty()}"
 
         internal fun decodeEntry(raw: String?, nowMillis: Long): Cached? {
-            val split = raw?.indexOf('|')?.takeIf { it > 0 } ?: return null
-            val timestamp = raw.substring(0, split).toLongOrNull() ?: return null
-            val url = raw.substring(split + 1).ifBlank { null }
+            val value = raw ?: return null
+            val split = value.indexOf('|').takeIf { it > 0 } ?: return null
+            val timestamp = value.substring(0, split).toLongOrNull() ?: return null
+            val url = value.substring(split + 1).ifBlank { null }
             val ttl = if (url == null) NEGATIVE_TTL_MS else POSITIVE_TTL_MS
             if (timestamp > nowMillis || nowMillis - timestamp > ttl) return null
             return Cached(url)
