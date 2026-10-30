@@ -677,6 +677,7 @@
     <string name="offline_wake">Aufwecken</string>
     <string name="offline_library_title">%1$s ist nicht erreichbar</string>
     <string name="offline_library_body">Der Server antwortet nicht. Sobald er wieder erreichbar ist, lädt diese Seite von selbst.</string>
+    <string name="home_cancel_wake">Aufwecken abbrechen</string>
     <string name="home_wake_timeout_title">Server wurde nicht rechtzeitig erreichbar</string>
     <string name="home_wake_timeout_body">„%1$s“ wurde per Wake-on-LAN angesprochen, ist aber noch nicht erreichbar. Der Start kann länger dauern – versuche es erneut oder prüfe Netzwerk und Wake-on-LAN-Einstellungen.</string>
     <string name="home_connection_error_body">Die Verbindung zum Medienserver ist fehlgeschlagen.</string>

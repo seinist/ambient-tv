@@ -165,6 +165,9 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val wakeState by viewModel.startupWakeState.collectAsState()
+    // Even with cached rows already visible, an app-scoped cold-start wake can still run.
+    val canCancelStartupWake = wakeState.waking
     val refreshing by viewModel.refreshing.collectAsState()
     val homeHeroStyleKey = viewModel.homeHeroStyleKey
     val homeHeroIntensityPercent = viewModel.homeHeroIntensityPercent
@@ -192,7 +195,8 @@ fun HomeScreen(
             (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE))
         else -> false
     }
-    ReportSidebarContentReady(!parkInitialFocus)
+    // Keep the cancel control focusable on television during startup.
+    ReportSidebarContentReady(!parkInitialFocus || canCancelStartupWake)
     val systemOverview = plexOnly || jellyfinOnly || embyOnly
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
@@ -328,6 +332,13 @@ fun HomeScreen(
 
         }
     }
+        if (canCancelStartupWake) {
+            TvActionButton(
+                text = stringResource(R.string.home_cancel_wake),
+                onClick = viewModel::cancelStartupWake,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp).zIndex(3f),
+            )
+        }
         // The app home has no header row: the clock floats where the library pages put it.
         if (!systemOverview && !LocalHandheldUi.current && com.ambient.tv.ui.common.LocalClockSettings.current.onHome) {
             com.ambient.tv.ui.common.HeaderClock(

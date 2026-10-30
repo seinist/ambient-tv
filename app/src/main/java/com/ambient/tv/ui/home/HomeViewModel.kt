@@ -232,6 +232,7 @@ class HomeViewModel @Inject constructor(
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    val startupWakeState: StateFlow<com.ambient.tv.connectivity.UnreachableServerGateState> = unreachableServers.state
 
     /** Channel icon URLs point at the TVHeadend server and need the same Basic Auth credentials
      * as the API calls - Coil doesn't share those with [tvheadendRepository]'s own client. */
@@ -558,8 +559,25 @@ class HomeViewModel @Inject constructor(
 
     fun reload() {
         if (_refreshing.value) return
+        unreachableServers.allowWakeRetry()
         captureFocusForReturn()
         refresh()
+    }
+
+    /** Stop wake attempts from cold start and let other systems remain usable. */
+    fun cancelStartupWake() {
+        if (!unreachableServers.current().waking) return
+        unreachableServers.cancelStartupWake()
+        // SharedConnectRun owns the actual wake; cancelling just loadJob does not stop it.
+        loadGeneration++
+        loadJob?.cancel()
+        jellyfinCollectionJob?.cancel()
+        embyCollectionJob?.cancel()
+        libraryLoading = false
+        _refreshing.value = false
+        val loaded = _uiState.value as? HomeUiState.Loaded
+        if (loaded == null) publishRows(emptyList())
+        else if (loaded.loading) _uiState.value = loaded.copy(loading = false)
     }
 
     private fun refresh(invalidateCache: Boolean) {
@@ -1646,13 +1664,16 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun retry() = start(
-        plexOnly = plexOnly,
-        jellyfinOnly = jellyfinOnly,
-        embyOnly = embyOnly,
-        focusStateKey = homeFocusStateKey,
-        refreshing = false,
-    )
+    fun retry() {
+        unreachableServers.allowWakeRetry()
+        start(
+            plexOnly = plexOnly,
+            jellyfinOnly = jellyfinOnly,
+            embyOnly = embyOnly,
+            focusStateKey = homeFocusStateKey,
+            refreshing = false,
+        )
+    }
 
     /**
      * The launcher's Live TV channel: recently watched channels first, then the live row, only

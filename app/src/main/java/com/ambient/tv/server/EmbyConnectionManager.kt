@@ -68,6 +68,15 @@ class EmbyConnectionManager @Inject constructor(
 
     fun pauseAutomaticReconnect() { reconnectPause.pause(endpointKey()) }
 
+    /** Stop the app-scoped cold-start wake, not just the caller waiting on it. */
+    fun cancelStartupWake() {
+        pauseAutomaticReconnect()
+        connectRun.cancel()
+    }
+
+    /** An explicit user retry re-enables waking without changing saved WOL preferences. */
+    fun allowWakeRetry() { reconnectPause.clear() }
+
     /** Joins a connect that is already running instead of starting a second one behind it. */
     suspend fun reconnect(): Boolean = withContext(Dispatchers.IO) {
         reconnectPause.clear()
@@ -134,7 +143,9 @@ class EmbyConnectionManager @Inject constructor(
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // Never leave "waking" behind: nothing would end it, and its card would keep waiting.
-            if (isInFlightConnectState(_state.value)) _state.value = settledStateAfterCancel(before)
+            if (isInFlightConnectState(_state.value)) {
+                _state.value = settledStateAfterCancel(before, paused = reconnectPause.isPaused(endpoint))
+            }
             throw cancelled
         }
     }
