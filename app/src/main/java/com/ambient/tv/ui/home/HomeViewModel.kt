@@ -1174,11 +1174,16 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadPhotoRow() {
+        val generation = ++photoRowGeneration
         photoJob?.cancel()
+        photoRowPending = false
         val definition = if (plexOnly || jellyfinOnly || embyOnly) null else configuredRow(HomeRowDefinition.SYSTEM_PHOTOS, "recent")
         if (definition == null) { photoRow = null; return }
+        photoRowPending = true
         photoJob = viewModelScope.launch {
+            try {
             val photos = photoRepository.recent()
+            if (generation != photoRowGeneration) return@launch
             photoRow = photos.takeIf { it.isNotEmpty() }?.let { entries ->
                 ContentRowData(
                     title = definition.displayTitle(context),
@@ -1188,8 +1193,13 @@ class HomeViewModel @Inject constructor(
                     showDescription = false,
                 )
             }
-            val current = _uiState.value as? HomeUiState.Loaded
-            if (current != null) publishRows(current.rows)
+            } finally {
+                if (generation == photoRowGeneration) {
+                    photoRowPending = false
+                    val current = _uiState.value as? HomeUiState.Loaded
+                    if (current != null && !_uiState.value.isFailurePage()) publishRows(current.rows)
+                }
+            }
         }
     }
 
@@ -1322,7 +1332,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadTrailerRows() {
+        val generation = ++trailerRowsGeneration
         trailerJob?.cancel()
+        trailerRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.trailersEnabled || !trailerRepository.configured) {
             trailerRows = emptyList()
             return
@@ -1332,12 +1344,15 @@ class HomeViewModel @Inject constructor(
         val enabledIds = definitions.mapTo(HashSet()) { "trailers.${it.contentKey}" }
         trailerRows = trailerRows.filter { it.id in enabledIds }
         if (definitions.isEmpty()) return
+        trailerRowsPending = true
         trailerJob = viewModelScope.launch {
+            try {
             val locale = context.resources.configuration.locales[0]
             for (definition in definitions) {
                 val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
                 val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
                 val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                if (generation != trailerRowsGeneration) return@launch
                 if (result.isFailure) continue
                 val entries = result.getOrThrow()
                 trailerRows = trailerRows.filterNot { it.id == "trailers.${feed.name}" }
@@ -1352,6 +1367,14 @@ class HomeViewModel @Inject constructor(
                     }, style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE), id = "trailers.${feed.name}", showDescription = false)
                 // Trailers are an extra row: they must not cover an offline or error page.
                 if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
+            } finally {
+                if (generation == trailerRowsGeneration) {
+                    trailerRowsPending = false
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
             }
         }
     }
