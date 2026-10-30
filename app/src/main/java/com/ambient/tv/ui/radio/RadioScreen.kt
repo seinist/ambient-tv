@@ -73,6 +73,7 @@ import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
+import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
