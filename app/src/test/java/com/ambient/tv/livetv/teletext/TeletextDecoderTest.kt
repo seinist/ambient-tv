@@ -114,13 +114,20 @@ class TeletextDecoderTest {
         return section(body.copyOfRange(0, 12) + audioTracks + body.copyOfRange(12, body.size))
     }
 
-    private fun aitSection(base: String, path: String, name: String, control: Int = 1): ByteArray {
+    private fun aitSection(
+        base: String,
+        path: String,
+        name: String,
+        control: Int = 1,
+        sectionNumber: Int = 0,
+        lastSectionNumber: Int = 0,
+    ): ByteArray {
         val transportCommon = bytes(0x02, 5 + base.length, 0x00, 0x03, 0x01, base.length) + base.toByteArray() + bytes(0x00)
         val appDescriptors = bytes(0x02, 0x03, 0x00, 0x03, 0x01) +
             bytes(0x01, 4 + name.length, 'd'.code, 'e'.code, 'u'.code, name.length) + name.toByteArray() +
             bytes(0x15, path.length) + path.toByteArray()
         val app = bytes(0, 0, 0, 0x13, 0, 1, control, 0xF0 or (appDescriptors.size shr 8), appDescriptors.size and 0xFF) + appDescriptors
-        val body = bytes(0x74, 0, 0, 0x00, 0x10, 0xC1, 0, 0, 0xF0 or (transportCommon.size shr 8), transportCommon.size and 0xFF) +
+        val body = bytes(0x74, 0, 0, 0x00, 0x10, 0xC1, sectionNumber, lastSectionNumber, 0xF0 or (transportCommon.size shr 8), transportCommon.size and 0xFF) +
             transportCommon + bytes(0xF0 or (app.size shr 8), app.size and 0xFF) + app
         val length = body.size - 3 + 4
         body[1] = (0xB0 or (length shr 8)).toByte(); body[2] = length.toByte()
@@ -266,6 +273,40 @@ class TeletextDecoderTest {
         decoder.feed(ts(0x102, aitSection("https://hbbtv.example/", "index.html", "HbbTV")))
         assertTrue(decoder.probeComplete())
         assertEquals("https://hbbtv.example/index.html", decoder.hbbtvApps.single().url)
+    }
+
+    @Test fun multiSectionAitAccumulatesApplicationsAndWaitsForEverySection() {
+        val decoder = TeletextDecoder()
+        decoder.feed(ts(0, pat) + ts(0x1000, pmtWithAit))
+        decoder.feed(ts(0x102, aitSection(
+            "https://one.example/", "index.html", "One",
+            sectionNumber = 0, lastSectionNumber = 1,
+        )))
+        assertFalse("section 0/1 must not finish the AIT probe", decoder.probeComplete())
+        assertEquals(listOf("https://one.example/index.html"), decoder.hbbtvApps.map { it.url })
+
+        decoder.feed(ts(0x102, aitSection(
+            "https://two.example/", "start.html", "Two",
+            sectionNumber = 1, lastSectionNumber = 1,
+        ), firstCounter = 1))
+        assertTrue(decoder.probeComplete())
+        assertEquals(
+            listOf("https://one.example/index.html", "https://two.example/start.html"),
+            decoder.hbbtvApps.map { it.url },
+        )
+    }
+
+    @Test fun timedOutMultiSectionAitKeepsApplicationsAlreadyReceived() {
+        val decoder = TeletextDecoder()
+        decoder.feed(ts(0, pat) + ts(0x1000, pmtWithAit))
+        decoder.feed(ts(0x102, aitSection(
+            "https://one.example/", "index.html", "One",
+            sectionNumber = 0, lastSectionNumber = 2,
+        )))
+        assertFalse(decoder.probeComplete())
+        decoder.finishAitProbe()
+        assertTrue(decoder.probeComplete())
+        assertEquals("https://one.example/index.html", decoder.hbbtvApps.single().url)
     }
 
     @Test fun patMustBeCompleteBeforeItsPmtIsUsed() {
