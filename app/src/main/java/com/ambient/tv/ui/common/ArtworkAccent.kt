@@ -47,7 +47,7 @@ fun rememberArtworkSampledAccent(
             .size(96, 64)
             .precision(coil3.size.Precision.EXACT)
             .allowHardware(false)
-            .requestHeaders(headers)
+            .requestHeaders(artworkHeadersForModel(model, headers))
             .build()
     }
     val painter = rememberAsyncImagePainter(model = painterModel)
