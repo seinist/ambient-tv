@@ -24,6 +24,7 @@ fun AlphabetBar(
     modifier: Modifier = Modifier,
     onReturnToContent: (() -> Unit)? = null,
     firstEntryFocusRequester: FocusRequester? = null,
+    actionsFocus: FocusRequester? = null,
 ) {
     // Entries keep a natural height and the bar is centered; it only compresses when the full
     // alphabet does not fit, instead of stretching a few letters across the whole column.
@@ -36,10 +37,16 @@ fun AlphabetBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                        if (onReturnToContent != null) onReturnToContent() else runCatching { gridFocus.requestFocus() }
-                        true
-                    } else false
+                    when (event.key) {
+                        Key.DirectionLeft -> if (event.type == KeyEventType.KeyDown) {
+                            if (onReturnToContent != null) onReturnToContent() else runCatching { gridFocus.requestFocus() }
+                            true
+                        } else false
+                        Key.DirectionRight -> if (actionsFocus != null && event.type == KeyEventType.KeyDown) {
+                            runCatching { actionsFocus.requestFocus() }.getOrDefault(false)
+                        } else false
+                        else -> false
+                    }
                 }
                 .focusGroup(),
             horizontalAlignment = Alignment.CenterHorizontally,
