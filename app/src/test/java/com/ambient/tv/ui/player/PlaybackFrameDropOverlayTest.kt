@@ -166,9 +166,12 @@ class PlaybackFrameDropOverlayTest {
         settle()
         rule.onNodeWithText(toggleTitle).assertDoesNotExist()
         rule.onNodeWithText(overlayText).assertDoesNotExist()
+        rule.runOnIdle { assertFalse(session.showFrameDropOverlay) }
 
         rule.runOnIdle {
             session.updateAudioOnly(false)
+            // Audio-only intentionally clears video-only overlay preferences; re-enable for video.
+            session.showFrameDropOverlay = true
             panel = UnifiedPlayerPanel.NONE
         }
         settle()
