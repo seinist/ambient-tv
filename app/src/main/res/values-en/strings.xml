@@ -2266,4 +2266,15 @@
     <string name="radio_stations">Stations</string>
     <string name="radio_station_count">%1$d stations</string>
     <string name="radio_browse_back">Back to %1$s</string>
+    <string name="offline_host_online">Host reachable, but the media service is not ready.</string>
+    <string name="offline_host_offline">Server host is not reachable on the network.</string>
+    <string name="offline_host_unknown">Connection status is being determined.</string>
+    <string name="offline_server_address">Server address: %1$s</string>
+    <string name="offline_wol_ready">Automatic Wake-on-LAN is configured.</string>
+    <string name="offline_wol_missing">Automatic Wake-on-LAN is not configured.</string>
+    <string name="offline_auto_check_manual">Manual connection attempt in progress…</string>
+    <string name="offline_auto_check_waiting">Waiting for the next automatic check…</string>
+    <string name="offline_auto_check_now">Automatic check is due…</string>
+    <string name="offline_auto_check_in">Next automatic check in %1$d s</string>
+    <string name="offline_wake_settings">Wake-on-LAN settings</string>
 </resources>
