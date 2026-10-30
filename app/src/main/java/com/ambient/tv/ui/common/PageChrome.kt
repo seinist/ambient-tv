@@ -353,9 +353,10 @@ fun PageChipRow(
     content: LazyListScope.() -> Unit,
 ) {
     val state = rememberLazyListState()
-    LaunchedEffect(selectedIndex) {
+    val handheld = LocalHandheldUi.current
+    LaunchedEffect(selectedIndex, handheld) {
         val index = selectedIndex ?: return@LaunchedEffect
-        if (index >= 0) runCatching { state.animateScrollToItem(index) }
+        if (handheld && index >= 0) state.animateScrollToItem(index)
     }
     LazyRow(
         state = state,
