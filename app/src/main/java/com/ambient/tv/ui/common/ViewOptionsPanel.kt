@@ -66,6 +66,8 @@ fun ViewOptionsPanel(
     gridColumns: Int, listRows: Int, onGridColumns: (Int) -> Unit, onListRows: (Int) -> Unit,
     onClose: () -> Unit, modifier: Modifier = Modifier,
     showDensity: Boolean = true,
+    /** Allow a fixed-layout page to show only density controls, without a redundant view selector. */
+    densityPreview: ViewPreview? = null,
     hint: String = stringResource(R.string.library_options_hint),
     title: String = stringResource(R.string.library_options),
     sorts: List<PanelOption> = emptyList(), selectedSort: String = "", onSort: (String) -> Unit = {},
@@ -140,7 +142,7 @@ fun ViewOptionsPanel(
                 }
             }
         }
-        val preview = views.firstOrNull { it.key == selectedView }?.preview
+        val preview = views.firstOrNull { it.key == selectedView }?.preview ?: densityPreview
         if (showDensity && preview != null) {
             RightPanelSectionTitle(stringResource(R.string.library_layout_density))
             if (preview in setOf(ViewPreview.LIST, ViewPreview.INFO_LIST, ViewPreview.POSTER_LIST, ViewPreview.POSTER_INFO_LIST)) {
