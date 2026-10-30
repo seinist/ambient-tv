@@ -238,17 +238,22 @@ class TvheadendRepository @Inject constructor(
         val services = async {
             optionalChannelMetadata("api/mpegts/service/grid").mapNotNull { row -> row.string("uuid")?.let { it to row } }.toMap()
         }
+        // TVHeadend already parses and persists HbbTV AIT metadata per MPEG-TS service. Fetch the
+        // raw service records once so playback can fall back to them when a stream profile strips
+        // AIT/PMT signalling. Permission-filtered by TVHeadend; unavailable metadata is optional.
+        val hbbtvServices = async { optionalHbbtvServiceMetadata() }
         val logoMap = suspendResult { channelLogoMap() }
             .onFailure { Timber.w(it, "TVHeadend channel logo playlist unavailable; falling back to channel icon field") }
             .getOrDefault(emptyMap())
 
         val names = tagNames.await()
         val serviceRows = services.await()
+        val hbbtvRows = hbbtvServices.await()
         channelRows.mapNotNull { obj ->
             val uuid = obj.string("uuid") ?: return@mapNotNull null
             if (obj.boolean("enabled") == false) return@mapNotNull null
             val name = obj.string("name") ?: uuid
-            val metadata = tvhChannelMetadata(obj, names, serviceRows)
+            val metadata = tvhChannelMetadata(obj, names, serviceRows, hbbtvRows)
             TvhChannel(
                 uuid = uuid,
                 name = name,
@@ -260,6 +265,8 @@ class TvheadendRepository @Inject constructor(
                 tags = metadata.tags,
                 kind = metadata.kind,
                 access = metadata.access,
+                hbbtvUrl = metadata.hbbtvUrl,
+                hbbtvName = metadata.hbbtvName,
             )
         }.distinctBy { it.uuid }.sortedWith(compareBy<TvhChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
     } }
@@ -274,6 +281,25 @@ class TvheadendRepository @Inject constructor(
                     if (!response.isSuccessful) emptyList() else entries(json.parseToJsonElement(response.body.string().orEmpty()))
                 }
             }.getOrDefault(emptyList())
+        }
+
+
+    /**
+     * Permission-filtered raw MPEG-TS service records. Newer TVHeadend versions persist their
+     * decoded HbbTV application lists here as `hbbtv.{section}`. A 401/403 or an older server is
+     * intentionally just "no fallback"; live channel loading must never depend on this metadata.
+     */
+    private suspend fun optionalHbbtvServiceMetadata(): Map<String, JsonObject> =
+        withContext(Dispatchers.IO) {
+            suspendResult {
+                val raw = getJson("api/raw/export", mapOf("class" to "mpegts_service"))
+                (raw as? JsonArray).orEmpty()
+                    .mapNotNull { it as? JsonObject }
+                    .filter { it["hbbtv"] is JsonObject }
+                    .mapNotNull { row -> row.string("uuid")?.let { it to row } }
+                    .toMap()
+            }.onFailure { Timber.d(it, "TVHeadend HbbTV service metadata unavailable") }
+                .getOrDefault(emptyMap())
         }
 
     suspend fun epgEvents(
