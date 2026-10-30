@@ -32,6 +32,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -264,7 +265,10 @@ private fun RadioPlayerContent(
                         current.bitrateKbps?.let {
                             add(stringResource(R.string.player_nerd_audio_bitrate) to "$it kbps")
                         }
-                        radioStationSubtitle(current).takeIf { it.isNotBlank() }?.let {
+                        radioStationSubtitle(
+                            current,
+                            LocalContext.current.resources.configuration.locales[0],
+                        ).takeIf { it.isNotBlank() }?.let {
                             add(stringResource(R.string.player_playback_info) to it)
                         }
                     }
