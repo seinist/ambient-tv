@@ -375,7 +375,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                                 projectmQualityKey = preferences.projectmQualityKey,
                                 projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
                             ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
-                            artwork.requestTitleArt(listOf(entry.title), viewModelScope)
+                            this@TvheadendPlayerViewModel.artwork.requestTitleArt(listOf(entry.title), viewModelScope)
                         }
                     }
                     else -> {
