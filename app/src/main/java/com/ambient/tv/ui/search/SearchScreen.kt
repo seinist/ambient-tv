@@ -756,12 +756,17 @@ private fun TvheadendChannelSearchRow(
     requestInitialFocus: Boolean = false,
     system: MediaSystem = MediaSystem.TVHEADEND,
     sourceName: String = "",
+    rowFocus: RowColumnFocus,
 ) {
+    val rowKey = "search:tvh-channels:${channels.first().sourceId}"
+    val keys = channels.map { "search:tvh-channel:${it.sourceId}:${it.uuid}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.search_channels)
-        BrowseFocusRow("search:tvh-channels:${channels.first().sourceId}") {
-        LazyRow(state = rememberLazyListState(itemKeys = channels.map { "search:tvh-channel:${it.sourceId}:${it.uuid}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow(rowKey) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(channels, key = { it.uuid }) { channel ->
                 SearchArtworkCard(
                     imageUrl = channel.iconUrl,
@@ -770,6 +775,7 @@ private fun TvheadendChannelSearchRow(
                     imageHeaders = imageHeaders,
                     onClick = { onClick(channel) },
                     focusKey = "search:tvh-channel:${channel.sourceId}:${channel.uuid}",
+                    focusModifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, "search:tvh-channel:${channel.sourceId}:${channel.uuid}"),
                     requestInitialFocus = requestInitialFocus && channel == channels.firstOrNull(),
                 )
             }
@@ -786,12 +792,17 @@ private fun TvheadendProgramSearchRow(
     requestInitialFocus: Boolean = false,
     system: MediaSystem = MediaSystem.TVHEADEND,
     sourceName: String = "",
+    rowFocus: RowColumnFocus,
 ) {
+    val rowKey = "search:tvh-programs:${programs.first().sourceId}"
+    val keys = programs.map { "search:tvh-program:${it.sourceId}:${it.eventId}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.tvh_guide)
-        BrowseFocusRow("search:tvh-programs:${programs.first().sourceId}") {
-        LazyRow(state = rememberLazyListState(itemKeys = programs.map { "search:tvh-program:${it.sourceId}:${it.eventId}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow(rowKey) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(programs, key = { it.eventId }) { event ->
                 SearchArtworkCard(
                     imageUrl = event.imageUrl,
@@ -800,6 +811,7 @@ private fun TvheadendProgramSearchRow(
                     imageHeaders = imageHeaders,
                     onClick = { onClick(event) },
                     focusKey = "search:tvh-program:${event.sourceId}:${event.eventId}",
+                    focusModifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, "search:tvh-program:${event.sourceId}:${event.eventId}"),
                     requestInitialFocus = requestInitialFocus && event == programs.firstOrNull(),
                 )
             }
@@ -816,12 +828,17 @@ private fun TvheadendRecordingSearchRow(
     requestInitialFocus: Boolean = false,
     system: MediaSystem = MediaSystem.TVHEADEND,
     sourceName: String = "",
+    rowFocus: RowColumnFocus,
 ) {
+    val rowKey = "search:tvh-recordings:${recordings.first().sourceId}"
+    val keys = recordings.map { "search:tvh-recording:${it.sourceId}:${it.uuid}" }
+    val rowState = rememberLazyListState(itemKeys = keys)
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, keys)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.tvh_recordings)
-        BrowseFocusRow("search:tvh-recordings:${recordings.first().sourceId}") {
-        LazyRow(state = rememberLazyListState(itemKeys = recordings.map { "search:tvh-recording:${it.sourceId}:${it.uuid}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow(rowKey) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(recordings, key = { it.uuid }) { recording ->
                 SearchArtworkCard(
                     imageUrl = recording.imageUrl ?: recording.fanartUrl,
@@ -830,6 +847,7 @@ private fun TvheadendRecordingSearchRow(
                     imageHeaders = imageHeaders,
                     onClick = { onClick(recording) },
                     focusKey = "search:tvh-recording:${recording.sourceId}:${recording.uuid}",
+                    focusModifier = Modifier.rowColumnFocusTarget(rowFocus, rowKey, "search:tvh-recording:${recording.sourceId}:${recording.uuid}"),
                     requestInitialFocus = requestInitialFocus && recording == recordings.firstOrNull(),
                 )
             }
@@ -848,6 +866,7 @@ private fun SearchArtworkCard(
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
     focusKey: String,
+    focusModifier: Modifier = Modifier,
 ) {
     var focused by remember(title, imageUrl) { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(10.dp)
@@ -856,7 +875,7 @@ private fun SearchArtworkCard(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = initialFocusModifier(requestInitialFocus).width(250.dp).browseFocusTarget(focusKey).mediaFocusMotion(focused).activateOnTvKey(onClick = onClick).onFocusChanged { focused = it.isFocused },
+        modifier = initialFocusModifier(requestInitialFocus).width(250.dp).then(focusModifier).browseFocusTarget(focusKey).mediaFocusMotion(focused).activateOnTvKey(onClick = onClick).onFocusChanged { focused = it.isFocused },
     ) {
         Column(
             Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
