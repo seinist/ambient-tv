@@ -74,6 +74,13 @@ object VideoImageCatalog {
         // NVScaler ported from MPV's compute shader to a fragment shader (Media3NisEffect).
         "nis" to "NVIDIA NIS · NVScaler",
     )
+    /** Explicit downsampling is opt-in; "display" preserves the existing direct display scaling.
+     * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
+     */
+    val media3Downscalers = linkedMapOf(
+        "display" to "Display", "lanczos" to "Lanczos · 3",
+        "mitchell" to "Mitchell", "spline36" to "Spline36", "spline64" to "Spline64",
+    )
     /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening; adaptive: bacondither's Adaptive Sharpen. */
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
     val media3Deband = strengths
@@ -225,9 +232,20 @@ data class Media3ImageOptions(
     val filmGrain: String = "off",
     /** Edge-preserving GPU denoise on source pixels, before deband; older profiles read as off. */
     val denoise: String = "off",
+    /** Separate downsampling control. "display" keeps the legacy display pipeline untouched. */
+    val downscaler: String = "display",
+    /** Suppress extrema outside neighbouring source samples (0..100%). */
+    val antiring: Int = 0,
+    /** MPV-style sigmoid sampling on supported separable/EWA kernel upscalers. */
+    val sigmoid: Boolean = true,
+    /** Edge-aware block-boundary smoothing on SDR input. */
+    val deblock: String = "off",
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
+        downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
+        antiring = antiring.coerceIn(0, 100),
+        deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",
         brightness = brightness.coerceIn(-20, 20), contrast = contrast.coerceIn(-20, 20),
         saturation = saturation.coerceIn(-20, 20),
         sharpening = sharpening.takeIf { it in VideoImageCatalog.media3Sharpening } ?: "off",
