@@ -403,11 +403,17 @@ internal fun SidebarContent(
     val configurationLabel = stringResource(R.string.nav_configuration)
     fun systemLabel(system: MenuSystem) = if (system.id == "files") filesLabel else system.label
     // Row lists are built once per data change, not on every recomposition.
-    val mainRows = remember(globals, systems, activeRoute, activeSystem?.id, filesLabel) {
+    val mainRows = remember(globals, systems, activeRoute, activeSystem?.id, filesLabel, settingsShortcutHidden, configurationLabel) {
         val single = systems.singleOrNull()
         if (single != null) {
-            // One system: Search/Home followed by that system's entries.
-            sidebarMainRows(globals, emptyList(), activeRoute) + sidebarPageRows(single.id, single.entries, null, activeRoute)
+            // Keep global Settings at the bottom while exposing the single inlined provider's
+            // own configuration directly, just like the nested system pages on multi-source TVs.
+            val sourceSettings = if (single.id in settingsShortcutHidden) null else MenuDestination(
+                "system-settings:${single.id}", configurationLabel, Icons.Filled.Settings,
+                Destinations.SETTINGS, settingsCategory = single.id,
+            )
+            sidebarMainRows(globals, emptyList(), activeRoute) +
+                sidebarPageRows(single.id, single.entries, sourceSettings, activeRoute)
         } else {
             sidebarMainRows(globals, systems.map { system ->
                 SidebarNavSystem(system.id, if (system.id == "files") filesLabel else system.label, system.entries, system.id == activeSystem?.id, system.icon)
