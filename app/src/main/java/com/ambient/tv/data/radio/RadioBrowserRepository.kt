@@ -46,7 +46,18 @@ class RadioBrowserRepository @Inject constructor(
 
     suspend fun languages(limit: Int = 100): List<RadioFacet> =
         api.languages(limit = limit.coerceIn(1, 200))
-            .toFacets { it.trim() }
+            .mapNotNull { dto ->
+                val id = dto.name.trim()
+                val count = dto.count()
+                if (id.isBlank() || count <= 0) null
+                else RadioFacet(
+                    id = id,
+                    name = id,
+                    stationCount = count,
+                    languageCode = radioLanguageCode(dto.iso639, id),
+                )
+            }
+            .distinctBy { it.id.lowercase() }
 
     suspend fun tags(limit: Int = 150): List<RadioFacet> =
         api.tags(limit = limit.coerceIn(1, 250))

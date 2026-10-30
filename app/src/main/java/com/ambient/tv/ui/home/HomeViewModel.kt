@@ -24,6 +24,7 @@ import com.ambient.tv.data.emby.EmbyBackend
 import com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.server.JellyfinConnectionManager
@@ -1245,41 +1246,44 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun RadioStation.toHomeItem() = MediaItem(
-        ratingKey = RADIO_HOME_ITEM_PREFIX + id,
-        title = name,
-        type = "track",
-        index = null,
-        thumbUrl = artworkUrl,
-        artUrl = artworkUrl,
-        year = null,
-        summary = buildList {
-            country?.takeIf { it.isNotBlank() }?.let(::add)
-            languages.take(2).forEach(::add)
-            tags.take(3).forEach(::add)
-        }.distinct().joinToString(" · ").takeIf(String::isNotBlank),
-        tagline = null,
-        durationMs = null,
-        viewOffsetMs = null,
-        parentTitle = null,
-        parentRatingKey = null,
-        grandparentTitle = null,
-        grandparentRatingKey = null,
-        contentRating = null,
-        rating = null,
-        studio = "Radio Browser",
-        genres = tags,
-        mediaVersions = listOf(
-            com.ambient.tv.domain.model.MediaVersion(
-                streamUrl = streamUrl,
-                resolution = null,
-                videoCodec = null,
-                audioCodec = codec,
-                container = null,
-                bitrateKbps = bitrateKbps,
+    private fun RadioStation.toHomeItem(): MediaItem {
+        val displayLocale = context.resources.configuration.locales[0]
+        return MediaItem(
+            ratingKey = RADIO_HOME_ITEM_PREFIX + id,
+            title = name,
+            type = "track",
+            index = null,
+            thumbUrl = artworkUrl,
+            artUrl = artworkUrl,
+            year = null,
+            summary = buildList {
+                country?.takeIf { it.isNotBlank() }?.let(::add)
+                localizedLanguageNames(displayLocale).take(2).forEach(::add)
+                tags.take(3).forEach(::add)
+            }.distinct().joinToString(" · ").takeIf(String::isNotBlank),
+            tagline = null,
+            durationMs = null,
+            viewOffsetMs = null,
+            parentTitle = null,
+            parentRatingKey = null,
+            grandparentTitle = null,
+            grandparentRatingKey = null,
+            contentRating = null,
+            rating = null,
+            studio = "Radio Browser",
+            genres = tags,
+            mediaVersions = listOf(
+                com.ambient.tv.domain.model.MediaVersion(
+                    streamUrl = streamUrl,
+                    resolution = null,
+                    videoCodec = null,
+                    audioCodec = codec,
+                    container = null,
+                    bitrateKbps = bitrateKbps,
+                ),
             ),
-        ),
-    )
+        )
+    }
 
     private fun loadTrailerRows() {
         trailerJob?.cancel()

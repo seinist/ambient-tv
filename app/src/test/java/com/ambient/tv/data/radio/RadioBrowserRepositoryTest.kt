@@ -73,8 +73,8 @@ class RadioBrowserRepositoryTest {
                 RadioBrowserFacetDto(" ", JsonPrimitive(4)),
             )
             languageFacets = listOf(
-                RadioBrowserFacetDto(" german ", JsonPrimitive("7")),
-                RadioBrowserFacetDto("English", JsonPrimitive(5)),
+                RadioBrowserFacetDto(" german ", JsonPrimitive("7"), iso639 = "deu"),
+                RadioBrowserFacetDto("English", JsonPrimitive(5), iso639 = "en"),
             )
             tagFacets = listOf(
                 RadioBrowserFacetDto(" rock ", JsonPrimitive(8)),
@@ -86,6 +86,7 @@ class RadioBrowserRepositoryTest {
         assertEquals(listOf("DE", "US"), repository.countries().map { it.id })
         assertEquals(listOf(12, 9), repository.countries().map { it.stationCount })
         assertEquals(listOf("german", "English"), repository.languages().map { it.id })
+        assertEquals(listOf("de", "en"), repository.languages().map { it.languageCode })
         assertEquals(listOf("rock", "pop"), repository.tags().map { it.id })
     }
 

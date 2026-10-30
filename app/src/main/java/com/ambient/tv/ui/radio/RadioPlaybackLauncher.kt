@@ -8,6 +8,7 @@ import androidx.media3.common.Player
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackEngineFactory
@@ -24,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import java.util.Locale
 
 @Singleton
 class RadioPlaybackLauncher @Inject constructor(
@@ -72,7 +74,10 @@ class RadioPlaybackLauncher @Inject constructor(
                 metadata = PlaybackMetadata(
                     route = Destinations.RADIO_PLAYER,
                     title = currentStation.name,
-                    subtitle = radioStationSubtitle(currentStation),
+                    subtitle = radioStationSubtitle(
+                        currentStation,
+                        context.resources.configuration.locales[0],
+                    ),
                     source = "radio",
                     mediaId = currentStation.id,
                     hasVideo = false,
@@ -153,8 +158,12 @@ class RadioPlaybackLauncher @Inject constructor(
     }
 }
 
-internal fun radioStationSubtitle(station: RadioStation): String = listOfNotNull(
+internal fun radioStationSubtitle(
+    station: RadioStation,
+    displayLocale: Locale = Locale.getDefault(),
+): String = listOfNotNull(
     station.country,
+    station.localizedLanguageNames(displayLocale).firstOrNull(),
     station.codec,
     station.bitrateKbps?.let { "$it kbps" },
 ).joinToString(" • ")

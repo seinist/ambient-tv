@@ -41,6 +41,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +54,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.radioLanguageDisplayName
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -378,7 +380,11 @@ private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String = 
             .getDisplayCountry(Locale.getDefault())
             .takeIf(String::isNotBlank)
     }.getOrNull() ?: facet.name
-    RadioSection.LANGUAGES -> facet.name.replaceFirstChar { it.titlecase() }
+    RadioSection.LANGUAGES -> {
+        val displayLocale = LocalContext.current.resources.configuration.locales[0]
+        radioLanguageDisplayName(facet.languageCode, facet.name, displayLocale)
+            ?: facet.name.replaceFirstChar { it.titlecase(displayLocale) }
+    }
     RadioSection.GENRES -> radioGenreDisplayName(facet.name)
     else -> facet.name
 }
@@ -635,7 +641,7 @@ private fun RadioStationTile(
                 }
                 CenteredMarqueeTitle(station.name, focused = focused)
                 Text(
-                    radioStationSubtitle(station),
+                    radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -715,7 +721,7 @@ private fun RadioStationList(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         MarqueeTitle(station.name, focused = focused, style = MaterialTheme.typography.titleMedium)
                         MarqueeTitle(
-                            radioStationSubtitle(station),
+                            radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
                             focused = focused,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,

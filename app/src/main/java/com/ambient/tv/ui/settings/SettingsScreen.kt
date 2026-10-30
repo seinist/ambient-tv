@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.settings
 
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.radio.radioLanguageDisplayName
 import com.ambient.tv.ui.common.withTvFocusInsets
 
 import androidx.compose.foundation.focusGroup
@@ -2020,22 +2021,26 @@ private fun HomeRowAddButtons(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                else -> SettingsSelect(options = available.map { facet ->
-                    val label = if (kind == HomeRowDefinition.RADIO_COUNTRY) {
-                        runCatching {
-                            java.util.Locale.Builder().setRegion(facet.id).build()
-                                .getDisplayCountry(java.util.Locale.getDefault())
-                                .takeIf(String::isNotBlank)
-                        }.getOrNull() ?: facet.name
-                    } else {
-                        facet.name
-                    }
-                    SettingsSelectOption(
+                else -> {
+                    val displayLocale = LocalContext.current.resources.configuration.locales[0]
+                    SettingsSelect(options = available.map { facet ->
+                        val label = when (kind) {
+                            HomeRowDefinition.RADIO_COUNTRY -> runCatching {
+                                java.util.Locale.Builder().setRegion(facet.id).build()
+                                    .getDisplayCountry(displayLocale)
+                                    .takeIf(String::isNotBlank)
+                            }.getOrNull() ?: facet.name
+                            HomeRowDefinition.RADIO_LANGUAGE ->
+                                radioLanguageDisplayName(facet.languageCode, facet.name, displayLocale) ?: facet.name
+                            else -> facet.name
+                        }
+                        SettingsSelectOption(
                         text = "$label · " + stringResource(R.string.radio_station_count, facet.stationCount),
                         selected = false,
                         onClick = { onAdd(HomeRowDefinition.SYSTEM_RADIO, contentKey(facet)) },
-                    )
-                })
+                        )
+                    })
+                }
             }
         } else {
             val mediaSystem = MediaSystem.fromKey(picker.system)
