@@ -56,7 +56,7 @@ class EmbyAuthRepository @Inject constructor(
             val body = FormBody.Builder()
                 .add("deviceId", preferences.clientIdentifier)
                 .build()
-            executeConnectJson(
+            executeConnectJson<EmbyConnectPin>(
                 Request.Builder()
                     .url("https://connect.emby.media/service/pin")
                     .post(body)
