@@ -164,6 +164,7 @@ import com.ambient.tv.ui.common.RegisterBrowseFocusSections
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.BrowseFocusRow
 import com.ambient.tv.ui.common.pageContentUp
+import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.rememberUhdScale
@@ -359,11 +360,22 @@ internal fun SectionContent(
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
         Box(Modifier.fillMaxSize()) {
             if (heroBackdrop) com.ambient.tv.ui.home.HomeFocusBackdrop(recommendationHero)
-            Column(Modifier.fillMaxSize().focusProperties {
-                onEnter = {
-                    if (showOptions) cancelFocusChange()
-                }
-            }.focusGroup()) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .handheldSwipeTabs(
+                        tabs = SectionPage.entries,
+                        selected = state.page,
+                        onSelect = onPage,
+                        enabled = !showOptions,
+                    )
+                    .focusProperties {
+                        onEnter = {
+                            if (showOptions) cancelFocusChange()
+                        }
+                    }
+                    .focusGroup(),
+            ) {
                 val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
                 val filterFocus = remember { FocusRequester() }
                 val filterBarShown = state.page != SectionPage.RECOMMENDATIONS && com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
@@ -530,7 +542,12 @@ private fun SectionHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        PageChipRow(focusChain, Modifier.fillMaxWidth().padding(top = 12.dp), PaddingValues(horizontal = 2.dp)) {
+        PageChipRow(
+            focusChain,
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            PaddingValues(horizontal = 2.dp),
+            selectedIndex = SectionPage.entries.indexOf(state.page),
+        ) {
             item { PageChip(stringResource(R.string.library_tab_recommendations), SectionPage.RECOMMENDATIONS, Icons.Filled.Recommend) }
             item { PageChip(stringResource(R.string.library_tab_library), SectionPage.LIBRARY, Icons.Filled.VideoLibrary) }
             item { PageChip(stringResource(R.string.library_tab_collections), SectionPage.COLLECTIONS, Icons.Filled.CollectionsBookmark) }
