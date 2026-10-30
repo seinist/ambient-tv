@@ -13,6 +13,7 @@ import com.ambient.tv.ui.navigation.Destinations
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.PlaybackEngineFactory
 import com.ambient.tv.ui.player.PlaybackMetadata
+import com.ambient.tv.util.suspendResult
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -50,21 +51,17 @@ class RadioPlaybackLauncher @Inject constructor(
         stations: List<RadioStation>?,
         reconnect: Boolean,
     ): Result<Unit> = playMutex.withLock {
-        runCatching {
+        suspendResult {
             if (!reconnect) {
                 reconnectJob?.cancel()
                 reconnectJob = null
-                reconnectStationId = station.id
-                reconnectAttempt = 0
+                // Keep the current stream as reconnect owner until the replacement really starts.
             }
 
             // A reconnect refreshes the catalog row but does not count another user click or
             // duplicate the Recent entry. The stored URL is still the final offline fallback.
             val currentStation = if (reconnect) repository.station(station.id) ?: station else station
             val streamUrl = if (reconnect) currentStation.streamUrl else repository.playbackUrl(currentStation)
-
-            if (stations != null) queue.replace(stations, currentStation.id) else queue.select(currentStation.id)
-            if (!reconnect) preferences.recordRadioStation(currentStation)
 
             val player = PlaybackEngineFactory.create(
                 context = context,
@@ -88,6 +85,15 @@ class RadioPlaybackLauncher @Inject constructor(
                 audioOnly = true,
                 liveStream = true,
             )
+
+            // Commit browse/player state only after the replacement player exists. A failed or
+            // cancelled start must leave the previous queue and Recent history untouched.
+            if (stations != null) queue.replace(stations, currentStation.id) else queue.select(currentStation.id)
+            if (!reconnect) {
+                reconnectStationId = currentStation.id
+                reconnectAttempt = 0
+                preferences.recordRadioStation(currentStation)
+            }
 
             val playbackGeneration = BackgroundPlaybackSession.snapshot.value.generation
 
