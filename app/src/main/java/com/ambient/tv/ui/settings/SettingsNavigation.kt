@@ -199,7 +199,8 @@ internal fun settingsDirectEntryReturnsToCaller(
     initialPage: SettingsCategory?,
     current: SettingsHubNav,
     hasLinkedOrigin: Boolean,
-): Boolean = initialPage != null && current.page == initialPage && !hasLinkedOrigin
+): Boolean = initialPage != null && current.page == initialPage && !hasLinkedOrigin &&
+    !current.returnToSearch && !current.returnToAdd
 
 /** Registered only while Settings is composed, including sidebar/miniplayer exits. */
 typealias SettingsExitGuard = (action: () -> Unit) -> Unit
