@@ -125,6 +125,8 @@ internal data class TvhFocusTarget(val contentId: String?, val rowId: String? = 
 fun TvheadendScreen(
     initialTab: TvheadendTab = TvheadendTab.LIVE,
     onOpenSettings: () -> Unit,
+    /** The live source can be TVHeadend, IPTV, Plex, Jellyfin or Emby. */
+    onOpenSourceSettings: (String) -> Unit = { onOpenSettings() },
     onBack: (() -> Unit)? = null,
     /** Tab chips update the nav route so the sidebar stays in sync. */
     onSelectTab: ((TvheadendTab) -> Unit)? = null,
@@ -285,7 +287,7 @@ fun TvheadendScreen(
             !state.configured -> StatePanel(
                 title = com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.entries.firstOrNull { it.name.equals(state.source.system, true) } ?: com.ambient.tv.ui.common.MediaSystem.TVHEADEND, R.string.tvh_not_configured),
                 actionLabel = stringResource(R.string.tvh_open_settings),
-                onAction = onOpenSettings,
+                onAction = { onOpenSourceSettings(state.source.system) },
                 modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 620.dp),
             )
             state.loading || (state.refreshing && when (state.tab) {
