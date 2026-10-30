@@ -22,20 +22,21 @@ fun liveTvRecordingArt(
     channels: List<LiveTvChannel>,
     titleArt: Map<String, String> = emptyMap(),
 ): LiveTvArt? {
-    (entry.imageUrl ?: entry.fanartUrl)?.let { return LiveTvArt(it) }
+    entry.fanartUrl?.let { return LiveTvArt(it) }
+    titleArt[liveTvArtKey(entry.title)]?.let { return LiveTvArt(it, external = true) }
+    entry.imageUrl?.let { return LiveTvArt(it) }
     val event = entry.broadcastEventId?.let { id -> events.firstOrNull { it.eventId == id } }
         ?: events.firstOrNull {
             it.channelUuid == entry.channelUuid && it.startEpochSeconds == entry.startEpochSeconds && it.title == entry.title
         }
     event?.imageUrl?.let { return LiveTvArt(it) }
-    titleArt[liveTvArtKey(entry.title)]?.let { return LiveTvArt(it, external = true) }
     return channels.firstOrNull { it.uuid == entry.channelUuid }?.iconUrl?.let { LiveTvArt(it, logo = true) }
 }
 
 /** A programme's art: its own image, art found by title, then the channel logo. */
 fun liveTvProgrammeArt(event: LiveTvProgramme, channels: List<LiveTvChannel>, titleArt: Map<String, String> = emptyMap()): LiveTvArt? {
-    event.imageUrl?.let { return LiveTvArt(it) }
     titleArt[liveTvArtKey(event.title)]?.let { return LiveTvArt(it, external = true) }
+    event.imageUrl?.let { return LiveTvArt(it) }
     return channels.firstOrNull { it.uuid == event.channelUuid }?.iconUrl?.let { LiveTvArt(it, logo = true) }
 }
 
@@ -46,10 +47,10 @@ fun liveTvSeriesArt(
     channels: List<LiveTvChannel>,
     titleArt: Map<String, String> = emptyMap(),
 ): LiveTvArt? {
-    entry.imageUrl?.let { return LiveTvArt(it) }
     val title = entry.title?.takeIf { it.isNotBlank() } ?: entry.name
     val key = liveTvArtKey(title)
-    events.firstOrNull { it.imageUrl != null && liveTvArtKey(it.title) == key }?.imageUrl?.let { return LiveTvArt(it) }
     titleArt[key]?.let { return LiveTvArt(it, external = true) }
+    entry.imageUrl?.let { return LiveTvArt(it) }
+    events.firstOrNull { it.imageUrl != null && liveTvArtKey(it.title) == key }?.imageUrl?.let { return LiveTvArt(it) }
     return channels.firstOrNull { it.name == entry.channelName || it.uuid == entry.channelName }?.iconUrl?.let { LiveTvArt(it, logo = true) }
 }
