@@ -1,10 +1,10 @@
 package com.ambient.tv.ui.player
 
-/** Pixels per second the multi-tap deband/sharpen shaders may process: Full HD at 60 fps. */
+/** Pixels per second the cleanup (deblock/denoise/deband) and sharpen shaders may process: Full HD at 60 fps. */
 internal const val MEDIA3_FILTER_MAX_PIXEL_RATE = 1920L * 1088L * 60L
 
 /**
- * Whether deband or sharpening may run on [width]×[height] at [fps]. Like the SDR→HDR budget,
+ * Whether cleanup or sharpening may run on [width]×[height] at [fps]. Like the SDR→HDR budget,
  * the GPU passes stay within Full HD at 60 fps; 4K60 would be four times that work on every frame.
  * Unknown frame rates count as 30 fps (broadcast and most films).
  */

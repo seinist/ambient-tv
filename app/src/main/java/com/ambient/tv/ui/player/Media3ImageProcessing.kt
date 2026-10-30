@@ -315,9 +315,13 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val viewport = renderGeometry.scalerViewport
         scaleRelation = if (viewport == null) VideoScaleRelation.UNKNOWN else
             format?.takeIf { it.width > 0 && it.height > 0 }?.let {
-                if (media3NeedsUpscaling(it.width, it.height, viewport.first, viewport.second,
-                        it.pixelWidthHeightRatio, it.rotationDegrees)) VideoScaleRelation.UPSCALE
-                else VideoScaleRelation.NATIVE
+                when {
+                    media3NeedsUpscaling(it.width, it.height, viewport.first, viewport.second,
+                        it.pixelWidthHeightRatio, it.rotationDegrees) -> VideoScaleRelation.UPSCALE
+                    media3NeedsDownscaling(it.width, it.height, viewport.first, viewport.second,
+                        it.pixelWidthHeightRatio, it.rotationDegrees) -> VideoScaleRelation.DOWNSCALE
+                    else -> VideoScaleRelation.NATIVE
+                }
             } ?: VideoScaleRelation.UNKNOWN
         // Sparsam disables the effect chain without clearing saved preferences.
         val gated = effectiveMedia3ImageOptions(options, reducedEffects)
@@ -335,7 +339,11 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             media3NeedsUpscaling(source.width, source.height, outputWidth, outputHeight,
                 source.pixelWidthHeightRatio, source.rotationDegrees)
         } == true
-        val configuredStages = if (enabled) media3EffectPlan(effective, upscaling) else emptyList()
+        val downscaling = enabled && format?.let { source ->
+            media3NeedsDownscaling(source.width, source.height, outputWidth, outputHeight,
+                source.pixelWidthHeightRatio, source.rotationDegrees)
+        } == true
+        val configuredStages = if (enabled) media3EffectPlan(effective, upscaling, downscaling = downscaling) else emptyList()
         // Sharpening/grain run on output pixels only with an actual GPU scale stage. Bilinear
         // leaves scaling to the display path, so these passes still process source pixels.
         val fps = format?.frameRate ?: 0f
@@ -346,11 +354,15 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             outputWidth = outputWidth,
             outputHeight = outputHeight,
             fps = fps,
-            scalingInChain = configuredStages.any { it is Media3Stage.Scale },
+            scalingInChain = configuredStages.any { it is Media3Stage.Scale || it is Media3Stage.Downscale },
         )
         // NIS, RAVU and the EWA/wide kernels at most 4K30 output; above that they run as Catmull-Rom.
         val heavyScaleAllowed = !upscaling || media3HeavyScalerBudgetAllows(outputWidth, outputHeight, fps)
-        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed, heavyScaleAllowed) else emptyList()
+        val heavyDownscaleAllowed = !downscaling || format?.let { source ->
+            media3HeavyDownscaleBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
+        } == true
+        val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
+            heavyScaleAllowed, downscaling, heavyDownscaleAllowed) else emptyList()
         filtersOverBudget = enabled && stages != configuredStages
         val userChange = userChangePending
         userChangePending = false
@@ -436,6 +448,7 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
 
 /** GL effect for one planned stage; the built-in matrix effects merge into one pass. */
 private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int, gamma: Int = 0): Effect = when (stage) {
+    is Media3Stage.Deblock -> Media3DeblockEffect(stage.strength, gamma)
     is Media3Stage.Denoise -> Media3DenoiseEffect(stage.strength, gamma)
     is Media3Stage.Deband -> Media3DebandEffect(stage.strength, gamma)
     is Media3Stage.Scale -> when (stage.scaler) {
@@ -443,9 +456,18 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
         "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
         in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
         "nis" -> Media3NisEffect(outputWidth, outputHeight)
-        in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight)
-        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f, gamma = gamma)
-        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f, gamma = gamma)
+        in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,
+            antiring = stage.antiring, sigmoid = stage.sigmoid)
+        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f,
+            gamma = gamma, antiring = stage.antiring)
+        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f,
+            gamma = gamma, antiring = stage.antiring)
+    }
+    is Media3Stage.Downscale -> when (stage.scaler) {
+        // Native Lanczos is used for manual selection and as the budget/ratio fallback.
+        "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
+        else -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,
+            antiring = stage.antiring, sigmoid = false, downscaling = true)
     }
     is Media3Stage.Sharpen -> Media3SharpenEffect(stage.kind, gamma)
     is Media3Stage.Grain -> Media3FilmGrainEffect(stage.strength, gamma)
