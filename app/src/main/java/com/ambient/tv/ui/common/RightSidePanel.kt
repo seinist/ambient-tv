@@ -353,7 +353,10 @@ private fun RightSidePanelChrome(
     val uiSounds = LocalUiSoundPlayer.current
 
     if (standalone && inheritedMotion == null) {
-        LaunchedEffect(standaloneMotion, reducedEffects) {
+        LaunchedEffect(standaloneMotion, reducedEffects, standaloneMotion.dismiss.closing) {
+            // A fast Back, or a performance-profile update during dismissal, must never
+            // restart the entrance animation and cancel the pending close callback.
+            if (standaloneMotion.dismiss.closing) return@LaunchedEffect
             standaloneMotion.progress.animateTo(
                 1f,
                 tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
