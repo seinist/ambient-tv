@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
@@ -99,8 +101,18 @@ fun TvLazyColumn(
     val animate = !LocalPerformanceProfile.current.reducedEffects
     LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
         scrollbar = { bar, contentFocus -> OverlayLazyScrollbar(state, bar, contentFocus) }) { listModifier ->
+        val scrollbarFocus = LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.LazyColumn(
-            modifier = listModifier.then(if (LocalHandheldUi.current || !userScrollEnabled) Modifier else Modifier.tvModalFocus(
+            modifier = listModifier
+                .then(if (LocalHandheldUi.current || focusActionsOnRight) Modifier else Modifier.focusProperties {
+                    onExit = {
+                        if (requestedFocusDirection == FocusDirection.Right) {
+                            cancelFocusChange()
+                            scrollbarFocus?.let { runCatching { it.requestFocus() } }
+                        }
+                    }
+                })
+                .then(if (LocalHandheldUi.current || !userScrollEnabled) Modifier else Modifier.tvModalFocus(
                 initialFocus = false,
                 allowUpExit = allowUpExit,
                 wrapVerticalFocus = wrapVerticalFocus,
@@ -140,9 +152,19 @@ fun TvLazyVerticalGrid(
     val animate = !LocalPerformanceProfile.current.reducedEffects
     LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
         scrollbar = { bar, contentFocus -> OverlayLazyGridScrollbar(state, bar, contentFocus) }) { listModifier ->
+        val scrollbarFocus = LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
             columns = columns,
-            modifier = listModifier.then(if (LocalHandheldUi.current || !userScrollEnabled) Modifier else Modifier.tvModalFocus(
+            modifier = listModifier
+                .then(if (LocalHandheldUi.current || focusActionsOnRight) Modifier else Modifier.focusProperties {
+                    onExit = {
+                        if (requestedFocusDirection == FocusDirection.Right) {
+                            cancelFocusChange()
+                            scrollbarFocus?.let { runCatching { it.requestFocus() } }
+                        }
+                    }
+                })
+                .then(if (LocalHandheldUi.current || !userScrollEnabled) Modifier else Modifier.tvModalFocus(
                 initialFocus = false,
                 allowUpExit = true,
                 scrollToTop = {
