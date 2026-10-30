@@ -369,8 +369,11 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
             media3SsimSuperBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
         } == true
         val anime4kAllowed = !upscaling || format?.let { source ->
-            media3Anime4kBudgetAllows(effective.scaler, source.width, source.height,
-                outputWidth, outputHeight, fps)
+            // The CNN's 2x feature grid assumes square pixels and an unrotated source.
+            // Keep Media3's normal geometry path for anamorphic or rotated tracks.
+            source.rotationDegrees % 180 == 0 && source.pixelWidthHeightRatio == 1f &&
+                media3Anime4kBudgetAllows(effective.scaler, source.width, source.height,
+                    outputWidth, outputHeight, fps)
         } == true
         val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
             heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed,
