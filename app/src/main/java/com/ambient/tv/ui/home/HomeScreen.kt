@@ -203,6 +203,12 @@ fun HomeScreen(
     // Keep the cancel control focusable on television during startup.
     ReportSidebarContentReady(!parkInitialFocus || canCancelStartupWake)
     val systemOverview = plexOnly || jellyfinOnly || embyOnly
+    val overviewProvider = when {
+        plexOnly -> "plex"
+        jellyfinOnly -> "jellyfin"
+        embyOnly -> "emby"
+        else -> null
+    }
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }
@@ -331,7 +337,12 @@ fun HomeScreen(
                     ConnectionErrorContent(state.message, viewModel::retry, onOpenSettings)
                 }
                 is HomeUiState.WakeTimedOut -> Centered {
-                    WakeTimeoutContent(state.serverName, viewModel::retry, onOpenSettings)
+                    WakeTimeoutContent(state.serverName, viewModel::retry) {
+                        // An overview knows which machine timed out. The global Home does not:
+                        // do not guess a host from a renamed server label.
+                        if (overviewProvider != null) openRelevantSettings("wake:$overviewProvider")
+                        else openSettings()
+                    }
                 }
             }
 
