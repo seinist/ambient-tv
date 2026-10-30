@@ -89,6 +89,8 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.pageContentUp
+import com.ambient.tv.ui.common.pageFocusStage
+import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
@@ -157,6 +159,8 @@ fun RadioScreen(
     val gridState = rememberBrowseGridState()
     val listState = rememberBrowseListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val contextStageFocus = remember { FocusRequester() }
+    val searchStageFocus = remember { FocusRequester() }
     val initialFocusRequester = remember(focusScope, effectiveViewMode) { FocusRequester() }
     val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
     val facetListFocus = remember(focusScope) { FocusRequester() }
@@ -299,7 +303,7 @@ fun RadioScreen(
 
             state.selectedFacet?.let { selectedFacet ->
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().pageFocusStage(focusChain, PageFocusLevel.CONTEXT, contextStageFocus),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -319,7 +323,7 @@ fun RadioScreen(
 
             if (searchVisible) {
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier.fillMaxWidth().pageFocusStage(focusChain, PageFocusLevel.SEARCH_LOWER, searchStageFocus),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
