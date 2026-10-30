@@ -184,6 +184,13 @@ class RadioViewModel @Inject constructor(
         resetFocusPaging()
         refreshLocalState()
         val current = _state.value
+        // The request is scheduled in a coroutine. Mark a confirmed-empty remote page
+        // pending synchronously so Reload cannot paint another stale empty frame.
+        val remote = current.submittedQuery.isNotBlank() || current.selectedFacet != null ||
+            current.section == RadioSection.POPULAR || current.section.isFacetSection
+        if (remote && current.stations.isEmpty() && current.facets.isEmpty()) {
+            _state.value = current.copy(loading = true, contentReady = false, error = false)
+        }
         when {
             current.submittedQuery.isNotBlank() || current.selectedFacet != null -> loadStations(reset = true)
             current.section == RadioSection.POPULAR -> loadStations(reset = true)
