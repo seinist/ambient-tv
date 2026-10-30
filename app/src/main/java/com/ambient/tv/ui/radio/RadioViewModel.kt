@@ -58,6 +58,13 @@ enum class RadioSection(val key: String) {
 internal val RadioSection.isFacetSection: Boolean
     get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
+/** Category overviews are always text lists; the saved user choice still controls station pages. */
+internal fun RadioUiState.isFacetOverview(): Boolean =
+    section.isFacetSection && selectedFacet == null && submittedQuery.isBlank()
+
+internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
+    if (isFacetOverview()) RadioViewMode.LIST else viewMode
+
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
     val loading: Boolean = false,
