@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,7 +57,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
-import com.ambient.tv.data.radio.radioLanguageDisplayName
+import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -94,7 +95,7 @@ import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.theme.screenGutter
-import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun RadioScreen(
@@ -120,11 +121,21 @@ fun RadioScreen(
     val focusScope = state.focusScope()
     val showingFacets = state.section.isFacetSection &&
         state.selectedFacet == null && state.submittedQuery.isBlank()
-    val contentIds = if (showingFacets) state.facets.map(RadioFacet::id) else state.stations.map(RadioStation::id)
+    val locale = LocalContext.current.resources.configuration.locales[0]
+    // Alphabetical order uses the localized display names, not raw Radio Browser codes.
+    val sortedFacets = remember(state.section, state.facets, locale) {
+        radioAlphabetFacets(state.section, state.facets, locale)
+    }
+    val alphabetJumps = remember(sortedFacets) {
+        radioAlphabetJumps(sortedFacets).filter { it.index != null }
+    }
+    val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    val effectiveViewMode = if (showingFacets) RadioViewMode.LIST else state.viewMode
+    val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
-    val initialContentId = remember(focusScope, state.viewMode, state.contentReady) {
+    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady) {
         if (!state.contentReady) null
         else radioInitialFocusId(
             viewModel.lastFocusedContent(focusScope),
@@ -137,23 +148,28 @@ fun RadioScreen(
     val gridState = rememberBrowseGridState()
     val listState = rememberBrowseListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    val initialFocusRequester = remember(focusScope, state.viewMode) { FocusRequester() }
+    val initialFocusRequester = remember(focusScope, effectiveViewMode) { FocusRequester() }
+    val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
+    val facetListFocus = remember(focusScope) { FocusRequester() }
+    var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    val scrollScope = rememberCoroutineScope()
+    val visibleLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
 
-    BrowseFocusContentIdentity(listOf(viewModel, focusScope, state.viewMode), restoreInitialTarget = true)
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode), restoreInitialTarget = true)
     if (state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
-        if (state.viewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
+        if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
-    LaunchedEffect(focusScope, state.viewMode, state.contentReady) {
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady) {
         if (!state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
-        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
         else listState.scrollToItem(index)
     }
     // A facet opens another dataset inside the same destination. The sidebar's entry handler
     // only runs on route navigation, so hand focus explicitly to its newly loaded content.
-    LaunchedEffect(focusScope, state.viewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
         if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
         val targetId = initialContentId
         val index = targetId?.let(contentIds::indexOf)?.takeIf { it >= 0 }
@@ -161,7 +177,7 @@ fun RadioScreen(
             pendingContentFocus = null
             return@LaunchedEffect
         }
-        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
         else listState.scrollToItem(index)
         repeat(6) {
             withFrameNanos { }
