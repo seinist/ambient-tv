@@ -23,6 +23,7 @@ import androidx.media3.effect.Brightness
 import androidx.media3.effect.Contrast
 import androidx.media3.effect.HslAdjustment
 import androidx.media3.effect.LanczosResample
+import androidx.media3.effect.GlEffect
 import com.ambient.tv.R
 import com.ambient.tv.data.local.Media3ImageOptions
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
@@ -361,8 +362,14 @@ internal class Media3ImageProcessing private constructor(context: Context, playe
         val heavyDownscaleAllowed = !downscaling || format?.let { source ->
             media3HeavyDownscaleBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
         } == true
+        val ssimDownAllowed = !downscaling || format?.let { source ->
+            media3SsimDownBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
+        } == true
+        val ssimSuperAllowed = !upscaling || format?.let { source ->
+            media3SsimSuperBudgetAllows(source.width, source.height, outputWidth, outputHeight, fps)
+        } == true
         val stages = if (enabled) media3EffectPlan(effective, upscaling, debandAllowed, sharpenAllowed,
-            heavyScaleAllowed, downscaling, heavyDownscaleAllowed) else emptyList()
+            heavyScaleAllowed, downscaling, heavyDownscaleAllowed, ssimDownAllowed, ssimSuperAllowed) else emptyList()
         filtersOverBudget = enabled && stages != configuredStages
         val userChange = userChangePending
         userChangePending = false
@@ -451,20 +458,12 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
     is Media3Stage.Deblock -> Media3DeblockEffect(stage.strength, gamma)
     is Media3Stage.Denoise -> Media3DenoiseEffect(stage.strength, gamma)
     is Media3Stage.Deband -> Media3DebandEffect(stage.strength, gamma)
-    is Media3Stage.Scale -> when (stage.scaler) {
-        "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
-        "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
-        in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
-        "nis" -> Media3NisEffect(outputWidth, outputHeight)
-        in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,
-            antiring = stage.antiring, sigmoid = stage.sigmoid)
-        "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f,
-            gamma = gamma, antiring = stage.antiring)
-        else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f,
-            gamma = gamma, antiring = stage.antiring)
+    is Media3Stage.Scale -> {
+        val upscale = media3ScalerEffect(stage, outputWidth, outputHeight, gamma)
+        if (stage.superResolution) Media3SsimSuperEffect(upscale) else upscale
     }
     is Media3Stage.Downscale -> when (stage.scaler) {
-        // Native Lanczos is used for manual selection and as the budget/ratio fallback.
+        "ssim_down" -> Media3SsimDownEffect(outputWidth, outputHeight)
         "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
         else -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,
             antiring = stage.antiring, sigmoid = false, downscaling = true)
@@ -475,6 +474,23 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
     is Media3Stage.Contrast -> Contrast(stage.value / 100f)
     is Media3Stage.Saturation -> HslAdjustment.Builder().adjustSaturation(stage.value.toFloat()).build()
     is Media3Stage.Gamma -> Media3GammaEffect(stage.value)
+}
+
+/** All Media3 scale algorithms can be wrapped by SSimSuperRes without replacing them. */
+private fun media3ScalerEffect(stage: Media3Stage.Scale, outputWidth: Int, outputHeight: Int,
+    gamma: Int): GlEffect = when (stage.scaler) {
+    "lanczos" -> if (stage.superResolution)
+        Media3KernelEffect("ssim_lanczos3", outputWidth, outputHeight, sigmoid = false)
+        else LanczosResample.scaleToFit(outputWidth, outputHeight)
+    "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
+    in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
+    "nis" -> Media3NisEffect(outputWidth, outputHeight)
+    in MEDIA3_KERNEL_SCALERS -> Media3KernelEffect(stage.scaler, outputWidth, outputHeight,
+        antiring = stage.antiring, sigmoid = stage.sigmoid)
+    "catmull_rom" -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 0f, c = 0.5f,
+        gamma = gamma, antiring = stage.antiring)
+    else -> Media3CubicScaleEffect(outputWidth, outputHeight, b = 1f, c = 0f,
+        gamma = gamma, antiring = stage.antiring)
 }
 
 @Composable

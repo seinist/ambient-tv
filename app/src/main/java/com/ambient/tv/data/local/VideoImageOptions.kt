@@ -80,6 +80,7 @@ object VideoImageCatalog {
     val media3Downscalers = linkedMapOf(
         "display" to "Display", "lanczos" to "Lanczos · 3",
         "mitchell" to "Mitchell", "spline36" to "Spline36", "spline64" to "Spline64",
+        "ssim_down" to "SSimDownscaler",
     )
     /** light/medium/strong: unsharp mask; cas: AMD Contrast Adaptive Sharpening; adaptive: bacondither's Adaptive Sharpen. */
     val media3Sharpening = setOf("off", "light", "medium", "strong", "cas", "adaptive")
@@ -240,9 +241,12 @@ data class Media3ImageOptions(
     val sigmoid: Boolean = true,
     /** Edge-aware block-boundary smoothing on SDR input. */
     val deblock: String = "off",
+    /** SSimSuperRes retains both original and upscaled RGB for the reconstruction. */
+    val superResolution: Boolean = false,
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
+        superResolution = superResolution && scaler !in setOf("bilinear", "fsr", "nis"),
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
         antiring = antiring.coerceIn(0, 100),
         deblock = deblock.takeIf { it in VideoImageCatalog.strengths } ?: "off",

@@ -24,6 +24,15 @@ class AudioOnlyDiagnosticsTest {
         assertFalse(playback.showFrameDropOverlay)
     }
 
+    @Test fun frameDropOverlayReturnsAfterTemporaryAudioOnlyPlayback() {
+        val playback = session()
+        playback.showFrameDropOverlay = true
+        playback.updateAudioOnly(true)
+        assertFalse(playback.showFrameDropOverlay)
+        playback.updateAudioOnly(false)
+        assertTrue(playback.showFrameDropOverlay)
+    }
+
     @Test fun audioOnlyRendererRestartDoesNotRestoreVideoDiagnostics() {
         val previous = session().apply {
             performanceHint = true

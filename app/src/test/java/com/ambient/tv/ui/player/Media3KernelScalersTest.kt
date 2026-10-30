@@ -37,7 +37,9 @@ class Media3KernelScalersTest {
 
     @Test fun separableWeightsSumToOneAtAnyPhase() {
         for ((key, k) in MEDIA3_KERNELS) {
-            if (k.polar || key in setOf("nearest", "sinc", "ginseng", "gaussian")) continue
+            // Windowed sinc/Lanczos kernels are normalized per output pixel by the shader,
+            // not at the raw kernel function (their phase sums need not be exactly 1).
+            if (k.polar || key in setOf("nearest", "sinc", "ginseng", "gaussian", "ssim_lanczos3")) continue
             for (step in 0..10) {
                 val f = step / 10.0
                 val sum = (1 - k.taps..k.taps).sumOf { k.value(it - f) }

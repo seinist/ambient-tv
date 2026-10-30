@@ -51,6 +51,11 @@ internal fun media3Intermediate(width: Int, height: Int, highPrecision: Boolean)
     }
 }
 
+/** SSim correction stores variances and contrast ratios which cannot be represented in RGBA8. */
+internal fun media3SsimIntermediate(width: Int, height: Int): Media3Intermediate =
+    halfFloatTexture(width, height)
+        ?: throw VideoFrameProcessingException("SSim needs a renderable half-float texture")
+
 private fun halfFloatTexture(width: Int, height: Int): Media3Intermediate? {
     val version = GLES20.glGetString(GLES20.GL_VERSION).orEmpty()
     val extensions = GLES20.glGetString(GLES20.GL_EXTENSIONS).orEmpty()
@@ -69,12 +74,13 @@ private fun halfFloatTexture(width: Int, height: Int): Media3Intermediate? {
     } else {
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0, GLES20.GL_RGBA, GL_HALF_FLOAT_OES, null)
     }
+    val previousFbo = IntArray(1).also { GLES20.glGetIntegerv(GLES20.GL_FRAMEBUFFER_BINDING, it, 0) }[0]
     val fbo = IntArray(1).also { GLES20.glGenFramebuffers(1, it, 0) }[0]
     GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
     GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, texture, 0)
     val complete = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) == GLES20.GL_FRAMEBUFFER_COMPLETE &&
         GLES20.glGetError() == GLES20.GL_NO_ERROR
-    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+    GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, previousFbo)
     if (complete) return Media3Intermediate(texture, fbo)
     GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
     GLES20.glDeleteTextures(1, intArrayOf(texture), 0)

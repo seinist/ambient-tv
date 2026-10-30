@@ -24,10 +24,10 @@ import kotlin.math.sqrt
  * radial pass over every texel inside the radius. Weights are normalized per output pixel.
  * Explicit downscaling stretches the support to prevent aliasing, within a GPU budget.
  *
- * Like MPV's defaults (sigmoid-upscaling=yes, center 0.75, slope 6.5) the samples are linearized
- * (BT.1886, gamma 2.4) and sigmoidized before scaling and converted back after it, which keeps
- * the ringing of sharp kernels from turning into bright halos. Between the separable passes the
- * picture stays in sigmoid space, on a half-float target where the GPU offers one.
+ * Like MPV's sigmoid-upscaling (center 0.75, slope 6.5), the already linear SDR RGB
+ * samples are mapped into sigmoid space and back. Media3 GlEffect input is linear BT.709;
+ * applying MPV's source gamma-2.4 linearization again would double-linearize midtones.
+ * Between the separable passes the picture stays in sigmoid space in a half-float target.
  */
 
 /**
@@ -136,6 +136,10 @@ internal val MEDIA3_KERNELS: Map<String, Media3Kernel> = linkedMapOf(
     "ewa_robidoux" to Media3Kernel(2.0, true, ROBIDOUX),
     "ewa_robidouxsharp" to Media3Kernel(2.0, true, ROBIDOUX_SHARP),
     "nearest" to Media3Kernel(0.5, false, { 1.0 }),
+    // SSimSuperRes must render its chosen upscale synchronously while retaining the
+    // source frame. Media3's LanczosResample uses an asynchronous GlShaderProgram;
+    // this private Lanczos-3 kernel is its synchronous windowed-sinc equivalent.
+    "ssim_lanczos3" to Media3Kernel(3.0, false, ::media3Sinc, ::media3Sinc),
 )
 
 /** Media3 keys handled here: the kernels plus MPV's "oversample". */
@@ -316,18 +320,18 @@ uniform vec2 uSigmoid;
 uniform float uFilterScale;
 uniform float uAntiRing;
 varying vec2 vTexSamplingCoord;
-// MPV's sigmoid-upscaling (center 0.75, slope 6.5) in BT.1886 linear light.
+// MPV's sigmoid constants, but Media3 already provides linear BT.709 RGB.
 const float kSigCenter = 0.75;
 const float kSigSlope = 6.5;
 const float kSigOffset = 0.0075772413;
 const float kSigScale = 0.8279063;
 vec3 toSigmoid(vec3 c) {
-  vec3 l = pow(clamp(c, 0.0, 1.0), vec3(2.4));
+  vec3 l = clamp(c, 0.0, 1.0);
   return kSigCenter - log(1.0 / (l * kSigScale + kSigOffset) - 1.0) / kSigSlope;
 }
 vec3 fromSigmoid(vec3 c) {
   vec3 l = (1.0 / (1.0 + exp(kSigSlope * (kSigCenter - clamp(c, 0.0, 1.0)))) - kSigOffset) / kSigScale;
-  return pow(clamp(l, 0.0, 1.0), vec3(1.0 / 2.4));
+  return clamp(l, 0.0, 1.0);
 }
 vec3 finishColor(vec3 c) { return uSigmoid.y > 0.5 ? fromSigmoid(c) : clamp(c, 0.0, 1.0); }
 """

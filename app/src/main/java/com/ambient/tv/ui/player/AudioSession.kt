@@ -18,6 +18,8 @@ class AudioSession(
 ) {
     var audioOnly by mutableStateOf(audioOnly)
         private set
+    /** User's explicit frame-drop overlay choice when this session temporarily becomes audio-only. */
+    private var videoFrameDropBeforeAudioOnly = false
 
     /** Content policy, independent of saved output profiles and visualizer selection. */
     fun updateAudioOnly(value: Boolean) {
@@ -26,9 +28,13 @@ class AudioSession(
         audioOnly = value
         // The FPS and advanced diagnostics overlays describe video, not audio playback.
         if (value) {
+            videoFrameDropBeforeAudioOnly = showFrameDropOverlay
             performanceHint = false
             showFpsOverlay = false
             showFrameDropOverlay = false
+        } else {
+            if (videoFrameDropBeforeAudioOnly) showFrameDropOverlay = true
+            videoFrameDropBeforeAudioOnly = false
         }
         renderOptions = optionsForPcm()
         val after = outputPlan()
@@ -111,6 +117,7 @@ class AudioSession(
         performanceHint = previous.performanceHint && !audioOnly
         showFpsOverlay = previous.showFpsOverlay && !audioOnly
         showFrameDropOverlay = previous.showFrameDropOverlay && !audioOnly
+        videoFrameDropBeforeAudioOnly = audioOnly && previous.videoFrameDropBeforeAudioOnly
         showFrameDropHistory = previous.showFrameDropHistory
     }
 

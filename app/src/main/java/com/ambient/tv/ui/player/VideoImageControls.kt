@@ -322,7 +322,9 @@ internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3Imag
             }
         }
         // Saved defaults: the source size is unknown, so FSR counts as upscaling.
-        Media3FilterRows(o, fsrSharpens = media3FsrSharpens(o, upscalerApplies = true), change = change)
+        Media3FilterRows(o, fsrSharpens = media3FsrSharpens(o, upscalerApplies = true),
+            superResolutionVisible = media3SuperResRowVisible(o, upscalerVisible = true),
+            change = change)
         ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
         ImageLevel(R.string.image_contrast, o.contrast) { change(o.copy(contrast = it)) }
         ImageLevel(R.string.image_saturation, o.saturation) { change(o.copy(saturation = it)) }
@@ -340,6 +342,7 @@ internal fun Media3FilterRows(
     fsrSharpens: Boolean,
     deband: Boolean = true,
     sharpen: Boolean = true,
+    superResolutionVisible: Boolean = false,
     change: (Media3ImageOptions) -> Unit,
 ) {
     // Match MPV filter order: deband → sharpening → denoise/deblock → film grain.
@@ -361,6 +364,11 @@ internal fun Media3FilterRows(
     }
     if (sharpen) {
         ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
+        if (superResolutionVisible) {
+            ImageChoice(R.string.image_superres, if (o.superResolution) "on" else "off", imageOnOff()) {
+                change(o.copy(superResolution = it == "on"))
+            }
+        }
     }
     ImageHint(stringResource(R.string.image_media3_filter_hint))
 }

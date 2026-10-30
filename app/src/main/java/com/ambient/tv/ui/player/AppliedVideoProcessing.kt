@@ -178,12 +178,21 @@ internal fun media3AppliedProcessing(
             frameInterpolation = "n/a",
         )
     }
-    val filters = stages.filter { it !is Media3Stage.Scale }
+    val filters = stages.filter { it !is Media3Stage.Scale && it !is Media3Stage.Downscale }
         .joinToString(", ") { media3StageSummary(it) }.ifBlank { "off" }
+    val scale = stages.filterIsInstance<Media3Stage.Scale>().firstOrNull()
+    val reduction = stages.filterIsInstance<Media3Stage.Downscale>().firstOrNull()
     return AppliedVideoProcessing(
         videoFilters = filters,
         deinterlacer = "n/a",
-        upscaler = scaler?.let { media3ScalerLabel(it) } ?: "n/a",
+        upscaler = when {
+            scale != null -> media3ScalerLabel(scale.scaler) +
+                if (scale.superResolution) " + SSimSuperRes" else ""
+            reduction != null -> "Down: " +
+                (com.ambient.tv.data.local.VideoImageCatalog.media3Downscalers[reduction.scaler] ?: reduction.scaler)
+            scaler != null -> media3ScalerLabel(scaler)
+            else -> "n/a"
+        },
         frameInterpolation = "n/a",
     )
 }
@@ -193,7 +202,8 @@ internal fun media3StageSummary(stage: Media3Stage): String = when (stage) {
     is Media3Stage.Deblock -> "deblock ${stage.strength}"
     is Media3Stage.Denoise -> "denoise ${stage.strength}"
     is Media3Stage.Deband -> "deband ${stage.strength}"
-    is Media3Stage.Scale -> media3ScalerLabel(stage.scaler)
+    is Media3Stage.Scale -> media3ScalerLabel(stage.scaler) +
+        if (stage.superResolution) " + SSimSuperRes" else ""
     is Media3Stage.Downscale -> "downscale ${com.ambient.tv.data.local.VideoImageCatalog.media3Downscalers[stage.scaler] ?: stage.scaler}"
     is Media3Stage.Sharpen -> when (stage.kind) {
         "cas" -> "sharpen CAS"

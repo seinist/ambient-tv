@@ -133,6 +133,8 @@ internal fun media3RenderOverloaded(dropped: Long, rendered: Long): Boolean =
 internal fun media3ImageOptionsAfterOverload(options: Media3ImageOptions): Media3ImageOptions? {
     val safe = options.normalized()
     return when {
+        // Like MPV, remove the optional SSim reconstruction before less expensive filters.
+        safe.superResolution -> safe.copy(superResolution = false)
         safe.sharpening == "adaptive" -> safe.copy(sharpening = "cas")
         safe.sharpening != "off" -> safe.copy(sharpening = "off")
         safe.denoise != "off" -> safe.copy(denoise = "off")
