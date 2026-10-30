@@ -10,6 +10,7 @@ import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Headers
+import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -17,6 +18,17 @@ import retrofit2.http.Query
 interface EmbyApiService {
     @GET("System/Info/Public") suspend fun getPublicSystemInfo(): EmbySystemInfo
     @POST("Users/AuthenticateByName") suspend fun authenticate(@Body body: EmbyAuthRequest): EmbyAuthResponse
+    @GET("Connect/Exchange")
+    suspend fun exchangeConnect(
+        @Query("format") format: String = "json",
+        @Query("ConnectUserId") connectUserId: String,
+        @Header("X-Emby-Token") accessKey: String,
+    ): EmbyConnectExchange
+    @GET("Users/{userId}")
+    suspend fun getAuthenticatedUser(
+        @Path("userId") userId: String,
+        @Header("X-Emby-Token") accessToken: String,
+    ): EmbyUser
 
     @GET("Users/{userId}/Views")
     suspend fun getUserViews(
