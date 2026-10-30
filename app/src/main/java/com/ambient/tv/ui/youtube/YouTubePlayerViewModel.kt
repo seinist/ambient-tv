@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import timber.log.Timber
 import kotlinx.coroutines.sync.withLock
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.navigation.Destinations
@@ -33,10 +35,11 @@ data class YouTubePlayerState(
 )
 
 @HiltViewModel
-class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context, private val savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine, private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability, private val availability: com.ambient.tv.data.browse.SourceAvailability, private val preferences: com.ambient.tv.data.local.AppPreferences) : ViewModel() {
+class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers.ApplicationContext private val context: android.content.Context, private val savedStateHandle: SavedStateHandle, private val engine: SmartTubeEngine, private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability, private val availability: com.ambient.tv.data.browse.SourceAvailability, private val preferences: com.ambient.tv.data.local.AppPreferences, private val browseContext: YouTubeBrowsePlaybackContext) : ViewModel() {
     internal fun ownsCompanionMedia(media: com.ambient.tv.companion.CompanionMedia?) = media?.kind == "youtube" && media.id == videoId && media.trailer == isTrailer
     private var videoId = requireNotNull(savedStateHandle.get<String>("videoId"))
     val isTrailer: Boolean = savedStateHandle.get<Boolean>("trailer") == true
+    private val browseSession: Long? = savedStateHandle.get<Long>("browseSession")?.takeIf { it >= 0L }
     private val _uiState = MutableStateFlow(YouTubePlayerState())
     val uiState: StateFlow<YouTubePlayerState> = _uiState.asStateFlow()
     private var loadJob: kotlinx.coroutines.Job? = null
@@ -159,6 +162,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 imageUrl = playback.imageUrl, backgroundUrl = playback.backgroundUrl,
                 durationMs = playback.durationMs, isLive = playback.isLive,
             ))) return@launch
+            if (!isTrailer) browseSession?.let { browseContext.played(it, videoId) }
             transitionToken = null
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
@@ -172,8 +176,31 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             },
                 nextVideo = playbackHistory.nextVideo,
                 previousVideoId = playbackHistory.previousVideoId,
-                successorsLoading = !isTrailer)
+                successorsLoading = !isTrailer && playbackHistory.nextVideo == null &&
+                    browseSession?.let { browseContext.contains(it, videoId) } == true)
             if (isTrailer) return@launch
+            // Next Up uses the original feed/row, including its continuation pages.
+            // No metadata suggestion is ever substituted for a missing browse successor.
+            if (playbackHistory.nextVideo == null && browseSession != null &&
+                browseContext.contains(browseSession, videoId)) {
+                launch {
+                    val next = try {
+                        browseContext.next(browseSession, videoId)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        // Retain the continuation handle: an error is not an exhausted playlist.
+                        Timber.w(error, "SmartTube next page failed for the originating browse row")
+                        null
+                    }
+                    _uiState.update { state ->
+                        if (state.playback?.videoId == videoId) state.copy(
+                            nextVideo = playbackHistory.nextVideo ?: next,
+                            successorsLoading = false,
+                        ) else state
+                    }
+                }
+            }
             // SponsorBlock is optional; a slow/unavailable service must never hold the decoder.
             launch {
                 val segments = suspendResult { engine.playbackSponsorSegments(videoId) }.getOrDefault(emptyList())
@@ -182,11 +209,6 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 }
             }
             val detail = suspendResult { engine.metadata(videoId) }.getOrNull()
-            val nextVideo = detail
-                ?.suggestions
-                ?.asSequence()
-                ?.flatMap { it.items.asSequence() }
-                ?.firstOrNull { it.videoId != videoId && !it.isLive && !it.isUpcoming && !it.isChannel }
             val channel = detail?.let(engine::channelOf)
             val signedIn = channel != null && suspendResult { engine.isSignedIn() }.getOrDefault(false)
             _uiState.update { current ->
@@ -197,7 +219,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     playback
                 }
                 if (current.playback?.videoId == videoId) current.copy(
-                    playback = enriched, nextVideo = playbackHistory.nextVideo ?: nextVideo, successorsLoading = false,
+                    playback = enriched,
                     channel = channel?.let { if (signedIn) it else it.copy(subscribed = null) },
                 ) else current
             }

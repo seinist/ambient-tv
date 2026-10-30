@@ -16,6 +16,26 @@ class YouTubeContentCacheTest {
         assertEquals("Saved", rows.last().title)
     }
 
+    @Test fun partialAndCompleteRefreshDoNotReindexVisibleRowsOrCards() {
+        val cache = YouTubeContentCache()
+        cache.replace("subscriptions", listOf(
+            YouTubeRow("Subscriptions", listOf(item("a"), item("b"))),
+            YouTubeRow("Later", listOf(item("c"))),
+        ))
+        val partial = cache.merge("subscriptions", listOf(
+            YouTubeRow("New at source top", listOf(item("new"))),
+            YouTubeRow("Subscriptions", listOf(item("fresh"), item("a"), item("b"))),
+        ))
+        assertEquals(listOf("Subscriptions", "Later", "New at source top"), partial.map { it.id })
+        assertEquals(listOf("a", "b", "fresh"), partial.first().items.map { it.videoId })
+        val completed = cache.replace("subscriptions", listOf(
+            YouTubeRow("New at source top", listOf(item("new"))),
+            YouTubeRow("Subscriptions", listOf(item("fresh"), item("a"), item("b"))),
+        ))
+        assertEquals(listOf("Subscriptions", "New at source top"), completed.map { it.id })
+        assertEquals(listOf("a", "b", "fresh"), completed.first().items.map { it.videoId })
+    }
+
     @Test
     fun cacheEvictsLeastRecentlyUsedEntryAtCapacity() {
         val cache = YouTubeContentCache()

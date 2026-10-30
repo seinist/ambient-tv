@@ -44,11 +44,13 @@ class RadioPlaybackLauncher @Inject constructor(
     suspend fun play(
         station: RadioStation,
         stations: List<RadioStation>? = null,
-    ): Result<Unit> = playInternal(station, stations, reconnect = false)
+        source: RadioBrowseQueueSource? = null,
+    ): Result<Unit> = playInternal(station, stations, source, reconnect = false)
 
     private suspend fun playInternal(
         station: RadioStation,
         stations: List<RadioStation>?,
+        source: RadioBrowseQueueSource?,
         reconnect: Boolean,
     ): Result<Unit> = playMutex.withLock {
         suspendResult {
@@ -88,7 +90,7 @@ class RadioPlaybackLauncher @Inject constructor(
 
             // Commit browse/player state only after the replacement player exists. A failed or
             // cancelled start must leave the previous queue and Recent history untouched.
-            if (stations != null) queue.replace(stations, currentStation.id) else queue.select(currentStation.id)
+            if (stations != null) queue.replace(stations, currentStation.id, source) else queue.select(currentStation.id)
             if (!reconnect) {
                 reconnectStationId = currentStation.id
                 reconnectAttempt = 0
@@ -158,7 +160,7 @@ class RadioPlaybackLauncher @Inject constructor(
                 reconnectStationId != station.id
             ) return@launch
 
-            playInternal(station, stations = null, reconnect = true)
+            playInternal(station, stations = null, source = null, reconnect = true)
                 .onFailure { Timber.w(it, "Radio reconnect %d failed to start", attempt) }
         }
     }
