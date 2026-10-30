@@ -74,6 +74,7 @@ data class SettingsUiState(
     val embyLibrarySections: List<LibrarySection> = emptyList(),
     val embyHiddenSectionKeys: Set<String> = emptySet(),
     val isSigningInEmby: Boolean = false,
+    val embyConnectPin: String? = null,
     val isTestingEmby: Boolean = false,
     val isResolvingEmbyMac: Boolean = false,
     val savedEmbyServers: List<EmbyServerProfile> = emptyList(),
