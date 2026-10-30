@@ -409,6 +409,64 @@ private fun SearchRows(
     }
     val restoreListIndex = mediaGroupListIndices.getOrNull(restoreGroupIndex) ?: 0
     val rowsState = rememberLazyListState(initialFirstVisibleItemIndex = if (restoreResultFocus) restoreListIndex else 0)
+    // The outer list spans all provider rows. It can locate the first remaining result even
+    // when the row holding focus disappears and its nested LazyRow is no longer composed.
+    val focusSlots = buildList {
+        var index = 1 // Result count.
+        fun status(source: SearchSourceState) {
+            if (source == SearchSourceState.LOADING || source == SearchSourceState.ERROR ||
+                source == SearchSourceState.PARTIAL) index++
+        }
+        fun mediaGroups(groups: List<Pair<Int, List<MediaItem>>>, provider: String) {
+            groups.forEach { (category, items) ->
+                items.forEach { add(BrowseFocusSlot(BrowseFocusKey("search:$provider:$category", it.ratingKey, true), index)) }
+                index++
+            }
+        }
+        status(state.plexState); mediaGroups(plexGroups, "plex")
+        status(state.jellyfinState); mediaGroups(jellyfinGroups, "jellyfin")
+        status(state.embyState); mediaGroups(embyGroups, "emby")
+        status(state.trailerState); mediaGroups(trailerGroups, "trailers")
+        status(state.tvheadendState)
+        state.liveTvSources.values.forEach { source ->
+            val channels = state.tvheadendResults.channels.filter { it.sourceId == source.id }
+            val programs = state.tvheadendResults.programs.filter { it.sourceId == source.id }
+            val recordings = state.tvheadendResults.recordings.filter { it.sourceId == source.id }
+            if (channels.isNotEmpty()) {
+                channels.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                    "search:tvh-channels:${source.id}", "search:tvh-channel:${it.sourceId}:${it.uuid}", true), index)) }
+                index++
+            }
+            if (programs.isNotEmpty()) {
+                programs.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                    "search:tvh-programs:${source.id}", "search:tvh-program:${it.sourceId}:${it.eventId}", true), index)) }
+                index++
+            }
+            if (recordings.isNotEmpty()) {
+                recordings.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                    "search:tvh-recordings:${source.id}", "search:tvh-recording:${it.sourceId}:${it.uuid}", true), index)) }
+                index++
+            }
+        }
+        status(state.youtubeState)
+        if (state.youtubeResults.isNotEmpty()) {
+            state.youtubeResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                "search:youtube", "search:youtube:${it.videoId}", true), index)) }
+            index++
+        }
+        status(state.spotifyState)
+        spotifyGroups.forEach { (type, items) ->
+            items.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                "search:spotify:$type", "search:spotify:${it.type}:${it.id}", true), index)) }
+            index++
+        }
+        status(state.radioState)
+        if (state.radioResults.isNotEmpty()) {
+            state.radioResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(
+                "search:radio", "search:radio:${it.id}", true), index)) }
+        }
+    }
+    RegisterBrowseFocusSlots(rowsState, focusSlots)
     LaunchedEffect(focusedKey, allMediaGroups, restoreResultFocus, restoreListIndex) {
         if (restoreResultFocus && focusedKey != null && restoreGroupIndex in allMediaGroups.indices) {
             // Status rows are real lazy items too.
