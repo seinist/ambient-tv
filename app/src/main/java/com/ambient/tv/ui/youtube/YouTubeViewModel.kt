@@ -63,6 +63,8 @@ data class YouTubeUiState(
     val visibleFeeds: List<YouTubeFeed> = listOf(YouTubeFeed.HOME),
     val query: String = "",
     val rows: List<YouTubeRow> = emptyList(),
+    /** A player return is a new focus target even when the visible row list is unchanged. */
+    val returnFocusRevision: Int = 0,
     /** Rows whose next page loads because focus neared their end (end-of-row placeholders). */
     val loadingRows: Set<String> = emptySet(),
     val error: String? = null,
@@ -79,6 +81,7 @@ class YouTubeViewModel @Inject constructor(
     private val engine: SmartTubeEngine,
     private val preferences: AppPreferences,
     private val contentCache: YouTubeContentCache,
+    private val playbackContext: YouTubeBrowsePlaybackContext,
 ) : ViewModel() {
     /** Set on the channel page route: the screen shows that channel instead of a feed. */
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
@@ -95,6 +98,24 @@ class YouTubeViewModel @Inject constructor(
         visitedFocusKeys += stateKey(feed)
         preferences.setSectionFocusSnapshot(stateKey(feed), videoId, rowId)
         scheduleRowContinuation(rowId, videoId)
+    }
+
+    /** Capture the actual visible row order before navigation; never infer the queue from suggestions. */
+    fun playbackToken(videoId: String): Long? {
+        val state = _uiState.value
+        val rows = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
+        val preferredRow = focusedRowId(state.feed)
+        val row = rows.firstOrNull { it.id == preferredRow && it.items.any { item -> item.videoId == videoId } }
+            ?: rows.firstOrNull { it.items.any { item -> item.videoId == videoId } }
+        return playbackContext.start(displayedContentKey, row, videoId)
+    }
+
+    private fun restorePlayedFocus() {
+        val key = displayedContentKey ?: return
+        val returned = playbackContext.consumeReturn(key) ?: return
+        visitedFocusKeys += stateKey(_uiState.value.feed)
+        preferences.setSectionFocusSnapshot(stateKey(_uiState.value.feed), returned.videoId, returned.rowId)
+        _uiState.value = _uiState.value.copy(returnFocusRevision = _uiState.value.returnFocusRevision + 1)
     }
 
     // --- Row continuation (SmartTube loads rows page by page, like its BrowsePresenter) -------
@@ -268,6 +289,7 @@ class YouTubeViewModel @Inject constructor(
             val feed = initialFeedKey?.let(YouTubeFeed::fromKey)
             if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
         }
+        restorePlayedFocus()
         refresh()
     }
 
@@ -441,8 +463,12 @@ class YouTubeViewModel @Inject constructor(
 
     private fun showCachedContent(key: String, retainedRows: List<YouTubeRow> = emptyList()) {
         val cached = contentCache.get(key)
-        val rows = retainedRows.takeIf { it.isNotEmpty() }
-            ?: cached ?: _uiState.value.rows.takeIf { displayedContentKey == key }.orEmpty()
+        val rows = when {
+            retainedRows.isNotEmpty() && cached != null -> contentCache.merge(key, retainedRows)
+            retainedRows.isNotEmpty() -> retainedRows
+            cached != null -> cached
+            else -> _uiState.value.rows.takeIf { displayedContentKey == key }.orEmpty()
+        }
         // The cache may have expired while this feed remained visible. Seed it again so the
         // first partial refresh cannot discard still-pending rows from the current screen.
         if (cached == null && rows.isNotEmpty()) contentCache.merge(key, rows)
