@@ -250,12 +250,17 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
     // Public for the existing native-view tests; production updates this together with the
     // provider hint through updatePresentationAspectRatio().
     var forcedAspectRatio: Float? = null
+    private var presentationSourceHint: Float? = null
     private val videoAspectGate = Media3VideoAspectGate()
     private var appliedAspectRatio = Float.NaN
     private val applySettledAspect = Runnable { applyStableAspectRatio() }
 
     fun updatePresentationAspectRatio(forced: Float?, sourceHint: Float?) {
+        // AndroidView.update also runs for unrelated OSD/ambient state. It must not cancel a
+        // pending decoder-aspect settle or apply a transient size on every recomposition.
+        if (forcedAspectRatio == forced && presentationSourceHint == sourceHint) return
         forcedAspectRatio = forced
+        presentationSourceHint = sourceHint
         videoAspectGate.configure(forced, sourceHint)
         // Explicit aspect changes respond immediately. The decoder's own updates are gated.
         if (player != null) {
