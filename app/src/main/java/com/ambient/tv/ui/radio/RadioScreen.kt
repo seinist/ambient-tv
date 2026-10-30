@@ -584,19 +584,23 @@ private fun RadioFacetList(
             ) {
                 Row(
                     Modifier
+                        .fillMaxWidth()
                         .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
                         .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f), shape)
-                        .padding(horizontal = 14.dp, vertical = 12.dp * rowScale),
+                        .padding(10.dp * rowScale),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Same geometry, accent and focus styling as the radio station list.
+                    // Text-only facets place their station count in the trailing metadata slot.
+                    Column(Modifier.weight(1f)) {
                         MarqueeTitle(entry.title, focused = focused, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            stringResource(R.string.radio_station_count, facet.stationCount),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
+                    Text(
+                        stringResource(R.string.radio_station_count, facet.stationCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
