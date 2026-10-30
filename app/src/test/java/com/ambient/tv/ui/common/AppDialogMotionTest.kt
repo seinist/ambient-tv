@@ -35,7 +35,7 @@ class AppDialogMotionTest {
     }
 
     @Test fun windowExitAnimationIsPackagedForNormalAndReducedEffects() {
-        val context = RuntimeEnvironment.getApplication<Application>()
+        val context = RuntimeEnvironment.getApplication()
         fun exitAnimation(style: Int): Int {
             val attributes = context.obtainStyledAttributes(style, intArrayOf(android.R.attr.windowExitAnimation))
             return try { attributes.getResourceId(0, 0) } finally { attributes.recycle() }
