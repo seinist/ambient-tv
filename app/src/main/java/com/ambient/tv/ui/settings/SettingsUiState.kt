@@ -37,6 +37,8 @@ data class MediaSubmenuDraft(
 data class MediaServerAuthLiveState(
     val busy: Boolean = false,
     val code: String? = null,
+    val testing: Boolean = false,
+    val resolvingMac: Boolean = false,
 )
 
 data class SettingsUiState(
@@ -86,8 +88,6 @@ data class SettingsUiState(
     val embyLibrarySections: List<LibrarySection> = emptyList(),
     val embyHiddenSectionKeys: Set<String> = emptySet(),
     val embyAuth: MediaServerAuthLiveState = MediaServerAuthLiveState(),
-    val isTestingEmby: Boolean = false,
-    val isResolvingEmbyMac: Boolean = false,
     val savedEmbyServers: List<EmbyServerProfile> = emptyList(),
     val activeEmbyServerId: String? = null,
     val discoveredEmbyServers: List<DiscoveredEmbyServer> = emptyList(),
