@@ -65,11 +65,14 @@ class CredentialRedirectGuardTest {
         val origin = server(redirectTo("http://localhost:${foreign.port}/landing"))
         val request = Request.Builder().url("http://127.0.0.1:${origin.port}/library")
             .header("X-Plex-Token", "plex-secret").header("X-Emby-Token", "emby-secret")
-            .header("X-Emby-Authorization", "MediaBrowser Token=\"emby-secret\"").header("Accept", "application/json")
+            .header("X-Emby-Authorization", "MediaBrowser Token=\"emby-secret\"")
+            .header("X-Connect-UserToken", "connect-secret")
+            .header("Accept", "application/json")
             .build()
         client.newCall(request).execute().use { assertEquals(200, it.code) }
 
         assertTrue(origin.requests.single().has("X-Plex-Token"))
+        assertTrue(origin.requests.single().has("X-Connect-UserToken"))
         val forwarded = foreign.requests.single()
         CredentialRedirectGuard.CREDENTIAL_HEADERS.forEach { assertFalse(it, forwarded.has(it)) }
         assertTrue(forwarded.has("Accept"))
