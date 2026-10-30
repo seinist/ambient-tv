@@ -107,6 +107,23 @@ internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float):
     return width.toLong() * height * rate <= MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE
 }
 
+/** Controls must follow the same scaling boundaries as MPV but only be offered for
+ * shader algorithms that actually implement them in Media3. */
+internal fun media3AntiRingRowVisible(
+    options: Media3ImageOptions,
+    upscalerVisible: Boolean,
+    downscalerVisible: Boolean,
+): Boolean {
+    val safe = options.normalized()
+    return (upscalerVisible && safe.scaler in MEDIA3_ANTIRING_SCALERS) ||
+        (downscalerVisible && safe.downscaler in MEDIA3_ANTIRING_SCALERS)
+}
+
+internal fun media3SigmoidRowVisible(
+    options: Media3ImageOptions,
+    upscalerVisible: Boolean,
+): Boolean = upscalerVisible && options.normalized().scaler in MEDIA3_SIGMOID_SCALERS
+
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
     upscalerApplies && options.normalized().scaler in setOf("fsr", "nis")
