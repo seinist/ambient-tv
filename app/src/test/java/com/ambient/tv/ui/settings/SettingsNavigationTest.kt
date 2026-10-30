@@ -140,6 +140,35 @@ class SettingsNavigationTest {
         assertEquals(WireGuardBrowseBack.Dismiss, wireGuardBrowseBack(0, false))
     }
 
+    @Test fun directSettingsShortcutsHaveStableScopedAnchors() {
+        assertEquals(SettingsCategory.APPEARANCE, settingsShortcutCategory("appearance:hdr"))
+        assertEquals("appearance:hdr", settingsShortcutItemKey("APPEARANCE:HDR"))
+        assertEquals("appearance:scale", settingsShortcutItemKey("appearance:scale"))
+        assertEquals("playback:renderer", settingsShortcutItemKey("playback:renderer"))
+        assertEquals("playback:test-duration", settingsShortcutItemKey("playback:test-duration"))
+        assertEquals("spotify:account", settingsShortcutItemKey("spotify:account"))
+        assertEquals("jellyfin:customization", settingsShortcutItemKey("jellyfin:customization"))
+        assertEquals("emby:customization", settingsShortcutItemKey("emby:customization"))
+        assertNull(settingsShortcutItemKey("appearance:missing"))
+        assertNull(settingsShortcutItemKey("plex:arbitrary-key"))
+        assertNull(settingsShortcutItemKey("wake:plex"))
+        assertNull(settingsShortcutItemKey("missing:account"))
+        assertEquals("plex", settingsShortcutWakeTarget("wake:plex"))
+        assertEquals("files", settingsShortcutWakeTarget("wake:files"))
+        assertEquals("dlna", settingsShortcutWakeTarget("wake:dlna"))
+        assertNull(settingsShortcutWakeTarget("wake:unknown"))
+    }
+
+    @Test fun directEntryReturnsToCallerButLinkedPagesKeepInternalBackNavigation() {
+        val opened = SettingsCategory.JELLYFIN
+        val sourcePage = SettingsHubNav(page = opened)
+        assertTrue(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = false))
+        assertFalse(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = true))
+        assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(page = SettingsCategory.WAKE), false))
+        assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(), false))
+        assertFalse(settingsDirectEntryReturnsToCaller(null, sourcePage, false))
+    }
+
     @Test fun existingSetupAndSidebarAliasesKeepTheirTargets() {
         mapOf(
             "plex" to SettingsCategory.PLEX, "network" to SettingsCategory.PLEX,
