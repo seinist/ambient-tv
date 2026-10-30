@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.composed
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -279,17 +280,91 @@ fun PageHeader(
  * and Down back the same way. Geometric search alone sent Up from the right side of a grid
  * straight to the right-aligned header actions, past the left-aligned chips.
  */
+/**
+ * Page controls are traversed by their actual vertical order, never by the D-pad beam.
+ * A missing or detached level is skipped, including a hidden filter bar or page chip row.
+ */
+internal enum class PageFocusLevel(val order: Int) {
+    HEADER(0),
+    SEARCH_TOP(10),      // Search page: query lives above source chips
+    CHIPS(20),
+    CONTEXT(23),         // Optional breadcrumb / selected facet
+    SEARCH_LOWER(26),    // Provider search below its category chips
+    FILTER(30),
+    CONTENT(40),
+}
+
 @Stable
 class PageFocusChain {
     val actions = FocusRequester()
     val chips = FocusRequester()
-    /** Fallback of the chip row's restorer: the selected chip carries it. */
     val selectedChip = FocusRequester()
     internal var hasChips = false
-    /** Where Up from the content goes: the chip row when the page shows one, else the actions. */
+    private data class Stage(val level: PageFocusLevel, val focus: FocusRequester)
+    private val stages = linkedMapOf<Any, Stage>()
+
+    internal fun register(owner: Any, level: PageFocusLevel, requester: FocusRequester) {
+        stages[owner] = Stage(level, requester)
+    }
+    internal fun unregister(owner: Any) { stages.remove(owner) }
+
+    private fun candidates(from: PageFocusLevel, down: Boolean): List<Stage> =
+        stages.values.toList().asReversed().distinctBy { it.level }
+            .filter { if (down) it.level.order > from.order else it.level.order < from.order }
+            .sortedWith(compareBy(if (down) { it.level.order } else { -it.level.order }))
+
+    internal fun previousRequester(from: PageFocusLevel): FocusRequester =
+        candidates(from, false).firstOrNull()?.focus ?: actions
+
+    internal fun requestNext(from: PageFocusLevel): Boolean = candidates(from, true).any {
+        runCatching { it.focus.requestFocus() }.getOrDefault(false)
+    }
+
+    internal fun requestPrevious(from: PageFocusLevel): Boolean {
+        if (candidates(from, false).any {
+                runCatching { it.focus.requestFocus() }.getOrDefault(false)
+            }) return true
+        return runCatching { actions.requestFocus() }.getOrDefault(false)
+    }
+
+    /** Kept for callers which explicitly request the chip stage, e.g. Search's query field. */
     val contentUp: FocusRequester get() = if (hasChips) chips else actions
-    /** Up from the content as [pageContentUp] sets it (a filter field above the content first). */
-    internal var upTarget: () -> FocusRequester = { contentUp }
+    /** Used by the shared lazy-list edge handler. Resolved at key time, not registration time. */
+    internal var upTarget: () -> FocusRequester = { previousRequester(PageFocusLevel.CONTENT) }
+}
+
+@Composable
+internal fun RegisterPageFocusLevel(chain: PageFocusChain, level: PageFocusLevel, requester: FocusRequester) {
+    val owner = remember(chain, level, requester) { Any() }
+    DisposableEffect(chain, owner, level, requester) {
+        chain.register(owner, level, requester)
+        onDispose { chain.unregister(owner) }
+    }
+}
+
+/** For the optional search field or contextual actions that sit between header and content. */
+fun Modifier.pageFocusStage(
+    chain: PageFocusChain,
+    level: PageFocusLevel,
+    requester: FocusRequester,
+): Modifier = composed {
+    RegisterPageFocusLevel(chain, level, requester)
+    this.focusRequester(requester).focusRestorer()
+        .onPreviewKeyEvent { event ->
+            when (event.key) {
+                Key.DirectionUp -> when (event.type) {
+                    KeyEventType.KeyDown -> chain.requestPrevious(level)
+                    KeyEventType.KeyUp -> true
+                    else -> false
+                }
+                Key.DirectionDown -> when (event.type) {
+                    KeyEventType.KeyDown -> chain.requestNext(level)
+                    KeyEventType.KeyUp -> true
+                    else -> false
+                }
+                else -> false
+            }
+        }.focusGroup()
 }
 
 @Composable
@@ -297,23 +372,29 @@ fun rememberPageFocusChain(): PageFocusChain = remember { PageFocusChain() }
 
 private fun Modifier.downTo(chain: PageFocusChain?): Modifier =
     if (chain == null) this else onPreviewKeyEvent { event ->
-        if (event.key != Key.DirectionDown || !chain.hasChips) false else {
-            if (event.type == KeyEventType.KeyDown) runCatching { chain.chips.requestFocus() }
-            true
+        if (event.key != Key.DirectionDown) false else when (event.type) {
+            KeyEventType.KeyDown -> chain.requestNext(PageFocusLevel.HEADER)
+            KeyEventType.KeyUp -> true
+            else -> false
         }
     }
 
-/** Up out of the content lands on [PageFocusChain.contentUp] instead of whatever lies straight above. */
-fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester = { chain.contentUp }): Modifier =
-    // Lists leave their top through their own key handling, not a focus exit: they ask the chain too.
-    also { chain.upTarget = target }.focusProperties {
+/** Up from the content goes to its nearest visible controls, and Down restores this content. */
+fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester = { chain.contentUp }): Modifier = composed {
+    val requester = remember { FocusRequester() }
+    RegisterPageFocusLevel(chain, PageFocusLevel.CONTENT, requester)
+    // The shared lazy-list edge handler reads this only when the first content item was reached.
+    chain.upTarget = { chain.previousRequester(PageFocusLevel.CONTENT) }
+    this.focusRequester(requester).focusRestorer().focusProperties {
         onExit = {
             if (requestedFocusDirection == FocusDirection.Up) {
                 cancelFocusChange()
-                runCatching { target().requestFocus() }
+                if (!chain.requestPrevious(PageFocusLevel.CONTENT))
+                    runCatching { target().requestFocus() }
             }
         }
     }
+}
 
 /**
  * Tab/filter chips under a [PageHeader]. Entering the row lands on the chip focused last (the
@@ -325,6 +406,7 @@ fun Modifier.pageContentUp(chain: PageFocusChain, target: () -> FocusRequester =
  */
 @Composable
 fun Modifier.pageChips(chain: PageFocusChain, up: FocusRequester = chain.actions): Modifier {
+    RegisterPageFocusLevel(chain, PageFocusLevel.CHIPS, chain.chips)
     DisposableEffect(chain) {
         chain.hasChips = true
         onDispose { chain.hasChips = false }
@@ -333,9 +415,20 @@ fun Modifier.pageChips(chain: PageFocusChain, up: FocusRequester = chain.actions
         .browseFocusTarget("page-chips", content = false)
         .focusRestorer(chain.selectedChip)
         .onPreviewKeyEvent { event ->
-            if (event.key != Key.DirectionUp) false else {
-                if (event.type == KeyEventType.KeyDown) runCatching { up.requestFocus() }
-                true
+            when (event.key) {
+                Key.DirectionUp -> when (event.type) {
+                    KeyEventType.KeyDown ->
+                        (if (up !== chain.actions) runCatching { up.requestFocus() }.getOrDefault(false) else false) ||
+                            chain.requestPrevious(PageFocusLevel.CHIPS)
+                    KeyEventType.KeyUp -> true
+                    else -> false
+                }
+                Key.DirectionDown -> when (event.type) {
+                    KeyEventType.KeyDown -> chain.requestNext(PageFocusLevel.CHIPS)
+                    KeyEventType.KeyUp -> true
+                    else -> false
+                }
+                else -> false
             }
         }
         .focusGroup()
