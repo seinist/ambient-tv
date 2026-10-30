@@ -27,6 +27,12 @@ data class WireGuardLiveState(
     val testOk: Boolean = false,
 )
 
+/** Transient media-server sign-in state kept nested to preserve SettingsUiState's JVM slot budget. */
+data class MediaServerAuthLiveState(
+    val busy: Boolean = false,
+    val code: String? = null,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -73,8 +79,7 @@ data class SettingsUiState(
     val embyAutoWakeEnabled: Boolean = true,
     val embyLibrarySections: List<LibrarySection> = emptyList(),
     val embyHiddenSectionKeys: Set<String> = emptySet(),
-    val isSigningInEmby: Boolean = false,
-    val embyConnectPin: String? = null,
+    val embyAuth: MediaServerAuthLiveState = MediaServerAuthLiveState(),
     val isTestingEmby: Boolean = false,
     val isResolvingEmbyMac: Boolean = false,
     val savedEmbyServers: List<EmbyServerProfile> = emptyList(),
