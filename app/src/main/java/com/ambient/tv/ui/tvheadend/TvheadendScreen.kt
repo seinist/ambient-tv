@@ -178,7 +178,7 @@ fun TvheadendScreen(
     }
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(!state.awaitingInitialContent())
     if (onBack != null) {
         BackHandler(enabled = !showBrowseOptions && state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
     }
@@ -272,7 +272,7 @@ fun TvheadendScreen(
 
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
         OperationFeedbackScope(viewModel.feedback, "timers", state.tab == TvheadendTab.TIMERS && state.selectedEvent == null && state.selectedRecording == null)
-        if (state.dashboard != null && state.error != null) {
+        if (state.dashboard != null && state.error != null && state.tabHasContent()) {
             OperationFeedbackContent(state.error!!, Modifier.fillMaxWidth(),
                 actionLabel = stringResource(R.string.home_retry), onAction = viewModel::refresh)
         }
@@ -297,16 +297,10 @@ fun TvheadendScreen(
                 onAction = { onOpenSourceSettings(state.source.system) },
                 modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 620.dp),
             )
-            state.loading || (state.refreshing && when (state.tab) {
-                TvheadendTab.LIVE -> state.dashboard?.channels.isNullOrEmpty()
-                TvheadendTab.GUIDE -> state.dashboard?.channels.isNullOrEmpty()
-                TvheadendTab.RECORDINGS -> state.dashboard?.let { it.recordings.isEmpty() && it.failedRecordings.isEmpty() } ?: true
-                TvheadendTab.TIMERS -> state.dashboard?.let { it.upcoming.isEmpty() && it.autoRecs.isEmpty() } ?: true
-                TvheadendTab.HBBTV -> state.dashboard == null
-            }) -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            state.awaitingInitialContent() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             }
-            state.error != null && state.dashboard == null -> OperationFeedbackContent(
+            state.emptyContentHasError() -> OperationFeedbackContent(
                 feedback = state.error!!,
                 layout = FeedbackLayout.PAGE,
                 actionLabel = stringResource(R.string.tvh_refresh),
@@ -349,7 +343,9 @@ fun TvheadendScreen(
                         listing = channelListing,
                         onWatch = watchChannel,
                         canWatch = !state.offline,
-                        refreshing = state.refreshing,
+                        // Channel cards may arrive before EPG; do not label each row "no programme"
+                        // until this entry's dashboard request has actually settled.
+                        refreshing = state.refreshing || !state.initialDashboardSettled,
                         browseState = viewModel.browseState,
                         channels = dashboard?.channels.orEmpty(),
                         events = dashboard?.events.orEmpty(),
