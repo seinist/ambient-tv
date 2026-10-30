@@ -102,6 +102,8 @@ class YouTubeViewModel @Inject constructor(
 
     /** Capture the actual visible row order before navigation; never infer the queue from suggestions. */
     fun playbackToken(videoId: String): Long? {
+        // Opening a channel tile is navigation, not a new playback queue.
+        if (com.ambient.tv.youtube.youtubeChannelIdOf(videoId) != null) return null
         val state = _uiState.value
         val rows = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
         val preferredRow = focusedRowId(state.feed)
