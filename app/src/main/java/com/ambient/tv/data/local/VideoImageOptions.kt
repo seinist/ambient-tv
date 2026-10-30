@@ -81,7 +81,10 @@ object VideoImageCatalog {
         // FSRCNNX luma CNN weights are loaded from MPV resources and evaluated via FP16.
         "fsrcnnx8" to "FSRCNNX · 8",
         "fsrcnnx16" to "FSRCNNX · 16",
-    )
+    ).apply {
+        // Same NNEDI3 quality presets and source labels as the bundled MPV renderer.
+        Nnedi3QualityCatalog.presets.forEach { preset -> put(preset.key, preset.displayName) }
+    }
     /** Explicit downsampling is opt-in; "display" preserves the existing direct display scaling.
      * Lanczos uses Media3's own effect; the other options use band-limited separable kernels.
      */
@@ -254,7 +257,7 @@ data class Media3ImageOptions(
 ) {
     fun normalized() = copy(
         scaler = scaler.takeIf { it in VideoImageCatalog.media3Scalers } ?: "bilinear",
-        superResolution = superResolution && scaler !in
+        superResolution = superResolution && !scaler.startsWith("nnedi3") && scaler !in
             (setOf("bilinear", "fsr", "nis") + setOf("anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m",
                 "fsrcnnx8", "fsrcnnx16")),
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
