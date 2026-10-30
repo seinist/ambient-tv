@@ -1453,8 +1453,13 @@ class SettingsViewModel @Inject constructor(
                         youtubeAuthErrorRes = if (!signed && code == null) R.string.youtube_error_login_start else null,
                     ) }
                     if (signed) {
+                        // A completed account action means SmartTube is meant to be usable, just as
+                        // Jellyfin/Emby enable themselves after a successful login.
+                        appPreferences.youtubeEnabled = true
+                        _uiState.update { it.copy(youtubeEnabled = true) }
                         notifyLogin("youtube", NoticePhase.SUCCESS)
                         com.ambient.tv.data.local.LoginStateSignal.changed()
+                        refreshSavedValues()
                     } else if (code == null) notifyLogin("youtube", NoticePhase.ERROR)
                     if (!signed && code != null) watchForYouTubeSignIn()
                 }
