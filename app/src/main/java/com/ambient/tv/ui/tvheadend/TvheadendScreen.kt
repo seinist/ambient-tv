@@ -323,6 +323,8 @@ fun TvheadendScreen(
                         events = dashboard?.events.orEmpty(),
                         upcoming = dashboard?.upcoming.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
+                        titleArt = titleArt,
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onWatch = watchChannel,
                         onEvent = viewModel::selectEvent,
                         firstContentFocusRequester = firstContentFocusRequester,
@@ -344,6 +346,8 @@ fun TvheadendScreen(
                         channels = dashboard?.channels.orEmpty(),
                         events = dashboard?.events.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
+                        titleArt = titleArt,
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onEvent = viewModel::selectEvent,
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
@@ -356,6 +360,7 @@ fun TvheadendScreen(
                         failedRecordings = dashboard?.failedRecordings.orEmpty(),
                         imageHeaders = viewModel.imageHeaders,
                         art = recordingArt,
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         canDelete = state.capabilities.deleteRecordings && !state.offline,
                         busy = state.actionInProgress,
                         onDelete = { pendingDelete = PendingDelete.Recording(it) },
@@ -374,6 +379,7 @@ fun TvheadendScreen(
                         imageHeaders = viewModel.imageHeaders,
                         art = recordingArt,
                         seriesArt = seriesArt,
+                        onArtworkNeeded = { title, scope -> viewModel.requestTitleArt(listOf(title), scope) },
                         onSelect = viewModel::selectRecording,
                         onEdit = { viewModel.edit(LiveTvEditTarget.Timer(it)) },
                         onEditSeries = { viewModel.edit(LiveTvEditTarget.Series(it)) },
@@ -397,7 +403,7 @@ fun TvheadendScreen(
         // A running programme recorded "from now" has its own timer without the EPG link.
         val timer = state.dashboard?.upcoming?.let { findProgrammeRecording(event, it) }
         val art = liveTvProgrammeArt(event, channels, titleArt)
-        LaunchedEffect(event.eventId) { if (event.imageUrl == null) viewModel.requestTitleArt(listOf(event.title)) }
+        LaunchedEffect(event.eventId, event.title) { viewModel.requestTitleArt(listOf(event.title)) }
         EventDialog(
             event = event,
             timer = timer,
@@ -572,6 +578,7 @@ internal fun ChannelRow(
     onWatch: (TvhChannel) -> Unit,
     onEvent: (TvhEpgEvent) -> Unit,
     onFocused: () -> Unit,
+    art: LiveTvArt? = null,
     modifier: Modifier = Modifier,
 ) {
     if (LocalHandheldUi.current) {
@@ -585,7 +592,10 @@ internal fun ChannelRow(
                     next?.let { Text("${formatTime(it.startEpochSeconds)} · ${it.title}", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
             },
-            leadingContent = { ArtworkImage(channel.iconUrl, channel.name, Modifier.size(44.dp), contentScale = ContentScale.Fit, headers = imageHeaders) },
+            leadingContent = {
+                if (art != null) LiveTvArtBox(art, channel.name, imageHeaders, Modifier.size(80.dp, 45.dp))
+                else ArtworkImage(channel.iconUrl, channel.name, Modifier.size(44.dp), contentScale = ContentScale.Fit, headers = imageHeaders)
+            },
             trailingContent = { if (current != null) androidx.compose.material3.IconButton(onClick = { onEvent(current) }) { androidx.compose.material3.Icon(Icons.Default.Info, stringResource(R.string.tvh_info)) } },
             modifier = modifier.clickable { onWatch(channel) },
         )
@@ -617,13 +627,12 @@ internal fun ChannelRow(
                 Modifier.size(84.dp, 48.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.35f)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (channel.iconUrl != null) ArtworkImage(
+                if (art != null) LiveTvArtBox(art, channel.name, imageHeaders, Modifier.fillMaxSize())
+                else if (channel.iconUrl != null) ArtworkImage(
                     model = channel.iconUrl,
                     title = channel.name,
                     modifier = Modifier.fillMaxSize().padding(4.dp),
                     contentScale = ContentScale.Fit,
-                    // Authentication is harmless for ticketed URLs and is required by
-                    // servers that protect imagecache as well as the API.
                     headers = imageHeaders,
                     fallbackText = channel.numberLabel.orEmpty().ifBlank { channel.name.take(3) },
                 )
@@ -663,8 +672,13 @@ internal fun GuideEventCard(
     now: Long,
     onEvent: (TvhEpgEvent) -> Unit,
     onFocused: () -> Unit,
+    art: LiveTvArt? = null,
+    imageHeaders: Map<String, String> = emptyMap(),
+    onArtworkNeeded: (kotlinx.coroutines.CoroutineScope) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    // LazyRow only composes nearby events; never prefetch the full multi-day EPG.
+    LaunchedEffect(event.eventId, event.title) { onArtworkNeeded(this) }
     var focused by remember { mutableStateOf(false) }
     val width = (event.durationSeconds / 60f * 3.2f).roundToInt().coerceIn(150, 430).dp
     val live = event.isLive(now)
@@ -674,31 +688,39 @@ internal fun GuideEventCard(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = modifier.width(width).browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid).mediaFocusMotion(focused).activateOnTvKey { onEvent(event) }.onFocusChanged {
-            focused = it.isFocused
-            if (it.isFocused) onFocused()
-        },
+        modifier = modifier.width(width).browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid)
+            .mediaFocusMotion(focused).activateOnTvKey { onEvent(event) }.onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            },
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(86.dp)
-                .background(
-                    when {
-                        focused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
-                        live -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator.copy(alpha = 0.10f)
-                        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
-                    }, cardShape,
-                )
-                .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (live) MetaBadge(stringResource(R.string.tvh_live), emphasized = true)
-                Text("${formatTime(event.startEpochSeconds)}–${formatTime(event.stopEpochSeconds)}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // Fixed 86dp geometry keeps the EPG grid and its focus targets steady as images arrive.
+        Box(Modifier.fillMaxWidth().height(86.dp).clip(cardShape)) {
+            if (art != null) LiveTvArtBox(art, event.title, imageHeaders, Modifier.fillMaxSize())
+            if (art != null) {
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
+            } else {
+                val fill = when {
+                    focused -> MaterialTheme.colorScheme.primary.copy(alpha = .22f)
+                    live -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator.copy(alpha = .10f)
+                    else -> MaterialTheme.colorScheme.surface.copy(alpha = .78f)
+                }
+                Box(Modifier.matchParentSize().background(fill))
             }
-            Text(event.title, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (live) MetaBadge(stringResource(R.string.tvh_live), emphasized = true)
+                    Text("${formatTime(event.startEpochSeconds)}–${formatTime(event.stopEpochSeconds)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (art != null) Color.White.copy(alpha = .85f) else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text(event.title, style = MaterialTheme.typography.titleSmall, maxLines = 2,
+                    color = if (art != null) Color.White else MaterialTheme.colorScheme.onSurface,
+                    overflow = TextOverflow.Ellipsis)
+            }
+            Box(Modifier.matchParentSize().border(if (focused) 2.dp else 1.dp,
+                if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .08f), cardShape))
         }
     }
 }
@@ -709,6 +731,7 @@ private fun RecordingList(
     failedRecordings: List<TvhDvrEntry>,
     imageHeaders: Map<String, String>,
     art: (TvhDvrEntry) -> LiveTvArt?,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     canDelete: Boolean,
     busy: Boolean,
     onDelete: (TvhDvrEntry) -> Unit,
@@ -731,6 +754,7 @@ private fun RecordingList(
     com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
+            LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
             DvrRow(
                 entry, completed = !failed, failed = failed, art = art(entry), imageHeaders = imageHeaders,
                 onPrimary = { if (!failed) onPlay(entry) else onSelect(entry) },
@@ -754,6 +778,7 @@ private fun TimerList(
     imageHeaders: Map<String, String>,
     art: (TvhDvrEntry) -> LiveTvArt?,
     seriesArt: (TvhAutoRec) -> LiveTvArt?,
+    onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit,
     onSelect: (TvhDvrEntry) -> Unit,
     onEdit: (TvhDvrEntry) -> Unit,
     onEditSeries: (TvhAutoRec) -> Unit,
@@ -781,6 +806,7 @@ private fun TimerList(
     LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
+                LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
                 DvrRow(
                     entry, completed = false, failed = false, art = art(entry), imageHeaders = imageHeaders,
                     onPrimary = { onSelect(entry) }, onInfo = { onSelect(entry) },
@@ -801,6 +827,9 @@ private fun TimerList(
                 )
             }
             items(autoRecs, key = { "autorec:${it.uuid}" }) { entry ->
+                LaunchedEffect(entry.uuid, entry.title, entry.name) {
+                    onArtworkNeeded(entry.title?.takeIf(String::isNotBlank) ?: entry.name, this)
+                }
                 val id = "autorec:${entry.uuid}"
                 SeriesTimerRow(
                     entry, busy, canManage, onDeleteSeries,
@@ -926,7 +955,7 @@ private fun DvrRow(
 
 /** Row art: programme images cropped, channel logos fitted on the dark plate. */
 @Composable
-private fun LiveTvArtBox(art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier) {
+internal fun LiveTvArtBox(art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier) {
     Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
         if (art != null) ArtworkImage(
             model = art.url, title = title,

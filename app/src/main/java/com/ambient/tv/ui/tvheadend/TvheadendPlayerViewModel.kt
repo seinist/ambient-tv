@@ -56,6 +56,8 @@ sealed interface TvheadendPlayerState {
         val nowEvent: TvhEpgEvent? = null,
         val nextEvent: TvhEpgEvent? = null,
         val playingRecording: LiveTvRecording? = null,
+        /** DVR entries opened directly are not live buffers, but still need their own TMDB art. */
+        val recordingArtSource: LiveTvRecording? = null,
         val artworkUrl: String? = null,
         val artworkFallbackUrls: List<String> = emptyList(),
         val playbackBackendKey: String = "media3",
@@ -89,6 +91,7 @@ class TvheadendPlayerViewModel @Inject constructor(
     private val companionMapper: com.ambient.tv.companion.CompanionMediaMapper,
     private val playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     private val hosts: HostConnectivity,
+    private val artwork: LiveTvArtworkRepository,
 ) : ViewModel() {
     private val repository = registry.repository(savedStateHandle.get<String>("sourceId"))
     val sourceSystem = repository.source.system
@@ -128,7 +131,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         artworkUrl = state.artworkUrl ?: state.nowEvent?.imageUrl ?: state.channel?.iconUrl,
         artworkHeaders = repository.authHeaders(),
         artworkFallbackUrls = state.artworkFallbackUrls,
-        artworkAspectRatio = if (state.artworkUrl.isNullOrBlank() && state.nowEvent?.imageUrl.isNullOrBlank() && !state.channel?.iconUrl.isNullOrBlank()) 1f else 16f / 9f,
+        artworkAspectRatio = if (!state.channel?.iconUrl.isNullOrBlank() && state.artworkUrl == state.channel?.iconUrl) 1f else 16f / 9f,
         isLive = state.source.isLive,
         hasVideo = state.channel?.kind != LiveTvChannelKind.RADIO,
         sourceWidth = state.sourceWidth,
@@ -232,6 +235,13 @@ class TvheadendPlayerViewModel @Inject constructor(
         com.ambient.tv.livetv.LiveTimeshift.resumeSeekHandler = timeshiftResumeSeekHandler
         if (kind == "channel") com.ambient.tv.livetv.LiveTvReturnFocus.watched(repository.source.id, initialId)
         load()
+        viewModelScope.launch {
+            artwork.titleArt.collectLatest {
+                val ready = _uiState.value as? TvheadendPlayerState.Ready ?: return@collectLatest
+                val decorated = withProgrammeArtwork(ready)
+                if (decorated !== ready) _uiState.value = decorated
+            }
+        }
         if (sourceSystem == "tvheadend" && kind == "channel") viewModelScope.launch {
             uiState.map { (it as? TvheadendPlayerState.Ready)?.let { state -> state.channel?.uuid to state.nowEvent } }
                 .distinctUntilChanged().collectLatest { selection ->
@@ -296,9 +306,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                         val (nowEvent, nextEvent) = loadProgramInfo(channelId)
                         val latest = _uiState.value as? TvheadendPlayerState.Ready
                         if (latest?.channel?.uuid == channelId && latest.playingRecording == null) {
-                            val artwork = tvhPanelArtwork(nowEvent?.imageUrl, latest.channel.iconUrl)
-                            _uiState.value = latest.copy(nowEvent = nowEvent, nextEvent = nextEvent,
-                                artworkUrl = artwork.first, artworkFallbackUrls = artwork.second)
+                            _uiState.value = withProgrammeArtwork(latest.copy(nowEvent = nowEvent, nextEvent = nextEvent))
+                            nowEvent?.let { artwork.requestTitleArt(listOf(it.title), viewModelScope) }
                         }
                         delay(60_000L)
                     }
@@ -309,7 +318,8 @@ class TvheadendPlayerViewModel @Inject constructor(
     private fun load() {
         (BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, currentChannelUuid, sourceId)) as? TvheadendPlayerState.Ready)?.let {
             savedResumeRequest.skip()
-            _uiState.value = it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend)
+            _uiState.value = withProgrammeArtwork(it.copy(playbackBackendKey = BackgroundPlaybackSession.snapshot.value.backend))
+            artwork.requestTitleArt(listOfNotNull(it.nowEvent?.title, it.recordingArtSource?.title), viewModelScope)
             viewModelScope.launch { channels = runCatching { repository.channels() }.getOrDefault(emptyList()) }
             return
         }
@@ -353,6 +363,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                                 resumeSource,
                                 artworkUrl = artwork.first,
                                 artworkFallbackUrls = artwork.second,
+                                recordingArtSource = entry,
                                 playbackBackendKey = com.ambient.tv.ui.player.savedPlaybackRenderer(
                                     preferences.tvheadendPlaybackBackendKey,
                                     preferences.titleVideoSettings["$sourceSystem:$initialId"], null,
@@ -363,7 +374,8 @@ class TvheadendPlayerViewModel @Inject constructor(
                                 projectmTransitionSeconds = preferences.projectmTransitionSeconds,
                                 projectmQualityKey = preferences.projectmQualityKey,
                                 projectmPresetCategoryKey = preferences.projectmPresetCategoryKey,
-                            ).withSelectedRenderer(restorePosition = false)
+                            ).withSelectedRenderer(restorePosition = false).let(::withProgrammeArtwork)
+                            this@TvheadendPlayerViewModel.artwork.requestTitleArt(listOf(entry.title), viewModelScope)
                         }
                     }
                     else -> {
@@ -542,6 +554,20 @@ class TvheadendPlayerViewModel @Inject constructor(
     private fun tvhPanelArtwork(primary: String?, fallback: String?): Pair<String?, List<String>> {
         val candidates = listOfNotNull(primary, fallback).filter(String::isNotBlank).distinct()
         return candidates.firstOrNull() to candidates.drop(1)
+    }
+
+    /** Resolve art without changing the active stream, seek position or OSD focus identity. */
+    private fun withProgrammeArtwork(state: TvheadendPlayerState.Ready): TvheadendPlayerState.Ready {
+        val entry = state.recordingArtSource
+        val programmeArt = when {
+            entry != null -> liveTvRecordingArt(entry, emptyList(), emptyList(), artwork.titleArt.value)
+            state.nowEvent != null -> liveTvProgrammeArt(state.nowEvent, listOfNotNull(state.channel), artwork.titleArt.value)
+            else -> null
+        }
+        val urls = listOfNotNull(programmeArt?.url, entry?.fanartUrl, entry?.imageUrl,
+            state.nowEvent?.imageUrl, state.channel?.iconUrl).filter(String::isNotBlank).distinct()
+        if (state.artworkUrl == urls.firstOrNull() && state.artworkFallbackUrls == urls.drop(1)) return state
+        return state.copy(artworkUrl = urls.firstOrNull(), artworkFallbackUrls = urls.drop(1))
     }
 
     private suspend fun loadProgramInfo(channelUuid: String): Pair<TvhEpgEvent?, TvhEpgEvent?> {

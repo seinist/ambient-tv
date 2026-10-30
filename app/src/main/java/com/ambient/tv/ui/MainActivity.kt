@@ -913,6 +913,7 @@ private fun AmbientTvApp(
     var pendingMediaSelectionCollectionSort by remember { mutableStateOf<String?>(null) }
     var mediaSelectionBusy by remember { mutableStateOf(false) }
     var pendingYouTubeVideoId by remember { mutableStateOf<String?>(null) }
+    var pendingYouTubeBrowseSession by remember { mutableStateOf<Long?>(null) }
 
     fun navigateToDetails(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) {
         navController.navigate(Destinations.detail(ratingKey, collectionId, collectionSort))
@@ -1014,18 +1015,21 @@ private fun AmbientTvApp(
     }
 
     /** [replacePlayer]: a video started from a channel page opened in the player replaces that player. */
-    fun handleYouTubeSelection(videoId: String, replacePlayer: Boolean = false) {
+    fun handleYouTubeSelection(videoId: String, browseSession: Long? = null, replacePlayer: Boolean = false) {
         // Channel tiles open the channel page whatever the selection behavior says.
         com.ambient.tv.youtube.youtubeChannelIdOf(videoId)?.let { channelId ->
             navController.navigate(Destinations.youtubeChannel(channelId))
             return
         }
         when (val route = youtubeSelectionRoute(appPreferences.youtubeMediaSelectionBehaviorKey, videoId)) {
-            is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(route.videoId))
-            is YouTubeSelectionRoute.Play -> playOnSelectedTarget(Destinations.youtubePlayer(route.videoId)) {
+            is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(route.videoId, browseSession))
+            is YouTubeSelectionRoute.Play -> playOnSelectedTarget(Destinations.youtubePlayer(route.videoId, browseSession)) {
                 if (replacePlayer) popUpTo(Destinations.YOUTUBE_PLAYER) { inclusive = true }
             }
-            is YouTubeSelectionRoute.Ask -> pendingYouTubeVideoId = route.videoId
+            is YouTubeSelectionRoute.Ask -> {
+                pendingYouTubeVideoId = route.videoId
+                pendingYouTubeBrowseSession = browseSession
+            }
         }
     }
     // Parsing and validating the IPTV JSON is not composition work. Cache it until the stored
@@ -2018,7 +2022,7 @@ private fun AmbientTvApp(
                         RestorableSidebarContent {
                             YouTubeScreen(
                                 initialFeedKey = appPreferences.youtubeStartFeedKey.takeIf { it != "home" },
-                                onVideoClick = { videoId -> handleYouTubeSelection(videoId) },
+                                onVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onBack = ::focusSidebar,
                                 onSelectFeed = { feed -> navigateSidebar(youtubeFeedRoute(feed.key)) },
                             )
@@ -2028,7 +2032,7 @@ private fun AmbientTvApp(
                         RestorableSidebarContent {
                             YouTubeScreen(
                                 initialFeedKey = entry.arguments?.getString("feedKey"),
-                                onVideoClick = { videoId -> handleYouTubeSelection(videoId) },
+                                onVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onBack = ::focusSidebar,
                                 onSelectFeed = { feed -> navigateSidebar(youtubeFeedRoute(feed.key)) },
                             )
@@ -2099,12 +2103,20 @@ private fun AmbientTvApp(
                     }
                     composable(
                         route = Destinations.YOUTUBE_DETAIL,
-                        arguments = listOf(navArgument("videoId") { type = NavType.StringType }),
-                    ) {
+                        arguments = listOf(
+                            navArgument("videoId") { type = NavType.StringType },
+                            navArgument("browseSession") { type = NavType.LongType; defaultValue = -1L },
+                        ),
+                    ) { entry ->
                         YouTubeDetailScreen(
                             onBack = ::navigateBack,
                             onOpenSettings = { openSystemSettings("youtube") },
-                            onPlay = { videoId -> playOnSelectedTarget(Destinations.youtubePlayer(videoId)) },
+                            onPlay = { videoId ->
+                                playOnSelectedTarget(Destinations.youtubePlayer(
+                                    videoId,
+                                    entry.arguments?.getLong("browseSession")?.takeIf { it >= 0L },
+                                ))
+                            },
                             onOpenChannel = ::openYouTubeChannel,
                             onOpenItem = { videoId -> handleYouTubeSelection(videoId) },
                         )
@@ -2118,7 +2130,7 @@ private fun AmbientTvApp(
                         ),
                     ) {
                         YouTubeScreen(
-                            onVideoClick = { videoId -> handleYouTubeSelection(videoId, replacePlayer = true) },
+                            onVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session, replacePlayer = true) },
                             onBack = ::navigateBack,
                         )
                     }
@@ -2168,7 +2180,8 @@ private fun AmbientTvApp(
                     composable(
                         route = Destinations.YOUTUBE_PLAYER,
                         arguments = listOf(navArgument("videoId") { type = NavType.StringType },
-                            navArgument("trailer") { type = NavType.BoolType; defaultValue = false }),
+                            navArgument("trailer") { type = NavType.BoolType; defaultValue = false },
+                            navArgument("browseSession") { type = NavType.LongType; defaultValue = -1L }),
                     ) { entry ->
                         YouTubePlayerScreen(
                             onBack = { if (navController.currentBackStackEntry === entry) navController.popBackStack() },
@@ -2526,14 +2539,21 @@ private fun AmbientTvApp(
 
                 pendingYouTubeVideoId?.let { videoId ->
                     YouTubeSelectionDialog(
-                        onDismiss = { pendingYouTubeVideoId = null },
-                        onPlay = {
+                        onDismiss = {
                             pendingYouTubeVideoId = null
-                            playOnSelectedTarget(Destinations.youtubePlayer(videoId))
+                            pendingYouTubeBrowseSession = null
+                        },
+                        onPlay = {
+                            val session = pendingYouTubeBrowseSession
+                            pendingYouTubeVideoId = null
+                            pendingYouTubeBrowseSession = null
+                            playOnSelectedTarget(Destinations.youtubePlayer(videoId, session))
                         },
                         onDetails = {
+                            val session = pendingYouTubeBrowseSession
                             pendingYouTubeVideoId = null
-                            navController.navigate(Destinations.youtubeDetail(videoId))
+                            pendingYouTubeBrowseSession = null
+                            navController.navigate(Destinations.youtubeDetail(videoId, session))
                         },
                     )
                 }

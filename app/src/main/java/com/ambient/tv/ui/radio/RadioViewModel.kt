@@ -20,7 +20,7 @@ import javax.inject.Inject
 enum class RadioViewMode { GRID, LIST }
 
 /** Selection is scoped to the exact Radio Browser page, not shared across facets or searches. */
-internal data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
+data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
 
 /** Session-only memory: parameterized sidebar routes replace their ViewModels on tab changes. */
 internal object RadioFocusMemory {
@@ -75,6 +75,9 @@ data class RadioUiState(
     val facets: List<RadioFacet> = emptyList(),
     val selectedFacet: RadioFacet? = null,
     val hasMore: Boolean = false,
+    /** Raw API cursor, never the number of mapped/deduplicated stations. */
+    val nextOffset: Int = 0,
+    val returnFocusRevision: Int = 0,
     val error: Boolean = false,
     val startingStationId: String? = null,
     val favoriteIds: Set<String> = emptySet(),
@@ -90,6 +93,7 @@ class RadioViewModel @Inject constructor(
     private val repository: RadioBrowserRepository,
     private val preferences: AppPreferences,
     private val playbackLauncher: RadioPlaybackLauncher,
+    private val playbackQueue: RadioPlaybackQueue,
 ) : ViewModel() {
     private val _state = MutableStateFlow(RadioUiState())
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
@@ -99,6 +103,24 @@ class RadioViewModel @Inject constructor(
     private var focusLoadJob: Job? = null
     private var focusedStationId: String? = null
     internal fun lastFocusedContent(scope: RadioFocusScope): String? = RadioFocusMemory.last(scope)
+
+    /** Synchronize pages loaded by the Player and prefer its last station on returning. */
+    fun consumePlayerReturn(): Boolean {
+        val scope = _state.value.focusScope()
+        val returned = playbackQueue.consumeReturn(scope) ?: return false
+        val currentId = returned.currentId ?: return false
+        RadioFocusMemory.save(scope, currentId)
+        val before = _state.value
+        val known = before.stations.mapTo(HashSet()) { it.id }
+        val stations = before.stations + returned.stations.filter { known.add(it.id) }
+        _state.value = before.copy(
+            stations = stations,
+            nextOffset = returned.source?.nextOffset ?: before.nextOffset,
+            hasMore = returned.source?.hasMore ?: before.hasMore,
+            returnFocusRevision = before.returnFocusRevision + 1,
+        )
+        return true
+    }
 
     fun onFacetFocused(facetId: String) {
         RadioFocusMemory.save(_state.value.focusScope(), facetId)
@@ -182,6 +204,7 @@ class RadioViewModel @Inject constructor(
             facets = emptyList(),
             selectedFacet = null,
             hasMore = false,
+            nextOffset = 0,
             error = false,
             contentReady = false,
         )
@@ -201,6 +224,7 @@ class RadioViewModel @Inject constructor(
             submittedQuery = "",
             stations = emptyList(),
             hasMore = false,
+            nextOffset = 0,
             error = false,
             contentReady = false,
         )
@@ -391,11 +415,12 @@ class RadioViewModel @Inject constructor(
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             val before = _state.value
-            val offset = if (reset) 0 else before.stations.size
+            val offset = if (reset) 0 else before.nextOffset
             _state.value = before.copy(
                 loading = reset,
                 loadingMore = !reset,
                 stations = if (reset) emptyList() else before.stations,
+                nextOffset = if (reset) 0 else before.nextOffset,
                 error = false,
                 contentReady = if (reset) false else before.contentReady,
             )
@@ -417,6 +442,7 @@ class RadioViewModel @Inject constructor(
                     loadingMore = false,
                     stations = (existing + page.items).distinctBy(RadioStation::id),
                     hasMore = page.hasMore,
+                    nextOffset = page.offset + page.limit,
                     error = false,
                     contentReady = true,
                 )
@@ -435,8 +461,19 @@ class RadioViewModel @Inject constructor(
         playJob?.cancel()
         playJob = viewModelScope.launch {
             _state.value = _state.value.copy(startingStationId = station.id, error = false)
-            val visibleStations = _state.value.stations
-            playbackLauncher.play(station, visibleStations)
+            val current = _state.value
+            val visibleStations = current.stations
+            val facet = current.selectedFacet
+            val source = RadioBrowseQueueSource(
+                focusScope = current.focusScope(),
+                query = current.submittedQuery.takeIf(String::isNotBlank),
+                countryCode = facet?.id.takeIf { current.section == RadioSection.COUNTRIES },
+                language = facet?.id.takeIf { current.section == RadioSection.LANGUAGES },
+                tag = facet?.id.takeIf { current.section == RadioSection.GENRES },
+                nextOffset = current.nextOffset,
+                hasMore = current.hasMore,
+            )
+            playbackLauncher.play(station, visibleStations, source)
                 .onSuccess {
                     refreshLocalState()
                     _state.value = _state.value.copy(startingStationId = null)

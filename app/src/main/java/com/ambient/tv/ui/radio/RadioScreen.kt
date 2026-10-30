@@ -97,6 +97,7 @@ import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.launch
+import androidx.lifecycle.repeatOnLifecycle
 
 @Composable
 fun RadioScreen(
@@ -133,7 +134,7 @@ fun RadioScreen(
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
-    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady) {
+    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision) {
         if (!state.contentReady) null
         else radioInitialFocusId(
             viewModel.lastFocusedContent(focusScope),
@@ -142,6 +143,16 @@ fun RadioScreen(
         )
     }
     var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(lifecycleOwner, viewModel) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            if (viewModel.consumePlayerReturn()) {
+                // Re-enter the actually playing station, not the old clicked card.
+                pendingContentFocus = viewModel.state.value.focusScope()
+            }
+            kotlinx.coroutines.awaitCancellation()
+        }
+    }
     var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
     val gridState = rememberBrowseGridState()
     val listState = rememberBrowseListState()
@@ -153,7 +164,8 @@ fun RadioScreen(
     val scrollScope = rememberCoroutineScope()
     val visibleLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
 
-    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode), restoreInitialTarget = true)
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
+        restoreInitialTarget = true)
     if (state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)

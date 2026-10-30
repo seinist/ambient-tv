@@ -103,28 +103,43 @@ class SettingsNavigationTest {
         assertNull(fromIndex.pop())
     }
 
-    @Test fun backWalksSearchThenIndexThenAreaMenu() {
+    @Test fun backFromSearchReturnsToTheAreaMenuWithoutAnExtraIndex() {
         val fromPage = SettingsHubNav(page = SettingsCategory.IMAGE, search = true, returnToSearch = true).pop()!!
         assertNull(fromPage.page)
         assertTrue(fromPage.search)
         val fromSearch = fromPage.pop()!!
         assertFalse(fromSearch.search)
-        assertFalse(fromSearch.areaMenu)
-        val fromIndex = fromSearch.pop()!!
-        assertTrue(fromIndex.areaMenu)
-        assertNull(fromIndex.pop())
+        assertTrue(fromSearch.areaMenu)
+        assertNull(fromSearch.pop())
     }
 
-    @Test fun directPageEntryBackWalksParentIndexThenAreaMenuThenExit() {
+    @Test fun standardSettingsEntryFocusesAreaMenuAndBackExits() {
+        val entry = settingsEntryNav(null)
+        assertNull(entry.page)
+        assertTrue(entry.areaMenu)
+        assertFalse(entry.directEntry)
+        assertNull(entry.pop())
+    }
+
+    @Test fun directSettingsEntryBackReturnsStraightToSource() {
         SettingsCategory.entries.forEach { category ->
             val initialPage = SettingsCategory.fromKey(category.name)!!
-            val parent = SettingsHubNav(page = initialPage).pop()!!
-            assertNull(category.name, parent.page)
-            assertFalse(category.name, parent.areaMenu)
-            val areaMenu = parent.pop()!!
-            assertTrue(category.name, areaMenu.areaMenu)
-            assertNull(category.name, areaMenu.pop())
+            val entry = settingsEntryNav(initialPage)
+            assertEquals(category.name, initialPage, entry.page)
+            assertFalse(category.name, entry.areaMenu)
+            assertTrue(category.name, entry.directEntry)
+            assertNull(category.name, entry.pop())
+            // Also after following a link to a peer page: never replay the opener.
+            assertNull(category.name, entry.copy(page = SettingsCategory.WAKE).pop())
         }
+    }
+
+    @Test fun pageLinksReturnToTheTargetAreaIndexNotThePreviousChild() {
+        val linked = SettingsHubNav(page = SettingsCategory.WAKE)
+        val index = linked.pop()!!
+        assertNull(index.page)
+        assertFalse(index.areaMenu)
+        assertTrue(index.pop()!!.areaMenu)
     }
 
     @Test fun handheldPageBackReturnsToParentBeforeExiting() {
@@ -157,22 +172,6 @@ class SettingsNavigationTest {
         assertEquals("files", settingsShortcutWakeTarget("wake:files"))
         assertEquals("dlna", settingsShortcutWakeTarget("wake:dlna"))
         assertNull(settingsShortcutWakeTarget("wake:unknown"))
-    }
-
-    @Test fun directEntryReturnsToCallerButLinkedPagesKeepInternalBackNavigation() {
-        val opened = SettingsCategory.JELLYFIN
-        val sourcePage = SettingsHubNav(page = opened)
-        assertTrue(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = false))
-        assertFalse(settingsDirectEntryReturnsToCaller(opened, sourcePage, hasLinkedOrigin = true))
-        assertFalse(settingsDirectEntryReturnsToCaller(
-            opened, SettingsHubNav(page = opened, returnToSearch = true), hasLinkedOrigin = false,
-        ))
-        assertFalse(settingsDirectEntryReturnsToCaller(
-            opened, SettingsHubNav(page = opened, returnToAdd = true), hasLinkedOrigin = false,
-        ))
-        assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(page = SettingsCategory.WAKE), false))
-        assertFalse(settingsDirectEntryReturnsToCaller(opened, SettingsHubNav(), false))
-        assertFalse(settingsDirectEntryReturnsToCaller(null, sourcePage, false))
     }
 
     @Test fun existingSetupAndSidebarAliasesKeepTheirTargets() {
