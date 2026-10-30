@@ -36,6 +36,22 @@ class GuideOptionsTest {
     @Test fun unknownNeverMatchesFta() {
         assertTrue(guideChannels(listOf(channel("a")), emptyMap(), 5000, GuideOptions(access = LiveTvChannelAccess.FTA)).isEmpty())
     }
+    @Test fun hbbtvCategoryUsesOnlyPreloadedChannelMetadata() {
+        val ordinary = channel("ordinary")
+        val hbbtv = channel("hbbtv").copy(hbbtvUrl = "https://hbbtv.example/start", hbbtvName = "Start")
+        assertEquals(
+            listOf("hbbtv"),
+            guideChannels(listOf(ordinary, hbbtv), emptyMap(), 5000, GuideOptions(onlyHbbtv = true)).map { it.uuid },
+        )
+    }
+
+    @Test fun staleHbbtvFilterIsInertWhenProviderCannotExposeCategoryWithoutStreaming() {
+        val rows = listOf(channel("a"), channel("b"))
+        assertEquals(
+            listOf("a", "b"),
+            guideChannels(rows, emptyMap(), 5000, GuideOptions(onlyHbbtv = true)).map { it.uuid },
+        )
+    }
     @Test fun duplicateEventsKeepTimerAndPreserveDifferentBroadcastTimes() {
         val first = event("1", "a")
         val timer = first.copy(eventId = "2", dvrUuid = "timer")
@@ -61,6 +77,9 @@ class GuideOptionsTest {
     @Test fun optionsAndOldChannelSnapshotsDeserialize() {
         val options = GuideOptions(GuideSort.NAME, LiveTvChannelKind.RADIO, LiveTvChannelAccess.FTA, "Favourite", true)
         assertEquals(options, Json.decodeFromString<GuideOptions>(Json.encodeToString(options)))
-        assertEquals(LiveTvChannelAccess.UNKNOWN, Json.decodeFromString<LiveTvChannel>("""{"uuid":"1","name":"Radio","number":1,"iconUrl":null}""").access)
+        val oldChannel = Json.decodeFromString<LiveTvChannel>("""{"uuid":"1","name":"Radio","number":1,"iconUrl":null}""")
+        assertEquals(LiveTvChannelAccess.UNKNOWN, oldChannel.access)
+        assertNull(oldChannel.hbbtvUrl)
+        assertFalse(Json.decodeFromString<GuideOptions>("""{"sort":"NUMBER"}""").onlyHbbtv)
     }
 }
