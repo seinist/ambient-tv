@@ -2,6 +2,8 @@ package com.ambient.tv.livetv
 
 import android.content.Context
 import com.ambient.tv.trailers.TmdbTrailerRepository
+import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.local.LanguagePreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -28,6 +30,7 @@ import kotlinx.coroutines.sync.withPermit
 class LiveTvArtworkRepository @Inject constructor(
     @ApplicationContext context: Context,
     private val tmdb: TmdbTrailerRepository,
+    private val appPreferences: AppPreferences,
 ) {
     private val prefs = context.getSharedPreferences("livetv_tmdb_landscape_v1", Context.MODE_PRIVATE)
     private val lock = Any()
@@ -101,13 +104,16 @@ class LiveTvArtworkRepository @Inject constructor(
 
     private fun cacheKey(language: String, titleKey: String) = "landscape:$language:$titleKey"
 
+    /** Honour the app's metadata-language override, not only the Android system locale. */
+    private fun artworkLanguage(): String = Locale.forLanguageTag(
+        LanguagePreferences.resolve(appPreferences.metadataLanguageKey)
+    ).let {
+        if (it.language == "de") "de-DE" else it.toLanguageTag().takeIf(String::isNotBlank) ?: "en-US"
+    }
+
     companion object {
         internal val POSITIVE_TTL_MS = TimeUnit.DAYS.toMillis(14)
         internal val NEGATIVE_TTL_MS = TimeUnit.HOURS.toMillis(6)
-
-        private fun artworkLanguage(): String = Locale.getDefault().let {
-            if (it.language == "de") "de-DE" else it.toLanguageTag().takeIf(String::isNotBlank) ?: "en-US"
-        }
 
         internal data class Cached(val url: String?, val expiresAtMillis: Long)
 
