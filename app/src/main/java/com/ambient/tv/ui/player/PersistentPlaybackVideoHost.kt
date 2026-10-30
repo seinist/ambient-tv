@@ -131,6 +131,10 @@ fun Media3VideoSurface(
             }
         },
         update = { view ->
+            val effective = VideoPresentation(resizeMode, aspectRatio, zoom).normalized()
+            // Install the expected geometry before attaching the player. Decoder format events
+            // arrive while buffering and must not repeatedly resize the portrait letterbox.
+            view.updatePresentationAspectRatio(effective.aspectRatio, sourceAspectRatioHint)
             if (view.player !== player) view.player = player
             view.setBackgroundColor(if (AmbientVideoBackdrop.enabled) android.graphics.Color.TRANSPARENT else android.graphics.Color.BLACK)
             (view.videoSurfaceView as? android.view.SurfaceView)?.let {
@@ -139,17 +143,7 @@ fun Media3VideoSurface(
                 it.applyUiHdrHeadroom(hdrHeadroom)
                 it.bindMedia3RenderResolution(processing, resolutionPolicy)
             }
-            val effective = VideoPresentation(resizeMode, aspectRatio, zoom).normalized()
-            view.forcedAspectRatio = effective.aspectRatio
             view.resizeMode = effective.resizeMode
-            val contentFrame = view.findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-            val sourceSize = player.videoSize
-            val sourceAspectRatio = if (sourceSize.width > 0 && sourceSize.height > 0) {
-                sourceSize.width * sourceSize.pixelWidthHeightRatio / sourceSize.height
-            } else {
-                0f
-            }
-            contentFrame?.setAspectRatio(effective.aspectRatio ?: sourceAspectRatio.takeIf { it > 0f } ?: sourceAspectRatioHint ?: 0f)
             view.videoSurfaceView?.apply {
                 isFocusable = false
                 isFocusableInTouchMode = false
@@ -253,10 +247,51 @@ internal fun androidx.media3.ui.SubtitleView.applyAmbientSubtitleStyle(
 
 /** PlayerView receives decoder format events independently of Compose updates. */
 internal class FormatPlayerView(context: android.content.Context) : PlayerView(context) {
+    // Public for the existing native-view tests; production updates this together with the
+    // provider hint through updatePresentationAspectRatio().
     var forcedAspectRatio: Float? = null
+    private var presentationSourceHint: Float? = null
+    private val videoAspectGate = Media3VideoAspectGate()
+    private var appliedAspectRatio = Float.NaN
+    private val applySettledAspect = Runnable { applyStableAspectRatio() }
+
+    fun updatePresentationAspectRatio(forced: Float?, sourceHint: Float?) {
+        // AndroidView.update also runs for unrelated OSD/ambient state. It must not cancel a
+        // pending decoder-aspect settle or apply a transient size on every recomposition.
+        if (forcedAspectRatio == forced && presentationSourceHint == sourceHint) return
+        forcedAspectRatio = forced
+        presentationSourceHint = sourceHint
+        videoAspectGate.configure(forced, sourceHint)
+        // Explicit aspect changes respond immediately. The decoder's own updates are gated.
+        if (player != null) {
+            removeCallbacks(applySettledAspect)
+            applyStableAspectRatio()
+        }
+    }
 
     override fun onContentAspectRatioChanged(contentFrame: AspectRatioFrameLayout?, aspectRatio: Float) {
-        super.onContentAspectRatioChanged(contentFrame, forcedAspectRatio ?: aspectRatio)
+        if (player == null) {
+            // Keep unattached PlayerView behaviour for previews and native-view tests.
+            super.onContentAspectRatioChanged(contentFrame, forcedAspectRatio ?: aspectRatio)
+            return
+        }
+        videoAspectGate.onDecoderAspectRatio(aspectRatio)
+        if (videoAspectGate.hasRenderedFirstFrame && !videoAspectGate.hasForcedAspect) {
+            // A new video track may emit several transient dimensions during a format switch.
+            // Debounce them without holding up the very first rendered frame.
+            removeCallbacks(applySettledAspect)
+            postDelayed(applySettledAspect, 180L)
+        } else {
+            applyStableAspectRatio()
+        }
+    }
+
+    private fun applyStableAspectRatio() {
+        val target = videoAspectGate.displayedAspectRatio()
+        if (!appliedAspectRatio.isNaN() && kotlin.math.abs(target - appliedAspectRatio) < 0.005f) return
+        val contentFrame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame) ?: return
+        appliedAspectRatio = target
+        super.onContentAspectRatioChanged(contentFrame, target)
     }
 
     /** Look of plain text subtitles; ASS/SSA tracks keep the file's own style instead. */
@@ -266,6 +301,17 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
 
     // Registered after PlayerView's own listener, so these box-free cues replace the ones it set.
     private val boxlessCues = object : androidx.media3.common.Player.Listener {
+        override fun onRenderedFirstFrame() {
+            // This is the first moment decoder geometry is authoritative for a visible picture.
+            removeCallbacks(applySettledAspect)
+            val size = player?.videoSize
+            val actual = size?.takeIf { it.width > 0 && it.height > 0 }?.let {
+                it.width * it.pixelWidthHeightRatio / it.height
+            }
+            videoAspectGate.onFirstFrameRendered(actual)
+            applyStableAspectRatio()
+        }
+
         override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
             subtitleView?.setCues(cueGroup.cues.map { it.styledFor(styledTrack) })
         }
@@ -280,12 +326,21 @@ internal class FormatPlayerView(context: android.content.Context) : PlayerView(c
 
     override fun setPlayer(player: androidx.media3.common.Player?) {
         this.player?.removeListener(boxlessCues)
+        removeCallbacks(applySettledAspect)
+        videoAspectGate.resetDecoder()
+        appliedAspectRatio = Float.NaN
         super.setPlayer(player)
         player?.addListener(boxlessCues)
         player?.let {
+            // Existing/retained players can already know the video geometry when reattached.
+            val size = it.videoSize
+            if (size.width > 0 && size.height > 0) {
+                videoAspectGate.onDecoderAspectRatio(size.width * size.pixelWidthHeightRatio / size.height)
+            }
             boxlessCues.onTracksChanged(it.currentTracks)
             subtitleView?.setCues(it.currentCues.cues.map { cue -> cue.styledFor(styledTrack) })
         }
+        if (player != null) applyStableAspectRatio()
     }
 }
 
