@@ -192,6 +192,7 @@ data class SettingsBackup(
     val sidebarEntryOrder: Map<String, List<String>> = emptyMap(),
     val sidebarEntryDividers: Map<String, List<String>> = emptyMap(),
     val spotifySubmenuKeys: List<String> = AppPreferences.DEFAULT_SPOTIFY_SUBMENU_KEYS,
+    val radioSubmenuKeys: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
     val tvheadendSubmenuKeys: List<String> = AppPreferences.DEFAULT_TVH_SUBMENU_KEYS,
     val plexHiddenSectionKeys: Set<String> = emptySet(),
     val sidebarSettingsShortcutHidden: Set<String> = emptySet(),
@@ -500,6 +501,7 @@ class SettingsBackupManager @Inject constructor(
             sidebarEntryOrder = preferences.sidebarEntryOrder,
             sidebarEntryDividers = preferences.sidebarEntryDividers,
             spotifySubmenuKeys = preferences.spotifySubmenuKeys,
+            radioSubmenuKeys = preferences.radioSubmenuKeys,
             tvheadendSubmenuKeys = preferences.tvheadendSubmenuKeys,
             plexHiddenSectionKeys = preferences.plexHiddenSectionKeys,
             sidebarSettingsShortcutHidden = preferences.sidebarSettingsShortcutHidden,
@@ -873,6 +875,7 @@ class SettingsBackupManager @Inject constructor(
         preferences.sidebarEntryOrder = backup.sidebarEntryOrder
         preferences.sidebarEntryDividers = backup.sidebarEntryDividers
         preferences.spotifySubmenuKeys = backup.spotifySubmenuKeys
+        preferences.radioSubmenuKeys = backup.radioSubmenuKeys
         preferences.tvheadendSubmenuKeys = backup.tvheadendSubmenuKeys
         preferences.plexHiddenSectionKeys = backup.plexHiddenSectionKeys
         preferences.sidebarSettingsShortcutHidden = backup.sidebarSettingsShortcutHidden
