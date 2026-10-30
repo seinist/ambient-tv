@@ -99,6 +99,7 @@ data class SettingsUiState(
     val spotifyBitrateKbps: Int = 320,
     val spotifyVisualizerModeKey: String = "cover",
     val spotifySubmenuKeys: List<String> = AppPreferences.DEFAULT_SPOTIFY_SUBMENU_KEYS,
+    val radioSubmenuKeys: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
     val host: String = "",
     val port: String = "32400",
     val plexUseHttps: Boolean = false,
