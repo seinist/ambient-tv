@@ -103,8 +103,12 @@ internal fun tvhHtspEncode(fields: Map<String, Any>): ByteArray {
 internal fun tvhHtspDecode(input: DataInputStream): Map<String, Any> {
     val length = input.readInt()
     require(length in 0..4_194_304) { "HTSP metadata frame too large" }
-    return tvhHtspFields(input.readNBytes(length), map = true) as Map<String, Any>
+    return tvhHtspFields(input.readHtspBytes(length), map = true) as Map<String, Any>
 }
+
+/** DataInputStream.readNBytes() is not available on older Android versions. */
+private fun DataInputStream.readHtspBytes(length: Int): ByteArray =
+    ByteArray(length).also(::readFully)
 
 @Suppress("UNCHECKED_CAST")
 private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
@@ -118,8 +122,8 @@ private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
         val fieldLength = input.readInt()
         require(nameLength <= input.available() && fieldLength >= 0 &&
             fieldLength <= input.available() - nameLength) { "Invalid HTSP field size" }
-        val name = input.readNBytes(nameLength).toString(Charsets.UTF_8)
-        val value = input.readNBytes(fieldLength)
+        val name = input.readHtspBytes(nameLength).toString(Charsets.UTF_8)
+        val value = input.readHtspBytes(fieldLength)
         val parsed: Any = when (kind) {
             1 -> tvhHtspFields(value, true)
             5 -> tvhHtspFields(value, false)
