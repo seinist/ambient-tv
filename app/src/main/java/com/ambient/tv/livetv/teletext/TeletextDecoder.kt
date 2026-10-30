@@ -231,7 +231,7 @@ class TeletextDecoder(
             .distinctBy { it.url }
             .sortedBy { it.controlCode }
         // Do not stop the probe after section 0 if the broadcaster announced more sections.
-        aitSeen = (0..lastSection).all(aitAppsBySection::containsKey)
+        aitSeen = aitSeen || (0..lastSection).all(aitAppsBySection::containsKey)
         if (previousApps != hbbtvApps || previousSeen != aitSeen) onServiceChanged()
     }
 
