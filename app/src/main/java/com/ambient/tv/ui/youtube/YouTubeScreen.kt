@@ -282,7 +282,7 @@ import kotlinx.coroutines.delay
                         rows = visibleRows,
                         // A feed is sectioned from its FIRST partial emission, not only once
                         // a second row happens to arrive and replaces the whole grid.
-                        keepSections = state.query.isBlank(),
+                        keepSections = state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null,
                         mode = state.viewMode,
                         gridColumns = state.gridColumns,
                         listRows = state.listRows,
