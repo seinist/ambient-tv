@@ -150,8 +150,6 @@ import kotlinx.coroutines.flow.collect
 fun HomeScreen(
     focusStateKey: String = "home",
     onOpenSettings: () -> Unit,
-    /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
-    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
     /** Opens the system picker (initial setup) to add a first system. */
     onAddSystem: () -> Unit = onOpenSettings,
     onItemClick: (String) -> Unit,
@@ -165,6 +163,8 @@ fun HomeScreen(
     jellyfinOnly: Boolean = false,
     embyOnly: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
+    /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val wakeState by viewModel.startupWakeState.collectAsState()
