@@ -354,7 +354,7 @@ fun RadioScreen(
             }
 
             when {
-                state.loading && state.stations.isEmpty() && state.facets.isEmpty() -> RadioLoadingContent(
+                state.awaitingInitialContent() -> RadioLoadingContent(
                     layout = state.loadingLayout(),
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
