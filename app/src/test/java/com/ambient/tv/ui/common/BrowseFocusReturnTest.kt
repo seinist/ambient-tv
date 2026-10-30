@@ -361,4 +361,23 @@ class BrowseFocusReturnTest {
         returnFromSidebar(fixture)
         focused(fixture.tileTag("item-6"))
     }
+    @Test fun refreshRemovingFocusedTileMovesFocusToFirstRemainingCard() {
+        val fixture = mount()
+        press(Key.DirectionDown)
+        focused(fixture.tileTag("item-3"))
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-3" } }
+        rule.waitForIdle()
+        focused(fixture.tileTag("item-0"))
+    }
+
+    @Test fun refreshDoesNotStealFocusFromASelectedCategoryChip() {
+        val fixture = mount()
+        press(Key.DirectionUp)
+        focused(fixture.chipTag("All"))
+        rule.runOnIdle { fixture.itemIds = fixture.itemIds.filterNot { it == "item-0" } }
+        rule.waitForIdle()
+        focused(fixture.chipTag("All"))
+    }
+
+
 }

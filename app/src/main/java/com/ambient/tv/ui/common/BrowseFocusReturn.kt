@@ -38,6 +38,12 @@ internal data class BrowseFocusKey(val row: Any?, val item: Any, val content: Bo
 
 internal data class BrowseFocusSlot(val key: BrowseFocusKey, val index: Int)
 
+/** A removed selection stays in its row when possible, otherwise at the top of the content. */
+internal fun missingBrowseFocusFallback(lost: BrowseFocusKey, slots: List<BrowseFocusSlot>): BrowseFocusKey? {
+    val available = slots.map { it.key }.filter { it.content }
+    return available.firstOrNull { it.row == lost.row } ?: available.firstOrNull()
+}
+
 /** One destination's return address; neither Android saved state nor preferences retain its nodes. */
 internal class BrowseFocusReturnState(private val scope: CoroutineScope, val view: View) {
     internal class Target(
@@ -57,6 +63,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
         val slots: () -> List<BrowseFocusSlot>,
         val visible: (Int) -> Boolean,
         val scroll: suspend (Int) -> Unit,
+        val allowRecovery: () -> Boolean,
     )
     private val targets = linkedMapOf<Target, Unit>()
     private val collections = linkedMapOf<Any, Collection>()
@@ -64,6 +71,8 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     private var lastKey: BrowseFocusKey? = null
     private var pin: PinnableContainer.PinnedHandle? = null
     private var preparation: Job? = null
+    private var recovery: Job? = null
+    private var recoveryGeneration = 0L
     private var prepared: BrowseFocusKey? = null
     private var contentIdentity: Any? = null
     private var initialTargetChosen = false
@@ -75,6 +84,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     fun register(target: Target) { targets[target] = Unit }
     fun unregister(target: Target) {
+        if (target.hasFocus && last === target && target.key.content) recoverMissingContent(target.key)
         targets.remove(target)
         if (last === target) {
             last = null
@@ -83,6 +93,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     }
 
     fun focusChanged(target: Target, hasFocus: Boolean) {
+        if (!hasFocus && target.hasFocus && last === target && target.key.content) recoverMissingContent(target.key)
         target.hasFocus = hasFocus
         // A shared MediaTile may also have a precise row/item modifier supplied by its
         // caller (for example Detail). Prefer that address regardless of callback order.
@@ -92,6 +103,8 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     private fun focused(target: Target) {
         if (!active || target !in targets) return
+        // Any deliberate focus target (tile, category or action) wins over refresh recovery.
+        cancelRecovery()
         if (last !== target) {
             releasePin()
             pin = target.pinnable?.pin()
@@ -105,6 +118,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     fun contentChanged(identity: Any, restoreInitialTarget: Boolean) {
         if (contentIdentity == identity) return
+        cancelRecovery()
         contentIdentity = identity
         if (restoreInitialTarget) initialTargetChosen = false
         if (lastKey?.content == true) forget()
@@ -118,6 +132,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     }
 
     fun forget() {
+        cancelRecovery()
         last = null
         lastKey = null
         releasePin()
@@ -128,8 +143,57 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
 
     private fun releasePin() { pin?.release(); pin = null }
 
-    fun registerCollection(owner: Any, slots: () -> List<BrowseFocusSlot>, visible: (Int) -> Boolean, scroll: suspend (Int) -> Unit) {
-        collections[owner] = Collection(slots, visible, scroll)
+    private fun cancelRecovery() {
+        recoveryGeneration++
+        recovery?.cancel()
+        recovery = null
+    }
+
+    /** Only a content tile losing its actual focus can trigger recovery. Leaving for controls,
+     * scrolling a still-present item out of composition, and changing pages must not steal focus. */
+    private fun recoverMissingContent(lost: BrowseFocusKey) {
+        cancelRecovery()
+        if (!active) return
+        val generation = recoveryGeneration
+        val identity = contentIdentity
+        recovery = scope.launch {
+            // Let the new lazy item registry and focus tree settle before inspecting survivors.
+            withFrameNanos { }
+            val sources = collections.values.toList()
+            if (!active || generation != recoveryGeneration || identity != contentIdentity ||
+                NavReselect.restoreTop.value) return@launch
+            // A page may register many independent Rows (Search) or an outer list plus
+            // nested Rows (Home/SmartTube). Match the entire visible registry first.
+            val available = sources.flatMap { it.slots() }
+            if (available.any { it.key == lost } || sources.any { !it.allowRecovery() }) return@launch
+            val destination = missingBrowseFocusFallback(lost, available) ?: return@launch
+            repeat(12) {
+                if (!active || generation != recoveryGeneration || identity != contentIdentity ||
+                    NavReselect.restoreTop.value || collections.values.any { !it.allowRecovery() } ||
+                    collections.values.any { collection -> collection.slots().any { slot -> slot.key == lost } }
+                ) return@launch
+                // Nested horizontal rows need their outer row and inner tile both composed.
+                try {
+                    collections.values.toList().forEach { collection ->
+                        collection.slots().firstOrNull { it.key == destination }?.let { slot ->
+                            if (!collection.visible(slot.index)) collection.scroll(slot.index)
+                        }
+                    }
+                    withFrameNanos { }
+                    val target = targets.keys.firstOrNull { it.key == destination && it.visible }
+                    if (target != null && runCatching { target.requester.requestFocus() }.getOrDefault(false)) return@launch
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: IllegalStateException) {
+                    return@launch // The list was replaced while focus was being reconciled.
+                }
+            }
+        }
+    }
+
+    fun registerCollection(owner: Any, slots: () -> List<BrowseFocusSlot>, visible: (Int) -> Boolean,
+                           scroll: suspend (Int) -> Unit, allowRecovery: () -> Boolean) {
+        collections[owner] = Collection(slots, visible, scroll, allowRecovery)
     }
     fun unregisterCollection(owner: Any) { collections.remove(owner) }
     fun setFallback(owner: Any, action: () -> Boolean?) { fallbackOwner = owner; fallback = action }
@@ -339,8 +403,11 @@ private fun RegisterBrowseFocusCollection(
     val currentSlots = rememberUpdatedState(slots)
     val currentScroll = rememberUpdatedState(scroll)
     val currentVisible = rememberUpdatedState(visible)
+    val filterFocus = LocalFilterFocusState.current
+    val allowRecovery = rememberUpdatedState(filterFocus?.allowContentAutoFocus != false)
     DisposableEffect(owner, token) {
-        owner.registerCollection(token, { currentSlots.value }, { currentVisible.value(it) }) { currentScroll.value(it) }
+        owner.registerCollection(token, { currentSlots.value }, { currentVisible.value(it) },
+            { currentScroll.value(it) }, { allowRecovery.value })
         onDispose { owner.unregisterCollection(token) }
     }
 }

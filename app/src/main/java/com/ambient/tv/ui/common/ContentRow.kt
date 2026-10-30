@@ -64,13 +64,10 @@ fun ContentRow(
     RegisterRowColumnFocus(columnFocus, row.id, rowState, remember(row.items) { row.items.map { it.ratingKey } })
     var rowHadFocus by remember(row.id) { mutableStateOf(false) }
     var lastFocusedKey by remember(row.id) { mutableStateOf<String?>(null) }
-    var previousKeys by remember(row.id) { mutableStateOf(row.items.map { it.ratingKey }) }
     val recoveryKey = remember(row.items) {
         val keys = row.items.map { it.ratingKey }
-        if (rowHadFocus && lastFocusedKey != null && lastFocusedKey !in keys)
-            com.ambient.tv.data.browse.survivingFocus(previousKeys, keys, lastFocusedKey) else null
+        if (rowHadFocus && lastFocusedKey != null && lastFocusedKey !in keys) keys.firstOrNull() else null
     }
-    androidx.compose.runtime.SideEffect { previousKeys = row.items.map { it.ratingKey } }
     androidx.compose.runtime.LaunchedEffect(recoveryKey) {
         val index = row.items.indexOfFirst { it.ratingKey == recoveryKey }
         if (index >= 0 && rowState.layoutInfo.visibleItemsInfo.none { it.index == index }) rowState.scrollToItem(index)

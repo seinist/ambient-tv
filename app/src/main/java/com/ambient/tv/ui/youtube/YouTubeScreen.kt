@@ -527,19 +527,32 @@ private fun SectionedYouTubeContent(
     loadingRows: Set<String>,
 ) {
     when (mode) {
-        YouTubeViewMode.LANDSCAPE -> LazyColumn(
-            allowUpExit = true,
-            modifier = Modifier.fillMaxSize(),
-            state = com.ambient.tv.ui.common.rememberBrowseListState(
-                initialFirstVisibleItemIndex = rows.withIndex().firstOrNull { (index, row) ->
-                    youtubeRowId(index, row) == focusTarget.rowId
-                }?.index ?: 0,
-            ).also { RegisterBrowseFocusRows(it, rows.mapIndexed { index, row -> youtubeRowId(index, row) to row.items.map { it.videoId } }) },
-            contentPadding = PaddingValues(bottom = 36.dp),
-        ) {
-            itemsIndexed(rows, key = { index, row -> "youtube-section:${row.id}" }) { index, row ->
-                val rowId = youtubeRowId(index, row)
-                RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused, rowId in loadingRows)
+        YouTubeViewMode.LANDSCAPE -> {
+            val rowKeys = remember(rows) { rows.mapIndexed { index, row -> youtubeRowId(index, row) } }
+            val listState = com.ambient.tv.ui.common.rememberBrowseListState(
+                initialFirstVisibleItemIndex = rowKeys.indexOf(focusTarget.rowId).coerceAtLeast(0),
+            )
+            RegisterBrowseFocusRows(listState, rows.mapIndexed { index, row -> youtubeRowId(index, row) to row.items.map { it.videoId } })
+            val rowFocus = rememberRowColumnFocus()
+            LazyColumn(
+                allowUpExit = true,
+                modifier = Modifier.fillMaxSize().rowColumnFocusNavigation(
+                    rowFocus,
+                    scrollToTop = { listState.scrollToItem(0) },
+                    scrollToBottom = { listState.scrollToItem(rows.lastIndex) },
+                    scrollToRow = { rowKey ->
+                        val index = rowKeys.indexOf(rowKey)
+                        if (index >= 0) listState.scrollToItem(index)
+                    },
+                ) { rowKeys },
+                state = listState,
+                contentPadding = PaddingValues(bottom = 36.dp),
+            ) {
+                itemsIndexed(rows, key = { _, row -> "youtube-section:${row.id}" }) { index, row ->
+                    val rowId = youtubeRowId(index, row)
+                    RowMode(row, rowId, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused,
+                        rowId in loadingRows, rowFocus)
+                }
             }
         }
         YouTubeViewMode.LIST -> SectionedYouTubeList(rows, listRows, click, detailed = false, initialFocusRequester, focusTarget, onItemFocused)
@@ -562,6 +575,7 @@ private fun RowMode(
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
     loadingMore: Boolean,
+    rowFocus: RowColumnFocus,
 ) = BrowseFocusRow(rowId) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
     ContentSectionHeader(title = row.title)
@@ -571,17 +585,19 @@ private fun RowMode(
         val visibleColumns = landscapeGridColumns(gridColumns)
         val cardWidth = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) landscapeCardWidth() else
             ((maxWidth - horizontalPadding * 2 - spacing * (visibleColumns - 1)) / visibleColumns).coerceAtLeast(160.dp)
+        val rowState = rememberBrowseRowState(
+            initialFirstVisibleItemIndex = if (rowId == focusTarget.rowId)
+                row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0) else 0,
+        )
+        RegisterRowColumnFocus(rowFocus, rowId, rowState, remember(row.items) { row.items.map { it.videoId } })
         LazyRow(
-            state = com.ambient.tv.ui.common.rememberBrowseListState(
-                initialFirstVisibleItemIndex = row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
-                    itemKeys = row.items.map { it.videoId },
-            ),
+            state = rowState,
             contentPadding = PaddingValues(horizontal = horizontalPadding),
             horizontalArrangement = Arrangement.spacedBy(spacing),
         ) {
             itemsIndexed(row.items, key = { _, it -> it.videoId }) { _, item ->
                 Card(
-                    item, click, Modifier.width(cardWidth), true,
+                    item, click, Modifier.width(cardWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId), true,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
                 )
@@ -870,14 +886,24 @@ private fun SectionedYouTubeCinematic(
     onItemFocused: (String?, String) -> Unit,
     loadingRows: Set<String>,
 ) {
+    val rowKeys = remember(rows) { rows.mapIndexed { index, row -> youtubeRowId(index, row) } }
+    val listState = com.ambient.tv.ui.common.rememberBrowseListState(
+        initialFirstVisibleItemIndex = rowKeys.indexOf(focusTarget.rowId).coerceAtLeast(0),
+    )
+    RegisterBrowseFocusRows(listState, rows.mapIndexed { index, row -> youtubeRowId(index, row) to row.items.map { it.videoId } })
+    val rowFocus = rememberRowColumnFocus()
     LazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
-        state = com.ambient.tv.ui.common.rememberBrowseListState(
-            initialFirstVisibleItemIndex = rows.withIndex().firstOrNull { (index, row) ->
-                youtubeRowId(index, row) == focusTarget.rowId
-            }?.index ?: 0,
-        ).also { RegisterBrowseFocusRows(it, rows.mapIndexed { index, row -> youtubeRowId(index, row) to row.items.map { it.videoId } }) },
+        modifier = Modifier.fillMaxSize().rowColumnFocusNavigation(
+            rowFocus,
+            scrollToTop = { listState.scrollToItem(0) },
+            scrollToBottom = { listState.scrollToItem(rows.lastIndex) },
+            scrollToRow = { rowKey ->
+                val index = rowKeys.indexOf(rowKey)
+                if (index >= 0) listState.scrollToItem(index)
+            },
+        ) { rowKeys },
+        state = listState,
         contentPadding = PaddingValues(bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -890,6 +916,7 @@ private fun SectionedYouTubeCinematic(
                 focusTarget = focusTarget,
                 onItemFocused = onItemFocused,
                 loadingMore = youtubeRowId(sectionIndex, row) in loadingRows,
+                rowFocus = rowFocus,
             )
         }
     }
@@ -904,6 +931,7 @@ private fun YouTubeCinematicSection(
     focusTarget: ContentFocusTarget,
     onItemFocused: (String?, String) -> Unit,
     loadingMore: Boolean,
+    rowFocus: RowColumnFocus,
 ) {
     if (row.items.isEmpty()) return
     var hero by remember(row.title, row.items) { mutableStateOf(row.items.first()) }
@@ -920,11 +948,13 @@ private fun YouTubeCinematicSection(
                     Text(meta(hero), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis) }
                 }
+                val rowState = rememberBrowseRowState(
+                    initialFirstVisibleItemIndex = if (rowId == focusTarget.rowId)
+                        row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0) else 0,
+                )
+                RegisterRowColumnFocus(rowFocus, rowId, rowState, remember(row.items) { row.items.map { it.videoId } })
                 LazyRow(
-                    state = com.ambient.tv.ui.common.rememberBrowseListState(
-                        initialFirstVisibleItemIndex = row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
-                    itemKeys = row.items.map { it.videoId },
-                    ),
+                    state = rowState,
                     contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -932,7 +962,7 @@ private fun YouTubeCinematicSection(
                         Card(
                             item,
                             click,
-                            Modifier.width(landscapeCardWidth()),
+                            Modifier.width(landscapeCardWidth()).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
                             false,
                             focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                             onFocused = {

@@ -20,6 +20,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -269,6 +274,8 @@ internal fun TrailerCatalogContent(
     val visibleEntries = remember(state.entries, sort, sortDescending, filter) {
         applyTrailerViewOptions(state.entries, sort, filter, sortDescending)
     }
+    BrowseFocusContentIdentity(listOf(stateKey, viewMode, sort, sortDescending, filter))
+    BrowseFocusInitialTarget(visibleEntries.firstOrNull()?.toMediaItem()?.ratingKey)
     ReportSidebarContentReady(!state.loadingInitial)
     BackHandler(enabled = showViewOptions) { showViewOptions = false }
     BackHandler(enabled = !showViewOptions) { optionsOpened = false; onBack() }
@@ -434,6 +441,7 @@ private fun TrailerGrid(entries: List<TrailerEntry>, mode: TrailerViewMode, colu
     onFocused: (TrailerEntry) -> Unit, onOpenTitle: (String, Int) -> Unit, state: TrailerFeedUi, onLoadMore: () -> Unit) {
     val selectedIndex = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
     val gridState = rememberLazyGridState(initialFirstVisibleItemIndex = (selectedIndex - 1).coerceAtLeast(0))
+    RegisterBrowseFocusGrid(gridState, remember(entries) { entries.map { it.toMediaItem().ratingKey } })
     LaunchedEffect(gridState, state.page, state.hasNextPage, state.loadingMore, state.refreshing, state.nextError) {
         snapshotFlow {
             val layout = gridState.layoutInfo
@@ -459,6 +467,7 @@ private fun TrailerList(entries: List<TrailerEntry>, listRows: Int, focusedKey: 
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
     val index = entries.indexOfFirst { it.key == focusedKey }.coerceAtLeast(0)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = (index - 1).coerceAtLeast(0))
+    RegisterBrowseFocusList(listState, remember(entries) { entries.map { it.toMediaItem().ratingKey } })
     LaunchedEffect(listState, state.page, state.hasNextPage, state.loadingMore, state.refreshing, state.nextError) {
         snapshotFlow {
             val layout = listState.layoutInfo
@@ -489,7 +498,9 @@ private fun TrailerListItem(entry: TrailerEntry, rowScale: Float, onClick: () ->
     }
     val shape = RoundedCornerShape(10.dp)
     Surface(onClick = onClick, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
-        modifier = Modifier.fillMaxWidth().focusRequester(requester).onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }) {
+        modifier = Modifier.fillMaxWidth().focusRequester(requester)
+            .browseFocusTarget(entry.toMediaItem().ratingKey)
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }) {
         Row(Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .14f) else MaterialTheme.colorScheme.surface.copy(alpha = .72f), shape)
             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .08f), shape).padding(10.dp * rowScale),
             horizontalArrangement = Arrangement.spacedBy(16.dp * rowScale), verticalAlignment = Alignment.CenterVertically) {
