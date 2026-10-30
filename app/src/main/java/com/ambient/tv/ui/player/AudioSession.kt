@@ -24,6 +24,12 @@ class AudioSession(
         if (audioOnly == value) return
         val before = outputPlan()
         audioOnly = value
+        // The FPS and advanced diagnostics overlays describe video, not audio playback.
+        if (value) {
+            performanceHint = false
+            showFpsOverlay = false
+            showFrameDropOverlay = false
+        }
         renderOptions = optionsForPcm()
         val after = outputPlan()
         if (before != after) routeChanged(before, after)
@@ -102,9 +108,9 @@ class AudioSession(
         automaticProfile = previous.automaticProfile
         automaticProfileInitialized = previous.automaticProfileInitialized
         // Renderer/output/decoder replacement continues this playback, including its diagnostics.
-        performanceHint = previous.performanceHint
-        showFpsOverlay = previous.showFpsOverlay
-        showFrameDropOverlay = previous.showFrameDropOverlay
+        performanceHint = previous.performanceHint && !audioOnly
+        showFpsOverlay = previous.showFpsOverlay && !audioOnly
+        showFrameDropOverlay = previous.showFrameDropOverlay && !audioOnly
         showFrameDropHistory = previous.showFrameDropHistory
     }
 

@@ -331,8 +331,8 @@ internal fun MpvPlayerContent(
             ),
         )
         PlaybackPerformanceNotice(mpvLoadHint(controller, snapshot, controller.deinterlaceModeKey != "off"))
-        val showNerdOverlay = controller.audioSession.performanceHint
-        val showFpsOverlay = controller.audioSession.showFpsOverlay
+        val showNerdOverlay = !audioOnlyContent && !controller.audioSession.audioOnly && controller.audioSession.performanceHint
+        val showFpsOverlay = !audioOnlyContent && !controller.audioSession.audioOnly && controller.audioSession.showFpsOverlay
         val displayRefreshHz = rememberDisplayRefreshHz()
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.audioCodec),
@@ -356,6 +356,7 @@ internal fun MpvPlayerContent(
         // Drawn by PersistentPlayerOverlays above the engine, so it survives a renderer switch.
         PublishPlayerOsd(PlayerOsdModel(
             state = state,
+            hasVideo = !audioOnlyContent,
             positionMs = seek.positionMs,
             durationMs = timelineDurationMs,
             timelineAlways = false,

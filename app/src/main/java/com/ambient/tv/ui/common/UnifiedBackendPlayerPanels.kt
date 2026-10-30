@@ -233,6 +233,7 @@ fun UnifiedBackendPlayerPanel(
             }
             PlayerOsdInfoPanelEntry(
                 audioSession = audioSession,
+                hasVideo = hasVideo && audioSession?.audioOnly != true,
                 onOpen = { onPanelChange(UnifiedPlayerPanel.OSD_INFO) },
             )
             if (hasVideo) {
@@ -308,6 +309,7 @@ fun UnifiedBackendPlayerPanel(
         ) {
             PlayerOsdInfoPanelControls(
                 audioSession = audioSession,
+                hasVideo = hasVideo && audioSession?.audioOnly != true,
                 onOpenButtons = { onPanelChange(UnifiedPlayerPanel.OSD_BUTTONS) },
             )
         }
@@ -677,7 +679,7 @@ fun UnifiedBackendPlayerPanel(
             modifier = modifier,
             onBack = back,
         ) {
-            PlayerOsdButtonPanelControls()
+            PlayerOsdButtonPanelControls(hasVideo = hasVideo && audioSession?.audioOnly != true)
         }
 
         UnifiedPlayerPanel.VISUALIZER, UnifiedPlayerPanel.VISUALIZER_SETTINGS -> {

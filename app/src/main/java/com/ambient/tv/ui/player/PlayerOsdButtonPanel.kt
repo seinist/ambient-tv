@@ -44,13 +44,14 @@ private val OsdButton.section: OsdButtonSection get() = when (this) {
 }
 
 @Composable
-internal fun PlayerOsdButtonPanelControls() {
+internal fun PlayerOsdButtonPanelControls(hasVideo: Boolean) {
     val player = activeOsdPlayer ?: return
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
     val handheld = LocalHandheldUi.current
     val hidden = osdHiddenButtons()
-    val sections = player.offeredButtons().groupBy { it.section }
+    // Group only actual actions: an audio-only player must not leave an empty Information heading.
+    val sections = filterVideoDiagnosticButtons(player.offeredButtons(), hasVideo).groupBy { it.section }
     Text(stringResource(R.string.osd_buttons_hint), style = MaterialTheme.typography.bodySmall)
     OsdButtonSection.entries.forEach { section ->
         sections[section]?.let { buttons ->

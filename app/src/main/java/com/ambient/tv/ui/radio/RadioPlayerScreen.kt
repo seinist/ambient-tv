@@ -43,7 +43,6 @@ import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PlayerControlBar
-import com.ambient.tv.ui.common.PlayerDiagnosticsButtons
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.PlayerSleepTimerButton
@@ -419,7 +418,6 @@ internal data class RadioOsdModel(
                             osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER,
                         )
                         PlayerSleepTimerButton(onOpenSleep, selected = panel == UnifiedPlayerPanel.SLEEP)
-                        PlayerDiagnosticsButtons()
                         PlayerIconButton(
                             Icons.Filled.Settings,
                             stringResource(R.string.player_playback_settings),

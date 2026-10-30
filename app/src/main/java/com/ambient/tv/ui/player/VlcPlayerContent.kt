@@ -308,8 +308,8 @@ internal fun VlcPlayerContent(
             if (vlcPlan.needsMpv) viewModel.followAudioPlan(snapshot.positionMs)
         }
         PlaybackPerformanceNotice(vlcLoadHint(controller, snapshot, controller.deinterlaceMode != "off"))
-        val showNerdOverlay = controller.audioSession.performanceHint
-        val showFpsOverlay = controller.audioSession.showFpsOverlay
+        val showNerdOverlay = !audioOnlyContent && !controller.audioSession.audioOnly && controller.audioSession.performanceHint
+        val showFpsOverlay = !audioOnlyContent && !controller.audioSession.audioOnly && controller.audioSession.showFpsOverlay
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, controller.audioSession, snapshot.runtimeStats?.audioCodec),
             audioRoute = audioRouteSummaryText(controller.audioSession),
@@ -332,6 +332,7 @@ internal fun VlcPlayerContent(
         // Drawn by PersistentPlayerOverlays above the engine, so it survives a renderer switch.
         PublishPlayerOsd(PlayerOsdModel(
             state = state,
+            hasVideo = !audioOnlyContent,
             positionMs = seek.positionMs,
             durationMs = timelineDurationMs,
             timelineAlways = false,

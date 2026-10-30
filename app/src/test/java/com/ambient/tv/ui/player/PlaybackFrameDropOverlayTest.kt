@@ -92,7 +92,7 @@ class PlaybackFrameDropOverlayTest {
                         title = stringResource(R.string.player_osd_info),
                         onBack = { panel = UnifiedPlayerPanel.NONE },
                     ) {
-                        PlayerOsdInfoPanelControls(session, onOpenButtons = {})
+                        PlayerOsdInfoPanelControls(session, hasVideo = true, onOpenButtons = {})
                     }
                 }
             }

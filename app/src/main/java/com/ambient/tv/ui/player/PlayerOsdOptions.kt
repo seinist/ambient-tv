@@ -52,7 +52,7 @@ enum class OsdPlayer(val buttons: List<OsdButton>) {
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
     RADIO(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.FAVORITE, OsdButton.AUDIO,
-        OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.STATS, OsdButton.FPS, OsdButton.TOOLS)),
+        OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.TOOLS)),
 }
 
 /**
@@ -106,6 +106,10 @@ var activeOsdButtons by mutableStateOf<Set<OsdButton>>(emptySet())
 /** Buttons to offer in the settings: what the bar really shows, else the player's full list. */
 fun OsdPlayer.offeredButtons(): List<OsdButton> =
     activeOsdButtons.takeIf { it.isNotEmpty() }?.let { present -> buttons.filter { it in present } } ?: buttons
+
+/** Audio-only has no video diagnostic actions, including when an earlier video OSD enabled them. */
+internal fun filterVideoDiagnosticButtons(buttons: List<OsdButton>, hasVideo: Boolean): List<OsdButton> =
+    if (hasVideo) buttons else buttons.filterNot { it == OsdButton.STATS || it == OsdButton.FPS }
 
 @Composable
 fun osdHiddenButtons(): Set<String> {
