@@ -724,32 +724,23 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         enabled = uiState.youtubeAvailable, loading = uiState.youtubeAuthBusy,
                     )
                     uiState.youtubeSignInCode?.let { code ->
-                        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-                            Text(stringResource(R.string.youtube_activate_handheld), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            com.ambient.tv.ui.youtube.YouTubeSignInPanel(
+                        // Keep the pending code visible after the modal is closed, but use the
+                        // exact same QR/browser prompt as the SmartTube browse screen.
+                        Text(
+                            stringResource(
+                                if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) R.string.youtube_activate_handheld
+                                else R.string.setup_youtube_code_instructions,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(code, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        var dismissedQr by remember(code) { mutableStateOf(false) }
+                        if (!dismissedQr) {
+                            com.ambient.tv.ui.youtube.YouTubeSignInPrompt(
                                 code = code,
-                                modifier = Modifier.fillMaxWidth(),
+                                onDismiss = { dismissedQr = true },
                             )
-                        } else {
-                            Text(stringResource(R.string.setup_youtube_code_instructions), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(code, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-                            // Same QR dialog as the YouTube page; closing it leaves the code above.
-                            var dismissedQr by remember { mutableStateOf<String?>(null) }
-                            if (dismissedQr != code) {
-                                com.ambient.tv.ui.common.QrCodeDialog(
-                                    title = stringResource(R.string.action_sign_in),
-                                    hint = stringResource(R.string.youtube_activate),
-                                    payload = com.ambient.tv.youtube.YouTubeSignInLink.qrPayload(code),
-                                    code = code,
-                                    onDismiss = { dismissedQr = code },
-                                    footer = {
-                                        TvActionButton(
-                                            text = stringResource(R.string.action_close),
-                                            onClick = { dismissedQr = code },
-                                        )
-                                    },
-                                )
-                            }
                         }
                     }
                     uiState.youtubeAuthErrorRes?.let { res ->
