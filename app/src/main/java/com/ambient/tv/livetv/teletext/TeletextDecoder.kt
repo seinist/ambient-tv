@@ -36,9 +36,13 @@ class TeletextDecoder(
     /** An AIT section has been read (possibly without a usable application). */
     @Volatile var aitSeen = false
         private set
-    /** HbbTV applications the AIT announces, autostart first. */
+    /** HbbTV applications the complete AIT announces, autostart first. */
     @Volatile var hbbtvApps: List<HbbtvApplication> = emptyList()
         private set
+    /** AITs may be split across section_number 0..last_section_number. */
+    private var aitVersion = -1
+    private var aitLastSection = -1
+    private val aitAppsBySection = linkedMapOf<Int, List<HbbtvApplication>>()
     /** Teletext packets decoded so far; 0 means the stream carries none (yet). */
     @Volatile var packetCount = 0L
         private set
@@ -133,8 +137,7 @@ class TeletextDecoder(
                     teletextPid = -1
                     announcedPages = emptyList()
                     aitPid = -1
-                    aitSeen = false
-                    hbbtvApps = emptyList()
+                    resetAitApplications()
                     pesActive = false
                     pesLength = 0
                     synchronized(lock) { receiving.fill(null) }
@@ -199,20 +202,56 @@ class TeletextDecoder(
         if (foundAit != aitPid) {
             aitPid = foundAit
             aitSections.reset()
-            aitSeen = false
-            hbbtvApps = emptyList()
+            resetAitApplications()
             changed = true
         }
         if (changed) onServiceChanged()
     }
 
     private fun parseAitSection(buf: ByteArray) {
-        val apps = parseAit(buf, buf.size)
-        if (apps != null && (!aitSeen || apps != hbbtvApps)) {
-            aitSeen = true
-            hbbtvApps = apps
-            onServiceChanged()
+        if (buf.size < 12 || buf[0].u != 0x74 || buf[5].u and 1 == 0) return
+        val apps = parseAit(buf, buf.size) ?: return
+        val version = (buf[5].u shr 1) and 0x1F
+        val sectionNumber = buf[6].u
+        val lastSection = buf[7].u
+        if (sectionNumber > lastSection) return
+
+        if (version != aitVersion || lastSection != aitLastSection) {
+            aitVersion = version
+            aitLastSection = lastSection
+            aitAppsBySection.clear()
+            aitSeen = false
+            hbbtvApps = emptyList()
         }
+        val previousApps = hbbtvApps
+        val previousSeen = aitSeen
+        aitAppsBySection[sectionNumber] = apps
+        hbbtvApps = (0..lastSection)
+            .flatMap { aitAppsBySection[it].orEmpty() }
+            .distinctBy { it.url }
+            .sortedBy { it.controlCode }
+        // Do not stop the probe after section 0 if the broadcaster announced more sections.
+        aitSeen = aitSeen || (0..lastSection).all(aitAppsBySection::containsKey)
+        if (previousApps != hbbtvApps || previousSeen != aitSeen) onServiceChanged()
+    }
+
+    private fun resetAitApplications() {
+        aitVersion = -1
+        aitLastSection = -1
+        aitAppsBySection.clear()
+        aitSeen = false
+        hbbtvApps = emptyList()
+    }
+
+    /**
+     * A broadcaster/profile that advertises an AIT PID but never sends every section must not keep
+     * a probe connection open forever. Preserve any applications already received and mark the
+     * table complete after the outer probe timeout.
+     */
+    fun finishAitProbe() {
+        if (aitPid < 0 || aitSeen) return
+        aitSeen = true
+        onServiceChanged()
     }
 
     private fun pesData(buf: ByteArray, payload: Int, end: Int, start: Boolean) {

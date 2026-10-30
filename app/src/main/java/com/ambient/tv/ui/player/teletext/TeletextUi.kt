@@ -81,6 +81,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
+import com.ambient.tv.livetv.teletext.HbbtvApplication
 import com.ambient.tv.livetv.teletext.LiveTeletext
 import com.ambient.tv.livetv.teletext.TELETEXT_COLORS
 import com.ambient.tv.livetv.teletext.TeletextPage
@@ -155,6 +156,7 @@ fun LiveTeletextHost(
     ownConnectionAllowed: Boolean,
     channelName: String?,
     channelKey: String,
+    hbbtvFallback: HbbtvApplication? = null,
 ) {
     val context = LocalContext.current
     var activeChannelKey by remember { mutableStateOf(channelKey) }
@@ -172,7 +174,7 @@ fun LiveTeletextHost(
         }
     }
     // Probe every channel: teletext and HbbTV entries only appear when the stream carries them.
-    LaunchedEffect(url, headers, readable, channelKey) {
+    LaunchedEffect(url, headers, readable, channelKey, hbbtvFallback) {
         // A renderer or Timeshift URL change keeps the current service open. A real channel
         // change also resets a decoder whose proxy URL happens to stay the same.
         if (activeChannelKey != channelKey) {
@@ -181,6 +183,9 @@ fun LiveTeletextHost(
             LiveTeletext.stop()
         }
         if (readable) LiveTeletext.start(url, headers) else LiveTeletext.stop()
+        // Server metadata is only a fallback. If the stream later yields an AIT application,
+        // LiveTeletext replaces this with the broadcaster-announced app automatically.
+        LiveTeletext.setHbbtvFallback(hbbtvFallback)
         activeChannelKey = channelKey
     }
     val needed = TeletextUi.viewerOpen || TeletextUi.probing || TeletextUi.subtitleChoice != "off"

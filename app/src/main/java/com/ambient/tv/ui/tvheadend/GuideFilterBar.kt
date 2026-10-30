@@ -10,9 +10,15 @@ private const val KIND = "kind"
 private const val ACCESS = "access"
 private const val GROUP = "group"
 private const val EPG = "epg"
+private const val CATEGORY = "category"
 
 @Composable
-internal fun guideFilterModel(options: GuideOptions, tags: List<String>, onChange: (GuideOptions) -> Unit): FilterBarModel {
+internal fun guideFilterModel(
+    options: GuideOptions,
+    tags: List<String>,
+    hasHbbtvCategory: Boolean,
+    onChange: (GuideOptions) -> Unit,
+): FilterBarModel {
     val all = stringResource(R.string.library_filter_all)
     val groups = buildList {
         add(PanelOptionGroup(KIND, stringResource(R.string.guide_kind), listOf(
@@ -26,6 +32,12 @@ internal fun guideFilterModel(options: GuideOptions, tags: List<String>, onChang
         if (tags.isNotEmpty() || options.tag != null) add(PanelOptionGroup(GROUP, stringResource(R.string.guide_group),
             listOf(PanelOption("", all)) + (tags + listOfNotNull(options.tag)).distinct().sorted().map { PanelOption(it, it) },
             options.tag ?: ""))
+        // This category must be knowable from channel metadata alone. Stream-only HbbTV discovery
+        // deliberately never reaches LiveTvChannel.hbbtvUrl and therefore cannot create this row.
+        if (hasHbbtvCategory) add(PanelOptionGroup(CATEGORY, stringResource(R.string.guide_category), listOf(
+            PanelOption("ALL", all),
+            PanelOption("HBBTV", stringResource(R.string.guide_hbbtv))),
+            if (options.onlyHbbtv) "HBBTV" else "ALL"))
         add(PanelOptionGroup(EPG, stringResource(R.string.guide_epg), listOf(
             PanelOption("ALL", stringResource(R.string.guide_all_channels)), PanelOption("EPG", stringResource(R.string.guide_with_epg))),
             if (options.onlyWithEpg) "EPG" else "ALL"))
@@ -41,6 +53,7 @@ internal fun guideFilterModel(options: GuideOptions, tags: List<String>, onChang
             KIND -> options.copy(kind = key.takeUnless { it == "ALL" }?.let(LiveTvChannelKind::valueOf))
             ACCESS -> options.copy(access = key.takeUnless { it == "ALL" }?.let(LiveTvChannelAccess::valueOf))
             GROUP -> options.copy(tag = key.takeIf(String::isNotEmpty))
+            CATEGORY -> options.copy(onlyHbbtv = key == "HBBTV")
             else -> options.copy(onlyWithEpg = key == "EPG")
         }) },
         sorts = listOf(PanelOption("NUMBER", stringResource(R.string.guide_sort_number)), PanelOption("NAME", stringResource(R.string.guide_sort_name))),

@@ -87,6 +87,7 @@ internal fun LiveTvChannelBrowser(
     val eventsByChannel = listing.eventsByChannel
     val visibleChannels = listing.visibleChannels
     val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
+    val hasHbbtvCategory = remember(channels) { channels.any { !it.hbbtvUrl.isNullOrBlank() } }
     val positionKey = if (channelList) "channels" else "guide"
     val filterFocusState = controls.filterFocusState
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
@@ -203,7 +204,7 @@ internal fun LiveTvChannelBrowser(
             pendingAlphabet = false
         }
     }
-    val filterModel = guideFilterModel(options, tags, onOptions)
+    val filterModel = guideFilterModel(options, tags, hasHbbtvCategory, onOptions)
     val filterBarShown = LocalFilterBarSetting.current.shown
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {

@@ -9,6 +9,14 @@ internal data class TvhChannelMetadata(
     val tags: List<String>,
     val kind: LiveTvChannelKind,
     val access: LiveTvChannelAccess,
+    val hbbtvUrl: String? = null,
+    val hbbtvName: String? = null,
+)
+
+internal data class TvhHbbtvApplication(
+    val url: String,
+    val name: String?,
+    val visibility: String?,
 )
 
 internal fun tvhTagNames(rows: List<JsonObject>): Map<String, String> = rows.mapNotNull { row ->
@@ -17,7 +25,46 @@ internal fun tvhTagNames(rows: List<JsonObject>): Map<String, String> = rows.map
     id to name
 }.toMap()
 
-internal fun tvhChannelMetadata(channel: JsonObject, tagNames: Map<String, String>, services: Map<String, JsonObject>): TvhChannelMetadata {
+/**
+ * HbbTV applications TVHeadend already decoded from the service AIT. TVHeadend stores one list
+ * per AIT section under hbbtv.{section}; flattening all sections mirrors the broadcaster's table.
+ */
+internal fun tvhHbbtvApplications(service: JsonObject): List<TvhHbbtvApplication> {
+    val sections = service["hbbtv"] as? JsonObject ?: return emptyList()
+    return sections.entries
+        .sortedBy { (key, _) -> key.toIntOrNull() ?: Int.MAX_VALUE }
+        .flatMap { (_, value) -> (value as? JsonArray).orEmpty() }
+        .mapNotNull { element ->
+            val app = element as? JsonObject ?: return@mapNotNull null
+            val url = (app["url"] as? JsonPrimitive)?.contentOrNull
+                ?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+                ?: return@mapNotNull null
+            val visibility = (app["visibility"] as? JsonPrimitive)?.contentOrNull?.lowercase(Locale.ROOT)
+            if (visibility == "none") return@mapNotNull null
+            val name = (app["title"] as? JsonArray).orEmpty()
+                .asSequence()
+                .mapNotNull { it as? JsonObject }
+                .mapNotNull { (it["name"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf(String::isNotBlank) }
+                .firstOrNull()
+            TvhHbbtvApplication(url, name, visibility)
+        }
+        .distinctBy { it.url }
+        .sortedBy {
+            when (it.visibility) {
+                "all" -> 0
+                "apps" -> 1
+                "reserved" -> 2
+                else -> 3
+            }
+        }
+}
+
+internal fun tvhChannelMetadata(
+    channel: JsonObject,
+    tagNames: Map<String, String>,
+    services: Map<String, JsonObject>,
+    hbbtvServices: Map<String, JsonObject> = emptyMap(),
+): TvhChannelMetadata {
     fun ids(key: String) = (channel[key] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
     val tags = ids("tags").mapNotNull(tagNames::get).distinct().sortedBy { it.lowercase(Locale.ROOT) }
     val serviceIds = ids("services").distinct()
@@ -48,5 +95,10 @@ internal fun tvhChannelMetadata(channel: JsonObject, tagNames: Map<String, Strin
         encryption.isNotEmpty() && encryption.all { it == true } -> LiveTvChannelAccess.ENCRYPTED
         else -> taggedAccess ?: LiveTvChannelAccess.UNKNOWN
     }
-    return TvhChannelMetadata(tags, kind, access)
+    val hbbtv = serviceIds.asSequence()
+        .mapNotNull(hbbtvServices::get)
+        .flatMap { tvhHbbtvApplications(it).asSequence() }
+        .distinctBy { it.url }
+        .firstOrNull()
+    return TvhChannelMetadata(tags, kind, access, hbbtv?.url, hbbtv?.name)
 }

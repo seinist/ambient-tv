@@ -6,6 +6,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TvheadendChannelMetadataTest {
+    @Test fun tvheadendStoredHbbtvIsUsedAsChannelFallback() {
+        val rawService = obj("""{
+            "hbbtv": {
+                "0": [
+                    {"title":[{"name":"Hidden","lang":"deu"}],"url":"https://hidden.example/","visibility":"none"}
+                ],
+                "1": [
+                    {"title":[{"name":"ARD Startleiste","lang":"deu"}],"url":"https://hbbtv.example/start","visibility":"all"}
+                ]
+            }
+        }""")
+        val metadata = tvhChannelMetadata(channel, emptyMap(), emptyMap(), mapOf("a" to rawService))
+        assertEquals("https://hbbtv.example/start", metadata.hbbtvUrl)
+        assertEquals("ARD Startleiste", metadata.hbbtvName)
+    }
+
+    @Test fun invalidOrInvisibleStoredHbbtvIsIgnored() {
+        val rawService = obj("""{
+            "hbbtv": {
+                "0": [
+                    {"url":"ftp://example/app","visibility":"all"},
+                    {"url":"https://hidden.example/app","visibility":"none"}
+                ]
+            }
+        }""")
+        assertTrue(tvhHbbtvApplications(rawService).isEmpty())
+        assertNull(tvhChannelMetadata(channel, emptyMap(), emptyMap(), mapOf("a" to rawService)).hbbtvUrl)
+    }
+
     private fun obj(value: String) = Json.parseToJsonElement(value).jsonObject
     private val channel = obj("""{"tags":["tag"],"services":["a","b"]}""")
     @Test fun resolvesTagIdsAndRadioFallbackWithoutAdminAccess() {

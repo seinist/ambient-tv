@@ -13,6 +13,8 @@
     <string name="guide_fta">Frei empfangbar (FTA)</string>
     <string name="guide_encrypted">Verschlüsselt</string>
     <string name="guide_group">Sendergruppe</string>
+    <string name="guide_category">Kategorie</string>
+    <string name="guide_hbbtv">HbbTV</string>
     <string name="guide_epg">Programmdaten</string>
     <string name="guide_all_channels">Alle Sender</string>
     <string name="guide_with_epg">Nur mit Programmdaten</string>
