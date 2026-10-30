@@ -867,7 +867,7 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
         }
         Row(Modifier.padding(horizontal = screenGutter())) {
             TvActionButton(
-                text = offlineActionLabel(gate),
+                text = offlineActionLabel(gate, system),
                 onClick = vm::retry,
                 loading = gate.retrying,
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true).onFocusChanged { if (it.isFocused) onFocused() },
