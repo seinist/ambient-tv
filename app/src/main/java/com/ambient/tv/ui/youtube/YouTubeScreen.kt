@@ -136,6 +136,10 @@ import kotlinx.coroutines.delay
         BackHandler(enabled = !showViewOptions && !searchVisible) { viewOptionsOpened = false; onBack() }
     }
     var initialContentFocusPending by remember(initialFeedKey) { mutableStateOf(true) }
+    // Channel pages have no sidebar focus-restorer: a player return needs a fresh target.
+    LaunchedEffect(state.returnFocusRevision) {
+        if (state.returnFocusRevision > 0) initialContentFocusPending = true
+    }
     var handledSignInId by rememberSaveable { mutableIntStateOf(0) }
     LaunchedEffect(state.completedSignInId) {
         if (state.completedSignInId <= handledSignInId) return@LaunchedEffect
