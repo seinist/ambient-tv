@@ -1,11 +1,16 @@
 package com.ambient.tv.data.radio
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class RadioBrowserRepositoryTest {
@@ -102,6 +107,21 @@ class RadioBrowserRepositoryTest {
         assertEquals(station.streamUrl, repository.playbackUrl(station))
     }
 
+    @Test fun cancelledPlaybackResolutionDoesNotFallBackToCatalogUrl() = runBlocking {
+        val station = station("one", "One").toRadioStation()!!
+        val api = FakeRadioBrowserApi().apply { awaitClickCancellation = true }
+        val pending = async { RadioBrowserRepository(api).playbackUrl(station) }
+
+        api.clickStarted.await()
+        pending.cancel()
+        try {
+            pending.await()
+            fail("cancelled playback URL resolution returned a fallback URL")
+        } catch (_: CancellationException) {
+            // Cancellation is control flow: the superseded station must never start.
+        }
+    }
+
     @Test fun stationLookupUsesUuidAndCanReturnNull() = runBlocking {
         val api = FakeRadioBrowserApi().apply { stations = emptyList() }
         assertNull(RadioBrowserRepository(api).station("missing"))
@@ -141,6 +161,8 @@ class RadioBrowserRepositoryTest {
         var tagFacets: List<RadioBrowserFacetDto> = emptyList()
         var click = RadioBrowserClickDto()
         var throwOnClick = false
+        var awaitClickCancellation = false
+        val clickStarted = CompletableDeferred<Unit>()
         var lastName: String? = null
         var lastCountryCode: String? = null
         var lastLanguage: String? = null
@@ -201,6 +223,8 @@ class RadioBrowserRepositoryTest {
         }
 
         override suspend fun resolveAndCountClick(stationUuid: String): RadioBrowserClickDto {
+            clickStarted.complete(Unit)
+            if (awaitClickCancellation) awaitCancellation()
             if (throwOnClick) error("offline")
             return click
         }
