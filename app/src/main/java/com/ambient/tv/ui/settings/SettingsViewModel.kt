@@ -1036,6 +1036,143 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    fun startJellyfinQuickConnect() {
+        val state = _uiState.value
+        if (state.isSigningInJellyfin) return
+        if (state.jellyfinHost.isBlank()) {
+            _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_jellyfin_quick_connect_server)) }
+            return
+        }
+        jellyfinQuickConnectJob?.cancel()
+        jellyfinQuickConnectJob = viewModelScope.launch {
+            notifyLogin("jellyfin", NoticePhase.WORKING, state.jellyfinHost)
+            _uiState.update {
+                it.copy(
+                    isSigningInJellyfin = true,
+                    jellyfinQuickConnectCode = null,
+                    statusMessage = null,
+                )
+            }
+            val session = jellyfinAuthRepository.initiateQuickConnect(
+                host = state.jellyfinHost,
+                port = state.jellyfinPort.toIntOrNull() ?: AppPreferences.DEFAULT_JELLYFIN_PORT,
+                useHttps = state.jellyfinUseHttps,
+                basePath = state.jellyfinBasePath,
+            ).getOrElse { error ->
+                notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
+                _uiState.update {
+                    it.copy(
+                        isSigningInJellyfin = false,
+                        jellyfinQuickConnectCode = null,
+                        statusMessage = error.message ?: context.getString(R.string.settings_status_error),
+                    )
+                }
+                jellyfinQuickConnectJob = null
+                return@launch
+            }
+            _uiState.update { it.copy(jellyfinQuickConnectCode = session.code) }
+            val deadline = System.currentTimeMillis() + LINK_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                delay(5_000)
+                val current = jellyfinAuthRepository.quickConnectState(
+                    host = state.jellyfinHost,
+                    port = state.jellyfinPort.toIntOrNull() ?: AppPreferences.DEFAULT_JELLYFIN_PORT,
+                    useHttps = state.jellyfinUseHttps,
+                    basePath = state.jellyfinBasePath,
+                    secret = session.secret,
+                ).getOrElse { error ->
+                    notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
+                    _uiState.update {
+                        it.copy(
+                            isSigningInJellyfin = false,
+                            jellyfinQuickConnectCode = null,
+                            statusMessage = error.message ?: context.getString(R.string.settings_status_error),
+                        )
+                    }
+                    jellyfinQuickConnectJob = null
+                    return@launch
+                }
+                if (!current.authenticated) continue
+                jellyfinAuthRepository.completeQuickConnect(
+                    host = state.jellyfinHost,
+                    port = state.jellyfinPort.toIntOrNull() ?: AppPreferences.DEFAULT_JELLYFIN_PORT,
+                    useHttps = state.jellyfinUseHttps,
+                    basePath = state.jellyfinBasePath,
+                    secret = session.secret,
+                    macAddress = normalizeMacAddress(state.jellyfinMacAddress),
+                    autoWake = state.jellyfinAutoWakeEnabled,
+                ).fold(
+                    onSuccess = { profile ->
+                        notifyLogin("jellyfin", NoticePhase.SUCCESS, profile.name, profile.username)
+                        com.ambient.tv.data.local.LoginStateSignal.changed()
+                        jellyfinRepository.invalidateCaches()
+                        val sections = jellyfinRepository.getLibrarySections().getOrDefault(emptyList())
+                        if (appPreferences.homeRows.none { row -> row.system == HomeRowDefinition.SYSTEM_JELLYFIN }) {
+                            appPreferences.homeRows = appPreferences.homeRows + listOf(
+                                HomeRowDefinition(system = HomeRowDefinition.SYSTEM_JELLYFIN, contentKey = "continue"),
+                                HomeRowDefinition(system = HomeRowDefinition.SYSTEM_JELLYFIN, contentKey = "recent"),
+                                HomeRowDefinition(system = HomeRowDefinition.SYSTEM_JELLYFIN, contentKey = "collections"),
+                                HomeRowDefinition(system = HomeRowDefinition.SYSTEM_JELLYFIN, contentKey = "libraries"),
+                            )
+                        }
+                        _uiState.update { currentState ->
+                            currentState.copy(
+                                jellyfinConfigured = true,
+                                jellyfinEnabled = true,
+                                jellyfinUsername = profile.username.orEmpty(),
+                                jellyfinPassword = "",
+                                jellyfinLibrarySections = sections,
+                                homeRows = if (currentState.homeRows != savedState.value.homeRows) currentState.homeRows else appPreferences.homeRows,
+                                isSigningInJellyfin = false,
+                                jellyfinQuickConnectCode = null,
+                                savedJellyfinServers = appPreferences.jellyfinServerProfiles,
+                                activeJellyfinServerId = appPreferences.activeJellyfinServerId,
+                                statusMessage = null,
+                            )
+                        }
+                        refreshSavedValues()
+                    },
+                    onFailure = { error ->
+                        notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
+                        _uiState.update {
+                            it.copy(
+                                isSigningInJellyfin = false,
+                                jellyfinQuickConnectCode = null,
+                                statusMessage = error.message ?: context.getString(R.string.settings_status_error),
+                            )
+                        }
+                    },
+                )
+                jellyfinQuickConnectJob = null
+                return@launch
+            }
+            notifyLogin("jellyfin", NoticePhase.ERROR, message = R.string.settings_jellyfin_quick_connect_expired)
+            _uiState.update {
+                it.copy(
+                    isSigningInJellyfin = false,
+                    jellyfinQuickConnectCode = null,
+                    statusMessage = context.getString(R.string.settings_jellyfin_quick_connect_expired),
+                )
+            }
+            jellyfinQuickConnectJob = null
+        }
+    }
+
+    fun cancelJellyfinQuickConnect() {
+        val active = jellyfinQuickConnectJob != null || _uiState.value.jellyfinQuickConnectCode != null
+        jellyfinQuickConnectJob?.cancel()
+        jellyfinQuickConnectJob = null
+        if (active) {
+            AppNotifications.dismiss("login:jellyfin")
+            _uiState.update {
+                it.copy(
+                    isSigningInJellyfin = false,
+                    jellyfinQuickConnectCode = null,
+                )
+            }
+        }
+    }
+
     fun signOutJellyfin() {
         if (_uiState.value.isSigningInJellyfin) return
         val active = appPreferences.activeJellyfinServerProfile()
