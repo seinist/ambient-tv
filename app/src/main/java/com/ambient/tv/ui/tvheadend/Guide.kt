@@ -349,6 +349,7 @@ internal fun LiveTvChannelBrowser(
                     alphabetTarget = visibleChannels.getOrNull(index)?.uuid
                     jumpTo(index, false)
                 }, gridFocus = contentFocus, modifier = Modifier.fillMaxHeight(), firstEntryFocusRequester = alphabetFocus,
+                    actionsFocus = pageFocusChain?.actions,
                     onReturnToContent = {
                         val target = visibleChannels.indexOfFirst { it.uuid == alphabetTarget }.takeIf { it >= 0 } ?: listState.firstVisibleItemIndex
                         jumpTo(target, true)
