@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.pageFocusStage
+import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 
@@ -210,13 +212,16 @@ internal fun LiveTvChannelBrowser(
     }
     val filterModel = guideFilterModel(options, tags, hasHbbtvCategory, onOptions)
     val filterBarShown = LocalFilterBarSetting.current.shown
+    val auxiliaryBarFocus = remember { FocusRequester() }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (controls.showOptions) cancelFocusChange() } }.focusGroup()) {
             // The view action lives in the page header. A-Z stays beside the sender navigation,
             // outside the scrolling filters, and never moves the header action off screen.
             if (filterBarShown || visibleChannels.isNotEmpty()) Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    .then(if (pageFocusChain != null && !filterBarShown)
+                        Modifier.pageFocusStage(pageFocusChain, PageFocusLevel.FILTER, auxiliaryBarFocus) else Modifier),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
