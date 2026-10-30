@@ -1576,6 +1576,7 @@ private fun AmbientTvApp(
         com.ambient.tv.ui.tvheadend.TvheadendTab.GUIDE -> Destinations.liveTvSection("guide")
         com.ambient.tv.ui.tvheadend.TvheadendTab.RECORDINGS -> Destinations.liveTvSection("recordings")
         com.ambient.tv.ui.tvheadend.TvheadendTab.TIMERS -> Destinations.liveTvSection("timers")
+        com.ambient.tv.ui.tvheadend.TvheadendTab.HBBTV -> Destinations.liveTvSection("hbbtv")
     }
 
 
@@ -2210,6 +2211,7 @@ private fun AmbientTvApp(
                             "guide" -> com.ambient.tv.ui.tvheadend.TvheadendTab.GUIDE
                             "recordings" -> com.ambient.tv.ui.tvheadend.TvheadendTab.RECORDINGS
                             "timers" -> com.ambient.tv.ui.tvheadend.TvheadendTab.TIMERS
+                            "hbbtv" -> com.ambient.tv.ui.tvheadend.TvheadendTab.HBBTV
                             else -> com.ambient.tv.ui.tvheadend.TvheadendTab.LIVE
                         }
                         val providerState by providerNavigationViewModel.uiState.collectAsState()
