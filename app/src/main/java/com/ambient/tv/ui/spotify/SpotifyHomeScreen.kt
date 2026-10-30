@@ -265,7 +265,8 @@ private fun SpotifyHomeSkeleton() {
 
 /** A fresh route or in-flight first page is not proof that Spotify returned no items. */
 internal fun SpotifyHomeUiState.awaitingInitialContent(expectedSectionKey: String): Boolean =
-    loading || (items.isEmpty() && refreshing) || (webAuthorized && sectionKey != expectedSectionKey)
+    loading || (!webAuthorized && authBusy) || (items.isEmpty() && refreshing) ||
+        (webAuthorized && sectionKey != expectedSectionKey)
 
 internal fun SpotifyHomeUiState.canConfirmEmptySection(expectedSectionKey: String): Boolean =
     webAuthorized && sectionKey == expectedSectionKey && !loading && !refreshing &&
