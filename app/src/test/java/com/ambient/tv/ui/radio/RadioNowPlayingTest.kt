@@ -13,6 +13,13 @@ class RadioNowPlayingTest {
         assertNull(radioNowPlayingTitle("  ", "Station"))
         assertNull(radioNowPlayingTitle("station", "Station"))
     }
+    @Test fun addsExplicitArtistWithoutDuplicatingStreamTitle() {
+        assertEquals("Artist - Track", radioMetadataNowPlaying("Track", "Artist", "Station"))
+        assertEquals("Artist - Track", radioMetadataNowPlaying("Artist - Track", "Artist", "Station"))
+        assertEquals("Track", radioMetadataNowPlaying("Track", null, "Station"))
+        assertNull(radioMetadataNowPlaying("Station", "Artist", "Station"))
+    }
+
     @Test fun reconnectUsesBoundedBackoff() {
         assertEquals(1_000L, radioReconnectDelayMs(1))
         assertEquals(2_500L, radioReconnectDelayMs(2))
