@@ -13,6 +13,8 @@
     <string name="guide_fta">Free-to-air (FTA)</string>
     <string name="guide_encrypted">Encrypted</string>
     <string name="guide_group">Channel group</string>
+    <string name="guide_category">Category</string>
+    <string name="guide_hbbtv">HbbTV</string>
     <string name="guide_epg">Programme data</string>
     <string name="guide_all_channels">All channels</string>
     <string name="guide_with_epg">Only with programme data</string>
