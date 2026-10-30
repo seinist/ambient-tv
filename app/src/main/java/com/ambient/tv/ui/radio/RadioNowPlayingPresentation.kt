@@ -28,7 +28,7 @@ internal fun radioHeaderPresentation(
     }
 
     // Most ICY streams use "Artist - Title"; keep the full metadata untouched if ambiguous.
-    val parts = playing.split(Regex("""\\s+[-–—]\\s+"""), limit = 2)
+    val parts = playing.split(Regex("""\s+[-–—]\s+"""), limit = 2)
     val artist = parts.getOrNull(0)?.trim()?.takeIf { parts.size == 2 && it.isNotBlank() }
     val track = parts.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
     return RadioHeaderPresentation(
