@@ -20,7 +20,7 @@ import javax.inject.Inject
 enum class RadioViewMode { GRID, LIST }
 
 /** Selection is scoped to the exact Radio Browser page, not shared across facets or searches. */
-internal data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
+data class RadioFocusScope(val section: RadioSection, val facetId: String?, val query: String)
 
 /** Session-only memory: parameterized sidebar routes replace their ViewModels on tab changes. */
 internal object RadioFocusMemory {
