@@ -1082,8 +1082,7 @@ class SettingsViewModel @Inject constructor(
                     notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
                     _uiState.update {
                         it.copy(
-                            jellyfinAuth.busy = false,
-                            jellyfinAuth.code = null,
+                            jellyfinAuth = it.jellyfinAuth.copy(busy = false, code = null),
                             statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                         )
                     }
@@ -1133,8 +1132,7 @@ class SettingsViewModel @Inject constructor(
                         notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
                         _uiState.update {
                             it.copy(
-                                jellyfinAuth.busy = false,
-                                jellyfinAuth.code = null,
+                                jellyfinAuth = it.jellyfinAuth.copy(busy = false, code = null),
                                 statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                             )
                         }
