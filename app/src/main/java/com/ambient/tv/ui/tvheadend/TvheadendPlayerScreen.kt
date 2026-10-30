@@ -359,6 +359,15 @@ fun TvheadendPlayerScreen(
                         ownConnectionAllowed = viewModel.sourceSystem == "tvheadend",
                         channelName = current.channel?.name,
                         channelKey = playbackMetadata.route,
+                        hbbtvFallback = current.channel?.hbbtvUrl?.let { url ->
+                            com.ambient.tv.livetv.teletext.HbbtvApplication(
+                                url = url,
+                                name = current.channel.hbbtvName,
+                                // TVHeadend's persisted metadata keeps visibility but not the AIT
+                                // control code. Treat it as "present", never as forced autostart.
+                                controlCode = 2,
+                            )
+                        },
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
                     com.ambient.tv.ui.player.PersistentPlayerOverlays()
