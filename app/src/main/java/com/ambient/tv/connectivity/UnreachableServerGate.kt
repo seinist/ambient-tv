@@ -261,7 +261,7 @@ class UnreachableServerGate @Inject constructor(
         MediaSystem.EMBY.key -> preferences.embyHost
         MediaSystem.TVHEADEND.key -> preferences.tvheadendHost
         else -> null
-    }?.trim()?.takeIf(String::isNotBlank)
+    }?.let { com.ambient.tv.network.NetworkEndpoint.normalizeHost(it) }?.takeIf(String::isNotBlank)
 
     private fun displayName(system: String): String = when (system) {
         MediaSystem.PLEX.key -> preferences.activeServerProfile()?.name?.takeIf { it.isNotBlank() }
