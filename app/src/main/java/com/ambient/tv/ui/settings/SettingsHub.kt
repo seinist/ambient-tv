@@ -200,6 +200,12 @@ internal fun SettingsHub(
             settlingPageFocus = true
             return
         }
+        // Direct external shortcuts close back to their source view on the first Back.
+        // Linked Settings pages were popped above and keep the existing in-Settings history.
+        if (settingsDirectEntryReturnsToCaller(initialPage, navState(), linkedPages.isNotEmpty())) {
+            requestExit(onBack)
+            return
+        }
         val next = navState().pop()
         if (next == null) requestExit(onBack) else {
             if (next.addingSystems && next.page == null) {
@@ -222,6 +228,9 @@ internal fun SettingsHub(
     }
     var searchLandingQuery by rememberSaveable(initialCategoryKey) {
         mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
+    }
+    var shortcutItemKey by rememberSaveable(initialCategoryKey) {
+        mutableStateOf(settingsShortcutItemKey(initialCategoryKey))
     }
     fun openPage(target: SettingsCategory) {
         val resolved = when {
@@ -825,6 +834,7 @@ internal fun SettingsHub(
                             val itemIndex = remember(current) { SettingsItemIndex() }
                             val pageSearchLanding = remember(current) { SettingsSearchLanding() }
                             val landingQuery = searchLandingQuery
+                            val externalItemKey = shortcutItemKey.takeIf { current == initialPage }
                             CompositionLocalProvider(
                                 LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
@@ -839,21 +849,24 @@ internal fun SettingsHub(
                                     if (target == SettingsCategory.WAKE) searchLandingQuery = link.substringBefore('-')
                                 },
                             ) {
-                            LaunchedEffect(current, landingQuery) {
+                            LaunchedEffect(current, landingQuery, externalItemKey) {
                                 if (!handheld) settlingPageFocus = true
                                 if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
                                 }
-                                val targetKey = landingQuery?.let {
+                                val targetKey = externalItemKey ?: landingQuery?.let {
                                     if (current == SettingsCategory.WAKE) viewModel.wakeTargetKey(state, it)
                                     else settingsSearchTargetKey(current, it)
                                 }
-                                val scrollTo = itemIndex.landingPosition(targetKey, requested = landingQuery != null)
+                                val scrollTo = itemIndex.landingPosition(
+                                    targetKey, requested = landingQuery != null || externalItemKey != null,
+                                )
                                 if (scrollTo != null && scrollTo < listState.layoutInfo.totalItemsCount) {
                                     listState.scrollToItem(scrollTo)
                                 }
                                 if (handheld) {
                                     if (landingQuery != null) searchLandingQuery = null
+                                    if (externalItemKey != null) shortcutItemKey = null
                                     return@LaunchedEffect
                                 }
                                 val restore = returningLink
@@ -883,6 +896,7 @@ internal fun SettingsHub(
                                 }
                                 settlingPageFocus = false
                                 if (landingQuery != null) searchLandingQuery = null
+                                if (externalItemKey != null) shortcutItemKey = null
                             }
                             content(current, listState, panelModifier,
                                 { scope.launch { requestPanelContentFocus() } }, ::requestExit)
