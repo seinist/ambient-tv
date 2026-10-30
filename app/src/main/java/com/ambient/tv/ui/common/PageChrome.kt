@@ -311,7 +311,7 @@ class PageFocusChain {
     private fun candidates(from: PageFocusLevel, down: Boolean): List<Stage> =
         stages.values.toList().asReversed().distinctBy { it.level }
             .filter { if (down) it.level.order > from.order else it.level.order < from.order }
-            .sortedWith(compareBy(if (down) { it.level.order } else { -it.level.order }))
+            .sortedWith(compareBy<Stage> { if (down) it.level.order else -it.level.order })
 
     internal fun previousRequester(from: PageFocusLevel): FocusRequester =
         candidates(from, false).firstOrNull()?.focus ?: actions
@@ -343,7 +343,7 @@ internal fun RegisterPageFocusLevel(chain: PageFocusChain, level: PageFocusLevel
 }
 
 /** For the optional search field or contextual actions that sit between header and content. */
-fun Modifier.pageFocusStage(
+internal fun Modifier.pageFocusStage(
     chain: PageFocusChain,
     level: PageFocusLevel,
     requester: FocusRequester,
