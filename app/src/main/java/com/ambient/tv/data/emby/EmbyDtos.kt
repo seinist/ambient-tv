@@ -24,6 +24,36 @@ data class EmbyAuthResponse(
 )
 
 @Serializable
+data class EmbyConnectPin(
+    @SerialName("Id") val id: String = "",
+    @SerialName("Pin") val pin: String = "",
+    @SerialName("DeviceId") val deviceId: String = "",
+    @SerialName("IsExpired") val isExpired: Boolean = false,
+    @SerialName("IsConfirmed") val isConfirmed: Boolean = false,
+)
+
+@Serializable
+data class EmbyConnectAuth(
+    @SerialName("UserId") val userId: String = "",
+    @SerialName("AccessToken") val accessToken: String = "",
+)
+
+@Serializable
+data class EmbyConnectServer(
+    @SerialName("SystemId") val systemId: String = "",
+    @SerialName("Name") val name: String = "",
+    @SerialName("Url") val url: String? = null,
+    @SerialName("LocalAddress") val localAddress: String? = null,
+    @SerialName("AccessKey") val accessKey: String = "",
+)
+
+@Serializable
+data class EmbyConnectExchange(
+    @SerialName("LocalUserId") val localUserId: String = "",
+    @SerialName("AccessToken") val accessToken: String = "",
+)
+
+@Serializable
 data class EmbyUser(
     @SerialName("Id") val id: String,
     @SerialName("Name") val name: String,
