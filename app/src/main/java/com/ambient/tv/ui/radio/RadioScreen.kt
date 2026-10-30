@@ -80,6 +80,8 @@ import com.ambient.tv.ui.common.BrowseFocusInitialTarget
 import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.rememberBrowseGridState
+import com.ambient.tv.ui.common.rememberBrowseListState
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -132,8 +134,8 @@ fun RadioScreen(
     }
     var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
     var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
-    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val gridState = rememberBrowseGridState()
+    val listState = rememberBrowseListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val initialFocusRequester = remember(focusScope, state.viewMode) { FocusRequester() }
 
