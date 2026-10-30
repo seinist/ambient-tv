@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.ui.common.AudioPlaybackVisualizer
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.MediaSystem
@@ -431,6 +432,9 @@ internal data class RadioOsdModel(
                     station?.codec?.takeIf { it.isNotBlank() }?.let { MetaBadge(it) }
                     station?.bitrateKbps?.let { MetaBadge("$it kbps") }
                     station?.countryCode?.takeIf { it.isNotBlank() }?.let { MetaBadge(it) }
+                    station?.localizedLanguageNames(
+                        LocalContext.current.resources.configuration.locales[0],
+                    )?.firstOrNull()?.let { MetaBadge(it) }
                 }
                 PlayerControlBar(
                     player = com.ambient.tv.ui.player.OsdPlayer.RADIO,
