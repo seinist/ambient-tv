@@ -1460,6 +1460,8 @@
     <string name="settings_page_vpn_hint">Import and test the WireGuard tunnel</string>
     <string name="wg_paste">Paste a wg-quick config</string>
     <string name="wg_load_file">Load configuration</string>
+    <string name="wg_scan_qr">Scan QR code</string>
+    <string name="wg_scan_qr_hint">Point the camera at a WireGuard configuration QR code. The private key stays on this device.</string>
     <string name="wg_file_title">Choose WireGuard file</string>
     <string name="wg_file_system_picker">System file picker</string>
     <string name="wg_file_empty">No folders or .conf files here.</string>
