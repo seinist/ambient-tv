@@ -1,6 +1,8 @@
 package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.pageFocusStage
+import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 
@@ -111,6 +113,7 @@ internal fun LiveTvChannelBrowser(
         }
     }
     val rowFocus = remember(visibleChannels) { visibleChannels.associate { it.uuid to FocusRequester() } }
+    val epgRowFocus = rememberRowColumnFocus()
     val alphabetFocus = remember { FocusRequester() }
     val alphabetActionFocus = remember { FocusRequester() }
     val contentFocus = remember { FocusRequester() }
@@ -210,13 +213,16 @@ internal fun LiveTvChannelBrowser(
     }
     val filterModel = guideFilterModel(options, tags, hasHbbtvCategory, onOptions)
     val filterBarShown = LocalFilterBarSetting.current.shown
+    val auxiliaryBarFocus = remember { FocusRequester() }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (controls.showOptions) cancelFocusChange() } }.focusGroup()) {
             // The view action lives in the page header. A-Z stays beside the sender navigation,
             // outside the scrolling filters, and never moves the header action off screen.
             if (filterBarShown || visibleChannels.isNotEmpty()) Row(
-                Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    .then(if (pageFocusChain != null && !filterBarShown)
+                        Modifier.pageFocusStage(pageFocusChain, PageFocusLevel.FILTER, auxiliaryBarFocus) else Modifier),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -225,6 +231,7 @@ internal fun LiveTvChannelBrowser(
                         .then(if (visibleChannels.isEmpty()) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
                     focusRequester = controls.filterBarFocus,
                     up = pageFocusChain?.contentUp,
+                    focusChain = pageFocusChain,
                 ) else Spacer(Modifier.weight(1f))
                 if (visibleChannels.isNotEmpty()) TvChip(stringResource(R.string.guide_az), selected = showAlphabet,
                     modifier = Modifier.focusRequester(alphabetActionFocus)
@@ -257,6 +264,7 @@ internal fun LiveTvChannelBrowser(
             } else Row(Modifier.fillMaxSize()) {
                 LazyColumn(allowUpExit = true, state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight().focusRequester(contentFocus).focusGroup()
+                        .rowColumnFocusWrapRight(epgRowFocus)
                         .overlayLazyScrollbar(listState, enabled = !showAlphabet),
                     verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(top = 4.dp, bottom = 36.dp)) {
                     items(visibleChannels, key = { it.uuid }) { channel ->
@@ -287,7 +295,7 @@ internal fun LiveTvChannelBrowser(
                                     if (rowPosition != null) it.eventId == rowPosition.itemId
                                     else channel.uuid == focusTarget.rowId && "event:${it.eventId}" == focusTarget.contentId
                                 }.coerceAtLeast(0), initialFirstVisibleItemScrollOffset = rowPosition?.offset ?: 0)
-                            RegisterBrowseFocusList(rowState, rowEvents.map { "event:${it.eventId}" }, channel.uuid)
+                            RegisterRowColumnFocus(epgRowFocus, channel.uuid, rowState, rowEvents.map { "event:${it.eventId}" })
                             // The row may keep an old saved position: show the current programme again.
                             if (channelTarget && restoreFocus) LaunchedEffect(filterFocusState) {
                                 if (filterFocusState.allowContentAutoFocus && rowEvents.isNotEmpty()) rowState.scrollToItem(guideLiveIndex(rowEvents, now))
@@ -320,14 +328,15 @@ internal fun LiveTvChannelBrowser(
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
                                 } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else LazyRow(state = rowState, horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                else LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                                     items(rowEvents, key = { it.eventId }) { event ->
                                         GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
                                             art = liveTvProgrammeArt(event, listOf(channel), titleArt),
                                             imageHeaders = imageHeaders,
                                             onArtworkNeeded = { onArtworkNeeded(event.title, it) },
-                                            modifier = if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
+                                            modifier = (if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)
+                                                .rowColumnFocusTarget(epgRowFocus, channel.uuid, "event:${event.eventId}"))
                                     }
                                 }
                             }

@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -8,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -42,19 +45,28 @@ fun FilterBar(
     onReset: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null,
     up: FocusRequester? = null,
+    focusChain: PageFocusChain? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val focus = LocalFilterFocusState.current
     val firstControl = groups.firstOrNull()?.let { "filter:${it.id}" }
         ?: "sort".takeIf { sorts.isNotEmpty() }
         ?: "sort-order".takeIf { sortOrders.size >= 2 }
+    // The group remembers the last focused selector instead of always returning to Sort.
+    // A bar with no focusable controls must never register a phantom navigation level.
+    val barRequester = focusRequester ?: remember { FocusRequester() }
     fun Modifier.firstFocus(control: String): Modifier =
-        if (control == firstControl && focusRequester != null) focusRequester(focusRequester) else this
+        if (focusChain == null && control == firstControl && focusRequester != null)
+            focusRequester(focusRequester) else this
     Row(
         modifier.fillMaxWidth()
             .horizontalScroll(rememberScrollState())
             .padding(vertical = 4.dp)
-            .then(if (up == null) Modifier else Modifier.onPreviewKeyEvent { event ->
+            .then(if (focusChain != null && firstControl != null)
+                Modifier.pageFocusStage(focusChain, PageFocusLevel.FILTER, barRequester)
+                else if (focusChain == null) Modifier
+                else Modifier)
+            .then(if (focusChain != null || up == null) Modifier else Modifier.onPreviewKeyEvent { event ->
                 if (event.key != Key.DirectionUp) false else {
                     if (event.type == KeyEventType.KeyDown) runCatching { up.requestFocus() }
                     true
@@ -140,9 +152,10 @@ fun FilterBar(
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     up: FocusRequester? = null,
+    focusChain: PageFocusChain? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) = FilterBar(model.groups, model.onSelect, modifier, model.sorts, model.selectedSort, model.onSort,
-    model.sortOrders, model.selectedSortOrder, model.onSortOrder, model.onReset, focusRequester, up, trailing)
+    model.sortOrders, model.selectedSortOrder, model.onSortOrder, model.onReset, focusRequester, up, focusChain, trailing)
 
 /** The panel holding only the filter bar switch, or sort and filters while the bar is hidden. */
 @Composable

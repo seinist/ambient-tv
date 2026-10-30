@@ -267,7 +267,7 @@ fun PhotoBrowserScreen(
                 }
                 if (filterBarShown) {
                     FilterBar(sortModel, focusRequester = filterFocus,
-                        up = if (timelineAvailable) focusChain.chips else focusChain.actions)
+                        up = if (timelineAvailable) focusChain.chips else focusChain.actions, focusChain = focusChain)
                 }
                 when {
                     state.loading && visible.isEmpty() -> StatePanel(stringResource(R.string.photos_loading))

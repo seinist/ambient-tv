@@ -221,6 +221,7 @@ fun FilteredBrowseScreen(
                     modifier = Modifier.padding(horizontal = screenGutter()),
                     focusRequester = filterFocus,
                     up = focusChain.actions,
+                    focusChain = focusChain,
                 )
                 when (val value = state) {
                     FilteredBrowseUiState.Loading -> LazyVerticalGrid(

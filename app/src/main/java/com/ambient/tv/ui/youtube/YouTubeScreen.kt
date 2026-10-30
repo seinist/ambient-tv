@@ -185,6 +185,7 @@ import kotlinx.coroutines.delay
     LaunchedEffect(state.rows) { ScreensaverArtworkRegistry.offerAll(state.rows.flatMap { it.items }.take(24).map { it.imageUrl }) }
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val filterFocus = remember { FocusRequester() }
+    val searchStageFocus = remember { FocusRequester() }
     val filterModel = youtubeFilterModel(state, viewModel)
     val filterBarShown = com.ambient.tv.ui.common.LocalFilterBarSetting.current.shown
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
@@ -212,6 +213,7 @@ import kotlinx.coroutines.delay
                 }
             },
             searchCloseModifier=Modifier.focusRequester(searchCloseFocusRequester),
+            searchStageFocus=searchStageFocus,
             onOpenSearch={
                 filterFocusState.keepControls()
                 searchOpened=true
@@ -333,6 +335,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
     searchActionModifier:Modifier,
     searchFieldModifier:Modifier,
     searchCloseModifier:Modifier,
+    searchStageFocus:FocusRequester,
     onOpenSearch:()->Unit,
     onCloseSearch:()->Unit,
     onOpenViewOptions:()->Unit,
@@ -365,7 +368,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         TvChip(feedLabel(feed), selected, modifier=if (state.feed==feed) Modifier.focusRequester(focusChain.selectedChip) else Modifier, icon=feedIcon(feed)) { onSelectFeed(feed) }
     } }
     if (showSearch) {
-        DeviceActionRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
+        DeviceActionRow(Modifier.fillMaxWidth().pageFocusStage(focusChain, PageFocusLevel.SEARCH_LOWER, searchStageFocus),horizontalArrangement=Arrangement.spacedBy(8.dp),verticalAlignment=Alignment.CenterVertically) {
             TvTextField(state.query,vm::onQueryChanged,
                 if (channel != null) stringResource(R.string.youtube_channel_search)
                 else com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.YOUTUBE, R.string.youtube_search),
@@ -374,7 +377,7 @@ private fun youtubeRowId(index: Int, row: YouTubeRow): String = row.id
         }
     }
     state.signInCode?.let { code -> DeviceActionRow(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.5f), RoundedCornerShape(10.dp)).padding(16.dp), horizontalArrangement=Arrangement.spacedBy(12.dp)) { Text(stringResource(R.string.youtube_activate)); Text(code, color=MaterialTheme.colorScheme.primary); TvActionButton(stringResource(R.string.youtube_refresh), onClick=onReload, loading=state.loading || state.refreshing); if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) YouTubeSignInBrowserActions(code) } }
-    if (filterModel != null) com.ambient.tv.ui.common.FilterBar(filterModel, focusRequester = filterFocus, up = filterUp)
+    if (filterModel != null) com.ambient.tv.ui.common.FilterBar(filterModel, focusRequester = filterFocus, up = filterUp, focusChain = focusChain)
 }
 
 @Composable private fun youtubeFilterModel(state: YouTubeUiState, vm: YouTubeViewModel): com.ambient.tv.ui.common.FilterBarModel {
@@ -547,7 +550,7 @@ private fun SectionedYouTubeContent(
             val rowFocus = rememberRowColumnFocus()
             LazyColumn(
                 allowUpExit = true,
-                modifier = Modifier.fillMaxSize().rowColumnFocusNavigation(
+                modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
                     rowFocus,
                     scrollToTop = { listState.scrollToItem(0) },
                     scrollToBottom = { listState.scrollToItem(rows.lastIndex) },
@@ -854,7 +857,13 @@ private fun Cinematic(
 ) {
     if (items.isEmpty()) return
     var hero by remember(items) { mutableStateOf(items.first()) }
-    Box(Modifier.fillMaxSize()) {
+    val rowFocus = rememberRowColumnFocus()
+    val rowState = com.ambient.tv.ui.common.rememberBrowseListState(
+        initialFirstVisibleItemIndex = items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
+        itemKeys = items.map { it.videoId },
+    )
+    RegisterRowColumnFocus(rowFocus, "youtube-cinematic", rowState, items.map { it.videoId })
+    Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
         if (!com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current && com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) {
             CrossfadeBackdropImage(hero.backgroundUrl ?: hero.imageUrl, hero.title, Modifier.fillMaxSize().alpha(.45f), ContentScale.Crop, focusCrop = true)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .96f)))))
@@ -866,16 +875,15 @@ private fun Cinematic(
                 youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis) }
             }
             LazyRow(
-                state = com.ambient.tv.ui.common.rememberBrowseListState(
-                    initialFirstVisibleItemIndex = items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
-                    itemKeys = items.map { it.videoId },
-                ),
+                state = rowState,
+                modifier = Modifier.containRowFocusExit(),
                 contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 18.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 itemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
                     Card(
-                        item, click, Modifier.width(landscapeCardWidth()), false,
+                        item, click, Modifier.width(landscapeCardWidth())
+                            .rowColumnFocusTarget(rowFocus, "youtube-cinematic", item.videoId), false,
                         focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                         onFocused = {
                             hero = item
@@ -905,7 +913,7 @@ private fun SectionedYouTubeCinematic(
     val rowFocus = rememberRowColumnFocus()
     LazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize().rowColumnFocusNavigation(
+        modifier = Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus).rowColumnFocusNavigation(
             rowFocus,
             scrollToTop = { listState.scrollToItem(0) },
             scrollToBottom = { listState.scrollToItem(rows.lastIndex) },

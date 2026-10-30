@@ -81,6 +81,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
+import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.containRowFocusExit
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -563,6 +566,7 @@ private fun SectionHeader(
             onReset = onResetFilters.takeIf { state.page == SectionPage.LIBRARY },
             focusRequester = filterFocus,
             up = filterUp,
+            focusChain = focusChain,
         )
     }
 }
@@ -816,6 +820,7 @@ private fun RecommendationRowsPage(
                     state = rowsState,
                     modifier = Modifier
                         .fillMaxSize()
+                        .rowColumnFocusWrapRight(columnFocus)
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = { rowsState.glideToItem(!performance.reducedEffects, 0) },
@@ -1124,6 +1129,7 @@ private fun RecommendationCinematicPage(
     val handheld = LocalHandheldUi.current
     val restoreIndex = remember(state.recommendationRows, restoreRowId) { state.recommendationRows.indexOfFirst { it.id == restoreRowId }.coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = restoreIndex)
+    val rowFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
     RegisterBrowseFocusRows(listState, state.recommendationRows.map { it.id to it.items.map { item -> item.ratingKey } })
     // On TV each section fills the viewport and the list snaps to the section that holds focus,
     // so header, hero and tile row are always shown whole, in both scroll directions.
@@ -1134,7 +1140,16 @@ private fun RecommendationCinematicPage(
     LazyColumn(
         allowUpExit = true,
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize()
+            .rowColumnFocusWrapRight(rowFocus)
+            .rowColumnFocusNavigation(
+                rowFocus,
+                scrollToTop = { listState.scrollToItem(0) },
+                scrollToBottom = { listState.scrollToItem(state.recommendationRows.lastIndex) },
+                scrollToRow = { rowKey ->
+                    state.recommendationRows.indexOfFirst { it.id == rowKey }.takeIf { it >= 0 }?.let { listState.scrollToItem(it) }
+                },
+            ) { state.recommendationRows.map { it.id } },
         contentPadding = PaddingValues(bottom = if (handheld) 36.dp else 0.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -1151,6 +1166,7 @@ private fun RecommendationCinematicPage(
                 requestFallbackFocus = initialKey == null && sectionIndex == 0,
                 restorePending = restorePending,
                 poster = poster,
+                rowFocus = rowFocus,
                 modifier = if (handheld) Modifier else Modifier.fillParentMaxHeight(),
             )
         }
@@ -1298,6 +1314,7 @@ private fun RecommendationCinematicSection(
     requestFallbackFocus: Boolean,
     restorePending: Boolean,
     poster: Boolean = false,
+    rowFocus: com.ambient.tv.ui.common.RowColumnFocus,
     modifier: Modifier = Modifier,
 ) {
     if (row.items.isEmpty()) return
@@ -1306,6 +1323,8 @@ private fun RecommendationCinematicSection(
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
     val handheld = LocalHandheldUi.current
+    val rowState = rememberLazyListState(itemKeys = row.items.map { it.ratingKey })
+    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, row.id, rowState, row.items.map { it.ratingKey })
     BrowseFocusRow(row.id) {
     Column(modifier.fillMaxWidth()) {
         ContentSectionHeader(title = row.title)
@@ -1313,7 +1332,8 @@ private fun RecommendationCinematicSection(
             CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent, fadeBottom = true)
             CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.72f, showStreamProperties = false) {
                 LazyRow(
-                    state = rememberLazyListState(itemKeys = row.items.map { it.ratingKey }),
+                    state = rowState,
+                    modifier = Modifier.containRowFocusExit(),
                     contentPadding = cinematicTileRowPadding(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1324,6 +1344,7 @@ private fun RecommendationCinematicSection(
                             onClick = { onItemClick(item.ratingKey) },
                             onFocused = { hero = item; onItemFocused(item) },
                             requestInitialFocus = restorePending && (item.ratingKey == focusedKey || (focusedKey == null && requestFallbackFocus && itemIndex == 0)),
+                            modifier = Modifier.rowColumnFocusTarget(rowFocus, row.id, item.ratingKey),
                         )
                     }
                 }
@@ -1395,6 +1416,7 @@ private fun CinematicTile(
     onClick: () -> Unit,
     onFocused: () -> Unit,
     requestInitialFocus: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     if (poster) {
         WallTile(
@@ -1403,7 +1425,7 @@ private fun CinematicTile(
             onClick = onClick,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
-            modifier = Modifier.width(deviceDp(172.dp, 84.dp) * rememberUhdScale()),
+            modifier = modifier.width(deviceDp(172.dp, 84.dp) * rememberUhdScale()),
         )
     } else {
         MediaTile(
@@ -1413,6 +1435,7 @@ private fun CinematicTile(
             showDescription = false,
             onFocused = onFocused,
             requestInitialFocus = requestInitialFocus,
+            modifier = modifier,
         )
     }
 }
@@ -1883,14 +1906,17 @@ private fun CinematicView(
     var hero by remember(items) { mutableStateOf(items.firstOrNull { it.ratingKey == restoreKey } ?: items.first()) }
     val restoreIndex = remember(items, restoreKey) { items.indexOfFirst { it.ratingKey == restoreKey }.coerceAtLeast(0) }
     val rowState = rememberLazyListState(initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0), itemKeys = items.map { it.ratingKey })
+    val rowFocus = com.ambient.tv.ui.common.rememberRowColumnFocus()
+    com.ambient.tv.ui.common.RegisterRowColumnFocus(rowFocus, "cinematic-library", rowState, items.map { it.ratingKey })
     val heroArtwork = hero.landscapeBackdropUrl
     val sampledAccent = rememberArtworkAccent(heroArtwork)
     val heroAccent = if (LocalAccentModeKey.current == "artwork") sampledAccent else MaterialTheme.colorScheme.primary
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
         CinematicHeroBackdrop(artworkUrl = heroArtwork, title = hero.title, accent = heroAccent)
         CinematicHeroContent(hero = hero, poster = poster, infoWidthFraction = 0.58f, showStreamProperties = true) {
             LazyRow(
                 state = rowState,
+                modifier = Modifier.containRowFocusExit(),
                 contentPadding = cinematicTileRowPadding(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -1901,6 +1927,7 @@ private fun CinematicView(
                         onClick = { onItemClick(item.ratingKey) },
                         onFocused = { restorePending = false; hero = item; onItemFocused(item) },
                         requestInitialFocus = restorePending && item.ratingKey == restoreKey,
+                        modifier = Modifier.rowColumnFocusTarget(rowFocus, "cinematic-library", item.ratingKey),
                     )
                 }
             }
