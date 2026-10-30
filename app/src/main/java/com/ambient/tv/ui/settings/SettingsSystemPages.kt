@@ -470,9 +470,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 )
                             }
                             TvActionButton(
-                                text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                                text = if (uiState.embyAuth.testing) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                                 onClick = viewModel::testEmbyConnection,
-                                enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
+                                enabled = uiState.embyConfigured, loading = uiState.embyAuth.testing,
                             )
                         }
                         uiState.embyAuth.code?.let { pin ->
