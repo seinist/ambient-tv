@@ -479,7 +479,9 @@ private fun media3Effect(stage: Media3Stage, outputWidth: Int, outputHeight: Int
 /** All Media3 scale algorithms can be wrapped by SSimSuperRes without replacing them. */
 private fun media3ScalerEffect(stage: Media3Stage.Scale, outputWidth: Int, outputHeight: Int,
     gamma: Int): GlEffect = when (stage.scaler) {
-    "lanczos" -> LanczosResample.scaleToFit(outputWidth, outputHeight)
+    "lanczos" -> if (stage.superResolution)
+        Media3KernelEffect("ssim_lanczos3", outputWidth, outputHeight, sigmoid = false)
+        else LanczosResample.scaleToFit(outputWidth, outputHeight)
     "fsr" -> Media3FsrEasuEffect(outputWidth, outputHeight, gamma)
     in MEDIA3_RAVU_SCALERS -> Media3RavuEffect(stage.scaler, outputWidth, outputHeight)
     "nis" -> Media3NisEffect(outputWidth, outputHeight)

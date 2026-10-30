@@ -136,6 +136,10 @@ internal val MEDIA3_KERNELS: Map<String, Media3Kernel> = linkedMapOf(
     "ewa_robidoux" to Media3Kernel(2.0, true, ROBIDOUX),
     "ewa_robidouxsharp" to Media3Kernel(2.0, true, ROBIDOUX_SHARP),
     "nearest" to Media3Kernel(0.5, false, { 1.0 }),
+    // SSimSuperRes must render its chosen upscale synchronously while retaining the
+    // source frame. Media3's LanczosResample uses an asynchronous GlShaderProgram;
+    // this private Lanczos-3 kernel is its synchronous windowed-sinc equivalent.
+    "ssim_lanczos3" to Media3Kernel(3.0, false, ::media3Sinc, ::media3Sinc),
 )
 
 /** Media3 keys handled here: the kernels plus MPV's "oversample". */

@@ -8,6 +8,7 @@ import androidx.media3.common.util.GlUtil
 import androidx.media3.common.util.Size
 import androidx.media3.effect.GlEffect
 import androidx.media3.effect.GlShaderProgram
+import androidx.media3.effect.BaseGlShaderProgram
 
 /**
  * SSimSuperRes adapted from the LGPL-3.0-or-later quality_ssim_super_*.glsl shader.
@@ -23,12 +24,19 @@ internal class Media3SsimSuperEffect(private val upscale: GlEffect) : GlEffect {
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
         media3RequireFragmentHighp("SSimSuperRes")
         if (useHdr) throw VideoFrameProcessingException("SSimSuperRes is SDR only")
-        return Media3SsimSuperShaderProgram(upscale.toGlShaderProgram(context, false))
+        val program = upscale.toGlShaderProgram(context, false)
+        // GlShaderProgram by itself exposes only queueInputFrame, not configure/drawFrame.
+        // All SSim-compatible scalers implement the synchronous Base subclass.
+        if (program !is BaseGlShaderProgram) {
+            program.release()
+            throw VideoFrameProcessingException("SSimSuperRes needs a synchronous scaler shader")
+        }
+        return Media3SsimSuperShaderProgram(program)
     }
 }
 
 private class Media3SsimSuperShaderProgram(
-    private val upscale: GlShaderProgram,
+    private val upscale: BaseGlShaderProgram,
 ) : Media3SsimProgram() {
     private val resize = shader(SSIM_RESIZE_SHADER)
     private val variance = shader(SSIM_SUPER_VARIANCE)
