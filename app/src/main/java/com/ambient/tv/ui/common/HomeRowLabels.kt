@@ -5,6 +5,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.genre
 import com.ambient.tv.data.local.homeRowType
+import com.ambient.tv.data.radio.radioLanguageDisplayName
 
 /**
  * Resolve defaults at display time so custom Home layouts follow the current UI language and the
@@ -83,7 +84,14 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
                         else -> R.string.radio_languages
                     })
                     val name = MediaSystem.RADIO.customName ?: context.getString(MediaSystem.RADIO.label)
-                    return "$name: $prefix · $value"
+                    val displayValue = if (kind == HomeRowDefinition.RADIO_LANGUAGE) {
+                        radioLanguageDisplayName(
+                            iso639 = null,
+                            fallbackName = value,
+                            displayLocale = context.resources.configuration.locales[0],
+                        ) ?: value
+                    } else value
+                    return "$name: $prefix · $displayValue"
                 }
             }
             return contentKey.replace('_', ' ').replaceFirstChar(Char::uppercase)
