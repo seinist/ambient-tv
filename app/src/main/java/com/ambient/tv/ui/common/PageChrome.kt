@@ -28,6 +28,7 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
@@ -347,9 +348,17 @@ fun PageChipRow(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     /** Up from the chips; a page with a control between header and chips (a search field) passes that. */
     up: FocusRequester = chain.actions,
+    /** Optional selected position so phone tab swipes/taps keep the active chip visible. */
+    selectedIndex: Int? = null,
     content: LazyListScope.() -> Unit,
 ) {
+    val state = rememberLazyListState()
+    LaunchedEffect(selectedIndex) {
+        val index = selectedIndex ?: return@LaunchedEffect
+        if (index >= 0) runCatching { state.animateScrollToItem(index) }
+    }
     LazyRow(
+        state = state,
         modifier = modifier.pageChips(chain, up),
         contentPadding = contentPadding,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
