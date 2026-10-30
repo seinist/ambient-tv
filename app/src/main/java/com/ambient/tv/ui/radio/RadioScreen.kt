@@ -122,7 +122,7 @@ fun RadioScreen(
     LaunchedEffect(viewModel, initialSectionKey) {
         viewModel.enter(RadioSection.fromKey(initialSectionKey))
     }
-    ReportSidebarContentReady(state.contentReady && !state.loading)
+    ReportSidebarContentReady(state.contentReady)
 
     val focusScope = state.focusScope()
     val showingFacets = state.isFacetOverview()
