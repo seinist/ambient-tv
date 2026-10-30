@@ -989,14 +989,14 @@ class SettingsViewModel @Inject constructor(
 
     fun signInJellyfin() {
         val state = _uiState.value
-        if (state.isSigningInJellyfin) return
+        if (state.jellyfinAuth.busy) return
         if (state.jellyfinHost.isBlank() || state.jellyfinUsername.isBlank()) {
             _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_jellyfin_missing_credentials)) }
             return
         }
         viewModelScope.launch {
             notifyLogin("jellyfin", NoticePhase.WORKING, state.jellyfinHost)
-            _uiState.update { it.copy(isSigningInJellyfin = true, statusMessage = null) }
+            _uiState.update { it.copy(jellyfinAuth = it.jellyfinAuth.copy(busy = true, code = null), statusMessage = null) }
             jellyfinAuthRepository.signIn(
                 host = state.jellyfinHost,
                 port = state.jellyfinPort.toIntOrNull() ?: AppPreferences.DEFAULT_JELLYFIN_PORT,
@@ -1024,21 +1024,21 @@ class SettingsViewModel @Inject constructor(
                         jellyfinConfigured = true, jellyfinEnabled = true,
                         jellyfinLibrarySections = sections,
                         homeRows = if (current.homeRows != savedState.value.homeRows) current.homeRows else appPreferences.homeRows,
-                        isSigningInJellyfin = false,
+                        jellyfinAuth = current.jellyfinAuth.copy(busy = false, code = null),
                         savedJellyfinServers = appPreferences.jellyfinServerProfiles,
                         activeJellyfinServerId = appPreferences.activeJellyfinServerId,
                         statusMessage = null,
                     ) }
                     refreshSavedValues()
                 },
-                onFailure = { notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, it, state.jellyfinHost)); _uiState.update { current -> current.copy(isSigningInJellyfin = false, statusMessage = it.message ?: context.getString(R.string.settings_status_error)) } },
+                onFailure = { notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, it, state.jellyfinHost)); _uiState.update { current -> current.copy(jellyfinAuth = current.jellyfinAuth.copy(busy = false, code = null), statusMessage = it.message ?: context.getString(R.string.settings_status_error)) } },
             )
         }
     }
 
     fun startJellyfinQuickConnect() {
         val state = _uiState.value
-        if (state.isSigningInJellyfin) return
+        if (state.jellyfinAuth.busy) return
         if (state.jellyfinHost.isBlank()) {
             _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_jellyfin_quick_connect_server)) }
             return
@@ -1048,8 +1048,7 @@ class SettingsViewModel @Inject constructor(
             notifyLogin("jellyfin", NoticePhase.WORKING, state.jellyfinHost)
             _uiState.update {
                 it.copy(
-                    isSigningInJellyfin = true,
-                    jellyfinQuickConnectCode = null,
+                    jellyfinAuth = it.jellyfinAuth.copy(busy = true, code = null),
                     statusMessage = null,
                 )
             }
@@ -1062,15 +1061,14 @@ class SettingsViewModel @Inject constructor(
                 notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
                 _uiState.update {
                     it.copy(
-                        isSigningInJellyfin = false,
-                        jellyfinQuickConnectCode = null,
+                        jellyfinAuth = it.jellyfinAuth.copy(busy = false, code = null),
                         statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                     )
                 }
                 jellyfinQuickConnectJob = null
                 return@launch
             }
-            _uiState.update { it.copy(jellyfinQuickConnectCode = session.code) }
+            _uiState.update { it.copy(jellyfinAuth = it.jellyfinAuth.copy(code = session.code)) }
             val deadline = System.currentTimeMillis() + LINK_TIMEOUT_MS
             while (System.currentTimeMillis() < deadline) {
                 delay(5_000)
@@ -1084,8 +1082,8 @@ class SettingsViewModel @Inject constructor(
                     notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
                     _uiState.update {
                         it.copy(
-                            isSigningInJellyfin = false,
-                            jellyfinQuickConnectCode = null,
+                            jellyfinAuth.busy = false,
+                            jellyfinAuth.code = null,
                             statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                         )
                     }
@@ -1123,8 +1121,7 @@ class SettingsViewModel @Inject constructor(
                                 jellyfinPassword = "",
                                 jellyfinLibrarySections = sections,
                                 homeRows = if (currentState.homeRows != savedState.value.homeRows) currentState.homeRows else appPreferences.homeRows,
-                                isSigningInJellyfin = false,
-                                jellyfinQuickConnectCode = null,
+                                jellyfinAuth = currentState.jellyfinAuth.copy(busy = false, code = null),
                                 savedJellyfinServers = appPreferences.jellyfinServerProfiles,
                                 activeJellyfinServerId = appPreferences.activeJellyfinServerId,
                                 statusMessage = null,
@@ -1136,8 +1133,8 @@ class SettingsViewModel @Inject constructor(
                         notifyLogin("jellyfin", NoticePhase.ERROR, state.jellyfinHost, reason = failureReasonText(context, error, state.jellyfinHost))
                         _uiState.update {
                             it.copy(
-                                isSigningInJellyfin = false,
-                                jellyfinQuickConnectCode = null,
+                                jellyfinAuth.busy = false,
+                                jellyfinAuth.code = null,
                                 statusMessage = error.message ?: context.getString(R.string.settings_status_error),
                             )
                         }
@@ -1149,8 +1146,7 @@ class SettingsViewModel @Inject constructor(
             notifyLogin("jellyfin", NoticePhase.ERROR, message = R.string.settings_jellyfin_quick_connect_expired)
             _uiState.update {
                 it.copy(
-                    isSigningInJellyfin = false,
-                    jellyfinQuickConnectCode = null,
+                    jellyfinAuth = it.jellyfinAuth.copy(busy = false, code = null),
                     statusMessage = context.getString(R.string.settings_jellyfin_quick_connect_expired),
                 )
             }
@@ -1159,22 +1155,21 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun cancelJellyfinQuickConnect() {
-        val active = jellyfinQuickConnectJob != null || _uiState.value.jellyfinQuickConnectCode != null
+        val active = jellyfinQuickConnectJob != null || _uiState.value.jellyfinAuth.code != null
         jellyfinQuickConnectJob?.cancel()
         jellyfinQuickConnectJob = null
         if (active) {
             AppNotifications.dismiss("login:jellyfin")
             _uiState.update {
                 it.copy(
-                    isSigningInJellyfin = false,
-                    jellyfinQuickConnectCode = null,
+                    jellyfinAuth = it.jellyfinAuth.copy(busy = false, code = null),
                 )
             }
         }
     }
 
     fun signOutJellyfin() {
-        if (_uiState.value.isSigningInJellyfin) return
+        if (_uiState.value.jellyfinAuth.busy) return
         val active = appPreferences.activeJellyfinServerProfile()
         if (active != null) {
             tokenStore.removeJellyfinTokenForServer(active.id)
