@@ -411,6 +411,7 @@ fun RadioScreen(
                             },
                             modifier = Modifier.fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
+                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
