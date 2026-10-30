@@ -104,7 +104,7 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
     private fun focused(target: Target) {
         if (!active || target !in targets) return
         // A newly focused content tile wins over a pending refresh fallback.
-        if (target.key.content) cancelRecovery()
+        if (target.key.content && recovery?.isActive != true) cancelRecovery()
         if (last !== target) {
             releasePin()
             pin = target.pinnable?.pin()
@@ -161,25 +161,32 @@ internal class BrowseFocusReturnState(private val scope: CoroutineScope, val vie
             withFrameNanos { }
             val sources = collections.values.toList()
             if (!active || generation != recoveryGeneration || identity != contentIdentity ||
-                NavReselect.restoreTop.value || sources.any { source -> source.slots().any { it.key == lost } }
-            ) return@launch
+                NavReselect.restoreTop.value) return@launch
+            // The outer collection is authoritative for nested rows: a recycled inner
+            // LazyRow may still report an old key for a frame after the outer list updated.
             val source = sources.firstOrNull { it.slots().any { slot -> slot.key.content } } ?: return@launch
-            if (!source.allowRecovery()) return@launch
+            if (!source.allowRecovery() || source.slots().any { it.key == lost }) return@launch
             val destination = missingBrowseFocusFallback(lost, source.slots()) ?: return@launch
             repeat(12) {
                 if (!active || generation != recoveryGeneration || identity != contentIdentity ||
                     NavReselect.restoreTop.value || !source.allowRecovery() ||
-                    collections.values.any { it.slots().any { slot -> slot.key == lost } }
+                    source.slots().any { slot -> slot.key == lost }
                 ) return@launch
                 // Nested horizontal rows need their outer row and inner tile both composed.
-                collections.values.toList().forEach { collection ->
-                    collection.slots().firstOrNull { it.key == destination }?.let { slot ->
-                        if (!collection.visible(slot.index)) collection.scroll(slot.index)
+                try {
+                    collections.values.toList().forEach { collection ->
+                        collection.slots().firstOrNull { it.key == destination }?.let { slot ->
+                            if (!collection.visible(slot.index)) collection.scroll(slot.index)
+                        }
                     }
+                    withFrameNanos { }
+                    val target = targets.keys.firstOrNull { it.key == destination && it.visible }
+                    if (target != null && runCatching { target.requester.requestFocus() }.getOrDefault(false)) return@launch
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: IllegalStateException) {
+                    return@launch // The list was replaced while focus was being reconciled.
                 }
-                withFrameNanos { }
-                val target = targets.keys.firstOrNull { it.key == destination && it.visible }
-                if (target != null && runCatching { target.requester.requestFocus() }.getOrDefault(false)) return@launch
             }
         }
     }
