@@ -569,7 +569,7 @@ fun CrossfadeBackdropImage(
                 }
                 var visibleFraction by remember { mutableStateOf<Float?>(null) }
                 val focusModel = (layer.model as? String)?.takeIf { focusCrop && contentScale == ContentScale.Crop }
-                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, headers, visibleFraction) else null
+                val focus = if (focusModel != null) rememberArtworkFocusCrop(focusModel, artworkHeadersForModel(focusModel, headers), visibleFraction) else null
                 var loaded by remember { mutableStateOf(false) }
                 LaunchedEffect(loaded, focus?.ready) {
                     // With focusCrop, fade in only once the crop is final so it never shifts on screen.
