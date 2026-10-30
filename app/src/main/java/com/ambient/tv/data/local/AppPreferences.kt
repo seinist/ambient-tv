@@ -1520,6 +1520,11 @@ class AppPreferences @Inject constructor(
             prefs.edit { putInt(KEY_TVH_PORT, value.coerceIn(1, 65535)) }
         }
 
+    /** HTSP is a separate TCP protocol: reverse-proxied HTTP ports need not be adjacent to it. */
+    var tvheadendHtspPort: Int
+        get() = prefs.getInt(KEY_TVH_HTSP_PORT, 9982).coerceIn(1, 65535)
+        set(value) = prefs.edit { putInt(KEY_TVH_HTSP_PORT, value.coerceIn(1, 65535)) }
+
     /** Prefer HTTPS for TVHeadend (reverse proxy / TLS). Default stays HTTP; host URLs with https:// still win. */
     var tvheadendUseHttps: Boolean
         get() = prefs.getBoolean(KEY_TVH_HTTPS, false)
@@ -2406,6 +2411,7 @@ class AppPreferences @Inject constructor(
         const val KEY_LOGIN_REJECTED = "login_rejected_profiles"
         const val KEY_METADATA_EDITORS = "metadata_editor_logins"
         const val KEY_TVH_PORT = "tvh_port"
+        const val KEY_TVH_HTSP_PORT = "tvh_htsp_port"
         const val KEY_TVH_HTTPS = "tvh_https"
         const val KEY_TVH_USERNAME = "tvh_username"
         const val KEY_TVH_STREAM_PROFILE = "tvh_stream_profile"
