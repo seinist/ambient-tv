@@ -37,6 +37,8 @@ data class MediaSubmenuDraft(
 data class MediaServerAuthLiveState(
     val busy: Boolean = false,
     val code: String? = null,
+    val testing: Boolean = false,
+    val resolvingMac: Boolean = false,
 )
 
 data class SettingsUiState(
@@ -67,8 +69,6 @@ data class SettingsUiState(
     val jellyfinLibrarySections: List<LibrarySection> = emptyList(),
     val jellyfinHiddenSectionKeys: Set<String> = emptySet(),
     val jellyfinAuth: MediaServerAuthLiveState = MediaServerAuthLiveState(),
-    val isTestingJellyfin: Boolean = false,
-    val isResolvingJellyfinMac: Boolean = false,
     val savedJellyfinServers: List<JellyfinServerProfile> = emptyList(),
     val activeJellyfinServerId: String? = null,
     val discoveredJellyfinServers: List<DiscoveredJellyfinServer> = emptyList(),
