@@ -55,6 +55,11 @@ import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.radioLanguageDisplayName
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -120,6 +125,13 @@ fun RadioScreen(
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val showingFacets = state.section.isFacetSection && state.selectedFacet == null && state.submittedQuery.isBlank()
+    val currentKeys = if (showingFacets) state.facets.map { "facet:${it.id}" }
+        else state.stations.map { "station:${it.id}" }
+    BrowseFocusContentIdentity(listOf(state.section, state.selectedFacet?.id, state.submittedQuery, state.viewMode))
+    BrowseFocusInitialTarget(currentKeys.firstOrNull())
+    if (state.viewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, currentKeys)
+    else RegisterBrowseFocusList(listState, currentKeys)
 
     LaunchedEffect(state.section, state.selectedFacet?.id, state.submittedQuery, state.viewMode) {
         runCatching { if (gridState.firstVisibleItemIndex != 0) gridState.scrollToItem(0) }
@@ -240,10 +252,6 @@ fun RadioScreen(
                     )
                 }
             }
-
-            val showingFacets = state.section.isFacetSection &&
-                state.selectedFacet == null &&
-                state.submittedQuery.isBlank()
 
             when {
                 state.loading -> com.ambient.tv.ui.common.SkeletonRow(
@@ -450,6 +458,7 @@ private fun RadioFacetTile(
         shape = ClickableSurfaceDefaults.shape(shape = shape),
         modifier = Modifier
             .fillMaxWidth()
+            .browseFocusTarget("facet:${facet.id}")
             .mediaFocusMotion(focused)
             .activateOnTvKey(onClick = onClick)
             .onFocusChanged { focused = it.isFocused },
@@ -511,6 +520,7 @@ private fun RadioFacetList(
                 shape = ClickableSurfaceDefaults.shape(shape),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .browseFocusTarget("facet:${facet.id}")
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(facet) }
                     .bringFocusedContextIntoView()
@@ -602,6 +612,7 @@ private fun RadioStationTile(
             shape = ClickableSurfaceDefaults.shape(shape = shape),
             modifier = Modifier
                 .fillMaxWidth()
+                .browseFocusTarget("station:${station.id}")
                 .mediaFocusMotion(focused)
                 .activateOnTvKey(onClick = onClick)
                 .onFocusChanged {
@@ -697,6 +708,7 @@ private fun RadioStationList(
                 shape = ClickableSurfaceDefaults.shape(shape),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .browseFocusTarget("station:${station.id}")
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(station) }
                     .bringFocusedContextIntoView()
