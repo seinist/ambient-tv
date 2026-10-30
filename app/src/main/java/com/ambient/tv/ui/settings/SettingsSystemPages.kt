@@ -373,9 +373,9 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 )
                             }
                             TvActionButton(
-                                text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                                text = if (uiState.jellyfinAuth.testing) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
                                 onClick = viewModel::testJellyfinConnection,
-                                enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
+                                enabled = uiState.jellyfinConfigured, loading = uiState.jellyfinAuth.testing,
                             )
                         }
                         uiState.jellyfinAuth.code?.let { code ->
