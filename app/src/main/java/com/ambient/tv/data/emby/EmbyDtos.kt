@@ -44,7 +44,8 @@ data class EmbyConnectServer(
     @SerialName("Name") val name: String = "",
     @SerialName("Url") val url: String? = null,
     @SerialName("LocalAddress") val localAddress: String? = null,
-    @SerialName("AccessKey") val accessKey: String = "",
+    @SerialName("AccessKey") val accessKey: String? = null,
+    @SerialName("ExchangeToken") val exchangeToken: String? = null,
 )
 
 @Serializable
