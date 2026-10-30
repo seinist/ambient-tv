@@ -89,7 +89,7 @@ internal fun SettingsHub(
     val handheld = LocalHandheldUi.current
     val sideIndex = settingsUsesSideIndex(isTabletUi(), LocalConfiguration.current.screenWidthDp)
     val initialPage = remember(initialCategoryKey, handheld) {
-        SettingsCategory.fromKey(initialCategoryKey)?.let {
+        settingsShortcutCategory(initialCategoryKey)?.let {
             if (!handheld && it == SettingsCategory.TRANSFER) SettingsCategory.COMPANION else it
         }
     }
@@ -189,6 +189,7 @@ internal fun SettingsHub(
     }
     val linkedPages = remember { mutableStateListOf<Pair<SettingsHubNav, String>>() }
     val linkFocus = remember { mutableMapOf<String, FocusRequester>() }
+    val wakeFieldFocus = remember { mutableMapOf<String, FocusRequester>() }
     var returningLink by remember { mutableStateOf<String?>(null) }
     fun back() {
         if (linkedPages.isNotEmpty()) {
@@ -219,7 +220,9 @@ internal fun SettingsHub(
         }
         scope.launch { withFrameNanos { }; runCatching { target?.requestFocus() } }
     }
-    var searchLandingQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    var searchLandingQuery by rememberSaveable(initialCategoryKey) {
+        mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
+    }
     fun openPage(target: SettingsCategory) {
         val resolved = when {
             target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
@@ -827,6 +830,7 @@ internal fun SettingsHub(
                                 LocalSettingsItemIndex provides itemIndex,
                                 com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
                                 LocalSettingsLinkFocus provides linkFocus,
+                                LocalSettingsWakeFieldFocus provides wakeFieldFocus,
                                 // Right from the page scrollbar reaches the header, like the index list.
                                 com.ambient.tv.ui.common.LocalScrollListActionFocus provides searchButtonFocus,
                                 LocalOpenSettingsPage provides { target, link ->
@@ -858,7 +862,25 @@ internal fun SettingsHub(
                                     val restored = runCatching { linkFocus[restore]?.requestFocus() == true }.getOrDefault(false)
                                     if (!restored) requestPanelContentFocus()
                                     returningLink = null
-                                } else requestPanelContentFocus()
+                                } else {
+                                    // Scroll to this server's host group, then place TV focus on
+                                    // its MAC row. A lazy item registers the requester on composition.
+                                    val wakeGroup = targetKey?.takeIf {
+                                        current == SettingsCategory.WAKE && it.startsWith("wake-group:")
+                                    }?.removePrefix("wake-group:")
+                                    var focusedMac = false
+                                    if (wakeGroup != null) {
+                                        repeat(16) {
+                                            if (!focusedMac) {
+                                                withFrameNanos { }
+                                                focusedMac = runCatching {
+                                                    wakeFieldFocus[wakeGroup]?.requestFocus() == true
+                                                }.getOrDefault(false)
+                                            }
+                                        }
+                                    }
+                                    if (!focusedMac) requestPanelContentFocus()
+                                }
                                 settlingPageFocus = false
                                 if (landingQuery != null) searchLandingQuery = null
                             }

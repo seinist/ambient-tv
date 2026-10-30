@@ -330,4 +330,16 @@ class SettingsNavigationTest {
         assertTrue(settingsSearchPrefersStartPageTab("home widgets"))
         assertEquals(SettingsCategory.SPOTIFY, SettingsCategory.fromKey("advanced"))
     }
+
+    @Test fun offlineShortcutOpensExistingWakePageAndTargetsSpecificMacGroup() {
+        assertEquals(SettingsCategory.WAKE, settingsShortcutCategory("wake:plex"))
+        assertEquals("plex", settingsShortcutWakeTarget("wake:plex"))
+        assertEquals("jellyfin", settingsShortcutWakeTarget("wake:jellyfin"))
+        assertEquals("emby", settingsShortcutWakeTarget("wake:emby"))
+        assertEquals("tvheadend", settingsShortcutWakeTarget("wake:tvheadend"))
+        assertEquals(SettingsCategory.PLEX, settingsShortcutCategory("plex"))
+        assertNull(settingsShortcutWakeTarget("plex"))
+        assertNull(settingsShortcutWakeTarget("wake:unknown"))
+        assertNull(settingsShortcutWakeTarget(null))
+    }
 }

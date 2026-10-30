@@ -1,5 +1,6 @@
 package com.ambient.tv.connectivity
 
+import android.os.SystemClock
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.TokenStore
@@ -40,6 +41,10 @@ data class UnreachableServerGateState(
     val offline: Set<String> = emptySet(),
     /** No unreachable system can be woken (no Wake-on-LAN): retrying only checks again. */
     val wakeUnavailable: Boolean = false,
+    /** Separate status for each offline system. */
+    val wakeReady: Set<String> = emptySet(),
+    val hostHealth: Map<String, HostHealth> = emptyMap(),
+    val serverAddresses: Map<String, String> = emptyMap(),
 ) {
 }
 
@@ -59,6 +64,9 @@ class UnreachableServerGate @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val revision = MutableStateFlow(0)
     private val retrying = MutableStateFlow(false)
+    private val nextCheckAtElapsedMs = MutableStateFlow(0L)
+    /** Deadline of the already-scheduled 30-second poll, using elapsed realtime. */
+    val nextAutomaticCheckAtElapsedMs: StateFlow<Long> = nextCheckAtElapsedMs
     @Volatile private var offline = emptySet<String>()
 
     val state: StateFlow<UnreachableServerGateState> = combine(
@@ -95,6 +103,7 @@ class UnreachableServerGate @Inject constructor(
         }
         scope.launch {
             while (true) {
+                nextCheckAtElapsedMs.value = SystemClock.elapsedRealtime() + 30_000L
                 delay(30_000L)
                 val offline = current().offline
                 coroutineScope {
@@ -224,6 +233,9 @@ class UnreachableServerGate @Inject constructor(
             },
             offline = offlineNow,
             wakeUnavailable = offlineNow.isNotEmpty() && offlineNow.none(::wakeConfigured),
+            wakeReady = offlineNow.filterTo(mutableSetOf(), ::wakeConfigured),
+            hostHealth = offlineNow.associateWith { hosts.health(it) },
+            serverAddresses = offlineNow.mapNotNull { system -> serverAddress(system)?.let { system to it } }.toMap(),
         )
     }
 
@@ -241,6 +253,15 @@ class UnreachableServerGate @Inject constructor(
         if (dlnaStore.servers().any { hosts.health("dlna:${it.id}") != HostHealth.OFFLINE }) add(MediaSystem.DLNA.key)
         // Another media server (TVHeadend included) counts only when its own probe is REACHABLE (see decideUnreachableServers).
     }
+
+    /** Configured host name only: credentials and tokens are never shown. */
+    private fun serverAddress(system: String): String? = when (system) {
+        MediaSystem.PLEX.key -> preferences.host
+        MediaSystem.JELLYFIN.key -> preferences.jellyfinHost
+        MediaSystem.EMBY.key -> preferences.embyHost
+        MediaSystem.TVHEADEND.key -> preferences.tvheadendHost
+        else -> null
+    }?.let { com.ambient.tv.network.NetworkEndpoint.normalizeHost(it) }?.takeIf(String::isNotBlank)
 
     private fun displayName(system: String): String = when (system) {
         MediaSystem.PLEX.key -> preferences.activeServerProfile()?.name?.takeIf { it.isNotBlank() }

@@ -6,6 +6,16 @@ import java.util.Locale
 
 internal val LocalSettingsSearchLanding = staticCompositionLocalOf<String?> { null }
 
+/** Optional scoped wake target after a normal Settings category alias. */
+internal fun settingsShortcutCategory(key: String?): SettingsCategory? =
+    SettingsCategory.fromKey(key?.substringBefore(':'))
+
+internal fun settingsShortcutWakeTarget(key: String?): String? {
+    if (settingsShortcutCategory(key) != SettingsCategory.WAKE) return null
+    return key?.substringAfter(':', missingDelimiterValue = "")?.lowercase(Locale.ROOT)
+        ?.takeIf { it in setOf("plex", "jellyfin", "emby", "tvheadend") }
+}
+
 /** Keep search intent available to lazy rows after the one-shot navigation signal is consumed. */
 internal class SettingsSearchLanding {
     private var query: String? = null
