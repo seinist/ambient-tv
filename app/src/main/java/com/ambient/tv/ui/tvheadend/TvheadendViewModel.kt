@@ -48,8 +48,6 @@ data class TvheadendUiState(
     val capabilities: LiveTvCapabilities = LiveTvCapabilities(),
     val loading: Boolean = false,
     val refreshing: Boolean = false,
-    /** A cached or channel-only dashboard does not prove optional tabs have finished loading. */
-    val initialDashboardSettled: Boolean = false,
     val tab: TvheadendTab = TvheadendTab.LIVE,
     val dashboard: TvhDashboard? = null,
     val selectedEvent: TvhEpgEvent? = null,
@@ -59,6 +57,8 @@ data class TvheadendUiState(
     val actionInProgress: Boolean = false,
     val actionFeedback: OperationFeedback? = null,
     val error: OperationFeedback? = null,
+    /** Cached or channels-only snapshots do not prove the initial optional sections are empty. */
+    val initialDashboardSettled: Boolean = false,
 )
 
 @HiltViewModel
