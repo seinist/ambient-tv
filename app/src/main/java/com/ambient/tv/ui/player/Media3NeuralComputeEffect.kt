@@ -29,8 +29,16 @@ internal val MEDIA3_CUNNY_SCALERS = setOf(
     "cunny_fast_ds", "cunny_faster_ds", "cunny_fast_soft",
     "cunny_faster_soft", "cunny_veryfast_soft",
 )
-/** Q variants use GL_EXT_spirv_intrinsics/dp4a and remain exclusive to Vulkan/MPV. */
-internal val MEDIA3_NEURAL_COMPUTE_SCALERS = MEDIA3_ARTCNN_SCALERS + MEDIA3_CUNNY_SCALERS
+internal val MEDIA3_CUNNY_QUANTIZED_SCALERS = setOf(
+    "cunny_fast_soft_q", "cunny_faster_soft_q", "cunny_veryfast_soft_q",
+)
+/**
+ * Quantized CuNNy 8-bit weights: emulate signed dp4a on GLES 3.1 integer operations;
+ * this retains the packed coefficients without requiring Vulkan SPIR-V extensions.
+ * It is slower than native dp4a and receives the strictest frame budget.
+ */
+internal val MEDIA3_NEURAL_COMPUTE_SCALERS =
+    MEDIA3_ARTCNN_SCALERS + MEDIA3_CUNNY_SCALERS + MEDIA3_CUNNY_QUANTIZED_SCALERS
 
 internal data class Media3ComputePass(
     val description: String,
@@ -55,7 +63,10 @@ private fun media3ComputeDimension(meta: String?, axis: String): Int? {
 /** Accept known, unquantized MPV compute shaders only. Unknown hooks fail closed. */
 internal fun media3ComputePasses(key: String, text: String): List<Media3ComputePass>? {
     if (key !in MEDIA3_NEURAL_COMPUTE_SCALERS) return null
-    if ("GL_EXT_spirv_intrinsics" in text || "dp4a(" in text) return null
+    if (key !in MEDIA3_CUNNY_QUANTIZED_SCALERS &&
+        ("GL_EXT_spirv_intrinsics" in text || "dp4a(" in text)) return null
+    if (key in MEDIA3_CUNNY_QUANTIZED_SCALERS &&
+        ("GL_EXT_spirv_intrinsics" !in text || "spirv_instruction" !in text)) return null
     val expectedCount = if (key in MEDIA3_ARTCNN_SCALERS) 8 else 4
     val marks = Regex("(?m)^//!DESC ").findAll(text).map { it.range.first }.toList()
     if (marks.size != expectedCount) return null
@@ -124,7 +135,36 @@ internal fun media3ComputeShader(pass: Media3ComputePass): String = buildString 
         Regex("""(?s)#extension GL_EXT_shader_explicit_arithmetic_types_float16\s*:\s*enable\s*#ifdef GL_EXT_shader_explicit_arithmetic_types_float16.*?#endif"""),
         "#define V4 vec4\n#define M4 mat4\n#define F float",
     )
-    append(fragment)
+    append(if ("GL_EXT_spirv_intrinsics" in fragment) media3CuNnyDotProductFallback(fragment) else fragment)
+}
+
+/**
+ * SPIR-V's OpSDot packed 4x8-bit signed integer dot-product is exactly the sum of four
+ * signed byte multiplications. GLES 3.1 bitwise integer operations can reproduce it,
+ * but without hardware dp4a acceleration. Never reinterpret the stored model weights.
+ */
+internal fun media3CuNnyDotProductFallback(body: String): String {
+    val directive = "#extension GL_EXT_spirv_intrinsics : require"
+    val instruction = Regex(
+        """(?s)spirv_instruction\s*\(extensions = \["SPV_KHR_integer_dot_product"\],\s*capabilities = \[6019, 6018\], id = 4450\)\s*int dp4\(int a, int b, spirv_literal int fmt\);"""
+    )
+    if (directive !in body || !instruction.containsMatchIn(body))
+        throw IllegalArgumentException("Unknown CuNNy packed dot product encoding")
+    val fallback = """
+int cunnySignedByte(int packed, int shift) {
+    int v = (packed >> shift) & 255;
+    return v >= 128 ? v - 256 : v;
+}
+int dp4(int a, int b, int fmt) {
+    int result = 0;
+    for (int i = 0; i < 4; i++) {
+        int shift = i * 8;
+        result += cunnySignedByte(a, shift) * cunnySignedByte(b, shift);
+    }
+    return result;
+}
+"""
+    return body.replace(directive, "").replace(instruction, fallback)
 }
 
 /** Heavy compute is disabled by default on unsupported GPUs and above a strict pixel budget. */
@@ -138,6 +178,7 @@ internal fun media3NeuralComputeBudgetAllows(
     if (enlargement <= 1.3 || enlargement > 2.0) return false
     val rate = fps.takeIf { it.isFinite() && it > 0f } ?: 30f
     val maxPixels = when {
+        key in MEDIA3_CUNNY_QUANTIZED_SCALERS -> 160L * 90L
         key.startsWith("artcnn32") -> 160L * 90L
         key.startsWith("artcnn16") -> 256L * 144L
         key.contains("veryfast") -> 640L * 360L
