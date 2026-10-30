@@ -35,6 +35,8 @@ import com.ambient.tv.ui.common.systemString
 /** Links retain the caller page and restore the exact opener when returning. */
 internal val LocalOpenSettingsPage = androidx.compose.runtime.staticCompositionLocalOf<(SettingsCategory, String) -> Unit> { { _, _ -> } }
 internal val LocalSettingsLinkFocus = androidx.compose.runtime.staticCompositionLocalOf<MutableMap<String, FocusRequester>> { mutableMapOf() }
+/** Register the MAC field of a lazily composed Wake-on-LAN group for deep links. */
+internal val LocalSettingsWakeFieldFocus = androidx.compose.runtime.staticCompositionLocalOf<MutableMap<String, FocusRequester>> { mutableMapOf() }
 
 @Composable
 internal fun SettingsPageLink(target: SettingsCategory, id: String, label: Int = target.titleRes) {
@@ -173,6 +175,12 @@ private fun wakeMemberLabel(member: WakeMember): String = when (member.kind) {
 /** One machine: a single MAC for all its services, one wake button, auto-wake per service. */
 @Composable
 private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
+    val macFocus = remember(group.key) { FocusRequester() }
+    val registry = LocalSettingsWakeFieldFocus.current
+    androidx.compose.runtime.DisposableEffect(group.key, macFocus, registry) {
+        registry[group.key] = macFocus
+        onDispose { if (registry[group.key] === macFocus) registry.remove(group.key) }
+    }
     val busy by viewModel.wakeGroupBusy.collectAsState()
     val resolved by viewModel.wakeMacResolved.collectAsState()
     val resolving = group.key in busy
@@ -189,7 +197,7 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
             TvTextField(requireExplicitEditing = true, value = mac,
                 onValueChange = { mac = it; viewModel.setGroupWakeMac(group, mac) },
                 inputFormatter = { com.ambient.tv.wol.formatMacAddressInput(it) },
-                label = stringResource(R.string.settings_mac_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.fillMaxWidth())
+                label = stringResource(R.string.settings_mac_label), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), modifier = Modifier.focusRequester(macFocus).fillMaxWidth())
             if (mac.isNotBlank() && !isUsableWakeMac(mac)) {
                 Text(stringResource(R.string.settings_status_mac_invalid), color = MaterialTheme.colorScheme.error)
             }
