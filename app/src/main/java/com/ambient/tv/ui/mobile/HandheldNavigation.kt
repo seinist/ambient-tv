@@ -232,6 +232,12 @@ private data class SourceEntry(
 )
 private data class SourceGroup(val system: MediaSystem, val entries: List<SourceEntry>)
 
+/** Same enabled Radio Browser categories and fallback as the TV sidebar. */
+internal fun handheldRadioSubmenuKeys(enabled: List<String>): List<String> =
+    listOf("popular", "favorites", "recent", "genres", "countries", "languages")
+        .filter { it in enabled }
+        .ifEmpty { listOf("popular") }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HandheldSources(
@@ -352,7 +358,17 @@ private fun HandheldSources(
         }
         if (radio) add(withSettings(
             MediaSystem.RADIO,
-            listOf(SourceEntry("home", overview, Destinations.RADIO)),
+            handheldRadioSubmenuKeys(sidebarState.radioSubmenuKeys).map { key ->
+                val label = stringResource(when (key) {
+                    "favorites" -> R.string.radio_favorites
+                    "recent" -> R.string.radio_recent
+                    "genres" -> R.string.radio_genres
+                    "countries" -> R.string.radio_countries
+                    "languages" -> R.string.radio_languages
+                    else -> R.string.radio_popular
+                })
+                SourceEntry(key, label, Destinations.radioSection(key))
+            },
         ))
         if (tv && sidebarState.tvheadendLoginRejected) add(withSettings(MediaSystem.TVHEADEND, listOf(SourceEntry("login",
             stringResource(R.string.tvh_login_check), Destinations.SETTINGS, settingsCategory = MediaSystem.TVHEADEND.key))))

@@ -8,8 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -22,10 +21,9 @@ private const val HORIZONTAL_DOMINANCE = 1.25f
 /**
  * Passive phone-only tab swipe.
  *
- * The detector observes the gesture in the Final pass and never consumes pointer changes itself.
- * If a descendant consumes a positional change (for example a horizontal LazyRow or a vertical
- * scrolling grid), the whole gesture is abandoned. This lets real content scrolling win while
- * unused horizontal swipes on page content can still move between equal-level tabs.
+ * Observe raw gesture displacement before a child consumes its movement. A vertically scrolling
+ * grid can otherwise swallow an entirely horizontal page swipe. Real horizontal LazyRows/chip
+ * strips retain their own gestures; this detector never consumes pointer changes.
  */
 fun <T> Modifier.handheldSwipeTabs(
     tabs: List<T>,
@@ -46,14 +44,16 @@ fun <T> Modifier.handheldSwipeTabs(
             awaitEachGesture {
                 val down = awaitFirstDown(
                     requireUnconsumed = false,
-                    pass = PointerEventPass.Final,
+                    pass = PointerEventPass.Initial,
                 )
                 var horizontal = 0f
                 var vertical = 0f
+                var consumedHorizontal = 0f
                 var consumedByChild = false
+                val touchSlop = viewConfiguration.touchSlop
 
                 while (true) {
-                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
                     // Pinch/zoom or any other multi-touch gesture is never a tab swipe.
                     if (event.changes.count { it.pressed } > 1) consumedByChild = true
                     val change = event.changes.firstOrNull { it.id == down.id }
@@ -61,13 +61,15 @@ fun <T> Modifier.handheldSwipeTabs(
                         consumedByChild = true
                         break
                     }
-                    if (change.position != change.previousPosition) {
-                        if (change.isConsumed) {
+                    // Capture raw movement before the child's Main pass.
+                    val delta = change.position - change.previousPosition
+                    horizontal += delta.x
+                    vertical += delta.y
+                    val final = awaitPointerEvent(PointerEventPass.Final)
+                    if (final.changes.firstOrNull { it.id == down.id }?.isConsumed == true) {
+                        consumedHorizontal += abs(delta.x)
+                        if (childConsumesHorizontalSwipe(consumedHorizontal, horizontal, vertical, touchSlop)) {
                             consumedByChild = true
-                        } else if (!consumedByChild) {
-                            val delta = change.positionChange()
-                            horizontal += delta.x
-                            vertical += delta.y
                         }
                     }
                     if (!change.pressed) break
@@ -106,3 +108,12 @@ internal fun swipeTabTargetIndex(
     val step = if (logicalDistance < 0f) 1 else -1
     return (selectedIndex + step).takeIf { it in 0 until tabCount }
 }
+
+/** Let an inner horizontal scroller handle its drag rather than switching provider pages. */
+internal fun childConsumesHorizontalSwipe(
+    consumedDx: Float,
+    totalDx: Float,
+    totalDy: Float,
+    touchSlop: Float,
+): Boolean = touchSlop > 0f && consumedDx >= touchSlop &&
+    abs(totalDx) > abs(totalDy) * HORIZONTAL_DOMINANCE
