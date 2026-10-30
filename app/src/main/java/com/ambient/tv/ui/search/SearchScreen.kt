@@ -432,10 +432,12 @@ private fun SearchRows(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 SearchGroupTitle(MediaSystem.PLEX, titleRes)
-                LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+                BrowseFocusRow("search:plex:$titleRes") {
+                LazyRow(state = rememberLazyListState(itemKeys = groupItems.map { it.ratingKey }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                     itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
                         MediaTile(item = item, style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) }, onFocused = { onFocused(item) }, requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) || (requestInitialResultFocus && item.ratingKey == firstMediaKey))
                     }
+                }
                 }
             }
         }
@@ -443,10 +445,12 @@ private fun SearchRows(
         itemsIndexed(jellyfinGroups, key = { _, group -> "jellyfin-${group.first}" }) { groupIndex, (titleRes, groupItems) ->
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.JELLYFIN, titleRes)
-                LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+                BrowseFocusRow("search:jellyfin:$titleRes") {
+                LazyRow(state = rememberLazyListState(itemKeys = groupItems.map { it.ratingKey }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                     itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
                         MediaTile(item = item, style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) }, onFocused = { onFocused(item) }, requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) || (requestInitialResultFocus && plexGroups.isEmpty() && item.ratingKey == firstMediaKey))
                     }
+                }
                 }
             }
         }
@@ -454,10 +458,12 @@ private fun SearchRows(
         itemsIndexed(embyGroups, key = { _, group -> "emby-${group.first}" }) { groupIndex, (titleRes, groupItems) ->
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.EMBY, titleRes)
-                LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+                BrowseFocusRow("search:emby:$titleRes") {
+                LazyRow(state = rememberLazyListState(itemKeys = groupItems.map { it.ratingKey }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                     itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
                         MediaTile(item = item, style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) }, onFocused = { onFocused(item) }, requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) || (requestInitialResultFocus && plexGroups.isEmpty() && jellyfinGroups.isEmpty() && item.ratingKey == firstMediaKey))
                     }
+                }
                 }
             }
         }
@@ -465,13 +471,15 @@ private fun SearchRows(
         itemsIndexed(trailerGroups, key = { _, group -> "trailers-${group.first}" }) { groupIndex, (titleRes, groupItems) ->
             Column(modifier = Modifier.bringFocusedContextIntoView(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchGroupTitle(MediaSystem.TRAILERS, titleRes)
-                LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+                BrowseFocusRow("search:trailers:$titleRes") {
+                LazyRow(state = rememberLazyListState(itemKeys = groupItems.map { it.ratingKey }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
                     itemsIndexed(groupItems, key = { _, it -> it.ratingKey }) { _, item ->
                         MediaTile(item = item, style = mediaTileStyle, showDescription = false, onClick = { onItemClick(item.ratingKey) },
                             onFocused = { onFocused(item) },
                             requestInitialFocus = (restoreResultFocus && item.ratingKey == focusedKey) ||
                                 (requestInitialResultFocus && plexGroups.isEmpty() && jellyfinGroups.isEmpty() && embyGroups.isEmpty() && item.ratingKey == firstMediaKey))
                     }
+                }
                 }
             }
         }
@@ -553,11 +561,12 @@ private fun SearchGroupTitle(system: MediaSystem, groupRes: Int) {
 private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) -> Unit, requestInitialFocus: Boolean = false) {
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.YOUTUBE, R.string.search_videos)
-        LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow("search:youtube") {
+        LazyRow(state = rememberLazyListState(itemKeys = youtubeItems.map { "search:youtube:${it.videoId}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(youtubeItems, key = { it.videoId }) { item ->
                 var focused by remember(item.videoId) { mutableStateOf(false) }
                 val cardShape = RoundedCornerShape(10.dp)
-                Surface(onClick = { onClick(item.videoId) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == youtubeItems.firstOrNull()).width(250.dp).mediaFocusMotion(focused).activateOnTvKey { onClick(item.videoId) }.onFocusChanged { focused = it.isFocused }) {
+                Surface(onClick = { onClick(item.videoId) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == youtubeItems.firstOrNull()).width(250.dp).browseFocusTarget("search:youtube:${item.videoId}").mediaFocusMotion(focused).activateOnTvKey { onClick(item.videoId) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
                         Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
                             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
@@ -578,6 +587,7 @@ private fun YouTubeSearchRow(youtubeItems: List<YouTubeItem>, onClick: (String) 
                 }
             }
         }
+        }
     }
 }
 
@@ -589,8 +599,9 @@ private fun RadioSearchRow(
 ) {
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.RADIO, R.string.radio_stations)
+        BrowseFocusRow("search:radio") {
         LazyRow(
-            state = rememberLazyListState(),
+            state = rememberLazyListState(itemKeys = items.map { "search:radio:${it.id}" }),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
             modifier = Modifier.containRowFocusExit(),
@@ -602,9 +613,11 @@ private fun RadioSearchRow(
                     subtitle = radioStationSubtitle(station),
                     squareArtwork = true,
                     onClick = { onClick(station) },
+                    focusKey = "search:radio:${station.id}",
                     requestInitialFocus = requestInitialFocus && station == items.firstOrNull(),
                 )
             }
+        }
         }
     }
 }
@@ -614,11 +627,12 @@ private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseI
     val titleRes = spotifyTypeTitleRes(type)
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SearchGroupTitle(MediaSystem.SPOTIFY, titleRes)
-        LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow("search:spotify:$type") {
+        LazyRow(state = rememberLazyListState(itemKeys = items.map { "search:spotify:${it.type}:${it.id}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(items, key = { "${it.type}:${it.id}" }) { item ->
                 var focused by remember(item.type, item.id) { mutableStateOf(false) }
                 val cardShape = RoundedCornerShape(10.dp)
-                Surface(onClick = { onClick(item) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == items.firstOrNull()).width(220.dp).mediaFocusMotion(focused).activateOnTvKey { onClick(item) }.onFocusChanged { focused = it.isFocused }) {
+                Surface(onClick = { onClick(item) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = initialFocusModifier(requestInitialFocus && item == items.firstOrNull()).width(220.dp).browseFocusTarget("search:spotify:${item.type}:${item.id}").mediaFocusMotion(focused).activateOnTvKey { onClick(item) }.onFocusChanged { focused = it.isFocused }) {
                     Column(
                         Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
                             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f), cardShape)
@@ -631,6 +645,7 @@ private fun SpotifySearchRow(type: SpotifyEntityType, items: List<SpotifyBrowseI
                     }
                 }
             }
+        }
         }
     }
 }
@@ -647,7 +662,8 @@ private fun TvheadendChannelSearchRow(
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.search_channels)
-        LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow("search:tvh-channels:${channels.first().sourceId}") {
+        LazyRow(state = rememberLazyListState(itemKeys = channels.map { "search:tvh-channel:${it.sourceId}:${it.uuid}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(channels, key = { it.uuid }) { channel ->
                 SearchArtworkCard(
                     imageUrl = channel.iconUrl,
@@ -655,9 +671,11 @@ private fun TvheadendChannelSearchRow(
                     subtitle = channel.numberLabel,
                     imageHeaders = imageHeaders,
                     onClick = { onClick(channel) },
+                    focusKey = "search:tvh-channel:${channel.sourceId}:${channel.uuid}",
                     requestInitialFocus = requestInitialFocus && channel == channels.firstOrNull(),
                 )
             }
+        }
         }
     }
 }
@@ -674,7 +692,8 @@ private fun TvheadendProgramSearchRow(
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.tvh_guide)
-        LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow("search:tvh-programs:${programs.first().sourceId}") {
+        LazyRow(state = rememberLazyListState(itemKeys = programs.map { "search:tvh-program:${it.sourceId}:${it.eventId}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(programs, key = { it.eventId }) { event ->
                 SearchArtworkCard(
                     imageUrl = event.imageUrl,
@@ -682,9 +701,11 @@ private fun TvheadendProgramSearchRow(
                     subtitle = "${event.channelName} · ${formatSearchDateTime(event.startEpochSeconds)}",
                     imageHeaders = imageHeaders,
                     onClick = { onClick(event) },
+                    focusKey = "search:tvh-program:${event.sourceId}:${event.eventId}",
                     requestInitialFocus = requestInitialFocus && event == programs.firstOrNull(),
                 )
             }
+        }
         }
     }
 }
@@ -701,7 +722,8 @@ private fun TvheadendRecordingSearchRow(
     Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(sourceName, style = MaterialTheme.typography.labelMedium)
         SearchGroupTitle(system, R.string.tvh_recordings)
-        LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
+        BrowseFocusRow("search:tvh-recordings:${recordings.first().sourceId}") {
+        LazyRow(state = rememberLazyListState(itemKeys = recordings.map { "search:tvh-recording:${it.sourceId}:${it.uuid}" }), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.containRowFocusExit()) {
             items(recordings, key = { it.uuid }) { recording ->
                 SearchArtworkCard(
                     imageUrl = recording.imageUrl ?: recording.fanartUrl,
@@ -709,9 +731,11 @@ private fun TvheadendRecordingSearchRow(
                     subtitle = "${recording.channelName} · ${formatSearchDateTime(recording.startEpochSeconds)}",
                     imageHeaders = imageHeaders,
                     onClick = { onClick(recording) },
+                    focusKey = "search:tvh-recording:${recording.sourceId}:${recording.uuid}",
                     requestInitialFocus = requestInitialFocus && recording == recordings.firstOrNull(),
                 )
             }
+        }
         }
     }
 }
@@ -725,6 +749,7 @@ private fun SearchArtworkCard(
     squareArtwork: Boolean = false,
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
+    focusKey: String,
 ) {
     var focused by remember(title, imageUrl) { mutableStateOf(false) }
     val cardShape = RoundedCornerShape(10.dp)
@@ -733,7 +758,7 @@ private fun SearchArtworkCard(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = cardShape),
-        modifier = initialFocusModifier(requestInitialFocus).width(250.dp).mediaFocusMotion(focused).activateOnTvKey(onClick = onClick).onFocusChanged { focused = it.isFocused },
+        modifier = initialFocusModifier(requestInitialFocus).width(250.dp).browseFocusTarget(focusKey).mediaFocusMotion(focused).activateOnTvKey(onClick = onClick).onFocusChanged { focused = it.isFocused },
     ) {
         Column(
             Modifier.background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), cardShape)
