@@ -136,8 +136,10 @@ internal fun media3ImageOptionsAfterOverload(options: Media3ImageOptions): Media
         safe.sharpening == "adaptive" -> safe.copy(sharpening = "cas")
         safe.sharpening != "off" -> safe.copy(sharpening = "off")
         safe.denoise != "off" -> safe.copy(denoise = "off")
+        safe.deblock != "off" -> safe.copy(deblock = "off")
         safe.filmGrain != "off" -> safe.copy(filmGrain = "off")
         safe.deband != "off" -> safe.copy(deband = "off")
+        safe.downscaler != "display" -> safe.copy(downscaler = "display")
         safe.scaler !in setOf("bilinear", "bicubic") -> safe.copy(scaler = "bilinear")
         else -> null
     }
