@@ -33,10 +33,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -73,6 +75,11 @@ import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -105,25 +112,86 @@ fun RadioScreen(
     LaunchedEffect(viewModel, initialSectionKey) {
         viewModel.enter(RadioSection.fromKey(initialSectionKey))
     }
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(state.contentReady && !state.loading)
 
-    BackHandler(enabled = showViewOptions) { showViewOptions = false }
-    BackHandler(enabled = !showViewOptions && searchVisible) {
-        if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
-        showSearch = false
+    val focusScope = state.focusScope()
+    val showingFacets = state.section.isFacetSection &&
+        state.selectedFacet == null && state.submittedQuery.isBlank()
+    val contentIds = if (showingFacets) state.facets.map(RadioFacet::id) else state.stations.map(RadioStation::id)
+    val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
+    // Hold the initial selection stable while browsing: paging and metadata updates must not
+    // jump the list back to a previously focused card.
+    val initialContentId = remember(focusScope, state.viewMode, state.contentReady) {
+        if (!state.contentReady) null
+        else radioInitialFocusId(
+            viewModel.lastFocusedContent(focusScope),
+            playingStationId.takeUnless { showingFacets },
+            contentIds,
+        )
     }
-    BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet != null) { viewModel.clearFacet() }
-    if (onBack != null) {
-        BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet == null) { onBack() }
-    }
-
+    var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
+    var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val initialFocusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(state.section, state.selectedFacet?.id, state.submittedQuery, state.viewMode) {
-        runCatching { if (gridState.firstVisibleItemIndex != 0) gridState.scrollToItem(0) }
-        runCatching { if (listState.firstVisibleItemIndex != 0) listState.scrollToItem(0) }
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, state.viewMode), restoreInitialTarget = true)
+    if (state.contentReady && contentIds.isNotEmpty()) {
+        BrowseFocusInitialTarget(initialContentId)
+        if (state.viewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
+        else RegisterBrowseFocusList(listState, contentIds)
+    }
+    LaunchedEffect(focusScope, state.viewMode, state.contentReady) {
+        if (!state.contentReady || initialContentId == null) return@LaunchedEffect
+        val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
+        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        else listState.scrollToItem(index)
+    }
+    // A facet opens another dataset inside the same destination. The sidebar's entry handler
+    // only runs on route navigation, so hand focus explicitly to its newly loaded content.
+    LaunchedEffect(focusScope, state.viewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
+        if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
+        pendingContentFocus = null
+        if (initialContentId == null) return@LaunchedEffect
+        val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
+        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        else listState.scrollToItem(index)
+        repeat(6) {
+            withFrameNanos { }
+            if (runCatching { initialFocusRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
+    val selectFacet: (RadioFacet) -> Unit = { facet ->
+        pendingContentFocus = RadioFocusScope(state.section, facet.id, "")
+        viewModel.selectFacet(facet)
+    }
+    val clearFacet: () -> Unit = {
+        pendingContentFocus = RadioFocusScope(state.section, null, "")
+        viewModel.clearFacet()
+    }
+    val submitSearch: () -> Unit = {
+        val query = state.query.trim()
+        if (query.length >= 2) pendingContentFocus = RadioFocusScope(state.section, state.selectedFacet?.id, query)
+        viewModel.submitSearch()
+    }
+    val clearSearch: () -> Unit = {
+        pendingContentFocus = RadioFocusScope(state.section, state.selectedFacet?.id, "")
+        viewModel.clearSearch()
+    }
+    val closeViewOptions: () -> Unit = {
+        showViewOptions = false
+        if (focusAfterViewOptions) pendingContentFocus = focusScope
+        focusAfterViewOptions = false
+    }
+    BackHandler(enabled = showViewOptions) { closeViewOptions() }
+    BackHandler(enabled = !showViewOptions && searchVisible) {
+        if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
+        showSearch = false
+    }
+    BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet != null) { clearFacet() }
+    if (onBack != null) {
+        BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet == null) { onBack() }
     }
 
     Box(Modifier.fillMaxSize()) {
