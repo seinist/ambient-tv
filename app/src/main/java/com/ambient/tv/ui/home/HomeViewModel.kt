@@ -1507,13 +1507,12 @@ class HomeViewModel @Inject constructor(
         }
         var focusRecovery = previous?.focusRecovery
         if (previous != null && savedFocus.ratingKey != null && rows.none { row -> (savedFocus.rowId == null || row.id == savedFocus.rowId) && row.items.any { savedFocus.ratingKey in it.allRatingKeys } }) {
-            val oldRow = previous.rows.firstOrNull { it.id == savedFocus.rowId }
             val newRow = rows.firstOrNull { it.id == savedFocus.rowId && it.items.isNotEmpty() }
-                ?: rows.getOrNull(previous.rows.indexOf(oldRow).coerceIn(0, rows.lastIndex.coerceAtLeast(0)))
-            val neighbour = com.ambient.tv.data.browse.survivingFocus(oldRow?.items.orEmpty().map { it.ratingKey }, newRow?.items.orEmpty().map { it.ratingKey }, savedFocus.ratingKey)
-            savedFocus = HomeFocusSnapshot(neighbour, newRow?.id)
+                ?: rows.firstOrNull { it.items.isNotEmpty() }
+            val firstRemaining = newRow?.items?.firstOrNull()?.ratingKey
+            savedFocus = HomeFocusSnapshot(firstRemaining, newRow?.id)
             focusRecovery = savedFocus
-            activeFocusedRatingKey = neighbour
+            activeFocusedRatingKey = firstRemaining
             activeFocusedRowId = newRow?.id
         }
         val savedContentFocusExists = savedFocus.ratingKey != null && rows.any { row ->
