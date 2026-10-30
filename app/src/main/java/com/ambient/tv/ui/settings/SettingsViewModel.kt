@@ -2254,7 +2254,7 @@ class SettingsViewModel @Inject constructor(
             ))
         }
         homeGenreJob = viewModelScope.launch {
-            val facets = runCatching {
+            val facets = suspendResult {
                 when (normalized) {
                     HomeRowDefinition.RADIO_COUNTRY -> radioBrowserRepository.countries(150)
                     HomeRowDefinition.RADIO_LANGUAGE -> radioBrowserRepository.languages(150)
