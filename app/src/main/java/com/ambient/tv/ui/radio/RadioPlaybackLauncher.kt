@@ -126,7 +126,8 @@ class RadioPlaybackLauncher @Inject constructor(
                 // Some Icecast/Shoutcast servers send their song updates as timed ICY
                 // metadata without changing the combined MediaMetadata.title.
                 override fun onMetadata(metadata: Metadata) {
-                    metadata.entries.filterIsInstance<IcyInfo>()
+                    (0 until metadata.length())
+                        .mapNotNull { metadata.get(it) as? IcyInfo }
                         .lastOrNull()?.title?.let(::publishNowPlaying)
                 }
 
