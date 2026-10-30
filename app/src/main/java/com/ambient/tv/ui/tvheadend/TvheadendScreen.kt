@@ -778,7 +778,8 @@ private fun RecordingList(
         initialFirstVisibleItemIndex = rows.indexOfFirst { it.first.uuid == focusTarget.contentId }.coerceAtLeast(0),
     )
     com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
-    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState).pageContentUp(focusChain), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
+    Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
+    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
             LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
             DvrRow(
@@ -791,6 +792,7 @@ private fun RecordingList(
                 modifier = if (entry.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
             )
         }
+    }
     }
 }
 
@@ -830,7 +832,8 @@ private fun TimerList(
         autoRecs.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
             com.ambient.tv.ui.common.BrowseFocusKey(null, "autorec:${entry.uuid}", true), timers.size + 1 + index)) }
     })
-    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState).pageContentUp(focusChain), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
+    Box(Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup()) {
+    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
                 LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
@@ -867,6 +870,7 @@ private fun TimerList(
                 )
             }
         }
+    }
     }
 }
 
