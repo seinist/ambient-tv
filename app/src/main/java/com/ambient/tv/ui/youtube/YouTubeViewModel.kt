@@ -84,9 +84,15 @@ class YouTubeViewModel @Inject constructor(
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
     // All channel pages share one view setup instead of one per visited channel.
     private fun stateKey(feed: YouTubeFeed) = if (channelId != null) "youtube:channel" else "youtube:${feed.key}"
-    fun focusedVideoId(feed: YouTubeFeed): String? = preferences.sectionFocus(stateKey(feed))
-    fun focusedRowId(feed: YouTubeFeed): String? = preferences.sectionFocusRow(stateKey(feed))
+    // Persisted selection may belong to an earlier app session. Start a fresh feed at the
+    // first card; only restore an item after it has actually held focus on this screen.
+    private val visitedFocusKeys = mutableSetOf<String>()
+    fun focusedVideoId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
+        ?.let(preferences::sectionFocus)
+    fun focusedRowId(feed: YouTubeFeed): String? = stateKey(feed).takeIf { it in visitedFocusKeys }
+        ?.let(preferences::sectionFocusRow)
     fun onItemFocused(feed: YouTubeFeed, rowId: String?, videoId: String) {
+        visitedFocusKeys += stateKey(feed)
         preferences.setSectionFocusSnapshot(stateKey(feed), videoId, rowId)
         scheduleRowContinuation(rowId, videoId)
     }
