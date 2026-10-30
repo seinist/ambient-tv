@@ -153,15 +153,22 @@ fun RadioScreen(
     // only runs on route navigation, so hand focus explicitly to its newly loaded content.
     LaunchedEffect(focusScope, state.viewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
         if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
-        pendingContentFocus = null
-        if (initialContentId == null) return@LaunchedEffect
-        val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
+        val targetId = initialContentId
+        val index = targetId?.let(contentIds::indexOf)?.takeIf { it >= 0 }
+        if (index == null) {
+            pendingContentFocus = null
+            return@LaunchedEffect
+        }
         if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
         else listState.scrollToItem(index)
         repeat(6) {
             withFrameNanos { }
-            if (runCatching { initialFocusRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            if (runCatching { initialFocusRequester.requestFocus() }.getOrDefault(false)) {
+                pendingContentFocus = null
+                return@LaunchedEffect
+            }
         }
+        pendingContentFocus = null
     }
     val selectFacet: (RadioFacet) -> Unit = { facet ->
         pendingContentFocus = RadioFocusScope(state.section, facet.id, "")
