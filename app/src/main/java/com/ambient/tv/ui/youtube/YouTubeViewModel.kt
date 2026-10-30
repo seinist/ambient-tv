@@ -534,8 +534,11 @@ class YouTubeViewModel @Inject constructor(
                     )
                 }
                 val cacheKey = "feed:${selectedFeed.key}"
-                val refreshRows = previousRows.takeIf { selectedFeed == feed }.orEmpty()
-                showCachedContent(cacheKey, refreshRows)
+                val retainedRows = previousRows.takeIf { selectedFeed == feed }.orEmpty()
+                showCachedContent(cacheKey, retainedRows)
+                // The player may have appended additional continuation pages to the cache.
+                // Use that expanded snapshot as the refresh extent, not the stale pre-player rows.
+                val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
                 suspendResult {
                     val signed = engine.isSignedIn()
                     val profile = if (signed) suspendResult { engine.accountProfile() }.getOrNull() else null
@@ -584,14 +587,16 @@ class YouTubeViewModel @Inject constructor(
                     _uiState.value = _uiState.value.copy(available = false, loading = false, error = null)
                     return@launch
                 }
+                showCachedContent(cacheKey, previousRows)
+                val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
                 suspendResult {
                     val signed = engine.isSignedIn()
                     if (generation != contentGeneration) return@launch
                     _uiState.value = _uiState.value.copy(signedIn = signed, visibleFeeds = emptyList())
                     val rows = engine.channel(channelId, cacheKey) { rows ->
-                        if (previousRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
+                        if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
                     }
-                    refreshYouTubeRowExtents(rows, previousRows) { rowId -> engine.continueRow(cacheKey, rowId) }
+                    refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { rows ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
                     _uiState.value = _uiState.value.copy(loading = false, rows = contentCache.replace(cacheKey, rows, cacheRevision))
@@ -641,13 +646,14 @@ class YouTubeViewModel @Inject constructor(
                 if (!manual) delay(350)
                 if (generation != contentGeneration) return@launch
                 showCachedContent(cacheKey, previousRows)
+                val refreshRows = _uiState.value.rows.takeIf { displayedContentKey == cacheKey }.orEmpty()
                 suspendResult {
                     val onRows: suspend (List<YouTubeRow>) -> Unit = { rows ->
-                        if (previousRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
+                        if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
                     }
                     val rows = if (channelId != null) engine.channelSearch(channelId, query, cacheKey, onRows)
                         else engine.search(query, cacheKey, onRows)
-                    refreshYouTubeRowExtents(rows, previousRows) { rowId -> engine.continueRow(cacheKey, rowId) }
+                    refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }
                     .onSuccess { rows ->
                         if (generation == contentGeneration && _uiState.value.query == query && contentCache.revision() == cacheRevision) {
