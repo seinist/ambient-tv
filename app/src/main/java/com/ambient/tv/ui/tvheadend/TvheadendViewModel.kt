@@ -170,7 +170,8 @@ class TvheadendViewModel @Inject constructor(
 
     /** Shared with the player; only composed cards and opened details request their own art. */
     val titleArt = artwork.titleArt
-    fun requestTitleArt(titles: Collection<String>) = artwork.requestTitleArt(titles, viewModelScope)
+    fun requestTitleArt(titles: Collection<String>, scope: kotlinx.coroutines.CoroutineScope = viewModelScope) =
+        artwork.requestTitleArt(titles, scope)
 
     private var refreshJob: Job? = null
     private val refreshPolicy = LiveTvRefreshPolicy()
