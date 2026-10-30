@@ -118,6 +118,33 @@ class PageFocusTraversalTest {
         rule.onNodeWithTag("chips").assertIsFocused()
     }
 
+    @Test fun rightFromContentWithoutScrollbarStaysInBrowseArea() {
+        val content = FocusRequester()
+        rule.setContent {
+            AmbientTvTheme {
+                Column(Modifier.fillMaxSize()) {
+                    PageHeader(actions = {
+                        Box(Modifier.size(60.dp).testTag("header").focusable())
+                    }) { androidx.tv.material3.Text("Browse") }
+                    TvLazyColumn(allowUpExit = true, modifier = Modifier.fillMaxSize()) {
+                        item {
+                            Box(Modifier.size(96.dp).focusRequester(content)
+                                .testTag("content").focusable())
+                        }
+                    }
+                }
+            }
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { content.requestFocus() }
+        rule.waitForIdle()
+        rule.onNodeWithTag("content").assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_RIGHT)
+        rule.onNodeWithTag("content").assertIsFocused()
+        press(AndroidKeyEvent.KEYCODE_DPAD_UP)
+        rule.onNodeWithTag("header").assertIsFocused()
+    }
+
     @Test fun rightAtEndOfRegisteredHorizontalRowWrapsWithoutHeader() {
         val last = FocusRequester()
         rule.setContent {

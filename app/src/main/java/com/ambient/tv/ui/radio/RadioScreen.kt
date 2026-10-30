@@ -89,6 +89,7 @@ import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.pageContentUp
+import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.pageFocusStage
 import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.skeletonPulseAlpha
@@ -163,6 +164,7 @@ fun RadioScreen(
     val searchStageFocus = remember { FocusRequester() }
     val initialFocusRequester = remember(focusScope, effectiveViewMode) { FocusRequester() }
     val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
+    val alphabetRightFocusRequester = remember(focusScope) { FocusRequester() }
     val facetListFocus = remember(focusScope) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
@@ -375,6 +377,7 @@ fun RadioScreen(
                             .focusRequester(facetListFocus)
                             .focusGroup(),
                     ) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { alphabetLetters.size > 5 }) {
                         RadioFacetList(
                             facets = sortedFacets,
                             listRows = state.listRows,
@@ -386,6 +389,7 @@ fun RadioScreen(
                             alphabetJumpId = alphabetJumpTargetId,
                             alphabetReturnRequester = alphabetReturnRequester,
                         )
+                        }
                     }
                     if (alphabetLetters.size > 5) {
                         // Shared component already used by the main library: no new A-Z widget.
@@ -406,6 +410,7 @@ fun RadioScreen(
                                 }
                             },
                             modifier = Modifier.fillMaxHeight(),
+                            firstEntryFocusRequester = alphabetRightFocusRequester,
                         )
                     }
                 }
