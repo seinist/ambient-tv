@@ -105,6 +105,22 @@ private abstract class Media3FragmentShaderProgram(
 
 private fun GlProgram.float(name: String, value: Float) = setFloatsUniformIfPresent(name, floatArrayOf(value))
 
+/** Spatial deblocker for 8x8 transform-grid artifacts; not FFmpeg's CPU deblock. */
+internal class Media3DeblockEffect(private val strength: String, private val gamma: Int = 0) : GlEffect {
+    override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
+        object : Media3FragmentShaderProgram(useHdr, DEBLOCK, media3GammaExponent(gamma)) {
+            override fun setUniforms(program: GlProgram) =
+                program.float("uDeblockStrength", media3DeblockStrength(strength))
+        }
+}
+
+internal fun media3DeblockStrength(strength: String): Float = when (strength) {
+    "light" -> 0.25f
+    "medium" -> 0.5f
+    "strong" -> 0.75f
+    else -> 0f
+}
+
 /**
  * Bilateral denoise over a 5x5 neighbourhood without corners: neighbours count by distance and
  * by how close their color is, so noise in flat areas averages out while edges stay.
@@ -151,6 +167,7 @@ internal class Media3CubicScaleEffect(
     private val b: Float,
     private val c: Float,
     private val gamma: Int = 0,
+    private val antiring: Int = 0,
 ) : GlEffect {
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
         gamma == 0 && media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
@@ -162,6 +179,7 @@ internal class Media3CubicScaleEffect(
             override fun setUniforms(program: GlProgram) {
                 program.float("uB", b)
                 program.float("uC", c)
+                program.float("uAntiRing", antiring.coerceIn(0, 100) / 100f)
             }
         }
 }
@@ -271,6 +289,7 @@ void main() {
 private const val CUBIC = """
 uniform float uB;
 uniform float uC;
+uniform float uAntiRing;
 float cubicWeight(float x) {
   x = abs(x);
   if (x < 1.0) return ((12.0 - 9.0 * uB - 6.0 * uC) * x * x * x + (-18.0 + 12.0 * uB + 6.0 * uC) * x * x + (6.0 - 2.0 * uB)) / 6.0;
@@ -291,7 +310,17 @@ void main() {
       weights += w;
     }
   }
-  gl_FragColor = finish(clamp(sum / weights, 0.0, 1.0));
+  vec3 color = sum / max(weights, 1e-6);
+  if (uAntiRing > 0.0) {
+    vec3 a = tap(base);
+    vec3 b = tap(base + vec2(1.0, 0.0));
+    vec3 c = tap(base + vec2(0.0, 1.0));
+    vec3 d = tap(base + vec2(1.0, 1.0));
+    vec3 lo = min(min(a, b), min(c, d));
+    vec3 hi = max(max(a, b), max(c, d));
+    color = mix(color, clamp(color, lo, hi), uAntiRing);
+  }
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
 }
 """
 
@@ -643,6 +672,40 @@ void main() {
 """
 
 // Bilateral filter, 21 taps (5x5 without the corners). uSpatial and uRange are 1 / (2 sigma^2).
+// Only smooth within 1 pixel of 8x8 boundaries when the boundary is a relatively small
+// discontinuity. Preserve true image edges by comparing against neighbouring gradients.
+private const val DEBLOCK = """
+uniform float uDeblockStrength;
+void main() {
+  vec2 pos = floor(vTexSamplingCoord * uInputSize);
+  vec3 color = tap(pos);
+  if (uDeblockStrength > 0.0) {
+    vec2 block = mod(pos, 8.0);
+    if (block.x < 1.0 || block.x > 6.0) {
+      float direction = block.x < 1.0 ? -1.0 : 1.0;
+      vec3 neighbour = tap(pos + vec2(direction, 0.0));
+      vec3 inside = tap(pos - vec2(direction, 0.0));
+      float across = length(color - neighbour);
+      float local = length(color - inside);
+      float blend = uDeblockStrength * (1.0 - smoothstep(0.04, 0.2, across)) *
+                    (1.0 - smoothstep(0.015, 0.13, max(across - local, 0.0)));
+      color = mix(color, (color + neighbour) * 0.5, blend);
+    }
+    if (block.y < 1.0 || block.y > 6.0) {
+      float direction = block.y < 1.0 ? -1.0 : 1.0;
+      vec3 neighbour = tap(pos + vec2(0.0, direction));
+      vec3 inside = tap(pos - vec2(0.0, direction));
+      float across = length(color - neighbour);
+      float local = length(color - inside);
+      float blend = uDeblockStrength * (1.0 - smoothstep(0.04, 0.2, across)) *
+                    (1.0 - smoothstep(0.015, 0.13, max(across - local, 0.0)));
+      color = mix(color, (color + neighbour) * 0.5, blend);
+    }
+  }
+  gl_FragColor = finish(clamp(color, 0.0, 1.0));
+}
+"""
+
 private const val DENOISE = """
 uniform float uSpatial;
 uniform float uRange;
