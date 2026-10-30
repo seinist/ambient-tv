@@ -131,7 +131,8 @@ internal fun PlayerVideoSettingsGroups(
         com.ambient.tv.ui.display.LocalUiHdrState.current?.conversionExperiment?.available == true
     val available = buildList {
         if (showRenderer && onRendererSelected != null && rendererKey != null) add("renderer" to R.string.player_renderer)
-        if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) || visible?.upscaler == true ||
+        if (hasPresentationControls || (handle is MpvPlaybackController && handle.supportsGpuFilters) ||
+            visible?.upscaler == true || visible?.downscaler == true ||
             visible?.media3Processing == true) add("scaling" to R.string.image_scaling)
         if (visible?.hasFilterSection(media3 = handle is Media3PlaybackHandle) == true) add("filters" to R.string.image_filters)
         if (hasPlaybackControls || svpEntryVisible) add("motion" to R.string.image_motion)
@@ -172,8 +173,9 @@ internal fun PlayerVideoSettingsGroups(
                 icon = videoSectionIcon(key),
                 title = stringResource(title),
                 value = videoSectionSummary(key, handle, rendererKey, media3Processing?.options,
-                    upscalerApplies = visible?.upscaler == true || visible?.media3Processing == true ||
+                    upscalerApplies = visible?.upscaler == true ||
                         (handle is MpvPlaybackController && handle.supportsGpuFilters),
+                    downscalerApplies = visible?.downscaler == true,
                     motionSummary = motionSummary, media3FiltersUnavailable = media3FiltersUnavailable != null),
                 onClick = { section = key; onOpenSection() },
             )
@@ -620,18 +622,21 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
         if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
         return
     }
-    if (!visibility.media3Processing && !visibility.upscaler && !visibility.picture) return
-    if (section == "scaling" && (visibility.media3Processing || visibility.upscaler)) {
+    if (!visibility.media3Processing && !visibility.upscaler && !visibility.downscaler && !visibility.picture) return
+    if (section == "scaling" && (visibility.media3Processing || visibility.upscaler || visibility.downscaler)) {
         if (visibility.media3Processing) {
             ImageChoice(R.string.image_processing, if (options.enabled) "on" else "off", imageOnOff()) {
                 change(options.copy(enabled = it == "on"))
             }
             ImageHint(stringResource(R.string.image_media3_hint))
         }
-        if (visibility.upscaler) {
-            ImageChoice(R.string.player_upscaler, options.scaler, media3ScalerChoices()) {
-                change(options.copy(scaler = it))
+        if (options.enabled) {
+            // Same order as MPV: upscaler, downscaler, anti-ringing, sigmoid.
+            Media3ScalingRows(options, visibility, ::change)
+            if (!visibility.upscaler && !visibility.downscaler) {
+                upscalerNotNeededHint(processing.scaleRelation)?.let { ImageHint(stringResource(it)) }
             }
+            if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
         }
     }
     if (section == "color" && visibility.picture) {
@@ -639,6 +644,35 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
         ImageLevel(R.string.image_contrast, options.contrast) { change(options.copy(contrast = it)) }
         ImageLevel(R.string.image_saturation, options.saturation) { change(options.copy(saturation = it)) }
         if (visibility.pictureGamma) ImageLevel(R.string.image_gamma, options.gamma) { change(options.copy(gamma = it)) }
+    }
+}
+
+/** Only actual Media3 shader capabilities are selectable; controls cannot be silently ignored. */
+@Composable
+private fun Media3ScalingRows(
+    o: com.ambient.tv.data.local.Media3ImageOptions,
+    visibility: PlayerPanelVideoVisibility,
+    change: (com.ambient.tv.data.local.Media3ImageOptions) -> Unit,
+) {
+    if (visibility.upscaler) {
+        ImageChoice(R.string.player_upscaler, o.scaler, media3ScalerChoices()) {
+            change(o.copy(scaler = it))
+        }
+    }
+    if (visibility.downscaler) {
+        ImageChoice(R.string.image_downscaler, o.downscaler,
+            com.ambient.tv.data.local.VideoImageCatalog.media3Downscalers.toList()) {
+            change(o.copy(downscaler = it))
+        }
+    }
+    if (media3AntiRingRowVisible(o, visibility.upscaler, visibility.downscaler)) {
+        ImageLevelSlider(R.string.image_antiring, o.antiring, range = 0..100,
+            step = 1, valueLabel = "${o.antiring} %") { change(o.copy(antiring = it)) }
+    }
+    if (media3SigmoidRowVisible(o, visibility.upscaler)) {
+        ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) {
+            change(o.copy(sigmoid = it == "on"))
+        }
     }
 }
 
@@ -788,7 +822,9 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
         "filters" -> mpv?.let { listOf(it.deband != m.deband, it.sharpening != m.sharpening, it.denoise != m.denoise,
             it.deblock != m.deblock, it.filmGrain != m.filmGrain, it.superResolution != m.superResolution).count { c -> c } }
             ?: vlc?.let { listOf(it.softwareProcessing != v.softwareProcessing, it.deband != v.deband, it.denoise != v.denoise).count { c -> c } }
-            ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening, it.filmGrain != d.filmGrain, it.denoise != d.denoise).count { c -> c } } ?: 0
+            ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening,
+                it.filmGrain != d.filmGrain, it.denoise != d.denoise,
+                it.deblock != d.deblock).count { c -> c } } ?: 0
         "motion" -> if ((mpv?.svpMode ?: vlc?.svpMode ?: "off") != "off") 1 else 0
         "color" -> mpv?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
             ?: vlc?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
@@ -800,7 +836,8 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
 @androidx.compose.runtime.Composable
 private fun videoSectionSummary(
     key: String, handle: Any?, rendererKey: String?, media3: com.ambient.tv.data.local.Media3ImageOptions?,
-    upscalerApplies: Boolean, motionSummary: String?, media3FiltersUnavailable: Boolean,
+    upscalerApplies: Boolean, downscalerApplies: Boolean,
+    motionSummary: String?, media3FiltersUnavailable: Boolean,
 ): String {
     val mpv = (handle as? MpvPlaybackController)?.imageOptions
     val vlc = (handle as? VlcPlaybackController)?.imageOptions
@@ -808,6 +845,10 @@ private fun videoSectionSummary(
         "renderer" -> rendererKey?.let { rendererLabel(it) }.orEmpty()
         // Without a scaler that applies, the area only holds fit/zoom: no misleading scaler name.
         "scaling" -> when {
+            media3 != null && downscalerApplies && !upscalerApplies ->
+                if (media3.enabled && media3.downscaler != "display")
+                    VideoImageCatalog.media3Downscalers[media3.downscaler] ?: media3.downscaler
+                else stringResource(R.string.video_section_default)
             !upscalerApplies -> ""
             mpv != null -> VideoImageCatalog.mpvScalers[mpv.scaler] ?: mpv.scaler
             vlc != null -> VideoImageCatalog.vlcScalers[vlc.scaler] ?: vlc.scaler

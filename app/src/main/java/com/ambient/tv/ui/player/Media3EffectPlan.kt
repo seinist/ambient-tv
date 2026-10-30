@@ -5,11 +5,15 @@ import com.ambient.tv.data.local.VideoImageCatalog
 
 /** One stage of Media3's SDR effect chain, independent of GL so the order stays testable. */
 internal sealed interface Media3Stage {
+    /** Smooth block-boundary artifacts before other image processing. */
+    data class Deblock(val strength: String) : Media3Stage
     /** Edge-preserving (bilateral) denoise on the source, before deband smooths what is left. */
     data class Denoise(val strength: String) : Media3Stage
     data class Deband(val strength: String) : Media3Stage
     /** Only planned while the fitted output is larger than the source; never past the display. */
-    data class Scale(val scaler: String) : Media3Stage
+    data class Scale(val scaler: String, val antiring: Int = 0, val sigmoid: Boolean = true) : Media3Stage
+    /** One downscale pass, separate from the luma upscaler, only for smaller renderer targets. */
+    data class Downscale(val scaler: String, val antiring: Int = 0) : Media3Stage
     /** light/medium/strong unsharp mask, cas, adaptive, or rcas (FSR's own sharpening pass). */
     data class Sharpen(val kind: String) : Media3Stage
     /** Film grain after sharpening, so the sharpener does not amplify it. */
@@ -34,16 +38,28 @@ internal fun media3EffectPlan(
     sharpenAllowed: Boolean = true,
     /** False above [media3HeavyScalerBudgetAllows] for the output: heavy scalers run as Catmull-Rom. */
     heavyScaleAllowed: Boolean = true,
+    downscaling: Boolean = false,
+    heavyDownscaleAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
         ?.let { if (!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) "catmull_rom" else it }
+    val downscaler = o.downscaler.takeIf { downscaling && it != "display" }
+        ?.let { if (!heavyDownscaleAllowed && it != "lanczos") "lanczos" else it }
     return buildList {
-        // Denoise reads the source like deband and shares its budget.
+        // Cleanup reads source pixels; disable all of it together above the source budget.
+        if (o.deblock != "off" && debandAllowed) add(Media3Stage.Deblock(o.deblock))
         if (o.denoise != "off" && debandAllowed) add(Media3Stage.Denoise(o.denoise))
         if (o.deband != "off" && debandAllowed) add(Media3Stage.Deband(o.deband))
-        scaler?.let { add(Media3Stage.Scale(it)) }
+        scaler?.let {
+            add(Media3Stage.Scale(it,
+                antiring = o.antiring.takeIf { _ -> it in MEDIA3_ANTIRING_SCALERS } ?: 0,
+                sigmoid = if (it in MEDIA3_SIGMOID_SCALERS) o.sigmoid else true))
+        }
+        downscaler?.let {
+            add(Media3Stage.Downscale(it, o.antiring.takeIf { _ -> it in MEDIA3_ANTIRING_SCALERS } ?: 0))
+        }
         when {
             !sharpenAllowed -> Unit
             scaler == "fsr" -> add(Media3Stage.Sharpen("rcas"))
@@ -67,6 +83,25 @@ internal fun media3EffectPlan(
 internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCALERS +
     MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
 
+/** Media3 antiring controls work only on kernels we own, not native Lanczos/FSR/NIS/RAVU. */
+internal val MEDIA3_ANTIRING_SCALERS: Set<String> = setOf(
+    "catmull_rom", "mitchell", "robidoux", "robidouxsharp",
+    "spline16", "spline36", "spline64", "sinc", "ginseng",
+    "ewa_lanczos", "ewa_lanczossharp", "ewa_lanczos4sharpest", "ewa_lanczossoft",
+    "ewa_robidoux", "ewa_robidouxsharp",
+)
+internal val MEDIA3_SIGMOID_SCALERS: Set<String> = MEDIA3_KERNELS.keys
+/** The separable downsampler limits source cost and maximum support; other cases use native Lanczos. */
+internal const val MEDIA3_DOWNSCALE_MAX_SOURCE_PIXEL_RATE = 3840L * 2160L * 30L
+internal fun media3HeavyDownscaleBudgetAllows(sourceWidth: Int, sourceHeight: Int,
+    outputWidth: Int, outputHeight: Int, fps: Float): Boolean {
+    if (sourceWidth <= 0 || sourceHeight <= 0 || outputWidth <= 0 || outputHeight <= 0) return false
+    val target = media3DownscaleSize(sourceWidth, sourceHeight, outputWidth, outputHeight)
+    val factor = maxOf(sourceWidth.toDouble() / target.first, sourceHeight.toDouble() / target.second)
+    val rate = fps.takeIf { it.isFinite() && it > 0f } ?: 30f
+    return factor <= 2.0 && sourceWidth.toLong() * sourceHeight * rate <= MEDIA3_DOWNSCALE_MAX_SOURCE_PIXEL_RATE
+}
+
 /** Output pixels per second a heavy scaler may produce: 4K at 30 fps (twice the filter budget). */
 internal const val MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE = 2L * 1920L * 1088L * 60L
 
@@ -76,6 +111,23 @@ internal fun media3HeavyScalerBudgetAllows(width: Int, height: Int, fps: Float):
     val rate = if (fps.isFinite() && fps > 0f) fps else 30f
     return width.toLong() * height * rate <= MEDIA3_HEAVY_SCALER_MAX_PIXEL_RATE
 }
+
+/** Controls must follow the same scaling boundaries as MPV but only be offered for
+ * shader algorithms that actually implement them in Media3. */
+internal fun media3AntiRingRowVisible(
+    options: Media3ImageOptions,
+    upscalerVisible: Boolean,
+    downscalerVisible: Boolean,
+): Boolean {
+    val safe = options.normalized()
+    return (upscalerVisible && safe.scaler in MEDIA3_ANTIRING_SCALERS) ||
+        (downscalerVisible && safe.downscaler in MEDIA3_ANTIRING_SCALERS)
+}
+
+internal fun media3SigmoidRowVisible(
+    options: Media3ImageOptions,
+    upscalerVisible: Boolean,
+): Boolean = upscalerVisible && options.normalized().scaler in MEDIA3_SIGMOID_SCALERS
 
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
@@ -97,7 +149,7 @@ internal data class Media3FusedStage(val stage: Media3Stage, val gamma: Int = 0)
 internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage> {
     val gamma = stages.lastOrNull() as? Media3Stage.Gamma ?: return stages.map { Media3FusedStage(it) }
     val previous = stages.getOrNull(stages.size - 2)
-    val fusable = previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
+    val fusable = previous is Media3Stage.Deblock || previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
         // Only the single-pass cubic and FSR shaders take the gamma; Lanczos is Media3's own effect,
         // the MPV kernels, RAVU and NIS are programs of their own.
         (previous is Media3Stage.Scale && previous.scaler in setOf("bicubic", "catmull_rom", "fsr"))

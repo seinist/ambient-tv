@@ -49,6 +49,7 @@ internal fun PlayerPanelVideoVisibility.sparsam(reduced: Boolean, media3: Boolea
         media3Processing = media3Processing && !media3,
         picture = picture && !media3, pictureGamma = pictureGamma && !media3,
         upscaler = upscaler && !media3,
+        downscaler = downscaler && !media3,
     )
 
 internal enum class VideoScaleRelation { UNKNOWN, UPSCALE, NATIVE, DOWNSCALE }
@@ -141,6 +142,8 @@ internal fun playerPanelVideoVisibility(
         pictureGamma = media3ScalerApplies,
         media3Processing = media3SdrAllowed,
         deband = media3ScalerApplies,
+        downscaler = media3ScalerApplies &&
+            scale in setOf(VideoScaleRelation.UNKNOWN, VideoScaleRelation.DOWNSCALE),
     )
     else -> PlayerPanelVideoVisibility(deinterlace = false, upscaler = false, shaderUpscalers = false)
 }

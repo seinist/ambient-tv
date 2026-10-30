@@ -308,8 +308,20 @@ internal fun Media3ImageOptionsEditor(o: Media3ImageOptions, change: (Media3Imag
     ImageChoice(R.string.image_processing, if (o.enabled) "on" else "off", imageOnOff()) { change(o.copy(enabled = it == "on")) }
     ImageHint(stringResource(R.string.image_media3_hint))
     if (o.enabled) {
+        // As in MPV: scaling controls share one group, before filters and color controls.
         ImageChoice(R.string.player_upscaler, o.scaler, media3ScalerChoices()) { change(o.copy(scaler = it)) }
-        // Saved defaults: the source size is not known here, so FSR counts as upscaling.
+        ImageChoice(R.string.image_downscaler, o.downscaler,
+            VideoImageCatalog.media3Downscalers.toList()) { change(o.copy(downscaler = it)) }
+        if (media3AntiRingRowVisible(o, upscalerVisible = true, downscalerVisible = true)) {
+            ImageLevelSlider(R.string.image_antiring, o.antiring, range = 0..100, step = 1,
+                valueLabel = "${o.antiring} %") { change(o.copy(antiring = it)) }
+        }
+        if (media3SigmoidRowVisible(o, upscalerVisible = true)) {
+            ImageChoice(R.string.image_sigmoid, if (o.sigmoid) "on" else "off", imageOnOff()) {
+                change(o.copy(sigmoid = it == "on"))
+            }
+        }
+        // Saved defaults: the source size is unknown, so FSR counts as upscaling.
         Media3FilterRows(o, fsrSharpens = media3FsrSharpens(o, upscalerApplies = true), change = change)
         ImageLevel(R.string.image_brightness, o.brightness) { change(o.copy(brightness = it)) }
         ImageLevel(R.string.image_contrast, o.contrast) { change(o.copy(contrast = it)) }
@@ -330,9 +342,9 @@ internal fun Media3FilterRows(
     sharpen: Boolean = true,
     change: (Media3ImageOptions) -> Unit,
 ) {
-    // Denoise and deband both work on source pixels and share their budget.
+    // Match MPV filter order: deband → sharpening → denoise/deblock → film grain.
+    // Deblock and denoise share the source-pixel budget, sharpening/grain the output budget.
     if (deband) {
-        ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
         ImageChoice(R.string.player_deband, o.deband, imageStrengths()) { change(o.copy(deband = it)) }
     }
     if (sharpen) {
@@ -342,7 +354,12 @@ internal fun Media3FilterRows(
             PlayerDropUpSection(stringResource(R.string.image_sharpen_builtin), imageStrengths()),
             PlayerDropUpSection(stringResource(R.string.image_sharpen_shader), listOf("cas" to "AMD CAS", "adaptive" to "Adaptive Sharpen")),
         )) { change(o.copy(sharpening = it)) }
-        // Grain shares the sharpening pass's size and budget.
+    }
+    if (deband) {
+        ImageChoice(R.string.image_denoise, o.denoise, imageStrengths()) { change(o.copy(denoise = it)) }
+        ImageChoice(R.string.image_deblock, o.deblock, imageStrengths()) { change(o.copy(deblock = it)) }
+    }
+    if (sharpen) {
         ImageChoice(R.string.image_film_grain, o.filmGrain, imageStrengths()) { change(o.copy(filmGrain = it)) }
     }
     ImageHint(stringResource(R.string.image_media3_filter_hint))

@@ -22,7 +22,7 @@ import kotlin.math.sqrt
  * evaluated exactly on the CPU and sampled into a lookup table the shader interpolates; orthogonal
  * kernels run as two separable passes (horizontal, then vertical), polar (EWA) kernels as one
  * radial pass over every texel inside the radius. Weights are normalized per output pixel.
- * Upscaling only (Media3 plans scalers only then), so the kernels are never stretched.
+ * Explicit downscaling stretches the support to prevent aliasing, within a GPU budget.
  *
  * Like MPV's defaults (sigmoid-upscaling=yes, center 0.75, slope 6.5) the samples are linearized
  * (BT.1886, gamma 2.4) and sigmoidized before scaling and converted back after it, which keeps
@@ -156,15 +156,21 @@ internal class Media3KernelEffect(
     private val key: String,
     private val outputWidth: Int,
     private val outputHeight: Int,
+    private val antiring: Int = 0,
+    private val sigmoid: Boolean = true,
+    private val downscaling: Boolean = false,
 ) : GlEffect {
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight) == (inputWidth to inputHeight)
+        (if (downscaling) media3DownscaleSize(inputWidth, inputHeight, outputWidth, outputHeight)
+         else media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)) == (inputWidth to inputHeight)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram {
         media3RequireFragmentHighp("MPV scaler $key")
-        if (key == "oversample") return Media3OversampleShaderProgram(useHdr, outputWidth, outputHeight)
+        if (key == "oversample" && !downscaling) return Media3OversampleShaderProgram(useHdr, outputWidth, outputHeight)
         val kernel = MEDIA3_KERNELS[key] ?: throw VideoFrameProcessingException("Unknown scaler $key")
-        return Media3KernelShaderProgram(useHdr, kernel, outputWidth, outputHeight)
+        // Polar downscaling grows quadratically in taps; offer only separable kernels.
+        if (downscaling && kernel.polar) throw VideoFrameProcessingException("Polar downscaling requires a dedicated shader")
+        return Media3KernelShaderProgram(useHdr, kernel, outputWidth, outputHeight, antiring, sigmoid, downscaling)
     }
 }
 
@@ -173,9 +179,12 @@ private class Media3KernelShaderProgram(
     private val kernel: Media3Kernel,
     private val outputWidth: Int,
     private val outputHeight: Int,
+    private val antiring: Int,
+    private val sigmoid: Boolean,
+    private val downscaling: Boolean,
 ) : BaseGlShaderProgram(useHighPrecision, /* texturePoolCapacity= */ 1) {
     private val useHighPrecision = useHighPrecision
-    private val program = media3GlProgram(media3KernelShader(kernel))
+    private val program = media3GlProgram(media3KernelShader(kernel, downscaling))
     private val planes = media3RavuLutPlanes(media3KernelLut(kernel))
     /** r = high byte, g = low byte; LINEAR stays exact because the decode is linear in both. */
     private val lut = media3LutTexture(
@@ -192,7 +201,8 @@ private class Media3KernelShaderProgram(
         releaseIntermediate()
         this.inputWidth = inputWidth
         this.inputHeight = inputHeight
-        val (width, height) = media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
+        val (width, height) = if (downscaling) media3DownscaleSize(inputWidth, inputHeight, outputWidth, outputHeight)
+            else media3FitSize(inputWidth, inputHeight, outputWidth, outputHeight)
         fitWidth = width
         fitHeight = height
         // Horizontal pass result: output width, source height.
@@ -229,7 +239,12 @@ private class Media3KernelShaderProgram(
         program.setFloatsUniformIfPresent("uInputSize", floatArrayOf(width.toFloat(), height.toFloat()))
         program.setFloatsUniformIfPresent("uDir", direction)
         program.setFloatsUniformIfPresent("uLutValue", floatArrayOf(planes.min, planes.range))
-        program.setFloatsUniformIfPresent("uSigmoid", floatArrayOf(if (pre) 1f else 0f, if (post) 1f else 0f))
+        program.setFloatsUniformIfPresent("uSigmoid", floatArrayOf(
+            if (pre && sigmoid) 1f else 0f, if (post && sigmoid) 1f else 0f))
+        val scale = if (kernel.polar) minOf(fitWidth.toFloat() / inputWidth, fitHeight.toFloat() / inputHeight)
+            else if (direction[0] > 0f) fitWidth.toFloat() / inputWidth else fitHeight.toFloat() / inputHeight
+        program.setFloatsUniformIfPresent("uFilterScale", floatArrayOf(if (downscaling) scale.coerceIn(0.01f, 1f) else 1f))
+        program.setFloatsUniformIfPresent("uAntiRing", floatArrayOf(if (post) antiring.coerceIn(0, 100) / 100f else 0f))
         media3DrawQuad(program)
     }
 
@@ -298,6 +313,8 @@ uniform vec2 uInputSize;
 uniform vec2 uDir;
 uniform vec2 uLutValue;
 uniform vec2 uSigmoid;
+uniform float uFilterScale;
+uniform float uAntiRing;
 varying vec2 vTexSamplingCoord;
 // MPV's sigmoid-upscaling (center 0.75, slope 6.5) in BT.1886 linear light.
 const float kSigCenter = 0.75;
@@ -316,14 +333,15 @@ vec3 finishColor(vec3 c) { return uSigmoid.y > 0.5 ? fromSigmoid(c) : clamp(c, 0
 """
 
 /** Shader for [kernel], with its radius and tap loop baked in like MPV's generated code. */
-internal fun media3KernelShader(kernel: Media3Kernel): String {
-    val taps = kernel.taps
+internal fun media3KernelShader(kernel: Media3Kernel, downscaling: Boolean = false): String {
+    // A 2x reduction needs twice the kernel radius. Beyond 2x the plan uses native Lanczos.
+    val taps = kernel.taps * if (downscaling) 2 else 1
     val radius = String.format(java.util.Locale.ROOT, "%.9f", kernel.support)
     val size = MEDIA3_KERNEL_LUT_SIZE
     val weight = """
 // Kernel weight at distance d (source pixels) from the LUT; zero at and beyond the radius.
 float weight(float d) {
-  float t = d / $radius;
+  float t = d * uFilterScale / $radius;
   if (t >= 1.0) return 0.0;
   vec2 q = texture2D(uLut, vec2((t * ${size - 1}.0 + 0.5) / $size.0, 0.5)).rg;
   // 16-bit value from two bytes; factors below 1 keep mediump in range.
@@ -332,6 +350,16 @@ float weight(float d) {
 vec3 texel(vec2 t) {
   vec3 c = texture2D(uTexSampler, (t + 0.5) / uInputSize).rgb;
   return uSigmoid.x > 0.5 ? toSigmoid(c) : c;
+}
+// Prevent new extrema around sharp edges, measured in the active working space.
+vec3 antiRing(vec3 color, vec2 base) {
+  vec3 a = texel(base);
+  vec3 b = texel(base + vec2(1.0, 0.0));
+  vec3 c = texel(base + vec2(0.0, 1.0));
+  vec3 d = texel(base + vec2(1.0, 1.0));
+  vec3 lo = min(min(a, b), min(c, d));
+  vec3 hi = max(max(a, b), max(c, d));
+  return mix(color, clamp(color, lo, hi), uAntiRing);
 }
 """
     val main = if (kernel.polar) """
@@ -352,7 +380,7 @@ void main() {
     }
   }
   vec3 color = wsum > 1e-6 ? sum / wsum : texel(floor(src + 0.5));
-  gl_FragColor = vec4(finishColor(color), 1.0);
+  gl_FragColor = vec4(finishColor(uAntiRing > 0.0 ? antiRing(color, base) : color), 1.0);
 }
 """ else """
 void main() {
@@ -370,7 +398,7 @@ void main() {
     wsum += w;
   }
   vec3 color = abs(wsum) > 1e-6 ? sum / wsum : texel(across + uDir * floor(along + 0.5));
-  gl_FragColor = vec4(finishColor(color), 1.0);
+  gl_FragColor = vec4(finishColor(uAntiRing > 0.0 ? antiRing(color, across + uDir * base) : color), 1.0);
 }
 """
     return KERNEL_HEADER + weight + main
