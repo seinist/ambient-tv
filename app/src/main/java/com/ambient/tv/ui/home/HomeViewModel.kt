@@ -1131,14 +1131,23 @@ class HomeViewModel @Inject constructor(
 
     /** Live TV rows; TVHeadend answers from its cache at once while the server sleeps. */
     private fun startTvPreview() {
+        val generation = ++tvPreviewGeneration
         tvPreviewJob?.cancel()
+        tvPreviewComplete = false
         tvPreviewJob = viewModelScope.launch {
-            tvPreview = loadLiveTvPreview()
-            tvPreviewComplete = true
-            val current = _uiState.value as? HomeUiState.Loaded
-            if (current != null) publishRows(current.rows)
-            else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
-                (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured)) publishRows(emptyList())
+            try {
+                val preview = loadLiveTvPreview()
+                if (generation == tvPreviewGeneration) tvPreview = preview
+            } finally {
+                if (generation == tvPreviewGeneration) {
+                    tvPreviewComplete = true
+                    val current = _uiState.value as? HomeUiState.Loaded
+                    if (current != null) publishRows(current.rows)
+                    else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
+                        (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured))
+                        publishRows(emptyList())
+                }
+            }
         }
     }
 
