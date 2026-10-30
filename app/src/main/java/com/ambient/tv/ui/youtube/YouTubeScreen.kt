@@ -857,7 +857,13 @@ private fun Cinematic(
 ) {
     if (items.isEmpty()) return
     var hero by remember(items) { mutableStateOf(items.first()) }
-    Box(Modifier.fillMaxSize()) {
+    val rowFocus = rememberRowColumnFocus()
+    val rowState = com.ambient.tv.ui.common.rememberBrowseListState(
+        initialFirstVisibleItemIndex = items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
+        itemKeys = items.map { it.videoId },
+    )
+    RegisterRowColumnFocus(rowFocus, "youtube-cinematic", rowState, items.map { it.videoId })
+    Box(Modifier.fillMaxSize().rowColumnFocusWrapRight(rowFocus)) {
         if (!com.ambient.tv.ui.common.LocalHomeBackgroundVisible.current && com.ambient.tv.ui.common.LocalFocusArtworkBackdrop.current) {
             CrossfadeBackdropImage(hero.backgroundUrl ?: hero.imageUrl, hero.title, Modifier.fillMaxSize().alpha(.45f), ContentScale.Crop, focusCrop = true)
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .96f)))))
@@ -869,16 +875,15 @@ private fun Cinematic(
                 youtubeInfoSubtitle(hero)?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis) }
             }
             LazyRow(
-                state = com.ambient.tv.ui.common.rememberBrowseListState(
-                    initialFirstVisibleItemIndex = items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0),
-                    itemKeys = items.map { it.videoId },
-                ),
+                state = rowState,
+                modifier = Modifier.containRowFocusExit(),
                 contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 18.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 itemsIndexed(items, key = { _, it -> it.videoId }) { _, item ->
                     Card(
-                        item, click, Modifier.width(landscapeCardWidth()), false,
+                        item, click, Modifier.width(landscapeCardWidth())
+                            .rowColumnFocusTarget(rowFocus, "youtube-cinematic", item.videoId), false,
                         focusRequester = if (item.videoId == focusTarget.itemId) initialFocusRequester else null,
                         onFocused = {
                             hero = item
