@@ -471,6 +471,7 @@ fun RadioScreen(
                             playing = playback.wantsToPlay,
                             startingStationId = state.startingStationId,
                             favoriteIds = state.favoriteIds,
+                            loadingMore = state.loadingMore,
                             state = listState,
                             onClick = { station -> viewModel.play(station, onOpenPlayer) },
                             onFocused = { station -> viewModel.onStationFocused(station.id) },
@@ -870,6 +871,7 @@ private fun RadioStationList(
     playing: Boolean,
     startingStationId: String?,
     favoriteIds: Set<String>,
+    loadingMore: Boolean,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
@@ -878,6 +880,9 @@ private fun RadioStationList(
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    val paginationPulse = if (loadingMore &&
+        !com.ambient.tv.ui.performance.LocalPerformanceProfile.current.reducedEffects
+    ) com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse) else null
     TvLazyColumn(
         allowUpExit = true,
         modifier = modifier.fillMaxSize(),
@@ -949,6 +954,11 @@ private fun RadioStationList(
                         )
                     }
                 }
+            }
+        }
+        if (loadingMore) {
+            items(RADIO_GRID_END_PLACEHOLDERS) {
+                RadioListPlaceholder(isFacet = false, rowScale = rowScale, pulse = paginationPulse)
             }
         }
     }
