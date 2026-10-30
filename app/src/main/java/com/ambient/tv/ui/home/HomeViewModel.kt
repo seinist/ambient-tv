@@ -1626,7 +1626,14 @@ class HomeViewModel @Inject constructor(
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
-            loading = libraryLoading && previous?.loading != false,
+            loading = (libraryLoading && previous?.loading != false) || homeAwaitingFirstResults(
+                hasVisibleRows = rowKeys.isNotEmpty(),
+                libraryPending = libraryLoading,
+                radioPending = radioRowsPending,
+                liveTvPending = !tvPreviewComplete && tvPreviewJob?.isActive == true,
+                photoPending = photoRowPending,
+                trailerPending = trailerRowsPending,
+            ),
         )
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
     }
@@ -1912,3 +1919,13 @@ private const val PHOTO_ROW_ID = "photos.recent"
 
 /** Home row key of an offline server's wake entry: prefix + system key. */
 const val HOME_OFFLINE_ROW_PREFIX = "offline:"
+
+/** Independent home providers can finish in any order; first empty response is not the final result. */
+internal fun homeAwaitingFirstResults(
+    hasVisibleRows: Boolean,
+    libraryPending: Boolean,
+    radioPending: Boolean,
+    liveTvPending: Boolean,
+    photoPending: Boolean,
+    trailerPending: Boolean,
+): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending)
