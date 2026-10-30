@@ -27,6 +27,12 @@ data class WireGuardLiveState(
     val testOk: Boolean = false,
 )
 
+/** Keep related submenu drafts in one JVM parameter slot; SettingsUiState is near the 255-slot limit. */
+data class MediaSubmenuDraft(
+    val spotify: List<String> = AppPreferences.DEFAULT_SPOTIFY_SUBMENU_KEYS,
+    val radio: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -98,7 +104,7 @@ data class SettingsUiState(
     val spotifyDeviceName: String = com.ambient.tv.branding.AppBrand.name,
     val spotifyBitrateKbps: Int = 320,
     val spotifyVisualizerModeKey: String = "cover",
-    val spotifySubmenuKeys: List<String> = AppPreferences.DEFAULT_SPOTIFY_SUBMENU_KEYS,
+    val mediaSubmenus: MediaSubmenuDraft = MediaSubmenuDraft(),
     val host: String = "",
     val port: String = "32400",
     val plexUseHttps: Boolean = false,
@@ -503,7 +509,10 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     spotifyDeviceName = if (draft.spotifyDeviceName != baseline.spotifyDeviceName) draft.spotifyDeviceName else stored.spotifyDeviceName,
     spotifyBitrateKbps = if (draft.spotifyBitrateKbps != baseline.spotifyBitrateKbps) draft.spotifyBitrateKbps else stored.spotifyBitrateKbps,
     spotifyVisualizerModeKey = if (draft.spotifyVisualizerModeKey != baseline.spotifyVisualizerModeKey) draft.spotifyVisualizerModeKey else stored.spotifyVisualizerModeKey,
-    spotifySubmenuKeys = if (draft.spotifySubmenuKeys != baseline.spotifySubmenuKeys) draft.spotifySubmenuKeys else stored.spotifySubmenuKeys,
+    mediaSubmenus = MediaSubmenuDraft(
+        spotify = if (draft.spotifySubmenuKeys != baseline.spotifySubmenuKeys) draft.spotifySubmenuKeys else stored.spotifySubmenuKeys,
+        radio = if (draft.radioSubmenuKeys != baseline.radioSubmenuKeys) draft.radioSubmenuKeys else stored.radioSubmenuKeys,
+    ),
     host = if (draft.host != baseline.host) draft.host else stored.host,
     port = if (draft.port != baseline.port) draft.port else stored.port,
     plexUseHttps = if (draft.plexUseHttps != baseline.plexUseHttps) draft.plexUseHttps else stored.plexUseHttps,
@@ -701,3 +710,10 @@ internal fun SettingsUiState.deferredSettingsFrom(saved: SettingsUiState): Setti
     customAccentHex = customAccentHex.takeIf { ACCENT_HEX.matches(it) } ?: saved.customAccentHex,
     customPlaybackAccentHex = customPlaybackAccentHex.takeIf { ACCENT_HEX.matches(it) } ?: saved.customPlaybackAccentHex,
 )
+
+
+val SettingsUiState.spotifySubmenuKeys: List<String>
+    get() = mediaSubmenus.spotify
+
+val SettingsUiState.radioSubmenuKeys: List<String>
+    get() = mediaSubmenus.radio

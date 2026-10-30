@@ -18,6 +18,9 @@ import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
@@ -55,6 +58,15 @@ internal fun spotifyMenuIcon(key: String): ImageVector = when (key) {
     "artists" -> Icons.Filled.Person
     "now_playing" -> Icons.Filled.PlayArrow
     else -> Icons.Filled.Home
+}
+
+internal fun radioMenuIcon(key: String): ImageVector = when (key) {
+    "favorites" -> Icons.Filled.Favorite
+    "recent" -> Icons.Filled.History
+    "genres" -> Icons.Filled.MusicNote
+    "countries" -> Icons.Filled.Public
+    "languages" -> Icons.Filled.Language
+    else -> Icons.Filled.TrendingUp
 }
 
 internal fun liveTvMenuIcon(key: String): ImageVector = when (key) {

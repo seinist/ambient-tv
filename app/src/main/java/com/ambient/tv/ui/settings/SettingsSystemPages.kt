@@ -593,7 +593,25 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     )
                 }
                 item(key = "radio-menu") {
-                    SettingsGroup(subtitle = stringResource(R.string.settings_system_menu_display)) {
+                    SettingsGroup(
+                        title = stringResource(R.string.settings_submenu_items),
+                        subtitle = stringResource(R.string.settings_submenu_items_hint),
+                    ) {
+                        listOf(
+                            "popular" to stringResource(R.string.radio_popular),
+                            "favorites" to stringResource(R.string.radio_favorites),
+                            "recent" to stringResource(R.string.radio_recent),
+                            "genres" to stringResource(R.string.radio_genres),
+                            "countries" to stringResource(R.string.radio_countries),
+                            "languages" to stringResource(R.string.radio_languages),
+                        ).forEach { (key, label) ->
+                            TvSettingRow(
+                                title = label,
+                                checked = key in uiState.radioSubmenuKeys,
+                                onCheckedChange = { enabled -> viewModel.onRadioSubmenuChanged(key, enabled) },
+                                leadingContent = { SettingsItemIcon(com.ambient.tv.ui.common.radioMenuIcon(key)) },
+                            )
+                        }
                         SubmenuSettingsRow(MediaSystem.RADIO, uiState, viewModel::onSidebarSettingsShortcutChanged)
                     }
                 }

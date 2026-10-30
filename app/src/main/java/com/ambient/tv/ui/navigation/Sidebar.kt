@@ -231,6 +231,7 @@ internal fun SidebarContent(
     val spotifyNativeAvailable = sidebarState.spotifyNativeAvailable
     val youtubeFeedKeys = sidebarState.youtubeFeedKeys
     val spotifySubmenuKeys = sidebarState.spotifySubmenuKeys
+    val radioSubmenuKeys = sidebarState.radioSubmenuKeys
     val tvheadendSubmenuKeys = sidebarState.tvheadendSubmenuKeys
     val settingsShortcutHidden = sidebarState.settingsShortcutHidden
     val systemOrder = sidebarState.systemOrder
@@ -314,15 +315,24 @@ internal fun SidebarContent(
         if (radioEnabled) add(MenuSystem(
             "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
             entries = listOf(
-                Triple("popular", stringResource(R.string.radio_popular), Icons.Filled.TrendingUp),
-                Triple("favorites", stringResource(R.string.radio_favorites), Icons.Filled.Favorite),
-                Triple("recent", stringResource(R.string.radio_recent), Icons.Filled.History),
-                Triple("genres", stringResource(R.string.radio_genres), Icons.Filled.MusicNote),
-                Triple("countries", stringResource(R.string.radio_countries), Icons.Filled.Public),
-                Triple("languages", stringResource(R.string.radio_languages), Icons.Filled.Language),
-            ).map { (key, label, icon) ->
-                MenuDestination("radio:$key", label, icon, Destinations.radioSection(key))
-            },
+                "popular" to stringResource(R.string.radio_popular),
+                "favorites" to stringResource(R.string.radio_favorites),
+                "recent" to stringResource(R.string.radio_recent),
+                "genres" to stringResource(R.string.radio_genres),
+                "countries" to stringResource(R.string.radio_countries),
+                "languages" to stringResource(R.string.radio_languages),
+            ).filter { (key, _) -> key in radioSubmenuKeys }
+                .map { (key, label) ->
+                    MenuDestination("radio:$key", label, com.ambient.tv.ui.common.radioMenuIcon(key), Destinations.radioSection(key))
+                }
+                .ifEmpty {
+                    listOf(MenuDestination(
+                        "radio:popular",
+                        stringResource(R.string.radio_popular),
+                        com.ambient.tv.ui.common.radioMenuIcon("popular"),
+                        Destinations.RADIO,
+                    ))
+                },
         ))
         if (tvheadendEnabled && sidebarState.tvheadendLoginRejected) {
             // Rejected login: keep TVHeadend in the menu, pointing at its settings instead of vanishing.
@@ -527,7 +537,7 @@ internal fun SidebarContent(
         if (systemId != null) rememberedChildren[systemId] = id
     }
 
-    LaunchedEffect(currentRoute, currentSectionKey, currentYouTubeFeedKey, currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId) {
+    LaunchedEffect(currentRoute, currentSectionKey, currentYouTubeFeedKey, currentSpotifySectionKey, currentRadioSectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId) {
         viewModel.refresh(if (currentRoute == null || currentRoute == Destinations.HOME) 2_500L else 0L)
     }
     LaunchedEffect(systemIds) {
