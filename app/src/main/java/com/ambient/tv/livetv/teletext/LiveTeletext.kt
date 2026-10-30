@@ -59,6 +59,8 @@ object LiveTeletext {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile private var decoder: TeletextDecoder? = null
+    /** Provider/server metadata used only when the live stream yields no launchable AIT app. */
+    @Volatile private var hbbtvFallback: HbbtvApplication? = null
     private var job: Job? = null
     @Volatile private var call: okhttp3.Call? = null
     private var sourceUrl: String? = null
@@ -123,11 +125,22 @@ object LiveTeletext {
         call = null
         decoder = null
         sourceUrl = null
+        hbbtvFallback = null
         mutableStatus.value = Status()
         mutableSubtitles.value = emptyList()
     }
 
     fun setNeeded(value: Boolean) { needed.value = value }
+
+    /**
+     * Supplies provider/server-side HbbTV discovery for the current channel. Stream AIT data wins
+     * whenever it is available; this only makes HbbTV usable when a profile filtered the AIT.
+     */
+    fun setHbbtvFallback(value: HbbtvApplication?) {
+        hbbtvFallback = value
+        val streamApp = decoder?.hbbtvApps?.firstOrNull()
+        mutableStatus.update { it.copy(hbbtv = streamApp ?: value) }
+    }
 
     fun setSubtitleChoice(choice: String, languages: Set<String>) {
         subtitleChoice = choice
@@ -164,16 +177,22 @@ object LiveTeletext {
                         target.feed(buffer, 0, n)
                         backoff = 1_000L
                         if (target.probeComplete() && !needed.value) break
-                        if (!target.pmtSeen && System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) {
-                            giveUp(target)
-                            return
+                        if (System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) {
+                            if (!target.pmtSeen) {
+                                giveUp(target)
+                                return
+                            }
+                            if (!target.probeComplete()) target.finishAitProbe()
                         }
                     }
                 }
             }.exceptionOrNull()
             if (decoder !== target) return
             if (target.probeComplete() && !needed.value) continue
-            if (!target.pmtSeen && System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) { giveUp(target); return }
+            if (System.currentTimeMillis() - started > PROBE_TIMEOUT_MS) {
+                if (!target.pmtSeen) { giveUp(target); return }
+                if (!target.probeComplete()) target.finishAitProbe()
+            }
             if (failure != null) Timber.w(failure, "Teletext stream ended; retry in %d ms", backoff)
             delay(backoff)
             backoff = (backoff * 2).coerceAtMost(15_000L)
@@ -182,7 +201,9 @@ object LiveTeletext {
 
     private suspend fun probeTimeout(target: TeletextDecoder) {
         delay(PROBE_TIMEOUT_MS)
-        if (decoder === target && !target.pmtSeen) giveUp(target)
+        if (decoder !== target) return
+        if (!target.pmtSeen) giveUp(target)
+        else if (!target.probeComplete()) target.finishAitProbe()
     }
 
     /** No PMT in time: not an MPEG-TS stream (HLS, Matroska profile …), so no teletext and no HbbTV. */
@@ -191,7 +212,7 @@ object LiveTeletext {
         Timber.i("Teletext: no MPEG-TS service information on this channel")
         call?.cancel()
         tapWanted = false
-        mutableStatus.update { it.copy(probed = true, noTeletext = true, hasTeletext = false, hbbtv = null) }
+        mutableStatus.update { it.copy(probed = true, noTeletext = true, hasTeletext = false, hbbtv = hbbtvFallback) }
     }
 
     private fun serviceChanged() {
@@ -201,7 +222,7 @@ object LiveTeletext {
                 probed = target.pmtSeen,
                 hasTeletext = target.teletextPid >= 0,
                 noTeletext = target.pmtSeen && target.teletextPid < 0,
-                hbbtv = target.hbbtvApps.firstOrNull(),
+                hbbtv = target.hbbtvApps.firstOrNull() ?: hbbtvFallback,
                 announced = target.announcedPages,
                 subtitlePagesSeen = target.subtitlePagesSeen(),
             )
