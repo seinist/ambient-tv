@@ -32,22 +32,15 @@ import com.ambient.tv.ui.common.rememberPendingAction
 import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.common.systemString
 
-/** Links retain the caller page and restore the exact opener when returning. */
+/** Cross-category links open a target page without adding the caller page to Back history. */
 internal val LocalOpenSettingsPage = androidx.compose.runtime.staticCompositionLocalOf<(SettingsCategory, String) -> Unit> { { _, _ -> } }
-internal val LocalSettingsLinkFocus = androidx.compose.runtime.staticCompositionLocalOf<MutableMap<String, FocusRequester>> { mutableMapOf() }
 /** Register the MAC field of a lazily composed Wake-on-LAN group for deep links. */
 internal val LocalSettingsWakeFieldFocus = androidx.compose.runtime.staticCompositionLocalOf<MutableMap<String, FocusRequester>> { mutableMapOf() }
 
 @Composable
 internal fun SettingsPageLink(target: SettingsCategory, id: String, label: Int = target.titleRes) {
     val open = LocalOpenSettingsPage.current
-    val registry = LocalSettingsLinkFocus.current
-    val focus = remember { FocusRequester() }
-    androidx.compose.runtime.DisposableEffect(id, focus) {
-        registry[id] = focus
-        onDispose { if (registry[id] === focus) registry.remove(id) }
-    }
-    SettingsNavigationRow(stringResource(label), modifier = Modifier.focusRequester(focus), onClick = { open(target, id) })
+    SettingsNavigationRow(stringResource(label), modifier = Modifier, onClick = { open(target, id) })
 }
 
 internal fun LazyListScope.networkReceiverItems(viewModel: SettingsViewModel) {

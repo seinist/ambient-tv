@@ -93,15 +93,16 @@ internal fun SettingsHub(
             if (!handheld && it == SettingsCategory.TRANSFER) SettingsCategory.COMPANION else it
         }
     }
+    val initialNav = remember(initialPage) { settingsEntryNav(initialPage) }
     var area by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage?.area ?: SettingsArea.START) }
-    var page by rememberSaveable(initialCategoryKey) { mutableStateOf(initialPage) }
+    var page by rememberSaveable(initialCategoryKey) { mutableStateOf(initialNav.page) }
     var search by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var returningFromPage by remember { mutableStateOf(false) }
-    var returningFromSearch by remember { mutableStateOf(false) }
     var returnToSearch by rememberSaveable { mutableStateOf(false) }
     var lastPage by rememberSaveable { mutableStateOf(initialPage) }
-    var areaMenu by rememberSaveable { mutableStateOf(false) }
+    var areaMenu by rememberSaveable(initialCategoryKey) { mutableStateOf(initialNav.areaMenu) }
+    var directEntry by rememberSaveable(initialCategoryKey) { mutableStateOf(initialNav.directEntry) }
     var addingSystems by rememberSaveable { mutableStateOf(false) }
     var returnToAdd by rememberSaveable { mutableStateOf(false) }
     var addOriginAreaName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -128,8 +129,8 @@ internal fun SettingsHub(
     // rail opens instead of returning to the row the page was opened from.
     val parkFocus = remember { FocusRequester() }
     var parking by remember { mutableStateOf(false) }
-    // Region that last held focus inside Settings. Coming back from the sidebar (Right) restores it;
-    // the first entry lands on the selected category instead of the Back button.
+    // Region that last held focus inside Settings. Returning from the app sidebar restores it;
+    // the first normal Settings entry starts on the left area rail.
     var lastRegionFocus by remember { mutableStateOf<FocusRequester?>(null) }
     val dialogFocus = remember { FocusRequester() }
     val states = rememberSaveableStateHolder()
@@ -169,6 +170,7 @@ internal fun SettingsHub(
         areaMenu = handheld || areaMenu,
         addingSystems = addingSystems,
         returnToAdd = returnToAdd,
+        directEntry = directEntry,
     )
     fun applyNav(next: SettingsHubNav) {
         if (page != null && next.page == null) {
@@ -176,8 +178,6 @@ internal fun SettingsHub(
             settlingPageFocus = false
             returningFromPage = true
         }
-        // Search was opened from its header chip; leaving it lands there again.
-        if (search && !next.search && next.page == null) returningFromSearch = true
         if (addingSystems && !next.addingSystems && next.page == null) returningFromAdd = true
         page = next.page
         search = next.search
@@ -185,21 +185,11 @@ internal fun SettingsHub(
         addingSystems = next.addingSystems
         returnToAdd = next.returnToAdd
         areaMenu = next.areaMenu
+        directEntry = next.directEntry
         if (!next.search) query = ""
     }
-    val linkedPages = remember { mutableStateListOf<Pair<SettingsHubNav, String>>() }
-    val linkFocus = remember { mutableMapOf<String, FocusRequester>() }
     val wakeFieldFocus = remember { mutableMapOf<String, FocusRequester>() }
-    var returningLink by remember { mutableStateOf<String?>(null) }
     fun back() {
-        if (linkedPages.isNotEmpty()) {
-            val (origin, link) = linkedPages.removeAt(linkedPages.lastIndex)
-            applyNav(origin)
-            area = origin.page!!.area
-            returningLink = link
-            settlingPageFocus = true
-            return
-        }
         val next = navState().pop()
         if (next == null) requestExit(onBack) else {
             if (next.addingSystems && next.page == null) {
@@ -223,15 +213,20 @@ internal fun SettingsHub(
     var searchLandingQuery by rememberSaveable(initialCategoryKey) {
         mutableStateOf(settingsShortcutWakeTarget(initialCategoryKey))
     }
-    fun openPage(target: SettingsCategory) {
+    fun openPage(target: SettingsCategory, fromLink: Boolean = false) {
         val resolved = when {
             target == SettingsCategory.ADVANCED -> SettingsCategory.SPOTIFY
             !handheld && target == SettingsCategory.TRANSFER -> SettingsCategory.COMPANION
             else -> target
         }
-        searchLandingQuery = query.takeIf { search && it.isNotBlank() }
-        returnToSearch = search
-        returnToAdd = addingSystems && !search
+        searchLandingQuery = query.takeIf { !fromLink && search && it.isNotBlank() }
+        returnToSearch = !fromLink && search
+        returnToAdd = !fromLink && addingSystems && !search
+        if (fromLink) {
+            // A cross-category link is not a child of the previously opened page.
+            search = false
+            query = ""
+        }
         if (returnToAdd && addOriginAreaName == null) addOriginAreaName = area.name
         if (!returnToAdd) {
             addingSystems = false
@@ -244,8 +239,7 @@ internal fun SettingsHub(
         areaMenu = false
     }
     fun openAddCatalog() {
-        linkedPages.clear()
-        returningLink = null
+        directEntry = false
         addOriginAreaName = area.name
         page = null
         search = false
@@ -257,8 +251,7 @@ internal fun SettingsHub(
         settlingPageFocus = false
     }
     fun selectArea(target: SettingsArea) {
-        linkedPages.clear()
-        returningLink = null
+        directEntry = false
         area = target
         search = false
         returnToSearch = false
@@ -378,7 +371,7 @@ internal fun SettingsHub(
         return false
     }
 
-    // Back key and the header's Back button: one step up (page → list, search → list, list → exit).
+    // Back always moves to a parent level, or exits a direct shortcut to its caller.
     fun goBack() {
         if (!parking) {
             if (page == null) back()
@@ -435,12 +428,6 @@ internal fun SettingsHub(
                 }
                 runCatching { searchFocus.requestFocus() }
             }
-            returningFromSearch -> {
-                returningFromSearch = false
-                if (!runCatching { searchButtonFocus.requestFocus() }.getOrDefault(false)) {
-                    runCatching { areaFocus.getValue(area).requestFocus() }
-                }
-            }
             returningFromAdd -> {
                 returningFromAdd = false
                 if (showsAddRow) indexState.scrollToItem(visibleEntries.size)
@@ -468,8 +455,15 @@ internal fun SettingsHub(
             runCatching { searchFocus.requestFocus() }
             return
         }
-        linkedPages.clear(); returningLink = null; page = null; search = true; addingSystems = false
-        returnToAdd = false; addOriginAreaName = null; returningFromPage = false
+        directEntry = false
+        page = null
+        search = true
+        addingSystems = false
+        areaMenu = false
+        returnToSearch = false
+        returnToAdd = false
+        addOriginAreaName = null
+        returningFromPage = false
     }
 
     Column(
@@ -829,13 +823,12 @@ internal fun SettingsHub(
                                 LocalSettingsSearchLanding provides pageSearchLanding.accept(landingQuery),
                                 LocalSettingsItemIndex provides itemIndex,
                                 com.ambient.tv.ui.common.LocalSettingsPresentation provides com.ambient.tv.ui.common.SettingsPresentation.Page,
-                                LocalSettingsLinkFocus provides linkFocus,
                                 LocalSettingsWakeFieldFocus provides wakeFieldFocus,
                                 // Right from the page scrollbar reaches the header, like the index list.
                                 com.ambient.tv.ui.common.LocalScrollListActionFocus provides searchButtonFocus,
                                 LocalOpenSettingsPage provides { target, link ->
-                                    linkedPages.add(navState() to link)
-                                    openPage(target)
+                                    // Link targets are peer settings pages, never Back destinations.
+                                    openPage(target, fromLink = true)
                                     if (target == SettingsCategory.WAKE) searchLandingQuery = link.substringBefore('-')
                                 },
                             ) {
@@ -856,31 +849,23 @@ internal fun SettingsHub(
                                     if (landingQuery != null) searchLandingQuery = null
                                     return@LaunchedEffect
                                 }
-                                val restore = returningLink
-                                if (restore != null) {
-                                    withFrameNanos { }
-                                    val restored = runCatching { linkFocus[restore]?.requestFocus() == true }.getOrDefault(false)
-                                    if (!restored) requestPanelContentFocus()
-                                    returningLink = null
-                                } else {
-                                    // Scroll to this server's host group, then place TV focus on
-                                    // its MAC row. A lazy item registers the requester on composition.
-                                    val wakeGroup = targetKey?.takeIf {
-                                        current == SettingsCategory.WAKE && it.startsWith("wake-group:")
-                                    }?.removePrefix("wake-group:")
-                                    var focusedMac = false
-                                    if (wakeGroup != null) {
-                                        repeat(16) {
-                                            if (!focusedMac) {
-                                                withFrameNanos { }
-                                                focusedMac = runCatching {
-                                                    wakeFieldFocus[wakeGroup]?.requestFocus() == true
-                                                }.getOrDefault(false)
-                                            }
+                                // Scroll to this server's host group, then place TV focus on
+                                // its MAC row. A lazy item registers the requester on composition.
+                                val wakeGroup = targetKey?.takeIf {
+                                    current == SettingsCategory.WAKE && it.startsWith("wake-group:")
+                                }?.removePrefix("wake-group:")
+                                var focusedMac = false
+                                if (wakeGroup != null) {
+                                    repeat(16) {
+                                        if (!focusedMac) {
+                                            withFrameNanos { }
+                                            focusedMac = runCatching {
+                                                wakeFieldFocus[wakeGroup]?.requestFocus() == true
+                                            }.getOrDefault(false)
                                         }
                                     }
-                                    if (!focusedMac) requestPanelContentFocus()
                                 }
+                                if (!focusedMac) requestPanelContentFocus()
                                 settlingPageFocus = false
                                 if (landingQuery != null) searchLandingQuery = null
                             }
