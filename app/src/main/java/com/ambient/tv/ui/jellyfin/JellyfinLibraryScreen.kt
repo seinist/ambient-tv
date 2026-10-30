@@ -9,6 +9,7 @@ import com.ambient.tv.ui.home.HomeViewModel
 fun JellyfinLibraryScreen(
     onItemClick: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
     onOpenAppHome: () -> Unit = {},
     onBack: (() -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel(),
@@ -16,6 +17,7 @@ fun JellyfinLibraryScreen(
     HomeScreen(
         focusStateKey = "jellyfin:home",
         onOpenSettings = onOpenSettings,
+        onOpenRelevantSettings = onOpenRelevantSettings,
         onOpenAppHome = onOpenAppHome,
         onBack = onBack,
         onItemClick = onItemClick,
