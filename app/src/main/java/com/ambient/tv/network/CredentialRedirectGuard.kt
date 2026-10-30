@@ -16,6 +16,7 @@ import okhttp3.OkHttpClient
 object CredentialRedirectGuard {
     internal val CREDENTIAL_HEADERS = listOf(
         "Authorization", "X-Plex-Token", "X-Emby-Token", "X-Emby-Authorization", "X-MediaBrowser-Token",
+        "X-Connect-UserToken",
     )
 
     private class FirstHop(val url: HttpUrl)

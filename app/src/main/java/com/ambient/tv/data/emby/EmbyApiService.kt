@@ -17,6 +17,7 @@ import retrofit2.http.Query
 interface EmbyApiService {
     @GET("System/Info/Public") suspend fun getPublicSystemInfo(): EmbySystemInfo
     @POST("Users/AuthenticateByName") suspend fun authenticate(@Body body: EmbyAuthRequest): EmbyAuthResponse
+    @GET("Users/{userId}") suspend fun getConnectUser(@Path("userId") userId: String): EmbyUser
 
     @GET("Users/{userId}/Views")
     suspend fun getUserViews(

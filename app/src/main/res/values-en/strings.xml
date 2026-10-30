@@ -38,6 +38,10 @@
     <string name="settings_emby_password">Password</string>
     <string name="settings_emby_wol">Wake-on-LAN</string>
     <string name="settings_emby_missing_credentials">Emby address and username are required.</string>
+    <string name="settings_emby_connect_pin">Emby Connect</string>
+    <string name="settings_emby_connect_pin_hint">Scan the QR code or open emby.media/pin on a signed-in phone or browser and enter this PIN.</string>
+    <string name="settings_emby_connect_server">Enter or discover an Emby server first.</string>
+    <string name="settings_emby_connect_expired">The Emby Connect PIN expired.</string>
     <string name="settings_emby_discovery_none">No Emby servers found on the local network.</string>
     <string name="settings_home_source_emby_continue">Emby: Continue watching</string>
     <string name="settings_home_source_emby_recent">Emby: Recently added</string>

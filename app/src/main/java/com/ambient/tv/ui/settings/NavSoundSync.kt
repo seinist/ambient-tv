@@ -18,6 +18,6 @@ internal fun NavSoundSync(bank: String, volume: Float, enabled: Boolean) {
         snapshot = SettingsBackup(exportedAtEpochMs = System.currentTimeMillis(),
             navSoundBank = com.ambient.tv.ui.sound.NavSoundBank.decode(bank).encode(),
             navSoundsVolume = volume, navSoundsEnabled = enabled)
-    }, fillWidth = true)
+    })
     snapshot?.let { CompanionSyncDialog(vm, navSnapshot = it, onDismiss = { snapshot = null }) }
 }

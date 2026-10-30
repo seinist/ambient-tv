@@ -482,21 +482,55 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item(key = "emby-sign-in") {
-                    SettingsActionRow {
-                        TvActionButton(
-                            text = when {
-                                uiState.isSigningInEmby -> stringResource(R.string.action_signing_in)
-                                uiState.embyConfigured -> stringResource(R.string.action_sign_out)
-                                else -> stringResource(R.string.action_sign_in)
-                            },
-                            onClick = if (uiState.embyConfigured) viewModel::signOutEmby else viewModel::signInEmby,
-                            loading = uiState.isSigningInEmby,
-                        )
-                        TvActionButton(
-                            text = if (uiState.isTestingEmby) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
-                            onClick = viewModel::testEmbyConnection,
-                            enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
-                        )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsActionRow {
+                            TvActionButton(
+                                text = when {
+                                    uiState.embyAuth.busy && uiState.embyAuth.code == null -> stringResource(R.string.action_signing_in)
+                                    uiState.embyConfigured -> stringResource(R.string.action_sign_out)
+                                    else -> stringResource(R.string.action_sign_in)
+                                },
+                                onClick = if (uiState.embyConfigured) viewModel::signOutEmby else viewModel::signInEmby,
+                                enabled = uiState.embyAuth.code == null,
+                                loading = uiState.embyAuth.busy && uiState.embyAuth.code == null,
+                            )
+                            if (!uiState.embyConfigured) {
+                                TvActionButton(
+                                    text = if (uiState.embyAuth.code != null) {
+                                        stringResource(R.string.settings_link_cancel)
+                                    } else {
+                                        stringResource(R.string.settings_emby_connect_pin)
+                                    },
+                                    onClick = if (uiState.embyAuth.code != null) {
+                                        viewModel::cancelEmbyConnect
+                                    } else {
+                                        viewModel::startEmbyConnect
+                                    },
+                                    loading = uiState.embyAuth.busy && uiState.embyAuth.code == null,
+                                )
+                            }
+                            TvActionButton(
+                                text = if (uiState.embyAuth.testing) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                                onClick = viewModel::testEmbyConnection,
+                                enabled = uiState.embyConfigured,
+                                loading = uiState.embyAuth.testing,
+                            )
+                        }
+                        uiState.embyAuth.code?.let { code ->
+                            com.ambient.tv.ui.common.QrCodeDialog(
+                                title = stringResource(R.string.settings_emby_connect_pin),
+                                hint = stringResource(R.string.settings_emby_connect_pin_hint),
+                                payload = "https://emby.media/pin",
+                                code = code,
+                                onDismiss = viewModel::cancelEmbyConnect,
+                                footer = {
+                                    TvActionButton(
+                                        text = stringResource(R.string.settings_link_cancel),
+                                        onClick = viewModel::cancelEmbyConnect,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
                 item { SettingsPageLink(SettingsCategory.WAKE, "emby-network", R.string.settings_network_link) }
