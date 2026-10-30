@@ -319,7 +319,7 @@ class TvheadendRepository @Inject constructor(
             suspendResult {
                 ensureConfiguredAndAllowed()
                 val host = configuredTvheadendEndpoint().host
-                val port = (preferences.tvheadendPort + 1).takeIf { it in 1..65535 } ?: 9982
+                val port = preferences.tvheadendHtspPort
                 TvheadendHtspHbbtv.discover(host, port,
                     preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty())
             }.onFailure { Timber.d(it, "TVHeadend HTSP HbbTV metadata unavailable; HTTP fallback remains active") }
@@ -881,7 +881,7 @@ class TvheadendRepository @Inject constructor(
 
     private fun currentCacheScope(): List<String> = listOf(
         preferences.tvheadendHost, preferences.tvheadendPort.toString(),
-        preferences.tvheadendUseHttps.toString(),
+        preferences.tvheadendHtspPort.toString(), preferences.tvheadendUseHttps.toString(),
         preferences.tvheadendUsername, tokenStore.tvheadendPassword.orEmpty(),
     )
 
