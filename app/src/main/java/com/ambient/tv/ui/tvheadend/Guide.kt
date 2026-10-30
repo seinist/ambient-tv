@@ -214,7 +214,8 @@ internal fun LiveTvChannelBrowser(
     val filterModel = guideFilterModel(options, tags, hasHbbtvCategory, onOptions)
     val filterBarShown = LocalFilterBarSetting.current.shown
     val auxiliaryBarFocus = remember { FocusRequester() }
-    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
+    CompositionLocalProvider(LocalFilterFocusState provides filterFocusState,
+        LocalBrowseRightIndexFocus provides alphabetFocus.takeIf { showAlphabet }) {
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().focusProperties { onEnter = { if (controls.showOptions) cancelFocusChange() } }.focusGroup()) {
             // The view action lives in the page header. A-Z stays beside the sender navigation,
@@ -348,6 +349,7 @@ internal fun LiveTvChannelBrowser(
                     alphabetTarget = visibleChannels.getOrNull(index)?.uuid
                     jumpTo(index, false)
                 }, gridFocus = contentFocus, modifier = Modifier.fillMaxHeight(), firstEntryFocusRequester = alphabetFocus,
+                    actionsFocus = pageFocusChain?.actions,
                     onReturnToContent = {
                         val target = visibleChannels.indexOfFirst { it.uuid == alphabetTarget }.takeIf { it >= 0 } ?: listState.firstVisibleItemIndex
                         jumpTo(target, true)

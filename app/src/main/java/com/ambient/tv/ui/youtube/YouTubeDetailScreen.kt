@@ -9,6 +9,7 @@ import com.ambient.tv.ui.mobile.handheldDetailStacks
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.filled.ThumbDown
@@ -43,24 +44,42 @@ import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.StatePanel
+import com.ambient.tv.ui.common.RowColumnFocus
+import com.ambient.tv.ui.common.rememberRowColumnFocus
+import com.ambient.tv.ui.common.RegisterRowColumnFocus
+import com.ambient.tv.ui.common.rowColumnFocusTarget
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
+import com.ambient.tv.ui.common.containRowFocusExit
 import com.ambient.tv.ui.player.LocalVisibleBackgroundVideo
 
 /** Titled horizontal strip below the detail hero. */
 @Composable
-private fun YouTubeDetailRow(title: String, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+private fun YouTubeDetailRow(
+    title: String,
+    itemKeys: List<Any>,
+    content: androidx.compose.foundation.lazy.LazyListScope.(RowColumnFocus, String) -> Unit,
+) {
+    val rowFocus = rememberRowColumnFocus()
+    val rowKey = "youtube-detail:$title"
+    val rowState = rememberLazyListState()
+    RegisterRowColumnFocus(rowFocus, rowKey, rowState, itemKeys)
+    Column(Modifier.fillMaxWidth().padding(top = 18.dp).rowColumnFocusWrapRight(rowFocus),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = deviceDp(46.dp, 16.dp)))
         LazyRow(
+            state = rowState,
+            modifier = Modifier.containRowFocusExit(),
             contentPadding = PaddingValues(horizontal = deviceDp(46.dp, 16.dp)),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            content = content,
-        )
+        ) {
+            content(rowFocus, rowKey)
+        }
     }
 }
 
 @Composable
 private fun YouTubeDetailChapters(chapters: List<com.ambient.tv.domain.model.VideoChapter>, onChapter: (com.ambient.tv.domain.model.VideoChapter) -> Unit) =
-    YouTubeDetailRow(stringResource(R.string.youtube_chapters)) {
+    YouTubeDetailRow(stringResource(R.string.youtube_chapters), chapters.map { it.startMs }) { rowFocus, rowKey ->
         items(chapters, key = { it.startMs }) { chapter ->
             var focused by remember { mutableStateOf(false) }
             val shape = RoundedCornerShape(10.dp)
@@ -70,6 +89,7 @@ private fun YouTubeDetailChapters(chapters: List<com.ambient.tv.domain.model.Vid
                 scale = com.ambient.tv.ui.common.noSurfaceScale(),
                 shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape),
                 modifier = Modifier
+                    .rowColumnFocusTarget(rowFocus, rowKey, chapter.startMs)
                     .width(deviceDp(220.dp, 180.dp))
                     .mediaFocusMotion(focused)
                     .activateOnTvKey { onChapter(chapter) }
@@ -197,9 +217,11 @@ fun YouTubeDetailScreen(
                         }
                     }
                     if (!state.offline) m.suggestions.filter { it.items.isNotEmpty() }.forEach { row ->
-                        YouTubeDetailRow(row.title.takeUnless { it == "SmartTube" } ?: stringResource(R.string.youtube_suggestions)) {
+                        YouTubeDetailRow(row.title.takeUnless { it == "SmartTube" } ?: stringResource(R.string.youtube_suggestions),
+                            row.items.map { it.videoId }) { rowFocus, rowKey ->
                             items(row.items, key = { it.videoId }) { item ->
-                                YouTubeItemCard(item, onOpenItem, Modifier.width(deviceDp(300.dp, 240.dp)))
+                                YouTubeItemCard(item, onOpenItem, Modifier.width(deviceDp(300.dp, 240.dp))
+                                    .rowColumnFocusTarget(rowFocus, rowKey, item.videoId))
                             }
                         }
                     }

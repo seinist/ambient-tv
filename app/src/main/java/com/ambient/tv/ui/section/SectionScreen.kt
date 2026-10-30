@@ -167,6 +167,7 @@ import com.ambient.tv.ui.common.RegisterBrowseFocusSections
 import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import com.ambient.tv.ui.common.BrowseFocusRow
 import com.ambient.tv.ui.common.pageContentUp
+import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.formatDuration
 import com.ambient.tv.ui.common.noSurfaceScale
@@ -408,6 +409,7 @@ internal fun SectionContent(
                     state.sort == SectionSort.TITLE &&
                     state.availableLetters.size > 5
                 val libraryFocusRequester = remember { FocusRequester() }
+                val alphabetRightFocusRequester = remember { FocusRequester() }
                 Box(
                     Modifier
                         .weight(1f)
@@ -428,7 +430,8 @@ internal fun SectionContent(
                             ),
                     ) {
                         // The alphabet bar already shows the position; a scrollbar would sit under it.
-                        CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar) {
+                        CompositionLocalProvider(LocalAlphabetBarShown provides showAlphabetBar,
+                            LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showAlphabetBar }) {
                                 SoftViewChange(state.viewMode, Modifier.fillMaxSize()) { when (state.page) {
                                 SectionPage.RECOMMENDATIONS -> RecommendationsPage(
                                     focusState,
@@ -474,6 +477,8 @@ internal fun SectionContent(
                             onSelect = { letter -> visibleLibraryLetter = letter; onSelectLetter(letter) },
                             gridFocus = libraryFocusRequester,
                             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                            firstEntryFocusRequester = alphabetRightFocusRequester,
+                            actionsFocus = focusChain.actions,
                         )
                     }
                 }

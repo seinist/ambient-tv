@@ -35,6 +35,8 @@ import com.ambient.tv.ui.performance.LocalPerformanceProfile
 /** Modal bodies point directly to their own footer; never to the page behind the modal. */
 internal val LocalScrollListActionFocus = staticCompositionLocalOf<FocusRequester?> { null }
 internal val LocalScrollListActions = staticCompositionLocalOf<ScrollListActions?> { null }
+/** The current page's A–Z index, if it is displayed to the right of browse content. */
+internal val LocalBrowseRightIndexFocus = staticCompositionLocalOf<FocusRequester?> { null }
 
 /** Headers register for their lifetime and window. Disposing a page removes its focus target. */
 internal class ScrollListActions {
@@ -101,7 +103,7 @@ fun TvLazyColumn(
     val animate = !LocalPerformanceProfile.current.reducedEffects
     LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
         scrollbar = { bar, contentFocus -> OverlayLazyScrollbar(state, bar, contentFocus) }) { listModifier ->
-        val scrollbarFocus = LocalLazyScrollbarRightTarget.current
+        val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = listModifier
                 .then(if (LocalHandheldUi.current || focusActionsOnRight) Modifier else Modifier.focusProperties {
@@ -152,7 +154,7 @@ fun TvLazyVerticalGrid(
     val animate = !LocalPerformanceProfile.current.reducedEffects
     LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
         scrollbar = { bar, contentFocus -> OverlayLazyGridScrollbar(state, bar, contentFocus) }) { listModifier ->
-        val scrollbarFocus = LocalLazyScrollbarRightTarget.current
+        val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
             columns = columns,
             modifier = listModifier
