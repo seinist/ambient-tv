@@ -135,7 +135,7 @@ fun RadioScreen(
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-    val initialFocusRequester = remember { FocusRequester() }
+    val initialFocusRequester = remember(focusScope, state.viewMode) { FocusRequester() }
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, state.viewMode), restoreInitialTarget = true)
     if (state.contentReady && contentIds.isNotEmpty()) {
