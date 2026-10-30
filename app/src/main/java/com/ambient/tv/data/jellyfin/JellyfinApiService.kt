@@ -17,6 +17,10 @@ import retrofit2.http.Query
 interface JellyfinApiService {
     @GET("System/Info/Public") suspend fun getPublicSystemInfo(): JellyfinSystemInfo
     @POST("Users/AuthenticateByName") suspend fun authenticate(@Body body: JellyfinAuthRequest): JellyfinAuthResponse
+    @GET("QuickConnect/Enabled") suspend fun quickConnectEnabled(): Boolean
+    @POST("QuickConnect/Initiate") suspend fun initiateQuickConnect(): JellyfinQuickConnectResult
+    @GET("QuickConnect/Connect") suspend fun quickConnectState(@Query("secret") secret: String): JellyfinQuickConnectResult
+    @POST("Users/AuthenticateWithQuickConnect") suspend fun authenticateQuickConnect(@Body body: JellyfinQuickConnectRequest): JellyfinAuthResponse
 
     @GET("UserViews")
     suspend fun getUserViews(

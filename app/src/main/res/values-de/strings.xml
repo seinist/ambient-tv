@@ -17,6 +17,10 @@
     <string name="settings_jellyfin_password">Passwort</string>
     <string name="settings_jellyfin_wol">Wake-on-LAN</string>
     <string name="settings_jellyfin_missing_credentials">Jellyfin-Adresse und Benutzername fehlen.</string>
+    <string name="settings_jellyfin_quick_connect">Quick Connect</string>
+    <string name="settings_jellyfin_quick_connect_hint">Auf einem bereits angemeldeten Jellyfin-Handy oder im Browser Einstellungen → Quick Connect öffnen und diesen Code eingeben.</string>
+    <string name="settings_jellyfin_quick_connect_server">Zuerst einen Jellyfin-Server eintragen oder suchen.</string>
+    <string name="settings_jellyfin_quick_connect_expired">Die Jellyfin-Quick-Connect-Anfrage ist abgelaufen.</string>
     <string name="settings_jellyfin_discovery_none">Keine Jellyfin-Server im lokalen Netzwerk gefunden.</string>
     <string name="settings_home_source_jellyfin_continue">Jellyfin: Weiterschauen</string>
     <string name="settings_home_source_jellyfin_recent">Jellyfin: Kürzlich hinzugefügt</string>

@@ -33,6 +33,14 @@ data class MediaSubmenuDraft(
     val radio: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
 )
 
+/** Runtime-only server authentication state, nested to stay below the JVM method-slot limit. */
+data class MediaServerAuthLiveState(
+    val busy: Boolean = false,
+    val code: String? = null,
+    val testing: Boolean = false,
+    val resolvingMac: Boolean = false,
+)
+
 data class SettingsUiState(
     val trailersConfigured: Boolean = false,
     val mpvImageOptions: MpvImageOptions = MpvImageOptions(),
@@ -60,9 +68,7 @@ data class SettingsUiState(
     val jellyfinAutoWakeEnabled: Boolean = true,
     val jellyfinLibrarySections: List<LibrarySection> = emptyList(),
     val jellyfinHiddenSectionKeys: Set<String> = emptySet(),
-    val isSigningInJellyfin: Boolean = false,
-    val isTestingJellyfin: Boolean = false,
-    val isResolvingJellyfinMac: Boolean = false,
+    val jellyfinAuth: MediaServerAuthLiveState = MediaServerAuthLiveState(),
     val savedJellyfinServers: List<JellyfinServerProfile> = emptyList(),
     val activeJellyfinServerId: String? = null,
     val discoveredJellyfinServers: List<DiscoveredJellyfinServer> = emptyList(),
