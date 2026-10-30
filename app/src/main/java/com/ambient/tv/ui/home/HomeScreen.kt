@@ -150,6 +150,8 @@ import kotlinx.coroutines.flow.collect
 fun HomeScreen(
     focusStateKey: String = "home",
     onOpenSettings: () -> Unit,
+    /** Contextual navigation for Library, Wake-on-LAN and the affected media provider. */
+    onOpenRelevantSettings: (String) -> Unit = { onOpenSettings() },
     /** Opens the system picker (initial setup) to add a first system. */
     onAddSystem: () -> Unit = onOpenSettings,
     onItemClick: (String) -> Unit,
@@ -184,6 +186,9 @@ fun HomeScreen(
     }
     val openSettings: () -> Unit = remember(viewModel, onOpenSettings) {
         { viewModel.captureFocusForReturn(); onOpenSettings() }
+    }
+    val openRelevantSettings: (String) -> Unit = remember(viewModel, onOpenRelevantSettings) {
+        { category -> viewModel.captureFocusForReturn(); onOpenRelevantSettings(category) }
     }
     val refreshGeneration by viewModel.refreshGeneration.collectAsState()
     // Keep entrance work separate from the pinned hero overlap. The list is drawn once into
@@ -309,7 +314,7 @@ fun HomeScreen(
                         focusSnapshot = focusSnapshot,
                         onItemClick = openItem,
                         onItemFocused = viewModel::onItemFocused,
-                        onOpenSettings = openSettings,
+                        onOpenRelevantSettings = openRelevantSettings,
                         onWatchLiveChannel = watchLiveChannel,
                         onLiveTvFocused = viewModel::onLiveTvFocused,
                         onShortcutFocused = viewModel::onShortcutFocused,
@@ -511,7 +516,7 @@ internal fun LibraryContent(
     focusSnapshot: HomeFocusSnapshot,
     onItemClick: (String) -> Unit,
     onItemFocused: (String, MediaItem) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenRelevantSettings: (String) -> Unit,
     onWatchLiveChannel: (TvhChannel) -> Unit,
     onLiveTvFocused: (HomeLiveTvItem) -> Unit,
     onShortcutFocused: (HomeRowDefinition) -> Unit,
@@ -534,7 +539,7 @@ internal fun LibraryContent(
         val unreachableVm: UnreachableServerViewModel = hiltViewModel()
         val gate by unreachableVm.state.collectAsState()
         gate.offline.firstOrNull()?.let { system ->
-            OfflineSystemPage(system, gate, unreachableVm::retry, onOpenSettings)
+            OfflineSystemPage(system, gate, unreachableVm::retry, { onOpenRelevantSettings("wake:$system") })
             return
         }
         Centered {
@@ -542,7 +547,7 @@ internal fun LibraryContent(
                 title = stringResource(R.string.home_library_empty),
                 body = stringResource(R.string.home_library_empty_body),
                 actionLabel = stringResource(R.string.nav_settings),
-                onAction = onOpenSettings,
+                onAction = { onOpenRelevantSettings("library") },
             )
         }
         return
