@@ -34,6 +34,10 @@
     <string name="settings_emby_password">Passwort</string>
     <string name="settings_emby_wol">Wake-on-LAN</string>
     <string name="settings_emby_missing_credentials">Emby-Adresse und Benutzername fehlen.</string>
+    <string name="settings_emby_connect">Emby Connect</string>
+    <string name="settings_emby_connect_hint">QR-Code scannen oder emby.media/pin auf Handy oder Computer öffnen und anschließend diese PIN eingeben.</string>
+    <string name="settings_emby_connect_server">Zuerst einen Emby-Server eintragen oder suchen.</string>
+    <string name="settings_emby_connect_expired">Die Emby-Connect-PIN ist abgelaufen.</string>
     <string name="settings_emby_discovery_none">Keine Emby-Server im lokalen Netzwerk gefunden.</string>
     <string name="settings_home_source_emby_continue">Emby: Weiterschauen</string>
     <string name="settings_home_source_emby_recent">Emby: Kürzlich hinzugefügt</string>
