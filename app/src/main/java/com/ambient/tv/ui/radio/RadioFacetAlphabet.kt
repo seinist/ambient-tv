@@ -28,7 +28,7 @@ internal fun radioFacetInitial(title: String): String {
 }
 
 internal data class RadioAlphabetFacet(val facet: RadioFacet, val title: String, val letter: String)
-internal data class RadioAlphabetJump(val letter: String, val index: Int?)
+internal data class RadioAlphabetJump(val letter: String, val index: Int)
 
 internal fun radioAlphabetFacets(section: RadioSection, facets: List<RadioFacet>, locale: Locale): List<RadioAlphabetFacet> {
     val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
@@ -42,16 +42,17 @@ internal fun radioAlphabetFacets(section: RadioSection, facets: List<RadioFacet>
 }
 
 /**
- * Always show A-Z, greying out unavailable letters. The extra indices cover non-Latin names
- * and "#" (numerals/symbols), so even those entries remain reachable through the quick bar.
+ * The shared AlphabetBar shows only letters represented by the current localized list.
+ * Keep alphabetic order for navigation, including non-Latin initials and "#" for symbols.
  */
 internal fun radioAlphabetJumps(entries: List<RadioAlphabetFacet>): List<RadioAlphabetJump> {
-    if (entries.isEmpty()) return emptyList()
     val firstIndices = linkedMapOf<String, Int>()
     entries.forEachIndexed { index, entry -> firstIndices.putIfAbsent(entry.letter, index) }
     val latin = ('A'..'Z').map(Char::toString)
     val extras = firstIndices.keys.filterNot { it in latin }.sortedWith(
         compareBy<String> { it != "#" }.thenBy { it },
     )
-    return (latin + extras).map { RadioAlphabetJump(it, firstIndices[it]) }
+    return (latin + extras).mapNotNull { letter ->
+        firstIndices[letter]?.let { RadioAlphabetJump(letter, it) }
+    }
 }
