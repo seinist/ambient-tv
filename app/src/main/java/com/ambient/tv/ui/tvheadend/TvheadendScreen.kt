@@ -695,14 +695,17 @@ internal fun GuideEventCard(
         // Fixed 86dp geometry keeps the EPG grid and its focus targets steady as images arrive.
         Box(Modifier.fillMaxWidth().height(86.dp).clip(cardShape)) {
             if (art != null) LiveTvArtBox(art, event.title, imageHeaders, Modifier.fillMaxSize())
-            Box(Modifier.matchParentSize().background(
-                if (art != null) Brush.verticalGradient(listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))
-                else when {
+            if (art != null) {
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
+            } else {
+                val fill = when {
                     focused -> MaterialTheme.colorScheme.primary.copy(alpha = .22f)
                     live -> com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator.copy(alpha = .10f)
                     else -> MaterialTheme.colorScheme.surface.copy(alpha = .78f)
-                },
-            ))
+                }
+                Box(Modifier.matchParentSize().background(fill))
+            }
             Column(Modifier.fillMaxSize().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (live) MetaBadge(stringResource(R.string.tvh_live), emphasized = true)
