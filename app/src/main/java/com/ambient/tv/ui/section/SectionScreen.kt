@@ -81,6 +81,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import com.ambient.tv.ui.common.ExplicitRowScrollSpec
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -563,6 +564,7 @@ private fun SectionHeader(
             onReset = onResetFilters.takeIf { state.page == SectionPage.LIBRARY },
             focusRequester = filterFocus,
             up = filterUp,
+            focusChain = focusChain,
         )
     }
 }
@@ -816,6 +818,7 @@ private fun RecommendationRowsPage(
                     state = rowsState,
                     modifier = Modifier
                         .fillMaxSize()
+                        .rowColumnFocusWrapRight(columnFocus)
                         .rowColumnFocusNavigation(
                             columnFocus,
                             scrollToTop = { rowsState.glideToItem(!performance.reducedEffects, 0) },
