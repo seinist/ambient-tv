@@ -225,6 +225,9 @@ class SidebarViewModel @Inject constructor(
         appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
         appPreferences.filesEnabled,
         appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
+        // Keep explicit auth completions observable even when every preference-derived boolean
+        // stayed the same (for example SmartTube signing in while it was already enabled).
+        com.ambient.tv.data.local.LoginStateSignal.generation.value,
         appPreferences.sidebarSystemOrder,
         appPreferences.youtubeFeedKeys,
         appPreferences.youtubeStartFeedKey,
