@@ -84,6 +84,7 @@ import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
@@ -270,7 +271,7 @@ fun RadioScreen(
                     TvChip(
                         text = stringResource(R.string.radio_browse_back, radioSectionLabel(state.section)),
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        onClick = viewModel::clearFacet,
+                        onClick = clearFacet,
                     )
                     Text(
                         radioFacetLabel(state.section, selectedFacet),
@@ -295,23 +296,19 @@ fun RadioScreen(
                     )
                     TvActionButton(
                         text = stringResource(R.string.action_search),
-                        onClick = viewModel::submitSearch,
+                        onClick = submitSearch,
                         enabled = state.query.trim().length >= 2,
                     )
                     PlayerIconButton(
                         Icons.Filled.Close,
                         stringResource(R.string.action_close),
                         {
-                            if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
+                            if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
                             showSearch = false
                         },
                     )
                 }
             }
-
-            val showingFacets = state.section.isFacetSection &&
-                state.selectedFacet == null &&
-                state.submittedQuery.isBlank()
 
             when {
                 state.loading -> com.ambient.tv.ui.common.SkeletonRow(
@@ -333,6 +330,7 @@ fun RadioScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .overlayLazyGridScrollbar(gridState)
+                                .pageContentUp(focusChain)
                                 .focusGroup(),
                             state = gridState,
                             contentPadding = PaddingValues(bottom = 40.dp),
@@ -343,7 +341,9 @@ fun RadioScreen(
                                 RadioFacetTile(
                                     section = state.section,
                                     facet = facet,
-                                    onClick = { viewModel.selectFacet(facet) },
+                                    modifier = if (facet.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
+                                    onClick = { selectFacet(facet) },
+                                    onFocused = { viewModel.onFacetFocused(facet.id) },
                                 )
                             }
                         }
@@ -353,7 +353,11 @@ fun RadioScreen(
                             facets = state.facets,
                             listRows = state.listRows,
                             state = listState,
-                            onClick = viewModel::selectFacet,
+                            onClick = selectFacet,
+                            onFocused = { viewModel.onFacetFocused(it.id) },
+                            initialFocusId = initialContentId,
+                            initialFocusRequester = initialFocusRequester,
+                            modifier = Modifier.pageContentUp(focusChain),
                         )
                     }
                 }
@@ -368,6 +372,7 @@ fun RadioScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .overlayLazyGridScrollbar(gridState)
+                                .pageContentUp(focusChain)
                                 .focusGroup(),
                             state = gridState,
                             contentPadding = PaddingValues(bottom = 40.dp),
@@ -377,6 +382,7 @@ fun RadioScreen(
                             itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
                                 RadioStationTile(
                                     station = station,
+                                    modifier = if (station.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
                                     playing = playback.metadata?.source == "radio" &&
                                         playback.metadata?.mediaId == station.id &&
                                         playback.wantsToPlay,
@@ -406,6 +412,9 @@ fun RadioScreen(
                             state = listState,
                             onClick = { station -> viewModel.play(station, onOpenPlayer) },
                             onFocused = { station -> viewModel.onStationFocused(station.id) },
+                            initialFocusId = initialContentId,
+                            initialFocusRequester = initialFocusRequester,
+                            modifier = Modifier.pageContentUp(focusChain),
                         )
                     }
                 }
@@ -421,12 +430,16 @@ fun RadioScreen(
                         ViewOption(RadioViewMode.LIST.name, stringResource(R.string.library_view_list), ViewPreview.LIST),
                     ),
                     selectedView = state.viewMode.name,
-                    onView = { viewModel.selectViewMode(RadioViewMode.valueOf(it)) },
+                    onView = {
+                        val mode = RadioViewMode.valueOf(it)
+                        if (mode != state.viewMode) focusAfterViewOptions = true
+                        viewModel.selectViewMode(mode)
+                    },
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
                     onGridColumns = viewModel::setGridColumns,
                     onListRows = viewModel::setListRows,
-                    onClose = { showViewOptions = false },
+                    onClose = closeViewOptions,
                 )
             }
         }
@@ -507,7 +520,9 @@ internal fun radioGenreDisplayName(raw: String): String {
 private fun RadioFacetTile(
     section: RadioSection,
     facet: RadioFacet,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
+    onFocused: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
@@ -516,11 +531,15 @@ private fun RadioFacetTile(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = shape),
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
+            .browseFocusTarget(facet.id)
             .mediaFocusMotion(focused)
             .activateOnTvKey(onClick = onClick)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            },
     ) {
         Column(
             Modifier
@@ -560,11 +579,15 @@ private fun RadioFacetList(
     listRows: Int,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioFacet) -> Unit,
+    onFocused: (RadioFacet) -> Unit,
+    initialFocusId: String?,
+    initialFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -577,12 +600,16 @@ private fun RadioFacetList(
                 colors = transparentSurfaceColors(),
                 scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = Modifier
+                modifier = (if (facet.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
                     .fillMaxWidth()
+                    .browseFocusTarget(facet.id)
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(facet) }
                     .bringFocusedContextIntoView()
-                    .onFocusChanged { focused = it.isFocused },
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        if (it.isFocused) onFocused(facet)
+                    },
             ) {
                 Row(
                     Modifier
@@ -651,6 +678,7 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
 @Composable
 private fun RadioStationTile(
     station: RadioStation,
+    modifier: Modifier = Modifier,
     playing: Boolean,
     loading: Boolean,
     favorite: Boolean,
@@ -668,8 +696,9 @@ private fun RadioStationTile(
             colors = transparentSurfaceColors(),
             scale = noSurfaceScale(),
             shape = ClickableSurfaceDefaults.shape(shape = shape),
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
+                .browseFocusTarget(station.id)
                 .mediaFocusMotion(focused)
                 .activateOnTvKey(onClick = onClick)
                 .onFocusChanged {
@@ -745,11 +774,14 @@ private fun RadioStationList(
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
+    initialFocusId: String?,
+    initialFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -763,8 +795,9 @@ private fun RadioStationList(
                 colors = transparentSurfaceColors(),
                 scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = Modifier
+                modifier = (if (station.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
                     .fillMaxWidth()
+                    .browseFocusTarget(station.id)
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(station) }
                     .bringFocusedContextIntoView()
