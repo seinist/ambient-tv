@@ -348,41 +348,50 @@ fun RadioScreen(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                showingFacets -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
-                    if (state.viewMode == RadioViewMode.GRID) {
-                        TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .overlayLazyGridScrollbar(gridState)
-                                .pageContentUp(focusChain)
-                                .focusGroup(),
-                            state = gridState,
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            items(state.facets, key = { it.id }) { facet ->
-                                RadioFacetTile(
-                                    section = state.section,
-                                    facet = facet,
-                                    modifier = if (facet.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
-                                    onClick = { selectFacet(facet) },
-                                    onFocused = { viewModel.onFacetFocused(facet.id) },
-                                )
-                            }
-                        }
-                    } else {
+                showingFacets -> Row(
+                    Modifier.fillMaxSize()
+                        .pageContentUp(focusChain)
+                        .focusGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    // Genres, countries and languages are text-only: one consistent list,
+                    // regardless of the remembered grid/list choice for actual stations.
+                    Box(
+                        Modifier.weight(1f).fillMaxSize()
+                            .focusRequester(facetListFocus)
+                            .focusGroup(),
+                    ) {
                         RadioFacetList(
-                            section = state.section,
-                            facets = state.facets,
+                            facets = sortedFacets,
                             listRows = state.listRows,
                             state = listState,
                             onClick = selectFacet,
                             onFocused = { viewModel.onFacetFocused(it.id) },
                             initialFocusId = initialContentId,
                             initialFocusRequester = initialFocusRequester,
-                            modifier = Modifier.pageContentUp(focusChain),
+                            alphabetJumpId = alphabetJumpTargetId,
+                            alphabetReturnRequester = alphabetReturnRequester,
+                        )
+                    }
+                    if (alphabetLetters.size > 5) {
+                        // Shared component already used by the main library: no new A-Z widget.
+                        AlphabetBar(
+                            letters = alphabetLetters,
+                            selected = visibleLetter,
+                            onSelect = { letter ->
+                                val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
+                                    ?: return@AlphabetBar
+                                alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
+                                scrollScope.launch { listState.scrollToItem(index) }
+                            },
+                            gridFocus = facetListFocus,
+                            onReturnToContent = {
+                                val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
+                                if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
+                                    runCatching { facetListFocus.requestFocus() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                 }
@@ -450,11 +459,12 @@ fun RadioScreen(
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
             Box(Modifier.align(Alignment.TopEnd)) {
                 ViewOptionsPanel(
-                    views = listOf(
+                    views = if (showingFacets) emptyList() else listOf(
                         ViewOption(RadioViewMode.GRID.name, stringResource(R.string.library_view_grid), ViewPreview.GRID),
                         ViewOption(RadioViewMode.LIST.name, stringResource(R.string.library_view_list), ViewPreview.LIST),
                     ),
-                    selectedView = state.viewMode.name,
+                    selectedView = effectiveViewMode.name,
+                    densityPreview = if (showingFacets) ViewPreview.LIST else null,
                     onView = {
                         val mode = RadioViewMode.valueOf(it)
                         if (mode != state.viewMode) focusAfterViewOptions = true
@@ -491,22 +501,8 @@ private fun radioSectionLabel(section: RadioSection): String = stringResource(
 )
 
 @Composable
-private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String = when (section) {
-    RadioSection.COUNTRIES -> runCatching {
-        Locale.Builder()
-            .setRegion(facet.id)
-            .build()
-            .getDisplayCountry(Locale.getDefault())
-            .takeIf(String::isNotBlank)
-    }.getOrNull() ?: facet.name
-    RadioSection.LANGUAGES -> {
-        val displayLocale = LocalContext.current.resources.configuration.locales[0]
-        radioLanguageDisplayName(facet.languageCode, facet.name, displayLocale)
-            ?: facet.name.replaceFirstChar { it.titlecase(displayLocale) }
-    }
-    RadioSection.GENRES -> radioGenreDisplayName(facet.name)
-    else -> facet.name
-}
+private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String =
+    radioFacetDisplayName(section, facet, LocalContext.current.resources.configuration.locales[0])
 
 internal fun radioGenreDisplayName(raw: String): String {
     val compact = raw.trim().replace(Regex("\\s+"), " ")
@@ -537,62 +533,6 @@ internal fun radioGenreDisplayName(raw: String): String {
             word.split('-').joinToString("-") { part ->
                 part.replaceFirstChar { it.titlecase() }
             }
-        }
-    }
-}
-
-@Composable
-private fun RadioFacetTile(
-    section: RadioSection,
-    facet: RadioFacet,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onFocused: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(10.dp)
-    Surface(
-        onClick = onClick,
-        colors = transparentSurfaceColors(),
-        scale = noSurfaceScale(),
-        shape = ClickableSurfaceDefaults.shape(shape = shape),
-        modifier = modifier
-            .fillMaxWidth()
-            .browseFocusTarget(facet.id)
-            .mediaFocusMotion(focused)
-            .activateOnTvKey(onClick = onClick)
-            .onFocusChanged {
-                focused = it.isFocused
-                if (it.isFocused) onFocused()
-            },
-    ) {
-        Column(
-            Modifier
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .14f)
-                    else MaterialTheme.colorScheme.surface.copy(alpha = .72f),
-                    shape,
-                )
-                .border(
-                    2.dp,
-                    if (focused) MaterialTheme.colorScheme.primary
-                    else Color.White.copy(alpha = .08f),
-                    shape,
-                )
-                .padding(horizontal = 14.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                radioFacetLabel(section, facet),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                stringResource(R.string.radio_station_count, facet.stationCount),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
