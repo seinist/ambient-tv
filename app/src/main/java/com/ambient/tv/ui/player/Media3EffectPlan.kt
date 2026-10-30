@@ -43,11 +43,15 @@ internal fun media3EffectPlan(
     heavyDownscaleAllowed: Boolean = true,
     ssimDownAllowed: Boolean = true,
     ssimSuperAllowed: Boolean = true,
+    anime4kAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
-        ?.let { if (!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) "catmull_rom" else it }
+        ?.let {
+            if ((!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) ||
+                (!anime4kAllowed && it in MEDIA3_ANIME4K_SCALERS)) "catmull_rom" else it
+        }
     val downscaler = o.downscaler.takeIf { downscaling && it != "display" }
         ?.let { if ((!heavyDownscaleAllowed && it != "lanczos") ||
                     (it == "ssim_down" && !ssimDownAllowed)) "lanczos" else it }
@@ -87,7 +91,7 @@ internal fun media3EffectPlan(
  * kernels): several times the work of the cubic or FSR pass.
  */
 internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCALERS +
-    MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
+    MEDIA3_ANIME4K_SCALERS + MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
 
 /** Media3 antiring controls work only on kernels we own, not native Lanczos/FSR/NIS/RAVU. */
 internal val MEDIA3_ANTIRING_SCALERS: Set<String> = setOf(
@@ -164,7 +168,8 @@ internal fun media3SsimSuperBudgetAllows(
 
 /** Unlike MPV's POSTKERNEL hook, Media3 must own its entire upscale pass to retain PREKERNEL. */
 internal fun media3SuperResRowVisible(options: Media3ImageOptions, upscalerVisible: Boolean): Boolean =
-    upscalerVisible && options.normalized().scaler !in setOf("bilinear", "fsr", "nis")
+    upscalerVisible && options.normalized().scaler !in
+        (setOf("bilinear", "fsr", "nis") + MEDIA3_ANIME4K_SCALERS)
 
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =

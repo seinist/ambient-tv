@@ -86,7 +86,6 @@ vec4 animeInput(vec2 uv) {
         append("#define ").append(name).append("_pos vTexSamplingCoord\n")
         append("#define ").append(name).append("_size uInputSize\n")
         append("#define ").append(name).append("_pt (1.0 / uInputSize)\n")
-        val sample = if (name == "MAIN") "animeInput" else "texture2D"
         if (name == "MAIN") {
             append("#define MAIN_tex(uv) animeInput((uv))\n")
             append("#define MAIN_texOff(offset) animeInput(vTexSamplingCoord + (offset) / uInputSize)\n")
@@ -167,8 +166,6 @@ void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
     private var fitTarget: Media3Intermediate? = null
     private var inputWidth = 1
     private var inputHeight = 1
-    private var fitWidth = 1
-    private var fitHeight = 1
 
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         releaseTextures()
@@ -182,8 +179,6 @@ void main() { gl_FragColor = texture2D(uImage, vTexSamplingCoord); }
         this.inputWidth = inputWidth
         this.inputHeight = inputHeight
         val (w, h) = media3FitSize(inputWidth, inputHeight, targetWidth, targetHeight)
-        fitWidth = w
-        fitHeight = h
         try {
             passes.dropLast(1).forEach { pass ->
                 saved[pass.save] = media3SsimIntermediate(inputWidth, inputHeight)
