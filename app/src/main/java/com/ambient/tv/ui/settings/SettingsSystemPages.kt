@@ -446,27 +446,27 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         SettingsActionRow {
                             TvActionButton(
                                 text = when {
-                                    uiState.isSigningInEmby && uiState.embyConnectPin == null -> stringResource(R.string.action_signing_in)
+                                    uiState.embyAuth.busy && uiState.embyAuth.code == null -> stringResource(R.string.action_signing_in)
                                     uiState.embyConfigured -> stringResource(R.string.action_sign_out)
                                     else -> stringResource(R.string.action_sign_in)
                                 },
                                 onClick = if (uiState.embyConfigured) viewModel::signOutEmby else viewModel::signInEmby,
-                                enabled = uiState.embyConnectPin == null,
-                                loading = uiState.isSigningInEmby && uiState.embyConnectPin == null,
+                                enabled = uiState.embyAuth.code == null,
+                                loading = uiState.embyAuth.busy && uiState.embyAuth.code == null,
                             )
                             if (!uiState.embyConfigured) {
                                 TvActionButton(
-                                    text = if (uiState.embyConnectPin != null) {
+                                    text = if (uiState.embyAuth.code != null) {
                                         stringResource(R.string.settings_link_cancel)
                                     } else {
                                         stringResource(R.string.settings_emby_connect)
                                     },
-                                    onClick = if (uiState.embyConnectPin != null) {
+                                    onClick = if (uiState.embyAuth.code != null) {
                                         viewModel::cancelEmbyConnect
                                     } else {
                                         viewModel::startEmbyConnect
                                     },
-                                    loading = uiState.isSigningInEmby && uiState.embyConnectPin == null,
+                                    loading = uiState.embyAuth.busy && uiState.embyAuth.code == null,
                                 )
                             }
                             TvActionButton(
@@ -475,7 +475,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 enabled = uiState.embyConfigured, loading = uiState.isTestingEmby,
                             )
                         }
-                        uiState.embyConnectPin?.let { pin ->
+                        uiState.embyAuth.code?.let { pin ->
                             com.ambient.tv.ui.common.QrCodeDialog(
                                 title = stringResource(R.string.settings_emby_connect),
                                 hint = stringResource(R.string.settings_emby_connect_hint),
