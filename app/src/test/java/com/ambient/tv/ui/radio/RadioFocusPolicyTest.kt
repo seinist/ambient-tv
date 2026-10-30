@@ -25,6 +25,13 @@ class RadioFocusPolicyTest {
         assertNull(radioInitialFocusId("station-a", "station-b", emptyList()))
     }
 
+    @Test fun lastFocusSurvivesViewModelRecreationWithinTheAppSession() {
+        val scope = RadioFocusScope(RadioSection.COUNTRIES, "focus-test-country", "focus-test-query")
+        RadioFocusMemory.save(scope, "focused-station")
+        assertEquals("focused-station", RadioFocusMemory.last(scope))
+        assertEquals("focused-station", radioInitialFocusId(RadioFocusMemory.last(scope), null, visible + "focused-station"))
+    }
+
     @Test fun focusScopeDistinguishesFacetAndSearchFromCategory() {
         val categories = RadioUiState(section = RadioSection.GENRES).focusScope()
         val nested = RadioUiState(
