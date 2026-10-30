@@ -77,7 +77,7 @@ fun SpotifyHomeScreen(
             rows = listOf(null to state.items.map(::spotifyFocusId)),
         ).itemId
     }
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(!state.awaitingInitialContent(expectedSectionKey))
     if (onBack != null) {
         BackHandler { onBack() }
     }
@@ -93,7 +93,7 @@ fun SpotifyHomeScreen(
     val failed = state.error != null || state.errorRes != null
     if (!state.loading && state.sectionKey == expectedSectionKey && !failed) BrowseFocusInitialTarget(focusItemId)
     RegisterBrowseFocusFallback {
-        if (state.loading || state.sectionKey != expectedSectionKey) null
+        if (state.awaitingInitialContent(expectedSectionKey)) null
         else if (failed || state.items.isEmpty()) {
             val target = if (state.webAuthorized) nowPlayingFocusRequester else signInFocusRequester
             runCatching { target.requestFocus() }.getOrDefault(false)
@@ -158,8 +158,16 @@ fun SpotifyHomeScreen(
         state.errorRes?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
         state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         when {
-            state.loading -> SpotifyHomeSkeleton()
-            state.items.isEmpty() && state.error == null && state.errorRes == null -> {
+            state.awaitingInitialContent(expectedSectionKey) -> SpotifyHomeSkeleton()
+            !state.webAuthorized && state.error == null && state.errorRes == null -> {
+                com.ambient.tv.ui.common.StatePanel(
+                    title = stringResource(R.string.spotify_error_not_authorized_settings),
+                    actionLabel = stringResource(R.string.action_sign_in),
+                    onAction = viewModel::login,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            state.canConfirmEmptySection(expectedSectionKey) -> {
                 com.ambient.tv.ui.common.StatePanel(
                     title = com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.SPOTIFY, R.string.spotify_empty),
                     modifier = Modifier.fillMaxWidth(),
@@ -254,3 +262,12 @@ private fun SpotifyHomeSkeleton() {
         }
     }
 }
+
+/** A fresh route or in-flight first page is not proof that Spotify returned no items. */
+internal fun SpotifyHomeUiState.awaitingInitialContent(expectedSectionKey: String): Boolean =
+    loading || (!webAuthorized && authBusy) || (items.isEmpty() && refreshing) ||
+        (webAuthorized && sectionKey != expectedSectionKey)
+
+internal fun SpotifyHomeUiState.canConfirmEmptySection(expectedSectionKey: String): Boolean =
+    webAuthorized && sectionKey == expectedSectionKey && !loading && !refreshing &&
+        error == null && errorRes == null && items.isEmpty()

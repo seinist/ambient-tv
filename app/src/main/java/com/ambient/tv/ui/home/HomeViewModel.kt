@@ -200,6 +200,14 @@ class HomeViewModel @Inject constructor(
     private var photoJob: Job? = null
     private var trailerJob: Job? = null
     private var radioJob: Job? = null
+    // Keep empty Home in its loading phase until every enabled async row has answered.
+    private var radioRowsPending = false
+    private var radioRowsGeneration = 0
+    private var trailerRowsPending = false
+    private var trailerRowsGeneration = 0
+    private var photoRowPending = false
+    private var photoRowGeneration = 0
+    private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
     private var radioRows: List<ContentRowData> = emptyList()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
@@ -364,6 +372,7 @@ class HomeViewModel @Inject constructor(
         }
         _refreshing.value = false
         libraryLoading = false
+        ++tvPreviewGeneration
         tvPreviewJob?.cancel()
         val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
         if (!keepSnapshot || tvPreviewScope != nextTvScope) tvPreview = HomeTvPreview()
@@ -1122,14 +1131,23 @@ class HomeViewModel @Inject constructor(
 
     /** Live TV rows; TVHeadend answers from its cache at once while the server sleeps. */
     private fun startTvPreview() {
+        val generation = ++tvPreviewGeneration
         tvPreviewJob?.cancel()
+        tvPreviewComplete = false
         tvPreviewJob = viewModelScope.launch {
-            tvPreview = loadLiveTvPreview()
-            tvPreviewComplete = true
-            val current = _uiState.value as? HomeUiState.Loaded
-            if (current != null) publishRows(current.rows)
-            else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
-                (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured)) publishRows(emptyList())
+            try {
+                val preview = loadLiveTvPreview()
+                if (generation == tvPreviewGeneration) tvPreview = preview
+            } finally {
+                if (generation == tvPreviewGeneration) {
+                    tvPreviewComplete = true
+                    val current = _uiState.value as? HomeUiState.Loaded
+                    if (current != null) publishRows(current.rows)
+                    else if (tvPreview.live.isNotEmpty() || tvPreview.recent.isNotEmpty() ||
+                        (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured))
+                        publishRows(emptyList())
+                }
+            }
         }
     }
 
@@ -1165,11 +1183,16 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadPhotoRow() {
+        val generation = ++photoRowGeneration
         photoJob?.cancel()
+        photoRowPending = false
         val definition = if (plexOnly || jellyfinOnly || embyOnly) null else configuredRow(HomeRowDefinition.SYSTEM_PHOTOS, "recent")
         if (definition == null) { photoRow = null; return }
+        photoRowPending = true
         photoJob = viewModelScope.launch {
+            try {
             val photos = photoRepository.recent()
+            if (generation != photoRowGeneration) return@launch
             photoRow = photos.takeIf { it.isNotEmpty() }?.let { entries ->
                 ContentRowData(
                     title = definition.displayTitle(context),
@@ -1179,13 +1202,20 @@ class HomeViewModel @Inject constructor(
                     showDescription = false,
                 )
             }
-            val current = _uiState.value as? HomeUiState.Loaded
-            if (current != null) publishRows(current.rows)
+            } finally {
+                if (generation == photoRowGeneration) {
+                    photoRowPending = false
+                    val current = _uiState.value as? HomeUiState.Loaded
+                    if (current != null && !_uiState.value.isFailurePage()) publishRows(current.rows)
+                }
+            }
         }
     }
 
     private fun loadRadioRows() {
+        val generation = ++radioRowsGeneration
         radioJob?.cancel()
+        radioRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.radioEnabled) {
             radioRows = emptyList()
             return
@@ -1211,7 +1241,9 @@ class HomeViewModel @Inject constructor(
             return
         }
 
+        radioRowsPending = true
         radioJob = viewModelScope.launch {
+            try {
             val built = coroutineScope {
                 definitions.map { definition ->
                     async {
@@ -1257,9 +1289,14 @@ class HomeViewModel @Inject constructor(
                     }
                 }.awaitAll().filterNotNull()
             }
-            radioRows = built
-            if (!_uiState.value.isFailurePage()) {
-                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            if (generation == radioRowsGeneration) radioRows = built
+            } finally {
+                if (generation == radioRowsGeneration) {
+                    radioRowsPending = false
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
             }
         }
     }
@@ -1304,7 +1341,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadTrailerRows() {
+        val generation = ++trailerRowsGeneration
         trailerJob?.cancel()
+        trailerRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.trailersEnabled || !trailerRepository.configured) {
             trailerRows = emptyList()
             return
@@ -1314,12 +1353,15 @@ class HomeViewModel @Inject constructor(
         val enabledIds = definitions.mapTo(HashSet()) { "trailers.${it.contentKey}" }
         trailerRows = trailerRows.filter { it.id in enabledIds }
         if (definitions.isEmpty()) return
+        trailerRowsPending = true
         trailerJob = viewModelScope.launch {
+            try {
             val locale = context.resources.configuration.locales[0]
             for (definition in definitions) {
                 val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
                 val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
                 val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                if (generation != trailerRowsGeneration) return@launch
                 if (result.isFailure) continue
                 val entries = result.getOrThrow()
                 trailerRows = trailerRows.filterNot { it.id == "trailers.${feed.name}" }
@@ -1334,6 +1376,14 @@ class HomeViewModel @Inject constructor(
                     }, style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE), id = "trailers.${feed.name}", showDescription = false)
                 // Trailers are an extra row: they must not cover an offline or error page.
                 if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
+            } finally {
+                if (generation == trailerRowsGeneration) {
+                    trailerRowsPending = false
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
             }
         }
     }
@@ -1576,7 +1626,14 @@ class HomeViewModel @Inject constructor(
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
-            loading = libraryLoading && previous?.loading != false,
+            loading = (libraryLoading && previous?.loading != false) || homeAwaitingFirstResults(
+                hasVisibleRows = rowKeys.isNotEmpty(),
+                libraryPending = libraryLoading,
+                radioPending = radioRowsPending,
+                liveTvPending = !tvPreviewComplete && tvPreviewJob?.isActive == true,
+                photoPending = photoRowPending,
+                trailerPending = trailerRowsPending,
+            ),
         )
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
     }
@@ -1862,3 +1919,13 @@ private const val PHOTO_ROW_ID = "photos.recent"
 
 /** Home row key of an offline server's wake entry: prefix + system key. */
 const val HOME_OFFLINE_ROW_PREFIX = "offline:"
+
+/** Independent home providers can finish in any order; first empty response is not the final result. */
+internal fun homeAwaitingFirstResults(
+    hasVisibleRows: Boolean,
+    libraryPending: Boolean,
+    radioPending: Boolean,
+    liveTvPending: Boolean,
+    photoPending: Boolean,
+    trailerPending: Boolean,
+): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending)

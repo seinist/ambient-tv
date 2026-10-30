@@ -57,6 +57,8 @@ data class TvheadendUiState(
     val actionInProgress: Boolean = false,
     val actionFeedback: OperationFeedback? = null,
     val error: OperationFeedback? = null,
+    /** Cached or channels-only snapshots do not prove the initial optional sections are empty. */
+    val initialDashboardSettled: Boolean = false,
 )
 
 @HiltViewModel
@@ -245,7 +247,8 @@ class TvheadendViewModel @Inject constructor(
                     // Stored data may need another read, but says nothing about reachability.
                     refreshNeedsRetry = repository.servingCachedData
                     val offline = offlineNow()
-                    _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(), loading = false, refreshing = false,
+                    _uiState.update { it.copy(configured = true, offline = offline, canWake = offline && canWake(),
+                        loading = false, refreshing = false, initialDashboardSettled = true,
                         dashboard = dashboard,
                         selectedEvent = it.selectedEvent?.let { selected ->
                             dashboard.events.firstOrNull { event -> event.eventId == selected.eventId && event.channelUuid == selected.channelUuid }
@@ -267,7 +270,8 @@ class TvheadendViewModel @Inject constructor(
                     refreshPolicy.completed(request)
                     refreshNeedsRetry = liveTvRefreshRetryable(error)
                     val offline = offlineNow()
-                    _uiState.update { it.copy(offline = offline, canWake = offline && canWake(), loading = false, refreshing = false, error = result) }
+                    _uiState.update { it.copy(offline = offline, canWake = offline && canWake(),
+                        loading = false, refreshing = false, initialDashboardSettled = true, error = result) }
                 },
             )
         }
