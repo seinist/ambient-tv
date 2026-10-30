@@ -305,6 +305,13 @@ class PlaybackAuditInstrumentation : Instrumentation() {
     override fun onStart() {
         thread(name = "playback-audit") {
             try {
+                if (arguments.getString("media3SsimShaders") == "true") {
+                    auditMedia3SsimShaders(targetContext, ::log)
+                    finish(Activity.RESULT_OK, Bundle().apply {
+                        putString("stream", "MEDIA3 SSIM GPU AUDIT FINISHED\n" + results)
+                    })
+                    return@thread
+                }
                 if (arguments.getString("textInputs") == "true") {
                     com.ambient.tv.ui.common.TextInputFocusAudit(this, ::log).run()
                     finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "TEXT INPUT FOCUS AUDIT PASSED\n$results") })
