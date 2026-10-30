@@ -51,12 +51,14 @@ class Media3ScalerSafetyTest {
         assertEquals(slope, baked("kSigSlope"), 1e-9)
         assertEquals(offset, baked("kSigOffset"), 1e-8)
         assertEquals(scale, baked("kSigScale"), 1e-7)
-        // Sigmoidize and back is the identity on 0..1 (pow 2.4 and its inverse included).
+        // Media3 input is already linear RGB. Unlike MPV's gamma-coded source, there
+        // must not be a second pow(2.4) before/after the sigmoid transformation.
+        assertFalse(shader.contains("pow(clamp(c, 0.0, 1.0), vec3(2.4))"))
+        assertFalse(shader.contains("vec3(1.0 / 2.4)"))
         for (step in 0..10) {
             val c = step / 10.0
-            val l = Math.pow(c, 2.4)
-            val s = center - kotlin.math.ln(1.0 / (l * scale + offset) - 1.0) / slope
-            val back = Math.pow((1.0 / (1.0 + exp(slope * (center - s))) - offset) / scale, 1 / 2.4)
+            val sigmoid = center - kotlin.math.ln(1.0 / (c * scale + offset) - 1.0) / slope
+            val back = (1.0 / (1.0 + exp(slope * (center - sigmoid))) - offset) / scale
             assertEquals(c, back, 1e-9)
         }
         assertTrue(shader.contains("uSigmoid.x > 0.5 ? toSigmoid(c) : c"))

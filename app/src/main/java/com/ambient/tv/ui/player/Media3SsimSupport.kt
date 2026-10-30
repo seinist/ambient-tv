@@ -23,7 +23,7 @@ internal abstract class Media3SsimProgram : BaseGlShaderProgram(
 ) {
     private val targets = mutableListOf<Media3Intermediate>()
     protected fun newTarget(width: Int, height: Int): Media3Intermediate =
-        media3SsimIntermediate(width, height).also(targets::add)
+        media3SsimIntermediate(width, height).also { targets.add(it) }
 
     protected fun clearTargets() {
         targets.forEach(Media3Intermediate::release)
