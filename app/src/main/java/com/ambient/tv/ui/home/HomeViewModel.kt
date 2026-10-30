@@ -200,6 +200,14 @@ class HomeViewModel @Inject constructor(
     private var photoJob: Job? = null
     private var trailerJob: Job? = null
     private var radioJob: Job? = null
+    // Keep empty Home in its loading phase until every enabled async row has answered.
+    private var radioRowsPending = false
+    private var radioRowsGeneration = 0
+    private var trailerRowsPending = false
+    private var trailerRowsGeneration = 0
+    private var photoRowPending = false
+    private var photoRowGeneration = 0
+    private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
     private var radioRows: List<ContentRowData> = emptyList()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
@@ -364,6 +372,7 @@ class HomeViewModel @Inject constructor(
         }
         _refreshing.value = false
         libraryLoading = false
+        ++tvPreviewGeneration
         tvPreviewJob?.cancel()
         val nextTvScope = liveTvRegistry.configured().joinToString { it.source.id }
         if (!keepSnapshot || tvPreviewScope != nextTvScope) tvPreview = HomeTvPreview()
@@ -1185,7 +1194,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun loadRadioRows() {
+        val generation = ++radioRowsGeneration
         radioJob?.cancel()
+        radioRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.radioEnabled) {
             radioRows = emptyList()
             return
@@ -1211,7 +1222,9 @@ class HomeViewModel @Inject constructor(
             return
         }
 
+        radioRowsPending = true
         radioJob = viewModelScope.launch {
+            try {
             val built = coroutineScope {
                 definitions.map { definition ->
                     async {
@@ -1257,9 +1270,14 @@ class HomeViewModel @Inject constructor(
                     }
                 }.awaitAll().filterNotNull()
             }
-            radioRows = built
-            if (!_uiState.value.isFailurePage()) {
-                publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            if (generation == radioRowsGeneration) radioRows = built
+            } finally {
+                if (generation == radioRowsGeneration) {
+                    radioRowsPending = false
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
             }
         }
     }
