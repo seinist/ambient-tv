@@ -86,6 +86,7 @@ import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.MetaBadge
 import com.ambient.tv.ui.common.PageHeader
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.PageBackground
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvActionButton
@@ -375,12 +376,14 @@ fun TvheadendScreen(
                         onSelect = viewModel::selectRecording,
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
+                        focusChain = pageFocusChain,
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
                     )
                     TvheadendTab.HBBTV -> TvheadendHbbtvBrowse(
                         channels = dashboard?.channels.orEmpty(),
                         firstFocus = firstContentFocusRequester,
                         selectedKey = contentFocusTarget.contentId,
+                        focusChain = pageFocusChain,
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
                         onWatchChannel = watchChannel,
                     )
@@ -401,6 +404,7 @@ fun TvheadendScreen(
                         onDeleteSeries = { pendingDelete = PendingDelete.Series(it) },
                         firstContentFocusRequester = firstContentFocusRequester,
                         focusTarget = contentFocusTarget,
+                        focusChain = pageFocusChain,
                         onFocused = { id -> viewModel.onContentFocused(tab, id) },
                     )
                 }
@@ -760,6 +764,7 @@ private fun RecordingList(
     onSelect: (TvhDvrEntry) -> Unit,
     firstContentFocusRequester: FocusRequester,
     focusTarget: TvhFocusTarget,
+    focusChain: com.ambient.tv.ui.common.PageFocusChain,
     onFocused: (String) -> Unit,
 ) {
     val rows = remember(recordings, failedRecordings) {
@@ -773,7 +778,7 @@ private fun RecordingList(
         initialFirstVisibleItemIndex = rows.indexOfFirst { it.first.uuid == focusTarget.contentId }.coerceAtLeast(0),
     )
     com.ambient.tv.ui.common.RegisterBrowseFocusList(listState, rows.map { it.first.uuid })
-    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
+    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState).let { it.pageContentUp(focusChain) }, allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         items(rows, key = { it.first.uuid }) { (entry, failed) ->
             LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
             DvrRow(
@@ -807,6 +812,7 @@ private fun TimerList(
     onDeleteSeries: (TvhAutoRec) -> Unit,
     firstContentFocusRequester: FocusRequester,
     focusTarget: TvhFocusTarget,
+    focusChain: com.ambient.tv.ui.common.PageFocusChain,
     onFocused: (String) -> Unit,
 ) {
     if (timers.isEmpty() && autoRecs.isEmpty()) {
@@ -824,7 +830,7 @@ private fun TimerList(
         autoRecs.forEachIndexed { index, entry -> add(com.ambient.tv.ui.common.BrowseFocusSlot(
             com.ambient.tv.ui.common.BrowseFocusKey(null, "autorec:${entry.uuid}", true), timers.size + 1 + index)) }
     })
-    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState), allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
+    LazyColumn(Modifier.fillMaxSize().overlayLazyScrollbar(listState).let { it.pageContentUp(focusChain) }, allowUpExit = true, state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 36.dp)) {
         if (timers.isNotEmpty()) {
             items(timers, key = { it.uuid }) { entry ->
                 LaunchedEffect(entry.uuid, entry.title) { onArtworkNeeded(entry.title, this) }
