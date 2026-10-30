@@ -2,6 +2,9 @@
 
 package com.ambient.tv.ui.common
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.tv.material3.LocalTextStyle
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.deviceDp
@@ -43,6 +46,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +82,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.ui.theme.LocalUiTokens
 import com.ambient.tv.ui.sound.LocalUiSoundPlayer
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.appControlSurface
 import com.ambient.tv.ui.theme.menuFocusMotion
 import androidx.compose.ui.semantics.semantics
@@ -90,6 +96,33 @@ import kotlinx.coroutines.launch
  * Handheld windows can be narrower than the television panel width, above all in portrait, where
  * a fixed 500 dp panel would push its start edge off screen. Television keeps the exact width.
  */
+/**
+ * Standalone browse/settings drawers share the player's slide duration and easing. The player
+ * itself owns its dismissal animation and must not be animated a second time.
+ *
+ * Only the outer handheld overlay owns this state; the nested panel column inherits it so
+ * outside-tap, Back and footer all dismiss the same session exactly once.
+ */
+internal class RightPanelDismissOnce {
+    var closing by mutableStateOf(false)
+        private set
+
+    fun claim(): Boolean {
+        if (closing) return false
+        closing = true
+        return true
+    }
+}
+
+private class StandaloneRightPanelMotion {
+    val progress = Animatable(0f)
+    val dismiss = RightPanelDismissOnce()
+}
+
+private val LocalStandaloneRightPanelMotion = staticCompositionLocalOf<StandaloneRightPanelMotion?> { null }
+
+internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
+
 /** Scrollbar of the enclosing [RightSidePanel] while its body overflows; null otherwise. */
 internal val LocalRightPanelScrollbarFocus = androidx.compose.runtime.staticCompositionLocalOf<FocusRequester?> { null }
 
@@ -182,7 +215,7 @@ fun RightSidePanel(
     scrollable: Boolean = true,
     header: (@Composable () -> Unit)? = null,
     onOutsideTap: (() -> Unit)? = onBack,
-    retainFocus: Boolean = false,
+    retainFocus: Boolean = true,
     focusRescue: PanelFocusRescue? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -309,30 +342,68 @@ private fun RightSidePanelChrome(
     com.ambient.tv.ui.player.SleepWarningKeyGate.BlockWhileShown()
     val playerPanelInteractive = com.ambient.tv.ui.player.LocalPlayerPanelInteractive.current
     val playerPanelMotion = com.ambient.tv.ui.player.LocalPlayerPanelMotion.current
-    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-        // Handheld: the screen beside the panel is a dismiss area. It takes the tap, so the
-        // player underneath does not toggle its controls at the same time.
-        Row(modifier.fillWindowHeight().fillMaxSize()) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .then(if (playerPanelInteractive) Modifier.pointerInput(onOutsideTap) {
-                        detectTapGestures { onOutsideTap() }
-                    } else Modifier),
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val inheritedMotion = LocalStandaloneRightPanelMotion.current
+    val ownMotion = remember { StandaloneRightPanelMotion() }
+    val standaloneMotion = inheritedMotion ?: ownMotion
+    val standalone = !playerPanelMotion.active
+    val panelInteractive = playerPanelInteractive && (!standalone || !standaloneMotion.dismiss.closing)
+    val dismissScope = rememberCoroutineScope()
+    val uiSounds = LocalUiSoundPlayer.current
+
+    if (standalone && inheritedMotion == null) {
+        LaunchedEffect(standaloneMotion, reducedEffects) {
+            standaloneMotion.progress.animateTo(
+                1f,
+                tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                    else com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS, easing = FastOutSlowInEasing),
             )
-            RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
-                scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null, retainFocus = retainFocus,
-                focusRescue = focusRescue, body = body)
+        }
+    }
+
+    fun dismiss(action: () -> Unit) {
+        if (!playerPanelInteractive) return
+        if (!standalone) {
+            // PlayerPanelVisibility retains the outgoing level and animates its exit itself.
+            action()
+            return
+        }
+        if (!standaloneMotion.dismiss.claim()) return
+        dismissScope.launch {
+            standaloneMotion.progress.animateTo(
+                0f,
+                tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                    else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS, easing = FastOutSlowInEasing),
+            )
+            action()
+        }
+    }
+    fun dismissBack() {
+        if (!panelInteractive) return
+        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismiss(onBack) }
+        else dismiss(onBack)
+    }
+
+    if (onOutsideTap != null && com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+        // The outside area and inner column must share the same animation/dismiss gate.
+        androidx.compose.runtime.CompositionLocalProvider(LocalStandaloneRightPanelMotion provides standaloneMotion) {
+            Row(modifier.fillWindowHeight().fillMaxSize()) {
+                Box(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .then(if (panelInteractive) Modifier.pointerInput(onOutsideTap) {
+                            detectTapGestures { dismiss(onOutsideTap) }
+                        } else Modifier),
+                )
+                RightSidePanelChrome(title, onBack, Modifier, subtitle, width, closeInsteadOfBack, requestHeaderFocus,
+                    scrollToTop, scrollToEnd, scrollbar, canScrollBackward, canScrollForward, header, onOutsideTap = null,
+                    retainFocus = retainFocus, focusRescue = focusRescue, body = body)
+            }
         }
         return
     }
-    // TV and handheld: Back dismisses the panel. Previously only handheld
-    // registered a BackHandler; TV relied on parent handlers / footer alone.
-    val uiSounds = LocalUiSoundPlayer.current
-    androidx.activity.compose.BackHandler(enabled = playerPanelInteractive) {
-        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK, onBack) else onBack()
-    }
+    // Android system Back and TV remote Back must always dismiss the modal rather than merely
+    // handing focus to the underlying view. A second Back during exit is consumed, not forwarded.
+    androidx.activity.compose.BackHandler(enabled = playerPanelInteractive) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
@@ -349,8 +420,8 @@ private fun RightSidePanelChrome(
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
     val dialogOwnsFocus = focusRescue?.dialogOwnsFocus?.invoke() == true
-    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus, playerPanelInteractive) {
-        if (!playerPanelInteractive) return@LaunchedEffect
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus, panelInteractive) {
+        if (!panelInteractive) return@LaunchedEffect
         // A player dialog's focus return owns the hand-back: a paused target of ours is obsolete.
         if (dialogOwnsFocus) rescue.pausedTarget = null
         if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
@@ -391,10 +462,10 @@ private fun RightSidePanelChrome(
             }
         }
     }
-    if (requestHeaderFocus && playerPanelInteractive) {
+    if (requestHeaderFocus && panelInteractive) {
         LaunchedEffect(Unit) {
             delay(400)
-            if (panelHasFocus) return@LaunchedEffect
+            if (panelHasFocus || !panelInteractive) return@LaunchedEffect
             // Back only for a level that was just opened; elsewhere the next OK would leave it.
             if (footerAllowed || !focusFirstRow()) runCatching { footerFocus.requestFocus() }
         }
@@ -415,21 +486,18 @@ private fun RightSidePanelChrome(
                 // Consume taps on empty panel space instead of reaching the page/player below.
                 detectTapGestures { }
             } else Modifier)
-            .then(if (playerPanelMotion.active) Modifier.graphicsLayer {
-                translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(
-                    playerPanelMotion.panelProgress.value,
-                    playerPanelMotion.reducedEffects,
-                )
-                alpha = com.ambient.tv.ui.player.playerPanelDrawerAlpha(
-                    playerPanelMotion.panelProgress.value,
-                    playerPanelMotion.reducedEffects,
-                )
-            } else Modifier)
+            .graphicsLayer {
+                val progress = if (playerPanelMotion.active) playerPanelMotion.panelProgress.value
+                    else standaloneMotion.progress.value
+                val reduced = if (playerPanelMotion.active) playerPanelMotion.reducedEffects else reducedEffects
+                translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(progress, reduced)
+                alpha = com.ambient.tv.ui.player.playerPanelDrawerAlpha(progress, reduced)
+            }
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
             .focusProperties {
-                canFocus = playerPanelInteractive
-                onEnter = { if (!playerPanelInteractive) cancelFocusChange() }
+                canFocus = panelInteractive
+                onEnter = { if (!panelInteractive) cancelFocusChange() }
                 onExit = { cancelFocusChange() }
             }
             .focusRequester(panelFocus)
@@ -440,13 +508,21 @@ private fun RightSidePanelChrome(
                     focusRescue?.onFocused?.invoke()
                 }
             }
-            // Any key ends a pending rescue: the user's own move wins.
-            .onPreviewKeyEvent {
-                rescue.userMoved = true
-                // The user's own move is remembered again, even while a stand-in row was parked.
-                focusRescue?.parkingDone?.invoke()
-                false
+            // Back on a focused TV panel is a modal action, not a page/sidebar focus move.
+            // The system BackHandler above handles Android predictive/system navigation as well.
+            .onPreviewKeyEvent { event ->
+                if (standalone && rightPanelBackKey(event.key)) {
+                    if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) dismissBack()
+                    true
+                } else {
+                    if (panelInteractive) {
+                        rescue.userMoved = true
+                        focusRescue?.parkingDone?.invoke()
+                    }
+                    false
+                }
             }
+            .then(if (!panelInteractive) Modifier.playerPanelInteractionGuard(false) else Modifier)
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
             .tvModalFocus(initialFocus = requestHeaderFocus, scrollToTop = scrollToTop,
@@ -518,7 +594,7 @@ private fun RightSidePanelChrome(
         ) {
             TvActionButton(
                 text = stringResource(if (closeInsteadOfBack) R.string.action_close else R.string.back),
-                onClick = onBack,
+                onClick = { dismiss(onBack) },
                 modifier = Modifier.focusRequester(footerFocus)
                     .onPreviewKeyEvent { event ->
                         if (event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
