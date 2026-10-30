@@ -54,6 +54,7 @@ class SmartTubeEngine @Inject constructor(
 
     fun discardRowContinuation(scope: String) {
         rowContinuations.remove(scope)
+        rowContinuationLocks.keys.removeAll { it.startsWith("$scope|") }
     }
     /** SmartTube's client selector is global: format loads that may switch it run one at a time. */
     private val formatClientMutex = kotlinx.coroutines.sync.Mutex()
