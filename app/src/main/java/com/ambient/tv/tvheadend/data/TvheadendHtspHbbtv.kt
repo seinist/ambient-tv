@@ -100,18 +100,27 @@ internal fun tvhHtspEncode(fields: Map<String, Any>): ByteArray {
 internal fun tvhHtspDecode(input: DataInputStream): Map<String, Any> {
     val length = input.readInt()
     require(length in 0..4_194_304) { "HTSP metadata frame too large" }
-    return tvhHtspFields(input.readHtspBytes(length), map = true) as Map<String, Any>
+    return tvhHtspMap(input.readHtspBytes(length))
 }
 
 /** DataInputStream.readNBytes() is not available on older Android versions. */
 private fun DataInputStream.readHtspBytes(length: Int): ByteArray =
     ByteArray(length).also { readFully(it) }
 
-@Suppress("UNCHECKED_CAST")
-private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
+private fun tvhHtspMap(data: ByteArray): Map<String, Any> {
+    val fields = linkedMapOf<String, Any>()
+    readHtspFields(data) { name, parsed -> fields[name] = parsed }
+    return fields
+}
+
+private fun tvhHtspList(data: ByteArray): List<Any> {
+    val fields = mutableListOf<Any>()
+    readHtspFields(data) { _, parsed -> fields += parsed }
+    return fields
+}
+
+private fun readHtspFields(data: ByteArray, accept: (String, Any) -> Unit) {
     val input = DataInputStream(data.inputStream())
-    val objectFields = linkedMapOf<String, Any>()
-    val listFields = mutableListOf<Any>()
     while (input.available() > 0) {
         require(input.available() >= 6) { "Incomplete HTSP field header" }
         val kind = input.readUnsignedByte()
@@ -122,8 +131,8 @@ private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
         val name = input.readHtspBytes(nameLength).toString(Charsets.UTF_8)
         val value = input.readHtspBytes(fieldLength)
         val parsed: Any = when (kind) {
-            1 -> tvhHtspFields(value, true)
-            5 -> tvhHtspFields(value, false)
+            1 -> tvhHtspMap(value)
+            5 -> tvhHtspList(value)
             2 -> value.foldIndexed(0L) { index, number, octet ->
                 number or ((octet.toLong() and 0xffL) shl (index * 8))
             }
@@ -132,9 +141,8 @@ private fun tvhHtspFields(data: ByteArray, map: Boolean): Any {
             7 -> value.isNotEmpty() && value[0].toInt() != 0
             else -> continue
         }
-        if (map) objectFields[name] = parsed else listFields += parsed
+        accept(name, parsed)
     }
-    return if (map) objectFields else listFields
 }
 
 private fun tvhHtspServiceJson(hbbtv: Any?): kotlinx.serialization.json.JsonObject {

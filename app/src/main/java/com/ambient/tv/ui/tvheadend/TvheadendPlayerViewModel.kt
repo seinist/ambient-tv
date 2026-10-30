@@ -131,7 +131,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         artworkUrl = state.artworkUrl ?: state.nowEvent?.imageUrl ?: state.channel?.iconUrl,
         artworkHeaders = repository.authHeaders(),
         artworkFallbackUrls = state.artworkFallbackUrls,
-        artworkAspectRatio = if (!state.channel?.iconUrl.isNullOrBlank() && state.artworkUrl == state.channel?.iconUrl) 1f else 16f / 9f,
+        artworkAspectRatio = if (!state.channel?.iconUrl.isNullOrBlank() && state.artworkUrl == state.channel.iconUrl) 1f else 16f / 9f,
         isLive = state.source.isLive,
         hasVideo = state.channel?.kind != LiveTvChannelKind.RADIO,
         sourceWidth = state.sourceWidth,

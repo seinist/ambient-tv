@@ -1936,10 +1936,11 @@ private fun HomeRowAddButtons(
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(chips) { (label, source) ->
                                 val genreChip = source.second == HomeRowDefinition.CONTENT_TOP_GENRE
+                                val picker = state.homeGenrePicker
                                 com.ambient.tv.ui.common.TvChip(
                                     text = label,
-                                    selected = genreChip && state.homeGenrePicker?.system == source.first &&
-                                        state.homeGenrePicker?.radioKind == null,
+                                    selected = genreChip && picker != null &&
+                                        picker.system == source.first && picker.radioKind == null,
                                     onClick = {
                                         if (genreChip) onPickGenre(source.first) else onAdd(source.first, source.second)
                                     },

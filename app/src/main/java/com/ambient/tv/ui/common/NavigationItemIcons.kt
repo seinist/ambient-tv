@@ -3,6 +3,7 @@ package com.ambient.tv.ui.common
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.ChildCare
@@ -21,7 +22,6 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.filled.SportsEsports
@@ -67,7 +67,7 @@ internal fun radioMenuIcon(key: String): ImageVector = when (key) {
     "genres" -> Icons.Filled.MusicNote
     "countries" -> Icons.Filled.Public
     "languages" -> Icons.Filled.Language
-    else -> Icons.Filled.TrendingUp
+    else -> Icons.AutoMirrored.Filled.TrendingUp
 }
 
 internal fun liveTvMenuIcon(key: String): ImageVector = when (key) {
