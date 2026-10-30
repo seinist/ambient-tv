@@ -24,6 +24,9 @@ data class LiveTvChannel(
     val numberLabel: String? = number?.toString(),
     val kind: LiveTvChannelKind = LiveTvChannelKind.UNKNOWN,
     val access: LiveTvChannelAccess = LiveTvChannelAccess.UNKNOWN,
+    /** Server-side HbbTV discovery fallback; the live stream's AIT remains authoritative. */
+    val hbbtvUrl: String? = null,
+    val hbbtvName: String? = null,
 )
 
 @kotlinx.serialization.Serializable
