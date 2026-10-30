@@ -36,6 +36,8 @@ class EmbyAuthRepository @Inject constructor(
         .readTimeout(20, TimeUnit.SECONDS)
         .writeTimeout(20, TimeUnit.SECONDS)
         .addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor)
+        // PIN bodies and the Connect user token must stay on connect.emby.media.
+        .let(com.ambient.tv.network.CredentialRedirectGuard::install)
         .build()
 
     private val localExchangeClient = OkHttpClient.Builder()
