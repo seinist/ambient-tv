@@ -39,9 +39,9 @@ object Destinations {
     const val SPOTIFY_SECTION = "spotify_section/{sectionKey}"
     const val SPOTIFY_DETAIL = "spotify_detail/{type}/{id}"
     const val SPOTIFY_PLAYER = "spotify_player?uri={uri}"
-    const val YOUTUBE_DETAIL = "youtube_detail/{videoId}"
+    const val YOUTUBE_DETAIL = "youtube_detail/{videoId}?browseSession={browseSession}"
     const val YOUTUBE_CHANNEL = "youtube_channel/{channelId}?title={title}&avatar={avatar}"
-    const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}"
+    const val YOUTUBE_PLAYER = "youtube_player/{videoId}?trailer={trailer}&browseSession={browseSession}"
     const val TVH_PLAYER = "tvh_player/{kind}/{id}?sourceId={sourceId}"
     const val DETAIL = "detail/{ratingKey}?collectionId={collectionId}&collectionSort={collectionSort}"
     const val PLAYER = "player/{ratingKey}?mediaIndex={mediaIndex}&restart={restart}&collectionId={collectionId}&collectionSort={collectionSort}&detailOrigin={detailOrigin}"
@@ -70,12 +70,14 @@ object Destinations {
     fun spotifySection(sectionKey: String) = "spotify_section/${Uri.encode(sectionKey)}"
     fun radioSection(sectionKey: String) =
         if (sectionKey == "popular") RADIO else "radio_section/${Uri.encode(sectionKey)}"
-    fun youtubeDetail(videoId: String) = "youtube_detail/${Uri.encode(videoId)}"
+    fun youtubeDetail(videoId: String, browseSession: Long? = null) =
+        "youtube_detail/${Uri.encode(videoId)}" + browseSession?.let { "?browseSession=$it" }.orEmpty()
     fun youtubeChannel(channelId: String, title: String? = null, avatarUrl: String? = null) =
         "youtube_channel/${Uri.encode(channelId)}?title=${Uri.encode(title.orEmpty())}&avatar=${Uri.encode(avatarUrl.orEmpty())}"
     fun spotifyDetail(type: String, id: String) = "spotify_detail/${Uri.encode(type)}/${Uri.encode(id)}"
     fun spotifyPlayer(uri: String? = null) = if (uri.isNullOrBlank()) "spotify_player" else "spotify_player?uri=${Uri.encode(uri)}"
-    fun youtubePlayer(videoId: String) = "youtube_player/${Uri.encode(videoId)}"
+    fun youtubePlayer(videoId: String, browseSession: Long? = null) =
+        "youtube_player/${Uri.encode(videoId)}" + browseSession?.let { "?browseSession=$it" }.orEmpty()
     fun trailerPlayer(videoId: String) = "${youtubePlayer(videoId)}?trailer=true"
     fun liveTvSection(tab: String, sourceId: String? = null) = "live_tv/${Uri.encode(tab)}" + sourceQuery(sourceId)
     fun tvhPlayer(kind: String, id: String, sourceId: String? = null) = "tvh_player/$kind/${Uri.encode(id)}" + sourceQuery(sourceId)
