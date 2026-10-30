@@ -168,6 +168,26 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                                 Text(stringResource(R.string.settings_link_instructions))
                                 uiState.linkCode?.let { Text(it, style = MaterialTheme.typography.headlineMedium) }
                                     ?: CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                                val qrUrl = uiState.linkQrUrl
+                                val linkCode = uiState.linkCode
+                                if (!qrUrl.isNullOrBlank() && !linkCode.isNullOrBlank()) {
+                                    var dismissedQr by remember(qrUrl) { mutableStateOf(false) }
+                                    if (!dismissedQr) {
+                                        com.ambient.tv.ui.common.QrCodeDialog(
+                                            title = stringResource(R.string.action_sign_in),
+                                            hint = stringResource(R.string.settings_link_instructions),
+                                            payload = qrUrl,
+                                            code = linkCode,
+                                            onDismiss = { dismissedQr = true },
+                                            footer = {
+                                                TvActionButton(
+                                                    text = stringResource(R.string.action_close),
+                                                    onClick = { dismissedQr = true },
+                                                )
+                                            },
+                                        )
+                                    }
+                                }
                             }
                             // Keep this action in the same composition slot when linking starts or
                             // stops. Replacing the entire subtree discarded DPAD focus.
@@ -724,32 +744,23 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                         enabled = uiState.youtubeAvailable, loading = uiState.youtubeAuthBusy,
                     )
                     uiState.youtubeSignInCode?.let { code ->
-                        if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-                            Text(stringResource(R.string.youtube_activate_handheld), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            com.ambient.tv.ui.youtube.YouTubeSignInPanel(
+                        // Keep the pending code visible after the modal is closed, but use the
+                        // exact same QR/browser prompt as the SmartTube browse screen.
+                        Text(
+                            stringResource(
+                                if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) R.string.youtube_activate_handheld
+                                else R.string.setup_youtube_code_instructions,
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(code, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                        var dismissedQr by remember(code) { mutableStateOf(false) }
+                        if (!dismissedQr) {
+                            com.ambient.tv.ui.youtube.YouTubeSignInPrompt(
                                 code = code,
-                                modifier = Modifier.fillMaxWidth(),
+                                onDismiss = { dismissedQr = true },
                             )
-                        } else {
-                            Text(stringResource(R.string.setup_youtube_code_instructions), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(code, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-                            // Same QR dialog as the YouTube page; closing it leaves the code above.
-                            var dismissedQr by remember { mutableStateOf<String?>(null) }
-                            if (dismissedQr != code) {
-                                com.ambient.tv.ui.common.QrCodeDialog(
-                                    title = stringResource(R.string.action_sign_in),
-                                    hint = stringResource(R.string.youtube_activate),
-                                    payload = com.ambient.tv.youtube.YouTubeSignInLink.qrPayload(code),
-                                    code = code,
-                                    onDismiss = { dismissedQr = code },
-                                    footer = {
-                                        TvActionButton(
-                                            text = stringResource(R.string.action_close),
-                                            onClick = { dismissedQr = code },
-                                        )
-                                    },
-                                )
-                            }
                         }
                     }
                     uiState.youtubeAuthErrorRes?.let { res ->
@@ -947,6 +958,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
         }
     }
     var filePicker by remember { mutableStateOf(false) }
+    var qrScanner by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     if (confirmRemove) {
         // Focus starts on Cancel so a repeated OK press can't delete the tunnel by accident.
@@ -988,6 +1000,32 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
             onDismiss = { filePicker = false },
         )
     }
+    val hasQrCamera = remember(context) {
+        runCatching {
+            context.getSystemService(android.hardware.camera2.CameraManager::class.java)
+                ?.cameraIdList?.isNotEmpty() == true
+        }.getOrDefault(false)
+    }
+    if (qrScanner) {
+        AppDialog(
+            onDismiss = { qrScanner = false },
+            title = stringResource(R.string.wg_scan_qr),
+            footer = {
+                TvActionButton(
+                    text = stringResource(R.string.action_close),
+                    onClick = { qrScanner = false },
+                )
+            },
+        ) {
+            com.ambient.tv.companion.QrScanner(
+                hint = stringResource(R.string.wg_scan_qr_hint),
+                onDecoded = { config ->
+                    qrScanner = false
+                    viewModel.importWireGuardConfig(config)
+                },
+            )
+        }
+    }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) viewModel.startWireGuard() else viewModel.onWireGuardConsentDenied()
     }
@@ -1023,6 +1061,9 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                 )
                 SettingsActionRow {
                     TvActionButton(text = stringResource(R.string.wg_load_file), onClick = { filePicker = true })
+                    if (hasQrCamera) {
+                        TvActionButton(text = stringResource(R.string.wg_scan_qr), onClick = { qrScanner = true })
+                    }
                     TvActionButton(
                         text = stringResource(R.string.wg_save),
                         // The pasted text stays until the import succeeds (the field hides then), so a

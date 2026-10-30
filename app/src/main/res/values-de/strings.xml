@@ -1460,6 +1460,8 @@
     <string name="settings_page_vpn_hint">WireGuard-Tunnel importieren und prüfen</string>
     <string name="wg_paste">wg-quick-Konfiguration einfügen</string>
     <string name="wg_load_file">Konfiguration laden</string>
+    <string name="wg_scan_qr">QR-Code scannen</string>
+    <string name="wg_scan_qr_hint">Kamera auf einen QR-Code mit einer WireGuard-Konfiguration richten. Der private Schlüssel bleibt auf diesem Gerät.</string>
     <string name="wg_file_title">WireGuard-Datei wählen</string>
     <string name="wg_file_system_picker">System-Dateiauswahl</string>
     <string name="wg_file_empty">Keine Ordner oder .conf-Dateien hier.</string>

@@ -45,6 +45,31 @@ fun YouTubeSignInDialog(code: String, onDismiss: () -> Unit) {
     }
 }
 
+/**
+ * Shared pending-account prompt for setup, Settings and the SmartTube browse screen.
+ * TV shows the scannable activation QR; handheld opens the browser/copy-code dialog instead.
+ */
+@Composable
+fun YouTubeSignInPrompt(code: String, onDismiss: () -> Unit) {
+    if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+        YouTubeSignInDialog(code, onDismiss)
+    } else {
+        com.ambient.tv.ui.common.QrCodeDialog(
+            title = stringResource(R.string.action_sign_in),
+            hint = stringResource(R.string.youtube_activate),
+            payload = YouTubeSignInLink.qrPayload(code),
+            code = code,
+            onDismiss = onDismiss,
+            footer = {
+                TvActionButton(
+                    text = stringResource(R.string.action_close),
+                    onClick = onDismiss,
+                )
+            },
+        )
+    }
+}
+
 /** Shared phone login controls for initial setup, settings and the YouTube screen. */
 @Composable
 fun YouTubeSignInPanel(code: String, modifier: Modifier = Modifier) {

@@ -72,7 +72,19 @@ internal fun CompanionQrScannerDialog(manager: CompanionManager, onClose: () -> 
  * once; the camera is released as soon as this leaves the composition.
  */
 @Composable
-internal fun CompanionQrScanner(onDecoded: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun CompanionQrScanner(onDecoded: (String) -> Unit, modifier: Modifier = Modifier) =
+    QrScanner(onDecoded = onDecoded, modifier = modifier)
+
+/**
+ * Generic in-app QR scanner shared by Companion pairing and configuration imports.
+ * [hint] only changes the purpose text; camera permission, preview and decoding stay identical.
+ */
+@Composable
+internal fun QrScanner(
+    onDecoded: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    hint: String? = null,
+) {
     val context = LocalContext.current
     var granted by remember { mutableStateOf(hasCameraPermission(context)) }
     var failure by remember { mutableStateOf(false) }
@@ -88,7 +100,7 @@ internal fun CompanionQrScanner(onDecoded: (String) -> Unit, modifier: Modifier 
             failure -> Text(stringResource(R.string.companion_scan_camera_failed))
             !granted -> Text(stringResource(R.string.companion_scan_camera_denied))
             else -> {
-                Text(stringResource(R.string.companion_scan_qr_hint))
+                Text(hint ?: stringResource(R.string.companion_scan_qr_hint))
                 if (!decoded) CameraPreview(
                     modifier = Modifier.fillMaxWidth().aspectRatio(1f),
                     onDecoded = { text -> if (!decoded) { decoded = true; onDecoded(text) } },

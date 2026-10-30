@@ -955,20 +955,19 @@ private fun HandheldSettingsExitSheet(
             }
             Spacer(Modifier.height(4.dp))
             feedback?.let { OperationFeedbackContent(it, Modifier.fillMaxWidth()) }
-            androidx.compose.material3.FilledTonalButton(
-                onClick = onKeepEditing,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
+            DeviceActionRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                androidx.compose.material3.Text(stringResource(R.string.settings_keep_editing))
-            }
-            androidx.compose.material3.TextButton(
-                onClick = onDiscard,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                    contentColor = androidx.compose.material3.MaterialTheme.colorScheme.error,
-                ),
-            ) {
-                androidx.compose.material3.Text(stringResource(R.string.settings_discard))
+                TvActionButton(
+                    text = stringResource(R.string.settings_keep_editing),
+                    onClick = onKeepEditing,
+                    selected = true,
+                )
+                TvActionButton(
+                    text = stringResource(R.string.settings_discard),
+                    onClick = onDiscard,
+                )
             }
         }
     }
