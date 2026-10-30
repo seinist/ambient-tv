@@ -249,6 +249,13 @@ object BackgroundPlaybackSession {
     internal fun currentAudioSession(): AudioSession? =
         (handle as? Media3PlaybackHandle)?.player?.let(Media3AudioProcessing::session)
 
+    /** Only a real seekable Media3 window allows radio scrubbing; elapsed live time alone is not enough. */
+    internal fun canSeekCurrentRadioStream(): Boolean =
+        snapshot.value.metadata?.source == "radio" &&
+            !snapshot.value.replacingSource &&
+            snapshot.value.status.durationMs > 0L &&
+            handle?.canSeekNow() == true
+
     fun refreshMetadata(metadata: PlaybackMetadata) {
         checkThread()
         val current = snapshot.value
