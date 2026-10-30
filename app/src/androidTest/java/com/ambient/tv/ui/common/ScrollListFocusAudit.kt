@@ -361,7 +361,10 @@ internal class ScrollListFocusAudit(private val instrumentation: Instrumentation
                             }
                             if (settings) LazyColumn(state = state, modifier = Modifier.weight(1f).fillMaxWidth()
                                 .onSettingsActionEdge(saveFocus).wrapFocusDownToTop(state), content = rows)
-                            else TvLazyColumn(state = state, modifier = Modifier.weight(1f).fillMaxWidth(), content = rows)
+                            // This particular legacy/modal case opts into Right-to-actions explicitly.
+                            // Browse screens use the opposite default, covered by PageFocusTraversalTest.
+                            else TvLazyColumn(state = state, modifier = Modifier.weight(1f).fillMaxWidth(),
+                                focusActionsOnRight = true, content = rows)
                         }
                     }
                 }
