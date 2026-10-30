@@ -160,7 +160,9 @@ class EmbyAuthRepository @Inject constructor(
             val connectServer = servers.firstOrNull { it.systemId == info.id }
                 ?: servers.firstOrNull { matchesAddress(it.localAddress) || matchesAddress(it.url) }
                 ?: error("This Emby server is not linked to the confirmed Emby Connect account")
-            require(connectServer.accessKey.isNotBlank()) { "Emby Connect server access key is missing" }
+            val exchangeToken = connectServer.exchangeToken?.takeIf(String::isNotBlank)
+                ?: connectServer.accessKey?.takeIf(String::isNotBlank)
+                ?: error("Emby Connect server exchange token is missing")
 
             val scheme = if (useHttps) "https" else "http"
             val authority = NetworkEndpoint.authorityHost(normalizedHost)
@@ -174,7 +176,7 @@ class EmbyAuthRepository @Inject constructor(
                 localExchangeClient,
                 Request.Builder()
                     .url(exchangeUrl)
-                    .header("X-MediaBrowser-Token", connectServer.accessKey)
+                    .header("X-MediaBrowser-Token", exchangeToken)
                     .get()
                     .build(),
                 EmbyConnectExchange.serializer(),
