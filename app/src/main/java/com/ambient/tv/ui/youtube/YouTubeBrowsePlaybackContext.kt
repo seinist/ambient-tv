@@ -26,6 +26,8 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val scope: String,
         val rowId: String,
         val items: MutableList<YouTubeItem>,
+        val playerScope: String,
+        var forked: Boolean,
         var exhausted: Boolean = false,
         var lastPlayed: String? = null,
         var returnPending: Boolean = false,
@@ -38,8 +40,12 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
     @Synchronized
     fun start(scope: String?, row: YouTubeRow?, videoId: String): Long? {
         if (scope.isNullOrBlank() || row == null || row.items.none { it.videoId == videoId }) return null
+        current?.let { engine.discardRowContinuation(it.playerScope) }
         val token = ++nextToken
-        current = Session(token, scope, row.id, row.items.distinctBy { it.videoId }.toMutableList())
+        val playerScope = "youtube-player-row:$token"
+        val forked = engine.forkRowContinuation(scope, playerScope, row.id)
+        current = Session(token, scope, row.id, row.items.distinctBy { it.videoId }.toMutableList(),
+            playerScope = playerScope, forked = forked)
         return token
     }
 
@@ -85,11 +91,17 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
             nextLoaded(token, videoId)?.let { return@withLock it }
             val source = synchronized(this) {
                 current?.takeIf { it.token == token && !it.exhausted && it.items.any { item -> item.videoId == videoId } }
-                    ?.let { it.scope to it.rowId }
             } ?: return@withLock null
-            val page = engine.continueRow(source.first, source.second)
+            // A cache-only first frame may precede the initial upstream feed; retry acquiring
+            // the original handle at the point where the row actually needs another page.
+            if (!source.forked && engine.forkRowContinuation(source.scope, source.playerScope, source.rowId)) {
+                source.forked = true
+            }
+            val page = engine.continueRow(
+                if (source.forked) source.playerScope else source.scope, source.rowId,
+            )
             synchronized(this) {
-                current?.takeIf { it.token == token && it.scope == source.first && it.rowId == source.second }?.let { session ->
+                current?.takeIf { it === source && it.token == token }?.let { session ->
                     if (page == null) {
                         session.exhausted = true
                     } else {
