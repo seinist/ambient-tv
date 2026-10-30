@@ -11,7 +11,8 @@ internal sealed interface Media3Stage {
     data class Denoise(val strength: String) : Media3Stage
     data class Deband(val strength: String) : Media3Stage
     /** Only planned while the fitted output is larger than the source; never past the display. */
-    data class Scale(val scaler: String, val antiring: Int = 0, val sigmoid: Boolean = true) : Media3Stage
+    data class Scale(val scaler: String, val antiring: Int = 0, val sigmoid: Boolean = true,
+        val superResolution: Boolean = false) : Media3Stage
     /** One downscale pass, separate from the luma upscaler, only for smaller renderer targets. */
     data class Downscale(val scaler: String, val antiring: Int = 0) : Media3Stage
     /** light/medium/strong unsharp mask, cas, adaptive, or rcas (FSR's own sharpening pass). */
@@ -40,13 +41,16 @@ internal fun media3EffectPlan(
     heavyScaleAllowed: Boolean = true,
     downscaling: Boolean = false,
     heavyDownscaleAllowed: Boolean = true,
+    ssimDownAllowed: Boolean = true,
+    ssimSuperAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
     val scaler = o.scaler.takeIf { upscaling && it != "bilinear" }
         ?.let { if (!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) "catmull_rom" else it }
     val downscaler = o.downscaler.takeIf { downscaling && it != "display" }
-        ?.let { if (!heavyDownscaleAllowed && it != "lanczos") "lanczos" else it }
+        ?.let { if ((!heavyDownscaleAllowed && it != "lanczos") ||
+                    (it == "ssim_down" && !ssimDownAllowed)) "lanczos" else it }
     return buildList {
         // Cleanup reads source pixels; disable all of it together above the source budget.
         if (o.deblock != "off" && debandAllowed) add(Media3Stage.Deblock(o.deblock))
@@ -55,7 +59,9 @@ internal fun media3EffectPlan(
         scaler?.let {
             add(Media3Stage.Scale(it,
                 antiring = o.antiring.takeIf { _ -> it in MEDIA3_ANTIRING_SCALERS } ?: 0,
-                sigmoid = if (it in MEDIA3_SIGMOID_SCALERS) o.sigmoid else true))
+                sigmoid = if (it in MEDIA3_SIGMOID_SCALERS) o.sigmoid else true,
+                superResolution = o.superResolution && ssimSuperAllowed &&
+                    it !in setOf("bilinear", "fsr", "nis")))
         }
         downscaler?.let {
             add(Media3Stage.Downscale(it, o.antiring.takeIf { _ -> it in MEDIA3_ANTIRING_SCALERS } ?: 0))
@@ -129,6 +135,37 @@ internal fun media3SigmoidRowVisible(
     upscalerVisible: Boolean,
 ): Boolean = upscalerVisible && options.normalized().scaler in MEDIA3_SIGMOID_SCALERS
 
+/** SSim effects are expensive. Keep the source/output work in the Full-HD-at-30fps range. */
+internal const val MEDIA3_SSIM_SOURCE_PIXEL_RATE = 1920L * 1088L * 30L
+internal const val MEDIA3_SSIM_SUPER_OUTPUT_PIXEL_RATE = 1920L * 1088L * 30L
+
+internal fun media3SsimDownBudgetAllows(
+    inputWidth: Int, inputHeight: Int, targetWidth: Int, targetHeight: Int, fps: Float,
+): Boolean {
+    if (inputWidth <= 0 || inputHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) return false
+    val (width, height) = media3DownscaleSize(inputWidth, inputHeight, targetWidth, targetHeight)
+    val reduction = maxOf(inputWidth.toDouble() / width, inputHeight.toDouble() / height)
+    val rate = fps.takeIf { it.isFinite() && it > 0f } ?: 30f
+    return reduction > 1.01 && reduction <= 2.0 &&
+        inputWidth.toLong() * inputHeight * rate <= MEDIA3_SSIM_SOURCE_PIXEL_RATE
+}
+
+internal fun media3SsimSuperBudgetAllows(
+    inputWidth: Int, inputHeight: Int, targetWidth: Int, targetHeight: Int, fps: Float,
+): Boolean {
+    if (inputWidth <= 0 || inputHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) return false
+    val (width, height) = media3FitSize(inputWidth, inputHeight, targetWidth, targetHeight)
+    val enlargement = minOf(width.toDouble() / inputWidth, height.toDouble() / inputHeight)
+    val rate = fps.takeIf { it.isFinite() && it > 0f } ?: 30f
+    return enlargement > 1.01 && enlargement <= 2.0 &&
+        inputWidth.toLong() * inputHeight * rate <= MEDIA3_SSIM_SOURCE_PIXEL_RATE &&
+        width.toLong() * height * rate <= MEDIA3_SSIM_SUPER_OUTPUT_PIXEL_RATE
+}
+
+/** Unlike MPV's POSTKERNEL hook, Media3 must own its entire upscale pass to retain PREKERNEL. */
+internal fun media3SuperResRowVisible(options: Media3ImageOptions, upscalerVisible: Boolean): Boolean =
+    upscalerVisible && options.normalized().scaler !in setOf("bilinear", "fsr", "nis")
+
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
     upscalerApplies && options.normalized().scaler in setOf("fsr", "nis")
@@ -152,7 +189,8 @@ internal fun media3FusedStages(stages: List<Media3Stage>): List<Media3FusedStage
     val fusable = previous is Media3Stage.Deblock || previous is Media3Stage.Denoise || previous is Media3Stage.Deband || previous is Media3Stage.Sharpen || previous is Media3Stage.Grain ||
         // Only the single-pass cubic and FSR shaders take the gamma; Lanczos is Media3's own effect,
         // the MPV kernels, RAVU and NIS are programs of their own.
-        (previous is Media3Stage.Scale && previous.scaler in setOf("bicubic", "catmull_rom", "fsr"))
+        (previous is Media3Stage.Scale && !previous.superResolution &&
+            previous.scaler in setOf("bicubic", "catmull_rom", "fsr"))
     if (!fusable) return stages.map { Media3FusedStage(it) }
     return stages.dropLast(2).map { Media3FusedStage(it) } + Media3FusedStage(previous, gamma.value)
 }
