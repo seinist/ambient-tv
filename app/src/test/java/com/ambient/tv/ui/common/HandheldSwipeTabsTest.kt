@@ -2,6 +2,8 @@ package com.ambient.tv.ui.common
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class HandheldSwipeTabsTest {
@@ -60,6 +62,13 @@ class HandheldSwipeTabsTest {
     fun `swipe does not wrap around first or last tab`() {
         assertNull(swipeTabTargetIndex(0, 4, 90f, 0f, 60f, false))
         assertNull(swipeTabTargetIndex(3, 4, -90f, 0f, 60f, false))
+    }
+
+    @Test
+    fun `horizontal child scroll wins but diagonal touch does not`() {
+        assertTrue(childConsumesHorizontalSwipe(28f, -95f, 9f, 8f))
+        assertFalse(childConsumesHorizontalSwipe(3f, -95f, 9f, 8f))
+        assertFalse(childConsumesHorizontalSwipe(28f, -20f, 90f, 8f))
     }
 
     @Test

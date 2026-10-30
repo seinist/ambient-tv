@@ -677,6 +677,7 @@
     <string name="offline_wake">Wake up</string>
     <string name="offline_library_title">%1$s is not reachable</string>
     <string name="offline_library_body">The server is not responding. As soon as it answers again, this page loads by itself.</string>
+    <string name="home_cancel_wake">Cancel wake-up</string>
     <string name="home_wake_timeout_title">Server did not become reachable</string>
     <string name="home_wake_timeout_body">A Wake-on-LAN request was sent to “%1$s”, but the server is still unavailable. Startup can take longer; try again or check the network and Wake-on-LAN settings.</string>
     <string name="home_connection_error_body">The connection to the media server failed.</string>
