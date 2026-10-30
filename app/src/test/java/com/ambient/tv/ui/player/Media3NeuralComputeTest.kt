@@ -26,6 +26,11 @@ class Media3NeuralComputeTest {
                 append("#ifdef GL_EXT_shader_explicit_arithmetic_types_float16\n")
                 append("# define V4 f16vec4\n# define M4 f16mat4\n# define F float16_t\n")
                 append("#else\n# define V4 vec4\n# define M4 mat4\n# define F float\n#endif\n")
+                if (key in MEDIA3_CUNNY_QUANTIZED_SCALERS && n in 1..2) {
+                    append("#extension GL_EXT_spirv_intrinsics : require\n")
+                    append("spirv_instruction (extensions = [\"SPV_KHR_integer_dot_product\"], capabilities = [6019, 6018], id = 4450)\n")
+                    append("int dp4(int a, int b, spirv_literal int fmt);\n")
+                }
                 append("void hook() {\n")
                 append("  imageStore(out_image, ivec2(gl_GlobalInvocationID.xy), ")
                 append("V4(0.25, 0.0, 0.0, 1.0));\n}\n")
@@ -33,7 +38,7 @@ class Media3NeuralComputeTest {
         }
     }
 
-    @Test fun parsesComputeLayoutsAndRejectsQuantizedVulkanSource() {
+    @Test fun parsesComputeLayoutsIncludingQuantizedModels() {
         for (key in MEDIA3_NEURAL_COMPUTE_SCALERS) {
             val passes = requireNotNull(media3ComputePasses(key, syntheticModel(key)))
             assertEquals(if (key in MEDIA3_ARTCNN_SCALERS) 8 else 4, passes.size)
@@ -51,13 +56,17 @@ class Media3NeuralComputeTest {
             assertTrue(shader.contains("#define V4 vec4"))
             assertTrue(shader.contains("imageStore(out_image"))
             assertFalse(shader.contains("GL_EXT_shader_explicit_arithmetic_types_float16"))
-        }
-        for (key in listOf("cunny_fast_soft_q", "cunny_faster_soft_q", "cunny_veryfast_soft_q")) {
-            assertFalse(key in MEDIA3_NEURAL_COMPUTE_SCALERS)
-            assertNull(media3ComputePasses(key, syntheticModel("cunny_fast_soft")))
+            if (key in MEDIA3_CUNNY_QUANTIZED_SCALERS) {
+                val qShader = media3ComputeShader(passes[1])
+                assertTrue(qShader.contains("int cunnySignedByte("))
+                assertTrue(qShader.contains("int dp4("))
+                assertFalse(qShader.contains("spirv_instruction"))
+                assertFalse(qShader.contains("GL_EXT_spirv_intrinsics"))
+            }
         }
         assertNull(media3ComputePasses("cunny_fast_soft",
             syntheticModel("cunny_fast_soft") + "\n#extension GL_EXT_spirv_intrinsics : require\n"))
+        assertNull(media3ComputePasses("cunny_fast_soft_q", syntheticModel("cunny_fast_soft")))
     }
 
     @Test fun malformedWorkgroupOrDependenciesFailClosed() {
@@ -76,13 +85,16 @@ class Media3NeuralComputeTest {
         assertTrue(media3NeuralComputeBudgetAllows("cunny_veryfast_soft", 640, 360, 1280, 720, 24f))
         assertFalse(media3NeuralComputeBudgetAllows("cunny_fast_ds", 640, 360, 1280, 720, 24f))
         assertFalse(media3NeuralComputeBudgetAllows("cunny_fast_soft", 640, 360, 768, 432, 24f))
-        assertFalse(media3NeuralComputeBudgetAllows("cunny_fast_soft_q", 160, 90, 320, 180, 24f))
+        assertTrue(media3NeuralComputeBudgetAllows("cunny_fast_soft_q", 160, 90, 320, 180, 24f))
+        assertFalse(media3NeuralComputeBudgetAllows("cunny_fast_soft_q", 480, 270, 960, 540, 24f))
         assertFalse(media3NeuralComputeBudgetAllows("artcnn16", 0, 144, 512, 288, 24f))
 
         for (key in MEDIA3_NEURAL_COMPUTE_SCALERS) {
             assertTrue(key in MEDIA3_HEAVY_SCALERS)
             assertTrue(key in MEDIA3_SHADER_SCALERS)
-            assertEquals(VideoImageCatalog.mpvShaders.getValue(key), VideoImageCatalog.media3Scalers.getValue(key))
+            if (key in MEDIA3_CUNNY_QUANTIZED_SCALERS)
+                assertTrue(VideoImageCatalog.media3Scalers.getValue(key).contains("GLES"))
+            else assertEquals(VideoImageCatalog.mpvShaders.getValue(key), VideoImageCatalog.media3Scalers.getValue(key))
             val o = Media3ImageOptions(enabled = true, scaler = key, superResolution = true)
             assertEquals(key, o.normalized().scaler)
             assertFalse(o.normalized().superResolution)

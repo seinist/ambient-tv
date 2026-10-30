@@ -93,6 +93,10 @@ object VideoImageCatalog {
         "cunny_fast_soft" to "CuNNy · Fast SOFT",
         "cunny_faster_soft" to "CuNNy · Faster SOFT",
         "cunny_veryfast_soft" to "CuNNy · Veryfast SOFT",
+        // Packed 4x8 signed dot products exactly emulated using GLES3.1 integer arithmetic.
+        "cunny_fast_soft_q" to "CuNNy · Fast SOFT · packed 8-bit (GLES)",
+        "cunny_faster_soft_q" to "CuNNy · Faster SOFT · packed 8-bit (GLES)",
+        "cunny_veryfast_soft_q" to "CuNNy · Veryfast SOFT · packed 8-bit (GLES)",
     ).apply {
         // Same NNEDI3 quality presets and source labels as the bundled MPV renderer.
         Nnedi3QualityCatalog.presets.forEach { preset -> put(preset.key, preset.displayName) }
@@ -274,7 +278,8 @@ data class Media3ImageOptions(
                 setOf("fsr", "nis", "anime4k", "anime4k_denoise", "anime4k_m", "anime4k_denoise_m",
                     "fsrcnnx8", "fsrcnnx16", "artcnn16", "artcnn32", "artcnn16_ds", "artcnn16_dn",
                     "artcnn32_ds", "artcnn32_dn", "cunny_fast_ds", "cunny_faster_ds",
-                    "cunny_fast_soft", "cunny_faster_soft", "cunny_veryfast_soft")) &&
+                    "cunny_fast_soft", "cunny_faster_soft", "cunny_veryfast_soft",
+                    "cunny_fast_soft_q", "cunny_faster_soft_q", "cunny_veryfast_soft_q")) &&
             scaler != "bilinear",
         downscaler = downscaler.takeIf { it in VideoImageCatalog.media3Downscalers } ?: "display",
         antiring = antiring.coerceIn(0, 100),
