@@ -94,6 +94,8 @@ import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.fillWindowHeight
 import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.pageContentUp
+import com.ambient.tv.ui.common.pageFocusStage
+import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.overlayLazyScrollbar
@@ -186,6 +188,7 @@ fun SearchScreen(
         BrowseFocusInitialTarget(firstResult)
         Box(Modifier.fillMaxSize()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+            val queryStageFocus = remember { FocusRequester() }
             Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
                 PageHeader(focusChain = focusChain, actions = {
                     if (uiState.hasResults) ViewOptionsChip(
@@ -199,7 +202,8 @@ fun SearchScreen(
                     )
                 }) { Text(stringResource(R.string.search_title), style = MaterialTheme.typography.headlineMedium) }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp)
+                        .pageFocusStage(focusChain, PageFocusLevel.SEARCH_TOP, queryStageFocus),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -334,7 +338,7 @@ private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onC
         Text(stringResource(R.string.search_recent), style = MaterialTheme.typography.titleMedium)
         TvChip(text = stringResource(R.string.search_clear_recent), icon = Icons.Filled.Delete, onClick = onClear)
     }
-    LazyRow(state = rememberLazyListState(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyRow(state = rememberLazyListState(), modifier = Modifier.containRowFocusExit(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(recent, key = { it }) { query -> TvChip(text = query, onClick = { onSelect(query) }) }
     }
 }
