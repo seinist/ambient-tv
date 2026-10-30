@@ -849,7 +849,9 @@ internal fun SettingsHub(
                                     if (target == SettingsCategory.WAKE) searchLandingQuery = link.substringBefore('-')
                                 },
                             ) {
-                            LaunchedEffect(current, landingQuery, externalItemKey) {
+                            // The shortcut anchor is one-shot state, not an effect key: consuming it must not
+                            // relaunch focus/scroll and jump away from the requested setting.
+                            LaunchedEffect(current, landingQuery) {
                                 if (!handheld) settlingPageFocus = true
                                 if (current != SettingsCategory.NAV_SOUNDS) withTimeoutOrNull(400) {
                                     snapshotFlow { listState.layoutInfo.totalItemsCount > 0 }.first { it }
