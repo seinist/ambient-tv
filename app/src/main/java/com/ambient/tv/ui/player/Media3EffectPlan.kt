@@ -46,6 +46,7 @@ internal fun media3EffectPlan(
     anime4kAllowed: Boolean = true,
     fsrcnnxAllowed: Boolean = true,
     nnedi3Allowed: Boolean = true,
+    computeAllowed: Boolean = true,
 ): List<Media3Stage> {
     val o = options.normalized()
     if (!o.enabled) return emptyList()
@@ -54,7 +55,8 @@ internal fun media3EffectPlan(
             if ((!heavyScaleAllowed && it in MEDIA3_HEAVY_SCALERS) ||
                 (!anime4kAllowed && it in MEDIA3_ANIME4K_SCALERS) ||
                 (!fsrcnnxAllowed && it in MEDIA3_FSRCNNX_SCALERS) ||
-                (!nnedi3Allowed && it in MEDIA3_NNEDI3_SCALERS)) "catmull_rom" else it
+                (!nnedi3Allowed && it in MEDIA3_NNEDI3_SCALERS) ||
+                (!computeAllowed && it in MEDIA3_NEURAL_COMPUTE_SCALERS)) "catmull_rom" else it
         }
     val downscaler = o.downscaler.takeIf { downscaling && it != "display" }
         ?.let { if ((!heavyDownscaleAllowed && it != "lanczos") ||
@@ -96,7 +98,7 @@ internal fun media3EffectPlan(
  */
 internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCALERS +
     MEDIA3_ANIME4K_SCALERS + MEDIA3_FSRCNNX_SCALERS + MEDIA3_NNEDI3_SCALERS +
-    MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
+    MEDIA3_NEURAL_COMPUTE_SCALERS + MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
 
 /** Media3 antiring controls work only on kernels we own, not native Lanczos/FSR/NIS/RAVU. */
 internal val MEDIA3_ANTIRING_SCALERS: Set<String> = setOf(
@@ -175,7 +177,7 @@ internal fun media3SsimSuperBudgetAllows(
 internal fun media3SuperResRowVisible(options: Media3ImageOptions, upscalerVisible: Boolean): Boolean =
     upscalerVisible && options.normalized().scaler !in
         (setOf("bilinear", "fsr", "nis") + MEDIA3_ANIME4K_SCALERS +
-            MEDIA3_FSRCNNX_SCALERS + MEDIA3_NNEDI3_SCALERS)
+            MEDIA3_FSRCNNX_SCALERS + MEDIA3_NNEDI3_SCALERS + MEDIA3_NEURAL_COMPUTE_SCALERS)
 
 /** True when FSR (RCAS) or NIS replaces the sharpening row (it would otherwise sharpen twice). */
 internal fun media3FsrSharpens(options: Media3ImageOptions, upscalerApplies: Boolean): Boolean =
@@ -188,7 +190,7 @@ internal fun media3ScalerChoices(): List<Pair<String, String>> = VideoImageCatal
 /** Mirror MPV's built-in vs GPU shader groups rather than presenting CNN as a basic kernel. */
 internal val MEDIA3_SHADER_SCALERS: Set<String> =
     MEDIA3_ANIME4K_SCALERS + MEDIA3_FSRCNNX_SCALERS + MEDIA3_NNEDI3_SCALERS +
-        MEDIA3_RAVU_SCALERS + setOf("fsr", "nis")
+        MEDIA3_NEURAL_COMPUTE_SCALERS + MEDIA3_RAVU_SCALERS + setOf("fsr", "nis")
 internal fun media3BuiltinScalerChoices(): List<Pair<String, String>> =
     media3ScalerChoices().filterNot { it.first in MEDIA3_SHADER_SCALERS }
 internal fun media3ShaderScalerChoices(): List<Pair<String, String>> =
