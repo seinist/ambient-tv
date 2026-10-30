@@ -958,6 +958,7 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
         }
     }
     var filePicker by remember { mutableStateOf(false) }
+    var qrScanner by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
     if (confirmRemove) {
         // Focus starts on Cancel so a repeated OK press can't delete the tunnel by accident.
@@ -999,6 +1000,32 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
             onDismiss = { filePicker = false },
         )
     }
+    val hasQrCamera = remember(context) {
+        runCatching {
+            context.getSystemService(android.hardware.camera2.CameraManager::class.java)
+                ?.cameraIdList?.isNotEmpty() == true
+        }.getOrDefault(false)
+    }
+    if (qrScanner) {
+        AppDialog(
+            onDismiss = { qrScanner = false },
+            title = stringResource(R.string.wg_scan_qr),
+            footer = {
+                TvActionButton(
+                    text = stringResource(R.string.action_close),
+                    onClick = { qrScanner = false },
+                )
+            },
+        ) {
+            com.ambient.tv.companion.QrScanner(
+                hint = stringResource(R.string.wg_scan_qr_hint),
+                onDecoded = { config ->
+                    qrScanner = false
+                    viewModel.importWireGuardConfig(config)
+                },
+            )
+        }
+    }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) viewModel.startWireGuard() else viewModel.onWireGuardConsentDenied()
     }
@@ -1034,6 +1061,9 @@ internal fun WireGuardRouteSection(uiState: SettingsUiState, viewModel: Settings
                 )
                 SettingsActionRow {
                     TvActionButton(text = stringResource(R.string.wg_load_file), onClick = { filePicker = true })
+                    if (hasQrCamera) {
+                        TvActionButton(text = stringResource(R.string.wg_scan_qr), onClick = { qrScanner = true })
+                    }
                     TvActionButton(
                         text = stringResource(R.string.wg_save),
                         // The pasted text stays until the import succeeds (the field hides then), so a
