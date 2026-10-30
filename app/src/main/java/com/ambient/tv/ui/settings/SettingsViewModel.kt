@@ -564,6 +564,7 @@ class SettingsViewModel @Inject constructor(
         tvheadendEnabled = appPreferences.tvheadendEnabled,
         tvheadendHost = appPreferences.tvheadendHost,
         tvheadendPort = appPreferences.tvheadendPort.toString(),
+        tvheadendHtspPort = appPreferences.tvheadendHtspPort.toString(),
         tvheadendUseHttps = appPreferences.tvheadendUseHttps,
         tvheadendUsername = appPreferences.tvheadendUsername,
         tvheadendPassword = tokenStore.tvheadendPassword.orEmpty(),
@@ -2606,6 +2607,7 @@ class SettingsViewModel @Inject constructor(
     }
     fun onTvheadendHostChanged(value: String) = _uiState.update { it.copy(tvheadendHost = value) }
     fun onTvheadendPortChanged(value: String) = _uiState.update { it.copy(tvheadendPort = value.filter(Char::isDigit)) }
+    fun onTvheadendHtspPortChanged(value: String) = _uiState.update { it.copy(tvheadendHtspPort = value.filter(Char::isDigit)) }
     fun onTvheadendHttpsChanged(value: Boolean) = _uiState.update { it.copy(tvheadendUseHttps = value) }
     fun onTvheadendUsernameChanged(value: String) = _uiState.update { it.copy(tvheadendUsername = value) }
     fun onTvheadendPasswordChanged(value: String) = _uiState.update { it.copy(tvheadendPassword = value) }
@@ -2640,6 +2642,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.tvheadendEnabled = state.tvheadendEnabled
         appPreferences.tvheadendHost = state.tvheadendHost.trim()
         appPreferences.tvheadendPort = state.tvheadendPort.toIntOrNull() ?: 9981
+        appPreferences.tvheadendHtspPort = state.tvheadendHtspPort.toIntOrNull() ?: 9982
         appPreferences.tvheadendUseHttps = state.tvheadendUseHttps
         appPreferences.tvheadendUsername = state.tvheadendUsername.trim()
         if (state.tvheadendPassword != tokenStore.tvheadendPassword.orEmpty()) appPreferences.tvheadendLoginVerified = false
