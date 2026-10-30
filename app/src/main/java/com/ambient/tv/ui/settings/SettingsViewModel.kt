@@ -430,6 +430,7 @@ class SettingsViewModel @Inject constructor(
         spotifyBitrateKbps = appPreferences.spotifyBitrateKbps,
         spotifyVisualizerModeKey = appPreferences.spotifyVisualizerModeKey,
         spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
+        radioSubmenuKeys = appPreferences.radioSubmenuKeys,
         host = appPreferences.host,
         port = appPreferences.port.toString(),
         plexUseHttps = appPreferences.plexUseHttps,
@@ -1527,6 +1528,12 @@ class SettingsViewModel @Inject constructor(
     fun onTvheadendSubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
         if (key !in AppPreferences.TVH_SUBMENU_KEYS) state else state.copy(tvheadendSubmenuKeys = if (enabled) (state.tvheadendSubmenuKeys + key).distinct() else state.tvheadendSubmenuKeys.filterNot { it == key })
     }
+    fun onRadioSubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
+        if (key !in AppPreferences.RADIO_SUBMENU_KEYS) state else state.copy(
+            radioSubmenuKeys = if (enabled) (state.radioSubmenuKeys + key).distinct()
+            else state.radioSubmenuKeys.filterNot { it == key },
+        )
+    }
     fun onPlexSectionVisibilityChanged(key: String, visible: Boolean) = _uiState.update { state ->
         state.copy(plexHiddenSectionKeys = if (visible) state.plexHiddenSectionKeys - key else state.plexHiddenSectionKeys + key)
     }
@@ -2572,6 +2579,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.spotifyBitrateKbps = state.spotifyBitrateKbps
         appPreferences.spotifyVisualizerModeKey = state.spotifyVisualizerModeKey
         appPreferences.spotifySubmenuKeys = state.spotifySubmenuKeys
+        appPreferences.radioSubmenuKeys = state.radioSubmenuKeys
         appPreferences.plexHiddenSectionKeys = state.plexHiddenSectionKeys
         appPreferences.jellyfinHiddenSectionKeys = state.jellyfinHiddenSectionKeys
         appPreferences.embyHiddenSectionKeys = state.embyHiddenSectionKeys
