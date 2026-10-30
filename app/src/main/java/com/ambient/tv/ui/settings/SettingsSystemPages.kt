@@ -345,21 +345,61 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     }
                 }
                 item(key = "jellyfin-sign-in") {
-                    SettingsActionRow {
-                        TvActionButton(
-                            text = when {
-                                uiState.isSigningInJellyfin -> stringResource(R.string.action_signing_in)
-                                uiState.jellyfinConfigured -> stringResource(R.string.action_sign_out)
-                                else -> stringResource(R.string.action_sign_in)
-                            },
-                            onClick = if (uiState.jellyfinConfigured) viewModel::signOutJellyfin else viewModel::signInJellyfin,
-                            loading = uiState.isSigningInJellyfin,
-                        )
-                        TvActionButton(
-                            text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
-                            onClick = viewModel::testJellyfinConnection,
-                            enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
-                        )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsActionRow {
+                            TvActionButton(
+                                text = when {
+                                    uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null -> stringResource(R.string.action_signing_in)
+                                    uiState.jellyfinConfigured -> stringResource(R.string.action_sign_out)
+                                    else -> stringResource(R.string.action_sign_in)
+                                },
+                                onClick = if (uiState.jellyfinConfigured) viewModel::signOutJellyfin else viewModel::signInJellyfin,
+                                enabled = uiState.jellyfinQuickConnectCode == null,
+                                loading = uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null,
+                            )
+                            if (!uiState.jellyfinConfigured) {
+                                TvActionButton(
+                                    text = if (uiState.jellyfinQuickConnectCode != null) {
+                                        stringResource(R.string.settings_link_cancel)
+                                    } else {
+                                        stringResource(R.string.settings_jellyfin_quick_connect)
+                                    },
+                                    onClick = if (uiState.jellyfinQuickConnectCode != null) {
+                                        viewModel::cancelJellyfinQuickConnect
+                                    } else {
+                                        viewModel::startJellyfinQuickConnect
+                                    },
+                                    loading = uiState.isSigningInJellyfin && uiState.jellyfinQuickConnectCode == null,
+                                )
+                            }
+                            TvActionButton(
+                                text = if (uiState.isTestingJellyfin) stringResource(R.string.settings_test_connection_progress) else stringResource(R.string.settings_reconnect_server),
+                                onClick = viewModel::testJellyfinConnection,
+                                enabled = uiState.jellyfinConfigured, loading = uiState.isTestingJellyfin,
+                            )
+                        }
+                        uiState.jellyfinQuickConnectCode?.let { code ->
+                            AppDialog(
+                                onDismiss = viewModel::cancelJellyfinQuickConnect,
+                                title = stringResource(R.string.settings_jellyfin_quick_connect),
+                                footer = {
+                                    TvActionButton(
+                                        text = stringResource(R.string.settings_link_cancel),
+                                        onClick = viewModel::cancelJellyfinQuickConnect,
+                                    )
+                                },
+                            ) {
+                                Text(
+                                    stringResource(R.string.settings_jellyfin_quick_connect_hint),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    code,
+                                    style = MaterialTheme.typography.displaySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
                     }
                 }
                 item { SettingsPageLink(SettingsCategory.WAKE, "jellyfin-network", R.string.settings_network_link) }
