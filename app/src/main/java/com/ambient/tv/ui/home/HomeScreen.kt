@@ -18,6 +18,7 @@ import com.ambient.tv.ui.common.ExplicitRowScrollSpec
 import com.ambient.tv.ui.common.TvBringIntoViewSpec
 import com.ambient.tv.ui.common.RowColumnFocus
 import com.ambient.tv.ui.common.rowColumnFocusNavigation
+import com.ambient.tv.ui.common.rowColumnFocusWrapRight
 import com.ambient.tv.ui.common.rowColumnFocusTarget
 import androidx.compose.ui.platform.LocalContext
 import com.ambient.tv.ui.common.displayTitle
@@ -740,6 +741,7 @@ internal fun LibraryContent(
                 state = rowListState,
                 modifier = Modifier.onFocusChanged { rowsHaveFocus = it.hasFocus }.then(Modifier
                     .fillMaxSize()
+                    .rowColumnFocusWrapRight(columnFocus)
                     .rowColumnFocusNavigation(
                         columnFocus,
                         scrollToTop = { rowListState.glideToItem(glideWrap, 0) },
@@ -1050,6 +1052,7 @@ private fun HomeLiveTvRow(
                         false
                     }
                     .focusProperties {
+                        onExit = { if (requestedFocusDirection == androidx.compose.ui.focus.FocusDirection.Right) cancelFocusChange() }
                         // Default search into this row picks a visible card at the far end.
                         onEnter = {
                             if (entry?.chosen(rowKey) != true &&
