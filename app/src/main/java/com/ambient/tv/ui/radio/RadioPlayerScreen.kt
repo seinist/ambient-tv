@@ -98,6 +98,7 @@ private fun RadioPlayerContent(
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
     var controlsVisible by rememberPlayerControlsVisible()
+    val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
     val rootFocusRequester = rememberPlayerEngineFocus()
     val playFocusRequester = rememberPlayerPlayFocus()
     val audioSession = BackgroundPlaybackSession.currentAudioSession()
@@ -210,6 +211,17 @@ private fun RadioPlayerContent(
                         )
                     }
                 }
+            }
+
+            if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
+                com.ambient.tv.ui.common.PlayerTouchLayer(
+                    onToggleControls = {
+                        if (panel == UnifiedPlayerPanel.NONE) {
+                            if (!controlsVisible || osd.closing) osd.reveal() else osd.close()
+                        }
+                    },
+                    onTogglePlayback = BackgroundPlaybackSession::userToggle,
+                )
             }
 
             if (metadata != null && metadata.source == "radio") {
