@@ -293,6 +293,32 @@ class TmdbTrailerRepositoryTest {
         assertNull(matchTrailerTitle(listOf(remake, remake.copy(id = 3)), "The Film", 2020))
     }
 
+    @Test fun programmeLandscapeIgnoresPortraitPosters() = runBlocking {
+        tokens.tmdbApiKey = "token"
+        responder = { request -> when {
+            request.url.encodedPath.endsWith("/search/movie") ->
+                """{"results":[{"id":1,"title":"Show","poster_path":"/portrait.jpg","popularity":100.0}]}"""
+            request.url.encodedPath.endsWith("/search/tv") ->
+                """{"results":[{"id":2,"name":"Show","backdrop_path":"/wide.jpg","popularity":4.0}]}"""
+            else -> "{}"
+        } }
+        assertEquals("https://image.tmdb.org/t/p/w780/wide.jpg",
+            repository.landscapeForProgramme("Show", "de-DE").getOrThrow())
+        assertEquals(2, requests.size)
+    }
+
+    @Test fun programmeSuffixMatchesItsSeriesButNotAnUnrelatedTitle() = runBlocking {
+        tokens.tmdbApiKey = "token"
+        responder = { request ->
+            if (request.url.encodedPath.endsWith("/search/tv") && request.url.queryParameter("query") == "Tatort")
+                """{"results":[{"id":3,"name":"Tatort","backdrop_path":"/tatort.jpg"}]}"""
+            else """{"results":[]}"""
+        }
+        assertEquals("https://image.tmdb.org/t/p/w780/tatort.jpg",
+            repository.landscapeForProgramme("Tatort: Die Folge", "de-DE").getOrThrow())
+        assertNull(repository.landscapeForProgramme("Unbekannte Sendung", "de-DE").getOrThrow())
+    }
+
     @Test fun onlyPlayableTrailersAndTeasersSurviveRanking() {
         val official = TrailerVideo("abcdefghijk", site = "YouTube", type = "Trailer", official = true, language = "de")
         val english = official.copy(key = "12345678901", language = "en")
