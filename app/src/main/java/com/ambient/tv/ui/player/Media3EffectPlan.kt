@@ -84,7 +84,12 @@ internal val MEDIA3_HEAVY_SCALERS: Set<String> = setOf("nis") + MEDIA3_RAVU_SCAL
     MEDIA3_KERNELS.filterValues { it.polar || it.taps >= 3 }.keys
 
 /** Media3 antiring controls work only on kernels we own, not native Lanczos/FSR/NIS/RAVU. */
-internal val MEDIA3_ANTIRING_SCALERS: Set<String> = MEDIA3_KERNELS.keys + setOf("bicubic", "catmull_rom")
+internal val MEDIA3_ANTIRING_SCALERS: Set<String> = setOf(
+    "catmull_rom", "mitchell", "robidoux", "robidouxsharp",
+    "spline16", "spline36", "spline64", "sinc", "ginseng",
+    "ewa_lanczos", "ewa_lanczossharp", "ewa_lanczos4sharpest", "ewa_lanczossoft",
+    "ewa_robidoux", "ewa_robidouxsharp",
+)
 internal val MEDIA3_SIGMOID_SCALERS: Set<String> = MEDIA3_KERNELS.keys
 /** The separable downsampler limits source cost and maximum support; other cases use native Lanczos. */
 internal const val MEDIA3_DOWNSCALE_MAX_SOURCE_PIXEL_RATE = 3840L * 2160L * 30L

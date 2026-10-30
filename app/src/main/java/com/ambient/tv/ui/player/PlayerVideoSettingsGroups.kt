@@ -173,7 +173,7 @@ internal fun PlayerVideoSettingsGroups(
                 icon = videoSectionIcon(key),
                 title = stringResource(title),
                 value = videoSectionSummary(key, handle, rendererKey, media3Processing?.options,
-                    upscalerApplies = visible?.upscaler == true || visible?.media3Processing == true ||
+                    upscalerApplies = visible?.upscaler == true ||
                         (handle is MpvPlaybackController && handle.supportsGpuFilters),
                     downscalerApplies = visible?.downscaler == true,
                     motionSummary = motionSummary, media3FiltersUnavailable = media3FiltersUnavailable != null),
