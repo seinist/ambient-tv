@@ -66,6 +66,13 @@ import com.ambient.tv.spotify.SpotifyEntityType
 import com.ambient.tv.tvheadend.domain.TvhChannel
 import com.ambient.tv.tvheadend.domain.TvhDvrEntry
 import com.ambient.tv.tvheadend.domain.TvhEpgEvent
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
+import com.ambient.tv.ui.common.BrowseFocusRow
+import com.ambient.tv.ui.common.RegisterBrowseFocusSlots
+import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.SoftViewChange
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.activateOnTvKey
@@ -166,6 +173,17 @@ fun SearchScreen(
     }
     BackHandler(enabled = showOptions) { showOptions = false }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
+        BrowseFocusContentIdentity(listOf(uiState.query, uiState.selectedSources, uiState.viewMode))
+        val firstMedia = listOf(uiState.results, uiState.jellyfinResults, uiState.embyResults, uiState.trailerResults)
+            .firstNotNullOfOrNull { searchMediaGroups(it).firstOrNull()?.second?.firstOrNull()?.ratingKey }
+        val firstResult = firstMedia
+            ?: uiState.tvheadendResults.channels.firstOrNull()?.let { "search:tvh-channel:${it.sourceId}:${it.uuid}" }
+            ?: uiState.tvheadendResults.programs.firstOrNull()?.let { "search:tvh-program:${it.sourceId}:${it.eventId}" }
+            ?: uiState.tvheadendResults.recordings.firstOrNull()?.let { "search:tvh-recording:${it.sourceId}:${it.uuid}" }
+            ?: uiState.youtubeResults.firstOrNull()?.let { "search:youtube:${it.videoId}" }
+            ?: uiState.spotifyResults.firstOrNull()?.let { "search:spotify:${it.type}:${it.id}" }
+            ?: uiState.radioResults.firstOrNull()?.let { "search:radio:${it.id}" }
+        BrowseFocusInitialTarget(firstResult)
         Box(Modifier.fillMaxSize()) {
             val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
             Column(modifier = Modifier.fillMaxSize().padding(start = screenGutter(), end = screenGutter(), top = com.ambient.tv.ui.common.pageHeaderTop(28.dp))) {
@@ -777,6 +795,54 @@ private fun SearchList(
     }
 
     val listState = rememberLazyListState()
+    // Include non-focusable headers/status rows in physical lazy indices.
+    val focusSlots = buildList {
+        var index = 0
+        fun status(source: SearchSourceState) {
+            if (source == SearchSourceState.LOADING || source == SearchSourceState.ERROR || source == SearchSourceState.PARTIAL) index++
+        }
+        fun mediaGroups(groups: List<Pair<Int, List<MediaItem>>>) {
+            groups.forEach { (_, items) ->
+                index++ // Group heading
+                items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, it.ratingKey, true), index++)) }
+            }
+        }
+        status(state.plexState); mediaGroups(plexGroups)
+        status(state.jellyfinState); mediaGroups(jellyfinGroups)
+        status(state.embyState); mediaGroups(embyGroups)
+        status(state.trailerState); mediaGroups(trailerGroups)
+        status(state.tvheadendState)
+        state.liveTvSources.values.forEach { source ->
+            state.tvheadendResults.channels.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+                index++
+                items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-channel:${it.sourceId}:${it.uuid}", true), index++)) }
+            }
+            state.tvheadendResults.programs.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+                index++
+                items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-program:${it.sourceId}:${it.eventId}", true), index++)) }
+            }
+            state.tvheadendResults.recordings.filter { it.sourceId == source.id }.takeIf { it.isNotEmpty() }?.let { items ->
+                index++
+                items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:tvh-recording:${it.sourceId}:${it.uuid}", true), index++)) }
+            }
+        }
+        status(state.youtubeState)
+        if (state.youtubeResults.isNotEmpty()) {
+            index++
+            state.youtubeResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:youtube:${it.videoId}", true), index++)) }
+        }
+        status(state.spotifyState)
+        spotifyGroups.forEach { (_, items) ->
+            index++
+            items.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:spotify:${it.type}:${it.id}", true), index++)) }
+        }
+        status(state.radioState)
+        if (state.radioResults.isNotEmpty()) {
+            index++
+            state.radioResults.forEach { add(BrowseFocusSlot(BrowseFocusKey(null, "search:radio:${it.id}", true), index++)) }
+        }
+    }
+    RegisterBrowseFocusSlots(listState, focusSlots)
     LazyColumn(
         allowUpExit = true,
         state = listState,
@@ -851,6 +917,7 @@ private fun SearchList(
                     subtitle = state.liveTvSources[channel.sourceId]?.name,
                     imageHeaders = state.liveTvHeaders[channel.sourceId].orEmpty(),
                     onClick = { onTvheadendChannelClick(channel) },
+                    focusKey = "search:tvh-channel:${channel.sourceId}:${channel.uuid}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "tvh-channels" && channel == state.tvheadendResults.channels.firstOrNull(),
                 )
             }
@@ -864,6 +931,7 @@ private fun SearchList(
                     subtitle = "${state.liveTvSources[event.sourceId]?.name.orEmpty()} · " + stringResource(R.string.search_program_meta, event.channelName, formatSearchDateTime(event.startEpochSeconds)),
                     imageHeaders = state.liveTvHeaders[event.sourceId].orEmpty(),
                     onClick = { onTvheadendProgramClick(event) },
+                    focusKey = "search:tvh-program:${event.sourceId}:${event.eventId}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "tvh-programs" && event == state.tvheadendResults.programs.firstOrNull(),
                 )
             }
@@ -877,6 +945,7 @@ private fun SearchList(
                     subtitle = "${state.liveTvSources[recording.sourceId]?.name.orEmpty()} · " + stringResource(R.string.search_recording_meta, recording.channelName, formatSearchDateTime(recording.startEpochSeconds)),
                     imageHeaders = state.liveTvHeaders[recording.sourceId].orEmpty(),
                     onClick = { onTvheadendRecordingClick(recording) },
+                    focusKey = "search:tvh-recording:${recording.sourceId}:${recording.uuid}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "tvh-recordings" && recording == state.tvheadendResults.recordings.firstOrNull(),
                 )
             }
@@ -892,6 +961,7 @@ private fun SearchList(
                     title = item.title,
                     subtitle = item.author ?: stringResource(R.string.search_videos),
                     onClick = { onYouTubeClick(item.videoId) },
+                    focusKey = "search:youtube:${item.videoId}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "youtube" && item == state.youtubeResults.firstOrNull(),
                 )
             }
@@ -908,6 +978,7 @@ private fun SearchList(
                     subtitle = item.subtitle,
                     squareArtwork = true,
                     onClick = { onSpotifyClick(item) },
+                    focusKey = "search:spotify:${item.type}:${item.id}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "spotify" && groupIndex == 0 && item == groupItems.firstOrNull(),
                 )
             }
@@ -922,6 +993,7 @@ private fun SearchList(
                     subtitle = radioStationSubtitle(station),
                     squareArtwork = true,
                     onClick = { onRadioClick(station) },
+                    focusKey = "search:radio:${station.id}",
                     requestInitialFocus = requestInitialResultFocus && firstExternalGroup == "radio" && station == state.radioResults.firstOrNull(),
                 )
             }
@@ -969,6 +1041,7 @@ private fun SearchMediaListItem(
         shape = ClickableSurfaceDefaults.shape(shape = rowShape),
         modifier = initialFocusModifier(requestInitialFocus)
             .fillMaxWidth()
+            .browseFocusTarget(item.ratingKey)
             .mediaFocusMotion(isFocused, focusedScale = 1.012f)
             .activateOnTvKey(onClick = onClick)
             .bringFocusedContextIntoView()
@@ -1009,6 +1082,7 @@ private fun ExternalSearchListItem(
     squareArtwork: Boolean = false,
     onClick: () -> Unit,
     requestInitialFocus: Boolean = false,
+    focusKey: String,
 ) {
     var focused by remember(title, imageUrl) { mutableStateOf(false) }
     val rowShape = RoundedCornerShape(10.dp)
@@ -1017,7 +1091,7 @@ private fun ExternalSearchListItem(
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = ClickableSurfaceDefaults.shape(shape = rowShape),
-        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged { focused = it.isFocused },
+        modifier = initialFocusModifier(requestInitialFocus).fillMaxWidth().browseFocusTarget(focusKey).mediaFocusMotion(focused, focusedScale = 1.012f).activateOnTvKey(onClick = onClick).bringFocusedContextIntoView().onFocusChanged { focused = it.isFocused },
     ) {
         Row(
             Modifier.fillMaxWidth()
