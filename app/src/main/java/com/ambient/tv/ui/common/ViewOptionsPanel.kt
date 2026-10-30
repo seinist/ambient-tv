@@ -73,6 +73,8 @@ fun ViewOptionsPanel(
     filters: List<PanelOption> = emptyList(), selectedFilter: String = "", onFilter: (String) -> Unit = {},
     filterGroups: List<PanelOptionGroup> = emptyList(), onFilterGroup: (String, String) -> Unit = { _, _ -> },
     filtersActive: Boolean = false, onResetFilters: (() -> Unit)? = null,
+    /** Fixed-layout pages can reuse just the density controls, without a view selector. */
+    densityPreview: ViewPreview? = null,
     extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
     val focus = LocalFilterFocusState.current
@@ -140,7 +142,7 @@ fun ViewOptionsPanel(
                 }
             }
         }
-        val preview = views.firstOrNull { it.key == selectedView }?.preview
+        val preview = views.firstOrNull { it.key == selectedView }?.preview ?: densityPreview
         if (showDensity && preview != null) {
             RightPanelSectionTitle(stringResource(R.string.library_layout_density))
             if (preview in setOf(ViewPreview.LIST, ViewPreview.INFO_LIST, ViewPreview.POSTER_LIST, ViewPreview.POSTER_INFO_LIST)) {

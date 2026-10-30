@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,10 +34,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -54,7 +58,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
-import com.ambient.tv.data.radio.radioLanguageDisplayName
+import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -73,10 +77,18 @@ import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
+import com.ambient.tv.ui.common.RegisterBrowseFocusList
+import com.ambient.tv.ui.common.browseFocusTarget
+import com.ambient.tv.ui.common.rememberBrowseGridState
+import com.ambient.tv.ui.common.rememberBrowseListState
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
+import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
@@ -84,7 +96,7 @@ import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.theme.screenGutter
-import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun RadioScreen(
@@ -105,25 +117,105 @@ fun RadioScreen(
     LaunchedEffect(viewModel, initialSectionKey) {
         viewModel.enter(RadioSection.fromKey(initialSectionKey))
     }
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(state.contentReady && !state.loading)
 
-    BackHandler(enabled = showViewOptions) { showViewOptions = false }
+    val focusScope = state.focusScope()
+    val showingFacets = state.isFacetOverview()
+    val locale = LocalContext.current.resources.configuration.locales[0]
+    // Alphabetical order uses the localized display names, not raw Radio Browser codes.
+    val sortedFacets = remember(state.section, state.facets, locale) {
+        radioAlphabetFacets(state.section, state.facets, locale)
+    }
+    val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
+    val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    val effectiveViewMode = state.effectiveViewMode()
+    val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
+    val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
+    // Hold the initial selection stable while browsing: paging and metadata updates must not
+    // jump the list back to a previously focused card.
+    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady) {
+        if (!state.contentReady) null
+        else radioInitialFocusId(
+            viewModel.lastFocusedContent(focusScope),
+            playingStationId.takeUnless { showingFacets },
+            contentIds,
+        )
+    }
+    var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
+    var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
+    val gridState = rememberBrowseGridState()
+    val listState = rememberBrowseListState()
+    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
+    val initialFocusRequester = remember(focusScope, effectiveViewMode) { FocusRequester() }
+    val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
+    val facetListFocus = remember(focusScope) { FocusRequester() }
+    var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    val scrollScope = rememberCoroutineScope()
+    val visibleLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode), restoreInitialTarget = true)
+    if (state.contentReady && contentIds.isNotEmpty()) {
+        BrowseFocusInitialTarget(initialContentId)
+        if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
+        else RegisterBrowseFocusList(listState, contentIds)
+    }
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady) {
+        if (!state.contentReady || initialContentId == null) return@LaunchedEffect
+        val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
+        if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        else listState.scrollToItem(index)
+    }
+    // A facet opens another dataset inside the same destination. The sidebar's entry handler
+    // only runs on route navigation, so hand focus explicitly to its newly loaded content.
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
+        if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
+        val targetId = initialContentId
+        val index = targetId?.let(contentIds::indexOf)?.takeIf { it >= 0 }
+        if (index == null) {
+            pendingContentFocus = null
+            return@LaunchedEffect
+        }
+        if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+        else listState.scrollToItem(index)
+        repeat(6) {
+            withFrameNanos { }
+            if (runCatching { initialFocusRequester.requestFocus() }.getOrDefault(false)) {
+                pendingContentFocus = null
+                return@LaunchedEffect
+            }
+        }
+        pendingContentFocus = null
+    }
+    val selectFacet: (RadioFacet) -> Unit = { facet ->
+        pendingContentFocus = RadioFocusScope(state.section, facet.id, "")
+        viewModel.selectFacet(facet)
+    }
+    val clearFacet: () -> Unit = {
+        pendingContentFocus = RadioFocusScope(state.section, null, "")
+        viewModel.clearFacet()
+    }
+    val submitSearch: () -> Unit = {
+        val query = state.query.trim()
+        if (query.length >= 2) pendingContentFocus = RadioFocusScope(state.section, state.selectedFacet?.id, query)
+        viewModel.submitSearch()
+    }
+    val clearSearch: () -> Unit = {
+        pendingContentFocus = RadioFocusScope(state.section, state.selectedFacet?.id, "")
+        viewModel.clearSearch()
+    }
+    val closeViewOptions: () -> Unit = {
+        showViewOptions = false
+        if (focusAfterViewOptions) pendingContentFocus = focusScope
+        focusAfterViewOptions = false
+    }
+    BackHandler(enabled = showViewOptions) { closeViewOptions() }
     BackHandler(enabled = !showViewOptions && searchVisible) {
-        if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
+        if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
         showSearch = false
     }
-    BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet != null) { viewModel.clearFacet() }
+    BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet != null) { clearFacet() }
     if (onBack != null) {
         BackHandler(enabled = !showViewOptions && !searchVisible && state.selectedFacet == null) { onBack() }
-    }
-
-    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
-
-    LaunchedEffect(state.section, state.selectedFacet?.id, state.submittedQuery, state.viewMode) {
-        runCatching { if (gridState.firstVisibleItemIndex != 0) gridState.scrollToItem(0) }
-        runCatching { if (listState.firstVisibleItemIndex != 0) listState.scrollToItem(0) }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -202,7 +294,7 @@ fun RadioScreen(
                     TvChip(
                         text = stringResource(R.string.radio_browse_back, radioSectionLabel(state.section)),
                         icon = Icons.AutoMirrored.Filled.ArrowBack,
-                        onClick = viewModel::clearFacet,
+                        onClick = clearFacet,
                     )
                     Text(
                         radioFacetLabel(state.section, selectedFacet),
@@ -227,23 +319,19 @@ fun RadioScreen(
                     )
                     TvActionButton(
                         text = stringResource(R.string.action_search),
-                        onClick = viewModel::submitSearch,
+                        onClick = submitSearch,
                         enabled = state.query.trim().length >= 2,
                     )
                     PlayerIconButton(
                         Icons.Filled.Close,
                         stringResource(R.string.action_close),
                         {
-                            if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) viewModel.clearSearch()
+                            if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
                             showSearch = false
                         },
                     )
                 }
             }
-
-            val showingFacets = state.section.isFacetSection &&
-                state.selectedFacet == null &&
-                state.submittedQuery.isBlank()
 
             when {
                 state.loading -> com.ambient.tv.ui.common.SkeletonRow(
@@ -258,34 +346,50 @@ fun RadioScreen(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                showingFacets -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
-                    if (state.viewMode == RadioViewMode.GRID) {
-                        TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .overlayLazyGridScrollbar(gridState)
-                                .focusGroup(),
-                            state = gridState,
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                        ) {
-                            items(state.facets, key = { it.id }) { facet ->
-                                RadioFacetTile(
-                                    section = state.section,
-                                    facet = facet,
-                                    onClick = { viewModel.selectFacet(facet) },
-                                )
-                            }
-                        }
-                    } else {
+                showingFacets -> Row(
+                    Modifier.fillMaxSize()
+                        .pageContentUp(focusChain)
+                        .focusGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    // Genres, countries and languages are text-only: one consistent list,
+                    // regardless of the remembered grid/list choice for actual stations.
+                    Box(
+                        Modifier.weight(1f).fillMaxSize()
+                            .focusRequester(facetListFocus)
+                            .focusGroup(),
+                    ) {
                         RadioFacetList(
-                            section = state.section,
-                            facets = state.facets,
+                            facets = sortedFacets,
                             listRows = state.listRows,
                             state = listState,
-                            onClick = viewModel::selectFacet,
+                            onClick = selectFacet,
+                            onFocused = { viewModel.onFacetFocused(it.id) },
+                            initialFocusId = initialContentId,
+                            initialFocusRequester = initialFocusRequester,
+                            alphabetJumpId = alphabetJumpTargetId,
+                            alphabetReturnRequester = alphabetReturnRequester,
+                        )
+                    }
+                    if (alphabetLetters.size > 5) {
+                        // Shared component already used by the main library: no new A-Z widget.
+                        AlphabetBar(
+                            letters = alphabetLetters,
+                            selected = visibleLetter,
+                            onSelect = { letter ->
+                                val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
+                                    ?: return@AlphabetBar
+                                alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
+                                scrollScope.launch { listState.scrollToItem(index) }
+                            },
+                            gridFocus = facetListFocus,
+                            onReturnToContent = {
+                                val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
+                                if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
+                                    runCatching { facetListFocus.requestFocus() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxHeight(),
                         )
                     }
                 }
@@ -300,6 +404,7 @@ fun RadioScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .overlayLazyGridScrollbar(gridState)
+                                .pageContentUp(focusChain)
                                 .focusGroup(),
                             state = gridState,
                             contentPadding = PaddingValues(bottom = 40.dp),
@@ -309,6 +414,7 @@ fun RadioScreen(
                             itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
                                 RadioStationTile(
                                     station = station,
+                                    modifier = if (station.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
                                     playing = playback.metadata?.source == "radio" &&
                                         playback.metadata?.mediaId == station.id &&
                                         playback.wantsToPlay,
@@ -338,6 +444,9 @@ fun RadioScreen(
                             state = listState,
                             onClick = { station -> viewModel.play(station, onOpenPlayer) },
                             onFocused = { station -> viewModel.onStationFocused(station.id) },
+                            initialFocusId = initialContentId,
+                            initialFocusRequester = initialFocusRequester,
+                            modifier = Modifier.pageContentUp(focusChain),
                         )
                     }
                 }
@@ -348,17 +457,22 @@ fun RadioScreen(
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
             Box(Modifier.align(Alignment.TopEnd)) {
                 ViewOptionsPanel(
-                    views = listOf(
+                    views = if (showingFacets) emptyList() else listOf(
                         ViewOption(RadioViewMode.GRID.name, stringResource(R.string.library_view_grid), ViewPreview.GRID),
                         ViewOption(RadioViewMode.LIST.name, stringResource(R.string.library_view_list), ViewPreview.LIST),
                     ),
-                    selectedView = state.viewMode.name,
-                    onView = { viewModel.selectViewMode(RadioViewMode.valueOf(it)) },
+                    selectedView = effectiveViewMode.name,
+                    densityPreview = if (showingFacets) ViewPreview.LIST else null,
+                    onView = {
+                        val mode = RadioViewMode.valueOf(it)
+                        if (mode != state.viewMode) focusAfterViewOptions = true
+                        viewModel.selectViewMode(mode)
+                    },
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
                     onGridColumns = viewModel::setGridColumns,
                     onListRows = viewModel::setListRows,
-                    onClose = { showViewOptions = false },
+                    onClose = closeViewOptions,
                 )
             }
         }
@@ -385,22 +499,8 @@ private fun radioSectionLabel(section: RadioSection): String = stringResource(
 )
 
 @Composable
-private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String = when (section) {
-    RadioSection.COUNTRIES -> runCatching {
-        Locale.Builder()
-            .setRegion(facet.id)
-            .build()
-            .getDisplayCountry(Locale.getDefault())
-            .takeIf(String::isNotBlank)
-    }.getOrNull() ?: facet.name
-    RadioSection.LANGUAGES -> {
-        val displayLocale = LocalContext.current.resources.configuration.locales[0]
-        radioLanguageDisplayName(facet.languageCode, facet.name, displayLocale)
-            ?: facet.name.replaceFirstChar { it.titlecase(displayLocale) }
-    }
-    RadioSection.GENRES -> radioGenreDisplayName(facet.name)
-    else -> facet.name
-}
+private fun radioFacetLabel(section: RadioSection, facet: RadioFacet): String =
+    radioFacetDisplayName(section, facet, LocalContext.current.resources.configuration.locales[0])
 
 internal fun radioGenreDisplayName(raw: String): String {
     val compact = raw.trim().replace(Regex("\\s+"), " ")
@@ -436,101 +536,71 @@ internal fun radioGenreDisplayName(raw: String): String {
 }
 
 @Composable
-private fun RadioFacetTile(
-    section: RadioSection,
-    facet: RadioFacet,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(10.dp)
-    Surface(
-        onClick = onClick,
-        colors = transparentSurfaceColors(),
-        scale = noSurfaceScale(),
-        shape = ClickableSurfaceDefaults.shape(shape = shape),
-        modifier = Modifier
-            .fillMaxWidth()
-            .mediaFocusMotion(focused)
-            .activateOnTvKey(onClick = onClick)
-            .onFocusChanged { focused = it.isFocused },
-    ) {
-        Column(
-            Modifier
-                .background(
-                    if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .14f)
-                    else MaterialTheme.colorScheme.surface.copy(alpha = .72f),
-                    shape,
-                )
-                .border(
-                    2.dp,
-                    if (focused) MaterialTheme.colorScheme.primary
-                    else Color.White.copy(alpha = .08f),
-                    shape,
-                )
-                .padding(horizontal = 14.dp, vertical = 18.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                radioFacetLabel(section, facet),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                stringResource(R.string.radio_station_count, facet.stationCount),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
 private fun RadioFacetList(
-    section: RadioSection,
-    facets: List<RadioFacet>,
+    facets: List<RadioAlphabetFacet>,
     listRows: Int,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioFacet) -> Unit,
+    onFocused: (RadioFacet) -> Unit,
+    initialFocusId: String?,
+    initialFocusRequester: FocusRequester,
+    alphabetJumpId: String?,
+    alphabetReturnRequester: FocusRequester,
+    modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
+        focusActionsOnRight = false, // D-pad Right enters the shared AlphabetBar, not page actions.
+        modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
     ) {
-        lazyItems(facets, key = { it.id }) { facet ->
+        lazyItems(facets, key = { it.facet.id }) { entry ->
+            val facet = entry.facet
             var focused by remember(facet.id) { mutableStateOf(false) }
             val shape = RoundedCornerShape(10.dp)
+            val focusModifier = when (facet.id) {
+                alphabetJumpId -> Modifier.focusRequester(alphabetReturnRequester)
+                initialFocusId -> Modifier.focusRequester(initialFocusRequester)
+                else -> Modifier
+            }
             Surface(
                 onClick = { onClick(facet) },
                 colors = transparentSurfaceColors(),
                 scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = Modifier
+                modifier = focusModifier
                     .fillMaxWidth()
+                    .browseFocusTarget(facet.id)
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(facet) }
                     .bringFocusedContextIntoView()
-                    .onFocusChanged { focused = it.isFocused },
+                    .onFocusChanged {
+                        focused = it.isFocused
+                        if (it.isFocused) onFocused(facet)
+                    },
             ) {
                 Row(
                     Modifier
+                        .fillMaxWidth()
                         .background(if (focused) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent, shape)
                         .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f), shape)
-                        .padding(horizontal = 14.dp, vertical = 12.dp * rowScale),
+                        .padding(10.dp * rowScale),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MarqueeTitle(radioFacetLabel(section, facet), focused = focused, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            stringResource(R.string.radio_station_count, facet.stationCount),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    // Same geometry, accent and focus styling as the radio station list.
+                    // Text-only facets place their station count in the trailing metadata slot.
+                    Column(Modifier.weight(1f)) {
+                        MarqueeTitle(entry.title, focused = focused, style = MaterialTheme.typography.titleMedium)
                     }
+                    Text(
+                        stringResource(R.string.radio_station_count, facet.stationCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -583,6 +653,7 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier) {
 @Composable
 private fun RadioStationTile(
     station: RadioStation,
+    modifier: Modifier = Modifier,
     playing: Boolean,
     loading: Boolean,
     favorite: Boolean,
@@ -600,8 +671,9 @@ private fun RadioStationTile(
             colors = transparentSurfaceColors(),
             scale = noSurfaceScale(),
             shape = ClickableSurfaceDefaults.shape(shape = shape),
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
+                .browseFocusTarget(station.id)
                 .mediaFocusMotion(focused)
                 .activateOnTvKey(onClick = onClick)
                 .onFocusChanged {
@@ -677,11 +749,14 @@ private fun RadioStationList(
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
+    initialFocusId: String?,
+    initialFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -695,8 +770,9 @@ private fun RadioStationList(
                 colors = transparentSurfaceColors(),
                 scale = noSurfaceScale(),
                 shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = Modifier
+                modifier = (if (station.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
                     .fillMaxWidth()
+                    .browseFocusTarget(station.id)
                     .mediaFocusMotion(focused, focusedScale = 1.012f)
                     .activateOnTvKey { onClick(station) }
                     .bringFocusedContextIntoView()
