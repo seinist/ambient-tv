@@ -53,6 +53,7 @@ data class SidebarUiState(
     /** Section behind SmartTube's root route (see [Destinations.youtubeSection]). */
     val youtubeStartFeedKey: String = "home",
     val spotifySubmenuKeys: List<String> = emptyList(),
+    val radioSubmenuKeys: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
     val tvheadendSubmenuKeys: List<String> = emptyList(),
     val settingsShortcutHidden: Set<String> = emptySet(),
     /** Per-system entry order / dividers from the level editor (system id -> entry ids). */
@@ -106,6 +107,7 @@ class SidebarViewModel @Inject constructor(
             tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
             tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
             spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
+            radioSubmenuKeys = appPreferences.radioSubmenuKeys,
             tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
             settingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,
             dividersAfter = appPreferences.sidebarDividersAfter,
@@ -268,6 +270,7 @@ class SidebarViewModel @Inject constructor(
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
                 spotifySubmenuKeys = appPreferences.spotifySubmenuKeys,
+                radioSubmenuKeys = appPreferences.radioSubmenuKeys,
                 tvheadendSubmenuKeys = appPreferences.tvheadendSubmenuKeys,
                 settingsShortcutHidden = appPreferences.sidebarSettingsShortcutHidden,
                 dividersAfter = appPreferences.sidebarDividersAfter,
