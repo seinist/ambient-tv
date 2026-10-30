@@ -618,7 +618,9 @@ private fun Media3VideoGroups(player: ExoPlayer, section: String) {
             return
         }
         Media3FilterRows(options, fsrSharpens = media3FsrSharpens(options, visibility.upscaler),
-            deband = visibility.deband, sharpen = visibility.shaders, change = ::change)
+            deband = visibility.deband, sharpen = visibility.shaders,
+            superResolutionVisible = media3SuperResRowVisible(options, visibility.upscaler),
+            change = ::change)
         if (processing.filtersOverBudget) ImageHint(stringResource(R.string.image_media3_filters_over_budget))
         return
     }
@@ -824,7 +826,7 @@ internal fun videoSectionChanges(key: String, mpv: MpvImageOptions?, vlc: VlcIma
             ?: vlc?.let { listOf(it.softwareProcessing != v.softwareProcessing, it.deband != v.deband, it.denoise != v.denoise).count { c -> c } }
             ?: media3?.let { listOf(it.deband != d.deband, it.sharpening != d.sharpening,
                 it.filmGrain != d.filmGrain, it.denoise != d.denoise,
-                it.deblock != d.deblock).count { c -> c } } ?: 0
+                it.deblock != d.deblock, it.superResolution != d.superResolution).count { c -> c } } ?: 0
         "motion" -> if ((mpv?.svpMode ?: vlc?.svpMode ?: "off") != "off") 1 else 0
         "color" -> mpv?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
             ?: vlc?.let { listOf(it.brightness, it.contrast, it.saturation, it.gamma).count { x -> x != 0 } }
