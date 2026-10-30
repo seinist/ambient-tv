@@ -202,17 +202,44 @@ class SidebarViewModel @Inject constructor(
                 appPreferences.changes(),
                 tokens.tmdbCredentialVersion,
                 com.ambient.tv.data.local.LoginStateSignal.generation,
-                snapshot = ::systemAvailability,
+                snapshot = ::sidebarRefreshSnapshot,
             ).collect { refresh() }
         }
     }
 
-    private fun systemAvailability() = listOf(
-        appPreferences.isConfigured, appPreferences.isJellyfinConfigured, appPreferences.isEmbyConfigured,
-        appPreferences.isTvheadendConfigured, appPreferences.hasTvheadendEndpoint, appPreferences.youtubeEnabled, appPreferences.spotifyEnabled,
+    /**
+     * Everything that can change the visible sidebar or one of its provider pages. Preference
+     * writes are deliberately de-duplicated here so unrelated settings never trigger expensive
+     * provider refreshes, while menu configuration changes can no longer get stuck until the next
+     * system activation.
+     */
+    private fun sidebarRefreshSnapshot(): List<Any?> = listOf(
+        appPreferences.isConfigured,
+        appPreferences.isJellyfinConfigured,
+        appPreferences.isEmbyConfigured,
+        appPreferences.isTvheadendConfigured,
+        appPreferences.hasTvheadendEndpoint,
+        appPreferences.youtubeEnabled,
+        appPreferences.spotifyEnabled,
         appPreferences.radioEnabled,
         appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
-        appPreferences.filesEnabled, appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
+        appPreferences.filesEnabled,
+        appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
+        // Keep explicit auth completions observable even when every preference-derived boolean
+        // stayed the same (for example SmartTube signing in while it was already enabled).
+        com.ambient.tv.data.local.LoginStateSignal.generation.value,
+        appPreferences.sidebarSystemOrder,
+        appPreferences.youtubeFeedKeys,
+        appPreferences.youtubeStartFeedKey,
+        appPreferences.spotifySubmenuKeys,
+        appPreferences.tvheadendSubmenuKeys,
+        appPreferences.sidebarSettingsShortcutHidden,
+        appPreferences.sidebarDividersAfter,
+        appPreferences.sidebarEntryOrder,
+        appPreferences.sidebarEntryDividers,
+        appPreferences.plexHiddenSectionKeys,
+        appPreferences.jellyfinHiddenSectionKeys,
+        appPreferences.embyHiddenSectionKeys,
     )
 
     private fun networkFileSourcesFromStore(): List<FileSource> =

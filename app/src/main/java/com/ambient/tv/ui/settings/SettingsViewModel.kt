@@ -963,10 +963,15 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(statusMessage = context.getString(R.string.settings_recent_tv_cleared)) }
     }
 
-    fun onPlexEnabledChanged(value: Boolean) = _uiState.update { current ->
-        current.copy(plexEnabled = value)
+    fun onPlexEnabledChanged(value: Boolean) {
+        appPreferences.plexEnabled = value
+        _uiState.update { it.copy(plexEnabled = value) }
     }
-    fun onJellyfinEnabledChanged(value: Boolean) = _uiState.update { it.copy(jellyfinEnabled = value) }
+
+    fun onJellyfinEnabledChanged(value: Boolean) {
+        appPreferences.jellyfinEnabled = value
+        _uiState.update { it.copy(jellyfinEnabled = value) }
+    }
     fun onJellyfinHostChanged(value: String) = _uiState.update { it.copy(jellyfinHost = value) }
     fun onJellyfinPortChanged(value: String) = _uiState.update { it.copy(jellyfinPort = value.filter(Char::isDigit)) }
     fun onJellyfinHttpsChanged(value: Boolean) = _uiState.update { it.copy(jellyfinUseHttps = value) }
@@ -1001,6 +1006,7 @@ class SettingsViewModel @Inject constructor(
             ).fold(
                 onSuccess = {
                     notifyLogin("jellyfin", NoticePhase.SUCCESS, it.name, state.jellyfinUsername)
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
                     jellyfinRepository.invalidateCaches()
                     val sections = jellyfinRepository.getLibrarySections().getOrDefault(emptyList())
                     if (appPreferences.homeRows.none { row -> row.system == HomeRowDefinition.SYSTEM_JELLYFIN }) {
@@ -1051,6 +1057,7 @@ class SettingsViewModel @Inject constructor(
             )
         }
         notifyLogin("jellyfin", NoticePhase.INFO, active?.name)
+        com.ambient.tv.data.local.LoginStateSignal.changed()
         refreshSavedValues()
     }
 
@@ -1183,7 +1190,10 @@ class SettingsViewModel @Inject constructor(
     }
 
 
-    fun onEmbyEnabledChanged(value: Boolean) = _uiState.update { it.copy(embyEnabled = value) }
+    fun onEmbyEnabledChanged(value: Boolean) {
+        appPreferences.embyEnabled = value
+        _uiState.update { it.copy(embyEnabled = value) }
+    }
     fun onEmbyHostChanged(value: String) = _uiState.update { it.copy(embyHost = value) }
     fun onEmbyPortChanged(value: String) = _uiState.update { it.copy(embyPort = value.filter(Char::isDigit)) }
     fun onEmbyHttpsChanged(value: Boolean) = _uiState.update { it.copy(embyUseHttps = value) }
@@ -1218,6 +1228,7 @@ class SettingsViewModel @Inject constructor(
             ).fold(
                 onSuccess = {
                     notifyLogin("emby", NoticePhase.SUCCESS, it.name, state.embyUsername)
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
                     embyRepository.invalidateCaches()
                     val sections = embyRepository.getLibrarySections().getOrDefault(emptyList())
                     if (appPreferences.homeRows.none { row -> row.system == HomeRowDefinition.SYSTEM_EMBY }) {
@@ -1268,6 +1279,7 @@ class SettingsViewModel @Inject constructor(
             )
         }
         notifyLogin("emby", NoticePhase.INFO, active?.name)
+        com.ambient.tv.data.local.LoginStateSignal.changed()
         refreshSavedValues()
     }
 
@@ -1405,6 +1417,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onFilesEnabledChanged(value: Boolean) {
+        appPreferences.filesEnabled = value
         _uiState.update { it.copy(filesEnabled = value) }
     }
 
@@ -1415,6 +1428,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun onYoutubeEnabledChanged(value: Boolean) {
+        appPreferences.youtubeEnabled = value
         _uiState.update { it.copy(youtubeEnabled = value) }
     }
 
@@ -1438,8 +1452,15 @@ class SettingsViewModel @Inject constructor(
                         youtubeSignInCode = if (signed) null else code,
                         youtubeAuthErrorRes = if (!signed && code == null) R.string.youtube_error_login_start else null,
                     ) }
-                    if (signed) notifyLogin("youtube", NoticePhase.SUCCESS)
-                    else if (code == null) notifyLogin("youtube", NoticePhase.ERROR)
+                    if (signed) {
+                        // A completed account action means SmartTube is meant to be usable, just as
+                        // Jellyfin/Emby enable themselves after a successful login.
+                        appPreferences.youtubeEnabled = true
+                        _uiState.update { it.copy(youtubeEnabled = true) }
+                        notifyLogin("youtube", NoticePhase.SUCCESS)
+                        com.ambient.tv.data.local.LoginStateSignal.changed()
+                        refreshSavedValues()
+                    } else if (code == null) notifyLogin("youtube", NoticePhase.ERROR)
                     if (!signed && code != null) watchForYouTubeSignIn()
                 }
                 .onFailure { error ->
@@ -1477,6 +1498,7 @@ class SettingsViewModel @Inject constructor(
                             statusMessage = null,
                         )
                     }
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
                 },
                 onFailure = { error ->
                     notifyLogin("youtube", NoticePhase.ERROR, reason = failureReasonText(context, error))
@@ -1508,6 +1530,7 @@ class SettingsViewModel @Inject constructor(
                         youtubeAuthErrorRes = null,
                         youtubeAuthBusy = false,
                     ) }
+                    com.ambient.tv.data.local.LoginStateSignal.changed()
                     refreshSavedValues()
                     return@launch
                 }
@@ -1534,10 +1557,22 @@ class SettingsViewModel @Inject constructor(
         state.copy(sidebarSettingsShortcutHidden = if (visible) state.sidebarSettingsShortcutHidden - system else state.sidebarSettingsShortcutHidden + system)
     }
 
-    fun onSpotifyEnabledChanged(value: Boolean) = _uiState.update { it.copy(spotifyEnabled = value) }
-    fun onRadioEnabledChanged(value: Boolean) = _uiState.update { it.copy(radioEnabled = value) }
+    fun onSpotifyEnabledChanged(value: Boolean) {
+        appPreferences.spotifyEnabled = value
+        _uiState.update { it.copy(spotifyEnabled = value) }
+        spotifyRepository.reconcileReceiverForPlatform()
+    }
+
+    fun onRadioEnabledChanged(value: Boolean) {
+        appPreferences.radioEnabled = value
+        _uiState.update { it.copy(radioEnabled = value) }
+    }
+
     fun onSpotifyClientIdChanged(value: String) = _uiState.update { it.copy(spotifyClientId = value.trim()) }
     fun loginSpotify() {
+        // Authorizing Spotify is also an explicit request to use the system. Persist the opt-in
+        // before the browser/WebView round trip so the sidebar can observe the resulting auth state.
+        onSpotifyEnabledChanged(true)
         appPreferences.spotifyClientId = _uiState.value.spotifyClientId
         refreshSavedValues()
         spotifyRepository.login(context).onFailure { error -> _uiState.update { it.copy(spotifyAuthError = error.message) } }
@@ -2284,7 +2319,10 @@ class SettingsViewModel @Inject constructor(
     fun onScreensaverQualityChanged(value: String) = _uiState.update { it.copy(screensaverQualityKey = value) }
     fun onScreensaverDimPercentChanged(value: Int) = _uiState.update { it.copy(screensaverDimPercent = value.coerceIn(20, 100)) }
 
-    fun onTvheadendEnabledChanged(value: Boolean) = _uiState.update { it.copy(tvheadendEnabled = value) }
+    fun onTvheadendEnabledChanged(value: Boolean) {
+        appPreferences.tvheadendEnabled = value
+        _uiState.update { it.copy(tvheadendEnabled = value) }
+    }
     fun onTvheadendHostChanged(value: String) = _uiState.update { it.copy(tvheadendHost = value) }
     fun onTvheadendPortChanged(value: String) = _uiState.update { it.copy(tvheadendPort = value.filter(Char::isDigit)) }
     fun onTvheadendHttpsChanged(value: Boolean) = _uiState.update { it.copy(tvheadendUseHttps = value) }
@@ -2994,7 +3032,13 @@ class SettingsViewModel @Inject constructor(
                         )
                     }
                     notifyLogin("plex", NoticePhase.SUCCESS, _uiState.value.host)
+                    onPlexEnabledChanged(true)
                     persistPlex(_uiState.value)
+                    // The PIN proves the Plex account, not that this PMS accepts the selected token.
+                    // Verify it now so isConfigured flips in the same flow and the menu appears
+                    // immediately instead of waiting for a later reconnect/test.
+                    connectionManager.testCurrentServer()
+                        .onFailure { timber.log.Timber.w(it, "Plex linked but server verification failed") }
                     refreshSavedValues()
                     return@launch
                 }
@@ -3135,6 +3179,9 @@ class SettingsViewModel @Inject constructor(
         // A Plex account token commonly authorizes every saved server. Clear every stored copy
         // so switching servers cannot silently restore the account after an explicit sign-out.
         tokenStore.retainOnlyServerTokens(emptySet())
+        // isConfigured is endpoint + verification. Clearing only the token used to leave Plex
+        // visible until a later 401 happened to invalidate the verified flag.
+        appPreferences.plexLoginVerified = false
         mediaRepository.invalidateCaches()
         _uiState.update {
             it.copy(
