@@ -666,8 +666,9 @@ fun PlayerSleepTimerButton(onClick: () -> Unit, selected: Boolean) {
 
 /** Stats-for-Nerds and FPS overlay toggles; opt-in OSD buttons, only with a playback session. */
 @Composable
-fun PlayerDiagnosticsButtons() {
+fun PlayerDiagnosticsButtons(hasVideo: Boolean = true) {
     val session = com.ambient.tv.ui.player.activeDiagnosticsSession ?: return
+    if (!hasVideo || session.audioOnly) return
     PlayerIconButton(
         Icons.Filled.Info,
         stringResource(R.string.player_stats_for_nerds),

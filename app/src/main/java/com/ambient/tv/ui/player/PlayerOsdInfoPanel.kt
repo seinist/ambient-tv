@@ -29,32 +29,32 @@ private enum class OsdInfoEntry(@StringRes val summary: Int, @StringRes val sect
 }
 
 /** The description and the submenu use the same entries for the current player. */
-private fun osdInfoEntries(audioSession: AudioSession?): List<OsdInfoEntry> = buildList {
-    if (activeOsdPlayer?.offeredButtons()?.isNotEmpty() == true) add(OsdInfoEntry.BUTTONS)
+private fun osdInfoEntries(audioSession: AudioSession?, hasVideo: Boolean): List<OsdInfoEntry> = buildList {
+    if (activeOsdPlayer?.offeredButtons()?.let { filterVideoDiagnosticButtons(it, hasVideo).isNotEmpty() } == true) add(OsdInfoEntry.BUTTONS)
     add(OsdInfoEntry.DURATION)
     add(OsdInfoEntry.CODECS)
-    if (audioSession != null) {
+    if (hasVideo && audioSession?.audioOnly == false) {
         add(OsdInfoEntry.FPS)
-        if (!audioSession.audioOnly) add(OsdInfoEntry.FRAME_DROPS)
+        add(OsdInfoEntry.FRAME_DROPS)
         add(OsdInfoEntry.STATS)
     }
 }
 
 @Composable
-internal fun PlayerOsdInfoPanelEntry(audioSession: AudioSession?, onOpen: () -> Unit) {
+internal fun PlayerOsdInfoPanelEntry(audioSession: AudioSession?, hasVideo: Boolean, onOpen: () -> Unit) {
     PlayerPanelEntry(
         icon = Icons.Filled.Tune,
         title = stringResource(R.string.player_osd_info),
-        value = osdInfoEntries(audioSession).map { stringResource(it.summary) }.joinToString(" · "),
+        value = osdInfoEntries(audioSession, hasVideo).map { stringResource(it.summary) }.joinToString(" · "),
         onClick = onOpen,
     )
 }
 
 @Composable
-internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, onOpenButtons: () -> Unit) {
+internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, hasVideo: Boolean, onOpenButtons: () -> Unit) {
     val context = LocalContext.current
     val preferences = remember(context) { videoImagePreferences(context) }
-    val entries = osdInfoEntries(audioSession)
+    val entries = osdInfoEntries(audioSession, hasVideo)
     entries.forEachIndexed { index, entry ->
         if (index == 0 || entries[index - 1].section != entry.section) {
             RightPanelSectionTitle(stringResource(entry.section))
@@ -62,7 +62,7 @@ internal fun PlayerOsdInfoPanelControls(audioSession: AudioSession?, onOpenButto
         when (entry) {
             OsdInfoEntry.BUTTONS -> activeOsdPlayer?.let { player ->
                 val hidden = osdHiddenButtons()
-                val offered = player.offeredButtons()
+                val offered = filterVideoDiagnosticButtons(player.offeredButtons(), hasVideo)
                 PlayerPanelEntry(
                     icon = Icons.Filled.ViewWeek,
                     title = stringResource(R.string.osd_buttons),

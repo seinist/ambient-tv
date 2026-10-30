@@ -324,9 +324,10 @@ private fun PlayerContent(
         audioSession?.updateMpvAllowed(viewModel.mpvAudioAllowed(state))
         onDispose { }
     }
+    val videoDiagnosticsAllowed = !audioOnlyHint && audioSession?.audioOnly != true
     val nerdStats = rememberMedia3NerdStats(
         exoPlayer,
-        audioSession?.performanceHint == true || audioSession?.showFpsOverlay == true,
+        videoDiagnosticsAllowed && (audioSession?.performanceHint == true || audioSession?.showFpsOverlay == true),
     )
     LaunchedEffect(exoPlayer) { audioSession?.refreshRoute(context, state.audioCodec) }
     RestoreMedia3PlaybackProfile(exoPlayer, metadata)
@@ -775,8 +776,8 @@ private fun PlayerContent(
             if (media3Plan?.needsMpv == true) viewModel.followAudioPlan(exoPlayer.currentPosition)
         }
         PlaybackPerformanceNotice(media3LoadHint(exoPlayer, nerdStats))
-        val showNerdOverlay = audioSession?.performanceHint == true
-        val showFpsOverlay = audioSession?.showFpsOverlay == true
+        val showNerdOverlay = videoDiagnosticsAllowed && audioSession?.performanceHint == true
+        val showFpsOverlay = videoDiagnosticsAllowed && audioSession?.showFpsOverlay == true
         PlaybackNerdStatsOverlay(
             audioConversion = audioConversionDiagnostic(context, state, audioSession, exoPlayer.audioFormat?.sampleMimeType, exoPlayer.audioFormat?.channelCount),
             audioRoute = audioSession?.let { audioRouteSummaryText(it) },
@@ -918,6 +919,7 @@ private fun PlayerControlsOverlay(
     // Drawn by PersistentPlayerOverlays above the engine, so it survives a renderer switch.
     PublishPlayerOsd(PlayerOsdModel(
         state = state,
+        hasVideo = hasVideo,
         positionMs = positionMs,
         durationMs = durationMs,
         timelineAlways = true,

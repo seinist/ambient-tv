@@ -33,6 +33,15 @@ class OsdToolButtonsTest {
         assertTrue(osdButtonVisible(OsdButton.FAVORITE, OsdPlayer.YOUTUBE, setOf("RADIO/FAVORITE")))
     }
 
+    @Test fun audioOnlyOmitsVideoDiagnosticsAndDoesNotCreateEmptyInformationSection() {
+        val informationOnly = listOf(OsdButton.STATS, OsdButton.FPS)
+        assertTrue(filterVideoDiagnosticButtons(informationOnly, hasVideo = false).isEmpty())
+        assertEquals(informationOnly, filterVideoDiagnosticButtons(informationOnly, hasVideo = true))
+        assertEquals(listOf(OsdButton.SLEEP), filterVideoDiagnosticButtons(informationOnly + OsdButton.SLEEP, hasVideo = false))
+        assertFalse(OsdButton.STATS in OsdPlayer.RADIO.buttons)
+        assertFalse(OsdButton.FPS in OsdPlayer.RADIO.buttons)
+    }
+
     @Test fun youtubePreviousAndNextVisibilityIsIndependentOfOtherPlayers() {
         val hidden = setOf("YOUTUBE/NEXT")
         assertFalse(osdButtonVisible(OsdButton.NEXT, OsdPlayer.YOUTUBE, hidden))

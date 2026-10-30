@@ -328,6 +328,8 @@ internal data class PlayerOsdModel(
     val onPanelChange: (UnifiedPlayerPanel) -> Unit,
     /** Audio-only Media3: the visualizer takes the video button's place. */
     val visualizerButton: Boolean = false,
+    /** Hide video diagnostics immediately, even before runtime track detection updates the session. */
+    val hasVideo: Boolean = true,
     /** The engine's technical badges (engine, mode, resolution, codecs). */
     val badges: @Composable () -> Unit,
 ) : PlayerOsdSpec {
@@ -412,7 +414,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { model.onPanelChange(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                     }
                     PlayerSleepTimerButton({ model.onPanelChange(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
-                    com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
+                    com.ambient.tv.ui.common.PlayerDiagnosticsButtons(hasVideo = model.hasVideo)
                     com.ambient.tv.ui.common.PlayerToolButtons()
                     PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { model.onPanelChange(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)
                 },
