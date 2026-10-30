@@ -1435,6 +1435,23 @@ private fun AmbientTvApp(
         if (guard != null && currentRoute == Destinations.SETTINGS) guard(action) else action()
     }
 
+    /** Centralized contextual entry; null category opens the general Settings hub.
+     * The serial ensures another shortcut can replace an already open Settings view. */
+    fun openSettings(category: String? = null, target: String? = null) {
+        guardedSettingsExit {
+            if (currentRoute != Destinations.SETTINGS) {
+                navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
+            }
+            val handle = navController.currentBackStackEntry
+                ?.takeIf { it.destination.route == Destinations.SETTINGS }
+                ?.savedStateHandle ?: return@guardedSettingsExit
+            handle[SETTINGS_PAGE_KEY] = category?.let {
+                if (target.isNullOrBlank()) it else "${it}:${target}"
+            }
+            handle[SETTINGS_PAGE_SERIAL] = (handle.get<Int>(SETTINGS_PAGE_SERIAL) ?: 0) + 1
+        }
+    }
+
     fun navigateTopLevel(route: String) {
         guardedSettingsExit {
             // Settings never rides along in a saved tab stack: leaving it for a top-level page closes
@@ -1509,11 +1526,7 @@ private fun AmbientTvApp(
         // Previously only nested/fullscreen routes got this; sidebar sections used
         // navigateTopLevel and wiped the caller so Back landed on Home.
         if (route == Destinations.SETTINGS) {
-            guardedSettingsExit {
-                if (currentRoute != Destinations.SETTINGS) {
-                    navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
-                }
-            }
+            openSettings()
         } else if (parameterizedSidebarRoute) {
             navigateToSection(route)
         } else {
@@ -1547,9 +1560,7 @@ private fun AmbientTvApp(
         activity?.finishAndRemoveTask()
     }
 
-    fun openSettingsPreservingContext() {
-        navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
-    }
+    fun openSettingsPreservingContext() = openSettings()
 
     fun youtubeFeedRoute(feedKey: String) = Destinations.youtubeSection(feedKey, appPreferences.youtubeStartFeedKey)
 
@@ -1564,22 +1575,14 @@ private fun AmbientTvApp(
     }
 
 
-    /**
-     * Sidebar shortcut: Settings opened on one system's page. The request rides on the Settings
-     * back stack entry: it is saved and restored with that entry, and a new entry starts without it.
-     */
-    fun openSystemSettings(category: String) {
-        // Category must be written inside the same guarded exit as navigate: if Settings is dirty,
-        // navigateSidebar alone can defer navigation and a synchronous savedStateHandle write is lost.
-        guardedSettingsExit {
-            if (currentRoute != Destinations.SETTINGS) {
-                navController.navigate(Destinations.SETTINGS) { launchSingleTop = true }
-            }
-            val state = navController.currentBackStackEntry
-                ?.takeIf { it.destination.route == Destinations.SETTINGS }?.savedStateHandle ?: return@guardedSettingsExit
-            state[SETTINGS_PAGE_KEY] = category
-            state[SETTINGS_PAGE_SERIAL] = (state.get<Int>(SETTINGS_PAGE_SERIAL) ?: 0) + 1
-        }
+    /** Existing system shortcuts include composite destinations such as "wake:plex". */
+    fun openSystemSettings(category: String) = openSettings(category)
+
+    /** Avoid defaulting non-Plex media IDs to the Plex settings page. */
+    fun openMediaSettings(mediaId: String) {
+        val provider = com.ambient.tv.data.browse.mediaProvider(mediaId)
+        val category = provider.takeIf { it in setOf("plex", "jellyfin", "emby", "files", "dlna") } ?: "library"
+        openSystemSettings(category)
     }
 
     fun playNextFromSidebar(candidate: NextUpCandidate) {
@@ -1910,6 +1913,7 @@ private fun AmbientTvApp(
                         RestorableSidebarContent {
                             HomeScreen(
                                 onOpenSettings = ::openSettingsPreservingContext,
+                                onOpenRelevantSettings = ::openSystemSettings,
                                 onAddSystem = { navController.navigate(Destinations.INITIAL_SETUP) { launchSingleTop = true } },
                                 onBack = ::focusSidebar,
                                 onItemClick = { ratingKey ->
@@ -1951,7 +1955,7 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("plex", Destinations.PLEX, providerNavigationViewModel, ::navigateSidebar) {
                                 PlexLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
-                                    onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenSettings = { openSystemSettings("plex") },
                                     onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
@@ -1965,7 +1969,7 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("jellyfin", Destinations.JELLYFIN, providerNavigationViewModel, ::navigateSidebar) {
                                 JellyfinLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
-                                    onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenSettings = { openSystemSettings("jellyfin") },
                                     onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
@@ -1979,7 +1983,7 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.navigation.ProviderBrowseContent("emby", Destinations.EMBY, providerNavigationViewModel, ::navigateSidebar) {
                                 EmbyLibraryScreen(
                                     onItemClick = { ratingKey -> handleMediaSelection(ratingKey) },
-                                    onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenSettings = { openSystemSettings("emby") },
                                     onOpenAppHome = { navigateSidebar(Destinations.HOME) },
                                     onBack = ::focusSidebar,
                                 )
@@ -2081,7 +2085,7 @@ private fun AmbientTvApp(
                     ) {
                         SpotifyDetailScreen(
                             onBack = ::navigateBack,
-                            onOpenSettings = ::openSettingsPreservingContext,
+                            onOpenSettings = { openSystemSettings("spotify") },
                             onNowPlaying = { playOnSelectedTarget(Destinations.spotifyPlayer()) },
                             onOpenAlbum = { albumId -> navController.navigate(Destinations.spotifyDetail("album", albumId)) },
                         )
@@ -2096,7 +2100,7 @@ private fun AmbientTvApp(
                     ) {
                         YouTubeDetailScreen(
                             onBack = ::navigateBack,
-                            onOpenSettings = ::openSettingsPreservingContext,
+                            onOpenSettings = { openSystemSettings("youtube") },
                             onPlay = { videoId -> playOnSelectedTarget(Destinations.youtubePlayer(videoId)) },
                             onOpenChannel = ::openYouTubeChannel,
                             onOpenItem = { videoId -> handleYouTubeSelection(videoId) },
@@ -2173,6 +2177,7 @@ private fun AmbientTvApp(
                             TvheadendScreen(
                                 initialTab = com.ambient.tv.ui.tvheadend.TvheadendTab.LIVE,
                                 onOpenSettings = ::openSettingsPreservingContext,
+                                onOpenSourceSettings = ::openSystemSettings,
                                 onBack = ::focusSidebar,
                                 onSelectTab = { tab -> navigateSidebar(tvheadendTabRoute(tab)) },
                                 onWatchChannel = { channelUuid -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channelUuid)) },
@@ -2202,6 +2207,7 @@ private fun AmbientTvApp(
                                 TvheadendScreen(
                                     initialTab = initialTab,
                                     onOpenSettings = ::openSettingsPreservingContext,
+                                    onOpenSourceSettings = ::openSystemSettings,
                                     onBack = ::focusSidebar,
                                     onSelectTab = { tab -> navigateSidebar(Destinations.liveTvSection(tab.name.lowercase(), sourceId)) },
                                     onWatchChannel = { channelUuid -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channelUuid, sourceId)) },
@@ -2369,7 +2375,9 @@ private fun AmbientTvApp(
                             // once a trailer was actually found (rememberTrailerAvailable).
                             onTrailer = if (appPreferences.trailersEnabled)
                                 ({ navController.navigate(Destinations.itemTrailers(it.ratingKey)) }) else null,
-                            onOpenSettings = ::openSettingsPreservingContext,
+                            onOpenSettings = {
+                                openMediaSettings(entry.arguments?.getString("ratingKey").orEmpty())
+                            },
                             onPlay = { item, mediaIndex, restart ->
                                 playOnSelectedTarget(
                                     Destinations.player(
@@ -2420,7 +2428,7 @@ private fun AmbientTvApp(
                         RestorableSidebarContent {
                             FilteredBrowseScreen(
                                 onBack = ::focusSidebar,
-                                onOpenSettings = ::openSettingsPreservingContext,
+                                onOpenSettings = { openMediaSettings(filterId) },
                                 onItemClick = { ratingKey, sort ->
                                     handleMediaSelection(
                                         ratingKey = ratingKey,
@@ -2444,7 +2452,7 @@ private fun AmbientTvApp(
                         com.ambient.tv.ui.common.HoldHomeBackgroundWhileLeaving {
                             FilteredBrowseScreen(
                                 onBack = ::navigateBack,
-                                onOpenSettings = ::openSettingsPreservingContext,
+                                onOpenSettings = { openMediaSettings(filterId) },
                                 leftNavigatesBack = false,
                                 onItemClick = { ratingKey, sort ->
                                     handleMediaSelection(
