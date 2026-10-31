@@ -4,6 +4,7 @@ import com.ambient.tv.notifications.*
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -23,6 +24,7 @@ import com.ambient.tv.vpn.WireGuardRouteState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -100,12 +102,23 @@ class ResumeConnectivityMonitor @Inject constructor(
     /** Bumped when the WireGuard route is marked failed (revoke / VPN network lost) so player UI can react. */
     val vpnDropGeneration: StateFlow<Long> = _vpnDropGeneration.asStateFlow()
 
+    private val ownedVpnNetworks = ConcurrentHashMap.newKeySet<Network>()
     private val vpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            cm?.getLinkProperties(network)?.let { onLinkPropertiesChanged(network, it) }
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            if (wireGuardRoute.ownsCompanionNetwork(linkProperties)) ownedVpnNetworks.add(network)
+        }
+
         override fun onLost(network: Network) {
-            if (!wireGuardRoute.anySystemEnabled()) return
+            // Android reports other apps' VPNs too. Only our own tunnel loss matters.
+            if (!ownedVpnNetworks.remove(network) || !wireGuardRoute.anySystemEnabled()) return
             val current = wireGuardRoute.status.value
             if (current is WireGuardRouteState.Up || current is WireGuardRouteState.Connecting) {
-                Timber.w("VPN network lost while WireGuard route was active")
+                Timber.w("Ambient WireGuard network lost while route was active")
                 markVpnRouteFailed(context.getString(R.string.wg_vpn_network_lost))
             }
         }
