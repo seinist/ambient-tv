@@ -219,7 +219,6 @@ fun HomeScreen(
             onBack()
         }
     }
-    BackHandler(enabled = showOverviewOptions) { showOverviewOptions = false }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(
         viewModel.reconnectSources(plexOnly, jellyfinOnly, embyOnly),
     ) {
@@ -363,7 +362,7 @@ fun HomeScreen(
             )
         }
         if (showOverviewOptions) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+            com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showOverviewOptions = false }) {
             Box(Modifier.align(Alignment.TopEnd)) {
                 com.ambient.tv.ui.common.ViewOptionsPanel(
                     showDensity = false,
@@ -383,6 +382,7 @@ fun HomeScreen(
                         runCatching { overviewOptionsFocus.requestFocus() }
                     },
                 )
+            }
             }
         }
     }
