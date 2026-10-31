@@ -258,12 +258,12 @@ import kotlinx.coroutines.delay
                 .focusGroup(),
         ) {
             when {
-                !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing))
-                state.loading -> Loading(state.gridColumns)
-                state.error != null -> Message(state.error!!)
+                !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing), error = true)
+                state.loading || (state.refreshing && visibleRows.none { it.items.isNotEmpty() }) -> Loading(state.gridColumns)
+                state.error != null -> Message(state.error!!, error = true)
                 visibleRows.none { it.items.isNotEmpty() } -> if (filterModel.activeCount > 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        StatePanel(
+                        com.ambient.tv.ui.common.BrowseStatusPanel(
                             title = stringResource(R.string.youtube_no_filter_matches),
                             actionLabel = stringResource(R.string.library_filter_reset),
                             onAction = {
@@ -1165,7 +1165,13 @@ private fun YouTubeLoadingRows(gridColumns: Int, pulse: androidx.compose.runtime
 }
 /** Cinematic strips keep a stable card width; regular horizontal rows use the density setting. */
 @Composable private fun landscapeCardWidth()=deviceDp(300.dp, 260.dp)
-@Composable private fun Message(text:String)=Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center){Text(text,color=MaterialTheme.colorScheme.onSurfaceVariant)}
+@Composable
+private fun Message(text: String, error: Boolean = false) =
+    com.ambient.tv.ui.common.BrowseStatusPanel(
+        title = text,
+        kind = if (error) com.ambient.tv.ui.common.BrowseStatusKind.ERROR
+            else com.ambient.tv.ui.common.BrowseStatusKind.EMPTY,
+    )
 @Composable
 private fun meta(i: YouTubeItem) = listOfNotNull(
     i.author ?: i.subtitle,
