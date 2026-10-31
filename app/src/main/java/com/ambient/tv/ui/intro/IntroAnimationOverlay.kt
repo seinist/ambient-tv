@@ -159,6 +159,8 @@ private class IntroFrame(
 private fun phase(t: Float, start: Float, end: Float) = ((t - start) / (end - start)).coerceIn(0f, 1f)
 /** Sine in-out: slow on both ends, no snap. */
 private fun soft(x: Float) = (1f - cos(x * PI.toFloat())) / 2f
+/** Backdrops remain visible in the settled/low-power frame and during a long server wake. */
+internal fun introBackdropPresence(seconds: Float): Float = soft(phase(seconds, 0f, 1.25f))
 /** Breathing curve over one loop: 0 at the loop seam, 1 halfway. */
 private fun wave(t: Float) = (1f - cos(t * 2f * PI.toFloat())) / 2f
 private fun drift(t: Float, period: Float, offset: Float = 0f) = sin(t * 2f * PI.toFloat() / period + offset)
@@ -238,6 +240,7 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     ) {
         Canvas(Modifier.fillMaxSize()) {
             IntroDraw.lite = lite
+            IntroDraw.still = still
             val seconds = if (still) SETTLED_SECONDS else clock.floatValue
             // wave(1) and wave(0) both sit at 0, so the idle breath continues the opening without a pop.
             val breath = if (still) 0.5f else wave(
@@ -310,6 +313,7 @@ private const val CONNECT_HOLD_MS = 6_000L
 /** Per-frame draw flag; the intro draws on the main thread only. */
 private object IntroDraw {
     var lite = false
+    var still = false
 }
 
 /** Fine monochrome noise, tiled and overlaid: it dithers the gradients so dark screens show no banding. */
@@ -549,12 +553,57 @@ private fun DrawScope.drawDaybreak(frame: IntroFrame) {
 }
 
 
+/**
+ * Signatur: a wide, low studio-light halo supporting the precisely drawn A and wordmark.
+ * The light stays after the reveal; reduced/low mode keeps one steady gradient and halo.
+ */
+private fun DrawScope.drawSignatureBackdrop(frame: IntroFrame) {
+    val presence = introBackdropPresence(frame.seconds)
+    if (presence <= 0.002f) return
+
+    val stage = stageCenter()
+    val width = size.minDimension * 0.62f
+    val reduced = IntroDraw.lite || IntroDraw.still
+    val breathe = if (reduced) 0.88f else 0.78f + 0.22f * frame.breath
+
+    // Lift the dark backdrop gently, without brightening the space reserved for status.
+    drawRect(
+        Brush.verticalGradient(
+            0f to frame.accent.copy(alpha = 0.035f * presence),
+            0.52f to frame.second.copy(alpha = 0.012f * presence),
+            1f to Color.Transparent,
+            startY = 0f,
+            endY = size.height * 0.85f,
+        ),
+        blendMode = BlendMode.Plus,
+    )
+    // Horizontally stretched light behind the lettering; no hard line or moving shapes.
+    lightPool(
+        lerp(frame.accent, frame.second, 0.22f),
+        at = Offset(stage.x, stage.y - width * 0.015f),
+        radius = width * 1.08f,
+        alpha = 0.15f * presence * breathe,
+        squash = 0.30f,
+    )
+    if (!reduced) {
+        // A slightly warmer pocket of light gives the first glyph a gentle visual anchor.
+        lightPool(
+            frame.accent,
+            at = Offset(stage.x - width * 0.33f, stage.y),
+            radius = width * 0.48f,
+            alpha = 0.095f * presence * breathe,
+            squash = 0.60f,
+        )
+    }
+}
+
 /** A quiet line-signature: the native A is traced, glyph outlines settle into ink. */
 private fun DrawScope.drawSignature(frame: IntroFrame) {
     val t = frame.seconds
     val stage = stageCenter()
     val width = size.minDimension * 0.62f
-    if (!IntroDraw.lite) {
+    drawSignatureBackdrop(frame)
+    if (!IntroDraw.lite && !IntroDraw.still) {
         val trace = soft(phase(t, 0.25f, 1.0f)) * (1f - soft(phase(t, 1.5f, 3.3f)))
         val idle = soft(phase(t, 4.1f, 4.8f))
         val glow = 0.055f * trace + 0.015f * idle * (0.65f + 0.35f * frame.breath)
@@ -597,12 +646,75 @@ private fun DrawScope.prismRibbon(
     )
 }
 
+/**
+ * Prisma: broad color pools and translucent diagonal facets stay behind the light sweep.
+ * Keeping the settled background prevents the intro from returning to a blank screen on WOL.
+ */
+private fun DrawScope.drawPrismBackdrop(frame: IntroFrame) {
+    val presence = introBackdropPresence(frame.seconds)
+    if (presence <= 0.002f) return
+
+    val stage = stageCenter()
+    val width = size.minDimension * 0.62f
+    val reduced = IntroDraw.lite || IntroDraw.still
+    val breathe = if (reduced) 0.88f else 0.78f + 0.22f * frame.breath
+    val driftX = if (reduced) 0f else 0.018f * drift(frame.seconds, 27f)
+
+    drawRect(
+        Brush.verticalGradient(
+            0f to frame.second.copy(alpha = 0.022f * presence),
+            0.65f to Color.Transparent,
+            startY = 0f,
+            endY = size.height * 0.80f,
+        ),
+        blendMode = BlendMode.Plus,
+    )
+    lightPool(
+        lerp(frame.accent, frame.second, 0.20f),
+        at = Offset(size.width * (0.29f + driftX), stage.y - width * 0.08f),
+        radius = size.maxDimension * 0.41f,
+        alpha = 0.13f * presence * breathe,
+        squash = 0.55f,
+    )
+    lightPool(
+        lerp(frame.second, frame.accent, 0.30f),
+        at = Offset(size.width * (0.71f - driftX), stage.y + width * 0.05f),
+        radius = size.maxDimension * 0.37f,
+        alpha = 0.11f * presence * breathe,
+        squash = 0.54f,
+    )
+    if (!reduced) {
+        // These wide, near-transparent facets form the background, not moving foreground beams.
+        prismRibbon(
+            x = size.width * (0.30f + driftX),
+            top = 0f, bottom = size.height * 0.78f,
+            width = size.width * 0.45f, slant = size.width * 0.28f,
+            color = frame.accent, opacity = 0.075f * presence * breathe,
+        )
+        prismRibbon(
+            x = size.width * (0.73f - driftX),
+            top = 0f, bottom = size.height * 0.78f,
+            width = size.width * 0.37f, slant = -size.width * 0.20f,
+            color = frame.second, opacity = 0.060f * presence * breathe,
+        )
+        // A low, blurred reflection adds depth without touching the bottom status area.
+        lightPool(
+            lerp(frame.accent, frame.second, 0.48f),
+            at = Offset(stage.x, stage.y + width * 0.17f),
+            radius = width * 0.77f,
+            alpha = 0.048f * presence * breathe,
+            squash = 0.18f,
+        )
+    }
+}
+
 /** Two soft refracted light planes reveal the logo; a restrained glint crosses the final wordmark. */
 private fun DrawScope.drawPrism(frame: IntroFrame) {
     val t = frame.seconds
     val stage = stageCenter()
     val wordWidth = size.minDimension * 0.62f
-    if (!IntroDraw.lite) {
+    drawPrismBackdrop(frame)
+    if (!IntroDraw.lite && !IntroDraw.still) {
         val intensity = soft(phase(t, 0f, 0.9f)) * (1f - soft(phase(t, 3.5f, 5.15f)))
         val crossing = soft(phase(t, 0.2f, 4.4f))
         prismRibbon(
@@ -622,7 +734,7 @@ private fun DrawScope.drawPrism(frame: IntroFrame) {
     // The logo never changes position or scale as the planes pass.
     drawWordmark(frame, stage, wordWidth, start = 0.6f, fromIcon = false, fixedPeak = true)
 
-    if (!IntroDraw.lite) {
+    if (!IntroDraw.lite && !IntroDraw.still) {
         val sheen = soft(phase(t, 2.0f, 2.25f)) * (1f - soft(phase(t, 4.5f, 5.1f)))
         val sweep = soft(phase(t, 2.0f, 4.7f))
         prismRibbon(
