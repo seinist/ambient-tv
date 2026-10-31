@@ -2113,14 +2113,19 @@ private fun HomeRowEditorItem(
         // Live channel rows use a compact logo/program card. Do not offer ignored poster/list controls.
         if (row.contentKey !in setOf("live", "recent_channels")) {
             Text(stringResource(R.string.settings_home_display))
-            SettingsSelect(options = HomeRowDefinition.DISPLAY_MODES.map { mode ->
+            SettingsSelect(options = HomeRowDefinition.DISPLAY_MODES
+                .filter { row.system != HomeRowDefinition.SYSTEM_YOUTUBE || it != HomeRowDefinition.DISPLAY_POSTER }
+                .map { mode ->
                 SettingsSelectOption(
                     text = when (mode) {
                         HomeRowDefinition.DISPLAY_POSTER -> stringResource(R.string.settings_home_display_poster)
                         HomeRowDefinition.DISPLAY_LIST -> stringResource(R.string.settings_home_display_list)
                         else -> stringResource(R.string.settings_home_display_landscape)
                     },
-                    selected = row.displayMode == mode,
+                    selected = row.displayMode == mode ||
+                        (row.system == HomeRowDefinition.SYSTEM_YOUTUBE &&
+                            row.displayMode == HomeRowDefinition.DISPLAY_POSTER &&
+                            mode == HomeRowDefinition.DISPLAY_LANDSCAPE),
                     onClick = { onUpdate(row.copy(displayMode = mode)) },
                 )
             })
