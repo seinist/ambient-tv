@@ -1466,7 +1466,9 @@ class HomeViewModel @Inject constructor(
                     }
                 if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
 
-                coroutineScope {
+                // Coalesce the independent API replies into one Home publish. A dozen
+                // filter rows must not repeatedly rebuild the Home focus/layout tree.
+                val updates = coroutineScope {
                     definitions.filterNot {
                         it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT)
                     }.map { definition -> async {
@@ -1483,16 +1485,20 @@ class HomeViewModel @Inject constructor(
                                 else -> emptyList()
                             }
                         }
-                        if (generation != radioRowsGeneration || result.isFailure) return@async
-                        val id = "radio.${definition.contentKey}"
-                        val row = radioHomeRow(definition, result.getOrThrow())
-                        // Only a successful (possibly empty) result replaces the disk copy.
+                        if (result.isFailure) null
+                        else "radio.${definition.contentKey}" to radioHomeRow(definition, result.getOrThrow())
+                    } }.awaitAll().filterNotNull()
+                }
+                if (generation == radioRowsGeneration && updates.isNotEmpty()) {
+                    updates.forEach { (id, row) ->
+                        // A failure retains its previous snapshot; a successful empty result
+                        // records a tombstone so deleted feeds do not reappear on cold start.
                         homeRowSnapshots.save("radio", id, row)
                         radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
-                        if (!_uiState.value.isFailurePage()) {
-                            publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
-                        }
-                    } }.awaitAll()
+                    }
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
                 }
             } finally {
                 if (generation == radioRowsGeneration) {
