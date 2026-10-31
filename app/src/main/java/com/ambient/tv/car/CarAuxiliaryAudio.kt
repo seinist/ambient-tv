@@ -155,6 +155,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
                     val path = location.second ?: access.root(source)
                     // FileAccess already takes care of SMB credentials, WireGuard, WOL and sorting.
                     // Its listing has a limit rather than an offset, so request a bounded prefix.
+                    if (offset >= 2000) return CarAudioPage(emptyList())
                     val wanted = (offset + limit + 1).coerceAtMost(2000)
                     val listing = access.list(source, path, wanted, FileEntry::audio)
                     CarAudioPage(listing.entries.drop(offset).take(limit).map { entry ->
