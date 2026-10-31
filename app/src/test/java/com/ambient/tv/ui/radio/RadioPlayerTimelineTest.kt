@@ -10,6 +10,12 @@ class RadioPlayerTimelineTest {
         assertEquals(0f, radioTimelineFraction(90_000L, 0L), 0f)
     }
 
+    @Test fun unknownLengthLiveRadioUsesSolidAccentLine() {
+        assertEquals(1f, radioTimelineAccentFill(90_000L, 0L), 0f)
+        assertEquals(1f, radioTimelineAccentFill(0L, -1L), 0f)
+        assertEquals(.5f, radioTimelineAccentFill(90_000L, 180_000L), .001f)
+    }
+
     @Test fun durationAloneDoesNotPermitScrubbing() {
         assertEquals(RadioTimelineMode.PROGRESS, radioTimelineMode(180_000L, seekable = false))
         assertEquals(RadioTimelineMode.SEEK, radioTimelineMode(180_000L, seekable = true))
