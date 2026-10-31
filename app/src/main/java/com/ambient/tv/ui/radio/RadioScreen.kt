@@ -161,8 +161,10 @@ fun RadioScreen(
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
-    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision) {
-        if (!state.contentReady) null
+    val initialContentId = remember(
+        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending,
+    ) {
+        if (requestedPagePending || !state.contentReady) null
         else radioInitialFocusId(
             viewModel.lastFocusedContent(focusScope),
             playingStationId.takeUnless { showingFacets },
@@ -200,16 +202,16 @@ fun RadioScreen(
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady) {
-        if (!state.contentReady || initialContentId == null) return@LaunchedEffect
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending) {
+        if (requestedPagePending || !state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
         if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
         else listState.scrollToItem(index)
     }
     // A facet opens another dataset inside the same destination. The sidebar's entry handler
     // only runs on route navigation, so hand focus explicitly to its newly loaded content.
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
-        if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending, pendingContentFocus, showViewOptions, handheld) {
+        if (requestedPagePending || !state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
         val targetId = initialContentId
         val index = targetId?.let(contentIds::indexOf)?.takeIf { it >= 0 }
         if (index == null) {
