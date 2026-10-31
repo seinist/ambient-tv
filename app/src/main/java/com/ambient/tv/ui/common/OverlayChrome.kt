@@ -278,6 +278,7 @@ internal val LocalLazyScrollbarRightTarget = staticCompositionLocalOf<FocusReque
 internal fun LazyScrollbarFrame(
     modifier: Modifier,
     overflow: Boolean,
+    scrollbarFocusRequester: FocusRequester? = null,
     scrollbar: @Composable (Modifier, FocusRequester) -> Unit,
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -287,7 +288,8 @@ internal fun LazyScrollbarFrame(
         return
     }
     val contentFocus = remember { FocusRequester() }
-    val scrollbarFocus = remember { FocusRequester() }
+    val ownedScrollbarFocus = remember { FocusRequester() }
+    val scrollbarFocus = scrollbarFocusRequester ?: ownedScrollbarFocus
     val visible = spec.enabled && overflow
     Box(modifier, propagateMinConstraints = true) {
         CompositionLocalProvider(LocalLazyScrollbarRightTarget provides scrollbarFocus.takeIf { visible }) {
