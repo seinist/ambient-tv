@@ -66,6 +66,9 @@
         <meta-data
             android:name="android.software.leanback.supports_touch"
             android:value="true" />
+        <!-- Official Android Auto media browser integration (audio, no projection). -->
+        <meta-data android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
 
         <!-- Opt-in force-lock only; Android shows its own approval screen in Settings. -->
         <receiver
@@ -107,8 +110,12 @@
 
         <service
             android:name=".ui.player.PlaybackService"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".vpn.WireGuardVpnService"
