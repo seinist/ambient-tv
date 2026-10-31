@@ -11,6 +11,7 @@ import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.genre
 import com.ambient.tv.data.local.isLiveTvChannelRow
 import com.ambient.tv.data.local.homeRowType
+import com.ambient.tv.data.local.systemHomeRowTypes
 import com.ambient.tv.data.local.homeSystemReady
 import com.ambient.tv.domain.model.LibraryHub
 import com.ambient.tv.domain.model.LibraryRecommendation
@@ -196,7 +197,12 @@ class HomeViewModel @Inject constructor(
 
     /** Skeletons follow the enabled Home row styles instead of always drawing posters. */
     fun loadingRowStyles(overviewSystem: String? = null): List<MediaTileStyle> =
-        homeLoadingRowStyles(appPreferences.homeRows, overviewSystem)
+        homeLoadingRowStyles(
+            definitions = appPreferences.homeRows,
+            overviewSystem = overviewSystem,
+            overviewPageMode = overviewSystem?.let(appPreferences::overviewViewMode),
+            systemHomeHiddenRows = appPreferences.systemHomeHiddenRows,
+        )
 
     private var plexOnly = false
     private var jellyfinOnly = false
@@ -2155,16 +2161,34 @@ class HomeViewModel @Inject constructor(
 internal fun homeLoadingRowStyles(
     definitions: List<HomeRowDefinition>,
     overviewSystem: String? = null,
+    overviewPageMode: String? = null,
+    systemHomeHiddenRows: Set<String> = emptySet(),
 ): List<MediaTileStyle> {
-    val visible = definitions.asSequence()
-        .filter { it.enabled && (overviewSystem == null || it.system == overviewSystem) }
-        .map { definition ->
-            if (definition.isLiveTvChannelRow) MediaTileStyle.LANDSCAPE
-            else homeRowTileStyle(definition.displayMode)
+    // Home uses the editor order. A system's own overview uses its own default rows even
+    // when the user did not add them to Home, with the saved overview presentation applied.
+    val rows = if (overviewSystem == null) {
+        definitions.filter { it.enabled }
+    } else {
+        systemHomeRowTypes(overviewSystem).filterNot { contentKey ->
+            "$overviewSystem.${homeRowType(contentKey)}" in systemHomeHiddenRows
+        }.map { contentKey ->
+            definitions.firstOrNull {
+                it.enabled && it.system == overviewSystem && it.contentKey == contentKey
+            } ?: HomeRowDefinition(system = overviewSystem, contentKey = contentKey)
         }
-        .take(3)
-        .toList()
-    return visible.ifEmpty { List(3) { MediaTileStyle.POSTER } }
+    }
+    val visible = rows.asSequence().map { definition ->
+        when {
+            definition.isLiveTvChannelRow -> MediaTileStyle.LANDSCAPE
+            else -> homeRowTileStyle(
+                definition.displayMode,
+                default = if (definition.contentKey == "continue") MediaTileStyle.CONTINUE else MediaTileStyle.POSTER,
+                overviewPageMode = overviewPageMode,
+            )
+        }
+    }.take(3).toList()
+    val fallback = homeRowTileStyle(HomeRowDefinition.DISPLAY_POSTER, overviewPageMode = overviewPageMode)
+    return visible.ifEmpty { List(3) { fallback } }
 }
 
 internal fun homeRowTileStyle(
