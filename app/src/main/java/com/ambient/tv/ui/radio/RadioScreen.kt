@@ -1008,7 +1008,7 @@ private fun RadioStationTile(
                         // Status only, identical to the favorite corner badge – not a play button.
                         ArtworkCornerIconBadge(
                             icon = Icons.Default.PlayArrow,
-                            contentDescription = stringResource(R.string.player_play),
+                            contentDescription = stringResource(if (playing) R.string.action_now_playing else R.string.player_loading),
                             modifier = Modifier.align(Alignment.BottomEnd).padding(7.dp),
                         )
                     }
