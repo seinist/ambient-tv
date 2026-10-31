@@ -103,12 +103,13 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
     val dialogOpen = editor != null || deleteSource != null
     OperationFeedbackScope(viewModel.feedback, "browse", !dialogOpen)
     editor?.let { OperationFeedbackScope(viewModel.feedback, "editor:${it.id}") }
-    ReportSidebarContentReady(!state.loading)
     BackHandler(contentActive && !dialogOpen) {
         if (state.loading) viewModel.cancelLoading() else if (!viewModel.up()) onBack()
     }
     val sourceList = state.folders.isEmpty() && viewModel.tab == "browse"
     val ids = if (sourceList) state.sources.map { "source:${it.id}" } else state.entries.map { it.id }
+    val emptyPending = com.ambient.tv.ui.common.awaitingEmptyBrowseResult(ids.isEmpty(), state.loading, state.refreshing)
+    ReportSidebarContentReady(!emptyPending && !state.loading)
     // Same condition as FilesViewModel.up(): a pinned share's root has no parent inside this page.
     val canUp = state.folders.isNotEmpty() && !(viewModel.pinnedSource && state.folders.size == 1)
     val upFocus = remember { FocusRequester() }
@@ -166,7 +167,7 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
                     onAction = if (state.folders.isEmpty()) onBack else viewModel::refresh,
                     actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus)
-            } else if (state.loading && ids.isEmpty()) {
+            } else if (emptyPending) {
                 FullscreenSpinner(Modifier.align(Alignment.Center))
             } else {
                 val context = LocalContext.current
