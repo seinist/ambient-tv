@@ -45,5 +45,5 @@ internal fun YouTubeItem.asHomeMediaItem(): MediaItem = MediaItem(
     contentRating = null,
     rating = null,
     studio = "SmartTube",
-    viewCount = if (percentWatched >= 95) 1 else null,
+    viewCount = if (!isLive && !isUpcoming && percentWatched >= 95) 1 else null,
 )
