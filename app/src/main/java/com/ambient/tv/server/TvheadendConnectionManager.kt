@@ -110,6 +110,7 @@ class TvheadendConnectionManager @Inject constructor(
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
             _state.value = ServerConnectionState.Online(identity(info.version))
+            hosts.online(hosts.begin("tvheadend")) // Successful API probe overrides stale port failures.
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
