@@ -97,8 +97,12 @@ class EmbyConnectionManager @Inject constructor(
         connectionMutex.withLock {
             // A passive probe must also run for a normally unpaused offline server.
             // A dismissed wake remains dismissed: only a confirmed service response clears it.
-            if (!preferences.isEmbyConfigured || (!force && _state.value is ServerConnectionState.Online &&
-                    hosts.health("emby") == com.ambient.tv.connectivity.HostHealth.ONLINE)) return@withLock false
+            if (!shouldProbeInBackground(
+                    configured = preferences.isEmbyConfigured,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("emby") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.embyHost)) return@withLock false
             val checkedEndpoint = endpointKey()
