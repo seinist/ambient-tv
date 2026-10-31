@@ -77,8 +77,8 @@ fun ViewOptionsPanel(
     filtersActive: Boolean = false, onResetFilters: (() -> Unit)? = null,
     /** Fixed-layout pages can reuse just the density controls, without a view selector. */
     densityPreview: ViewPreview? = null,
-    extraContent: @Composable ColumnScope.() -> Unit = {},
     gridDensityProfile: GridDensityProfile = GridDensityProfile.MEDIA_LIBRARY,
+    extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
     val focus = LocalFilterFocusState.current
     // Returning to a filter replaces the panel's initial focus for this opening. Clearing the
