@@ -67,7 +67,14 @@ class ServerConnectionManager @Inject constructor(
 
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("plex"))
+        val hostHealth = hosts.health("plex")
+        // Invalidate the cached identity on a confirmed outage. A later open machine port
+        // must not resurrect an old Online state before this service answers its own API.
+        if (hostHealth == com.ambient.tv.connectivity.HostHealth.OFFLINE &&
+            service is ServerConnectionState.Online) {
+            _state.value = ServerConnectionState.Offline
+        }
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
 
     /** Short checks only (background probe, server test); a wake never holds it. */
