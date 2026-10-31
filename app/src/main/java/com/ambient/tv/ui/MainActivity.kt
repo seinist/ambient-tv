@@ -298,6 +298,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     private fun registerUserInteraction() {
+        com.ambient.tv.ui.player.SleepSession.cancelStandbyRequest()
         registerInteraction()
         BackgroundPlaybackSession.registerUserInteraction()
     }
@@ -308,6 +309,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.ambient.tv.ui.player.SleepSession.cancelStandbyRequest()
         registerInteraction()
         if (::appPreferences.isInitialized && com.ambient.tv.ui.mobile.isTelevision(this) && appPreferences.spotifyEnabled) {
             runCatching { spotifyRepository.get().reconcileReceiverForPlatform() }
@@ -1397,10 +1399,12 @@ private fun AmbientTvApp(
     // SurfaceView flags: clearFlags raced the video surfaces and let the phone sleep while
     // buffering, and surface-level keepScreenOn=true also blocked sleep during browse/mini-player.
     // wantsToPlay covers buffering; isPlaying alone was too narrow.
-    val keepScreenOn = screensaverOverlayPresent ||
+    val standbyRequested = !handheld && com.ambient.tv.ui.player.SleepSession.standbyRequested
+    val keepScreenOn = !standbyRequested && (
+        screensaverOverlayPresent ||
         (!handheld && screensaverEnabled) ||
         ((onPlayerScreen || currentRoute == Destinations.RADIO_PLAYER) && backgroundPlayback.wantsToPlay) ||
-        (!handheld && backgroundPlayback.activeVideo && backgroundPlayback.wantsToPlay)
+        (!handheld && backgroundPlayback.activeVideo && backgroundPlayback.wantsToPlay))
     DisposableEffect(keepScreenOn) {
         focusSoundView.keepScreenOn = keepScreenOn
         onDispose { focusSoundView.keepScreenOn = false }
@@ -1416,11 +1420,14 @@ private fun AmbientTvApp(
         if (playbackActive && screensaverActive && screensaverPreview == null) onScreensaverActiveChanged(false)
     }
 
-    LaunchedEffect(screensaverEnabled, screensaverTimeoutMs, playbackActive, lastInteractionElapsedMs, screensaverOverlayPresent, windowInfo.isWindowFocused) {
-        if (!screensaverEnabled || playbackActive || screensaverOverlayPresent || !windowInfo.isWindowFocused) return@LaunchedEffect
+    LaunchedEffect(standbyRequested, screensaverActive) {
+        if (standbyRequested && screensaverActive) onScreensaverActiveChanged(false)
+    }
+    LaunchedEffect(screensaverEnabled, screensaverTimeoutMs, playbackActive, lastInteractionElapsedMs, screensaverOverlayPresent, windowInfo.isWindowFocused, standbyRequested) {
+        if (standbyRequested || !screensaverEnabled || playbackActive || screensaverOverlayPresent || !windowInfo.isWindowFocused) return@LaunchedEffect
         val remaining = screensaverTimeoutMs - (SystemClock.elapsedRealtime() - lastInteractionElapsedMs)
         if (remaining > 0) kotlinx.coroutines.delay(remaining)
-        if (!playbackActive && screensaverEnabled && SystemClock.elapsedRealtime() - lastInteractionElapsedMs >= screensaverTimeoutMs) {
+        if (!standbyRequested && !playbackActive && screensaverEnabled && SystemClock.elapsedRealtime() - lastInteractionElapsedMs >= screensaverTimeoutMs) {
             onScreensaverActiveChanged(true)
         }
     }
@@ -2635,7 +2642,7 @@ private fun AmbientTvApp(
             com.ambient.tv.companion.CompanionDialogs(companionVm)
             if (!handheld) com.ambient.tv.companion.CompanionRemoteInput.Overlay(activity?.window)
             ScreensaverOverlay(
-                visible = ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
+                visible = !standbyRequested && ScreensaverPresentation.shouldShow(screensaverActive, screensaverPreview != null, playbackActive),
                 onDismiss = { onScreensaverActiveChanged(false) },
                 onHidden = {
                     if (!screensaverActive && onScreensaverHidden()) screensaverPreview = null
