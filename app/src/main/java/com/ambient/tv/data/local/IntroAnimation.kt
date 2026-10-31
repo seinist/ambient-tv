@@ -10,15 +10,19 @@ object IntroAnimation {
     /** Light field; the key predates the rename and stays so saved choices keep working. */
     const val BLOOM = "bloom"
     const val HORIZON = "horizon"
+    const val SIGNATURE = "signature"
+    const val PRISM = "prism"
     const val DEFAULT = BLOOM
 
-    val keys = listOf(OFF, BLOOM, HORIZON)
+    val keys = listOf(OFF, BLOOM, HORIZON, SIGNATURE, PRISM)
 
     /** Retired styles (power_on, signal, shimmer, ripple, word) fall back to the default. */
     fun normalize(key: String?): String = key?.takeIf { it in keys } ?: DEFAULT
 
     fun durationMs(key: String): Int = when (normalize(key)) {
         HORIZON -> 5000
+        SIGNATURE -> 4800
+        PRISM -> 5200
         OFF -> 0
         else -> 5200
     }
