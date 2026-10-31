@@ -134,9 +134,8 @@ fun PhotoViewerScreen(
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
-    BackHandler {
+    BackHandler(enabled = !menuOpen) {
         when {
-            menuOpen -> menuOpen = false
             state.zoom > 1f -> viewModel.resetZoom()
             controlsVisible -> controlsVisible = false
             else -> onClose()
@@ -362,6 +361,7 @@ fun PhotoViewerScreen(
         }
 
         if (menuOpen) {
+            com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { menuOpen = false }) {
             RightSidePanel(
                 title = stringResource(R.string.photos_menu_title),
                 onBack = { menuOpen = false },
@@ -398,6 +398,7 @@ fun PhotoViewerScreen(
                         TvActionButton(stringResource(R.string.photos_zoom_out), { viewModel.zoomOut() }, Modifier.weight(1f), enabled = state.zoom > 1f, icon = Icons.Filled.ZoomOut, fillWidth = true)
                     }
                 }
+            }
             }
         }
     }
