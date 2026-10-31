@@ -430,24 +430,19 @@ fun RadioScreen(
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                 )
                 state.error && !state.loading &&
-                    (if (showingFacets) state.facets.isEmpty() else state.stations.isEmpty()) -> Column(
-                    Modifier.fillMaxWidth().pageContentUp(focusChain).focusGroup(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    StatePanel(
+                    (if (showingFacets) state.facets.isEmpty() else state.stations.isEmpty()) ->
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
                         title = stringResource(R.string.radio_error),
-                        modifier = Modifier.fillMaxWidth(),
+                        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
+                        actionLabel = stringResource(R.string.action_reload),
+                        onAction = viewModel::refresh,
+                        modifier = Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
                     )
-                    TvActionButton(
-                        text = stringResource(R.string.action_reload),
-                        onClick = viewModel::refresh,
+                showingFacets && state.facets.isEmpty() && state.contentReady ->
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(state.emptyMessageRes()),
+                        modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                     )
-                }
-                showingFacets && state.facets.isEmpty() && state.contentReady -> StatePanel(
-                    title = stringResource(R.string.radio_no_stations),
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 showingFacets -> Row(
                     Modifier.fillMaxSize()
                         .pageContentUp(focusChain)
@@ -503,10 +498,11 @@ fun RadioScreen(
                         )
                     }
                 }
-                state.stations.isEmpty() && state.contentReady -> StatePanel(
-                    title = stringResource(R.string.radio_no_stations),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                state.stations.isEmpty() && state.contentReady ->
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(state.emptyMessageRes()),
+                        modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
+                    )
                 else -> Row(
                     Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
