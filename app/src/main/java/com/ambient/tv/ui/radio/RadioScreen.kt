@@ -1062,7 +1062,7 @@ private fun RadioStationList(
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
     ) {
         lazyItems(stations, key = { it.id }) { station ->
-            var focused by remember(station.id) { mutableStateOf(false) }
+            // Highlight the entire row (play target + favorite action) as one surface.
             var rowHasFocus by remember(station.id) { mutableStateOf(false) }
             val selected = playbackId == station.id
             val favorite = station.id in favoriteIds
@@ -1072,7 +1072,9 @@ private fun RadioStationList(
                 initialFocusId -> Modifier.focusRequester(initialFocusRequester)
                 else -> Modifier
             }
-            // The play target and the favorite button are siblings, as in LiveTV's DVR rows.
+            // Like LiveTV DVR rows, play and favorite are independent focus targets.
+            // The shared row draws focus once; an inner mediaFocusMotion would cast an
+            // outer shadow *inside* the row and scale only its play half.
             Row(
                 Modifier.fillMaxWidth()
                     .onFocusChanged { rowHasFocus = it.hasFocus }
@@ -1082,8 +1084,8 @@ private fun RadioStationList(
                         shape,
                     )
                     .border(
-                        if (focused || rowHasFocus || selected) 2.dp else 1.dp,
-                        if (focused || rowHasFocus || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
+                        if (rowHasFocus || selected) 2.dp else 1.dp,
+                        if (rowHasFocus || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
                         shape,
                     ),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1096,11 +1098,10 @@ private fun RadioStationList(
                     shape = ClickableSurfaceDefaults.shape(shape),
                     modifier = focusModifier.weight(1f)
                         .browseFocusTarget(station.id)
-                        .mediaFocusMotion(focused, focusedScale = 1.012f)
+                        // No nested shadow or zoom: the containing row owns its highlight.
                         .activateOnTvKey { onClick(station) }
                         .bringFocusedContextIntoView()
                         .onFocusChanged {
-                            focused = it.isFocused
                             if (it.isFocused) onFocused(station)
                         },
                 ) {
