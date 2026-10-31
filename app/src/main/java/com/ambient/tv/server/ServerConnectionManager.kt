@@ -71,7 +71,8 @@ class ServerConnectionManager @Inject constructor(
         // Invalidate the cached identity on a confirmed outage. A later open machine port
         // must not resurrect an old Online state before this service answers its own API.
         if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
-            _state.value = ServerConnectionState.Offline
+            // Do not override a newer Checking/Waking/Online result from a concurrent connect.
+            _state.compareAndSet(service, ServerConnectionState.Offline)
         }
         com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
