@@ -418,6 +418,9 @@ private fun RightSidePanelChrome(
     val standaloneMotion = inheritedMotion ?: ownMotion
     val standalone = !playerPanelMotion.active
     val panelInteractive = playerPanelInteractive && (!standalone || !standaloneMotion.dismiss.closing)
+    // Block controls immediately on Back, but keep the existing focus owner until the exit
+    // animation completes. Otherwise Compose may move focus into the underlying grid mid-slide.
+    val keepPanelFocusDuringExit = standalone && standaloneMotion.dismiss.closing && playerPanelInteractive
     val dismissScope = rememberCoroutineScope()
     val uiSounds = LocalUiSoundPlayer.current
 
@@ -572,7 +575,7 @@ private fun RightSidePanelChrome(
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
             .focusProperties {
-                canFocus = panelInteractive
+                canFocus = panelInteractive || keepPanelFocusDuringExit
                 onEnter = { if (!panelInteractive) cancelFocusChange() }
                 onExit = { cancelFocusChange() }
             }
