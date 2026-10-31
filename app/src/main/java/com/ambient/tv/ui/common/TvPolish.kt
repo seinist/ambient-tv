@@ -431,6 +431,8 @@ fun ArtworkImage(
     fallbackIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     /** False for full-screen backdrops: no grey pulse while loading, no title card on failure. */
     placeholder: Boolean = true,
+    /** Optional caller-specific fallback, used after all URLs fail (or none is supplied). */
+    fallbackContent: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val candidates = remember(model, fallbackModels) {
@@ -501,12 +503,16 @@ fun ArtworkImage(
             if (loading && placeholder) PulsingArtworkPlaceholder()
         }
         if (placeholder && (!hasModel || failed)) {
-            if (fallbackIcon == null) ArtworkFallback(fallbackText) else Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                androidx.compose.material3.Icon(fallbackIcon, title, Modifier.fillMaxSize(0.3f),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            when {
+                fallbackContent != null -> fallbackContent()
+                fallbackIcon == null -> ArtworkFallback(fallbackText)
+                else -> Box(
+                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Icon(fallbackIcon, title, Modifier.fillMaxSize(0.3f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
