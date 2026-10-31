@@ -21,6 +21,19 @@ class PlaybackServiceRadioActionsTest {
         assertTrue(actions and PlaybackState.ACTION_SKIP_TO_NEXT != 0L)
     }
 
+    @Test fun carMusicQueuesExposeSkipWithoutChangingOrdinaryVideo() {
+        val actions = platformPlaybackActions("plex", hasPrevious = true, hasNext = true, carAudioQueue = true)
+        assertTrue(actions and PlaybackState.ACTION_SKIP_TO_PREVIOUS != 0L)
+        assertTrue(actions and PlaybackState.ACTION_SKIP_TO_NEXT != 0L)
+        assertTrue(actions and PlaybackState.ACTION_SEEK_TO != 0L)
+    }
+
+    @Test fun carBrowserCanPlaySelectedMediaAndVoiceSearch() {
+        val actions = platformPlaybackActions("radio", hasPrevious = false, hasNext = false)
+        assertTrue(actions and PlaybackState.ACTION_PLAY_FROM_MEDIA_ID != 0L)
+        assertTrue(actions and PlaybackState.ACTION_PLAY_FROM_SEARCH != 0L)
+    }
+
     @Test fun ordinaryPlaybackKeepsSeekAndNoRadioSkipActions() {
         val actions = platformPlaybackActions("plex", hasPrevious = true, hasNext = true)
 
