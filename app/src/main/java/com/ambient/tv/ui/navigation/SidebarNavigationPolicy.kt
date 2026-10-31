@@ -44,12 +44,14 @@ internal fun returnsFromFullscreenPlayer(previousRoute: String?, currentRoute: S
         Destinations.PLAYER,
         Destinations.TVH_PLAYER,
         Destinations.YOUTUBE_PLAYER,
+        Destinations.TELEGRAM_PLAYER,
         Destinations.SPOTIFY_PLAYER,
         Destinations.RADIO_PLAYER,
     ) && currentRoute !in setOf(
         Destinations.PLAYER,
         Destinations.TVH_PLAYER,
         Destinations.YOUTUBE_PLAYER,
+        Destinations.TELEGRAM_PLAYER,
         Destinations.SPOTIFY_PLAYER,
         Destinations.RADIO_PLAYER,
     )
