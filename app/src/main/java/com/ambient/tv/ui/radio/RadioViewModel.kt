@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
+import com.ambient.tv.data.radio.RadioSearchPage
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.browse.BrowseWorkBudget
@@ -113,6 +114,7 @@ data class RadioUiState(
     val startingStationId: String? = null,
     val favoriteIds: Set<String> = emptySet(),
     val viewMode: RadioViewMode = RadioViewMode.GRID,
+    val sortDescending: Boolean = false,
     val gridColumns: Int = 8,
     val listRows: Int = 7,
     /** Prevent the sidebar from focusing header actions before the asynchronous results arrive. */
@@ -128,6 +130,7 @@ class RadioViewModel @Inject constructor(
 ) : ViewModel() {
     private val _state = MutableStateFlow(RadioUiState(
         visibleSections = radioVisibleSections(preferences.radioSubmenuKeys),
+        sortDescending = preferences.sectionSortOrder(RADIO_VIEW_STATE_KEY) == "DESCENDING",
     ))
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
 
@@ -145,7 +148,7 @@ class RadioViewModel @Inject constructor(
         RadioFocusMemory.save(scope, currentId)
         val before = _state.value
         val known = before.stations.mapTo(HashSet()) { it.id }
-        val stations = before.stations + returned.stations.filter { known.add(it.id) }
+        val stations = radioAlphabeticalStations(before.stations + returned.stations.filter { known.add(it.id) }, before.sortDescending)
         _state.value = before.copy(
             stations = stations,
             nextOffset = returned.source?.nextOffset ?: before.nextOffset,
@@ -206,6 +209,7 @@ class RadioViewModel @Inject constructor(
             }.getOrDefault(RadioViewMode.GRID),
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
+            sortDescending = preferences.sectionSortOrder(RADIO_VIEW_STATE_KEY) == "DESCENDING",
         )
         refreshLocalState()
         when {
@@ -223,7 +227,7 @@ class RadioViewModel @Inject constructor(
         // pending synchronously so Reload cannot paint another stale empty frame.
         val remote = current.submittedQuery.isNotBlank() || current.selectedFacet != null ||
             current.section == RadioSection.POPULAR || current.section.isFacetSection
-        if (remote && current.stations.isEmpty() && current.facets.isEmpty()) {
+        if (remote && (if (current.isFacetOverview()) current.facets.isEmpty() else current.stations.isEmpty())) {
             _state.value = current.copy(loading = true, contentReady = false, error = false)
         }
         when {
@@ -340,17 +344,52 @@ class RadioViewModel @Inject constructor(
     }
 
     fun toggleFavorite(station: RadioStation) {
-        val favorite = station.id !in _state.value.favoriteIds
+        val before = _state.value
+        val favorite = station.id !in before.favoriteIds
+        val removingFromFavorites = !favorite && before.section == RadioSection.FAVORITES &&
+            before.submittedQuery.isBlank() && before.selectedFacet == null
+        if (removingFromFavorites) {
+            radioFocusAfterRemovingFavorite(before.stations, station.id)?.let { nextId ->
+                RadioFocusMemory.save(before.focusScope(), nextId)
+            }
+        }
         preferences.setRadioFavorite(station, favorite)
         refreshLocalState()
-        if (_state.value.section == RadioSection.FAVORITES && _state.value.submittedQuery.isBlank()) {
+        if (before.section == RadioSection.FAVORITES && before.submittedQuery.isBlank()) {
             showLocalSection(RadioSection.FAVORITES)
+            if (removingFromFavorites) _state.value = _state.value.copy(returnFocusRevision = before.returnFocusRevision + 1)
         }
     }
 
     fun selectViewMode(mode: RadioViewMode) {
         preferences.setSectionViewMode(RADIO_VIEW_STATE_KEY, mode.name)
         _state.value = _state.value.copy(viewMode = mode)
+    }
+
+    /** Persist sort direction for all Radio Browser indexes and remote station pages. */
+    fun setSortDescending(descending: Boolean) {
+        val current = _state.value
+        if (current.sortDescending == descending) return
+        preferences.setSectionSortOrder(RADIO_VIEW_STATE_KEY, if (descending) "DESCENDING" else "ASCENDING")
+        // Locally available sets (including the full Popular top-100) can reverse instantly.
+        val local = current.isFacetOverview() ||
+            (current.submittedQuery.isBlank() && current.selectedFacet == null &&
+                (current.section == RadioSection.FAVORITES || current.section == RadioSection.RECENT ||
+                    (current.section == RadioSection.POPULAR && current.contentReady && !current.loading)))
+        if (local) {
+            _state.value = current.copy(
+                sortDescending = descending,
+                stations = radioAlphabeticalStations(current.stations, descending),
+            )
+        } else {
+            // Remote paging must restart at offset zero in the other direction. Mixing
+            // previously loaded A–Z and fresh Z–A pages would invalidate every jump.
+            loadJob?.cancel()
+            resetFocusPaging()
+            _state.value = current.copy(sortDescending = descending, stations = emptyList(),
+                loading = true, contentReady = false, hasMore = false, nextOffset = 0, error = false)
+            loadStations(reset = true)
+        }
     }
 
     fun setGridColumns(columns: Int) {
@@ -423,7 +462,7 @@ class RadioViewModel @Inject constructor(
         _state.value = _state.value.copy(
             loading = false,
             loadingMore = false,
-            stations = stations,
+            stations = radioAlphabeticalStations(stations, _state.value.sortDescending),
             facets = emptyList(),
             hasMore = false,
             error = false,
@@ -495,21 +534,32 @@ class RadioViewModel @Inject constructor(
             )
             val facet = _state.value.selectedFacet
             val section = _state.value.section
+            val query = _state.value.submittedQuery.takeIf(String::isNotBlank)
+            val descending = _state.value.sortDescending
             suspendResult {
-                repository.search(
-                    query = _state.value.submittedQuery.takeIf(String::isNotBlank),
-                    countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
-                    language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
-                    tag = facet?.id.takeIf { section == RadioSection.GENRES },
-                    offset = offset,
-                    limit = PAGE_SIZE,
-                )
+                if (section == RadioSection.POPULAR && facet == null && query == null) {
+                    // 'Popular' remains the actual top-clicked catalog, not the entire
+                    // station database. Fetch its complete bounded set before indexing.
+                    val popular = repository.popular(POPULAR_LIMIT)
+                    RadioSearchPage(popular, offset = 0, limit = POPULAR_LIMIT, hasMore = false)
+                } else {
+                    repository.search(
+                        query = query,
+                        countryCode = facet?.id.takeIf { section == RadioSection.COUNTRIES },
+                        language = facet?.id.takeIf { section == RadioSection.LANGUAGES },
+                        tag = facet?.id.takeIf { section == RadioSection.GENRES },
+                        offset = offset,
+                        limit = PAGE_SIZE,
+                        order = "name",
+                        reverse = descending,
+                    )
+                }
             }.onSuccess { page ->
                 val existing = if (reset) emptyList() else _state.value.stations
                 _state.value = _state.value.copy(
                     loading = false,
                     loadingMore = false,
-                    stations = (existing + page.items).distinctBy(RadioStation::id),
+                    stations = radioAlphabeticalStations((existing + page.items).distinctBy(RadioStation::id), descending),
                     hasMore = page.hasMore,
                     nextOffset = page.offset + page.limit,
                     error = false,
@@ -560,6 +610,7 @@ class RadioViewModel @Inject constructor(
 
     companion object {
         private const val PAGE_SIZE = 48
+        private const val POPULAR_LIMIT = 100
         private const val FACET_LIMIT = 150
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
