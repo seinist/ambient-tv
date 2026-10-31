@@ -23,6 +23,7 @@ import timber.log.Timber
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -139,6 +140,20 @@ class YouTubeViewModel @Inject constructor(
     /** The user may already have scrolled to a tail while the first feed request is in flight. */
     private val visibleViewportEnds = linkedMapOf<String, Pair<Int, Boolean>>()
 
+    /** Register before starting: Main.immediate may otherwise complete a job before assignment. */
+    private fun startRowContinuation(rowId: String, showPlaceholder: Boolean) {
+        if (rowId in rowLoadJobs) return
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try { continueRow(rowId, showPlaceholder) }
+            finally {
+                // A cancelled old feed must not remove the new feed's job with the same row ID.
+                if (rowLoadJobs[rowId] === coroutineContext[Job]) rowLoadJobs.remove(rowId)
+            }
+        }
+        rowLoadJobs[rowId] = job
+        job.start()
+    }
+
     /** Discards every row continuation state; [session] arms paging for that feed/search key. */
     private fun resetPaging(session: String?, revision: Long = pagingRevision) {
         focusLoadJob?.cancel()
@@ -194,9 +209,7 @@ class YouTubeViewModel @Inject constructor(
             delay(YouTubeRowPaging.FOCUS_SETTLE_MS)
             while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
             if (focusedRowId != target || target in rowLoadJobs) return@launch
-            rowLoadJobs[target] = viewModelScope.launch {
-                try { continueRow(target, showPlaceholder = true) } finally { rowLoadJobs.remove(target) }
-            }
+            startRowContinuation(target, showPlaceholder = true)
         }
     }
 
@@ -214,10 +227,7 @@ class YouTubeViewModel @Inject constructor(
         if (!paging.shouldLoadOnFocus(visible.id, lastVisibleIndex.coerceAtMost(visible.items.lastIndex),
                 visible.items.size, grid) ||
             !paging.canLoad(visible.id, source.items.size) || visible.id in rowLoadJobs) return
-        rowLoadJobs[visible.id] = viewModelScope.launch {
-            try { continueRow(visible.id, showPlaceholder = true) }
-            finally { rowLoadJobs.remove(visible.id) }
-        }
+        startRowContinuation(visible.id, showPlaceholder = true)
     }
 
     private suspend fun awaitQuietInput(maxWaitMs: Long = Long.MAX_VALUE) {
