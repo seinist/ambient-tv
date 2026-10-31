@@ -63,7 +63,7 @@ jobs:
         # One ABI keeps the Vulkan probe build short; unit tests do not depend on it.
         run: |
           set -o pipefail
-          if ! ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 --continue 2>&1 | tee gradle.log; then
+          if ! ./gradlew :app:testDebugUnitTest -PAPK_ABI=arm64 --warning-mode all --continue 2>&1 | tee gradle.log; then
             # Kotlin compile errors, failed tests and Gradle's own failure summary as annotations.
             grep -E '^e: |FAILED$|tests completed|What went wrong' -A3 gradle.log | grep -v '^--$' | head -40 \
               | sed 's/%/%25/g; s/^/::error title=gradle::/'
