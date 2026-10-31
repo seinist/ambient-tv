@@ -376,6 +376,7 @@ private fun DrawScope.drawWordmark(
     start: Float,
     fromIcon: Boolean,
     signature: Boolean = false,
+    fixedPeak: Boolean = false,
 ) {
     val t = frame.seconds - start
     val unit = width / (WORDMARK_RIGHT - WORDMARK_LEFT)
@@ -415,7 +416,7 @@ private fun DrawScope.drawWordmark(
             }
         }
     } else {
-        val grow = if (signature) 1f else 1.08f - 0.08f * appear
+        val grow = if (signature || fixedPeak) 1f else 1.08f - 0.08f * appear
         val pivot = mark(Offset(9.914f, -9.375f))
         peak = WORDMARK_PEAK.map { pivot + (mark(it) - pivot) * grow }
         peakStroke = WORDMARK_PEAK_STROKE * unit
@@ -619,7 +620,7 @@ private fun DrawScope.drawPrism(frame: IntroFrame) {
     }
 
     // The logo never changes position or scale as the planes pass.
-    drawWordmark(frame, stage, wordWidth, start = 0.6f, fromIcon = false)
+    drawWordmark(frame, stage, wordWidth, start = 0.6f, fromIcon = false, fixedPeak = true)
 
     if (!IntroDraw.lite) {
         val sheen = soft(phase(t, 2.0f, 2.25f)) * (1f - soft(phase(t, 4.5f, 5.1f)))
