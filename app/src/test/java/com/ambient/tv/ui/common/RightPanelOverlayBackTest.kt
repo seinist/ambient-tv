@@ -12,6 +12,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.platform.testTag
 import com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS
 import com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
 import org.junit.Assert.assertEquals
@@ -100,5 +103,22 @@ class RightPanelOverlayBackTest {
             assertEquals(0, outsideClosed.get())
             assertEquals(0, underlyingBack.get())
         }
+    }
+
+    @Test fun freshTvRightPanelFocusesFirstActionInsteadOfFooterBack() {
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            RightSidePanel(title = "Ansicht", onBack = {}, requestHeaderFocus = true) {
+                RightPanelChoice(
+                    text = "Erste Option",
+                    selected = false,
+                    onClick = {},
+                    modifier = Modifier.testTag("first-panel-choice"),
+                )
+            }
+        }
+        rule.mainClock.advanceTimeBy(500L)
+        rule.waitForIdle()
+        rule.onNodeWithTag("first-panel-choice").assertIsFocused()
     }
 }
