@@ -447,6 +447,7 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
         views = YouTubeViewMode.entries.map { com.ambient.tv.ui.common.ViewOption(it.name, modeLabel(it), com.ambient.tv.ui.common.ViewPreview.valueOf(it.name)) },
         selectedView = state.viewMode.name, onView = { onSelectView(YouTubeViewMode.valueOf(it)) },
         gridColumns = state.gridColumns, listRows = state.listRows,
+        gridDensityProfile = com.ambient.tv.ui.common.GridDensityProfile.SMARTTUBE,
         onGridColumns = onSetGridColumns, onListRows = onSetListRows, onClose = onClose,
         showDensity = state.viewMode != YouTubeViewMode.CINEMATIC,
         sorts = filterModel.sorts, selectedSort = filterModel.selectedSort, onSort = filterModel.onSort,
