@@ -1520,7 +1520,9 @@ private fun AmbientTvApp(
     val keepScreenOn = !standbyRequested && (
         screensaverOverlayPresent ||
         (!handheld && screensaverEnabled) ||
-        ((onPlayerScreen || currentRoute == Destinations.RADIO_PLAYER) && backgroundPlayback.wantsToPlay) ||
+        // The user can lock the phone while PiP is floating; audio will keep playing.
+        ((onPlayerScreen || currentRoute == Destinations.RADIO_PLAYER) &&
+            backgroundPlayback.wantsToPlay && !(handheld && pipPresentation)) ||
         (!handheld && backgroundPlayback.activeVideo && backgroundPlayback.wantsToPlay))
     DisposableEffect(keepScreenOn) {
         focusSoundView.keepScreenOn = keepScreenOn
