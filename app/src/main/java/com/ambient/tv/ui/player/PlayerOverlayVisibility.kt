@@ -30,6 +30,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -239,6 +243,9 @@ fun PlayerOverlayVisibility(
     visibility.targetState = show
     // Handheld reopening slides the action row in from below, even if the OSD expands immediately.
     val stow = remember(hidden) { PlayerOsdStow(initiallyCollapsed = (handheld && osd != null) || osd?.expanded == false) }
+    val preview = remember(hidden) { SeekPreviewOverlayState() }
+    var previewOrigin by remember { mutableStateOf(Offset.Zero) }
+    var previewViewport by remember { mutableStateOf(IntSize.Zero) }
     // A real dismissal stows the bar first; a panel takes over the screen right away.
     val stowFirst = !show && !panelOpen
     androidx.compose.runtime.SideEffect { stow.closing = stowFirst }
@@ -262,8 +269,15 @@ fun PlayerOverlayVisibility(
         enter = fadeIn(tween(180, easing = FastOutSlowInEasing)),
         exit = fadeOut(tween(200, delayMillis = fadeDelay, easing = FastOutSlowInEasing)),
     ) {
-        androidx.compose.runtime.CompositionLocalProvider(LocalPlayerOsdStow provides stow) { Box(
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalPlayerOsdStow provides stow,
+            LocalSeekPreviewOverlayState provides preview,
+        ) { Box(
             Modifier.fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    previewOrigin = coordinates.positionInRoot()
+                    previewViewport = coordinates.size
+                }
                 // Exiting controls remain drawn; focus cannot re-enter their stale actions.
                 .focusProperties { onEnter = { if (!show) cancelFocusChange() } }
                 .focusGroup()
@@ -291,7 +305,9 @@ fun PlayerOverlayVisibility(
                         }
                     }
                 }),
-            content = content,
-        ) }
+        ) {
+            content()
+            SeekPreviewOverlay(preview, previewOrigin, previewViewport)
+        } }
     }
 }
