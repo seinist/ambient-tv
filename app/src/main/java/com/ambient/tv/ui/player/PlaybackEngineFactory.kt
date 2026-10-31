@@ -105,6 +105,8 @@ object PlaybackEngineFactory {
         liveStream: Boolean = metadata?.isLive == true,
         /** SmartTube: network engine and buffer size from its settings; null keeps the defaults. */
         streamTuning: Media3StreamTuning? = null,
+        /** Optional authenticated source (Telegram MTProto) without exposing file URLs. */
+        dataSourceFactory: androidx.media3.datasource.DataSource.Factory? = null,
     ): ExoPlayer {
         if (metadata != null) {
             return BackgroundPlaybackSession.acquire(context, metadata, "media3",
@@ -115,7 +117,8 @@ object PlaybackEngineFactory {
                 gatedMedia3Handle { deferPrepare ->
                     create(context.applicationContext, streamUrl, startPositionMs,
                         subtitleTracks, streamHeaders, audioPassthroughEnabled, mimeType = mimeType, maxVideoHeight = maxVideoHeight, preferredVideoMimeType = preferredVideoMimeType, maxVideoFrameRate = maxVideoFrameRate, streamUrlRenewer = streamUrlRenewer, sourceHdrStandard = sourceHdrStandard, preferOriginalAudio = preferOriginalAudio, audioOnly = audioOnly, mpvAudioAllowed = mpvAudioAllowed, centerYouTubeCaptions = centerYouTubeCaptions,
-                        deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning)
+                        deferPrepare = deferPrepare, liveStream = liveStream, streamTuning = streamTuning,
+                        dataSourceFactory = dataSourceFactory)
                 }
             }.player
         }
@@ -160,7 +163,7 @@ object PlaybackEngineFactory {
             val httpDataSourceFactory = media3HttpDataSourceFactory(context, streamTuning?.networkEngine, streamClient)
                 .setDefaultRequestProperties(streamHeaders)
             val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory))
+                .setDataSourceFactory(dataSourceFactory ?: DefaultDataSource.Factory(context, httpDataSourceFactory))
                 .apply { if (centerYouTubeCaptions) setSubtitleParserFactory(com.ambient.tv.youtube.YouTubeSubtitleParserFactory()) }
 
             val heapMb = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.memoryClass ?: 0
