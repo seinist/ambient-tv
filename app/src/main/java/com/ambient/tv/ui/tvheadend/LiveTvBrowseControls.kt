@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.focus.FocusRequester
@@ -143,6 +144,22 @@ private data class CompletedLiveTvListing(
 )
 
 /**
+ * Compose effect keys normally compare two List instances structurally. A fresh 20,000-entry
+ * EPG with unchanged values would perform that deep equality check on the main thread.
+ * Compare the incoming immutable list instances by reference instead.
+ */
+private class LiveTvDataIdentityKey(
+    private val channels: List<LiveTvChannel>,
+    private val events: List<LiveTvProgramme>,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is LiveTvDataIdentityKey && other.channels === channels && other.events === events
+
+    override fun hashCode(): Int =
+        31 * System.identityHashCode(channels) + System.identityHashCode(events)
+}
+
+/**
  * An independent, cancelable worker builds the EPG snapshot. Keep previous rows and focus IDs
  * while the replacement loads. Switching providers starts with no old source's channels.
  */
@@ -161,8 +178,12 @@ internal fun rememberLiveTvChannelListing(
             now = System.currentTimeMillis() / 1000L
         }
     }
-    var completed by remember(sourceId) { mutableStateOf<CompletedLiveTvListing?>(null) }
-    LaunchedEffect(sourceId, channels, events, options, now, enabled) {
+    // Avoid deep equality comparisons of channel/EPG lists in both effects and snapshot writes.
+    var completed by remember(sourceId) {
+        mutableStateOf<CompletedLiveTvListing?>(null, referentialEqualityPolicy())
+    }
+    val sourceData = LiveTvDataIdentityKey(channels, events)
+    LaunchedEffect(sourceId, sourceData, options, now, enabled) {
         if (!enabled) return@LaunchedEffect
         // A newer effect cancels its predecessor. No partial background result touches Compose.
         val built = withContext(Dispatchers.Default) {
