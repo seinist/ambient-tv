@@ -520,6 +520,7 @@ private fun RightSidePanelChrome(
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
+    var bodyHasFocus by remember { mutableStateOf(false) }
     // A rebuilt level that already held focus rescues it like a panel that just lost it.
     var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
     val panelFocus = remember { FocusRequester() }
@@ -583,7 +584,8 @@ private fun RightSidePanelChrome(
             // Do not leave focus on the old grid for 400 ms while the drawer enters.
             // Give Compose one layout frame to attach the panel's controls, then claim focus.
             androidx.compose.runtime.withFrameNanos { }
-            if (panelHasFocus || !panelInteractive) return@LaunchedEffect
+            if (bodyHasFocus || !panelInteractive) return@LaunchedEffect
+            // Focus held by the footer/parent group does not mean the content row is focused.
             // A fresh level begins at the first available control, not at its footer Back.
             // The footer is only a fallback for an empty level. A returning level keeps
             // trying its remembered item through the dedicated focus rescue.
@@ -683,6 +685,7 @@ private fun RightSidePanelChrome(
                 .fillMaxWidth()
                 .clipToBounds()
                 .focusRequester(bodyFocus)
+                .onFocusChanged { bodyHasFocus = it.hasFocus }
                 .focusProperties {
                     onExit = { bodyFocus.saveFocusedChild() }
                 }
