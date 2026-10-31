@@ -2,6 +2,7 @@ package com.ambient.tv.car
 
 import android.content.Context
 import com.ambient.tv.data.dlna.DlnaKeys
+import com.ambient.tv.data.dlna.DlnaNode
 import com.ambient.tv.data.dlna.DlnaRepository
 import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.data.dlna.toMediaItem
@@ -19,6 +20,22 @@ import com.ambient.tv.livetv.LiveTvRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+
+/** Conservative classification: never turn video-only or ambiguous DLNA resources into audio. */
+internal fun carDlnaAudioEligible(node: DlnaNode): Boolean {
+    if (node.container) return false
+    val type = node.upnpClass.orEmpty()
+    if (type.contains("videoItem", ignoreCase = true) ||
+        type.contains("imageItem", ignoreCase = true)) return false
+    val mimes = node.resources.mapNotNull {
+        it.protocolInfo?.split(':', limit = 4)?.getOrNull(2)?.substringBefore(';')
+    }
+    if (mimes.any { it.startsWith("video/", ignoreCase = true) }) return false
+    return type.contains("audioItem", ignoreCase = true) ||
+        mimes.any { it.startsWith("audio/", ignoreCase = true) }
+}
+
+internal fun carAudioFileEligible(entry: FileEntry) = !entry.directory && entry.audio
 
 internal data class CarAudioPage(
     val items: List<CarAudioEntry>,
@@ -82,9 +99,9 @@ internal class CarAuxiliaryAudio @Inject constructor(
                 folder(CarAudioIds.fileSource(it.id), it.name)
             } else emptyList())
             CarAudioIds.FILE_FAVORITES -> slice(if (preferences.filesEnabled)
-                fileStore.favorites().filter(FileEntry::audio).map(::fileEntry) else emptyList())
+                fileStore.favorites().filter(::carAudioFileEligible).map(::fileEntry) else emptyList())
             CarAudioIds.FILE_RECENT -> slice(if (preferences.filesEnabled)
-                fileStore.history().map { it.entry }.filter(FileEntry::audio).distinctBy { it.id }.map(::fileEntry)
+                fileStore.history().map { it.entry }.filter(::carAudioFileEligible).distinctBy { it.id }.map(::fileEntry)
                 else emptyList())
             CarAudioIds.LIVE_RADIO_IPTV, CarAudioIds.LIVE_RADIO_TVH -> {
                 val system = if (parent == CarAudioIds.LIVE_RADIO_IPTV) "iptv" else "tvheadend"
@@ -133,7 +150,8 @@ internal class CarAuxiliaryAudio @Inject constructor(
                         if (node.container) folder(CarAudioIds.dlnaFolder(node.key), node.title)
                         else {
                             val item = node.toMediaItem()
-                            if (!carAudioPlayableType(item.type) || item.streamUrl.isNullOrBlank()) null
+                            if (!carDlnaAudioEligible(node) || !carAudioPlayableType(item.type) ||
+                                item.streamUrl.isNullOrBlank()) null
                             else CarAudioEntry(CarAudioIds.musicItem(item.ratingKey), item.title, null,
                                 node.artworkUrl, playable = true, libraryItem = item)
                         }
@@ -171,7 +189,8 @@ internal class CarAuxiliaryAudio @Inject constructor(
     private fun folder(id: String, label: String) = CarAudioEntry(id, label)
 
     private fun fileEntry(entry: FileEntry) =
-        CarAudioEntry(CarAudioIds.musicItem(entry.id), entry.name, null, playable = entry.audio)
+        CarAudioEntry(CarAudioIds.musicItem(entry.id), entry.name, null,
+            playable = carAudioFileEligible(entry))
 
     /** Only explicit radio-kind channels qualify; TV or unknown streams never enter Auto. */
     suspend fun resolveLive(id: String): CarAudioSelection.Live? {
@@ -201,7 +220,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
     suspend fun searchStoredAudio(query: String, limit: Int = 25): List<CarAudioEntry> {
         if (!preferences.filesEnabled) return emptyList()
         return (fileStore.favorites() + fileStore.history().map { it.entry })
-            .filter { it.audio && it.name.contains(query, ignoreCase = true) }
+            .filter { carAudioFileEligible(it) && it.name.contains(query, ignoreCase = true) }
             .distinctBy { it.id }.take(limit).map(::fileEntry)
     }
 }
