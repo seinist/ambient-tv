@@ -17,6 +17,8 @@ data class RadioBrowseQueueSource(
     val tag: String? = null,
     val nextOffset: Int = 0,
     val hasMore: Boolean = false,
+    /** Continue alphabetized result pages in the same direction as the browse view. */
+    val sortDescending: Boolean = false,
 )
 
 @Singleton
