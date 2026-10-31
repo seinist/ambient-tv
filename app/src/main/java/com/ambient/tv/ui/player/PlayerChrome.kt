@@ -2,6 +2,8 @@ package com.ambient.tv.ui.player
 
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.focusable
@@ -107,8 +109,19 @@ fun ReferencePlayerHeader(
     artworkAspectRatio: Float = 16f / 9f,
     artworkContentScale: ContentScale = ContentScale.Crop,
 ) {
+    // The bubble occupies the area above the timeline. Fade only the header's pixels,
+    // never its measured height: the seekbar, badges and actions must not jump.
+    val previewVisible = LocalSeekPreviewOverlayState.current?.showing == true
+    val headerAlpha by animateFloatAsState(
+        targetValue = if (previewVisible) 0f else 1f,
+        animationSpec = tween(
+            durationMillis = if (previewVisible) 90 else 180,
+            delayMillis = if (previewVisible) 0 else 200,
+        ),
+        label = "Seek preview header",
+    )
     Row(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
