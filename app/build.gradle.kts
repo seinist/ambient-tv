@@ -441,6 +441,8 @@ dependencies {
     implementation(libs.androidx.media3.datasource.cronet)
     implementation(libs.play.services.cronet)
     implementation(libs.androidx.media3.session)
+    // Android Auto browse + searchable results; wraps the already active platform MediaSession.
+    implementation("androidx.media:media:1.8.0")
 
     implementation(libs.retrofit.core)
     implementation(libs.retrofit.kotlinx.serialization.converter)
