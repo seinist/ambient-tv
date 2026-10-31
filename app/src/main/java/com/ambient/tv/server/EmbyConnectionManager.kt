@@ -82,7 +82,7 @@ class EmbyConnectionManager @Inject constructor(
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        connectRun.joinOrStart(endpoint) { connect() }.also {
+        connectRun.joinOrStart(endpoint) { connect(forceNewWake = true) }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("emby")
         }
     }
@@ -133,13 +133,13 @@ class EmbyConnectionManager @Inject constructor(
         }
     }
 
-    private suspend fun connect(): Boolean {
+    private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
         var freshlyConfirmed = false
         val check = hosts.begin("emby")
         val endpoint = endpointKey()
         return try {
-            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+            connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
                     else if (freshlyConfirmed) browseReconnects.request("emby")
@@ -159,6 +159,7 @@ class EmbyConnectionManager @Inject constructor(
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
         onConnected: () -> Unit,
+        forceNewWake: Boolean = false,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("emby") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.isEmbyConfigured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -188,7 +189,7 @@ class EmbyConnectionManager @Inject constructor(
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),
                     wireGuardHost = preferences.embyHost.takeIf { preferences.wireGuardEmbyEnabled },
-                    retry = attempt > 0,
+                    retry = forceNewWake || attempt > 0,
                 )
             },
             retries = wakeRetries,
