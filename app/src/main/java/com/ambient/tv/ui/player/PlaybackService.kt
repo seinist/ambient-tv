@@ -79,7 +79,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     @Inject internal lateinit var carCatalog: CarAudioCatalog
     @Inject lateinit var spotify: SpotifyRepository
     private var carPlaybackJob: Job? = null
-    private var carSpotifySelected = false
+    private val carSpotifySelection = CarSpotifySelection()
+    private val carSpotifySelected: Boolean get() = carSpotifySelection.active
     private var carSpotifyStartGeneration = -1L
     private val sponsorSkip = BackgroundSponsorSkipPolicy()
     private var carMusicQueue: List<String> = emptyList()
@@ -136,7 +137,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     if (carSpotifySelected) spotify.pause() else BackgroundPlaybackSession.userPause()
                 }
                 override fun onStop() {
-                    if (carSpotifySelected) spotify.stop() else BackgroundPlaybackSession.stop()
+                    if (carSpotifySelected) {
+                        carSpotifySelection.clear()
+                        spotify.stop()
+                    } else BackgroundPlaybackSession.stop()
                 }
                 override fun onSkipToPrevious() { skipCarAudio(next = false) }
                 override fun onSkipToNext() { skipCarAudio(next = true) }
@@ -180,7 +184,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         scope.launch {
             BackgroundPlaybackSession.snapshot.collect { state ->
                 if (carSpotifySelected && state.active && state.generation != carSpotifyStartGeneration) {
-                    carSpotifySelected = false
+                    carSpotifySelection.clear()
                 }
                 if (!carSpotifySelected) updatePlatformState(state)
                 else if (!state.active) {
@@ -455,7 +459,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         when (selection) {
             is CarAudioSelection.Radio -> {
                 if (carSpotifySelected) spotify.pause()
-                carSpotifySelected = false
+                carSpotifySelection.clear()
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
                 radioPlaybackLauncher.play(selection.station, selection.queue)
@@ -465,7 +469,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
             is CarAudioSelection.Spotify -> {
                 carSpotifyStartGeneration = BackgroundPlaybackSession.snapshot.value.generation
-                carSpotifySelected = true
+                val start = carSpotifySelection.begin()
                 carMusicQueue = emptyList()
                 carLiveQueue = emptyList()
                 mediaSession.setPlaybackState(PlaybackState.Builder()
@@ -474,11 +478,19 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         PlaybackState.ACTION_PLAY_FROM_SEARCH or PlaybackState.ACTION_SKIP_TO_NEXT or
                         PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
                     .setState(PlaybackState.STATE_BUFFERING, 0L, 0f).build())
-                spotify.playUri(selection.uri)
+                spotify.playUri(selection.uri) { success ->
+                    // The repository already rolls back the previous background engine on
+                    // failure. Do not keep Android Auto pinned to a dead Spotify session.
+                    // A late result must never replace a newer source or stop selection.
+                    if (!success && carSpotifySelection.rollbackFailed(start)) {
+                        if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
+                        else updatePlatformState(BackgroundPlaybackSession.snapshot.value)
+                    }
+                }
             }
             is CarAudioSelection.Library -> {
                 if (carSpotifySelected) spotify.pause()
-                carSpotifySelected = false
+                carSpotifySelection.clear()
                 val item = selection.item
                 val url = item.streamUrl ?: return
                 carMusicQueue = selection.queue
@@ -510,7 +522,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
             }
             is CarAudioSelection.Live -> {
                 if (carSpotifySelected) spotify.pause()
-                carSpotifySelected = false
+                carSpotifySelection.clear()
                 carMusicQueue = emptyList()
                 carLiveQueue = selection.queue
                 val stream = selection.stream
