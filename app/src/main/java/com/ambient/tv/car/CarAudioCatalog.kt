@@ -1,6 +1,9 @@
 package com.ambient.tv.car
 
+import android.content.Context
 import android.os.SystemClock
+import com.ambient.tv.R
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
@@ -34,6 +37,7 @@ internal sealed interface CarAudioSelection {
 /** Read-only, driver-safe browse facade. Existing repositories and playback engines own the data. */
 @Singleton
 internal class CarAudioCatalog @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val preferences: AppPreferences,
     private val radio: RadioBrowserRepository,
     private val spotify: SpotifyRepository,
@@ -81,10 +85,10 @@ internal class CarAudioCatalog @Inject constructor(
 
     private fun root(): List<CarAudioEntry> = buildList {
         // Android Auto normally allows <= 4 root tabs. Nest providers' categories instead.
-        if (preferences.radioEnabled) add(folder(CarAudioIds.RADIO_ROOT, "Radio"))
+        if (preferences.radioEnabled) add(folder(CarAudioIds.RADIO_ROOT, context.getString(R.string.car_audio_radio)))
         if (preferences.spotifyEnabled && spotify.webAuthorized)
-            add(folder(CarAudioIds.SPOTIFY_ROOT, "Spotify"))
-        add(folder(CarAudioIds.MUSIC_LIBRARIES, "Musikbibliotheken"))
+            add(folder(CarAudioIds.SPOTIFY_ROOT, context.getString(R.string.car_audio_spotify)))
+        add(folder(CarAudioIds.MUSIC_LIBRARIES, context.getString(R.string.car_audio_music_libraries)))
     }
 
     private fun folder(id: String, title: String, subtitle: String? = null) =
@@ -127,16 +131,16 @@ internal class CarAudioCatalog @Inject constructor(
 
     private suspend fun loadPage(parentId: String): List<CarAudioEntry> = when (parentId) {
         CarAudioIds.RADIO_ROOT -> if (preferences.radioEnabled) listOf(
-            folder(CarAudioIds.RADIO_FAVORITES, "Favoriten"),
-            folder(CarAudioIds.RADIO_RECENT, "Zuletzt gehört"),
-            folder(CarAudioIds.RADIO_POPULAR, "Beliebt"),
+            folder(CarAudioIds.RADIO_FAVORITES, context.getString(R.string.car_audio_favorites)),
+            folder(CarAudioIds.RADIO_RECENT, context.getString(R.string.car_audio_recent)),
+            folder(CarAudioIds.RADIO_POPULAR, context.getString(R.string.car_audio_popular)),
         ) else emptyList()
         CarAudioIds.SPOTIFY_ROOT -> if (spotifyEnabled()) listOf(
-            folder(CarAudioIds.SPOTIFY_HOME, "Startseite"),
-            folder(CarAudioIds.SPOTIFY_LIKED, "Lieblingssongs"),
-            folder(CarAudioIds.SPOTIFY_PLAYLISTS, "Playlists"),
-            folder(CarAudioIds.SPOTIFY_ALBUMS, "Alben"),
-            folder(CarAudioIds.SPOTIFY_ARTISTS, "Künstler"),
+            folder(CarAudioIds.SPOTIFY_HOME, context.getString(R.string.car_audio_home)),
+            folder(CarAudioIds.SPOTIFY_LIKED, context.getString(R.string.car_audio_liked)),
+            folder(CarAudioIds.SPOTIFY_PLAYLISTS, context.getString(R.string.car_audio_playlists)),
+            folder(CarAudioIds.SPOTIFY_ALBUMS, context.getString(R.string.car_audio_albums)),
+            folder(CarAudioIds.SPOTIFY_ARTISTS, context.getString(R.string.car_audio_artists)),
         ) else emptyList()
         CarAudioIds.RADIO_FAVORITES ->
             if (preferences.radioEnabled) preferences.radioFavorites.map { it.asEntry() } else emptyList()
