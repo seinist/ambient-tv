@@ -11,6 +11,7 @@ import com.ambient.tv.ui.common.MediaTileStyle
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /** A small offline display copy. No stream URLs, bearer tokens, or signed image URLs. */
