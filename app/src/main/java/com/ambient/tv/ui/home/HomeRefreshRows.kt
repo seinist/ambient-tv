@@ -36,3 +36,7 @@ internal fun mergeColdStartHomeRows(
     val visibleIds = visible.mapTo(HashSet()) { it.id }
     return restored.filterNot { it.id in visibleIds } + visible
 }
+
+/** Server reachability controls playback, but not cached Plex/Jellyfin/Emby posters. */
+internal fun homeRowHiddenByOffline(system: String, offline: Set<String>): Boolean =
+    system in offline && system !in setOf("plex", "jellyfin", "emby")
