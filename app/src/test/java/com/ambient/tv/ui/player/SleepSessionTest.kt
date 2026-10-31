@@ -20,7 +20,7 @@ class SleepSessionTest {
         fun advance(ms: Long) { rt += ms; epoch += ms }
     }
 
-    private class Target : SleepTarget {
+    private class Target(private val tvDevice: Boolean = true) : SleepTarget {
         var playing = true
         var ended = false
         var stops = 0
@@ -31,6 +31,7 @@ class SleepSessionTest {
         override fun sleepPause() { pauses++; playing = false }
         override fun sleepPlay() { playing = true }
         override fun sleepStop() { stops++; SleepSession.end(this) }
+        override fun sleepAllowsDeviceStandby() = tvDevice
         override fun sleepEnterStandby() { standbyAttempts++ }
     }
 
@@ -92,6 +93,20 @@ class SleepSessionTest {
         assertFalse(SleepSession.standbyRequested)
         assertNull(SleepSession.target)
         assertEquals(SleepTimerKind.OFF, SleepSession.config.kind)
+    }
+
+    @Test fun phoneStopsPlaybackButNeverRequestsStandby() {
+        val phone = Target(tvDevice = false)
+        SleepSession.begin(phone, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(phone)
+        assertEquals(1, phone.pauses)
+        clock.advance(PlaybackSleepTimer.PROMPT_MS)
+        SleepSession.tick(phone)
+        assertEquals(1, phone.stops)
+        assertEquals(0, phone.standbyAttempts)
+        assertFalse(SleepSession.standbyRequested)
     }
 
     @Test fun naturalEndOfItemAlsoRequestsTvStandbyWithoutPrompt() {
