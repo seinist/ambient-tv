@@ -44,6 +44,24 @@ class RadioBrowserRepositoryTest {
         assertEquals(2, api.lastLimit)
     }
 
+    @Test fun stationAlphabetSortPassesNameAndDirectionToServerPagination() = runBlocking {
+        val api = FakeRadioBrowserApi().apply {
+            stations = listOf(station("a", "Alpha"), station("z", "Zulu"))
+        }
+        val repository = RadioBrowserRepository(api)
+        val page = repository.search(tag = "jazz", offset = 48, limit = 2, order = "name", reverse = false)
+        assertEquals(listOf("a", "z"), page.items.map { it.id })
+        assertEquals("name", api.lastOrder)
+        assertFalse(api.lastReverse)
+        assertEquals("jazz", api.lastTag)
+        assertEquals(48, api.lastOffset)
+
+        repository.search(tag = "jazz", offset = 96, limit = 2, order = "name", reverse = true)
+        assertEquals("name", api.lastOrder)
+        assertTrue(api.lastReverse)
+        assertEquals(96, api.lastOffset)
+    }
+
     @Test fun invalidCatalogRowsAreDroppedAndResolvedUrlWins() = runBlocking {
         val api = FakeRadioBrowserApi().apply {
             stations = listOf(
@@ -169,6 +187,8 @@ class RadioBrowserRepositoryTest {
         var lastTag: String? = null
         var lastOffset = -1
         var lastLimit = -1
+        var lastOrder: String? = null
+        var lastReverse: Boolean = false
         var lastUuid: String? = null
 
         override suspend fun searchStations(
@@ -186,6 +206,8 @@ class RadioBrowserRepositoryTest {
             lastCountryCode = countryCode
             lastLanguage = language
             lastTag = tag
+            lastOrder = order
+            lastReverse = reverse
             lastOffset = offset
             lastLimit = limit
             return stations
