@@ -1285,7 +1285,6 @@ private fun TvhSidePanel(
     RightSideLazyPanel(
         title = title,
         onBack = onBack,
-        width = 500.dp,
         onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
         requestHeaderFocus = true,
         content = content,
@@ -1364,7 +1363,6 @@ private fun TvhTrackPanel(
     RightSidePanel(
         title = title,
         onBack = onBack,
-        width = 500.dp,
         onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
         requestHeaderFocus = true,
         scrollable = false,
@@ -1402,7 +1400,6 @@ private fun TvhPlaybackInfoPanel(
     RightSidePanel(
         title = stringResource(R.string.player_playback_info),
         onBack = onBack,
-        width = 520.dp,
         onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
         requestHeaderFocus = true,
     ) {

@@ -591,10 +591,7 @@ fun UnifiedPlayerSidePanel(
         // Handheld: a tap beside the panel closes it entirely, not just one level.
         onOutsideTap = navigation?.let { nav -> { nav.close() } } ?: onBack,
         modifier = modifier,
-        // Television: 38 % of the screen; labels that do not fit scroll while focused.
-        width = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) {
-            if (navigation?.panel in setOf(UnifiedPlayerPanel.VIDEO, UnifiedPlayerPanel.VIDEO_SECTION, UnifiedPlayerPanel.VIDEO_SVP, UnifiedPlayerPanel.VIDEO_SVP_ADVANCED, UnifiedPlayerPanel.RENDERER)) 420.dp else 500.dp
-        } else (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * 0.38f).dp,
+        // All right-side drawers share the Video Playback Settings width policy.
         requestHeaderFocus = requestInitialFocus || navigation?.restoreFailed == true,
         scrollable = true,
         retainFocus = true,

@@ -254,16 +254,35 @@ fun Modifier.fillWindowHeight(handheldGap: Dp? = null): Modifier = composed {
         }
 }
 
-/** A portrait handheld clamps the drawer width so its left edge stays on-screen. */
+/**
+ * Shared right-side drawer geometry, matching the VIDEO Playback Settings panel.
+ * TV and handheld landscape: 38% of screen width; handheld portrait: at most 420 dp.
+ * Using the same reference removes 500/520 dp vs 38% jumps between sources.
+ */
+internal const val RIGHT_PANEL_SCREEN_FRACTION = 0.38f
+internal const val RIGHT_PANEL_HANDHELD_PORTRAIT_DP = 420f
+
+internal fun referenceRightPanelWidthDp(
+    screenWidthDp: Int,
+    handheld: Boolean,
+    landscape: Boolean,
+    portraitWidthDp: Float = RIGHT_PANEL_HANDHELD_PORTRAIT_DP,
+): Float {
+    val screen = screenWidthDp.coerceAtLeast(0).toFloat()
+    return if (!handheld || landscape) screen * RIGHT_PANEL_SCREEN_FRACTION
+        else minOf(portraitWidthDp, screen)
+}
+
+/** Prefer the playback drawer reference rather than a fixed TV dp width. */
 @Composable
 private fun panelWidth(width: Dp): Dp {
-    if (!com.ambient.tv.ui.mobile.LocalHandheldUi.current) return width
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val screenWidth = configuration.screenWidthDp.dp
-    // Landscape: 38 % of the screen, as on television.
-    return if (configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
-        screenWidth * 0.38f
-    else minOf(width, screenWidth)
+    return referenceRightPanelWidthDp(
+        screenWidthDp = configuration.screenWidthDp,
+        handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current,
+        landscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE,
+        portraitWidthDp = width.value,
+    ).dp
 }
 
 /**
@@ -278,7 +297,7 @@ fun RightSidePanel(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    width: Dp = 500.dp,
+    width: Dp = RIGHT_PANEL_HANDHELD_PORTRAIT_DP.dp,
     closeInsteadOfBack: Boolean = false,
     requestHeaderFocus: Boolean = true,
     scrollable: Boolean = true,
@@ -346,7 +365,7 @@ fun RightSideLazyPanel(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     subtitle: String? = null,
-    width: Dp = 500.dp,
+    width: Dp = RIGHT_PANEL_HANDHELD_PORTRAIT_DP.dp,
     closeInsteadOfBack: Boolean = false,
     requestHeaderFocus: Boolean = true,
     onOutsideTap: (() -> Unit)? = onBack,
