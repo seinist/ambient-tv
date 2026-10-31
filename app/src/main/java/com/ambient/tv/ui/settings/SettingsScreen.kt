@@ -1134,6 +1134,7 @@ fun SettingsScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    if (!handheldUi) TvSleepStandbySettings()
                                     SettingsSelect(label = stringResource(R.string.settings_sleep_warning), options = AppPreferences.SLEEP_WARNING_VALUES.map { minutes ->
                                         SettingsSelectOption(
                                             text = if (minutes == 0) stringResource(R.string.settings_next_up_off)
