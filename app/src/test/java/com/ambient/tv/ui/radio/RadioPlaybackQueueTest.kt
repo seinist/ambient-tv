@@ -70,6 +70,22 @@ class RadioPlaybackQueueTest {
         assertNull(queue.consumeReturn(scope))
     }
 
+    @Test fun appendedPageUsesSameAlphabeticalOrderAsBrowseAndPreservesReverseFlag() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.COUNTRIES, "DE", "")
+        val source = RadioBrowseQueueSource(scope, countryCode = "DE",
+            nextOffset = 48, hasMore = true, sortDescending = true)
+        queue.replace(listOf(station("z"), station("b")), "z", source)
+        val page = com.ambient.tv.data.radio.RadioSearchPage(
+            items = listOf(station("a"), station("c")), offset = 48, limit = 48, hasMore = false,
+        )
+        assertTrue(queue.appendPage(source, page))
+        assertEquals(listOf("z", "c", "b", "a"), queue.snapshot().stations.map { it.id })
+        assertEquals(true, queue.snapshot().source?.sortDescending)
+        queue.select("c")
+        assertEquals("b", queue.next()?.id)
+    }
+
     @Test fun returnFocusNeverEscapesTheOriginalBrowseScope() {
         val queue = RadioPlaybackQueue()
         val scope = RadioFocusScope(RadioSection.COUNTRIES, "DE", "")
