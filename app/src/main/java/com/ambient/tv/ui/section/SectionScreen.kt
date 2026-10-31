@@ -1689,7 +1689,7 @@ private fun LandscapeGrid(
     LazyVerticalGrid(
         state = gridState,
         modifier = Modifier.overlayLazyGridScrollbar(gridState, gutter = deviceDp(52.dp, 16.dp), enabled = !LocalAlphabetBarShown.current),
-        columns = deviceDensityGridCells((columns / 2).coerceIn(2, 6), 144.dp, 4, landscapeTileWidth = 260.dp),
+        columns = deviceDensityGridCells((columns / 2).coerceIn(2, 6), 260.dp, 4),
         contentPadding = PaddingValues(screenGutter(), 12.dp, deviceDp(52.dp, 16.dp), 36.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
