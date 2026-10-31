@@ -2,9 +2,21 @@ package com.ambient.tv.ui.intro
 
 import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
+    @Test fun ambientBackgroundStaysVisibleAfterRevealAndDuringServerWake() {
+        // Low-power rendering uses the settled 60-second frame; the 3-minute wake hold
+        // must never fade these new backgrounds back to a blank screen.
+        assertEquals(0f, introBackdropPresence(0f), 0.0001f)
+        assertTrue(introBackdropPresence(0.65f) > 0f)
+        assertTrue(introBackdropPresence(0.65f) < 1f)
+        assertEquals(1f, introBackdropPresence(1.25f), 0.0001f)
+        assertEquals(1f, introBackdropPresence(60f), 0.0001f)
+        assertEquals(1f, introBackdropPresence(180f), 0.0001f)
+    }
+
     @Test fun aKeepsFinalWordmarkProportionsInsideTheTv() {
         val peak = introBloomPeakInTv
         assertEquals(24f, peak[1].x, 0.0001f)
