@@ -405,11 +405,9 @@ private fun PlayerControlBarContent(
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val handheldFullscreen = com.ambient.tv.ui.mobile.LocalHandheldFullscreen.current?.enabled == true
-    val focusManager = LocalFocusManager.current
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
     val osd = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.osd
     val osdStow = com.ambient.tv.ui.player.LocalPlayerOsdStow.current
-    val collapse = com.ambient.tv.ui.player.rememberCollapsePlayerControls()
     val stowed = if (osd != null) !osd.expanded else controlFocus?.seekFocused == true || osdStow?.closing == true
     val interactive = osd?.let { it.expanded && !it.closing } ?: (osdStow?.closing != true)
     // TV and handheld share one motion progress: the action row slides offscreen first,
@@ -457,6 +455,8 @@ private fun PlayerControlBarContent(
         }
         return
     }
+    val focusManager = LocalFocusManager.current
+    val collapse = com.ambient.tv.ui.player.rememberCollapsePlayerControls()
     val navigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     androidx.compose.runtime.CompositionLocalProvider(LocalPlayerBarInteractive provides interactive) {
     Column(
