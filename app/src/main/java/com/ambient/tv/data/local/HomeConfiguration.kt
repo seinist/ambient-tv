@@ -20,6 +20,8 @@ data class HomeRowDefinition(
         const val SYSTEM_EMBY = "emby"
         const val SYSTEM_TVHEADEND = "tvheadend"
         const val SYSTEM_YOUTUBE = "youtube"
+        const val SYSTEM_TELEGRAM = "telegram"
+        val TELEGRAM_ROW_KEYS = listOf("recent", "videos", "youtube", "audio", "photos")
         const val SYSTEM_TRAILERS = "trailers"
         const val SYSTEM_SPOTIFY = "spotify"
         const val SYSTEM_RADIO = "radio"
@@ -106,6 +108,7 @@ fun homeSystemReady(
     youtubeReady: Boolean,
     spotifyReady: Boolean,
     radioReady: Boolean = false,
+    telegramReady: Boolean = false,
     embyReady: Boolean = false,
     photosReady: Boolean = false,
     trailersReady: Boolean = false,
@@ -118,6 +121,7 @@ fun homeSystemReady(
     HomeRowDefinition.SYSTEM_EMBY -> embyReady
     HomeRowDefinition.SYSTEM_TVHEADEND -> tvheadendReady
     HomeRowDefinition.SYSTEM_YOUTUBE -> youtubeReady
+    HomeRowDefinition.SYSTEM_TELEGRAM -> telegramReady
     HomeRowDefinition.SYSTEM_SPOTIFY -> spotifyReady
     HomeRowDefinition.SYSTEM_RADIO -> radioReady
     else -> false

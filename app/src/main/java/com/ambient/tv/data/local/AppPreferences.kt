@@ -382,6 +382,21 @@ class AppPreferences @Inject constructor(
         get() = prefs.getBoolean(KEY_RADIO_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_RADIO_ENABLED, value) }
 
+    /** An opt-in system: browsing requires a separately authorized MTProto session. */
+    var telegramEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TELEGRAM_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_TELEGRAM_ENABLED, value) }
+
+    var telegramSubmenuKeys: List<String>
+        get() = prefs.getString(KEY_TELEGRAM_SUBMENU_KEYS, null)
+            ?.split(',')?.map(String::trim)?.filter { it in TELEGRAM_SUBMENU_KEYS }?.distinct()
+            ?: DEFAULT_TELEGRAM_SUBMENU_KEYS
+        set(value) = prefs.edit {
+            putString(KEY_TELEGRAM_SUBMENU_KEYS, value.filter { it in TELEGRAM_SUBMENU_KEYS }
+                .distinct().joinToString(","))
+        }
+
+
     var radioSubmenuKeys: List<String>
         get() {
             val raw = prefs.getString(KEY_RADIO_SUBMENU_KEYS, null) ?: return DEFAULT_RADIO_SUBMENU_KEYS
@@ -536,7 +551,7 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
+        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !telegramEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""
@@ -2212,10 +2227,15 @@ class AppPreferences @Inject constructor(
             HomeRowDefinition.SYSTEM_EMBY,
             HomeRowDefinition.SYSTEM_TVHEADEND,
             HomeRowDefinition.SYSTEM_YOUTUBE,
+            HomeRowDefinition.SYSTEM_TELEGRAM,
             HomeRowDefinition.SYSTEM_SPOTIFY,
             HomeRowDefinition.SYSTEM_PHOTOS,
         )
         const val KEY_INITIAL_SETUP_COMPLETED = "initial_setup_completed"
+        const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
+        const val KEY_TELEGRAM_SUBMENU_KEYS = "telegram_submenu_keys"
+        val TELEGRAM_SUBMENU_KEYS = setOf("recent", "channels", "videos", "youtube", "audio", "photos")
+        val DEFAULT_TELEGRAM_SUBMENU_KEYS = listOf("recent", "channels", "videos", "youtube", "audio", "photos")
         const val KEY_RADIO_ENABLED = "radio_enabled"
         const val KEY_RADIO_SUBMENU_KEYS = "radio_submenu_keys"
         val RADIO_SUBMENU_KEYS = setOf("popular", "favorites", "recent", "genres", "countries", "languages")

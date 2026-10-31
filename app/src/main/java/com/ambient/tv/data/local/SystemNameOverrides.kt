@@ -11,7 +11,7 @@ import androidx.compose.runtime.setValue
  */
 object SystemNameOverrides {
     const val MAX_LENGTH = 30
-    val KEYS = listOf("plex", "jellyfin", "emby", "youtube", "spotify", "radio", "tvheadend", "dlna", "files", "trailers")
+    val KEYS = listOf("plex", "jellyfin", "emby", "youtube", "telegram", "spotify", "radio", "tvheadend", "dlna", "files", "trailers")
 
     var names: Map<String, String> by mutableStateOf(emptyMap())
         internal set
