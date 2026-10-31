@@ -366,7 +366,6 @@ fun PhotoViewerScreen(
                 title = stringResource(R.string.photos_menu_title),
                 onBack = { menuOpen = false },
                 modifier = Modifier.align(Alignment.CenterEnd),
-                width = 460.dp,
                 closeInsteadOfBack = true,
                 onOutsideTap = { menuOpen = false },
             ) {
