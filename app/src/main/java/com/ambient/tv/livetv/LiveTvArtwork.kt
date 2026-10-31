@@ -12,9 +12,9 @@ data class LiveTvArt(val url: String, val logo: Boolean = false, val external: B
 fun liveTvArtKey(title: String): String = title.trim().lowercase(java.util.Locale.ROOT)
 
 /**
- * A recording's or timer's art: its own image, its fanart, the EPG programme it was made from,
- * art found by title, and last the channel logo. TVHeadend DVR entries usually carry no image
- * of their own while the guide (or TMDb) has one.
+ * Choose wide imagery for recording rows in this order: recording fanart, TMDb landscape,
+ * recording's own image (often a poster), EPG event image, then channel logo.
+ * Landscape artwork must take precedence over a narrow poster on LiveTV tiles.
  */
 fun liveTvRecordingArt(
     entry: LiveTvRecording,
