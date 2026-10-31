@@ -55,8 +55,10 @@ class RadioPlaybackQueue @Inject constructor() {
     fun appendPage(source: RadioBrowseQueueSource, page: RadioSearchPage): Boolean {
         if (state.source != source || page.offset != source.nextOffset) return false
         val seen = state.stations.mapTo(HashSet()) { it.id }
+        val merged = state.stations + page.items.filter { it.id.isNotBlank() && seen.add(it.id) }
         state = state.copy(
-            stations = state.stations + page.items.filter { it.id.isNotBlank() && seen.add(it.id) },
+            // Exactly the same index order as RadioScreen after returning from playback.
+            stations = radioAlphabeticalStations(merged, source.sortDescending),
             source = source.copy(nextOffset = page.offset + page.limit, hasMore = page.hasMore),
         )
         return true
