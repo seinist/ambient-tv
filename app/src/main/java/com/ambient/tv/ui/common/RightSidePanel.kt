@@ -584,7 +584,11 @@ private fun RightSidePanelChrome(
             // Give Compose one layout frame to attach the panel's controls, then claim focus.
             androidx.compose.runtime.withFrameNanos { }
             if (panelHasFocus || !panelInteractive) return@LaunchedEffect
-            if (footerAllowed || !focusFirstRow()) runCatching { footerFocus.requestFocus() }
+            // A fresh level begins at the first available control, not at its footer Back.
+            // The footer is only a fallback for an empty level. A returning level keeps
+            // trying its remembered item through the dedicated focus rescue.
+            if (!focusFirstRow() && (footerAllowed || focusRescue?.target?.invoke() == null))
+                runCatching { footerFocus.requestFocus() }
         }
     }
     val tokens = LocalUiTokens.current
