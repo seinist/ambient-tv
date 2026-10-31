@@ -173,13 +173,9 @@ private fun InteractiveScrollbar(
                     paging?.cancel()
                     // Prefer adjacent controls, then the owning modal footer/page header.
                     // An explicit modal target must never fall through to the page behind it.
-                    // A list with a separate A–Z index must go to that adjacent index,
-                    // rather than letting geometric focus search jump to a distant page action.
-                    val movedToIndex = actionsFocus?.let {
-                        runCatching { it.requestFocus() }.getOrDefault(false)
-                    } == true
-                    if (!movedToIndex && !focusManager.moveFocus(FocusDirection.Right)) {
-                        if (localActions != null) runCatching { localActions.requestFocus() }
+                    if (!focusManager.moveFocus(FocusDirection.Right)) {
+                        val target = actionsFocus ?: localActions
+                        if (target != null) runCatching { target.requestFocus() }
                         else actions?.requestFocus(view)
                     }
                 }
@@ -282,7 +278,6 @@ internal val LocalLazyScrollbarRightTarget = staticCompositionLocalOf<FocusReque
 internal fun LazyScrollbarFrame(
     modifier: Modifier,
     overflow: Boolean,
-    scrollbarFocusRequester: FocusRequester? = null,
     scrollbar: @Composable (Modifier, FocusRequester) -> Unit,
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -292,8 +287,7 @@ internal fun LazyScrollbarFrame(
         return
     }
     val contentFocus = remember { FocusRequester() }
-    val ownedScrollbarFocus = remember { FocusRequester() }
-    val scrollbarFocus = scrollbarFocusRequester ?: ownedScrollbarFocus
+    val scrollbarFocus = remember { FocusRequester() }
     val visible = spec.enabled && overflow
     Box(modifier, propagateMinConstraints = true) {
         CompositionLocalProvider(LocalLazyScrollbarRightTarget provides scrollbarFocus.takeIf { visible }) {
