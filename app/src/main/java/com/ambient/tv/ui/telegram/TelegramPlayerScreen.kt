@@ -194,7 +194,11 @@ private fun TelegramPlaybackContent(
             }
         }
         Box(
-            Modifier.fillMaxSize().background(Color.Black).focusRequester(focus)
+            Modifier.fillMaxSize()
+                // The persistent Media3 SurfaceView is rendered beneath this navigation
+                // destination. Opaque player chrome would otherwise hide the video.
+                .background(if (media.kind == TelegramMediaKind.VIDEO) Color.Transparent else Color.Black)
+                .focusRequester(focus)
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
