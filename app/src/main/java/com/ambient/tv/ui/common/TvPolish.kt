@@ -672,12 +672,13 @@ fun StatePanel(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     centered: Boolean = false,
+    phase: com.ambient.tv.notifications.FeedbackPhase? = null,
 ) {
     // Callers often hand in fillMaxSize/fillMaxWidth for placement; the panel itself only takes
     // the width its text needs and wraps long text at a readable line length.
     Box(modifier, contentAlignment = Alignment.Center) {
         FeedbackContent(
-            title = title, body = body, phase = null, modifier = Modifier.widthIn(max = if (centered) 520.dp else 620.dp), layout = FeedbackLayout.PAGE,
+            title = title, body = body, phase = phase, modifier = Modifier.widthIn(max = if (centered) 520.dp else 620.dp), layout = FeedbackLayout.PAGE,
             actionLabel = actionLabel, onAction = onAction,
             secondaryActionLabel = secondaryActionLabel, onSecondaryAction = onSecondaryAction,
             requestActionFocus = onAction != null && actionLabel != null,
