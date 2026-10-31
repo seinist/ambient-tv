@@ -216,6 +216,8 @@ class HomeViewModel @Inject constructor(
     private var radioRowsGeneration = 0
     private var youtubeRowsPending = false
     private var youtubeRowsGeneration = 0
+    /** Identifies which SmartTube account/language owns the Home preview currently on screen. */
+    private var youtubeCacheRevision: Long? = null
     private var trailerRowsPending = false
     private var trailerRowsGeneration = 0
     private var photoRowPending = false
@@ -1292,6 +1294,18 @@ class HomeViewModel @Inject constructor(
             try {
                 // The same account-scoped cache as the SmartTube screen: no duplicate model.
                 if (suspendResult { youtubeContentCache.restore() }.isFailure) return@launch
+                if (generation != youtubeRowsGeneration) return@launch
+                val restoredRevision = youtubeContentCache.revision()
+                if (youtubeCacheRevision != null && youtubeCacheRevision != restoredRevision) {
+                    // Switching SmartTube accounts/languages must never retain the old user's
+                    // cached channel and video tiles on Home.
+                    youtubeRows = emptyList()
+                    youtubeSourceRows.clear()
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
+                youtubeCacheRevision = restoredRevision
                 val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(emptySet())
                 if (generation != youtubeRowsGeneration) return@launch
                 val available = definitions.filter { it.contentKey in supported }
