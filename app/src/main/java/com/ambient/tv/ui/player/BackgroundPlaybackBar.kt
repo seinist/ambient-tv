@@ -132,6 +132,14 @@ fun BackgroundPlaybackBar(
                 artworkUrl = metadata.artworkUrl, fallbackUrls = metadata.artworkFallbackUrls,
                 title = metadata.title, headers = metadata.artworkHeaders,
                 modifier = Modifier.size(44.dp), contentScale = ContentScale.Crop,
+                fallbackContent = {
+                    MiniPlayerArtworkFallback(
+                        title = metadata.title,
+                        source = metadata.source,
+                        playing = session.playing,
+                        audioOnly = !metadata.hasVideo,
+                    )
+                },
             )
             Icon(
                 if (session.playing) Icons.Filled.PlayArrow else Icons.Filled.Pause,
@@ -331,7 +339,14 @@ fun BackgroundPlaybackIndicator(modifier: Modifier = Modifier) {
                 val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
                 val style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                 drawArc(track, -90f, 360f, false, topLeft, arcSize, style = style)
-                if (progress != null) drawArc(accent, -90f, 360f * progress, false, topLeft, arcSize, style = style)
+                miniPlayerRingSweep(progress, metadata.isLive)?.let { sweep ->
+                    // Unknown live duration: a steady, dim accent ring, not fake progress.
+                    val liveUnknown = progress == null && metadata.isLive
+                    drawArc(
+                        if (liveUnknown) accent.copy(alpha = if (session.playing) 0.75f else 0.36f) else accent,
+                        -90f, sweep, false, topLeft, arcSize, style = style,
+                    )
+                }
             }
             .padding(5.dp),
         contentAlignment = Alignment.Center,
@@ -341,6 +356,14 @@ fun BackgroundPlaybackIndicator(modifier: Modifier = Modifier) {
             title = metadata.title, headers = metadata.artworkHeaders,
             modifier = Modifier.size(46.dp), contentScale = ContentScale.Crop,
             shape = androidx.compose.foundation.shape.CircleShape,
+            fallbackContent = {
+                MiniPlayerArtworkFallback(
+                    title = metadata.title,
+                    source = metadata.source,
+                    playing = session.playing,
+                    audioOnly = !metadata.hasVideo,
+                )
+            },
         )
         Icon(
             if (session.playing) Icons.Filled.PlayArrow else Icons.Filled.Pause,
