@@ -2224,7 +2224,7 @@ class SettingsViewModel @Inject constructor(
             state.homeRows + HomeRowDefinition(
                 system = system, contentKey = contentKey,
                 // SmartTube supplies landscape thumbnails; never initialize them as portrait posters.
-                displayMode = if (system == HomeRowDefinition.SYSTEM_YOUTUBE) HomeRowDefinition.DISPLAY_LANDSCAPE
+                displayMode = if (system in setOf(HomeRowDefinition.SYSTEM_YOUTUBE, HomeRowDefinition.SYSTEM_TELEGRAM)) HomeRowDefinition.DISPLAY_LANDSCAPE
                     else HomeRowDefinition.DISPLAY_POSTER,
             ),
         )

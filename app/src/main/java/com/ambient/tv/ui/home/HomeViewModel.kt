@@ -1705,7 +1705,7 @@ class HomeViewModel @Inject constructor(
         val failure = this is HomeUiState.Offline || this is HomeUiState.Error || this is HomeUiState.WakeTimedOut
         // A cached independent feed can recover Home from a media-server error page,
         // without making that server appear online or hiding its wake/reconnect entry.
-        return failure && radioRows.isEmpty() && youtubeRows.isEmpty() && trailerRows.isEmpty() && photoRow == null
+        return failure && radioRows.isEmpty() && youtubeRows.isEmpty() && telegramRows.isEmpty() && trailerRows.isEmpty() && photoRow == null
     }
 
     private fun com.ambient.tv.data.photos.PhotoEntry.toHomeItem() = MediaItem(
