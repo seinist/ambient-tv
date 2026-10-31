@@ -61,9 +61,11 @@ fun OperationFeedbackContent(
     onSecondaryAction: (() -> Unit)? = null,
     requestActionFocus: Boolean = false,
     actionLoading: Boolean = false,
+    centered: Boolean = false,
 ) {
     FeedbackContent(stringResource(feedback.message, *feedback.args.toTypedArray()), feedback.detail?.let { stringResource(it) }, feedback.phase,
-        modifier, layout, actionLabel, onAction, actionModifier, secondaryActionLabel, onSecondaryAction, requestActionFocus, actionLoading)
+        modifier, layout, actionLabel, onAction, actionModifier, secondaryActionLabel, onSecondaryAction, requestActionFocus, actionLoading,
+        centered = centered)
 }
 
 /** Shared appearance for field feedback, content cards, and the existing StatePanel API. */
