@@ -21,6 +21,13 @@ class ResumeConnectivityPolicyTest {
     }
 
     @Test
+    fun `returning to foreground detects a recently powered-off server`() {
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(true, 1_000L, 1_000L))
+        assertFalse(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 1_000L))
+        assertTrue(ResumeConnectivityPolicy.shouldRecheckOnStart(false, 0L, 30_000L))
+    }
+
+    @Test
     fun `negative ages force recheck`() {
         assertTrue(ResumeConnectivityPolicy.shouldRecheck(backgroundedForMs = -1L, lastHealthAgeMs = 0L))
     }
