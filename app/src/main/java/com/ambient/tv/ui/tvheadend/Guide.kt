@@ -4,7 +4,6 @@ import com.ambient.tv.ui.common.browseFocusTarget
 import com.ambient.tv.ui.common.pageFocusStage
 import com.ambient.tv.ui.common.PageFocusLevel
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
-import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
@@ -92,8 +91,9 @@ internal fun LiveTvChannelBrowser(
     val now = listing.now
     val eventsByChannel = listing.eventsByChannel
     val visibleChannels = listing.visibleChannels
-    val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
-    val hasHbbtvCategory = remember(channels) { channels.any { !it.hbbtvUrl.isNullOrBlank() } }
+    val tags = listing.tags
+    val hasHbbtvCategory = listing.hasHbbtvCategory
+    val browsePending = refreshing || listing.building
     val positionKey = if (channelList) "channels" else "guide"
     val filterFocusState = controls.filterFocusState
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
@@ -101,18 +101,17 @@ internal fun LiveTvChannelBrowser(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
         initialFirstVisibleItemScrollOffset = savedPosition?.offset ?: 0,
     )
-    if (channelList) RegisterBrowseFocusList(listState, visibleChannels.map { it.uuid })
-    else RegisterBrowseFocusRows(listState, visibleChannels.map { channel ->
-        channel.uuid to (listOf("channel:${channel.uuid}") +
-            eventsByChannel[channel.uuid].orEmpty().map { "event:${it.eventId}" })
-    })
+    if (channelList) RegisterBrowseFocusList(listState, listing.visibleChannelIds)
+    else RegisterBrowseFocusSlots(listState, listing.guideFocusSlots)
     val currentChannels by rememberUpdatedState(visibleChannels)
     LaunchedEffect(listState, browseState, positionKey) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { (index, offset) ->
             currentChannels.getOrNull(index)?.let { browseState.savePosition(positionKey, it.uuid, offset) }
         }
     }
-    val rowFocus = remember(visibleChannels) { visibleChannels.associate { it.uuid to FocusRequester() } }
+    // A large EPG previously allocated a FocusRequester for every channel on the UI thread.
+    // LazyColumn only composes visible rows; keep requesters for visited rows stable instead.
+    val rowFocus = remember(browseState, positionKey) { mutableMapOf<String, FocusRequester>() }
     val epgRowFocus = rememberRowColumnFocus()
     val alphabetFocus = remember { FocusRequester() }
     val alphabetActionFocus = remember { FocusRequester() }
@@ -156,8 +155,8 @@ internal fun LiveTvChannelBrowser(
     // The list keeps its old scroll position across the player, so the target row (for example a
     // channel reached by zapping) may not be composed yet: bring it into view before focusing.
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState) {
-        if (sharedInitialFocus) return@LaunchedEffect
+    LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState, listing.building) {
+        if (sharedInitialFocus || listing.building) return@LaunchedEffect
         if (!restoreFocus) return@LaunchedEffect
         if (!filterFocusState.allowContentAutoFocus) {
             currentOnFocusRestored()
@@ -252,7 +251,7 @@ internal fun LiveTvChannelBrowser(
                 },
             ).focusGroup()) {
             if (visibleChannels.isEmpty()) {
-                if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (browsePending) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     FullscreenSpinner()
                 } else BrowseStatusPanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
                     modifier = Modifier.fillMaxSize().then(if (!filterBarShown) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
@@ -283,7 +282,7 @@ internal fun LiveTvChannelBrowser(
                                 onWatch = { if (canWatch) onWatch(it.uuid) }, onEvent = onEvent,
                                 onFocused = { alphabetTarget = channel.uuid; contentFocused(channel.uuid, null) },
                                 art = currentArt,
-                                modifier = Modifier.focusRequester(rowFocus.getValue(channel.uuid))
+                                modifier = Modifier.focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                         } else {
                             // A channel target (back from the player) starts at the programme running now.
@@ -310,7 +309,7 @@ internal fun LiveTvChannelBrowser(
                                 var focused by remember { mutableStateOf(false) }
                                 Surface(onClick = { if (canWatch) onWatch(channel.uuid) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(),
                                     modifier = Modifier.width(if (LocalHandheldUi.current) 260.dp else 212.dp)
-                                        .focusRequester(rowFocus.getValue(channel.uuid))
+                                        .focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                         .browseFocusTarget("channel:${channel.uuid}", rowKey = channel.uuid)
                                         .then(if ("channel:${channel.uuid}" == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier)
                                         .onFocusChanged { focused = it.isFocused; if (it.isFocused) { alphabetTarget = channel.uuid; contentFocused("channel:${channel.uuid}", channel.uuid) } }
@@ -325,7 +324,7 @@ internal fun LiveTvChannelBrowser(
                                         }
                                     }
                                 }
-                                if (rowEvents.isEmpty() && refreshing) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
+                                if (rowEvents.isEmpty() && browsePending) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
                                 } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

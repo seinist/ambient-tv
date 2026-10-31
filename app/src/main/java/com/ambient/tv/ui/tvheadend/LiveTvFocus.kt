@@ -19,15 +19,21 @@ internal fun liveTvFocusTarget(
     savedId: String?,
     savedRowId: String?,
     now: Long,
+    listing: LiveTvChannelListing? = null,
 ): TvhFocusTarget = when (tab) {
     TvheadendTab.LIVE -> {
-        val ids = visibleChannelIds(dashboard, options, now)
+        val ids = listing?.visibleChannelIds ?: visibleChannelIds(dashboard, options, now)
         TvhFocusTarget(savedId?.takeIf { it in ids } ?: ids.firstOrNull())
     }
     TvheadendTab.GUIDE -> {
-        val eventsByChannel = dashboard?.events.orEmpty().groupBy { it.channelUuid }
-        val rows = guideChannels(dashboard?.channels.orEmpty(), eventsByChannel, now, options).map { channel ->
-            channel.uuid to guideEvents(eventsByChannel[channel.uuid].orEmpty(), now)
+        // Prepared listing avoids a second full group/sort pass on the Compose thread.
+        val rows = if (listing != null) listing.visibleChannels.map { channel ->
+            channel.uuid to listing.eventsByChannel[channel.uuid].orEmpty()
+        } else {
+            val eventsByChannel = dashboard?.events.orEmpty().groupBy { it.channelUuid }
+            guideChannels(dashboard?.channels.orEmpty(), eventsByChannel, now, options).map { channel ->
+                channel.uuid to guideEvents(eventsByChannel[channel.uuid].orEmpty(), now)
+            }
         }
         val savedRow = rows.firstOrNull { (rowId, events) ->
             rowId == savedRowId && (savedId == "channel:$rowId" || events.any { "event:${it.eventId}" == savedId })

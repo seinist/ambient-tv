@@ -61,8 +61,26 @@ internal fun guideChannelRows(
     eventsByChannel: Map<String, List<LiveTvProgramme>>,
     now: Long,
     options: GuideOptions = GuideOptions(),
+): Pair<List<LiveTvChannel>, Map<String, String>> =
+    guideChannelRowsFromIdentities(
+        channels, eventsByChannel.mapValues { (_, events) -> guideEvents(events, now).map { it.identity() } }, options,
+    )
+
+/** Already-normalized EPG groups are used by the async channel browser; never sort them twice. */
+internal fun guideChannelsPrepared(
+    channels: List<LiveTvChannel>,
+    normalizedEventsByChannel: Map<String, List<LiveTvProgramme>>,
+    options: GuideOptions = GuideOptions(),
+): List<LiveTvChannel> =
+    guideChannelRowsFromIdentities(
+        channels, normalizedEventsByChannel.mapValues { (_, events) -> events.map { it.identity() } }, options,
+    ).first
+
+private fun guideChannelRowsFromIdentities(
+    channels: List<LiveTvChannel>,
+    programmes: Map<String, List<ProgrammeIdentity>>,
+    options: GuideOptions,
 ): Pair<List<LiveTvChannel>, Map<String, String>> {
-    val programmes = eventsByChannel.mapValues { (_, events) -> guideEvents(events, now).map { it.identity() } }
     val rowFor = mutableMapOf<Any, String>()
     val shownAs = mutableMapOf<String, String>()
     // A stale persisted HbbTV filter becomes inert when this provider can no longer report the

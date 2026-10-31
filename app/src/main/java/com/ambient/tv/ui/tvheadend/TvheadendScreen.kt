@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.tvheadend
 
-import com.ambient.tv.livetv.guideChannels
 import com.ambient.tv.livetv.LiveTvArt
 import com.ambient.tv.livetv.liveTvChannelRowArt
 import com.ambient.tv.livetv.liveTvProgrammeArt
@@ -163,9 +162,11 @@ fun TvheadendScreen(
     val channelControls = rememberLiveTvBrowseControls(viewModel.browseState, "channels")
     val guideControls = rememberLiveTvBrowseControls(viewModel.browseState, "guide")
     val browseControls = if (state.tab == TvheadendTab.LIVE) channelControls else guideControls
-    val channelListing = rememberLiveTvChannelListing(channels, events, state.guideOptions)
-    val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
-    val hasHbbtvCategory = remember(channels) { channels.any { !it.hbbtvUrl.isNullOrBlank() } }
+    val channelListing = rememberLiveTvChannelListing(
+        channels, events, state.guideOptions, sourceId = state.source.id, enabled = channelBrowser,
+    )
+    val tags = channelListing.tags
+    val hasHbbtvCategory = channelListing.hasHbbtvCategory
     val filterModel = guideFilterModel(state.guideOptions, tags, hasHbbtvCategory, viewModel::setGuideOptions)
     // Crossfade keeps the previous tab mounted briefly. Each tab owns its requesters so
     // an outgoing channel row cannot register the incoming page's Up target or filter field.
@@ -180,7 +181,10 @@ fun TvheadendScreen(
     }
     com.ambient.tv.ui.common.RetryOfflineBrowse(viewModel::retryOffline)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(state.source.id), viewModel::refreshAfterReconnect)
-    ReportSidebarContentReady(!state.awaitingInitialContent())
+    ReportSidebarContentReady(
+        !state.awaitingInitialContent() &&
+            (!channelBrowser || !channelListing.building || channelListing.visibleChannels.isNotEmpty()),
+    )
     if (onBack != null) {
         BackHandler(enabled = !showBrowseOptions && state.selectedEvent == null && state.selectedRecording == null && state.editing == null && pendingDelete == null) { onBack() }
     }
@@ -192,18 +196,17 @@ fun TvheadendScreen(
     // Next/previous channel in the player follows the filtered, sorted list shown here.
     val watchChannel: (String) -> Unit = { channelUuid ->
         if (state.tab == TvheadendTab.LIVE || state.tab == TvheadendTab.GUIDE) {
-            val dashboard = state.dashboard
-            val visible = guideChannels(dashboard?.channels.orEmpty(), dashboard?.events.orEmpty().groupBy { it.channelUuid },
-                System.currentTimeMillis() / 1000L, state.guideOptions).map { it.uuid }
-            com.ambient.tv.livetv.LiveTvZapOrder.offer(state.source.id, visible)
+            // Reuse the exact filtered/sorted snapshot shown on screen, not a second EPG pass.
+            com.ambient.tv.livetv.LiveTvZapOrder.offer(state.source.id, channelListing.visibleChannelIds)
         } else com.ambient.tv.livetv.LiveTvZapOrder.clear()
         onWatchChannel(channelUuid)
     }
     // Back from the player: the channel watched last (also after zapping) becomes the selection.
     val returnedChannel = remember { viewModel.consumeReturnFocus() }
-    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions, returnedChannel) {
+    val contentFocusTarget = remember(state.tab, state.dashboard, state.guideOptions, returnedChannel, channelListing) {
         liveTvFocusTarget(state.tab, state.dashboard, state.guideOptions,
-            viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab), System.currentTimeMillis() / 1000L)
+            viewModel.focusedContentId(state.tab), viewModel.focusedRowId(state.tab),
+            channelListing.now, listing = channelListing.takeIf { channelBrowser })
     }
     var initialContentFocusPending by remember(initialTab) { mutableStateOf(true) }
     com.ambient.tv.ui.common.BrowseFocusContentIdentity(listOf(state.source.id, state.tab, state.guideOptions))
@@ -269,7 +272,7 @@ fun TvheadendScreen(
             focusChain = pageFocusChain,
             browseControls = browseControls.takeIf { channelBrowser && state.configured },
             activeFilterCount = filterModel.activeCount,
-            visibleChannelCount = channelListing.visibleChannels.size.takeIf { channelBrowser },
+            visibleChannelCount = channelListing.visibleChannels.size.takeIf { channelBrowser && !channelListing.building },
         )
 
         OperationFeedbackScope(viewModel.feedback, "dashboard", state.selectedEvent == null && state.selectedRecording == null)
