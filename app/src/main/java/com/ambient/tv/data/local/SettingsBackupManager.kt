@@ -33,6 +33,9 @@ data class SettingsBackup(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    /** Telegram UI preferences only; never export MTProto authorization/session files. */
+    val telegramEnabled: Boolean = false,
+    val telegramSubmenuKeys: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
     val radioFavorites: List<com.ambient.tv.data.radio.RadioStation> = emptyList(),
     val smartTubeAccounts: List<SmartTubeAccountBackup>? = null,
     val spotifyAccount: SpotifyAccountBackup? = null,
@@ -344,6 +347,8 @@ class SettingsBackupManager @Inject constructor(
             ),
             spotifyEnabled = preferences.spotifyEnabled,
             radioEnabled = preferences.radioEnabled,
+            telegramEnabled = preferences.telegramEnabled,
+            telegramSubmenuKeys = preferences.telegramSubmenuKeys,
             radioFavorites = preferences.radioFavorites,
             spotifyClientId = preferences.spotifyClientId,
             spotifyDeviceName = preferences.spotifyDeviceName,
@@ -698,6 +703,8 @@ class SettingsBackupManager @Inject constructor(
         preferences.youtubeEnabled = backup.youtubeEnabled
         preferences.spotifyEnabled = backup.spotifyEnabled
         preferences.radioEnabled = backup.radioEnabled
+        preferences.telegramEnabled = backup.telegramEnabled
+        preferences.telegramSubmenuKeys = backup.telegramSubmenuKeys
         preferences.replaceRadioFavorites(backup.radioFavorites)
         preferences.trailersEnabled = backup.trailersEnabled
         preferences.trailerLanguage = backup.trailerLanguage
