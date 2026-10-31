@@ -44,6 +44,9 @@ data class SidebarUiState(
     val youtubeEnabled: Boolean = false,
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
+    val telegramEnabled: Boolean = false,
+    val telegramHomeEnabled: Boolean = false,
+    val telegramSubmenuKeys: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
     val radioHomeEnabled: Boolean = false,
     /** Address entered; TVHeadend stays in the menu even when its login was rejected. */
     val tvheadendEnabled: Boolean = false,
@@ -106,6 +109,9 @@ class SidebarViewModel @Inject constructor(
             youtubeEnabled = appPreferences.youtubeEnabled,
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
+            telegramEnabled = appPreferences.telegramEnabled,
+            telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
+            telegramSubmenuKeys = appPreferences.telegramSubmenuKeys,
             radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
             tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
             tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,
@@ -180,6 +186,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.youtubeEnabled) add("youtube")
             if (appPreferences.spotifyEnabled) add("spotify")
             if (appPreferences.radioEnabled) add("radio")
+            if (appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
         }
@@ -227,6 +234,8 @@ class SidebarViewModel @Inject constructor(
         appPreferences.youtubeEnabled,
         appPreferences.spotifyEnabled,
         appPreferences.radioEnabled,
+        appPreferences.telegramEnabled,
+        appPreferences.telegramSubmenuKeys,
         appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
         appPreferences.filesEnabled,
         appPreferences.trailersEnabled && !tokens.tmdbApiKey.isNullOrBlank(),
@@ -293,6 +302,9 @@ class SidebarViewModel @Inject constructor(
                 youtubeEnabled = appPreferences.youtubeEnabled,
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
+            telegramEnabled = appPreferences.telegramEnabled,
+            telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
+            telegramSubmenuKeys = appPreferences.telegramSubmenuKeys,
                 radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
                 tvheadendEnabled = appPreferences.hasTvheadendEndpoint,
                 tvheadendLoginRejected = appPreferences.tvheadendLoginRejected,

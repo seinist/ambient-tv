@@ -158,6 +158,7 @@ fun Sidebar(
     modifier: Modifier = Modifier,
     viewModel: SidebarViewModel = hiltViewModel(),
     currentRadioSectionKey: String? = null,
+    currentTelegramSectionKey: String? = null,
 ) {
     val state by viewModel.uiState.collectAsState()
     com.ambient.tv.ui.common.RefreshOnReconnect(viewModel.reconnectSources, viewModel::refreshAfterReconnect)
@@ -176,7 +177,7 @@ fun Sidebar(
         state, actions, currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey, currentSpotifySectionKey,
         currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId, onNavigate, onOpenSystemSettings,
         onOpenPlayback, onPlayNext, requestContentFocus, contentReady, isEntryRequested, onEntryRequestConsumed,
-        onFocusOwnershipChanged, modifier, currentRadioSectionKey,
+        onFocusOwnershipChanged, modifier, currentRadioSectionKey, currentTelegramSectionKey,
     )
 }
 
@@ -215,6 +216,7 @@ internal fun SidebarContent(
     onFocusOwnershipChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     currentRadioSectionKey: String? = null,
+    currentTelegramSectionKey: String? = null,
 ) {
     val uiScale = rememberUhdScale()
     val menuMotionEnabled = LocalPerformanceProfile.current.allowSpringFocus
@@ -225,6 +227,7 @@ internal fun SidebarContent(
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
     val radioEnabled = sidebarState.radioEnabled
+    val telegramEnabled = sidebarState.telegramEnabled
     val tvheadendEnabled = sidebarState.tvheadendEnabled
     val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
@@ -312,6 +315,22 @@ internal fun SidebarContent(
             }
             add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
+        if (telegramEnabled) add(MenuSystem(
+            "telegram", systemName(MediaSystem.TELEGRAM), Icons.Filled.Send, system = MediaSystem.TELEGRAM,
+            entries = listOf(
+                Triple("recent", R.string.telegram_recent, Icons.Filled.Update),
+                Triple("channels", R.string.telegram_channels, Icons.Filled.Subscriptions),
+                Triple("videos", R.string.telegram_videos, Icons.Filled.OndemandVideo),
+                Triple("youtube", R.string.telegram_youtube, Icons.Filled.SmartDisplay),
+                Triple("audio", R.string.telegram_audio, Icons.Filled.Audiotrack),
+                Triple("photos", R.string.telegram_photos, Icons.Filled.PhotoLibrary),
+            ).filter { (key, _, _) -> key in sidebarState.telegramSubmenuKeys }
+                .map { (key, title, icon) ->
+                    MenuDestination("telegram:$key", stringResource(title), icon, Destinations.telegramSection(key))
+                }.ifEmpty { listOf(MenuDestination(
+                    "telegram:recent", stringResource(R.string.telegram_recent), Icons.Filled.Update, Destinations.TELEGRAM,
+                )) },
+        ))
         if (radioEnabled) add(MenuSystem(
             "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,
             entries = listOf(
@@ -376,12 +395,12 @@ internal fun SidebarContent(
     val activeRoute = sidebarConcreteRoute(
         currentRoute, currentSectionKey, currentYouTubeFeedKey, currentTrailerFeedKey,
         currentSpotifySectionKey, currentTvheadendTab, currentLiveTvSourceId, currentFileSourceId, currentDlnaServerId,
-        currentRadioSectionKey,
+        currentRadioSectionKey, currentTelegramSectionKey,
     )
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
     // Search: only backends SearchViewModel can query — FilesRepository.search is a stub, so Files is excluded.
-    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled)
+    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled, sidebarState.telegramHomeEnabled)
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = plexShown,
         jellyfinConfigured = jellyfinShown,
