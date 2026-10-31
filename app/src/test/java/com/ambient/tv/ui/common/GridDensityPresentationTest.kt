@@ -24,7 +24,7 @@ class GridDensityPresentationTest {
             visibleGridColumns(8, ViewPreview.POSTER, GridDensityProfile.MEDIA_LIBRARY, true, 411, 900),
         )
         assertEquals(
-            handheldPortraitColumns(4, 411, 144f, 4),
+            handheldPortraitColumns(4, 411, 260f, 4),
             visibleGridColumns(8, ViewPreview.LANDSCAPE, GridDensityProfile.MEDIA_LIBRARY, true, 411, 900),
         )
         assertEquals(
