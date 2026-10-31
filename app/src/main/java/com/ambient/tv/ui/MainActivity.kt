@@ -233,13 +233,14 @@ open class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && pipAutoEntryAllowed &&
-            handheldPipSupported() && !isInPictureInPictureMode
+        if (!pipAutoEntryAllowed || !handheldPipSupported() || isInPictureInPictureMode) return
+        // Even with Android 12+ automatic entry, this early callback lets the UI prepare
+        // the previously hidden mini-player surface before the system shrinks the Activity.
+        systemPipEntering = true
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            !runCatching { enterPictureInPictureMode(pipParams) }.getOrDefault(false)
         ) {
-            systemPipEntering = true
-            if (!runCatching { enterPictureInPictureMode(pipParams) }.getOrDefault(false)) {
-                systemPipEntering = false
-            }
+            systemPipEntering = false
         }
     }
 
@@ -392,7 +393,10 @@ open class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!isInPictureInPictureMode) pipWasOpen = false // PiP expanded back into the app.
+        if (!isInPictureInPictureMode) {
+            pipWasOpen = false // PiP expanded back into the app.
+            systemPipEntering = false // Or the platform declined the transition.
+        }
         com.ambient.tv.ui.player.SleepSession.cancelStandbyRequest()
         registerInteraction()
         if (::appPreferences.isInitialized && com.ambient.tv.ui.mobile.isTelevision(this) && appPreferences.spotifyEnabled) {
