@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -119,9 +120,28 @@ fun RadioScreen(
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-
-    LaunchedEffect(viewModel, initialSectionKey) {
-        viewModel.enter(RadioSection.fromKey(initialSectionKey))
+    val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // NavHost paints before its first RESUMED callback. A reused VM can still hold an
+    // old confirmed-empty error; shield the first frame with the requested route's layout.
+    var entryPending by remember(viewModel, requestedSection) { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner, viewModel, requestedSection) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE &&
+                viewModel.state.value.needsRemoteRefreshOnReturn()
+            ) {
+                // This happens while leaving, before the returning destination may draw.
+                // Populated cached content stays on screen instead of reverting to a skeleton.
+                entryPending = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("radio")) {
+        // PR #151 redirects disabled category routes; don't fetch that hidden category.
+        if (requestedSection in viewModel.state.value.visibleSections) viewModel.enter(requestedSection)
+        entryPending = false
     }
     // A category disabled in Settings must not strand a deep link on a hidden tab.
     // Route through the same sidebar navigation as a normal chip selection.
@@ -129,10 +149,13 @@ fun RadioScreen(
         val requested = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
         if (requested !in state.visibleSections) selectSection(state.visibleSections.first())
     }
-    ReportSidebarContentReady(state.contentReady)
+    val requestedPagePending = state.awaitingRequestedPage(requestedSection, entryPending)
+    val visibleSection = if (entryPending || state.section != requestedSection) requestedSection else state.section
+    ReportSidebarContentReady(!requestedPagePending && state.contentReady)
 
     val focusScope = state.focusScope()
-    val showingFacets = state.isFacetOverview()
+    val showingFacets = if (requestedPagePending && state.section != requestedSection)
+        requestedSection.isFacetSection else state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
     // Alphabetical order uses the localized display names, not raw Radio Browser codes.
     val sortedFacets = remember(state.section, state.facets, locale) {
@@ -140,13 +163,15 @@ fun RadioScreen(
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
-    val effectiveViewMode = state.effectiveViewMode()
+    val effectiveViewMode = if (requestedPagePending && visibleSection.isFacetSection) RadioViewMode.LIST else state.effectiveViewMode()
     val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
-    val initialContentId = remember(focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision) {
-        if (!state.contentReady) null
+    val initialContentId = remember(
+        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending,
+    ) {
+        if (requestedPagePending || !state.contentReady) null
         else radioInitialFocusId(
             viewModel.lastFocusedContent(focusScope),
             playingStationId.takeUnless { showingFacets },
@@ -154,7 +179,6 @@ fun RadioScreen(
         )
     }
     var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             if (viewModel.consumePlayerReturn()) {
@@ -180,21 +204,21 @@ fun RadioScreen(
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
-    if (state.contentReady && contentIds.isNotEmpty()) {
+    if (!requestedPagePending && state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady) {
-        if (!state.contentReady || initialContentId == null) return@LaunchedEffect
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending) {
+        if (requestedPagePending || !state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
         if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
         else listState.scrollToItem(index)
     }
     // A facet opens another dataset inside the same destination. The sidebar's entry handler
     // only runs on route navigation, so hand focus explicitly to its newly loaded content.
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, pendingContentFocus, showViewOptions, handheld) {
-        if (!state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending, pendingContentFocus, showViewOptions, handheld) {
+        if (requestedPagePending || !state.contentReady || pendingContentFocus != focusScope || showViewOptions || handheld) return@LaunchedEffect
         val targetId = initialContentId
         val index = targetId?.let(contentIds::indexOf)?.takeIf { it >= 0 }
         if (index == null) {
@@ -250,7 +274,7 @@ fun RadioScreen(
                 .fillMaxSize()
                 .handheldSwipeTabs(
                     tabs = state.visibleSections,
-                    selected = state.section,
+                    selected = visibleSection,
                     onSelect = selectSection,
                     enabled = !showViewOptions &&
                         !searchVisible &&
@@ -286,7 +310,8 @@ fun RadioScreen(
             ) {
                 SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
                 Text(
-                    radioPageSubtitle(state),
+                    if (requestedPagePending && state.section != requestedSection)
+                        radioSectionLabel(requestedSection) else radioPageSubtitle(state),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -296,16 +321,16 @@ fun RadioScreen(
             // Like SmartTube: show the enabled category chips on TV AND handheld.
             com.ambient.tv.ui.common.PageChipRow(
                 focusChain,
-                selectedIndex = state.visibleSections.indexOf(state.section),
+                selectedIndex = state.visibleSections.indexOf(visibleSection),
             ) {
                 lazyItems(state.visibleSections, key = { it.key }) { section ->
                     TvChip(
                         text = radioSectionLabel(section),
-                        selected = state.section == section &&
+                        selected = visibleSection == section &&
                             state.submittedQuery.isBlank() &&
                             state.selectedFacet == null,
                         icon = com.ambient.tv.ui.common.radioMenuIcon(section.key),
-                        modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                        modifier = if (visibleSection == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
                         onClick = { selectSection(section) },
                     )
                 }
@@ -360,8 +385,8 @@ fun RadioScreen(
             }
 
             when {
-                state.awaitingInitialContent() -> RadioLoadingContent(
-                    layout = state.loadingLayout(),
+                requestedPagePending -> RadioLoadingContent(
+                    layout = state.requestedLoadingLayout(requestedSection),
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),

@@ -811,6 +811,14 @@ open class MainActivity : ComponentActivity() {
     }
 }
 
+/** Avoid fading an outgoing empty Radio category into the newly requested one on phones. */
+internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String?): Boolean {
+    val isRadioBrowse = { route: String? ->
+        route == Destinations.RADIO || route == Destinations.RADIO_SECTION
+    }
+    return isRadioBrowse(fromRoute) && isRadioBrowse(toRoute)
+}
+
 internal val SIDEBAR_ROUTES = setOf(Destinations.TRAILERS, Destinations.TRAILER_FEED, Destinations.FILES, Destinations.FILE_SOURCE, Destinations.FILE_FAVORITES, Destinations.FILE_RECENT, Destinations.FILE_CONTINUE, Destinations.DLNA, Destinations.DLNA_SERVER, Destinations.HOME, Destinations.PLEX, Destinations.JELLYFIN, Destinations.EMBY, Destinations.SEARCH, Destinations.YOUTUBE, Destinations.YOUTUBE_FEED, Destinations.SPOTIFY, Destinations.SPOTIFY_SECTION, Destinations.RADIO, Destinations.RADIO_SECTION, Destinations.LIVE_TV, Destinations.LIVE_TV_SECTION, Destinations.SETTINGS, Destinations.SECTION)
 internal val FULLSCREEN_ROUTES = setOf(Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER, Destinations.SETUP_COMPLETE, Destinations.INITIAL_SETUP, Destinations.SETUP_SETTINGS, Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER, Destinations.YOUTUBE_DETAIL, Destinations.YOUTUBE_CHANNEL, Destinations.SPOTIFY_PLAYER, Destinations.RADIO_PLAYER, Destinations.SPOTIFY_DETAIL, Destinations.SERVER_SELECT, Destinations.DETAIL, Destinations.DETAIL_FILTERED_BROWSE)
 // Saved on the Settings back stack entry by a sidebar shortcut: the page to open, plus a serial
@@ -1786,32 +1794,38 @@ private fun AmbientTvApp(
                     // TV destinations change atomically: outgoing pages must not retain focus
                     // or Back ownership while the parent page is already active.
                     enterTransition = {
-                        if (!handheld) {
-                            EnterTransition.None
-                        } else {
-                            fadeIn(tween(700))
-                        }
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) EnterTransition.None
+                        else fadeIn(tween(700))
                     },
                     exitTransition = {
-                        if (!handheld) {
-                            ExitTransition.None
-                        } else {
-                            fadeOut(tween(700))
-                        }
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) ExitTransition.None
+                        else fadeOut(tween(700))
                     },
                     // Pop and predictive-back pops default to Navigation's own scale-out
                     // animation (page shrinks, parent shows behind); keep TV atomic here too.
                     popEnterTransition = {
-                        if (!handheld) EnterTransition.None else fadeIn(tween(700))
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) EnterTransition.None else fadeIn(tween(700))
                     },
                     popExitTransition = {
-                        if (!handheld) ExitTransition.None else fadeOut(tween(700))
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) ExitTransition.None else fadeOut(tween(700))
                     },
                     predictivePopEnterTransition = {
-                        if (!handheld) EnterTransition.None else fadeIn(tween(700))
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) EnterTransition.None else fadeIn(tween(700))
                     },
                     predictivePopExitTransition = {
-                        if (!handheld) ExitTransition.None else fadeOut(tween(700))
+                        if (!handheld || radioSectionTransitionIsInstant(
+                                initialState.destination.route, targetState.destination.route,
+                            )) ExitTransition.None else fadeOut(tween(700))
                     },
                 ) {
                     composable(Destinations.INITIAL_SETUP) {

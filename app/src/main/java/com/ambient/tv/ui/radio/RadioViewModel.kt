@@ -73,6 +73,23 @@ internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
 internal fun RadioUiState.awaitingInitialContent(): Boolean =
     stations.isEmpty() && facets.isEmpty() && (loading || !contentReady)
 
+/** A destination's old empty/error state is never the new route's first result. */
+internal fun RadioUiState.awaitingRequestedPage(
+    requestedSection: RadioSection,
+    entryPending: Boolean,
+): Boolean = entryPending || section != requestedSection || awaitingInitialContent()
+
+/** Use category-list skeletons for a requested facet overview on the very first frame. */
+internal fun RadioUiState.requestedLoadingLayout(requestedSection: RadioSection): RadioLoadingLayout =
+    if (section == requestedSection) loadingLayout()
+    else copy(section = requestedSection, selectedFacet = null, submittedQuery = "").loadingLayout()
+
+/** Preserve live content on back; only a no-result remote page needs first-frame shielding. */
+internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
+    stations.isEmpty() && facets.isEmpty() &&
+        (submittedQuery.isNotBlank() || selectedFacet != null ||
+            section == RadioSection.POPULAR || section.isFacetSection)
+
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
     val visibleSections: List<RadioSection> = RadioSection.entries,
@@ -170,7 +187,10 @@ class RadioViewModel @Inject constructor(
 
     fun enter(initialSection: RadioSection? = null) {
         if (entered) {
-            initialSection?.let(::selectSection)
+            // Reopening an existing NavHost destination must revalidate its empty/error
+            // result instead of returning without a request. Keep the active facet/search.
+            if (initialSection != null && initialSection != _state.value.section) selectSection(initialSection)
+            else refresh()
             return
         }
         entered = true
