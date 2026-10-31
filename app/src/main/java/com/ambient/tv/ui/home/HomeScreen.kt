@@ -555,7 +555,7 @@ internal fun LibraryContent(
             return
         }
         Centered {
-            StatePanel(
+            com.ambient.tv.ui.common.BrowseStatusPanel(
                 title = stringResource(R.string.home_library_empty),
                 body = stringResource(R.string.home_library_empty_body),
                 actionLabel = stringResource(R.string.nav_settings),
@@ -1908,27 +1908,29 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawAmbientGlow(
 
 @Composable
 private fun ServerOfflineContent(serverName: String, onRetry: () -> Unit, onOpenSettings: () -> Unit) {
-    StatePanel(
+    com.ambient.tv.ui.common.BrowseStatusPanel(
         title = stringResource(R.string.home_server_unreachable_title),
+        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
         body = stringResource(R.string.home_server_unreachable_body, serverName),
         actionLabel = stringResource(R.string.home_retry),
         onAction = onRetry,
         secondaryActionLabel = stringResource(R.string.home_check_settings),
         onSecondaryAction = onOpenSettings,
-        modifier = Modifier.widthIn(max = 700.dp),
+
     )
 }
 
 @Composable
 private fun WakeTimeoutContent(serverName: String, onRetry: () -> Unit, onOpenSettings: () -> Unit) {
-    StatePanel(
+    com.ambient.tv.ui.common.BrowseStatusPanel(
         title = stringResource(R.string.home_wake_timeout_title),
+        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
         body = stringResource(R.string.home_wake_timeout_body, serverName),
         actionLabel = stringResource(R.string.home_retry),
         onAction = onRetry,
         secondaryActionLabel = stringResource(R.string.home_check_settings),
         onSecondaryAction = onOpenSettings,
-        modifier = Modifier.widthIn(max = 700.dp),
+
     )
 }
 
@@ -1942,13 +1944,14 @@ private fun ConnectionErrorContent(message: String, onRetry: () -> Unit, onOpenS
             append(stringResource(R.string.home_connection_error_details, sanitized))
         }
     }
-    StatePanel(
+    com.ambient.tv.ui.common.BrowseStatusPanel(
         title = stringResource(R.string.home_connection_problem),
+        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
         body = body,
         actionLabel = stringResource(R.string.home_retry),
         onAction = onRetry,
         secondaryActionLabel = stringResource(R.string.home_check_settings),
         onSecondaryAction = onOpenSettings,
-        modifier = Modifier.widthIn(max = 700.dp),
+
     )
 }
