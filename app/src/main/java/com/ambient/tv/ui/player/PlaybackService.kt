@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.ambient.tv.ui.player
 
 import com.ambient.tv.ui.common.requestHeaders
@@ -6,8 +8,10 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.service.media.MediaBrowserService
-import android.media.browse.MediaBrowser
+import androidx.media.MediaBrowserServiceCompat
+import androidx.media.utils.MediaConstants
+import android.support.v4.media.MediaBrowserCompat
+import android.support.v4.media.session.MediaSessionCompat
 import android.os.Bundle
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -64,7 +68,7 @@ import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 
 @AndroidEntryPoint
-class PlaybackService : MediaBrowserService() {
+class PlaybackService : MediaBrowserServiceCompat() {
     @Inject lateinit var files: com.ambient.tv.data.files.FilesRepository
     @Inject lateinit var repository: MediaRepository
     @Inject lateinit var youtube: SmartTubeEngine
@@ -163,7 +167,7 @@ class PlaybackService : MediaBrowserService() {
         }
         // The very same platform session used by notifications and Bluetooth is now also
         // discoverable by Android Auto. Never create a competing second player/session.
-        setSessionToken(mediaSession.sessionToken)
+        setSessionToken(requireNotNull(MediaSessionCompat.fromMediaSession(this, mediaSession)).sessionToken)
         audioManager = getSystemService(AudioManager::class.java)
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Ambient TV:Playback").apply { setReferenceCounted(false) }
@@ -366,12 +370,15 @@ class PlaybackService : MediaBrowserService() {
                     android.media.session.MediaSessionManager.RemoteUserInfo(clientPackageName, -1, clientUid),
                 )
         }.getOrDefault(false) else false
-        return if (owned && (clientUid == applicationInfo.uid || trusted)) BrowserRoot(CarAudioIds.ROOT, null) else null
+        return if (owned && (clientUid == applicationInfo.uid || trusted)) BrowserRoot(
+            CarAudioIds.ROOT,
+            Bundle().apply { putBoolean(MediaConstants.BROWSER_SERVICE_EXTRAS_KEY_SEARCH_SUPPORTED, true) },
+        ) else null
     }
 
     override fun onLoadChildren(
         parentId: String,
-        result: MediaBrowserService.Result<MutableList<MediaBrowser.MediaItem>>,
+        result: MediaBrowserServiceCompat.Result<MutableList<MediaBrowserCompat.MediaItem>>,
     ) {
         if (!CarAudioIds.isFolder(parentId)) { result.sendResult(null); return }
         result.detach()
@@ -390,12 +397,32 @@ class PlaybackService : MediaBrowserService() {
 
     override fun onLoadItem(
         itemId: String,
-        result: MediaBrowserService.Result<MediaBrowser.MediaItem>,
+        result: MediaBrowserServiceCompat.Result<MediaBrowserCompat.MediaItem>,
     ) {
         result.detach()
         scope.launch {
             val entry = runCatching { carCatalog.entry(itemId) }.getOrNull()
             result.sendResult(entry?.toBrowserItem())
+        }
+    }
+
+    /** Android Auto's actual browsable search results, not only one voice-selected station. */
+    override fun onSearch(
+        query: String,
+        extras: Bundle?,
+        result: MediaBrowserServiceCompat.Result<MutableList<MediaBrowserCompat.MediaItem>>,
+    ) {
+        result.detach()
+        scope.launch {
+            val found = try {
+                carCatalog.search(query)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "Android Auto media search failed")
+                emptyList()
+            }
+            result.sendResult(found.map { it.toBrowserItem() }.toMutableList())
         }
     }
 
@@ -835,7 +862,7 @@ class PlaybackService : MediaBrowserService() {
         super.onTaskRemoved(rootIntent)
     }
 
-    override fun onBind(intent: Intent?): android.os.IBinder? = super.onBind(intent)
+    // MediaBrowserServiceCompat owns onBind: avoid a second ad-hoc browser binder.
 
     companion object {
         private const val CHANNEL = "playback"
