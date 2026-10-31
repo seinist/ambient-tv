@@ -25,11 +25,13 @@ class SleepSessionTest {
         var ended = false
         var stops = 0
         var pauses = 0
+        var standbyAttempts = 0
         override fun sleepStatus() = PlaybackStatus(playing = playing, ended = ended)
         override fun sleepWantsToPlay() = playing
         override fun sleepPause() { pauses++; playing = false }
         override fun sleepPlay() { playing = true }
         override fun sleepStop() { stops++; SleepSession.end(this) }
+        override fun sleepEnterStandby() { standbyAttempts++ }
     }
 
     private fun prefs(auto: String = AppPreferences.SLEEP_AUTO_START_OFF, daily: Int = -1, warning: Int = 1) =
@@ -84,8 +86,23 @@ class SleepSessionTest {
         clock.advance(PlaybackSleepTimer.PROMPT_MS)
         SleepSession.tick(target)
         assertEquals(1, target.stops)
+        assertEquals(1, target.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
+        SleepSession.cancelStandbyRequest()
+        assertFalse(SleepSession.standbyRequested)
         assertNull(SleepSession.target)
         assertEquals(SleepTimerKind.OFF, SleepSession.config.kind)
+    }
+
+    @Test fun naturalEndOfItemAlsoRequestsTvStandbyWithoutPrompt() {
+        val target = Target().apply { playing = false; ended = true }
+        SleepSession.begin(target, { prefs() }, isLive = false, hadPlayer = false, replacingSource = false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.END_OF_ITEM))
+        SleepSession.tick(target)
+        assertEquals(0, target.pauses)
+        assertEquals(1, target.stops)
+        assertEquals(1, target.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
     }
 
     @Test fun continuingAfterTheDailyStopDropsItButKeepsTheUserTimer() {
