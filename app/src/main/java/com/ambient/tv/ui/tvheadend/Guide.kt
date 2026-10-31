@@ -92,8 +92,9 @@ internal fun LiveTvChannelBrowser(
     val now = listing.now
     val eventsByChannel = listing.eventsByChannel
     val visibleChannels = listing.visibleChannels
-    val tags = remember(channels) { channels.flatMap { it.tags }.distinct().sorted() }
-    val hasHbbtvCategory = remember(channels) { channels.any { !it.hbbtvUrl.isNullOrBlank() } }
+    val tags = listing.tags
+    val hasHbbtvCategory = listing.hasHbbtvCategory
+    val browsePending = refreshing || listing.building
     val positionKey = if (channelList) "channels" else "guide"
     val filterFocusState = controls.filterFocusState
     val savedPosition = remember(browseState, positionKey) { browseState.position(positionKey) }
@@ -101,11 +102,8 @@ internal fun LiveTvChannelBrowser(
         initialFirstVisibleItemIndex = visibleChannels.indexOfFirst { it.uuid == (savedPosition?.itemId ?: if (channelList) focusTarget.contentId else focusTarget.rowId) }.coerceAtLeast(0),
         initialFirstVisibleItemScrollOffset = savedPosition?.offset ?: 0,
     )
-    if (channelList) RegisterBrowseFocusList(listState, visibleChannels.map { it.uuid })
-    else RegisterBrowseFocusRows(listState, visibleChannels.map { channel ->
-        channel.uuid to (listOf("channel:${channel.uuid}") +
-            eventsByChannel[channel.uuid].orEmpty().map { "event:${it.eventId}" })
-    })
+    if (channelList) RegisterBrowseFocusList(listState, listing.visibleChannelIds)
+    else RegisterBrowseFocusRows(listState, listing.guideFocusRows)
     val currentChannels by rememberUpdatedState(visibleChannels)
     LaunchedEffect(listState, browseState, positionKey) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { (index, offset) ->
@@ -156,8 +154,8 @@ internal fun LiveTvChannelBrowser(
     // The list keeps its old scroll position across the player, so the target row (for example a
     // channel reached by zapping) may not be composed yet: bring it into view before focusing.
     val sharedInitialFocus = com.ambient.tv.ui.common.LocalBrowseFocusReturnState.current != null
-    LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState) {
-        if (sharedInitialFocus) return@LaunchedEffect
+    LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState, listing.building) {
+        if (sharedInitialFocus || listing.building) return@LaunchedEffect
         if (!restoreFocus) return@LaunchedEffect
         if (!filterFocusState.allowContentAutoFocus) {
             currentOnFocusRestored()
@@ -252,7 +250,7 @@ internal fun LiveTvChannelBrowser(
                 },
             ).focusGroup()) {
             if (visibleChannels.isEmpty()) {
-                if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (browsePending) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     FullscreenSpinner()
                 } else BrowseStatusPanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
                     modifier = Modifier.fillMaxSize().then(if (!filterBarShown) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
@@ -325,7 +323,7 @@ internal fun LiveTvChannelBrowser(
                                         }
                                     }
                                 }
-                                if (rowEvents.isEmpty() && refreshing) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
+                                if (rowEvents.isEmpty() && browsePending) Box(Modifier.padding(12.dp), contentAlignment = Alignment.Center) {
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
                                 } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
