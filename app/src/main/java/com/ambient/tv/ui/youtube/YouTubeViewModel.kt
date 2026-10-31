@@ -243,7 +243,9 @@ class YouTubeViewModel @Inject constructor(
                 ?.let { contentCache.appendItems(session, rowId, it, pagingRevision) }
                 ?: _uiState.value.rows
             val after = rows.firstOrNull { it.id == rowId }?.items?.size ?: 0
-            paging.finish(rowId, token, page?.takeIf { after > before }, after)
+            if (com.ambient.tv.youtube.youtubeContinuationStalled(page, before, after))
+                paging.fail(rowId, token)
+            else paging.finish(rowId, token, page, after)
             finished = true
             Timber.tag("youtube-rows").d("Row %s continued: +%d items (total %d, more=%s)", rowId, after - before, after, page?.hasMore)
             // One state update: appended items and removed placeholders arrive together.

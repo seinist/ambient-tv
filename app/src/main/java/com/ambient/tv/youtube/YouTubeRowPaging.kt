@@ -1,5 +1,9 @@
 package com.ambient.tv.youtube
 
+/** A continuable page without new visible items must back off, never end the row forever. */
+internal fun youtubeContinuationStalled(page: YouTubeRowPage?, before: Int, after: Int): Boolean =
+    page?.hasMore == true && after <= before
+
 /** One continuation page of a SmartTube row. [hasMore] false marks the end of the row. */
 data class YouTubeRowPage(val items: List<YouTubeItem>, val hasMore: Boolean)
 

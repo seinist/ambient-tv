@@ -70,6 +70,19 @@ class YouTubeRowPagingTest {
     }
 
     @Test
+    fun duplicateOnlyContinuationBacksOffInsteadOfPermanentlyEnding() {
+        val p = paging()
+        assertTrue(p.begin("A", 10))
+        val repeated = YouTubeRowPage(listOf(item("A-0")), hasMore = true)
+        assertTrue(youtubeContinuationStalled(repeated, before = 10, after = 10))
+        p.fail("A", p.token)
+        assertEquals(Status.FAILED, p.status("A"))
+        now += YouTubeRowPaging.RETRY_AFTER_MS
+        assertTrue(p.canLoad("A", 10))
+        assertFalse(youtubeContinuationStalled(YouTubeRowPage(emptyList(), hasMore = false), 10, 10))
+    }
+
+    @Test
     fun fullRowEndsEvenWithMorePages() {
         val p = paging()
         p.begin("A", 100)
