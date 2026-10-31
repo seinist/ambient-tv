@@ -38,6 +38,14 @@ internal val LocalScrollListActions = staticCompositionLocalOf<ScrollListActions
 /** The current page's A–Z index, if it is displayed to the right of browse content. */
 internal val LocalBrowseRightIndexFocus = staticCompositionLocalOf<FocusRequester?> { null }
 
+/** Only dedicated list screens opt into displaying a scrollbar beside their A–Z index. */
+internal fun lazyListScrollbarVisible(
+    hasAlphabet: Boolean,
+    scrollbarWithAlphabet: Boolean,
+    canScrollForward: Boolean,
+    canScrollBackward: Boolean,
+): Boolean = (canScrollForward || canScrollBackward) && (!hasAlphabet || scrollbarWithAlphabet)
+
 /** Headers register for their lifetime and window. Disposing a page removes its focus target. */
 internal class ScrollListActions {
     private class Target(val view: View, val actions: FocusRequester, val up: (() -> FocusRequester)?)
@@ -107,8 +115,12 @@ fun TvLazyColumn(
     val animate = !LocalPerformanceProfile.current.reducedEffects
     val alphabetFocus = LocalBrowseRightIndexFocus.current
     // Browsing grids keep the index-only design; Radio lists can opt into both controls.
-    LazyScrollbarFrame(modifier, (alphabetFocus == null || scrollbarWithAlphabet) &&
-        (state.canScrollForward || state.canScrollBackward),
+    LazyScrollbarFrame(modifier, lazyListScrollbarVisible(
+        hasAlphabet = alphabetFocus != null,
+        scrollbarWithAlphabet = scrollbarWithAlphabet,
+        canScrollForward = state.canScrollForward,
+        canScrollBackward = state.canScrollBackward,
+    ),
         scrollbarFocusRequester = scrollbarFocusRequester,
         scrollbar = { bar, contentFocus ->
             OverlayLazyScrollbar(state, bar, scrollbarReturnFocus ?: contentFocus, actionsFocus = alphabetFocus)
