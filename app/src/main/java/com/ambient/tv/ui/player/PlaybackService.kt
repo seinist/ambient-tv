@@ -388,7 +388,8 @@ class PlaybackService : MediaBrowserService() {
             } catch (error: Exception) {
                 Timber.w(error, "Android Auto playback selection failed")
                 mediaSession.setPlaybackState(PlaybackState.Builder()
-                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE)
+                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE or
+                    PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH)
                     .setState(PlaybackState.STATE_ERROR, 0L, 0f).build())
             }
         }
@@ -411,7 +412,8 @@ class PlaybackService : MediaBrowserService() {
                 carMusicQueue = emptyList()
                 mediaSession.setPlaybackState(PlaybackState.Builder()
                     .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or
+                        PlaybackState.ACTION_PLAY_FROM_SEARCH or PlaybackState.ACTION_SKIP_TO_NEXT or
                         PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
                     .setState(PlaybackState.STATE_BUFFERING, 0L, 0f).build())
                 spotify.playUri(selection.uri)
@@ -477,6 +479,7 @@ class PlaybackService : MediaBrowserService() {
             .build())
         mediaSession.setPlaybackState(PlaybackState.Builder()
             .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
+                PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH or
                 PlaybackState.ACTION_STOP or PlaybackState.ACTION_SKIP_TO_NEXT or
                 PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
             .setState(when {
@@ -506,7 +509,8 @@ class PlaybackService : MediaBrowserService() {
         }
         if (!state.active) {
             mediaSession.setPlaybackState(PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE)
+                .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE or
+                    PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH)
                 .setState(PlaybackState.STATE_STOPPED, 0L, 0f).build())
             getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
             lastNotification = null
@@ -531,7 +535,7 @@ class PlaybackService : MediaBrowserService() {
         val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0)
         val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex)
         mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext))
+            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic))
             .setState(when {
                 !state.active || state.status.ended -> PlaybackState.STATE_STOPPED
                 state.status.error != null -> PlaybackState.STATE_ERROR
@@ -779,10 +783,19 @@ class PlaybackService : MediaBrowserService() {
     }
 }
 
-internal fun platformPlaybackActions(source: String?, hasPrevious: Boolean, hasNext: Boolean): Long {
-    var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_STOP
+internal fun platformPlaybackActions(
+    source: String?,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    carAudioQueue: Boolean = false,
+): Long {
+    var actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
+        PlaybackState.ACTION_STOP or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or PlaybackState.ACTION_PLAY_FROM_SEARCH
     if (source != "radio") actions = actions or PlaybackState.ACTION_SEEK_TO
-    if (hasPrevious) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
-    if (hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+    // Ordinary video stays seek-only; selected car music and radio provide a queue.
+    if (source == "radio" || carAudioQueue) {
+        if (hasPrevious) actions = actions or PlaybackState.ACTION_SKIP_TO_PREVIOUS
+        if (hasNext) actions = actions or PlaybackState.ACTION_SKIP_TO_NEXT
+    }
     return actions
 }
