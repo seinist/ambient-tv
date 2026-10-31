@@ -28,15 +28,16 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
+import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalPlaybackAccent
 import java.util.Locale
 
 /** Two readable characters inside the 46 dp artwork circle, not a new text overlay beside it. */
 internal fun miniPlayerMonogram(title: String): String? {
     val name = title.trim()
-    if (name.isEmpty() || name.lowercase(Locale.ROOT) in setOf(
-            "unknown", "untitled", "unbekannt", "n/a", "radio", "radio browser",
-        )
+    val normalized = name.lowercase(Locale.ROOT)
+    if (name.isEmpty() || normalized.startsWith("http://") || normalized.startsWith("https://") ||
+        normalized in setOf("unknown", "untitled", "unbekannt", "n/a", "radio", "radio browser")
     ) return null
     val words = Regex("""[\p{L}\p{N}]+""").findAll(name).map { it.value }.take(2).toList()
     val letters = when (words.size) {
@@ -62,6 +63,7 @@ internal fun MiniPlayerArtworkFallback(
 ) {
     val accent = LocalPlaybackAccent.current.indicator
     val monogram = miniPlayerMonogram(title)
+    val system = MediaSystem.fromKey(source)
     Box(
         Modifier.fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -78,8 +80,8 @@ internal fun MiniPlayerArtworkFallback(
                 maxLines = 1,
                 color = Color.White.copy(alpha = 0.95f),
             )
-            MediaSystem.fromKey(source) != null -> SystemLogo(
-                system = requireNotNull(MediaSystem.fromKey(source)),
+            system != null -> SystemLogo(
+                system = system,
                 modifier = symbol,
                 size = 23.dp,
                 tint = accent,
@@ -101,7 +103,7 @@ internal fun MiniPlayerArtworkFallback(
 /** Three tiny equalizer bars; no motion or drawing work if artwork is successfully loaded. */
 @Composable
 private fun MiniPlayerAudioBars(playing: Boolean, modifier: Modifier = Modifier) {
-    val levels: List<Float> = if (playing) {
+    val levels: List<Float> = if (playing && !LocalPerformanceProfile.current.reducedEffects) {
         val motion = rememberInfiniteTransition(label = "miniAudio")
         val first = motion.animateFloat(0.30f, 1f,
             infiniteRepeatable(tween(540), RepeatMode.Reverse), label = "left").value
