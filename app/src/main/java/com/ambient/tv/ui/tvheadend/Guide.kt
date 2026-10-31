@@ -103,7 +103,7 @@ internal fun LiveTvChannelBrowser(
         initialFirstVisibleItemScrollOffset = savedPosition?.offset ?: 0,
     )
     if (channelList) RegisterBrowseFocusList(listState, listing.visibleChannelIds)
-    else RegisterBrowseFocusRows(listState, listing.guideFocusRows)
+    else RegisterBrowseFocusSlots(listState, listing.guideFocusSlots)
     val currentChannels by rememberUpdatedState(visibleChannels)
     LaunchedEffect(listState, browseState, positionKey) {
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }.collect { (index, offset) ->

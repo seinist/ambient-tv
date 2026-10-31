@@ -26,6 +26,8 @@ import com.ambient.tv.livetv.LiveTvChannel
 import com.ambient.tv.livetv.LiveTvProgramme
 import com.ambient.tv.livetv.guideChannelsPrepared
 import com.ambient.tv.livetv.guideEvents
+import com.ambient.tv.ui.common.BrowseFocusKey
+import com.ambient.tv.ui.common.BrowseFocusSlot
 import com.ambient.tv.ui.common.FilterFocusState
 import com.ambient.tv.ui.common.FilterBarModel
 import com.ambient.tv.ui.common.FilterOptionsPanel
@@ -112,6 +114,10 @@ internal data class LiveTvChannelListing(
     val guideFocusRows: List<Pair<String, List<String>>> = visibleChannels.map { channel ->
         channel.uuid to (listOf("channel:${channel.uuid}") +
             eventsByChannel[channel.uuid].orEmpty().map { "event:${it.eventId}" })
+    },
+    // Flattening all programme focus slots in RegisterBrowseFocusRows used to run in Compose.
+    val guideFocusSlots: List<BrowseFocusSlot> = guideFocusRows.flatMapIndexed { index, (row, items) ->
+        items.map { BrowseFocusSlot(BrowseFocusKey(row, it, true), index) }
     },
     val tags: List<String> = emptyList(),
     val hasHbbtvCategory: Boolean = false,

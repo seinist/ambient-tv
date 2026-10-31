@@ -52,6 +52,14 @@ class LiveTvChannelListingTest {
             prepared.guideFocusRows,
         )
         assertEquals(prepared.visibleChannels, guideChannelsPrepared(channels, prepared.eventsByChannel, options))
+        assertEquals(
+            prepared.guideFocusRows.sumOf { it.second.size },
+            prepared.guideFocusSlots.size,
+        )
+        assertEquals(listOf(0, 0), prepared.guideFocusSlots.take(2).map { it.index })
+        assertEquals(listOf(1, 1, 1), prepared.guideFocusSlots.drop(2).map { it.index })
+        assertEquals("c", prepared.guideFocusSlots.first().key.row)
+        assertEquals("channel:c", prepared.guideFocusSlots.first().key.item)
     }
 
     @Test fun preparedGuideRespectsEpgFilterAndDescendingSort() {
