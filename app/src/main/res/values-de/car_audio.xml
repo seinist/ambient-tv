@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="car_audio_radio">Radio</string>
+    <string name="car_audio_spotify">Spotify</string>
+    <string name="car_audio_music_libraries">Musikbibliotheken</string>
+    <string name="car_audio_favorites">Favoriten</string>
+    <string name="car_audio_recent">Zuletzt gehört</string>
+    <string name="car_audio_popular">Beliebt</string>
+    <string name="car_audio_home">Startseite</string>
+    <string name="car_audio_liked">Lieblingssongs</string>
+    <string name="car_audio_playlists">Playlists</string>
+    <string name="car_audio_albums">Alben</string>
+    <string name="car_audio_artists">Künstler</string>
+</resources>
