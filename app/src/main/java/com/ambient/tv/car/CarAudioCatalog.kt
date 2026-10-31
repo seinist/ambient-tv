@@ -221,9 +221,15 @@ internal class CarAudioCatalog @Inject constructor(
             return CarAudioSelection.Spotify("spotify:track:$trackId")
         }
         CarAudioIds.musicItemId(id)?.let { key ->
-            val item = entriesById[id]?.libraryItem
-                ?: media.getMetadata(key).getOrNull() ?: return null
-            if (!carAudioPlayableType(item.type) || item.streamUrl.isNullOrBlank()) return null
+            // Browse previews often omit stream URLs; resolve the authoritative track
+            // metadata before claiming the item is unavailable to the head unit.
+            val preview = entriesById[id]?.libraryItem
+            if (preview != null && !carAudioPlayableType(preview.type)) return null
+            val item = media.getMetadata(key).getOrNull()
+                ?.takeIf { carAudioPlayableType(it.type) && !it.streamUrl.isNullOrBlank() }
+                ?: preview?.takeIf { !it.streamUrl.isNullOrBlank() }
+                ?: return null
+            if (!carAudioPlayableType(item.type)) return null
             val queue = parents[id]?.let(pages::get)?.entries.orEmpty().filter { it.playable && it.libraryItem != null }
                 .mapNotNull { it.libraryItem?.ratingKey }
             return CarAudioSelection.Library(item, queue.ifEmpty { listOf(key) })
