@@ -796,6 +796,19 @@ fun SettingsScreen(
                             if (uiState.playbackBackendKey == "mpv" && !com.ambient.tv.ui.player.backend.MpvBackendAvailability.isAvailable) {
                                 item { Text(stringResource(R.string.player_backend_mpv_unavailable), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
+                            if (handheldUi) {
+                                item { SettingsSubheader(stringResource(R.string.settings_auto_pip_title)) }
+                                item(key = "playback:picture-in-picture") {
+                                    SettingsGroup {
+                                        TvSettingRow(
+                                            title = stringResource(R.string.settings_auto_pip_enable),
+                                            body = stringResource(R.string.settings_auto_pip_hint),
+                                            checked = uiState.autoPictureInPicture,
+                                            onCheckedChange = viewModel::onAutoPictureInPictureChanged,
+                                        )
+                                    }
+                                }
+                            }
                             item { SettingsSubheader(stringResource(R.string.settings_section_general_display)) }
                             if (supportedDisplayModes.size > 1) {
                                 item {

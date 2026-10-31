@@ -1054,6 +1054,11 @@ class AppPreferences @Inject constructor(
             ?: playbackBackendKey
         set(value) = prefs.edit { putString(KEY_TVH_PLAYBACK_BACKEND, value.takeIf { it in PLAYBACK_BACKENDS } ?: "media3") }
 
+    /** Android system PiP on phones when the user leaves while video is playing. */
+    var autoPictureInPicture: Boolean
+        get() = prefs.getBoolean(KEY_HANDHELD_AUTO_PIP, true)
+        set(value) = prefs.edit { putBoolean(KEY_HANDHELD_AUTO_PIP, value) }
+
     var visibleBackgroundVideoPlayback: Boolean
         get() = prefs.getBoolean(KEY_VISIBLE_BACKGROUND_VIDEO_PLAYBACK, false)
         set(value) = prefs.edit { putBoolean(KEY_VISIBLE_BACKGROUND_VIDEO_PLAYBACK, value) }
@@ -2322,6 +2327,7 @@ class AppPreferences @Inject constructor(
         val PLAYBACK_BACKENDS = setOf("media3", "vlc", "mpv")
         val LIVE_TIMESHIFT_SIZES = listOf(0, 512, 1024, 2048, 4096)
         const val KEY_VISIBLE_BACKGROUND_VIDEO_PLAYBACK = "visible_background_video_playback"
+        const val KEY_HANDHELD_AUTO_PIP = "handheld_auto_pip"
         const val KEY_MPV_VIDEO_OUTPUT_MODE = "mpv_video_output_mode"
         const val KEY_MPV_SCALING_FILTER = "mpv_scaling_filter"
         const val KEY_MPV_DEBAND = "mpv_deband"

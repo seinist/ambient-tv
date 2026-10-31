@@ -2202,4 +2202,7 @@
     <string name="settings_sleep_standby_hint">Mit Berechtigung fordert Ambient TV nach Timer-Ablauf den Standby an. Andernfalls gibt es die Bildschirm-Wachhaltung frei, damit Android selbst abschalten kann. Ob ein angeschlossener Fernseher ausgeht, hängt vom Gerät und HDMI-CEC ab.</string>
     <string name="settings_sleep_standby_unavailable">Dieses TV-Gerät unterstützt kein sofortiges Standby über Geräteverwaltung. Der Timer beendet trotzdem die Wiedergabe und lässt Android automatisch einschlafen.</string>
     <string name="settings_sleep_standby_explanation">Ambient TV darf das Gerät nur nach Ablauf des Sleep-Timers sperren. Diese Berechtigung ist freiwillig und kann jederzeit deaktiviert werden.</string>
+    <string name="settings_auto_pip_title">Bild-in-Bild</string>
+    <string name="settings_auto_pip_enable">Bild-in-Bild automatisch starten</string>
+    <string name="settings_auto_pip_hint">Auf Handys Videos beim Verlassen der App in einem schwebenden Android-Fenster weiterspielen. Audio läuft weiterhin ohne Bild-in-Bild im Hintergrund.</string>
 </resources>

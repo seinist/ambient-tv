@@ -37,7 +37,7 @@ val LocalPersistentPlaybackVideoHost = staticCompositionLocalOf { false }
 val LocalVisibleBackgroundVideo = staticCompositionLocalOf { false }
 
 @Composable
-fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier) {
+fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier, systemPip: Boolean = false) {
     // The handle is Compose state and changes synchronously during acquisition. The snapshot
     // flow reaches this composition separately: keying by its generation can attach the NEW
     // handle under the OLD generation, then destroy its Surface again one frame later.
@@ -51,7 +51,7 @@ fun PersistentPlaybackVideoHost(modifier: Modifier = Modifier) {
     // Ambient letterbox only on a portrait phone with a real picture; landscape stays black.
     val portraitPhone = com.ambient.tv.ui.mobile.LocalHandheldUi.current &&
         androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
-    val ambient = portraitPhone && when (handle) {
+    val ambient = !systemPip && portraitPhone && when (handle) {
         is Media3PlaybackHandle -> true
         is VlcPlaybackController -> !handle.audioSession.audioOnly
         is MpvPlaybackController -> !handle.audioSession.audioOnly
