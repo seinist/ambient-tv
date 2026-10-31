@@ -740,6 +740,10 @@ class HomeViewModel @Inject constructor(
                 releasesComplete = releases.size == sections.size,
             )))
         }
+        // Conflate bursts of independent server replies. First results appear immediately,
+        // while later replies share publications instead of rebuilding every row each time.
+        // Producer and publisher stay on Main, so the row maps remain single-threaded.
+        val partialPublisher = HomePartialPublishQueue(this) { publishPartial() }
         coroutineScope {
             if (hasEnabledRow(system, "continue") || (allContinueRow() != null && system in appPreferences.allContinueSystems)) launch {
                 val result = repository.getOnDeck()
@@ -747,19 +751,19 @@ class HomeViewModel @Inject constructor(
                 // Feeds the cross-system row; a failed answer keeps the last list of that server.
                 if (result.isSuccess) continueBySystem[system] = onDeck
                 // A successful answer is the server's truth; Watch Next follows it (videos only).
-                if (result.isSuccess) homeMediaSystem(system)?.let { mediaSystem ->
+                if (result.isSuccess && launcherPublisher.channelPublishingEnabled) homeMediaSystem(system)?.let { mediaSystem ->
                     launcherPublisher.syncWatchNextFromServer(mediaSystem,
                         onDeck.filter { it.type == "movie" || it.type == "episode" }
                             .map { it.toLauncherTitle(com.ambient.tv.ui.common.MediaTileStyle.CONTINUE) })
                 }
-                publishPartial()
+                partialPublisher.request()
             }
             if (listOf("recent", "collections", "libraries").any { hasEnabledRow(system, it) }) {
                 sections.forEach { section -> launch {
                     previews[section.key] = limitedHomeFetch {
                         repository.getSectionPreview(section.key, "addedAt:desc", previewLimit).counted(repository.cachedSectionPreview(section.key, "addedAt:desc", previewLimit).orEmpty())
                     }
-                    publishPartial()
+                    partialPublisher.request()
                 } }
             }
             if (hasEnabledRow(system, "recent")) {
@@ -767,18 +771,20 @@ class HomeViewModel @Inject constructor(
                     releases[section.key] = limitedHomeFetch {
                         repository.getSectionPreview(section.key, "originallyAvailableAt:desc", releaseLimit).counted(repository.cachedSectionPreview(section.key, "originallyAvailableAt:desc", releaseLimit).orEmpty())
                     }
-                    publishPartial()
+                    partialPublisher.request()
                 } }
             }
             launch {
                 episodes = loadRecentEpisodes(repository, sections, system)
-                publishPartial()
+                partialPublisher.request()
             }
             launch {
                 ranked = loadRanked(repository, sections, system)
-                publishPartial()
+                partialPublisher.request()
             }
         }
+        // The final complete snapshot follows; discard a pending partial update.
+        partialPublisher.stop()
         if (failed.get() in 1 until requested.get()) {
             val reason = firstFailure.get()?.let { com.ambient.tv.notifications.failureReasonText(context, it) }
             com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
@@ -1487,31 +1493,31 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun publishRowsInternal(rows: List<ContentRowData>, hasRows: Boolean) {
-        // The launcher's rows follow the server rows (enabled rows, their titles and display
-        // setting; servers hidden as unreachable left out). The publisher waits until they settle.
-        val launcherRows = rows.filterNot { homeRowHidden(it.id) }
-        fun channel(selected: List<ContentRowData>, newestFirst: Boolean) = com.ambient.tv.launcher.LauncherChannelContent(
-            name = selected.singleOrNull()?.title,
-            titles = selected.flatMap { row -> row.items.map { it to row.style } }
-                .let { pairs -> if (newestFirst) pairs.sortedByDescending { it.first.addedAt ?: 0L } else pairs }
-                .map { (item, style) -> item.toLauncherTitle(style) },
-        )
-        // Offline, asleep or failed loads publish no rows; the launcher keeps the last ones, which
-        // are exactly what wakes the server from the home screen.
+        // On handhelds there is no Android TV launcher. On TVs, convert potentially
+        // hundreds of metadata records only after the debounce expires, on the IO worker.
         val mediaConfigured = appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured
-        if (hasRows || !mediaConfigured) launcherPublisher.scheduleChannels(
-            // The cross-system row is already ordered by last watched; otherwise each server's row.
-            continueWatching = channel(launcherRows.filter { it.id == ALL_CONTINUE_ROW_ID }
-                .ifEmpty { launcherRows.filter { it.id.endsWith(".continue") } }, newestFirst = false),
-            recentlyAdded = channel(launcherRows.filter { ".recentlyAdded" in it.id }, newestFirst = true),
-            liveTv = launcherLiveTv().takeIf { live ->
-                // Still loading, or empty because the live TV server is asleep/unreachable: keep the
-                // launcher's last channels. Empty with no live rows or no live TV clears it.
+        if ((hasRows || !mediaConfigured) && launcherPublisher.channelPublishingEnabled) {
+            val launcherRows = rows.filterNot { homeRowHidden(it.id) }
+            val continueRows = launcherRows.filter { it.id == ALL_CONTINUE_ROW_ID }
+                .ifEmpty { launcherRows.filter { it.id.endsWith(".continue") } }
+            val recentRows = launcherRows.filter { ".recentlyAdded" in it.id }
+            val live = launcherLiveTv().takeIf { content ->
+                // A still-pending or unavailable LiveTV server retains the previous channel.
                 val liveWanted = !plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty() &&
                     appPreferences.homeRows.any { it.enabled && it.contentKey in setOf("live", "recent_channels") }
-                !liveWanted || (tvPreviewComplete && live.titles.isNotEmpty())
-            },
-        )
+                !liveWanted || (tvPreviewComplete && content.titles.isNotEmpty())
+            }
+            launcherPublisher.scheduleChannelsWhenIdle {
+                fun channel(selected: List<ContentRowData>, newestFirst: Boolean) =
+                    com.ambient.tv.launcher.LauncherChannelContent(
+                        name = selected.singleOrNull()?.title,
+                        titles = selected.flatMap { row -> row.items.map { it to row.style } }
+                            .let { pairs -> if (newestFirst) pairs.sortedByDescending { it.first.addedAt ?: 0L } else pairs }
+                            .map { (item, style) -> item.toLauncherTitle(style) },
+                    )
+                Triple(channel(continueRows, false), channel(recentRows, true), live)
+            }
+        }
         @Suppress("NAME_SHADOWING")
         val rows = rows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") || homeRowHidden(it.id)

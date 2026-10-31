@@ -24,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -100,6 +102,8 @@ class LauncherPublisher @Inject constructor(
             context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 
     private val active: Boolean get() = supported && preferences.launcherIntegrationEnabled
+    /** False on phones and whenever the launcher feature is disabled. */
+    val channelPublishingEnabled: Boolean get() = active
 
     /**
      * Playback of a server title stopped (or was marked watched). In progress → Watch Next entry
@@ -147,12 +151,20 @@ class LauncherPublisher @Inject constructor(
         }
     }
 
-    /** Home rows changed; publish the channels once the rows have settled for a few seconds. */
-    fun scheduleChannels(continueWatching: LauncherChannelContent, recentlyAdded: LauncherChannelContent, liveTv: LauncherChannelContent?) {
+    /** Compatibility method for already prepared channel content. */
+    fun scheduleChannels(continueWatching: LauncherChannelContent, recentlyAdded: LauncherChannelContent, liveTv: LauncherChannelContent?) =
+        scheduleChannelsWhenIdle { Triple(continueWatching, recentlyAdded, liveTv) }
+
+    /** Prepare channel titles off-main only after Home has settled, then publish on IO. */
+    fun scheduleChannelsWhenIdle(
+        prepare: () -> Triple<LauncherChannelContent, LauncherChannelContent, LauncherChannelContent?>,
+    ) {
         if (!active) return
         channelJob?.cancel()
         channelJob = scope.launch {
             delay(CHANNEL_SETTLE_MS)
+            val (continueWatching, recentlyAdded, liveTv) = prepare()
+            currentCoroutineContext().ensureActive()
             lock.withLock {
                 runCatching {
                     val posters = mutableSetOf<Uri>()
