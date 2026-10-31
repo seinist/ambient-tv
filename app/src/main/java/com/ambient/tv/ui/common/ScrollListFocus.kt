@@ -38,14 +38,6 @@ internal val LocalScrollListActions = staticCompositionLocalOf<ScrollListActions
 /** The current page's A–Z index, if it is displayed to the right of browse content. */
 internal val LocalBrowseRightIndexFocus = staticCompositionLocalOf<FocusRequester?> { null }
 
-/** Only dedicated list screens opt into displaying a scrollbar beside their A–Z index. */
-internal fun lazyListScrollbarVisible(
-    hasAlphabet: Boolean,
-    scrollbarWithAlphabet: Boolean,
-    canScrollForward: Boolean,
-    canScrollBackward: Boolean,
-): Boolean = (canScrollForward || canScrollBackward) && (!hasAlphabet || scrollbarWithAlphabet)
-
 /** Headers register for their lifetime and window. Disposing a page removes its focus target. */
 internal class ScrollListActions {
     private class Target(val view: View, val actions: FocusRequester, val up: (() -> FocusRequester)?)
@@ -105,29 +97,16 @@ fun TvLazyColumn(
     allowUpExit: Boolean = false,
     wrapVerticalFocus: Boolean = true,
     focusActionsOnRight: Boolean = false,
-    /** Opt in only for dedicated lists: show the scroll thumb alongside the A–Z index. */
-    scrollbarWithAlphabet: Boolean = false,
-    scrollbarFocusRequester: FocusRequester? = null,
-    scrollbarReturnFocus: FocusRequester? = null,
     content: LazyListScope.() -> Unit,
 ) {
     BrowseScrollBudget(state)
     val animate = !LocalPerformanceProfile.current.reducedEffects
-    val alphabetFocus = LocalBrowseRightIndexFocus.current
-    // Browsing grids keep the index-only design; Radio lists can opt into both controls.
-    LazyScrollbarFrame(modifier, lazyListScrollbarVisible(
-        hasAlphabet = alphabetFocus != null,
-        scrollbarWithAlphabet = scrollbarWithAlphabet,
-        canScrollForward = state.canScrollForward,
-        canScrollBackward = state.canScrollBackward,
-    ),
-        scrollbarFocusRequester = scrollbarFocusRequester,
-        scrollbar = { bar, contentFocus ->
-            OverlayLazyScrollbar(state, bar, scrollbarReturnFocus ?: contentFocus, actionsFocus = alphabetFocus)
-        }) { listModifier ->
-        val scrollbarFocus = if (scrollbarWithAlphabet) {
-            LocalLazyScrollbarRightTarget.current ?: alphabetFocus
-        } else alphabetFocus ?: LocalLazyScrollbarRightTarget.current
+    // The right alphabet index already serves as position/scroll navigation.
+    // Never draw a second scrollbar beside or underneath it.
+    LazyScrollbarFrame(modifier, LocalBrowseRightIndexFocus.current == null &&
+        (state.canScrollForward || state.canScrollBackward),
+        scrollbar = { bar, contentFocus -> OverlayLazyScrollbar(state, bar, contentFocus) }) { listModifier ->
+        val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.LazyColumn(
             modifier = listModifier
                 .then(if (LocalHandheldUi.current || focusActionsOnRight) Modifier else Modifier.focusProperties {
