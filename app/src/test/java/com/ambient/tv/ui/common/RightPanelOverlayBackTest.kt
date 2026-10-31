@@ -34,7 +34,8 @@ class RightPanelOverlayBackTest {
         rule.mainClock.autoAdvance = false
         rule.setContent {
             var open by remember { mutableStateOf(true) }
-            BackHandler(enabled = !open) { pageBack.incrementAndGet() }
+            // Even a mistakenly enabled underlying page Back must not take the first key.
+            BackHandler(enabled = true) { pageBack.incrementAndGet() }
             Box(Modifier.fillMaxSize()) {
                 if (open) RightPanelOverlay {
                     RightSidePanel(
