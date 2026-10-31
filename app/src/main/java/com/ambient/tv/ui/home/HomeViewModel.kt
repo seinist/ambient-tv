@@ -1533,10 +1533,24 @@ class HomeViewModel @Inject constructor(
                 .ifEmpty { launcherRows.filter { it.id.endsWith(".continue") } }
             val recentRows = launcherRows.filter { ".recentlyAdded" in it.id }
             val live = launcherLiveTv().takeIf { content ->
-                // A still-pending or unavailable LiveTV server retains the previous channel.
-                val liveWanted = !plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty() &&
-                    appPreferences.homeRows.any { it.enabled && it.contentKey in setOf("live", "recent_channels") }
-                !liveWanted || (tvPreviewComplete && content.titles.isNotEmpty())
+                val wantedSources = if (plexOnly || jellyfinOnly || embyOnly) emptyList()
+                    else liveTvRegistry.configured().filter { repo ->
+                        appPreferences.homeRows.any { it.enabled && it.system == repo.source.system &&
+                            it.contentKey in setOf("live", "recent_channels") }
+                    }
+                val offline = unreachableServers.current().offline
+                val tvheadendFailed = when (tvheadendConnectionManager.state.value) {
+                    ServerConnectionState.Offline, ServerConnectionState.WakeTimedOut -> true
+                    is ServerConnectionState.Error -> true
+                    else -> false
+                }
+                // While a wake/preview is pending, retain the previous Android TV launcher
+                // programs. Once every configured source is *confirmed* offline, publish
+                // an empty program list to remove stale Live TV tiles there as well.
+                val allOffline = allHomeTvSourcesOffline(
+                    wantedSources.map { it.source.system }, offline, tvheadendFailed,
+                )
+                wantedSources.isEmpty() || (tvPreviewComplete && (content.titles.isNotEmpty() || allOffline))
             }
             launcherPublisher.scheduleChannelsWhenIdle {
                 fun channel(selected: List<ContentRowData>, newestFirst: Boolean) =
