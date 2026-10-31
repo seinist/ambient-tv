@@ -181,8 +181,10 @@ class YouTubeViewModel @Inject constructor(
             coroutineScope {
                 candidates.forEach { rowId ->
                     launch {
+                        // Background prefill must not monopolize both permits while awaiting
+                        // idle input: focused/visible rows need to load promptly instead.
+                        awaitQuietInput()
                         continuationPermits.withPermit {
-                            awaitQuietInput()
                             continueRow(rowId, showPlaceholder = false)
                         }
                     }

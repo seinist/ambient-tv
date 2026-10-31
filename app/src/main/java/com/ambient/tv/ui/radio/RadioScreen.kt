@@ -221,7 +221,7 @@ fun RadioScreen(
         hasMore = state.hasMore,
         loading = state.loading,
         loadingMore = state.loadingMore,
-        enabled = state.contentReady && !requestedPagePending && !showingFacets,
+        enabled = state.contentReady && !requestedPagePending && !showingFacets && !showViewOptions,
         onNearEnd = { lastVisible -> viewModel.onViewportNearEnd(focusScope, lastVisible) },
     )
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()

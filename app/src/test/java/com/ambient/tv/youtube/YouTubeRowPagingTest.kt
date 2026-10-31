@@ -177,6 +177,13 @@ class YouTubeRowPagingTest {
     }
 
     @Test
+    fun backgroundPrefillDoesNotHogPermitsWhileWaitingForUserToStopScrolling() {
+        val file = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeViewModel.kt").readText()
+        val prefill = file.substringAfter("private fun armPaging(").substringBefore("private fun singleRowId(")
+        assertTrue(prefill.indexOf("awaitQuietInput()") < prefill.indexOf("continuationPermits.withPermit"))
+    }
+
+    @Test
     fun rowEndPlaceholdersUseTheSharedDampedPulse() {
         val source = listOf(File("src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt"), File("app/src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt"))
             .first { it.exists() }.readText()
