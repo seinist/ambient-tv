@@ -811,9 +811,7 @@ open class MainActivity : ComponentActivity() {
     }
 }
 
-/** Radio categories are separate destinations. On phones, fading the outgoing empty
- * category for 700 ms makes "No stations" appear before the incoming page's first fetch.
- * Keep category-to-category navigation atomic, without changing other app transitions. */
+/** Avoid fading an outgoing empty Radio category into the newly requested one on phones. */
 internal fun radioSectionTransitionIsInstant(fromRoute: String?, toRoute: String?): Boolean {
     val isRadioBrowse = { route: String? ->
         route == Destinations.RADIO || route == Destinations.RADIO_SECTION

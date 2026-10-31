@@ -201,16 +201,17 @@ fun TvheadendPlayerScreen(
     com.ambient.tv.ui.player.PersistentPlayerChrome(
         viewModel, viewModel.changingChannel, initialZapOsd = viewModel.startsWithLiveChannel,
     ) {
-    // A channel change shows the OSD with the new channel; Up/Down keep zapping meanwhile.
+    // Reveal the new sender details only once its Ready metadata is actually available,
+    // not when zapping merely starts (which could otherwise show the old channel).
     val zapChrome = com.ambient.tv.ui.player.LocalPlayerChromeState.current
-    LaunchedEffect(viewModel.zapVersion) {
-        if (viewModel.zapVersion > 0 && zapChrome != null && zapChrome.panels.panel == UnifiedPlayerPanel.NONE) {
-            // An automatic/compact channel change keeps Up/Down available for zapping.
-            // The expanded bar's channel buttons retain their controls and focus instead.
-            val zapOnly = !zapChrome.osd.expanded || zapChrome.osd.closing
-            zapChrome.visible.value = true
-            zapChrome.shownByZap.value = zapOnly
+    var displayedChannelId by remember(viewModel) { mutableStateOf<String?>(null) }
+    LaunchedEffect(ready?.channel?.uuid) {
+        val channelId = ready?.channel?.uuid
+        if (com.ambient.tv.ui.player.channelIdentityChanged(displayedChannelId, channelId) &&
+            zapChrome != null && zapChrome.panels.panel == UnifiedPlayerPanel.NONE) {
+            zapChrome.osd.showChannelInfo()
         }
+        if (channelId != null) displayedChannelId = channelId
     }
     Box(Modifier.fillMaxSize().background(if (persistentVideoHost) Color.Transparent else Color.Black)
         .onPreviewKeyEvent {

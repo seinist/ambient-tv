@@ -55,6 +55,10 @@ enum class RadioSection(val key: String) {
     }
 }
 
+/** Exactly the categories enabled for the menu, in the same canonical order on TV and handheld. */
+internal fun radioVisibleSections(enabledKeys: List<String>): List<RadioSection> =
+    RadioSection.entries.filter { it.key in enabledKeys }.ifEmpty { listOf(RadioSection.POPULAR) }
+
 internal val RadioSection.isFacetSection: Boolean
     get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
@@ -69,18 +73,18 @@ internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
 internal fun RadioUiState.awaitingInitialContent(): Boolean =
     stations.isEmpty() && facets.isEmpty() && (loading || !contentReady)
 
-/** The requested sidebar route must be resolved before an old page can report "empty". */
+/** A destination's old empty/error state is never the new route's first result. */
 internal fun RadioUiState.awaitingRequestedPage(
     requestedSection: RadioSection,
     entryPending: Boolean,
 ): Boolean = entryPending || section != requestedSection || awaitingInitialContent()
 
-/** A new route's placeholders must match its layout, not the former page's cached mode. */
+/** Use category-list skeletons for a requested facet overview on the very first frame. */
 internal fun RadioUiState.requestedLoadingLayout(requestedSection: RadioSection): RadioLoadingLayout =
     if (section == requestedSection) loadingLayout()
     else copy(section = requestedSection, selectedFacet = null, submittedQuery = "").loadingLayout()
 
-/** An empty remote page needs revalidation whenever its suspended destination resumes. */
+/** Preserve live content on back; only a no-result remote page needs first-frame shielding. */
 internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
     stations.isEmpty() && facets.isEmpty() &&
         (submittedQuery.isNotBlank() || selectedFacet != null ||
@@ -88,6 +92,7 @@ internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
 
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
+    val visibleSections: List<RadioSection> = RadioSection.entries,
     /** First composition is pending even before the enter() effect has launched the API request. */
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
@@ -117,7 +122,9 @@ class RadioViewModel @Inject constructor(
     private val playbackLauncher: RadioPlaybackLauncher,
     private val playbackQueue: RadioPlaybackQueue,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(RadioUiState())
+    private val _state = MutableStateFlow(RadioUiState(
+        visibleSections = radioVisibleSections(preferences.radioSubmenuKeys),
+    ))
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
 
     private var loadJob: Job? = null
@@ -154,6 +161,10 @@ class RadioViewModel @Inject constructor(
         viewModelScope.launch {
             var favoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
             preferences.changes().collect {
+                val visibleSections = radioVisibleSections(preferences.radioSubmenuKeys)
+                if (_state.value.visibleSections != visibleSections) {
+                    _state.value = _state.value.copy(visibleSections = visibleSections)
+                }
                 val nextFavoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
                 val favoritesChanged = nextFavoriteIds != favoriteIds
                 favoriteIds = nextFavoriteIds
@@ -176,9 +187,8 @@ class RadioViewModel @Inject constructor(
 
     fun enter(initialSection: RadioSection? = null) {
         if (entered) {
-            // An old entry may already have reported "no stations" or an API error.
-            // Unlike selecting the same chip, re-entering this destination always retries.
-            // Keep the actual facet/search context when returning from the player.
+            // Reopening an existing NavHost destination must revalidate its empty/error
+            // result instead of returning without a request. Keep the active facet/search.
             if (initialSection != null && initialSection != _state.value.section) selectSection(initialSection)
             else refresh()
             return

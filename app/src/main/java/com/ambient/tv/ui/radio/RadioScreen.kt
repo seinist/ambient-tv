@@ -122,16 +122,16 @@ fun RadioScreen(
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    // A NavHost destination is drawn before its resume/entry callback runs. A reused
-    // ViewModel may still say an old page was empty: never render that state as new data.
+    // NavHost paints before its first RESUMED callback. A reused VM can still hold an
+    // old confirmed-empty error; shield the first frame with the requested route's layout.
     var entryPending by remember(viewModel, requestedSection) { mutableStateOf(true) }
     DisposableEffect(lifecycleOwner, viewModel, requestedSection) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE &&
                 viewModel.state.value.needsRemoteRefreshOnReturn()
             ) {
-                // Reset while this destination is leaving, *before* NavHost can render
-                // its next frame on return. Existing stations/facets stay visible.
+                // This happens while leaving, before the returning destination may draw.
+                // Populated cached content stays on screen instead of reverting to a skeleton.
                 entryPending = true
             }
         }
@@ -139,8 +139,15 @@ fun RadioScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("radio")) {
-        viewModel.enter(requestedSection)
+        // PR #151 redirects disabled category routes; don't fetch that hidden category.
+        if (requestedSection in viewModel.state.value.visibleSections) viewModel.enter(requestedSection)
         entryPending = false
+    }
+    // A category disabled in Settings must not strand a deep link on a hidden tab.
+    // Route through the same sidebar navigation as a normal chip selection.
+    LaunchedEffect(initialSectionKey, state.visibleSections) {
+        val requested = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+        if (requested !in state.visibleSections) selectSection(state.visibleSections.first())
     }
     val requestedPagePending = state.awaitingRequestedPage(requestedSection, entryPending)
     val visibleSection = if (entryPending || state.section != requestedSection) requestedSection else state.section
@@ -266,7 +273,7 @@ fun RadioScreen(
             Modifier
                 .fillMaxSize()
                 .handheldSwipeTabs(
-                    tabs = RadioSection.entries,
+                    tabs = state.visibleSections,
                     selected = visibleSection,
                     onSelect = selectSection,
                     enabled = !showViewOptions &&
@@ -311,21 +318,21 @@ fun RadioScreen(
                 )
             }
 
-            if (handheld) {
-                com.ambient.tv.ui.common.PageChipRow(
-                    focusChain,
-                    selectedIndex = RadioSection.entries.indexOf(visibleSection),
-                ) {
-                    lazyItems(RadioSection.entries, key = { it.key }) { section ->
-                        TvChip(
-                            text = radioSectionLabel(section),
-                            selected = visibleSection == section &&
-                                state.submittedQuery.isBlank() &&
-                                state.selectedFacet == null,
-                            modifier = if (visibleSection == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
-                            onClick = { selectSection(section) },
-                        )
-                    }
+            // Like SmartTube: show the enabled category chips on TV AND handheld.
+            com.ambient.tv.ui.common.PageChipRow(
+                focusChain,
+                selectedIndex = state.visibleSections.indexOf(visibleSection),
+            ) {
+                lazyItems(state.visibleSections, key = { it.key }) { section ->
+                    TvChip(
+                        text = radioSectionLabel(section),
+                        selected = visibleSection == section &&
+                            state.submittedQuery.isBlank() &&
+                            state.selectedFacet == null,
+                        icon = com.ambient.tv.ui.common.radioMenuIcon(section.key),
+                        modifier = if (visibleSection == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                        onClick = { selectSection(section) },
+                    )
                 }
             }
 
