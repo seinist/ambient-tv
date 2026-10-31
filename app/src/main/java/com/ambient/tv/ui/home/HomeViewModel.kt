@@ -675,7 +675,9 @@ class HomeViewModel @Inject constructor(
      */
     private fun failOrContinue(failure: HomeUiState) {
         val loaded = _uiState.value as? HomeUiState.Loaded
-        if (loaded != null && !loaded.onlyTrailers()) return
+        // An offline media server must not replace already visible cached Home feeds.
+        // Its reconnect entry is still appended to the existing independent rows.
+        if (loaded != null && loaded.rowKeys.isNotEmpty()) return
         unreachableServers.refresh()
         val now = unreachableServers.current()
         if (now.canDismiss || now.offline.isNotEmpty()) publishRows(emptyList())
@@ -1609,12 +1611,12 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun HomeUiState.isFailurePage() =
-        this is HomeUiState.Offline || this is HomeUiState.Error || this is HomeUiState.WakeTimedOut
-
-    /** Loaded only with trailer rows: no server content yet, so a server failure still shows. */
-    private fun HomeUiState.Loaded.onlyTrailers() = rows.isNotEmpty() && rows.all { it.id.startsWith("trailers.") } &&
-        liveTvItems.isEmpty() && recentTvItems.isEmpty() && tvRows.isEmpty()
+    private fun HomeUiState.isFailurePage(): Boolean {
+        val failure = this is HomeUiState.Offline || this is HomeUiState.Error || this is HomeUiState.WakeTimedOut
+        // A cached independent feed can recover Home from a media-server error page,
+        // without making that server appear online or hiding its wake/reconnect entry.
+        return failure && radioRows.isEmpty() && youtubeRows.isEmpty() && trailerRows.isEmpty() && photoRow == null
+    }
 
     private fun com.ambient.tv.data.photos.PhotoEntry.toHomeItem() = MediaItem(
         ratingKey = com.ambient.tv.ui.photos.PhotoLaunch.HOME_PREFIX + id,
