@@ -271,9 +271,16 @@ fun PhotoBrowserScreen(
                         up = if (timelineAvailable) focusChain.chips else focusChain.actions, focusChain = focusChain)
                 }
                 when {
-                    emptyPending -> StatePanel(stringResource(R.string.photos_loading))
-                    state.failed -> StatePanel(stringResource(R.string.photos_error), actionLabel = stringResource(R.string.photos_retry), onAction = viewModel::retry)
-                    visible.isEmpty() -> StatePanel(stringResource(R.string.photos_empty))
+                    emptyPending -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        com.ambient.tv.ui.common.FullscreenSpinner()
+                    }
+                    state.failed -> com.ambient.tv.ui.common.BrowseStatusPanel(
+                        stringResource(R.string.photos_error),
+                        kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
+                        actionLabel = stringResource(R.string.photos_retry),
+                        onAction = viewModel::retry,
+                    )
+                    visible.isEmpty() -> com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.photos_empty))
                     else -> LazyVerticalGrid(
                         columns = GridCells.Adaptive(220.dp),
                         state = gridState,
