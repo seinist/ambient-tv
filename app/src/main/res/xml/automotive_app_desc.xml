@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<automotiveApp>
+    <!-- Standard Android Auto audio only; no video, projection or non-public car SDK. -->
+    <uses name="media" />
+</automotiveApp>
