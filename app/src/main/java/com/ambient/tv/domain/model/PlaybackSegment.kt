@@ -4,7 +4,7 @@ package com.ambient.tv.domain.model
 data class PlaybackSegment(val type: String, val startMs: Long, val endMs: Long)
 
 fun normalizePlaybackSegments(segments: List<PlaybackSegment>, durationMs: Long): List<PlaybackSegment> =
-    segments.filter { it.type in setOf("intro", "credits") && it.startMs >= 0 &&
+    segments.filter { it.type in setOf("intro", "credits", "sponsor") && it.startMs >= 0 &&
         (it.endMs > it.startMs || (it.type == "credits" && it.endMs == -1L)) &&
         (durationMs <= 0 || (it.startMs < durationMs && it.endMs <= durationMs)) }
         .distinct().sortedBy { it.startMs }.take(100)

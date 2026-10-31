@@ -88,6 +88,8 @@ data class PlaybackMetadata(
     /** Title data for an online subtitle search; null where it makes no sense (live TV, music). */
     val subtitleSearch: SubtitleSearchInfo? = null,
     val playbackSegments: List<com.ambient.tv.domain.model.PlaybackSegment> = emptyList(),
+    /** SponsorBlock is an independent automatic-skip switch; never reclassify sponsorship as credits. */
+    val sponsorSkipEnabled: Boolean = false,
     /** Server, season, series and collections for scoped playback settings; null outside libraries. */
     val videoScope: PlaybackVideoScope? = null,
 )
