@@ -128,6 +128,7 @@ import com.ambient.tv.ui.common.RatingScoreBadge
 import com.ambient.tv.ui.common.ContentRow
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.SkeletonRow
+import com.ambient.tv.ui.common.MediaTileStyle
 import com.ambient.tv.ui.common.StreamPropertyRow
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.rememberRowCenteringState
@@ -212,6 +213,7 @@ fun HomeScreen(
         embyOnly -> "emby"
         else -> null
     }
+    val loadingRowStyles = remember(viewModel, overviewProvider) { viewModel.loadingRowStyles(overviewProvider) }
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }
@@ -323,13 +325,14 @@ fun HomeScreen(
             when (val state = uiState) {
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
                 // Connection progress is presented by the global, non-focusable notification host.
-                HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows()
+                HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows(loadingRowStyles)
                 is HomeUiState.Loaded -> SoftViewChange(
                     if (systemOverview) overviewViewMode else Unit,
                     Modifier.fillMaxSize(),
                 ) {
                     LibraryContent(
                         state = state,
+                        loadingRowStyles = loadingRowStyles,
                         heroContent = viewModel.heroContent,
                         homeHeroStyleKey = homeHeroStyleKey,
                         homeHeroIntensityPercent = homeHeroIntensityPercent,
@@ -499,22 +502,38 @@ private fun NotConfiguredDialog(onAddSystem: () -> Unit) {
 }
 
 @Composable
-private fun LoadingRows() {
-    // Mirror the final Home composition while data is loading so the screen does not
-    // reflow from a centered spinner into a completely different TV layout.
-    Column(modifier = Modifier.fillMaxSize()) {
+private fun LoadingRows(rowStyles: List<MediaTileStyle>) {
+    val styles = rowStyles.ifEmpty { listOf(MediaTileStyle.POSTER) }
+    if (LocalHandheldUi.current) {
+        // On phones Home has no hero: placeholders start at the same top position as real rows.
+        LazyColumn(
+            allowUpExit = true,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+        ) {
+            items(styles.take(3)) { style ->
+                SkeletonRow(title = "", modifier = Modifier.padding(top = 8.dp), style = style, itemCount = 7)
+            }
+        }
+        return
+    }
+
+    // TV: the actual Home shows just the active, enlarged row parked at the screen bottom.
+    // Using the same composition locals and bottom anchor avoids both a size pop and a jump
+    // when the first cached/provider row replaces its placeholder.
+    val heroHeight = homeHeroHeight()
+    val viewport = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.height.toDp() }
+    val rowScale = com.ambient.tv.ui.common.heroRowTileScale(viewport - homeRowParkOffset(heroHeight))
+    Box(Modifier.fillMaxSize()) {
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(homeHeroHeight())
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
-                            MaterialTheme.colorScheme.background,
-                        ),
+            modifier = Modifier.fillMaxWidth().height(heroHeight).background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.70f),
+                        MaterialTheme.colorScheme.background,
                     ),
                 ),
+            ),
         ) {
             Column(
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = screenGutter(), bottom = HomeHeroFadeTail),
@@ -524,13 +543,16 @@ private fun LoadingRows() {
                 Box(Modifier.widthIn(min = 210.dp, max = 270.dp).height(14.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f), androidx.compose.foundation.shape.RoundedCornerShape(999.dp)))
             }
         }
-        LazyColumn(
-            allowUpExit = true,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 12.dp, bottom = 36.dp),
+        CompositionLocalProvider(
+            com.ambient.tv.ui.common.LocalHeroRowTiles provides true,
+            com.ambient.tv.ui.common.LocalHeroRowTileScale provides rowScale,
         ) {
-            item { SkeletonRow(title = "", modifier = Modifier.padding(top = 8.dp), style = com.ambient.tv.ui.common.MediaTileStyle.POSTER, itemCount = 7) }
-            items(2) { SkeletonRow(title = "", modifier = Modifier.padding(top = 8.dp), style = com.ambient.tv.ui.common.MediaTileStyle.POSTER, itemCount = 7) }
+            SkeletonRow(
+                title = "",
+                modifier = Modifier.align(Alignment.BottomStart).padding(bottom = HeroRowBottomMargin, top = 8.dp),
+                style = styles.first(),
+                itemCount = 7,
+            )
         }
     }
 }
@@ -539,6 +561,7 @@ private fun LoadingRows() {
 @OptIn(ExperimentalFoundationApi::class)
 internal fun LibraryContent(
     state: HomeUiState.Loaded,
+    loadingRowStyles: List<MediaTileStyle>,
     heroContent: StateFlow<HomeHeroContent?>,
     homeHeroStyleKey: String,
     homeHeroIntensityPercent: Int,
@@ -563,7 +586,7 @@ internal fun LibraryContent(
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
-        LoadingRows()
+        LoadingRows(loadingRowStyles)
         return
     }
     if (state.rowKeys.isEmpty()) {
@@ -586,31 +609,15 @@ internal fun LibraryContent(
         return
     }
 
-    val performance = LocalPerformanceProfile.current
-    // Fokus eases from the hero down onto the parked row each time the row changes.
-    // On a TV the focused row stays parked; on a phone the light settles at the bottom of the hero.
-    val focusTravel = remember { Animatable(0.24f) }
-    val parkedTravel = if (LocalHandheldUi.current) 0.88f else 0.52f
-    LaunchedEffect(focusSnapshot.rowId, parkedTravel) {
-        val row = focusSnapshot.rowId
-        val target = if (row == null) 0.24f else parkedTravel
-        if (row != null && focusTravel.value > 0.40f) focusTravel.animateTo(0.32f, tween(220))
-        focusTravel.animateTo(target, tween(860, easing = FastOutSlowInEasing))
-    }
-    val travel = { focusTravel.value }
     if (LocalHandheldUi.current) {
+        // Touch has no row-focus previews; the hero was redundant and consumed the first
+        // viewport. Keep the regular row cards and their own labels/actions at the top.
         LazyColumn(
             allowUpExit = true,
             state = rememberLazyListState(),
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
         ) {
-            item("mobile-hero") {
-                HomeHero(
-                    heroContent, homeHeroStyleKey, homeHeroIntensityPercent, homeHeroSpreadKey, entranceProgress,
-                    focusTravel = travel,
-                )
-            }
             items(state.rowKeys, key = { it }) { rowKey ->
                 when {
                     rowKey in state.tvRows -> {
@@ -641,6 +648,18 @@ internal fun LibraryContent(
         }
         return
     }
+
+    val performance = LocalPerformanceProfile.current
+    // The focus light follows the parked Home row on television only.
+    val focusTravel = remember { Animatable(0.24f) }
+    val parkedTravel = 0.52f
+    LaunchedEffect(focusSnapshot.rowId) {
+        val row = focusSnapshot.rowId
+        val target = if (row == null) 0.24f else parkedTravel
+        if (row != null && focusTravel.value > 0.40f) focusTravel.animateTo(0.32f, tween(220))
+        focusTravel.animateTo(target, tween(860, easing = FastOutSlowInEasing))
+    }
+    val travel = { focusTravel.value }
 
     // Rows always move behind the pinned hero. Full mode uses a true alpha mask; reduced mode
     // gets the same visual handoff from the hero's cheap opaque-to-transparent overlay.
@@ -1723,7 +1742,7 @@ internal fun HomeHeroAmbient(
 
 /**
  * On TV the hero takes the upper part of the screen, so the first row rests in the lower half
- * like Plex's home and the freed space holds the summary. Handheld keeps the compact banner.
+ * like Plex's home and the freed space holds the summary. Handheld Home has no hero.
  */
 @Composable
 private fun homeHeroHeight(): Dp {

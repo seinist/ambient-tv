@@ -107,6 +107,24 @@ fun resolveMediaTileStyle(style: MediaTileStyle, itemType: String, handheld: Boo
     else -> style
 }
 
+/** Media cards and loading placeholders must use exactly the same Home-specific scaling. */
+internal fun mediaTileHomeScale(style: MediaTileStyle, heroRow: Boolean, scale: HeroRowTileScale): Float = when {
+    !heroRow -> 1f
+    style == MediaTileStyle.POSTER || style == MediaTileStyle.AUTO -> scale.poster
+    else -> scale.landscape
+}
+
+@Composable
+internal fun mediaTileWidth(style: MediaTileStyle): Dp {
+    val baseWidth = when (style) {
+        MediaTileStyle.POSTER, MediaTileStyle.AUTO -> deviceDp(POSTER_WIDTH, 132.dp)
+        MediaTileStyle.CONTINUE -> deviceDp(CONTINUE_WIDTH, 240.dp)
+        MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE -> deviceDp(EPISODE_WIDTH, 240.dp)
+    }
+    return baseWidth * rememberUhdScale() *
+        mediaTileHomeScale(style, LocalHeroRowTiles.current, LocalHeroRowTileScale.current)
+}
+
 fun mediaTileImageUrl(item: MediaItem, style: MediaTileStyle): String? = when (style) {
     MediaTileStyle.POSTER -> item.posterArtUrl
     MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> item.landscapeArtUrl
@@ -132,16 +150,7 @@ fun MediaTile(
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
-    val uhdScale = rememberUhdScale()
-    val width = when (resolvedStyle) {
-        MediaTileStyle.POSTER -> deviceDp(POSTER_WIDTH, 132.dp)
-        MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> deviceDp(EPISODE_WIDTH, 240.dp)
-        MediaTileStyle.AUTO -> deviceDp(POSTER_WIDTH, 132.dp)
-    } * uhdScale * when {
-        !heroRowTiles -> 1f
-        resolvedStyle == MediaTileStyle.POSTER || resolvedStyle == MediaTileStyle.AUTO -> LocalHeroRowTileScale.current.poster
-        else -> LocalHeroRowTileScale.current.landscape
-    }
+    val width = mediaTileWidth(resolvedStyle)
     val aspectRatio = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> 16f / 9f
@@ -558,16 +567,11 @@ private fun SkeletonTileContent(
     val fill = MaterialTheme.colorScheme.surfaceVariant
     val tileShape = RoundedCornerShape(tokens.cardRadius)
     val textShape = RoundedCornerShape(3.dp)
-    val uhdScale = rememberUhdScale()
     val resolvedStyle = when (style) {
         MediaTileStyle.AUTO -> MediaTileStyle.POSTER
         else -> style
     }
-    val tileWidth = when (resolvedStyle) {
-        MediaTileStyle.POSTER -> deviceDp(POSTER_WIDTH, 132.dp)
-        MediaTileStyle.LANDSCAPE, MediaTileStyle.EPISODE, MediaTileStyle.CONTINUE -> deviceDp(EPISODE_WIDTH, 240.dp)
-        MediaTileStyle.AUTO -> deviceDp(POSTER_WIDTH, 132.dp)
-    } * uhdScale
+    val tileWidth = mediaTileWidth(resolvedStyle)
     val tileAspect = when (resolvedStyle) {
         MediaTileStyle.POSTER, MediaTileStyle.AUTO -> 2f / 3f
         else -> 16f / 9f
