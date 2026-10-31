@@ -258,17 +258,13 @@ fun SearchScreen(
                     .focusGroup()) {
                     when {
                         !uiState.hasSearched -> RecentSearches(uiState.recentSearches, viewModel::useRecentSearch, viewModel::clearRecentSearches)
-                        uiState.hasSearched && !uiState.hasResults && !uiState.isSearching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                BrandMark(size = 32.dp, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f), contentDescription = null)
-                                StatePanel(
-                                    stringResource(R.string.search_no_results),
-                                    if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
-                                        stringResource(R.string.search_no_results_partial_error)
-                                    } else stringResource(R.string.search_no_results_body),
-                                )
-                            }
-                        }
+                        uiState.hasSearched && !uiState.hasResults && !uiState.isSearching ->
+                            com.ambient.tv.ui.common.BrowseStatusPanel(
+                                title = stringResource(R.string.search_no_results),
+                                body = if (listOf(uiState.plexState, uiState.jellyfinState, uiState.embyState, uiState.trailerState, uiState.youtubeState, uiState.spotifyState, uiState.radioState, uiState.tvheadendState).any { it == SearchSourceState.ERROR || it == SearchSourceState.PARTIAL }) {
+                                    stringResource(R.string.search_no_results_partial_error)
+                                } else stringResource(R.string.search_no_results_body),
+                            )
                         else -> SoftViewChange(uiState.viewMode, Modifier.fillMaxSize()) {
                             if (uiState.viewMode == SearchViewMode.ROWS) SearchRows(
                                 uiState,
