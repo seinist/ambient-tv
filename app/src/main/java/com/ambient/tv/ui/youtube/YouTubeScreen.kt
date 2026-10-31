@@ -4,6 +4,7 @@ package com.ambient.tv.ui.youtube
 
 import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.mobile.DeviceActionRow
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 
 import com.ambient.tv.ui.mobile.deviceVideoGridCells
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -447,6 +449,7 @@ private fun YouTubeItemArtwork(item: YouTubeItem, modifier: Modifier) {
         views = YouTubeViewMode.entries.map { com.ambient.tv.ui.common.ViewOption(it.name, modeLabel(it), com.ambient.tv.ui.common.ViewPreview.valueOf(it.name)) },
         selectedView = state.viewMode.name, onView = { onSelectView(YouTubeViewMode.valueOf(it)) },
         gridColumns = state.gridColumns, listRows = state.listRows,
+        gridDensityProfile = com.ambient.tv.ui.common.GridDensityProfile.SMARTTUBE,
         onGridColumns = onSetGridColumns, onListRows = onSetListRows, onClose = onClose,
         showDensity = state.viewMode != YouTubeViewMode.CINEMATIC,
         sorts = filterModel.sorts, selectedSort = filterModel.selectedSort, onSort = filterModel.onSort,
@@ -596,9 +599,10 @@ private fun RowMode(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val horizontalPadding = screenGutter()
         val spacing = 16.dp
-        val visibleColumns = landscapeGridColumns(gridColumns)
-        val cardWidth = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) landscapeCardWidth() else
-            ((maxWidth - horizontalPadding * 2 - spacing * (visibleColumns - 1)) / visibleColumns).coerceAtLeast(160.dp)
+        // Sectioned rows use the same effective density as the flat landscape grid.
+        val visibleColumns = smartTubeVisibleLandscapeColumns(gridColumns)
+        val cardWidth = ((maxWidth - horizontalPadding * 2 - spacing * (visibleColumns - 1)) /
+            visibleColumns).coerceAtLeast(if (LocalHandheldUi.current) 104.dp else 160.dp)
         val rowState = rememberBrowseRowState(
             initialFirstVisibleItemIndex = if (rowId == focusTarget.rowId)
                 row.items.indexOfFirst { it.videoId == focusTarget.itemId }.coerceAtLeast(0) else 0,
@@ -1123,9 +1127,10 @@ private fun YouTubeLoadingRows(gridColumns: Int, pulse: androidx.compose.runtime
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val horizontalPadding = screenGutter()
         val spacing = 16.dp
-        val visibleColumns = landscapeGridColumns(gridColumns)
-        val cardWidth = if (com.ambient.tv.ui.mobile.LocalHandheldUi.current) landscapeCardWidth() else
-            ((maxWidth - horizontalPadding * 2 - spacing * (visibleColumns - 1)) / visibleColumns).coerceAtLeast(160.dp)
+        // Sectioned rows use the same effective density as the flat landscape grid.
+        val visibleColumns = smartTubeVisibleLandscapeColumns(gridColumns)
+        val cardWidth = ((maxWidth - horizontalPadding * 2 - spacing * (visibleColumns - 1)) /
+            visibleColumns).coerceAtLeast(if (LocalHandheldUi.current) 104.dp else 160.dp)
         LazyColumn(
             allowUpExit = true,
             modifier = Modifier.fillMaxSize(),
@@ -1163,6 +1168,16 @@ private fun YouTubeLoadingRows(gridColumns: Int, pulse: androidx.compose.runtime
         }
     }
 }
+/** Effective density shared by SmartTube section rows, flat grids, and their loading skeletons. */
+@Composable
+private fun smartTubeVisibleLandscapeColumns(gridColumns: Int): Int {
+    val configuration = LocalConfiguration.current
+    return visibleGridColumns(
+        gridColumns, ViewPreview.LANDSCAPE, GridDensityProfile.SMARTTUBE,
+        LocalHandheldUi.current, configuration.screenWidthDp, configuration.screenHeightDp,
+    )
+}
+
 /** Cinematic strips keep a stable card width; regular horizontal rows use the density setting. */
 @Composable private fun landscapeCardWidth()=deviceDp(300.dp, 260.dp)
 @Composable

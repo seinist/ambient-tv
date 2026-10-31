@@ -7,6 +7,7 @@ import com.ambient.tv.ui.theme.screenGutter
 import com.ambient.tv.ui.common.fillWindowHeight
 
 import com.ambient.tv.ui.common.AlphabetBar
+import com.ambient.tv.ui.common.alphabetTrackedLetter
 
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 
@@ -332,12 +333,20 @@ internal fun SectionContent(
         filterFocusState.keepControls()
         initialContentFocusPending = false
     }
-    // The alphabet indicator represents the item that has focus, not just the top tile.
+    // Read this composition local while composing, never from the ordinary onSelect callback.
+    val alphabetHandheld = LocalHandheldUi.current
+    // TV follows DPAD focus; touch scroll does not change focus, so handhelds follow the
+    // first visible item instead. Keep both indicators independent to avoid scroll-to-focus loops.
     val initialLibraryLetter = libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey)
     var visibleLibraryLetter by remember(state.items, state.focusedRatingKey, state.page, state.sortOrder, state.viewMode) {
         mutableStateOf(initialLibraryLetter)
     }
-    // The bar follows the focused item, so moving sideways within a grid row updates it too.
+    val viewportLetterState = remember(state.items, state.page, state.sortOrder, state.viewMode) {
+        mutableStateOf<Char?>(null)
+    }
+    val onLibraryViewportChanged: (Char?) -> Unit = remember(viewportLetterState) {
+        { letter: Char? -> viewportLetterState.value = letter }
+    }
     val onLibraryItemFocused: (MediaItem) -> Unit = { item ->
         markInitialFocusHandled()
         visibleLibraryLetter = libraryIndexLetter(item.title)
@@ -451,11 +460,11 @@ internal fun SectionContent(
                                         onResetFilters()
                                         filterFocusState.restoreFilter(if (filterBarShown) FilterFocusSurface.BAR else FilterFocusSurface.PANEL)
                                     } else when (state.viewMode) {
-                                        SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {})
-                                        SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter)
-                                        SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = {}, poster = state.viewMode == SectionViewMode.POSTER_LIST)
-                                        SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST)
-                                        SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL)
+                                        SectionViewMode.POSTER, SectionViewMode.GRID -> LibraryGrid(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = onLibraryViewportChanged)
+                                        SectionViewMode.LANDSCAPE, SectionViewMode.ROWS -> LandscapeGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, onLibraryViewportChanged)
+                                        SectionViewMode.LIST, SectionViewMode.POSTER_LIST -> LibraryList(focusState, onItemClick, onLibraryItemFocused, onVisibleLetterChanged = onLibraryViewportChanged, poster = state.viewMode == SectionViewMode.POSTER_LIST)
+                                        SectionViewMode.INFO_LIST, SectionViewMode.POSTER_INFO_LIST -> InfoList(focusState.items, focusState.focusedRatingKey, focusState.listRows, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_INFO_LIST, onVisibleLetterChanged = onLibraryViewportChanged)
+                                        SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> WallGrid(focusState.items, focusState.focusedRatingKey, focusState.gridColumns, onItemClick, onLibraryItemFocused, focusState.selectedLetter, poster = state.viewMode == SectionViewMode.POSTER_WALL, onVisibleLetterChanged = onLibraryViewportChanged)
                                         SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC -> CinematicView(focusState.items, focusState.focusedRatingKey, onItemClick, poster = state.viewMode == SectionViewMode.POSTER_CINEMATIC) { item -> markInitialFocusHandled(); onItemFocused(item) }
                                     }
                                 }
@@ -475,8 +484,12 @@ internal fun SectionContent(
                     if (showAlphabetBar) {
                         AlphabetBar(
                             letters = state.availableLetters,
-                            selected = visibleLibraryLetter,
-                            onSelect = { letter -> visibleLibraryLetter = letter; onSelectLetter(letter) },
+                            selected = alphabetTrackedLetter(alphabetHandheld, viewportLetterState.value, visibleLibraryLetter),
+                            onSelect = { letter ->
+                                visibleLibraryLetter = letter
+                                if (alphabetHandheld) viewportLetterState.value = letter
+                                onSelectLetter(letter)
+                            },
                             gridFocus = libraryFocusRequester,
                             modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                             firstEntryFocusRequester = alphabetRightFocusRequester,
@@ -609,7 +622,11 @@ private fun SectionOptionsPanel(
         }
     }
     com.ambient.tv.ui.common.ViewOptionsPanel(
-        showDensity = selectedMode != SectionViewMode.CINEMATIC && selectedMode != SectionViewMode.POSTER_CINEMATIC,
+        // Recommendation poster/landscape modes are horizontal ContentRows with fixed
+        // tile geometry; the grid-density setting has no effect there.
+        showDensity = selectedMode !in setOf(SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC) &&
+            !(state.page == SectionPage.RECOMMENDATIONS &&
+                selectedMode in setOf(SectionViewMode.POSTER, SectionViewMode.LANDSCAPE)),
         views = modes.map { mode -> com.ambient.tv.ui.common.ViewOption(mode.name, stringResource(when (mode) {
             SectionViewMode.POSTER -> R.string.library_view_poster
             SectionViewMode.LANDSCAPE -> R.string.library_view_landscape
@@ -1674,7 +1691,7 @@ private fun LandscapeGrid(
     LazyVerticalGrid(
         state = gridState,
         modifier = Modifier.overlayLazyGridScrollbar(gridState, gutter = deviceDp(52.dp, 16.dp), enabled = !LocalAlphabetBarShown.current),
-        columns = deviceDensityGridCells((columns / 2).coerceIn(2, 6), 144.dp, 4, landscapeTileWidth = 260.dp),
+        columns = deviceDensityGridCells((columns / 2).coerceIn(2, 6), 260.dp, 4),
         contentPadding = PaddingValues(screenGutter(), 12.dp, deviceDp(52.dp, 16.dp), 36.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1976,7 +1993,9 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
             val cardShape = RoundedCornerShape(10.dp)
             Surface(onClick = { onClick(collection.id, collection.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = focusModifier.browseFocusTarget(collection.id).mediaFocusMotion(isFocused).activateOnTvKey { onClick(collection.id, collection.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(collection.id) }) {
                 Column(
-                    Modifier.width(cardWidth)
+                    // A fixed 160dp TV card overflows narrow phone grid cells and overlaps
+                    // neighboring tiles when density changes. Respect each grid cell on handheld.
+                    (if (LocalHandheldUi.current) Modifier.fillMaxWidth() else Modifier.width(cardWidth))
                         .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), cardShape)
                         .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), cardShape)
                 ) {

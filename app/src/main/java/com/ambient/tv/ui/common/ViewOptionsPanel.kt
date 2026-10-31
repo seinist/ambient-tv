@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import kotlinx.coroutines.delay
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -75,6 +77,7 @@ fun ViewOptionsPanel(
     filtersActive: Boolean = false, onResetFilters: (() -> Unit)? = null,
     /** Fixed-layout pages can reuse just the density controls, without a view selector. */
     densityPreview: ViewPreview? = null,
+    gridDensityProfile: GridDensityProfile = GridDensityProfile.MEDIA_LIBRARY,
     extraContent: @Composable ColumnScope.() -> Unit = {},
 ) {
     val focus = LocalFilterFocusState.current
@@ -154,15 +157,29 @@ fun ViewOptionsPanel(
                     onValueChange = { focus?.keepControls(); onListRows(it) },
                 )
             } else {
-                val displayedColumns = displayedGridColumns(gridColumns, preview)
-                val minColumns = if (gridDensityStep(preview) == 2) 2 else 4
-                val maxColumns = if (gridDensityStep(preview) == 2) 6 else 12
+                val configuration = LocalConfiguration.current
+                val handheld = LocalHandheldUi.current
+                val choices = remember(preview, gridDensityProfile, handheld,
+                    configuration.screenWidthDp, configuration.screenHeightDp) {
+                    visibleGridDensityChoices(
+                        preview, gridDensityProfile, handheld,
+                        configuration.screenWidthDp, configuration.screenHeightDp,
+                    )
+                }
+                val visibleColumns = visibleGridColumns(
+                    gridColumns, preview, gridDensityProfile, handheld,
+                    configuration.screenWidthDp, configuration.screenHeightDp,
+                )
+                val selectedIndex = choices.indexOfFirst { it.visibleColumns == visibleColumns }.coerceAtLeast(0)
                 RightPanelValueSlider(
                     title = stringResource(R.string.library_grid_density_title),
-                    value = displayedColumns,
-                    valueRange = minColumns..maxColumns,
-                    valueLabel = stringResource(R.string.library_grid_columns, displayedColumns),
-                    onValueChange = { focus?.keepControls(); onGridColumns(changedGridColumns(gridColumns, preview, it - displayedColumns)) },
+                    value = selectedIndex,
+                    valueRange = 0..choices.lastIndex,
+                    valueLabel = stringResource(R.string.library_grid_columns, visibleColumns),
+                    onValueChange = { next ->
+                        focus?.keepControls()
+                        choices.getOrNull(next)?.let { onGridColumns(it.storedColumns) }
+                    },
                 )
             }
         }
