@@ -109,8 +109,12 @@ class ServerConnectionManager @Inject constructor(
         connectionMutex.withLock {
             // A passive probe must also run for a normally unpaused offline server.
             // A dismissed wake remains dismissed: only a confirmed service response clears it.
-            if (!preferences.hasPlexEndpoint || (!force && _state.value is ServerConnectionState.Online &&
-                    hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE)) return@withLock false
+            if (!shouldProbeInBackground(
+                    configured = preferences.hasPlexEndpoint,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
