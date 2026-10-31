@@ -98,6 +98,7 @@ import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
 import com.ambient.tv.ui.common.overlayLazyGridScrollbar
+import com.ambient.tv.ui.common.overlayLazyScrollbar
 import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.pageFocusStage
@@ -217,6 +218,7 @@ fun RadioScreen(
     val initialFocusRequester = remember(focusScope, effectiveViewMode) { FocusRequester() }
     val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
     val alphabetRightFocusRequester = remember(focusScope) { FocusRequester() }
+    val listScrollbarFocus = remember(focusScope) { FocusRequester() }
     val facetListFocus = remember(focusScope) { FocusRequester() }
     val stationContentFocus = remember(focusScope, effectiveViewMode) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
@@ -475,6 +477,7 @@ fun RadioScreen(
                             initialFocusRequester = initialFocusRequester,
                             alphabetJumpId = alphabetJumpTargetId,
                             alphabetReturnRequester = alphabetReturnRequester,
+                            scrollbarFocusRequester = listScrollbarFocus,
                         )
                         }
                     }
@@ -492,9 +495,12 @@ fun RadioScreen(
                             },
                             gridFocus = facetListFocus,
                             onReturnToContent = {
-                                val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
-                                if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
-                                    runCatching { facetListFocus.requestFocus() }
+                                // Adjacent navigation: A–Z -> scrollbar -> selected list item.
+                                if (!runCatching { listScrollbarFocus.requestFocus() }.getOrDefault(false)) {
+                                    val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
+                                    if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
+                                        runCatching { facetListFocus.requestFocus() }
+                                    }
                                 }
                             },
                             modifier = Modifier.fillMaxHeight(),
@@ -581,6 +587,7 @@ fun RadioScreen(
                                         initialFocusRequester = initialFocusRequester,
                                         alphabetJumpId = alphabetJumpTargetId,
                                         alphabetReturnRequester = alphabetReturnRequester,
+                                        scrollbarFocusRequester = listScrollbarFocus,
                                         modifier = Modifier.pageContentUp(focusChain),
                                     )
                                 }
@@ -604,20 +611,23 @@ fun RadioScreen(
                             },
                             gridFocus = stationContentFocus,
                             onReturnToContent = {
-                                // A distant letter is not necessarily composed yet; scroll first,
-                                // then focus the exact matching sender instead of a nearby card.
-                                val targetIndex = state.stations.indexOfFirst { it.id == alphabetJumpTargetId }
-                                scrollScope.launch {
-                                    if (targetIndex >= 0) {
-                                        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(targetIndex)
-                                        else listState.scrollToItem(targetIndex)
+                                // Radio LIST mode has a dedicated scrollbar between the rows and A–Z.
+                                // Grid mode keeps the existing A–Z -> focused tile behavior.
+                                if (state.viewMode != RadioViewMode.LIST ||
+                                    !runCatching { listScrollbarFocus.requestFocus() }.getOrDefault(false)) {
+                                    val targetIndex = state.stations.indexOfFirst { it.id == alphabetJumpTargetId }
+                                    scrollScope.launch {
+                                        if (targetIndex >= 0) {
+                                            if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(targetIndex)
+                                            else listState.scrollToItem(targetIndex)
+                                        }
+                                        val target = if (targetIndex >= 0) alphabetReturnRequester else initialFocusRequester
+                                        repeat(6) {
+                                            withFrameNanos { }
+                                            if (runCatching { target.requestFocus() }.getOrDefault(false)) return@launch
+                                        }
+                                        runCatching { stationContentFocus.requestFocus() }
                                     }
-                                    val target = if (targetIndex >= 0) alphabetReturnRequester else initialFocusRequester
-                                    repeat(6) {
-                                        withFrameNanos { }
-                                        if (runCatching { target.requestFocus() }.getOrDefault(false)) return@launch
-                                    }
-                                    runCatching { stationContentFocus.requestFocus() }
                                 }
                             },
                             modifier = Modifier.fillMaxHeight(),
@@ -727,13 +737,17 @@ private fun RadioFacetList(
     initialFocusRequester: FocusRequester,
     alphabetJumpId: String?,
     alphabetReturnRequester: FocusRequester,
+    scrollbarFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     TvLazyColumn(
         allowUpExit = true,
-        focusActionsOnRight = false, // D-pad Right enters the shared AlphabetBar, not page actions.
-        modifier = modifier.fillMaxSize(),
+        focusActionsOnRight = false,
+        scrollbarWithAlphabet = true,
+        scrollbarFocusRequester = scrollbarFocusRequester,
+        scrollbarReturnFocus = if (alphabetJumpId != null) alphabetReturnRequester else initialFocusRequester,
+        modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
@@ -1044,6 +1058,7 @@ private fun RadioStationList(
     initialFocusRequester: FocusRequester,
     alphabetJumpId: String?,
     alphabetReturnRequester: FocusRequester,
+    scrollbarFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
@@ -1053,7 +1068,10 @@ private fun RadioStationList(
     TvLazyColumn(
         allowUpExit = true,
         focusActionsOnRight = false,
-        modifier = modifier.fillMaxSize(),
+        scrollbarWithAlphabet = true,
+        scrollbarFocusRequester = scrollbarFocusRequester,
+        scrollbarReturnFocus = if (alphabetJumpId != null) alphabetReturnRequester else initialFocusRequester,
+        modifier = modifier.fillMaxSize().overlayLazyScrollbar(state),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
