@@ -419,7 +419,19 @@ class RadioViewModel @Inject constructor(
     fun loadMore() {
         val current = _state.value
         if (current.loading || current.loadingMore || !current.hasMore) return
+        // Claim the pending page synchronously so two scroll/focus callbacks cannot
+        // enqueue duplicate requests for the same Radio Browser offset.
+        _state.value = current.copy(loadingMore = true)
         loadStations(reset = false)
+    }
+
+    /** Also handles wheel, touch, scrollbars and remote paging without a new focused station. */
+    fun onViewportNearEnd(expectedScope: RadioFocusScope, lastVisibleIndex: Int) {
+        val current = _state.value
+        if (current.focusScope() != expectedScope ||
+            !radioShouldLoadOnFocus(lastVisibleIndex, current.stations.size,
+                current.hasMore, current.loading, current.loadingMore)) return
+        loadMore()
     }
 
     fun onStationFocused(stationId: String) {
