@@ -23,3 +23,8 @@ internal fun shouldProbeInBackground(
     serviceOnline: Boolean,
     hostOnline: Boolean,
 ): Boolean = configured && (force || !serviceOnline || !hostOnline)
+
+/** A resume that joined an in-flight cached connect still needs a fresh service probe.
+ * A real successful API check updates lastSuccessfulCheckMs; a cached reuse does not. */
+internal fun needsPostJoinResumeVerification(connected: Boolean, lastSuccessfulCheckMs: Long): Boolean =
+    connected && lastSuccessfulCheckMs == 0L

@@ -157,6 +157,14 @@ class UnreachableServerPolicyTest {
     }
 
     @Test
+    fun `a recovered machine cannot resurrect a stale service identity`() {
+        val identity = com.ambient.tv.domain.model.PlexServerIdentity("m", "v", false)
+        assertTrue(shouldInvalidateConfirmedService(ServerConnectionState.Online(identity), HostHealth.OFFLINE))
+        assertFalse(shouldInvalidateConfirmedService(ServerConnectionState.Online(identity), HostHealth.ONLINE))
+        assertFalse(shouldInvalidateConfirmedService(ServerConnectionState.Waking(3), HostHealth.OFFLINE))
+    }
+
+    @Test
     fun `offline TVHeadend counts like a media server`() {
         val tvheadend = hostAwareProbe(true, ServerConnectionState.Offline, HostHealth.OFFLINE)
         val decision = decideUnreachableServers(UnreachableServerInput(

@@ -58,11 +58,12 @@ class JellyfinConnectionManager @Inject constructor(
         // Invalidate the cached identity on a confirmed outage. A later open machine port
         // must not resurrect an old Online state before this service answers its own API.
         if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
-            _state.value = ServerConnectionState.Offline
+            // Do not override a newer Checking/Waking/Online result from a concurrent connect.
+            _state.compareAndSet(service, ServerConnectionState.Offline)
         }
         com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
-    private var lastSuccessfulCheckMs = 0L
+    @Volatile private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
     private fun endpointKey() = listOf(preferences.activeJellyfinServerId, preferences.jellyfinHost, preferences.jellyfinPort, preferences.jellyfinUseHttps, preferences.jellyfinBasePath).joinToString("|")
     /** Short checks only (background probe); a wake never holds it. */
@@ -136,9 +137,17 @@ class JellyfinConnectionManager @Inject constructor(
      * wake with its whole budget - a server needing 30 s to boot outlasts any short wait.
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
-        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        // Invalidate even if an ordinary Home entry is currently reusing a cached connection.
+        lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpoint) { connect() } }.also {
+        watchWaking(_state, onWaking) {
+            val joined = connectRun.joinOrStart(endpoint) { connect() }
+            // A concurrent ensureConnected() may have returned its cached Online result
+            // before invalidation. Repeat only if no fresh API confirmation was recorded.
+            if (endpoint == endpointKey() && needsPostJoinResumeVerification(joined, lastSuccessfulCheckMs)) {
+                connectRun.joinOrStart(endpoint) { connect() }
+            } else joined
+        }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("jellyfin")
         }
     }

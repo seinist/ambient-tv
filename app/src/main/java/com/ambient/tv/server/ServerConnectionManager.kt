@@ -63,7 +63,7 @@ class ServerConnectionManager @Inject constructor(
     private val resumeConnectivity: Provider<ResumeConnectivityMonitor>,
 ) {
     private var lastConnectedServerId: String? = null
-    private var lastSuccessfulCheckMs: Long = 0L
+    @Volatile private var lastSuccessfulCheckMs: Long = 0L
 
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
@@ -71,7 +71,8 @@ class ServerConnectionManager @Inject constructor(
         // Invalidate the cached identity on a confirmed outage. A later open machine port
         // must not resurrect an old Online state before this service answers its own API.
         if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
-            _state.value = ServerConnectionState.Offline
+            // Do not override a newer Checking/Waking/Online result from a concurrent connect.
+            _state.compareAndSet(service, ServerConnectionState.Offline)
         }
         com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
@@ -149,9 +150,17 @@ class ServerConnectionManager @Inject constructor(
      * to boot outlasts any short wait.
      */
     suspend fun recheckOnResume(onWaking: (() -> Unit)? = null): Boolean = withContext(Dispatchers.IO) {
-        if (!connectRun.active) lastSuccessfulCheckMs = 0L
+        // Invalidate even if an ordinary Home entry is currently reusing a cached connection.
+        lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        watchWaking(_state, onWaking) { connectRun.joinOrStart(endpoint) { connect() } }.also {
+        watchWaking(_state, onWaking) {
+            val joined = connectRun.joinOrStart(endpoint) { connect() }
+            // A concurrent ensureConnected() may have returned its cached Online result
+            // before invalidation. Repeat only if no fresh API confirmation was recorded.
+            if (endpoint == endpointKey() && needsPostJoinResumeVerification(joined, lastSuccessfulCheckMs)) {
+                connectRun.joinOrStart(endpoint) { connect() }
+            } else joined
+        }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("plex")
         }
     }

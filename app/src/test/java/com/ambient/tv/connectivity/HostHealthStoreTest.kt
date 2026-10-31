@@ -42,17 +42,24 @@ class HostHealthStoreTest {
         assertEquals(HostHealth.UNKNOWN, store.current(keys[3]).health)
     }
 
-    @Test fun `a recovered host leaves nothing offline`() {
+    @Test fun `a recovered host stays offline until the service itself answers`() {
         store.offline(store.begin("nas"))
-        fun decision() = decideUnreachableServers(UnreachableServerInput(
-            mapOf("plex" to hostAwareProbe(true, ServerConnectionState.Offline, store.current("nas").health)),
-            setOf("youtube"),
-        ))
-        assertTrue(decision().unreachable.isNotEmpty())
+        fun probe(service: ServerConnectionState) = hostAwareProbe(true, service, store.current("nas").health)
+        assertEquals(ServerProbe.UNREACHABLE, probe(ServerConnectionState.Offline))
         store.online("nas")
-        assertTrue(decision().unreachable.isEmpty())
-        val probe = hostAwareProbe(true, ServerConnectionState.Offline, store.current("nas").health)
-        assertTrue(nextOfflineSystems(setOf("plex"), mapOf("plex" to probe), settled = true).isEmpty())
+        // An open machine port alone is not proof that Plex is ready to serve its library.
+        val stillStarting = probe(ServerConnectionState.Offline)
+        assertEquals(ServerProbe.HOST_REACHABLE, stillStarting)
+        assertEquals(setOf("plex"), decideUnreachableServers(UnreachableServerInput(
+            mapOf("plex" to stillStarting), setOf("youtube"),
+        )).unreachable)
+        assertEquals(setOf("plex"), nextOfflineSystems(
+            setOf("plex"), mapOf("plex" to stillStarting), settled = true,
+        ))
+        val identity = com.ambient.tv.domain.model.PlexServerIdentity("id", "1", false)
+        val confirmed = probe(ServerConnectionState.Online(identity))
+        assertEquals(ServerProbe.REACHABLE, confirmed)
+        assertTrue(nextOfflineSystems(setOf("plex"), mapOf("plex" to confirmed), settled = true).isEmpty())
     }
 
     @Test fun `active waking remains pending until service check finishes`() {
@@ -86,7 +93,7 @@ class HostHealthStoreTest {
             "plex" to ServerProbe.UNREACHABLE,
             "jellyfin" to hostAwareProbe(true, ServerConnectionState.Error("Unauthorized"), HostHealth.ONLINE),
         )))
-        assertEquals(setOf("plex"), decision.unreachable)
+        assertEquals(setOf("plex", "jellyfin"), decision.unreachable)
         assertFalse(decision.canDismiss)
     }
 
