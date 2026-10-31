@@ -86,6 +86,21 @@ fun nextOfflineSystems(previous: Set<String>, probes: Map<String, ServerProbe>, 
     return kept
 }
 
+/** Retry the selected offline service and other offline services sharing its physical machine.
+ * The wakeable sibling can send WOL while the requested service has no configured MAC. */
+fun offlineRetryTargets(
+    offline: Set<String>,
+    selectedSystem: String?,
+    machineFor: (String) -> String?,
+): Set<String> {
+    if (selectedSystem == null) return offline
+    if (selectedSystem !in offline) return emptySet()
+    val selectedMachine = machineFor(selectedSystem)
+    return offline.filterTo(mutableSetOf()) {
+        it == selectedSystem || (selectedMachine != null && machineFor(it) == selectedMachine)
+    }
+}
+
 /** Media server whose library [route] shows, or null for any other page. */
 fun libraryRouteSystem(route: String?): String? {
     if (route.isNullOrBlank()) return null
