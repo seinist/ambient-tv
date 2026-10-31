@@ -57,8 +57,7 @@ class EmbyConnectionManager @Inject constructor(
         val hostHealth = hosts.health("emby")
         // Invalidate the cached identity on a confirmed outage. A later open machine port
         // must not resurrect an old Online state before this service answers its own API.
-        if (hostHealth == com.ambient.tv.connectivity.HostHealth.OFFLINE &&
-            service is ServerConnectionState.Online) {
+        if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
             _state.value = ServerConnectionState.Offline
         }
         com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
