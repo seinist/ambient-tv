@@ -60,6 +60,20 @@ class WakeBurstCoalescerTest {
     }
 
     @Test
+    fun `a new attempt after the short overlap window sends a fresh packet`() = runBlocking {
+        var now = 1_000L
+        var sent = 0
+        val coalescer = WakeBurstCoalescer { now }
+        val send = suspend { sent++; Result.success(Unit) }
+        assertEquals(WakeBurstOutcome.SENT, coalescer.run("aabbccddeeff", 5_000L, send).getOrThrow())
+        now += 1_000L
+        assertEquals(WakeBurstOutcome.COALESCED, coalescer.run("aabbccddeeff", 5_000L, send).getOrThrow())
+        now += 4_000L
+        assertEquals(WakeBurstOutcome.SENT, coalescer.run("aabbccddeeff", 5_000L, send).getOrThrow())
+        assertEquals(2, sent)
+    }
+
+    @Test
     fun `different NICs and expired requests dispatch independently`() = runBlocking {
         var now = 1_000L
         var dispatchCount = 0
