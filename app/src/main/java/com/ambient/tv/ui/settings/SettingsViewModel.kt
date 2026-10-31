@@ -510,6 +510,7 @@ class SettingsViewModel @Inject constructor(
         mpvVideoDecoderKey = appPreferences.mpvVideoDecoderKey,
         mpvHdrGpuEnabled = appPreferences.mpvHdrGpuEnabled,
         vlcVideoOutputModeKey = appPreferences.vlcVideoOutputModeKey,
+        autoPictureInPicture = appPreferences.autoPictureInPicture,
         visibleBackgroundVideoPlayback = appPreferences.visibleBackgroundVideoPlayback,
         backgroundVideoDimPercent = appPreferences.backgroundVideoDimPercent,
         mediaAudioPassthroughEnabled = appPreferences.mediaAudioPassthroughEnabled,
@@ -2507,6 +2508,8 @@ class SettingsViewModel @Inject constructor(
         it.copy(vlcVideoOutputModeKey = value.takeIf { key -> key in AppPreferences.VLC_VIDEO_OUTPUT_MODES } ?: "auto")
     }
 
+    fun onAutoPictureInPictureChanged(value: Boolean) = _uiState.update { it.copy(autoPictureInPicture = value) }
+
     fun onVisibleBackgroundVideoPlaybackChanged(value: Boolean) = _uiState.update {
         it.copy(visibleBackgroundVideoPlayback = value)
     }
@@ -2980,6 +2983,7 @@ class SettingsViewModel @Inject constructor(
         appPreferences.mpvVideoDecoderKey = state.mpvVideoDecoderKey
         appPreferences.mpvHdrGpuEnabled = state.mpvHdrGpuEnabled
         appPreferences.vlcVideoOutputModeKey = state.vlcVideoOutputModeKey
+        appPreferences.autoPictureInPicture = state.autoPictureInPicture
         appPreferences.visibleBackgroundVideoPlayback = state.visibleBackgroundVideoPlayback
         appPreferences.backgroundVideoDimPercent = state.backgroundVideoDimPercent
         appPreferences.mediaAudioPassthroughEnabled = state.mediaAudioPassthroughEnabled
