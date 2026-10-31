@@ -121,8 +121,14 @@ private fun parse(data: String) = PathParser().parsePathString(data).toPath()
 /** The Λ as three points (left foot, apex, right foot) and its stroke, in wordmark units. */
 private val WORDMARK_PEAK = listOf(Offset(1.914f, -1.375f), Offset(9.914f, -17.375f), Offset(17.914f, -1.375f))
 private const val WORDMARK_PEAK_STROKE = 2.75f
-/** The same three points of the icon's peak, in its 48-unit viewport. */
-private val ICON_PEAK = listOf(Offset(15f, 28f), Offset(24f, 13f), Offset(33f, 28f))
+/**
+ * The A always has the final wordmark's proportions, including while framed by the TV.
+ * Fit its 16-unit height into the icon's original 15-unit A height (apex y=13, feet y=28).
+ * Moving the frame and glyph with one transform eliminates the late shape/size pop.
+ */
+private const val BLOOM_TV_A_SCALE = 15f / 16f
+private val BLOOM_TV_A_ORIGIN = Offset(24f, 13f) - WORDMARK_PEAK[1] * BLOOM_TV_A_SCALE
+internal val introBloomPeakInTv = WORDMARK_PEAK.map { BLOOM_TV_A_ORIGIN + it * BLOOM_TV_A_SCALE }
 private const val GLYPH_SCALE = 0.022f
 private const val LABEL_SCALE = 0.01f
 private val BADGE_TOP_LEFT = Offset(110.526f, -16f)
@@ -157,19 +163,9 @@ private fun soft(x: Float) = (1f - cos(x * PI.toFloat())) / 2f
 private fun wave(t: Float) = (1f - cos(t * 2f * PI.toFloat())) / 2f
 private fun drift(t: Float, period: Float, offset: Float = 0f) = sin(t * 2f * PI.toFloat() / period + offset)
 
-/**
- * Keep the icon A rigidly centered in its TV frame while the mark travels left. Only after the
- * frame is almost completely faded do we finish the tiny shape morph into the wordmark Λ.
- */
-internal fun introBloomPeakMorph(t: Float) = soft(phase(t, 2.3f, 2.4f))
-
-/** Vertical correction that puts the retained icon-A feet on the wordmark baseline. */
-internal fun introBloomBaselineShiftInWordmarkUnits(): Float {
-    val endUnit = 16f / 18f
-    val apexAlignedFootY = WORDMARK_PEAK[1].y +
-        (ICON_PEAK[0].y - ICON_PEAK[1].y) * endUnit
-    return WORDMARK_PEAK[0].y - apexAlignedFootY
-}
+/** The A and TV shell always share the same translation and scale. */
+internal fun introBloomPeakAt(iconOrigin: Offset, iconUnit: Float): List<Offset> =
+    introBloomPeakInTv.map { iconOrigin + it * iconUnit }
 
 /**
  * Full-screen intro in the current accent (and playback accent when a pair is set). The app
@@ -237,12 +233,7 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
     val openSeconds = IntroAnimation.durationMs(style) / 1000f
     Box(
         modifier.fillMaxSize()
-            .graphicsLayer {
-                alpha = exit.value
-                val grow = 1f + 0.02f * (1f - exit.value)
-                scaleX = grow
-                scaleY = grow
-            }
+            .graphicsLayer { alpha = exit.value }
             .pointerInput(Unit) { detectTapGestures { IntroPresentation.skip() } },
     ) {
         Canvas(Modifier.fillMaxSize()) {
@@ -371,8 +362,8 @@ private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
 
 /**
  * The full wordmark centered on [at], [width] wide, starting at [start]. With [fromIcon] the TV
- * icon stands in the light first, then shrinks onto the A while the TV frame fades around it.
- * The A stays centered in that frame for the entire move. Otherwise the Λ gathers on its own.
+ * TV icon stands in the light first. Its A already has the final wordmark shape and stays
+ * centered in the TV as they move and scale together; only the shell fades. Otherwise Λ gathers on its own.
  * "mbient" follows letter by letter, and the TV badge switches on last: a line of light opens
  * into the badge, then the label appears.
  */
@@ -391,21 +382,17 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
     val peak: List<Offset>
     val peakStroke: Float
     if (fromIcon) {
-        // Preserve the original Bloom travel and scale, keep the A locked to the TV frame, and
-        // settle the complete mark on the same baseline as "mbient". Aligning by the apex alone
-        // leaves the icon-A feet too high because the icon and wordmark A have different proportions.
+        // Travel the original TV path without changing the A's shape at the end.
+        // Converting by the fixed glyph scale places all three peak points exactly on the
+        // completed wordmark at move=1; the frame uses this same transform until it fades.
         val bigUnit = width * 0.30f / 48f
         val bigOrigin = at - Offset(24f, 24f) * bigUnit
-        val endUnit = unit * 16f / 18f
-        val apexAlignedOrigin = mark(WORDMARK_PEAK[1]) - ICON_PEAK[1] * endUnit
-        val endOrigin = apexAlignedOrigin +
-            Offset(0f, introBloomBaselineShiftInWordmarkUnits() * unit)
+        val endUnit = unit / BLOOM_TV_A_SCALE
+        val endOrigin = mark(WORDMARK_PEAK[1]) - introBloomPeakInTv[1] * endUnit
         val iconUnit = mix(bigUnit, endUnit, move)
         val iconOrigin = mix(bigOrigin, endOrigin, move)
-        val iconPeak = ICON_PEAK.map { iconOrigin + it * iconUnit }
-        val peakMorph = introBloomPeakMorph(t)
-        peak = ICON_PEAK.indices.map { mix(iconPeak[it], mark(WORDMARK_PEAK[it]), peakMorph) }
-        peakStroke = mix(3.6f * iconUnit, WORDMARK_PEAK_STROKE * unit, peakMorph)
+        peak = introBloomPeakAt(iconOrigin, iconUnit)
+        peakStroke = WORDMARK_PEAK_STROKE * BLOOM_TV_A_SCALE * iconUnit
         val shell = appear * (1f - soft(phase(t, 1.5f, 2.4f)))
         if (shell > 0f) {
             val shellColor = lerp(frame.ink, frame.accent, 0.25f)

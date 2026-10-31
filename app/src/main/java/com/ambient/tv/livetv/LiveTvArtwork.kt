@@ -40,6 +40,10 @@ fun liveTvProgrammeArt(event: LiveTvProgramme, channels: List<LiveTvChannel>, ti
     return channels.firstOrNull { it.uuid == event.channelUuid }?.iconUrl?.let { LiveTvArt(it, logo = true) }
 }
 
+/** Prefer programme artwork and fall back to the channel logo for mobile channel rows. */
+fun liveTvChannelRowArt(programmeArt: LiveTvArt?, channelLogoUrl: String?): LiveTvArt? =
+    programmeArt ?: channelLogoUrl?.let { LiveTvArt(it, logo = true) }
+
 /** A series timer's art: its own, the guide's for the same title, art found by title, then the channel logo. */
 fun liveTvSeriesArt(
     entry: LiveTvSeriesTimer,

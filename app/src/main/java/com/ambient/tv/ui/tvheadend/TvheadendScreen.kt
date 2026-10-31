@@ -2,6 +2,7 @@ package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.livetv.guideChannels
 import com.ambient.tv.livetv.LiveTvArt
+import com.ambient.tv.livetv.liveTvChannelRowArt
 import com.ambient.tv.livetv.liveTvProgrammeArt
 import com.ambient.tv.livetv.liveTvRecordingArt
 import com.ambient.tv.livetv.liveTvSeriesArt
@@ -619,8 +620,12 @@ internal fun ChannelRow(
                 }
             },
             leadingContent = {
-                if (art != null) LiveTvArtBox(art, channel.name, imageHeaders, Modifier.size(80.dp, 45.dp))
-                else ArtworkImage(channel.iconUrl, channel.name, Modifier.size(44.dp), contentScale = ContentScale.Fit, headers = imageHeaders)
+                // Reserve one 16:9 image slot for backdrops, channel logos and missing artwork.
+                // The image can change after the async TMDB lookup without shifting the text.
+                LiveTvArtBox(
+                    liveTvChannelRowArt(art, channel.iconUrl), channel.name, imageHeaders,
+                    Modifier.size(80.dp, 45.dp),
+                )
             },
             trailingContent = { if (current != null) androidx.compose.material3.IconButton(onClick = { onEvent(current) }) { androidx.compose.material3.Icon(Icons.Default.Info, stringResource(R.string.tvh_info)) } },
             modifier = modifier.clickable { onWatch(channel) },

@@ -43,6 +43,16 @@ class LiveTvArtworkTest {
         assertTrue(withoutFanart.external)
     }
 
+    @Test fun handheldChannelArtworkKeepsBackdropAndUsesLogoFallback() {
+        val backdrop = LiveTvArt("https://image.tmdb.org/t/p/w780/bg.jpg", external = true)
+        assertSame(backdrop, liveTvChannelRowArt(backdrop, channels.first().iconUrl))
+        val logo = liveTvChannelRowArt(null, channels.first().iconUrl)!!
+        assertEquals(channels.first().iconUrl, logo.url)
+        assertTrue(logo.logo)
+        assertFalse(logo.external)
+        assertNull(liveTvChannelRowArt(null, null))
+    }
+
     @Test fun artCacheKeepsMissesBrieflyAndHitsAcrossRestarts() {
         val now = 10_000_000_000L
         val positive = LiveTvArtworkRepository.encodeEntry(now, "https://image.tmdb.org/t/p/w780/bg.jpg")

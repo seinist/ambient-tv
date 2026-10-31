@@ -1,23 +1,40 @@
 package com.ambient.tv.ui.intro
 
+import androidx.compose.ui.geometry.Offset
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroBrandMarkMotionTest {
-    @Test fun retainedTvASettlesOnTheMbientBaseline() {
-        assertEquals(8f / 3f, introBloomBaselineShiftInWordmarkUnits(), 0.0001f)
-        assertTrue(introBloomBaselineShiftInWordmarkUnits() > 0f)
+    @Test fun aKeepsFinalWordmarkProportionsInsideTheTv() {
+        val peak = introBloomPeakInTv
+        assertEquals(24f, peak[1].x, 0.0001f)
+        assertEquals(13f, peak[1].y, 0.0001f)
+        assertEquals(28f, peak[0].y, 0.0001f)
+        assertEquals(15f, peak[2].x - peak[0].x, 0.0001f)
+        assertEquals(15f, peak[0].y - peak[1].y, 0.0001f)
     }
 
-    @Test fun aStaysRigidWithTheTvUntilTheFrameIsAlmostGone() {
-        assertEquals(0f, introBloomPeakMorph(2.29f), 0.0001f)
-        assertEquals(0f, introBloomPeakMorph(2.3f), 0.0001f)
+    @Test fun framedAEndsOnTheWordmarkWithoutAnyMorph() {
+        val wordmarkUnit = 2f
+        val apex = Offset(200f, 100f)
+        val iconUnit = wordmarkUnit * 16f / 15f
+        val origin = apex - introBloomPeakInTv[1] * iconUnit
+        val peak = introBloomPeakAt(origin, iconUnit)
+
+        assertEquals(apex.x, peak[1].x, 0.0001f)
+        assertEquals(apex.y, peak[1].y, 0.0001f)
+        assertEquals(apex.x - 8f * wordmarkUnit, peak[0].x, 0.0001f)
+        assertEquals(apex.x + 8f * wordmarkUnit, peak[2].x, 0.0001f)
+        assertEquals(apex.y + 16f * wordmarkUnit, peak[0].y, 0.0001f)
+        assertEquals(peak[0].y, peak[2].y, 0.0001f)
     }
 
-    @Test fun aFinishesItsWordmarkShapeOnlyAtTheEndOfTheTvFade() {
-        val duringFade = introBloomPeakMorph(2.35f)
-        assertTrue(duringFade > 0f && duringFade < 1f)
-        assertEquals(1f, introBloomPeakMorph(2.4f), 0.0001f)
+    @Test fun aStaysFixedRelativeToTvAcrossTranslationAndScaling() {
+        val before = introBloomPeakAt(Offset(30f, 50f), 4f)
+        val after = introBloomPeakAt(Offset(70f, 60f), 2f)
+        for (i in before.indices) {
+            assertEquals((before[i].x - 30f) / 4f, (after[i].x - 70f) / 2f, 0.0001f)
+            assertEquals((before[i].y - 50f) / 4f, (after[i].y - 60f) / 2f, 0.0001f)
+        }
     }
 }
