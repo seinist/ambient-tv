@@ -325,6 +325,27 @@ class HomeViewModel @Inject constructor(
     }
 
 
+    init {
+        // TVHeadend's channel cache remains available in its own browser, but Home must react
+        // immediately when the service loses or regains its verified connection.
+        viewModelScope.launch {
+            var wasOnline = false
+            tvheadendConnectionManager.state
+                .map { it is ServerConnectionState.Online }
+                .distinctUntilChanged()
+                .collect { online ->
+                    if (hasEntered) {
+                        (_uiState.value as? HomeUiState.Loaded)?.let { publishRows(it.rows) }
+                        if (online && !wasOnline && tvPreviewJob?.isActive != true &&
+                            !plexOnly && !jellyfinOnly && !embyOnly &&
+                            appPreferences.isTvheadendConfigured
+                        ) startTvPreview()
+                    }
+                    wasOnline = online
+                }
+        }
+    }
+
     fun consumeHomeEntranceAnimation(): Boolean {
         if (homeEntranceAnimationConsumed) return false
         homeEntranceAnimationConsumed = true
@@ -1135,7 +1156,7 @@ class HomeViewModel @Inject constructor(
         return if (plexOnly || jellyfinOnly || embyOnly) rows else rows.sortedBy { order[homeRowSource(it.id)] ?: Int.MAX_VALUE }
     }
 
-    /** Live TV rows; TVHeadend answers from its cache at once while the server sleeps. */
+    /** Home only advertises verified TVHeadend channels; its own browser can still use cache offline. */
     private fun startTvPreview() {
         val generation = ++tvPreviewGeneration
         tvPreviewJob?.cancel()
@@ -1163,6 +1184,14 @@ class HomeViewModel @Inject constructor(
         }
         val previews = repositories.map { repo -> async {
             suspendResult {
+                if (repo.source.system == "tvheadend") {
+                    // capabilities()/channels() can succeed from the disk cache while TVHeadend
+                    // is switched off. Wait for the shared WOL/connect result, then make a fresh
+                    // uncached API probe before claiming that these channels are playable.
+                    if (!tvheadendConnectionManager.ensureConnected() ||
+                        tvheadendRepository.probeServerInfo().isFailure
+                    ) return@suspendResult HomeTvPreview()
+                }
                 if (!repo.capabilities().available) return@suspendResult HomeTvPreview()
                 val channels = repo.channels()
                 val historyScope = if (repo.source.system == "tvheadend") appPreferences.tvheadendHistoryScope else repo.source.id
@@ -1522,8 +1551,12 @@ class HomeViewModel @Inject constructor(
         val rows = rows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") || homeRowHidden(it.id)
         } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows
-        val liveTvItems = tvPreview.live
-        val recentTvItems = tvPreview.recent
+        // Re-evaluate on every publish, not just when the preview was fetched: the server
+        // can go offline while Home is still open and its cached preview is still in memory.
+        val offlineTvSystems = unreachableServers.current().offline
+        val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
+        val liveTvItems = tvPreview.live.filter { homeTvSourceVisible(it.channel.sourceId, offlineTvSystems, tvheadendOnline) }
+        val recentTvItems = tvPreview.recent.filter { homeTvSourceVisible(it.channel.sourceId, offlineTvSystems, tvheadendOnline) }
         val previous = _uiState.value as? HomeUiState.Loaded
         val shortcuts = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows.filter { row ->
             row.enabled && homeSystemActive(row.system) && when (row.system) {
@@ -1747,7 +1780,10 @@ class HomeViewModel @Inject constructor(
             val system = item.channel.sourceId.substringBefore(':').ifBlank { HomeRowDefinition.SYSTEM_TVHEADEND }
             return enabled.any { it.system == system && it.contentKey == key } && !homeRowHidden("$system.$key")
         }
+        val offlineSystems = unreachableServers.current().offline
+        val tvheadendOnline = tvheadendConnectionManager.state.value is ServerConnectionState.Online
         val items = (tvPreview.recent.filter { allowed(it, "recent_channels") } + tvPreview.live.filter { allowed(it, "live") })
+            .filter { homeTvSourceVisible(it.channel.sourceId, offlineSystems, tvheadendOnline) }
             .distinctBy { it.channel.sourceId to it.channel.uuid }
         return com.ambient.tv.launcher.LauncherChannelContent(
             name = null,
