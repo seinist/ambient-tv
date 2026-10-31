@@ -65,6 +65,8 @@ import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioFacet
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.ui.common.AlphabetBar
+import com.ambient.tv.ui.common.alphabetTrackedLetter
+import com.ambient.tv.ui.common.GridDensityProfile
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
@@ -220,17 +222,19 @@ fun RadioScreen(
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
     var focusedStationId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    // Focus keeps its facet identity across locale/sort changes, rather than resetting
-    // the index indicator to the row currently at the top of the scrolling list.
+    // DPAD focus is authoritative on TV, but finger-scrolling does not move that focus.
+    // For handhelds follow the actual first visible row, even if an old tile stays focused.
     var focusedFacetId by remember(focusScope) { mutableStateOf<String?>(null) }
-    val visibleLetter = sortedFacets.firstOrNull { it.facet.id == (focusedFacetId ?: initialContentId) }
+    val focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == (focusedFacetId ?: initialContentId) }
         ?.letter?.singleOrNull()
-        ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
-    // Prefer the focused tile over the first visible row, including after returning from playback.
+    val visibleFacetLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+    val visibleLetter = alphabetTrackedLetter(handheld, visibleFacetLetter, focusedFacetLetter)
     val currentStationId = focusedStationId?.takeIf { id -> state.stations.any { it.id == id } } ?: initialContentId
-    val stationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
-        ?: state.stations.getOrNull(if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex
-            else listState.firstVisibleItemIndex)?.let(::radioStationLetter)
+    val focusedStationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
+    val visibleStationLetter = state.stations.getOrNull(
+        if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex,
+    )?.let(::radioStationLetter)
+    val stationLetter = alphabetTrackedLetter(handheld, visibleStationLetter, focusedStationLetter)
     val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
@@ -642,6 +646,7 @@ fun RadioScreen(
                     },
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
+                    gridDensityProfile = GridDensityProfile.RADIO_BROWSER,
                     onGridColumns = viewModel::setGridColumns,
                     onListRows = viewModel::setListRows,
                     sortOrders = sortDirectionOptions("A–Z", "Z–A"),
@@ -1000,18 +1005,12 @@ private fun RadioStationTile(
                         )
                     }
                     if (playing || loading) {
-                        Box(
-                            Modifier.align(Alignment.BottomEnd).padding(6.dp)
-                                .clip(RoundedCornerShape(999.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
-                                .padding(horizontal = 9.dp, vertical = 5.dp),
-                        ) {
-                            androidx.compose.material3.Icon(
-                                Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
+                        // Status only, identical to the favorite corner badge – not a play button.
+                        ArtworkCornerIconBadge(
+                            icon = Icons.Default.PlayArrow,
+                            contentDescription = stringResource(R.string.player_play),
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(7.dp),
+                        )
                     }
                 }
                 CenteredMarqueeTitle(station.name, focused = cardHasFocus)
