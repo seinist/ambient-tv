@@ -147,8 +147,9 @@ internal class CarAudioCatalog @Inject constructor(
         val special = auxiliary.children(parent, offset, PAGE_SIZE)
             ?: radioPage(parent, offset)
         if (special != null) {
-            return special.items + if (special.hasMore && offset + PAGE_SIZE <= MAX_CURSOR)
-                listOf(folder(CarAudioIds.more(parent, offset + PAGE_SIZE), context.getString(R.string.car_audio_more)))
+            val nextOffset = special.nextOffset ?: (offset + PAGE_SIZE)
+            return special.items + if (special.hasMore && nextOffset > offset && nextOffset <= MAX_CURSOR)
+                listOf(folder(CarAudioIds.more(parent, nextOffset), context.getString(R.string.car_audio_more)))
             else emptyList()
         }
         val base = loadPage(parent)
