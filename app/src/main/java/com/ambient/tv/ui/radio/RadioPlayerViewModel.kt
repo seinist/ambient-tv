@@ -28,6 +28,9 @@ class RadioPlayerViewModel @Inject constructor(
     private val repository: RadioBrowserRepository,
 ) : ViewModel() {
     private val nextMutex = Mutex()
+    /** Hide the outgoing station's information until its replacement has settled. */
+    var switchingStation by mutableStateOf(false)
+        private set
     private var queueRevision by mutableIntStateOf(0)
     var visualizerMode by mutableStateOf(preferences.audioVisualizerModeKey)
         private set
@@ -84,12 +87,19 @@ class RadioPlayerViewModel @Inject constructor(
     }
 
     fun previous() {
+        if (switchingStation) return
         val station = queue.previous() ?: return
-        viewModelScope.launch { launcher.play(station) }
+        switchingStation = true
+        viewModelScope.launch {
+            try { launcher.play(station) } finally { switchingStation = false }
+        }
     }
 
     fun next() {
+        if (switchingStation || (queue.next() == null && queue.snapshot().source?.hasMore != true)) return
+        switchingStation = true
         viewModelScope.launch {
+            try {
             nextMutex.withLock {
                 var station = queue.next()
                 var attempts = 0
@@ -117,6 +127,9 @@ class RadioPlayerViewModel @Inject constructor(
                     station = queue.next()
                 }
                 station?.let { launcher.play(it) }
+            }
+            } finally {
+                switchingStation = false
             }
         }
     }
