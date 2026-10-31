@@ -323,11 +323,6 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             items(columnCount * 3) { SkeletonTile(style = style, showDescription = false, fillCell = true) }
                         }
                     } else {
-                        if (nodes.isEmpty() && !emptyPending && state.error == null) {
-                            item("empty", span = { GridItemSpan(maxLineSpan) }) {
-                                Text(stringResource(R.string.dlna_empty), style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
                         gridItemsIndexed(nodes, key = { _, node -> node.key }, span = { _, node ->
                             GridItemSpan(if (state.viewMode == DlnaViewMode.LIST) maxLineSpan else 1)
                         }) { _, node ->
@@ -355,6 +350,12 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                         }
                     }
                 }
+                }
+                if (nodes.isEmpty() && !emptyPending && state.error == null) {
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(R.string.dlna_empty),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
                 if (nodes.isEmpty()) state.error?.let {
                     OperationFeedbackContent(it, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
