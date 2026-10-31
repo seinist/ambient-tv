@@ -20,7 +20,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-internal data class CarAudioPage(val items: List<CarAudioEntry>, val hasMore: Boolean = false)
+internal data class CarAudioPage(
+    val items: List<CarAudioEntry>,
+    val hasMore: Boolean = false,
+    val nextOffset: Int? = null,
+)
 
 /** Source-specific Android Auto audio adapter.
  * Never creates its own player, duplicates credentials, or returns video browse items.
@@ -134,8 +138,12 @@ internal class CarAuxiliaryAudio @Inject constructor(
                                 node.artworkUrl, playable = true, libraryItem = item)
                         }
                     }
-                    CarAudioPage(entries, offset + browse.numberReturned < browse.totalMatches ||
-                        (browse.totalMatches <= 0 && browse.numberReturned >= browse.requestedCount))
+                    CarAudioPage(
+                        entries,
+                        offset + browse.numberReturned < browse.totalMatches ||
+                            (browse.totalMatches <= 0 && browse.numberReturned >= browse.requestedCount),
+                        nextOffset = offset + browse.numberReturned,
+                    )
                 }
                 CarAudioIds.fileSourceId(parent) != null || CarAudioIds.fileFolderId(parent) != null -> {
                     if (!preferences.filesEnabled) return CarAudioPage(emptyList())
