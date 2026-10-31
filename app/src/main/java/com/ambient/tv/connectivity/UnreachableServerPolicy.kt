@@ -102,7 +102,7 @@ fun libraryRouteSystem(route: String?): String? {
 
 /** Host recovery clears stale reconnect prompts without claiming service authentication. */
 fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: HostHealth): ServerProbe =
-    if (!configured) ServerProbe.INACTIVE
+    if (!configured || service == ServerConnectionState.NotConfigured) ServerProbe.INACTIVE
     else if (probeOf(true, service) == ServerProbe.PENDING) ServerProbe.PENDING
     else when (host) {
         HostHealth.ONLINE -> if (service is ServerConnectionState.Online) ServerProbe.REACHABLE else ServerProbe.HOST_REACHABLE
