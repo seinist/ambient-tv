@@ -68,7 +68,7 @@ import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
-import com.ambient.tv.ui.common.MetaBadge
+import com.ambient.tv.ui.common.ArtworkCornerIconBadge
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.StatePanel
@@ -993,12 +993,10 @@ private fun RadioStationTile(
                     // Same artwork-corner badge as the watched status on MediaTile.
                     // Favorite edits remain available from the player OSD or station list.
                     if (favorite) {
-                        val favoriteLabel = stringResource(R.string.radio_favorites)
-                        MetaBadge(
-                            text = "♥",
-                            emphasized = true,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp)
-                                .semantics { contentDescription = favoriteLabel },
+                        ArtworkCornerIconBadge(
+                            icon = Icons.Filled.Favorite,
+                            contentDescription = stringResource(R.string.radio_favorites),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
                         )
                     }
                     if (playing || loading) {
