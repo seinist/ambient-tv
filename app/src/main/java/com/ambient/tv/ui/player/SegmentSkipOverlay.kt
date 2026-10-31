@@ -40,7 +40,8 @@ internal fun SegmentSkipOverlay(
     fun mode(segment: com.ambient.tv.domain.model.PlaybackSegment): String = when (segment.type) {
         "intro" -> metadata.introSkipMode
         "credits" -> metadata.creditsSkipMode
-        "sponsor" -> if (metadata.sponsorSkipEnabled) "auto" else "off"
+        // SponsorBlock runs exclusively in PlaybackService, including during background play.
+        "sponsor" -> "off"
         else -> "off"
     }
     val segments = navigation.timeline.segments.filter {
@@ -85,7 +86,7 @@ internal fun SegmentSkipOverlay(
     }
     // Leaving the segment re-arms the manual button, but never automatic skipping.
     LaunchedEffect(segment) { if (segment != dismissed) dismissed = null }
-    // SponsorBlock is automatic and never exposes an incorrectly labeled credits button.
+    // SponsorBlock never displays a manual button; the service owns its automatic seek.
     val visible = segment != null && segment.type != "sponsor" && segment != dismissed &&
         !navigation.skipOverlayBlocked && !navigation.chaptersOpen && !nextUpVisible
     val restorePlayerFocus = !visible && focused

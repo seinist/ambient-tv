@@ -213,7 +213,9 @@ fun HomeScreen(
         embyOnly -> "emby"
         else -> null
     }
-    val loadingRowStyles = remember(viewModel, overviewProvider) { viewModel.loadingRowStyles(overviewProvider) }
+    // View mode, Home row order and hidden system rows may change while this screen survives.
+    // Do not freeze their loading formats in remember(viewModel, provider).
+    val loadingRowStyles = viewModel.loadingRowStyles(overviewProvider)
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }

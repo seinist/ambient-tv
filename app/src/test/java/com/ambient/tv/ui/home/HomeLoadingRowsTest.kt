@@ -44,6 +44,25 @@ class HomeLoadingRowsTest {
         )
     }
 
+    @Test fun loadingRowsTrackOverviewViewModeSwitchWithoutRecreatingTheScreen() {
+        val rows = emptyList<HomeRowDefinition>()
+        assertEquals(List(3) { MediaTileStyle.POSTER },
+            homeLoadingRowStyles(rows, overviewSystem = "plex",
+                overviewPageMode = HomeRowDefinition.DISPLAY_POSTER))
+        assertEquals(listOf(MediaTileStyle.CONTINUE, MediaTileStyle.LANDSCAPE, MediaTileStyle.LANDSCAPE),
+            homeLoadingRowStyles(rows, overviewSystem = "plex",
+                overviewPageMode = HomeRowDefinition.DISPLAY_LANDSCAPE))
+    }
+
+    @Test fun loadingRowsTrackHomeEditorCardFormatChanges() {
+        val poster = HomeRowDefinition(
+            id = "recent", system = "plex", contentKey = "recent", displayMode = "poster",
+        )
+        assertEquals(listOf(MediaTileStyle.POSTER), homeLoadingRowStyles(listOf(poster)))
+        assertEquals(listOf(MediaTileStyle.LANDSCAPE),
+            homeLoadingRowStyles(listOf(poster.copy(displayMode = "landscape"))))
+    }
+
     @Test fun atMostThreeVisibleSkeletonRowsArePrepared() {
         val rows = (0 until 6).map { index ->
             HomeRowDefinition(id = "row$index", system = "plex", contentKey = "row$index")
