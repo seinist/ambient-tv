@@ -30,15 +30,20 @@ internal fun radioFacetInitial(title: String): String {
 internal data class RadioAlphabetFacet(val facet: RadioFacet, val title: String, val letter: String)
 internal data class RadioAlphabetJump(val letter: String, val index: Int)
 
-internal fun radioAlphabetFacets(section: RadioSection, facets: List<RadioFacet>, locale: Locale): List<RadioAlphabetFacet> {
+internal fun radioAlphabetFacets(
+    section: RadioSection,
+    facets: List<RadioFacet>,
+    locale: Locale,
+    descending: Boolean = false,
+): List<RadioAlphabetFacet> {
     val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
     return facets.map { facet ->
         val title = radioFacetDisplayName(section, facet, locale)
         RadioAlphabetFacet(facet, title, radioFacetInitial(title))
-    }.sortedWith { left, right ->
+    }.sortedWith(Comparator { left, right ->
         val compared = collator.compare(left.title, right.title)
         if (compared != 0) compared else left.facet.id.compareTo(right.facet.id)
-    }
+    }.let { if (descending) it.reversed() else it })
 }
 
 /**
