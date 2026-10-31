@@ -154,6 +154,8 @@ fun HomeScreen(
     /** Opens the system picker (initial setup) to add a first system. */
     onAddSystem: () -> Unit = onOpenSettings,
     onItemClick: (String) -> Unit,
+    /** Uses SmartTube's existing details/play/ask setting and its source row queue. */
+    onYouTubeVideoClick: (String, Long?) -> Unit = { videoId, _ -> onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId) },
     onWatchLiveChannel: (TvhChannel) -> Unit = {},
     onOpenHomeContent: (HomeRowDefinition) -> Unit = {},
     /** System overview: the app home screen. Unused on the app home itself. */
@@ -334,6 +336,10 @@ fun HomeScreen(
                         homeHeroSpreadKey = homeHeroSpreadKey,
                         focusSnapshot = focusSnapshot,
                         onItemClick = openItem,
+                        onYouTubeHomeVideoClick = { videoId, rowId ->
+                            viewModel.captureFocusForReturn()
+                            onYouTubeVideoClick(videoId, viewModel.youtubePlaybackToken(rowId, videoId))
+                        },
                         onItemFocused = viewModel::onItemFocused,
                         onOpenRelevantSettings = openRelevantSettings,
                         onWatchLiveChannel = watchLiveChannel,
@@ -551,6 +557,9 @@ internal fun LibraryContent(
     externalBackdropScrolling: MutableStateFlow<Boolean>? = null,
     /** System overview: its page actions on the hero's title line instead of a header row. */
     heroTitleActions: (@Composable RowScope.() -> Unit)? = null,
+    onYouTubeHomeVideoClick: (String, String) -> Unit = { videoId, _ ->
+        onItemClick(HOME_YOUTUBE_ITEM_PREFIX + videoId)
+    },
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
@@ -621,7 +630,11 @@ internal fun LibraryContent(
                         HomeShortcutRow(it, onOpenHomeContent, onShortcutFocused, requestInitialFocus = false)
                     }
                     else -> state.rows.firstOrNull { it.id == rowKey }?.let { row ->
-                        ContentRow(row = row, onItemClick = { onItemClick(it.ratingKey) }, onItemFocused = { onItemFocused(row.id, it) })
+                        ContentRow(row = row, onItemClick = { item ->
+                            val videoId = homeYouTubeVideoId(item.ratingKey)
+                            if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
+                            else onItemClick(item.ratingKey)
+                        }, onItemFocused = { onItemFocused(row.id, it) })
                     }
                 }
             }
@@ -842,7 +855,11 @@ internal fun LibraryContent(
                             state.rows.getOrNull(index)?.let { row ->
                                 ContentRow(
                                     row = row,
-                                    onItemClick = { item -> onItemClick(item.ratingKey) },
+                                    onItemClick = { item ->
+                                        val videoId = homeYouTubeVideoId(item.ratingKey)
+                                        if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
+                                        else onItemClick(item.ratingKey)
+                                    },
                                     onItemFocused = { item -> restoreArmed = false; onItemFocused(row.id, item) },
                                     onRowFocused = { centeredRowKey.value = rowKey },
                                     columnFocus = columnFocus,

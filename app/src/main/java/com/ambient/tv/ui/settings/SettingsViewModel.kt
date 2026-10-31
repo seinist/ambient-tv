@@ -2206,7 +2206,12 @@ class SettingsViewModel @Inject constructor(
         // Already listed (including disabled): re-enable only via the row toggle, not the add chip.
         if (homeRowAlreadyPresent(system, contentKey, state)) return@update state
         state.withHomeRows(
-            state.homeRows + HomeRowDefinition(system = system, contentKey = contentKey),
+            state.homeRows + HomeRowDefinition(
+                system = system, contentKey = contentKey,
+                // SmartTube supplies landscape thumbnails; never initialize them as portrait posters.
+                displayMode = if (system == HomeRowDefinition.SYSTEM_YOUTUBE) HomeRowDefinition.DISPLAY_LANDSCAPE
+                    else HomeRowDefinition.DISPLAY_POSTER,
+            ),
         )
     }
     fun onSystemHomeRowChanged(system: String, rowType: String, visible: Boolean) = _uiState.update { state ->

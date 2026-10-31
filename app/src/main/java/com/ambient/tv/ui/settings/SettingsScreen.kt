@@ -2110,8 +2110,10 @@ private fun HomeRowEditorItem(
             label = stringResource(R.string.settings_home_custom_title),
             modifier = Modifier.fillMaxWidth(),
         )
-        // Live channel rows use a compact logo/program card. Do not offer ignored poster/list controls.
-        if (row.contentKey !in setOf("live", "recent_channels")) {
+        // Live channel cards and SmartTube's 16:9 video thumbnails have fixed geometry.
+        // Home's "list" mode currently shares landscape cards; don't offer ignored controls.
+        if (row.system != HomeRowDefinition.SYSTEM_YOUTUBE &&
+            row.contentKey !in setOf("live", "recent_channels")) {
             Text(stringResource(R.string.settings_home_display))
             SettingsSelect(options = HomeRowDefinition.DISPLAY_MODES.map { mode ->
                 SettingsSelectOption(
