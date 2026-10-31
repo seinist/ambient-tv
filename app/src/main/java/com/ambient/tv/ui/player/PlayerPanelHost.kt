@@ -192,6 +192,10 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
             val motion = LocalPlayerPanelMotion.current
             val outerInteractive = LocalPlayerPanelInteractive.current
             val stateHolder = LocalPlayerPanelStateHolder.current
+            // The navigation state changes before the visibility effect updates its retained
+            // close-animation snapshot. Show the new level immediately when still interactive;
+            // keep only the outgoing level when dismissing the entire panel.
+            val activeLevel = if (outerInteractive && panel != UnifiedPlayerPanel.NONE) panel else displayedPanel
             Box(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
@@ -208,7 +212,7 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                     Box(Modifier.fillMaxSize().playerPanelInteractionGuard(outerInteractive)) {
                         val drawPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
                             UnifiedBackendPlayerPanel(
-                                panel = displayedPanel,
+                                panel = activeLevel,
                                 onPanelChange = { next -> model.onPanelChange?.invoke(next) ?: navigation?.open(next) },
                                 hasVideo = model.hasVideo,
                                 isLive = model.isLive,
@@ -252,7 +256,7 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                             )
                         }
                         if (stateHolder != null) {
-                            stateHolder.SaveableStateProvider(displayedPanel.name) { drawPanel() }
+                            stateHolder.SaveableStateProvider(activeLevel.name) { drawPanel() }
                         } else {
                             drawPanel()
                         }
