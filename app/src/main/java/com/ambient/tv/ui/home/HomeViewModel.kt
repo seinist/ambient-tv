@@ -25,6 +25,10 @@ import com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.localizedLanguageNames
+import com.ambient.tv.youtube.SmartTubeEngine
+import com.ambient.tv.youtube.YouTubeContentCache
+import com.ambient.tv.youtube.YouTubeRow
+import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
 import com.ambient.tv.server.ServerConnectionManager
 import com.ambient.tv.server.ServerConnectionState
 import com.ambient.tv.server.JellyfinConnectionManager
@@ -54,6 +58,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import com.ambient.tv.ui.performance.PerformanceProfileResolver
@@ -94,6 +99,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     key = "${when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> "radio"
+        ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "youtube"
         EmbyBackend.owns(ratingKey) -> "emby"
         JellyfinBackend.owns(ratingKey) -> "jellyfin"
         else -> "plex"
@@ -105,6 +111,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     providerLabel = when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
+        ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "SmartTube"
         EmbyBackend.owns(ratingKey) -> "Emby"
         JellyfinBackend.owns(ratingKey) -> "Jellyfin"
         else -> "Plex"
@@ -171,6 +178,9 @@ class HomeViewModel @Inject constructor(
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
+    private val smartTubeEngine: SmartTubeEngine,
+    private val youtubeContentCache: YouTubeContentCache,
+    private val youtubePlaybackContext: YouTubeBrowsePlaybackContext,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val trailerRepository: com.ambient.tv.trailers.TmdbTrailerRepository,
     private val performanceProfileResolver: PerformanceProfileResolver,
@@ -202,9 +212,14 @@ class HomeViewModel @Inject constructor(
     private var photoJob: Job? = null
     private var trailerJob: Job? = null
     private var radioJob: Job? = null
+    private var youtubeJob: Job? = null
     // Keep empty Home in its loading phase until every enabled async row has answered.
     private var radioRowsPending = false
     private var radioRowsGeneration = 0
+    private var youtubeRowsPending = false
+    private var youtubeRowsGeneration = 0
+    /** Identifies which SmartTube account/language owns the Home preview currently on screen. */
+    private var youtubeCacheRevision: Long? = null
     private var trailerRowsPending = false
     private var trailerRowsGeneration = 0
     private var photoRowPending = false
@@ -212,6 +227,9 @@ class HomeViewModel @Inject constructor(
     private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
     private var radioRows: List<ContentRowData> = emptyList()
+    private var youtubeRows: List<ContentRowData> = emptyList()
+    /** The exact upstream SmartTube group per configured feed, for bounded next/previous. */
+    private val youtubeSourceRows = mutableMapOf<String, YouTubeRow>()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
     private var photoRow: ContentRowData? = null
     private var tvPreview = HomeTvPreview()
@@ -238,7 +256,8 @@ class HomeViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<HomeUiState>(
         if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
-            appPreferences.isTvheadendConfigured || appPreferences.radioEnabled)
+            appPreferences.isTvheadendConfigured || appPreferences.radioEnabled ||
+            (appPreferences.youtubeEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }))
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -406,6 +425,7 @@ class HomeViewModel @Inject constructor(
         loadPhotoRow()
         loadTrailerRows()
         loadRadioRows()
+        loadYouTubeRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
         if ((jellyfinOnly || embyOnly) && !refreshing && _uiState.value !is HomeUiState.Loaded) {
             libraryLoading = true
@@ -429,7 +449,11 @@ class HomeViewModel @Inject constructor(
         }
         if (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured) {
             if (appPreferences.isTvheadendConfigured || trailerJob?.isActive == true ||
-                radioJob?.isActive == true || radioRows.isNotEmpty()) {
+                radioJob?.isActive == true || radioRows.isNotEmpty() ||
+                youtubeJob?.isActive == true || youtubeRows.isNotEmpty() ||
+                (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
+                    it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
+                })) {
                 // The independent TV job publishes as soon as channels are ready.
                 if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.LoadingLibrary
             } else {
@@ -1249,6 +1273,125 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Preserve SmartTube's actual source group so Player Next stays in the selected Home feed. */
+    fun youtubePlaybackToken(rowId: String, videoId: String): Long? {
+        val key = rowId.takeIf { it.startsWith("youtube.") }?.removePrefix("youtube.") ?: return null
+        val original = youtubeSourceRows[key]?.takeIf { source -> source.items.any { it.videoId == videoId } } ?: return null
+        return youtubePlaybackContext.start("feed:$key", original, videoId)
+    }
+
+    /** SmartTube feeds are regular video rows on Home, not one large category action button. */
+    private fun updateHomeYouTubeRow(generation: Int, definition: HomeRowDefinition, source: YouTubeRow?) {
+        if (generation != youtubeRowsGeneration) return
+        val key = definition.contentKey
+        val id = "youtube.$key"
+        youtubeRows = youtubeRows.filterNot { it.id == id }
+        if (source == null || source.items.isEmpty()) {
+            youtubeSourceRows.remove(key)
+        } else {
+            youtubeSourceRows[key] = source
+            youtubeRows = youtubeRows + ContentRowData(
+                title = definition.displayTitle(context),
+                items = source.items.map { it.asHomeMediaItem() },
+                // YouTube artwork is 16:9. The editor's old 'poster' default must not crop it.
+                style = MediaTileStyle.LANDSCAPE,
+                id = id,
+                showDescription = false,
+            )
+        }
+        if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+    }
+
+    private fun loadYouTubeRows() {
+        val generation = ++youtubeRowsGeneration
+        youtubeJob?.cancel()
+        youtubeRowsPending = false
+        val definitions = if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.youtubeEnabled ||
+            !smartTubeEngine.available) emptyList() else appPreferences.homeRows
+            .filter { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }
+            .distinctBy { it.contentKey }
+
+        val enabledKeys = definitions.mapTo(hashSetOf()) { it.contentKey }
+        youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in enabledKeys }
+        youtubeSourceRows.keys.retainAll(enabledKeys)
+        if (definitions.isEmpty()) {
+            youtubeRows = emptyList()
+            youtubeSourceRows.clear()
+            return
+        }
+
+        youtubeRowsPending = true
+        youtubeJob = viewModelScope.launch {
+            try {
+                // The same account-scoped cache as the SmartTube screen: no duplicate model.
+                if (suspendResult { youtubeContentCache.restore() }.isFailure) return@launch
+                if (generation != youtubeRowsGeneration) return@launch
+                val restoredRevision = youtubeContentCache.revision()
+                if (youtubeCacheRevision != null && youtubeCacheRevision != restoredRevision) {
+                    // Switching SmartTube accounts/languages must never retain the old user's
+                    // cached channel and video tiles on Home.
+                    youtubeRows = emptyList()
+                    youtubeSourceRows.clear()
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
+                youtubeCacheRevision = restoredRevision
+                val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(emptySet())
+                if (generation != youtubeRowsGeneration) return@launch
+                val available = definitions.filter { it.contentKey in supported }
+                val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
+                youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in supportedKeys }
+                youtubeSourceRows.keys.retainAll(supportedKeys)
+                val revision = youtubeContentCache.revision()
+                available.forEach { definition ->
+                    val stored = homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
+                    if (stored != null) updateHomeYouTubeRow(generation, definition, stored)
+                }
+                // Two feeds at a time; never fetch every Home feed or every item eagerly.
+                val permits = Semaphore(2)
+                coroutineScope {
+                    available.map { definition -> async {
+                        permits.withPermit {
+                            val cacheKey = "feed:${definition.contentKey}"
+                            val result = suspendResult {
+                                smartTubeEngine.feed(definition.contentKey) { partial ->
+                                    // Reactive SmartTube can take a while to finish: publish the
+                                    // first usable group if Home did not have that feed cached.
+                                    withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                                        if (generation == youtubeRowsGeneration &&
+                                            definition.contentKey !in youtubeSourceRows
+                                        ) homeYouTubeSourceRow(partial, HOME_ROW_LIMIT)?.let {
+                                            updateHomeYouTubeRow(generation, definition, it)
+                                        }
+                                    }
+                                }
+                            }
+                            if (generation == youtubeRowsGeneration && result.isSuccess) {
+                                val rows = result.getOrThrow()
+                                // The common SmartTube cache reconciles by ID, preserving
+                                // the positions of focused tiles while fresh results arrive.
+                                val visible = if (youtubeContentCache.revision() == revision)
+                                    youtubeContentCache.replace(cacheKey, rows, revision) else rows
+                                val selected = homeYouTubeSourceRow(visible, HOME_ROW_LIMIT)
+                                // A successful empty feed removes expired Home tiles. A failed
+                                // refresh keeps the previously shown cached source instead.
+                                updateHomeYouTubeRow(generation, definition, selected)
+                            }
+                        }
+                    } }.awaitAll()
+                }
+            } finally {
+                if (generation == youtubeRowsGeneration) {
+                    youtubeRowsPending = false
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
+            }
+        }
+    }
+
     private fun loadRadioRows() {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -1446,7 +1589,7 @@ class HomeViewModel @Inject constructor(
     private fun publishRows(rows: List<ContentRowData>) =
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows)),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || youtubeRows.isNotEmpty(),
         )
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
@@ -1565,8 +1708,9 @@ class HomeViewModel @Inject constructor(
         }
         @Suppress("NAME_SHADOWING")
         val rows = rows.filterNot {
-            it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") || homeRowHidden(it.id)
-        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows
+            it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
+                it.id.startsWith("youtube.") || homeRowHidden(it.id)
+        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows
         // Re-evaluate on every publish, not just when the preview was fetched: the server
         // can go offline while Home is still open and its cached preview is still in memory.
         val offlineTvSystems = unreachableServers.current().offline
@@ -1576,7 +1720,8 @@ class HomeViewModel @Inject constructor(
         val previous = _uiState.value as? HomeUiState.Loaded
         val shortcuts = if (plexOnly || jellyfinOnly || embyOnly) emptyList() else appPreferences.homeRows.filter { row ->
             row.enabled && homeSystemActive(row.system) && when (row.system) {
-                HomeRowDefinition.SYSTEM_YOUTUBE -> true
+                HomeRowDefinition.SYSTEM_YOUTUBE ->
+                    !youtubeRowsPending && youtubeRows.none { it.id == "youtube.${row.contentKey}" }
                 HomeRowDefinition.SYSTEM_SPOTIFY -> true
                 HomeRowDefinition.SYSTEM_RADIO -> false
                 HomeRowDefinition.SYSTEM_TVHEADEND -> row.contentKey !in setOf("live", "recent_channels")
@@ -1688,6 +1833,7 @@ class HomeViewModel @Inject constructor(
                 liveTvPending = !tvPreviewComplete && tvPreviewJob?.isActive == true,
                 photoPending = photoRowPending,
                 trailerPending = trailerRowsPending,
+                youtubePending = youtubeRowsPending,
             ),
         )
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
@@ -1697,7 +1843,7 @@ class HomeViewModel @Inject constructor(
         homeFetchLimiter.withPermit { block() }
 
     fun onItemFocused(rowId: String, item: MediaItem) {
-        metadataPrefetcher.detail(item.ratingKey)
+        if (!item.ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX)) metadataPrefetcher.detail(item.ratingKey)
         val current = _uiState.value as? HomeUiState.Loaded ?: return
         val focusChanged = !activeFocusKnown || activeFocusedRatingKey != item.ratingKey || activeFocusedRowId != rowId
         val mustReleaseInitialFocus = current.initialFocusTarget != HomeInitialFocusTarget.NONE
@@ -1986,4 +2132,5 @@ internal fun homeAwaitingFirstResults(
     liveTvPending: Boolean,
     photoPending: Boolean,
     trailerPending: Boolean,
-): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending)
+    youtubePending: Boolean = false,
+): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending || youtubePending)

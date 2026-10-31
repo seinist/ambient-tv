@@ -2077,6 +2077,7 @@ private fun AmbientTvApp(
                                         handleMediaSelection(ratingKey)
                                     }
                                 },
+                                onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onOpenHomeContent = { row ->
                                     when (row.system) {
