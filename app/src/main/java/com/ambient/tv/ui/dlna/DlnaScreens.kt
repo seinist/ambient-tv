@@ -271,7 +271,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             }) {
                 SystemPageTitle(MediaSystem.DLNA, title = state.server?.name)
             }
-            val failedOrEmptyFolder = !state.loading && state.path.isNotEmpty() &&
+            val failedOrEmptyFolder = !state.loading && !state.refreshing && state.path.isNotEmpty() &&
                 nodes.isEmpty()
             DlnaBreadcrumb(
                 root = stringResource(R.string.dlna_root),
@@ -306,7 +306,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 }
                 val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
                 val columns = GridCells.Fixed(columnCount)
-                val pulse = if (state.loading && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
+                val pulse = if ((state.loading || state.refreshing) && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
                 SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = columns,
@@ -315,14 +315,14 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     contentPadding = PaddingValues(end = 12.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    if (state.loading && nodes.isEmpty()) {
+                    if ((state.loading || state.refreshing) && nodes.isEmpty()) {
                         if (state.viewMode == DlnaViewMode.LIST) {
                             items(state.listRows.coerceIn(4, 10)) { DlnaLoadingRow(pulse, rowScale) }
                         } else {
                             items(columnCount * 3) { SkeletonTile(style = style, showDescription = false, fillCell = true) }
                         }
                     } else {
-                        if (nodes.isEmpty() && state.error == null) {
+                        if (nodes.isEmpty() && !state.loading && !state.refreshing && state.error == null) {
                             item("empty", span = { GridItemSpan(maxLineSpan) }) {
                                 Text(stringResource(R.string.dlna_empty), style = MaterialTheme.typography.bodyLarge)
                             }
