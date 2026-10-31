@@ -57,7 +57,9 @@ internal class BackgroundSponsorSkipPolicy {
             generation = playbackGeneration
             handledStarts.clear()
         }
-        if (!playing || ranges.isEmpty()) return null
+        // Without a known EOF, a segment's end may be the decoder's final timestamp.
+        // Wait for playback duration rather than risking an exact-end seek.
+        if (!playing || ranges.isEmpty() || durationMs <= 0L) return null
         val segments = com.ambient.tv.youtube.youtubeSponsorTimeline(
             com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs,
         ).segments
