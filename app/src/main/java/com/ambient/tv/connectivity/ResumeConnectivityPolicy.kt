@@ -9,6 +9,11 @@ object ResumeConnectivityPolicy {
     /** Matches [com.ambient.tv.server.ServerConnectionManager] reuse window. */
     const val HEALTH_STALE_MS = 30_000L
 
+    /** A real process foreground return must validate services even if the last check
+     * was recent: the server may have shut down while the phone was backgrounded. */
+    fun shouldRecheckOnStart(wasBackgrounded: Boolean, backgroundedForMs: Long, lastHealthAgeMs: Long): Boolean =
+        wasBackgrounded || shouldRecheck(backgroundedForMs, lastHealthAgeMs)
+
     fun shouldRecheck(
         backgroundedForMs: Long,
         lastHealthAgeMs: Long,
