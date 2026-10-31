@@ -17,6 +17,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -117,6 +119,64 @@ private class StandaloneRightPanelMotion {
 }
 
 private val LocalStandaloneRightPanelMotion = staticCompositionLocalOf<StandaloneRightPanelMotion?> { null }
+
+/**
+ * Every standalone right drawer and its dimming scrim share one entrance/exit animation.
+ * The panel's own BackHandler is the sole modal Back owner; the parent page must not clear
+ * its visible flag until the drawer's exit animation invokes onBack.
+ *
+ * Player-owned panels already animate their scrim through PlayerPanelVisibility and do not
+ * use this wrapper.
+ */
+@Composable
+fun RightPanelOverlay(
+    modifier: Modifier = Modifier,
+    onOutsideTap: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val motion = remember { StandaloneRightPanelMotion() }
+    val latestOutside = rememberUpdatedState(onOutsideTap)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(motion, reducedEffects, motion.dismiss.closing) {
+        if (motion.dismiss.closing) return@LaunchedEffect
+        motion.progress.animateTo(
+            1f,
+            tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                else com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS, easing = FastOutSlowInEasing),
+        )
+    }
+
+    fun dismissOutside() {
+        val action = latestOutside.value ?: return
+        if (!motion.dismiss.claim()) return
+        scope.launch {
+            motion.progress.animateTo(
+                0f,
+                tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                    else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS, easing = FastOutSlowInEasing),
+            )
+            action()
+        }
+    }
+
+    androidx.compose.runtime.CompositionLocalProvider(LocalStandaloneRightPanelMotion provides motion) {
+        Box(modifier.fillMaxSize()) {
+            // Alpha updates only the draw layer. Keep the dimmer visible throughout dismissal,
+            // and release the underlying grid's focus only after the panel actually closes.
+            Box(
+                Modifier.fillMaxSize()
+                    .graphicsLayer { alpha = 0.38f * motion.progress.value }
+                    .background(Color.Black)
+                    .then(if (onOutsideTap != null) Modifier.pointerInput(onOutsideTap) {
+                        detectTapGestures { dismissOutside() }
+                    } else Modifier),
+            )
+            content()
+        }
+    }
+}
 
 internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
 
