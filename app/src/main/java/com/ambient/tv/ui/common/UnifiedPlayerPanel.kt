@@ -154,9 +154,11 @@ class PlayerPanelNavigation {
                 restoreKey = null
                 restoreFailed = false
                 restoreGeneration++
-                // The action bar starts a fresh path; rows inside a panel go one level deeper.
+                // Every child carries its actual parent focus target. Some nested controls
+                // navigate without fromOrigin(); do not discard the parent's remembered row.
+                val origin = pendingOrigin ?: if (pendingRoot) null else path.lastOrNull()?.focusedKey
                 if (pendingRoot) path.clear()
-                path.add(Level(target, pendingOrigin))
+                path.add(Level(target, origin))
             }
         }
     }
@@ -200,7 +202,9 @@ class PlayerPanelNavigation {
         activity.interact()
         videoState.leave()
         audioState.leave()
-        restore(left.originKey)
+        // If the initiating control did not register its own origin, return to the
+        // parent's last focused row instead of leaving the panel with no focus target.
+        restore(left.originKey ?: path.lastOrNull()?.focusedKey)
     }
 
     fun close() {
@@ -296,6 +300,7 @@ class PlayerPanelNavigation {
         park = { focus -> parked(focus) },
         parkingDone = ::endParking,
         dialogOwnsFocus = { dialogFocusOwner != null },
+        pendingHandBack = { restoreKey != null },
     )
 
     private fun restore(key: String?) {

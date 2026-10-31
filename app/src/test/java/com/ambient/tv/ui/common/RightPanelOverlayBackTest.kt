@@ -12,6 +12,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.platform.testTag
 import com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS
 import com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS
 import org.junit.Assert.assertEquals
@@ -66,5 +69,56 @@ class RightPanelOverlayBackTest {
             assertEquals(1, drawerClosed.get())
             assertEquals(0, pageBack.get())
         }
+    }
+
+    @Test fun backUsesPanelCloseCallbackNotOutsideTapAndKeepsTheUnderlyingPage() {
+        val outsideClosed = AtomicInteger(0)
+        val panelBack = AtomicInteger(0)
+        val underlyingBack = AtomicInteger(0)
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            var open by remember { mutableStateOf(true) }
+            BackHandler { underlyingBack.incrementAndGet() }
+            Box(Modifier.fillMaxSize()) {
+                if (open) RightPanelOverlay(onOutsideTap = {
+                    outsideClosed.incrementAndGet()
+                    open = false
+                }) {
+                    RightSidePanel(
+                        title = "Ansicht",
+                        onBack = { panelBack.incrementAndGet(); open = false },
+                        modifier = Modifier.align(Alignment.TopEnd),
+                        requestHeaderFocus = false,
+                    ) { RightPanelInfoRow("Anzeige") }
+                }
+            }
+        }
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_ENTER_MS + 80L)
+        rule.waitForIdle()
+        rule.runOnIdle { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_EXIT_MS + 80L)
+        rule.waitForIdle()
+        rule.runOnIdle {
+            assertEquals(1, panelBack.get())
+            assertEquals(0, outsideClosed.get())
+            assertEquals(0, underlyingBack.get())
+        }
+    }
+
+    @Test fun freshTvRightPanelFocusesFirstActionInsteadOfFooterBack() {
+        rule.mainClock.autoAdvance = false
+        rule.setContent {
+            RightSidePanel(title = "Ansicht", onBack = {}, requestHeaderFocus = true) {
+                RightPanelChoice(
+                    text = "Erste Option",
+                    selected = false,
+                    onClick = {},
+                    modifier = Modifier.testTag("first-panel-choice"),
+                )
+            }
+        }
+        rule.mainClock.advanceTimeBy(500L)
+        rule.waitForIdle()
+        rule.onNodeWithTag("first-panel-choice").assertIsFocused()
     }
 }

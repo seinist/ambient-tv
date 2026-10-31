@@ -116,6 +116,9 @@ internal class RightPanelDismissOnce {
 private class StandaloneRightPanelMotion {
     val progress = Animatable(0f)
     val dismiss = RightPanelDismissOnce()
+    // The outer overlay owns the only BackHandler. The visible inner panel supplies the
+    // correct Back action (and focus hand-back), which is not always the outside-tap action.
+    var panelBack: (() -> Unit)? = null
 }
 
 private val LocalStandaloneRightPanelMotion = staticCompositionLocalOf<StandaloneRightPanelMotion?> { null }
@@ -168,7 +171,9 @@ fun RightPanelOverlay(
     // One system Back owner per standalone overlay. It remains enabled while the drawer
     // exits so a second Back is swallowed rather than navigates the browse grid.
     androidx.activity.compose.BackHandler {
-        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
+        val panelBack = motion.panelBack
+        if (panelBack != null) panelBack()
+        else if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
         else dismissOutside()
     }
     androidx.compose.runtime.CompositionLocalProvider(
@@ -496,14 +501,26 @@ private fun RightSidePanelChrome(
         }
         return
     }
-    // Android system Back and TV remote Back must always dismiss the modal rather than merely
-    // handing focus to the underlying view. A second Back during exit is consumed, not forwarded.
+    // The overlay remains the single Android BackHandler owner. Forward its Back to the
+    // inner panel's actual onBack (which may restore a header button or return to a parent).
+    // Outside taps still use their explicitly supplied action.
+    val updatedPanelBack = rememberUpdatedState<() -> Unit>({ dismissBack() })
+    if (standalone && inheritedMotion != null) {
+        androidx.compose.runtime.SideEffect {
+            inheritedMotion.panelBack = { updatedPanelBack.value() }
+        }
+        androidx.compose.runtime.DisposableEffect(inheritedMotion) {
+            onDispose { inheritedMotion.panelBack = null }
+        }
+    }
+    // Without a wrapper (player chrome or standalone column) the panel owns Back itself.
     androidx.activity.compose.BackHandler(
         enabled = playerPanelInteractive && !LocalRightPanelOverlayOwnsBack.current,
     ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
+    var bodyHasFocus by remember { mutableStateOf(false) }
     // A rebuilt level that already held focus rescues it like a panel that just lost it.
     var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
     val panelFocus = remember { FocusRequester() }
@@ -517,12 +534,15 @@ private fun RightSidePanelChrome(
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
     val dialogOwnsFocus = focusRescue?.dialogOwnsFocus?.invoke() == true
-    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus, panelInteractive) {
+    val pendingHandBack = focusRescue?.pendingHandBack?.invoke() == true
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused,
+        dialogOwnsFocus, panelInteractive, pendingHandBack) {
         if (!panelInteractive) return@LaunchedEffect
         // A player dialog's focus return owns the hand-back: a paused target of ours is obsolete.
         if (dialogOwnsFocus) rescue.pausedTarget = null
         if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
-                windowInfo.isWindowFocused, rescue.pausedTarget, dialogOwnsFocus)) return@LaunchedEffect
+                windowInfo.isWindowFocused, rescue.pausedTarget, dialogOwnsFocus,
+                pendingHandBack)) return@LaunchedEffect
         if (rescue.job?.isActive == true) return@LaunchedEffect
         val target = rescue.pausedTarget ?: focusRescue?.target?.invoke()
         rescue.pausedTarget = null
@@ -543,7 +563,11 @@ private fun RightSidePanelChrome(
                     }
                     if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
                     if (target == null) {
-                        if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
+                        // An unkeyed child (some dynamically constructed settings entries)
+                        // still needs an actual focusable row, not just the drawer's focus
+                        // group. Focusing only panelFocus left the D-pad with no selection.
+                        if (!bodyHasFocus && !focusFirstRow() && !panelHasFocus)
+                            runCatching { footerFocus.requestFocus() }
                         return@retryFocusFor true
                     }
                     if (!panelHasFocus && !parked) parked = parkOnFirstRow()
@@ -564,8 +588,13 @@ private fun RightSidePanelChrome(
             // Do not leave focus on the old grid for 400 ms while the drawer enters.
             // Give Compose one layout frame to attach the panel's controls, then claim focus.
             androidx.compose.runtime.withFrameNanos { }
-            if (panelHasFocus || !panelInteractive) return@LaunchedEffect
-            if (footerAllowed || !focusFirstRow()) runCatching { footerFocus.requestFocus() }
+            if (bodyHasFocus || !panelInteractive) return@LaunchedEffect
+            // Focus held by the footer/parent group does not mean the content row is focused.
+            // A fresh level begins at the first available control, not at its footer Back.
+            // The footer is only a fallback for an empty level. A returning level keeps
+            // trying its remembered item through the dedicated focus rescue.
+            if (!focusFirstRow() && (footerAllowed || focusRescue?.target?.invoke() == null))
+                runCatching { footerFocus.requestFocus() }
         }
     }
     val tokens = LocalUiTokens.current
@@ -660,6 +689,7 @@ private fun RightSidePanelChrome(
                 .fillMaxWidth()
                 .clipToBounds()
                 .focusRequester(bodyFocus)
+                .onFocusChanged { bodyHasFocus = it.hasFocus }
                 .focusProperties {
                     onExit = { bodyFocus.saveFocusedChild() }
                 }

@@ -54,6 +54,8 @@ class PanelFocusRescue internal constructor(
     val parkingDone: () -> Unit = {},
     /** A player dialog's focus return owns the hand-back right now; the rescue stays out of it. */
     val dialogOwnsFocus: () -> Boolean = { false },
+    /** Back returned to a parent; retry its opening row even if focus landed on a stand-in. */
+    val pendingHandBack: () -> Boolean = { false },
 )
 
 /**
@@ -83,5 +85,7 @@ internal fun panelRescueStep(windowFocused: Boolean, userMoved: Boolean, dialogO
  * panel's focus; otherwise only a panel that lost focus is rescued.
  */
 internal fun panelRescueShouldStart(retainFocus: Boolean, handheld: Boolean, hadPanelFocus: Boolean,
-    panelHasFocus: Boolean, windowFocused: Boolean, pausedTarget: String?, dialogOwnsFocus: Boolean = false): Boolean =
-    retainFocus && !handheld && hadPanelFocus && windowFocused && !dialogOwnsFocus && (!panelHasFocus || pausedTarget != null)
+    panelHasFocus: Boolean, windowFocused: Boolean, pausedTarget: String?, dialogOwnsFocus: Boolean = false,
+    pendingHandBack: Boolean = false): Boolean =
+    retainFocus && !handheld && hadPanelFocus && windowFocused && !dialogOwnsFocus &&
+        (!panelHasFocus || pausedTarget != null || pendingHandBack)

@@ -67,4 +67,22 @@ class PanelFocusRescueTest {
         assertFalse(videoAdjustOpensPanel(UnifiedPlayerPanel.VIDEO_SVP))
         assertFalse(videoAdjustOpensPanel(UnifiedPlayerPanel.RENDERER))
     }
+
+    @Test fun pendingBackRescuesOriginEvenWhenAnotherPanelControlHasFocus() {
+        assertTrue(panelRescueShouldStart(
+            retainFocus = true, handheld = false, hadPanelFocus = true,
+            panelHasFocus = true, windowFocused = true, pausedTarget = null,
+            pendingHandBack = true,
+        ))
+        assertFalse(panelRescueShouldStart(
+            retainFocus = true, handheld = false, hadPanelFocus = true,
+            panelHasFocus = true, windowFocused = true, pausedTarget = null,
+            pendingHandBack = false,
+        ))
+        assertFalse(panelRescueShouldStart(
+            retainFocus = true, handheld = false, hadPanelFocus = true,
+            panelHasFocus = true, windowFocused = true, pausedTarget = null,
+            dialogOwnsFocus = true, pendingHandBack = true,
+        ))
+    }
 }
