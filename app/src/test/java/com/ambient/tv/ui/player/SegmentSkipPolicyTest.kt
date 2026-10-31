@@ -63,6 +63,34 @@ class SegmentSkipPolicyTest {
         assertEquals(listOf(sponsor), normalizePlaybackSegments(listOf(sponsor), 100_000L))
     }
 
+    @Test fun sponsorSkipKeepsTheDecoderAwayFromEofAndSkipsOnlyOnce() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val segments = listOf(80_000L..100_000L)
+        assertNull(policy.nextSeek(7, segments, 80_500L, 100_000L, playing = false))
+        assertEquals(98_500L, policy.nextSeek(7, segments, 80_500L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7, segments, 81_000L, 100_000L, playing = true))
+        // A late SponsorBlock refresh may adjust an endpoint but must not skip twice.
+        assertNull(policy.nextSeek(7, listOf(80_000L..101_000L), 81_000L, 100_000L, playing = true))
+    }
+
+    @Test fun terminalSponsorTooShortToSeekAndNewSessionCanSkipAgain() {
+        val policy = BackgroundSponsorSkipPolicy()
+        val terminal = listOf(99_000L..100_000L)
+        assertNull(policy.nextSeek(7, terminal, 99_300L, 100_000L, playing = true))
+        assertNull(policy.nextSeek(7, terminal, 99_400L, 100_000L, playing = true))
+        assertEquals(98_500L, policy.nextSeek(8, listOf(80_000L..100_000L),
+            80_500L, 100_000L, playing = true))
+    }
+
+    @Test fun sponsorSegmentsArrivingAfterPlaybackStartsBecomeSkippable() {
+        val policy = BackgroundSponsorSkipPolicy()
+        assertNull(policy.nextSeek(3, emptyList(), 20_000L, 60_000L, playing = true))
+        assertEquals(30_000L, policy.nextSeek(3, listOf(15_000L..30_000L),
+            20_000L, 60_000L, playing = true))
+        assertNull(policy.nextSeek(3, listOf(-1L..30_000L), 20_000L,
+            60_000L, playing = true))
+    }
+
     @Test fun embyMarkersPairWithoutRelyingOnChapterNames() {
         val segments = playbackSegmentsFromMarkers(listOf("IntroEnd" to 40_000L, "Chapter" to 0L,
             "IntroStart" to 10_000L, "CreditsStart" to 80_000L, "IntroStart" to 95_000L))
