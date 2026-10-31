@@ -317,6 +317,15 @@ fun YouTubePlayerScreen(
             // The shared session owns EOF, including successor loading and hand-off guards.
             val onCompleted: () -> Unit = {}
 
+            // SponsorBlock responses may arrive after the first video frame. Update the
+            // shared timeline without restarting or seeking the decoder.
+            val playbackTimeline = remember(playback.timeline, playback.sponsorSegments, playback.durationMs) {
+                if (prefs.youtubeSponsorBlockEnabled && !playback.isLive && !isTrailer)
+                    com.ambient.tv.youtube.youtubeSponsorTimeline(
+                        playback.timeline, playback.sponsorSegments, playback.durationMs,
+                    )
+                else playback.timeline
+            }
             // Live streams have no final end time, so Next Up must stay off for them.
             val nextUp = state.nextVideo?.takeUnless { playback.isLive || isTrailer }?.let { next ->
                 NextUpCandidate(
@@ -352,7 +361,7 @@ fun YouTubePlayerScreen(
                 com.ambient.tv.youtube.youtubeCaptionTracks(playback.captions, captionFiles)
             }
             PlaybackSessionContent(
-                timeline = playback.timeline,
+                timeline = playbackTimeline,
                 metadata = PlaybackMetadata(
                     route, playback.title, playback.author.orEmpty(),
                     "youtube", playback.videoId, durationMs = playback.durationMs,
@@ -377,6 +386,7 @@ fun YouTubePlayerScreen(
                     },
                     isLive = playback.isLive,
                     isTrailer = isTrailer,
+                    sponsorSkipEnabled = prefs.youtubeSponsorBlockEnabled && !playback.isLive && !isTrailer,
                     subtitleTracks = captionTracks,
                     resumeState = playback.copy(resumeMs = resumePosition),
                     nextUp = nextUp,
