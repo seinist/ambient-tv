@@ -1645,7 +1645,8 @@ class HomeViewModel @Inject constructor(
         }
         @Suppress("NAME_SHADOWING")
         val rows = rows.filterNot {
-            it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") || homeRowHidden(it.id)
+            it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
+                it.id.startsWith("youtube.") || homeRowHidden(it.id)
         } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows
         val liveTvItems = tvPreview.live
         val recentTvItems = tvPreview.recent
