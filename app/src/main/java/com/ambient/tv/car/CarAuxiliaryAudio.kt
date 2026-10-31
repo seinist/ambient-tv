@@ -36,6 +36,7 @@ internal fun carDlnaAudioEligible(node: DlnaNode): Boolean {
 }
 
 internal fun carAudioFileEligible(entry: FileEntry) = !entry.directory && entry.audio
+internal fun carLiveAudioEligible(channel: LiveTvChannel) = channel.kind == LiveTvChannelKind.RADIO
 
 internal data class CarAudioPage(
     val items: List<CarAudioEntry>,
@@ -121,7 +122,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
                     val repo = liveRepository(requireNotNull(CarAudioIds.liveGroupsId(parent)))
                         ?: return CarAudioPage(emptyList())
                     val tags = repo.channels().asSequence()
-                        .filter { it.kind == LiveTvChannelKind.RADIO }
+                        .filter { carLiveAudioEligible(it) }
                         .flatMap { it.tags.asSequence() }
                         .map(String::trim).filter(String::isNotBlank).distinct()
                         .sortedWith(String.CASE_INSENSITIVE_ORDER).toList()
@@ -131,7 +132,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
                     val (id, tag) = requireNotNull(CarAudioIds.liveGroupSpec(parent))
                     val repo = liveRepository(id) ?: return CarAudioPage(emptyList())
                     val channels = repo.channels().asSequence()
-                        .filter { it.kind == LiveTvChannelKind.RADIO && (tag.isEmpty() || tag in it.tags) }
+                        .filter { carLiveAudioEligible(it) && (tag.isEmpty() || tag in it.tags) }
                         .sortedWith(compareBy<LiveTvChannel> { it.number ?: Int.MAX_VALUE }.thenBy { it.name.lowercase() })
                         .toList()
                     slice(channels.map { ch ->
@@ -196,7 +197,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
     suspend fun resolveLive(id: String): CarAudioSelection.Live? {
         val (sourceId, uuid) = CarAudioIds.liveAudioSpec(id) ?: return null
         val repo = liveRepository(sourceId) ?: return null
-        val radioChannels = repo.channels().filter { it.kind == LiveTvChannelKind.RADIO }
+        val radioChannels = repo.channels().filter { carLiveAudioEligible(it) }
         val channel = radioChannels.firstOrNull { it.uuid == uuid } ?: return null
         val siblings = radioChannels.map { CarAudioIds.liveAudio(sourceId, it.uuid) }
         return CarAudioSelection.Live(channel, repo.liveStream(channel), siblings, repo.source.system)
@@ -208,7 +209,7 @@ internal class CarAuxiliaryAudio @Inject constructor(
         for (repo in liveTv.configured().filter { it.source.system in setOf("iptv", "tvheadend") }) {
             if (results.size >= limit) break
             val channels = runCatching { repo.channels() }.getOrDefault(emptyList())
-            results += channels.filter { it.kind == LiveTvChannelKind.RADIO &&
+            results += channels.filter { carLiveAudioEligible(it) &&
                 it.name.contains(query, ignoreCase = true) }
                 .take(limit - results.size)
                 .map { CarAudioEntry(CarAudioIds.liveAudio(repo.source.id, it.uuid), it.name,
