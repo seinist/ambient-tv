@@ -71,7 +71,18 @@ class ResumeConnectivityMonitor @Inject constructor(
 
     init {
         scope.launch {
-            for (reason in recheckRequests) runRecheck(reason)
+            for (reason in recheckRequests) {
+                try {
+                    runRecheck(reason)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    // A failed VPN/network setup must not terminate the only resume worker.
+                    Timber.w(error, "Resume connectivity worker failed")
+                    _status.value = ResumeConnectivityStatus.Idle
+                    _recheckGeneration.value = _recheckGeneration.value + 1
+                }
+            }
         }
     }
 
