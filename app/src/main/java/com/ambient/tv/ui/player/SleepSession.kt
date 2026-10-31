@@ -14,7 +14,9 @@ interface SleepTarget {
     fun sleepPlay()
     /** Ends playback (timer ran out or "stop now" in the prompt). */
     fun sleepStop()
-    /** Best-effort TV standby after playback is stopped; no-op without platform permission. */
+    /** Device standby is never allowed for phones, tablets or automotive. */
+    fun sleepAllowsDeviceStandby(): Boolean = false
+    /** TV only, called after stopping playback if [sleepAllowsDeviceStandby] is true. */
     fun sleepEnterStandby() {}
 }
 
@@ -249,8 +251,11 @@ object SleepSession {
                 kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK,
             ))
         }
-        standbyRequested = true
-        ending.sleepEnterStandby()
+        // A phone timer must stop audio/video only. No lock, power or standby request.
+        if (ending.sleepAllowsDeviceStandby()) {
+            standbyRequested = true
+            ending.sleepEnterStandby()
+        }
     }
 
     /** Tests: back to a clean state. */
