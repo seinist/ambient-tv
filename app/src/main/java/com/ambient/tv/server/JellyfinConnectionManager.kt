@@ -118,8 +118,8 @@ class JellyfinConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
-            _state.value = ServerConnectionState.Online(identity)
             hosts.online(hosts.begin("jellyfin")) // Successful API probe overrides stale port failures.
+            _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
@@ -214,13 +214,13 @@ class JellyfinConnectionManager @Inject constructor(
         val identity = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }.getOrElse {
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.jellyfinHost}:${preferences.jellyfinPort}")); return false
         }
-        _state.value = ServerConnectionState.Online(identity)
         lastServerId = endpointKey
         lastSuccessfulCheckMs = System.currentTimeMillis()
         if (preferences.jellyfinMacAddress.isNullOrBlank()) {
             macResolver.resolve(host, preferences.jellyfinPort)?.macAddress?.let(preferences::updateActiveJellyfinServerMac)
         }
         hosts.online(hosts.begin("jellyfin")) // MAC discovery may have changed the shared machine key.
+        _state.value = ServerConnectionState.Online(identity)
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true
