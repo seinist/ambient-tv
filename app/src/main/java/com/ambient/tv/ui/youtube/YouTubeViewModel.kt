@@ -314,7 +314,7 @@ class YouTubeViewModel @Inject constructor(
     fun enter(initialFeedKey: String?) {
         if (!entered) {
             entered = true
-            val feed = initialFeedKey?.let(YouTubeFeed::fromKey)
+            val feed = initialFeedKey?.let(YouTubeFeed::fromKey)?.takeIf { it in configuredFeeds }
             if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
         }
         restorePlayedFocus()
@@ -547,7 +547,9 @@ class YouTubeViewModel @Inject constructor(
                 val supported = suspendResult { engine.supportedFeedKeys() }.getOrDefault(setOf("home"))
                 if (generation != contentGeneration) return@launch
                 // A transient capability/auth probe during recovery must not change the open tab.
-                val feeds = configuredFeeds.filter { it.key in supported || (preserveFeedSelection && it == feed) }
+                // A transient SmartTube capability probe must never switch a clicked category
+                // to Home during loading. Keep the explicitly requested, enabled destination.
+                val feeds = configuredFeeds.filter { it.key in supported || it == feed }
                     .ifEmpty { listOf(YouTubeFeed.HOME) }
                 val selectedFeed = feed.takeIf { it in feeds } ?: feeds.first()
                 if (_uiState.value.visibleFeeds != feeds || _uiState.value.feed != selectedFeed) {
