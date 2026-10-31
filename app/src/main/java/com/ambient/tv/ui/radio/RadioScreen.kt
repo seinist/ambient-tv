@@ -117,6 +117,15 @@ fun RadioScreen(
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     val selectSection = onSelectSection ?: viewModel::selectSection
     var showViewOptions by remember { mutableStateOf(false) }
+    var restoreViewOptionsFocus by remember { mutableStateOf(false) }
+    val viewOptionsFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(showViewOptions, restoreViewOptionsFocus) {
+        if (!showViewOptions && restoreViewOptionsFocus) {
+            withFrameNanos { }
+            runCatching { viewOptionsFocusRequester.requestFocus() }
+            restoreViewOptionsFocus = false
+        }
+    }
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -259,6 +268,7 @@ fun RadioScreen(
     val closeViewOptions: () -> Unit = {
         showViewOptions = false
         if (focusAfterViewOptions) pendingContentFocus = focusScope
+        else restoreViewOptionsFocus = true
         focusAfterViewOptions = false
     }
     BackHandler(enabled = !showViewOptions && searchVisible) {
@@ -307,7 +317,8 @@ fun RadioScreen(
                         loading = state.loading || state.loadingMore,
                         onClick = viewModel::refresh,
                     )
-                    ViewOptionsChip(0, onClick = { showViewOptions = true })
+                    ViewOptionsChip(0, onClick = { showViewOptions = true },
+                        modifier = Modifier.focusRequester(viewOptionsFocusRequester))
                 },
             ) {
                 SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
