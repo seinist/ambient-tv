@@ -482,7 +482,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     // The repository already rolls back the previous background engine on
                     // failure. Do not keep Android Auto pinned to a dead Spotify session.
                     // A late result must never replace a newer source or stop selection.
-                    if (!success && carSpotifySelection.rollbackFailed(start)) {
+                    if (success) carSpotifySelection.confirm(start)
+                    else if (carSpotifySelection.rollbackFailed(start)) {
                         if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
                         else updatePlatformState(BackgroundPlaybackSession.snapshot.value)
                     }
