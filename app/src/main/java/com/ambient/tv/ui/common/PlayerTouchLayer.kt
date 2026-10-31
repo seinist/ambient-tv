@@ -71,6 +71,9 @@ fun PlayerTouchLayer(
     val handheld = LocalHandheldUi.current
     val osd = LocalPlayerChromeState.current?.osd
     val panelOpen = LocalPlayerPanelNavigation.current?.panel?.let { it != UnifiedPlayerPanel.NONE } == true
+    // The pointerInput(Unit) detector lives across panel and renderer transitions.
+    val currentPanelOpen by rememberUpdatedState(panelOpen)
+    val currentOsd by rememberUpdatedState(osd)
     val currentToggleControls by rememberUpdatedState(onToggleControls)
     val currentTogglePlayback by rememberUpdatedState(onTogglePlayback)
     val currentSeekBack by rememberUpdatedState(onSeekBack)
@@ -142,7 +145,7 @@ fun PlayerTouchLayer(
                     onTap = {
                         // A compact phone OSD has no action row: a picture tap must unfold it,
                         // not hide the seekbar. An already expanded OSD keeps tap-to-dismiss.
-                        if (!handheld || panelOpen || osd?.expandForHandheldTap() != true) currentToggleControls()
+                        if (!handheld || currentPanelOpen || currentOsd?.expandForHandheldTap() != true) currentToggleControls()
                     },
                     onDoubleTap = { position: Offset ->
                         when {
