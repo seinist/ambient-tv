@@ -5,6 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReconnectPauseTest {
+    @Test fun resumeMustNotTrustCachedResultFromConcurrentHomeEntry() {
+        assertTrue(needsPostJoinResumeVerification(true, 0L))
+        assertFalse(needsPostJoinResumeVerification(true, 100L))
+        assertFalse(needsPostJoinResumeVerification(false, 0L))
+    }
+
     @Test fun passiveChecksRunForOfflineServicesEvenWhenNotPaused() {
         assertTrue(shouldProbeInBackground(true, false, false, false))
         assertTrue(shouldProbeInBackground(true, false, false, true))
