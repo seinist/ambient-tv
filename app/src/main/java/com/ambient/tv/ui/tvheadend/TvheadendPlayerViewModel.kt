@@ -110,6 +110,8 @@ class TvheadendPlayerViewModel @Inject constructor(
     }.getOrNull()
     internal fun ownsCompanionMedia(media: com.ambient.tv.companion.CompanionMedia?) = media?.kind == "live:$kind" && media.source == companionSource && media.id == (if (kind == "channel") currentChannelUuid else initialId)
     private var currentChannelUuid: String = initialId
+    /** Intended channel, including while an asynchronous tune still holds the outgoing Ready state. */
+    val expectedChannelUuid: String get() = currentChannelUuid
     private var channels: List<TvhChannel> = emptyList()
     /** Started from Live TV or the Guide: zapping stays within that view's filtered channels. */
     private val zapOrder: List<String>? =
@@ -413,12 +415,16 @@ class TvheadendPlayerViewModel @Inject constructor(
         }
     }
 
-    private suspend fun acquireStream(open: suspend () -> TvhPlaybackSource): TvhPlaybackSource {
+    private suspend fun acquireStream(
+        open: suspend () -> TvhPlaybackSource,
+        pendingMetadata: PlaybackMetadata? = null,
+    ): TvhPlaybackSource {
         val job = currentCoroutineContext()[Job]
         return withContext(NonCancellable) { streamMutex.withLock {
             if (job?.isActive == false) throw CancellationException()
             val previous = BackgroundPlaybackSession.snapshot.value.metadata?.liveTvSession
             val replacement = BackgroundPlaybackSession.beginSourceReplacement(
+                replacementMetadata = pendingMetadata,
                 playWhenReadyOverride = true.takeIf { changingChannel },
             )
             pendingSourceReplacement = replacement
@@ -834,7 +840,24 @@ class TvheadendPlayerViewModel @Inject constructor(
                 localFallbackBackends.clear()
                 videoFailureConfirmed = false
                 com.ambient.tv.ui.player.AudioCodecRejects.clear()
-                val source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid)
+                // Replace global metadata *before* acquiring the new stream. Otherwise
+                // mini-player, external controls and notifications still show the old channel.
+                val pendingMetadata = PlaybackMetadata(
+                    route = Destinations.tvhPlayer(kind, channel.uuid, sourceId),
+                    title = channel.name,
+                    source = sourceSystem,
+                    mediaId = channel.uuid,
+                    artworkUrl = channel.iconUrl,
+                    artworkHeaders = repository.authHeaders(),
+                    artworkAspectRatio = 1f,
+                    isLive = true,
+                    hasVideo = channel.kind != LiveTvChannelKind.RADIO,
+                    liveTvSourceId = sourceId,
+                )
+                val source = timeshifted(acquireStream(
+                    { repository.liveStream(channel) },
+                    pendingMetadata = pendingMetadata,
+                ), channel.uuid)
                 val artwork = tvhPanelArtwork(null, channel.iconUrl)
                 _uiState.value = TvheadendPlayerState.Ready(
                     source = source,
