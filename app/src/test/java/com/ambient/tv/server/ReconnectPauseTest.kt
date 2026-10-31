@@ -5,6 +5,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReconnectPauseTest {
+    @Test fun passiveChecksRunForOfflineServicesEvenWhenNotPaused() {
+        assertTrue(shouldProbeInBackground(true, false, false, false))
+        assertTrue(shouldProbeInBackground(true, false, false, true))
+        assertTrue(shouldProbeInBackground(true, false, true, false))
+        assertFalse(shouldProbeInBackground(true, false, true, true))
+        assertTrue(shouldProbeInBackground(true, true, true, true))
+        assertFalse(shouldProbeInBackground(false, true, false, false))
+    }
+
     @Test fun pauseHoldsForTheSameEndpointOnly() {
         val pause = ReconnectPause()
         pause.pause("a")
