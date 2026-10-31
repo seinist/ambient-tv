@@ -123,6 +123,12 @@ fun RadioScreen(
     LaunchedEffect(viewModel, initialSectionKey) {
         viewModel.enter(RadioSection.fromKey(initialSectionKey))
     }
+    // A category disabled in Settings must not strand a deep link on a hidden tab.
+    // Route through the same sidebar navigation as a normal chip selection.
+    LaunchedEffect(initialSectionKey, state.visibleSections) {
+        val requested = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+        if (requested !in state.visibleSections) selectSection(state.visibleSections.first())
+    }
     ReportSidebarContentReady(state.contentReady)
 
     val focusScope = state.focusScope()
@@ -243,7 +249,7 @@ fun RadioScreen(
             Modifier
                 .fillMaxSize()
                 .handheldSwipeTabs(
-                    tabs = RadioSection.entries,
+                    tabs = state.visibleSections,
                     selected = state.section,
                     onSelect = selectSection,
                     enabled = !showViewOptions &&
@@ -287,21 +293,21 @@ fun RadioScreen(
                 )
             }
 
-            if (handheld) {
-                com.ambient.tv.ui.common.PageChipRow(
-                    focusChain,
-                    selectedIndex = RadioSection.entries.indexOf(state.section),
-                ) {
-                    lazyItems(RadioSection.entries, key = { it.key }) { section ->
-                        TvChip(
-                            text = radioSectionLabel(section),
-                            selected = state.section == section &&
-                                state.submittedQuery.isBlank() &&
-                                state.selectedFacet == null,
-                            modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
-                            onClick = { selectSection(section) },
-                        )
-                    }
+            // Like SmartTube: show the enabled category chips on TV AND handheld.
+            com.ambient.tv.ui.common.PageChipRow(
+                focusChain,
+                selectedIndex = state.visibleSections.indexOf(state.section),
+            ) {
+                lazyItems(state.visibleSections, key = { it.key }) { section ->
+                    TvChip(
+                        text = radioSectionLabel(section),
+                        selected = state.section == section &&
+                            state.submittedQuery.isBlank() &&
+                            state.selectedFacet == null,
+                        icon = com.ambient.tv.ui.common.radioMenuIcon(section.key),
+                        modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                        onClick = { selectSection(section) },
+                    )
                 }
             }
 
