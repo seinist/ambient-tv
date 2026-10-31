@@ -173,9 +173,13 @@ private fun InteractiveScrollbar(
                     paging?.cancel()
                     // Prefer adjacent controls, then the owning modal footer/page header.
                     // An explicit modal target must never fall through to the page behind it.
-                    if (!focusManager.moveFocus(FocusDirection.Right)) {
-                        val target = actionsFocus ?: localActions
-                        if (target != null) runCatching { target.requestFocus() }
+                    // A list with a separate A–Z index must go to that adjacent index,
+                    // rather than letting geometric focus search jump to a distant page action.
+                    val movedToIndex = actionsFocus?.let {
+                        runCatching { it.requestFocus() }.getOrDefault(false)
+                    } == true
+                    if (!movedToIndex && !focusManager.moveFocus(FocusDirection.Right)) {
+                        if (localActions != null) runCatching { localActions.requestFocus() }
                         else actions?.requestFocus(view)
                     }
                 }
