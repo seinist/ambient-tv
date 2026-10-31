@@ -230,7 +230,7 @@ fun RadioScreen(
     val stationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
         ?: state.stations.getOrNull(if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex
             else listState.firstVisibleItemIndex)?.let(::radioStationLetter)
-    val showStationAlphabet = !showingFacets && stationLetters.size > 1 && !requestedPagePending
+    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
