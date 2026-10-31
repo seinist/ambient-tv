@@ -175,7 +175,7 @@ fun RightPanelOverlay(
         LocalStandaloneRightPanelMotion provides motion,
         LocalRightPanelOverlayOwnsBack provides true,
     ) {
-        Box(modifier.fillMaxSize()) {
+        Box(modifier.fillWindowHeight().fillMaxSize()) {
             // Alpha updates only the draw layer. Keep the dimmer visible throughout dismissal,
             // and release the underlying grid's focus only after the panel actually closes.
             Box(
