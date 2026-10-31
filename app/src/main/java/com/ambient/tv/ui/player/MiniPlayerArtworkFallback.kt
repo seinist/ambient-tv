@@ -1,19 +1,16 @@
 package com.ambient.tv.ui.player
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -28,6 +25,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.SystemLogo
+import com.ambient.tv.ui.common.SharedSkeletonPulse
+import com.ambient.tv.ui.common.rememberSharedPulse
 import com.ambient.tv.ui.performance.LocalPerformanceProfile
 import com.ambient.tv.ui.theme.LocalPlaybackAccent
 import java.util.Locale
@@ -100,30 +99,36 @@ internal fun MiniPlayerArtworkFallback(
     }
 }
 
-/** Three tiny equalizer bars; no motion or drawing work if artwork is successfully loaded. */
+/** One shared lifecycle-bound pulse; frame changes only redraw these 14x8 dp, not Compose. */
 @Composable
 private fun MiniPlayerAudioBars(playing: Boolean, modifier: Modifier = Modifier) {
-    val levels: List<Float> = if (playing && !LocalPerformanceProfile.current.reducedEffects) {
-        val motion = rememberInfiniteTransition(label = "miniAudio")
-        val first = motion.animateFloat(0.30f, 1f,
-            infiniteRepeatable(tween(540), RepeatMode.Reverse), label = "left").value
-        val middle = motion.animateFloat(0.95f, 0.28f,
-            infiniteRepeatable(tween(690), RepeatMode.Reverse), label = "middle").value
-        val last = motion.animateFloat(0.50f, 1f,
-            infiniteRepeatable(tween(460), RepeatMode.Reverse), label = "right").value
-        listOf(first, middle, last)
-    } else listOf(0.30f, 0.55f, 0.30f)
-    val foreground = LocalPlaybackAccent.current.indicator
-    Row(
-        modifier.height(8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        levels.forEach { level ->
-            Box(
-                Modifier.width(3.dp).height((8f * level).dp)
-                    .background(foreground.copy(alpha = if (playing) 0.96f else 0.45f)),
-            )
-        }
-    }
+    val pulse = if (playing && !LocalPerformanceProfile.current.reducedEffects)
+        rememberSharedPulse(SharedSkeletonPulse) else null
+    val color = LocalPlaybackAccent.current.indicator.copy(alpha = if (playing) 0.95f else 0.45f)
+    Box(
+        modifier
+            .width(14.dp)
+            .height(8.dp)
+            .drawBehind {
+                // This state is read at draw time: it never recomposes the mini-player per frame.
+                val wave = ((pulse?.value ?: 0.45f) - 0.28f).div(0.34f).coerceIn(0f, 1f)
+                val barWidth = 3.dp.toPx()
+                val gap = 2.dp.toPx()
+                val radius = CornerRadius(1.dp.toPx())
+                for (index in 0..2) {
+                    val level = when (index) {
+                        0 -> 0.25f + 0.75f * wave
+                        1 -> 0.90f - 0.55f * wave
+                        else -> 0.30f + 0.65f * (1f - kotlin.math.abs(wave - 0.5f) * 2f)
+                    }
+                    val height = size.height * level
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(index * (barWidth + gap), size.height - height),
+                        size = Size(barWidth, height),
+                        cornerRadius = radius,
+                    )
+                }
+            },
+    )
 }
