@@ -118,8 +118,8 @@ class EmbyConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
-            _state.value = ServerConnectionState.Online(identity)
             hosts.online(hosts.begin("emby")) // Successful API probe overrides stale port failures.
+            _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
@@ -214,13 +214,13 @@ class EmbyConnectionManager @Inject constructor(
         val identity = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }.getOrElse {
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.embyHost}:${preferences.embyPort}")); return false
         }
-        _state.value = ServerConnectionState.Online(identity)
         lastServerId = endpointKey
         lastSuccessfulCheckMs = System.currentTimeMillis()
         if (preferences.embyMacAddress.isNullOrBlank()) {
             macResolver.resolve(host, preferences.embyPort)?.macAddress?.let(preferences::updateActiveEmbyServerMac)
         }
         hosts.online(hosts.begin("emby")) // MAC discovery may have changed the shared machine key.
+        _state.value = ServerConnectionState.Online(identity)
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true
