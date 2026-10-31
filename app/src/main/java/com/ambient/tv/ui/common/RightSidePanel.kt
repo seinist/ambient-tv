@@ -133,12 +133,13 @@ private val LocalRightPanelOverlayOwnsBack = staticCompositionLocalOf { false }
 @Composable
 fun RightPanelOverlay(
     modifier: Modifier = Modifier,
-    onOutsideTap: (() -> Unit)? = null,
+    onOutsideTap: () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val reducedEffects = LocalPerformanceProfile.current.reducedEffects
     val motion = remember { StandaloneRightPanelMotion() }
     val latestOutside = rememberUpdatedState(onOutsideTap)
+    val latestReduced = rememberUpdatedState(reducedEffects)
     val scope = rememberCoroutineScope()
     val uiSounds = LocalUiSoundPlayer.current
 
@@ -152,12 +153,12 @@ fun RightPanelOverlay(
     }
 
     fun dismissOutside() {
-        val action = latestOutside.value ?: return
+        val action = latestOutside.value
         if (!motion.dismiss.claim()) return
         scope.launch {
             motion.progress.animateTo(
                 0f,
-                tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                tween(if (latestReduced.value) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
                     else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS, easing = FastOutSlowInEasing),
             )
             action()
@@ -166,7 +167,7 @@ fun RightPanelOverlay(
 
     // One system Back owner per standalone overlay. It remains enabled while the drawer
     // exits so a second Back is swallowed rather than navigates the browse grid.
-    androidx.activity.compose.BackHandler(enabled = onOutsideTap != null) {
+    androidx.activity.compose.BackHandler {
         if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
         else dismissOutside()
     }
@@ -181,9 +182,7 @@ fun RightPanelOverlay(
                 Modifier.fillMaxSize()
                     .graphicsLayer { alpha = 0.38f * motion.progress.value }
                     .background(Color.Black)
-                    .then(if (onOutsideTap != null) Modifier.pointerInput(onOutsideTap) {
-                        detectTapGestures { dismissOutside() }
-                    } else Modifier),
+                    .pointerInput(Unit) { detectTapGestures { dismissOutside() } },
             )
             content()
         }
