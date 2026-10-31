@@ -49,7 +49,7 @@ internal fun visibleGridColumns(
         } else density(landscapeGridColumns(storedColumns), 260f, 4)
         GridDensityProfile.MEDIA_LIBRARY -> when (preview) {
             ViewPreview.LANDSCAPE, ViewPreview.ROWS ->
-                density(landscapeGridColumns(storedColumns), 144f, 4, 260f)
+                density(landscapeGridColumns(storedColumns), 260f, 4)
             ViewPreview.WALL -> wall((storedColumns + 2).coerceIn(6, 14), 144f)
             ViewPreview.POSTER_WALL -> wall((storedColumns + 4).coerceIn(8, 16), 96f)
             else -> density(storedColumns, 144f, 8)
