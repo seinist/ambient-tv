@@ -342,6 +342,12 @@ internal class CarAudioCatalog @Inject constructor(
         }
         found += auxiliary.searchLive(q, limit = 20)
         found += auxiliary.searchStoredAudio(q, limit = 15)
+        // UPnP/SMB have no shared remote full-text API. Search the currently browsed
+        // audio folders in addition to saved file favorites/history, never video nodes.
+        found += entriesById.values.filter { entry ->
+            entry.playable && entry.title.contains(q, ignoreCase = true) &&
+                CarAudioIds.musicItemId(entry.id)?.let { DlnaKeys.owns(it) || FileKeys.owns(it) } == true
+        }.take(20)
         if (spotifyEnabled()) {
             runCatching { spotify.search(q).mapNotNull { it.asEntry() } }
                 .getOrDefault(emptyList()).take(15).let(found::addAll)
