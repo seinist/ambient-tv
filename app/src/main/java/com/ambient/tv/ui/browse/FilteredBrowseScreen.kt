@@ -230,8 +230,9 @@ fun FilteredBrowseScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) { items(18) { SkeletonTile() } }
                     is FilteredBrowseUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        StatePanel(
+                        com.ambient.tv.ui.common.BrowseStatusPanel(
                             title = stringResource(R.string.library_load_failed),
+                            kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
                             body = value.message.ifBlank { stringResource(R.string.error_generic) },
                             actionLabel = stringResource(R.string.home_retry),
                             onAction = viewModel::load,
@@ -242,7 +243,7 @@ fun FilteredBrowseScreen(
                         BrowseFocusInitialTarget(value.focusedRatingKey?.takeIf { key -> value.items.any { it.ratingKey == key } }
                             ?: value.items.firstOrNull()?.ratingKey)
                         if (value.items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+                            com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
                         } else Box(Modifier.fillMaxSize()
                             .focusRestorer()
                             .pageContentUp(focusChain) { if (filterBarShown) filterFocus else focusChain.actions }

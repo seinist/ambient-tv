@@ -224,8 +224,9 @@ fun SectionScreen(
                 viewModel.loadingPage,
             )
             is SectionUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                StatePanel(
+                com.ambient.tv.ui.common.BrowseStatusPanel(
                     title = stringResource(R.string.library_load_failed),
+                    kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
                     body = sanitizeUiErrorMessage(state.message) ?: stringResource(R.string.error_generic),
                     actionLabel = stringResource(R.string.home_retry),
                     onAction = viewModel::load,
@@ -462,7 +463,7 @@ internal fun SectionContent(
                                     if (state.collectionsLoading) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         FullscreenSpinner()
                                     } else if (state.collections.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        StatePanel(stringResource(R.string.collections_empty_title), stringResource(R.string.collections_empty_body))
+                                        com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.collections_empty_title), stringResource(R.string.collections_empty_body))
                                     } else when (state.viewMode) {
                                         SectionViewMode.POSTER, SectionViewMode.GRID, SectionViewMode.WALL, SectionViewMode.POSTER_WALL -> CollectionGrid(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
                                         else -> CollectionList(focusState, onCollectionClick) { id -> markInitialFocusHandled(); onCollectionFocused(id) }
@@ -1458,13 +1459,13 @@ private fun cinematicTileRowPadding() = PaddingValues(
 @Composable
 private fun EmptyLibrary(filtered: Boolean, onReset: () -> Unit) = Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
     if (filtered) {
-        StatePanel(
+        com.ambient.tv.ui.common.BrowseStatusPanel(
             title = stringResource(R.string.library_no_filter_matches),
             actionLabel = stringResource(R.string.library_filter_reset),
             onAction = onReset,
         )
     } else {
-        StatePanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
+        com.ambient.tv.ui.common.BrowseStatusPanel(stringResource(R.string.library_empty_title), stringResource(R.string.library_empty_body))
     }
 }
 

@@ -72,8 +72,10 @@ internal fun TvheadendHbbtvBrowse(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (apps.isEmpty()) {
-            Text(stringResource(R.string.tvh_hbbtv_browse_empty),
-                style = MaterialTheme.typography.bodyMedium)
+            com.ambient.tv.ui.common.BrowseStatusPanel(
+                title = stringResource(R.string.tvh_hbbtv_browse_empty),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 itemsIndexed(apps, key = { _, entry -> entry.key }) { index, entry ->

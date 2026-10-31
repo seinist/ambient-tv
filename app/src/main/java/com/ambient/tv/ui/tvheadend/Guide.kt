@@ -253,9 +253,9 @@ internal fun LiveTvChannelBrowser(
             ).focusGroup()) {
             if (visibleChannels.isEmpty()) {
                 if (refreshing) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                } else StatePanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
-                    modifier = if (!filterBarShown) Modifier.focusRequester(firstContentFocusRequester) else Modifier,
+                    FullscreenSpinner()
+                } else BrowseStatusPanel(title = stringResource(R.string.guide_no_matches), actionLabel = stringResource(R.string.library_filter_reset),
+                    modifier = Modifier.fillMaxSize().then(if (!filterBarShown) Modifier.focusRequester(firstContentFocusRequester) else Modifier),
                     onAction = {
                         filterFocusState.keepControls()
                         if (!filterBarShown) controls.openOptions()

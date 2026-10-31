@@ -122,11 +122,12 @@ fun DlnaManageScreen(onOpen: (String) -> Unit, onBack: () -> Unit, viewModel: Dl
             modifier = Modifier.fillMaxWidth(),
             fillWidth = true,
         )
-        state.error?.let { OperationFeedbackContent(it, Modifier.fillMaxWidth()) }
+        if (state.saved.isNotEmpty()) state.error?.let { OperationFeedbackContent(it, Modifier.fillMaxWidth()) }
+        Box(Modifier.fillMaxWidth().weight(1f)) {
         LazyColumn(
             allowUpExit = true,
             state = serverList,
-            modifier = Modifier.fillMaxWidth().weight(1f).overlayLazyScrollbar(serverList),
+            modifier = Modifier.fillMaxSize().overlayLazyScrollbar(serverList),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (state.saved.isNotEmpty()) {
@@ -144,9 +145,26 @@ fun DlnaManageScreen(onOpen: (String) -> Unit, onBack: () -> Unit, viewModel: Dl
                     )
                 }
             }
-            if (state.searched && state.error == null && state.found.isEmpty()) {
-                item { Text(stringResource(R.string.dlna_no_servers_found), style = MaterialTheme.typography.bodyMedium) }
+        }
+        // Discovery messages belong to the free viewport, not a first grid/list row.
+        if (state.saved.isEmpty() && state.found.isEmpty()) {
+            when {
+                state.searching -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    com.ambient.tv.ui.common.FullscreenSpinner()
+                }
+                state.error != null -> OperationFeedbackContent(
+                    state.error!!,
+                    modifier = Modifier.align(Alignment.Center),
+                    layout = FeedbackLayout.PAGE,
+                    actionLabel = stringResource(R.string.dlna_search),
+                    onAction = viewModel::search,
+                    centered = true,
+                )
+                state.searched -> com.ambient.tv.ui.common.BrowseStatusPanel(
+                    title = stringResource(R.string.dlna_no_servers_found),
+                )
             }
+        }
         }
     }
     removeServer?.let { server ->
@@ -323,11 +341,6 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                             items(columnCount * 3) { SkeletonTile(style = style, showDescription = false, fillCell = true) }
                         }
                     } else {
-                        if (nodes.isEmpty() && !emptyPending && state.error == null) {
-                            item("empty", span = { GridItemSpan(maxLineSpan) }) {
-                                Text(stringResource(R.string.dlna_empty), style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
                         gridItemsIndexed(nodes, key = { _, node -> node.key }, span = { _, node ->
                             GridItemSpan(if (state.viewMode == DlnaViewMode.LIST) maxLineSpan else 1)
                         }) { _, node ->
@@ -356,11 +369,17 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     }
                 }
                 }
+                if (nodes.isEmpty() && !emptyPending && state.error == null) {
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(R.string.dlna_empty),
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
                 if (nodes.isEmpty()) state.error?.let {
                     OperationFeedbackContent(it, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                         actionLabel = stringResource(if (state.server == null) R.string.dlna_servers else R.string.home_retry),
                         onAction = if (state.server == null) onManage else viewModel::refresh,
-                        requestActionFocus = !showOptions && !keepHeaderFocus)
+                        requestActionFocus = !showOptions && !keepHeaderFocus, centered = true)
                 }
                 if (state.loadingMore && state.pageError == null) {
                     Row(

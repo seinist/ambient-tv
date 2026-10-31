@@ -166,7 +166,8 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                 OperationFeedbackContent(state.error!!, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
                     onAction = if (state.folders.isEmpty()) onBack else viewModel::refresh,
-                    actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus)
+                    actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus,
+                    centered = true)
             } else if (emptyPending) {
                 FullscreenSpinner(Modifier.align(Alignment.Center))
             } else {
@@ -182,13 +183,6 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                             focusModifier = Modifier.focusRequester(upFocus).onFocusChanged { if (it.isFocused) viewModel.focus(UP_ID) },
                             // Same width as the favorite action, so all rows end on one edge.
                             trailing = { if (!handheld) Spacer(Modifier.width(48.dp)) },
-                        )
-                    }
-                    if (ids.isEmpty()) item("empty") {
-                        Text(
-                            stringResource(if (sourceList) R.string.files_no_sources else R.string.files_empty),
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(top = if (canUp) 8.dp else 0.dp),
                         )
                     }
                     if (sourceList) items(state.sources, key = { "source:${it.id}" }) { source ->
@@ -264,6 +258,14 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                     }
                     }
                     if (state.more) item("more") { TvActionButton(stringResource(R.string.files_more), viewModel::more, loading = state.loading || state.refreshing) }
+                }
+                // A zero-item LazyColumn places its text at the top. Keep the Up row
+                // focusable and draw the status in the visible content viewport instead.
+                if (ids.isEmpty()) {
+                    com.ambient.tv.ui.common.BrowseStatusPanel(
+                        title = stringResource(if (sourceList) R.string.files_no_sources else R.string.files_empty),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
         }

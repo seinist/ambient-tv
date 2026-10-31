@@ -95,6 +95,20 @@ internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
         (submittedQuery.isNotBlank() || selectedFacet != null ||
             section == RadioSection.POPULAR || section.isFacetSection)
 
+/** The message belongs to the *requested* result, not the previous page or a loading snapshot. */
+internal fun RadioUiState.emptyMessageRes(): Int = when {
+    submittedQuery.isNotBlank() -> com.ambient.tv.R.string.radio_no_search_results
+    isFacetOverview() -> when (section) {
+        RadioSection.GENRES -> com.ambient.tv.R.string.radio_no_genres
+        RadioSection.COUNTRIES -> com.ambient.tv.R.string.radio_no_countries
+        RadioSection.LANGUAGES -> com.ambient.tv.R.string.radio_no_languages
+        else -> com.ambient.tv.R.string.radio_no_stations
+    }
+    section == RadioSection.FAVORITES -> com.ambient.tv.R.string.radio_no_favorites
+    section == RadioSection.RECENT -> com.ambient.tv.R.string.radio_no_recent
+    else -> com.ambient.tv.R.string.radio_no_stations
+}
+
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
     val visibleSections: List<RadioSection> = RadioSection.entries,

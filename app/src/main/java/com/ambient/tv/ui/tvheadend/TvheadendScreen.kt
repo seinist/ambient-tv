@@ -290,12 +290,15 @@ fun TvheadendScreen(
         if (state.tab == TvheadendTab.TIMERS) state.actionFeedback?.takeIf { it.scope == "timers" }?.let {
             OperationFeedbackContent(it, Modifier.fillMaxWidth())
         }
+        // Keep every state centered inside the remaining space beneath the Live TV header.
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         when {
-            !state.configured -> StatePanel(
+            !state.configured -> com.ambient.tv.ui.common.BrowseStatusPanel(
                 title = com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.entries.firstOrNull { it.name.equals(state.source.system, true) } ?: com.ambient.tv.ui.common.MediaSystem.TVHEADEND, R.string.tvh_not_configured),
                 actionLabel = stringResource(R.string.tvh_open_settings),
                 onAction = { onOpenSourceSettings(state.source.system) },
-                modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 620.dp),
+                kind = com.ambient.tv.ui.common.BrowseStatusKind.INFO,
+                modifier = Modifier.fillMaxSize(),
             )
             state.awaitingInitialContent() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 androidx.compose.material3.CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
@@ -306,9 +309,10 @@ fun TvheadendScreen(
                 actionLabel = stringResource(R.string.tvh_refresh),
                 onAction = viewModel::refresh,
                 requestActionFocus = true,
-                modifier = Modifier.align(Alignment.CenterHorizontally).widthIn(max = 680.dp),
+                centered = true,
+                modifier = Modifier.align(Alignment.Center).widthIn(max = 680.dp),
             )
-            else -> Crossfade(state.tab, animationSpec = tween(tokens.animationNormalMs), label = "tvhTab") { tab ->
+            else -> Crossfade(state.tab, modifier = Modifier.fillMaxSize(), animationSpec = tween(tokens.animationNormalMs), label = "tvhTab") { tab ->
                 val dashboard = state.dashboard
                 when (tab) {
                     TvheadendTab.LIVE -> LiveTvChannelBrowser(
@@ -405,6 +409,7 @@ fun TvheadendScreen(
                     )
                 }
             }
+        }
         }
         }
         if (showBrowseOptions) LiveTvBrowseOptionsPanel(browseControls, filterModel)
@@ -767,7 +772,7 @@ private fun RecordingList(
         (recordings.map { it to false } + failedRecordings.map { it to true }).sortedByDescending { it.first.startEpochSeconds }
     }
     if (rows.isEmpty()) {
-        StatePanel(title = stringResource(R.string.tvh_no_recordings), modifier = Modifier.widthIn(max = 620.dp))
+        com.ambient.tv.ui.common.BrowseStatusPanel(title = stringResource(R.string.tvh_no_recordings))
         return
     }
     val listState = rememberLazyListState(
@@ -814,7 +819,7 @@ private fun TimerList(
     onFocused: (String) -> Unit,
 ) {
     if (timers.isEmpty() && autoRecs.isEmpty()) {
-        StatePanel(title = stringResource(R.string.tvh_no_timers), modifier = Modifier.widthIn(max = 620.dp))
+        com.ambient.tv.ui.common.BrowseStatusPanel(title = stringResource(R.string.tvh_no_timers))
         return
     }
     val targetIndex = timers.indexOfFirst { it.uuid == focusTarget.contentId }.takeIf { it >= 0 }
