@@ -50,6 +50,13 @@ internal fun miniPlayerArtwork(
     return MiniPlayerArtwork(url, fallbacks, aspectRatio)
 }
 
+/** A missing URL is not a reason to omit an artwork tile when it has a real fallback. */
+internal fun shouldDrawPlaybackArtworkCard(
+    artworkUrl: String?,
+    fallbackUrls: List<String>,
+    hasFallbackContent: Boolean,
+): Boolean = !artworkUrl.isNullOrBlank() || fallbackUrls.any(String::isNotBlank) || hasFallbackContent
+
 @Composable
 fun PlaybackArtworkCard(
     artworkUrl: String?,
@@ -59,8 +66,9 @@ fun PlaybackArtworkCard(
     contentScale: ContentScale = ContentScale.Crop,
     fallbackUrls: List<String> = emptyList(),
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(8.dp),
+    fallbackContent: (@Composable () -> Unit)? = null,
 ) {
-    if (artworkUrl.isNullOrBlank() && fallbackUrls.isEmpty()) return
+    if (!shouldDrawPlaybackArtworkCard(artworkUrl, fallbackUrls, fallbackContent != null)) return
     Box(
         modifier
             .clip(shape)
@@ -74,6 +82,7 @@ fun PlaybackArtworkCard(
             headers = headers,
             contentScale = contentScale,
             fallbackModels = fallbackUrls,
+            fallbackContent = fallbackContent,
         )
     }
 }
