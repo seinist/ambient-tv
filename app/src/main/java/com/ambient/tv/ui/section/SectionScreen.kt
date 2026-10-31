@@ -1991,7 +1991,9 @@ private fun CollectionGrid(state: SectionUiState.Loaded, onClick: (String, Strin
             val cardShape = RoundedCornerShape(10.dp)
             Surface(onClick = { onClick(collection.id, collection.title) }, colors = transparentSurfaceColors(), scale = noSurfaceScale(), shape = ClickableSurfaceDefaults.shape(shape = cardShape), modifier = focusModifier.browseFocusTarget(collection.id).mediaFocusMotion(isFocused).activateOnTvKey { onClick(collection.id, collection.title) }.onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused(collection.id) }) {
                 Column(
-                    Modifier.width(cardWidth)
+                    // A fixed 160dp TV card overflows narrow phone grid cells and overlaps
+                    // neighboring tiles when density changes. Respect each grid cell on handheld.
+                    (if (LocalHandheldUi.current) Modifier.fillMaxWidth() else Modifier.width(cardWidth))
                         .background(if (isFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.09f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.58f), cardShape)
                         .border(if (isFocused) 1.5.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f), cardShape)
                 ) {
