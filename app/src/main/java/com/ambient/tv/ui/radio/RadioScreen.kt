@@ -219,9 +219,11 @@ fun RadioScreen(
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
     var focusedStationId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    // Scrolling changes the first visible row, but focusing another row takes precedence.
-    var focusedFacetLetter by remember(focusScope, sortedFacets) { mutableStateOf<Char?>(null) }
-    val visibleLetter = focusedFacetLetter
+    // Focus keeps its facet identity across locale/sort changes, rather than resetting
+    // the index indicator to the row currently at the top of the scrolling list.
+    var focusedFacetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    val visibleLetter = sortedFacets.firstOrNull { it.facet.id == (focusedFacetId ?: initialContentId) }
+        ?.letter?.singleOrNull()
         ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
     // Prefer the focused tile over the first visible row, including after returning from playback.
     val currentStationId = focusedStationId?.takeIf { id -> state.stations.any { it.id == id } } ?: initialContentId
@@ -466,9 +468,8 @@ fun RadioScreen(
                             state = listState,
                             onClick = selectFacet,
                             onFocused = { facet ->
+                                focusedFacetId = facet.id
                                 viewModel.onFacetFocused(facet.id)
-                                focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == facet.id }
-                                    ?.letter?.singleOrNull()
                             },
                             initialFocusId = initialContentId,
                             initialFocusRequester = initialFocusRequester,
@@ -483,10 +484,10 @@ fun RadioScreen(
                             letters = alphabetLetters,
                             selected = visibleLetter,
                             onSelect = { letter ->
-                                focusedFacetLetter = letter
                                 val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
                                     ?: return@AlphabetBar
                                 alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
+                                focusedFacetId = alphabetJumpTargetId
                                 scrollScope.launch { listState.scrollToItem(index) }
                             },
                             gridFocus = facetListFocus,
