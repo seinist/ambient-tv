@@ -68,6 +68,7 @@ import com.ambient.tv.ui.common.AlphabetBar
 import com.ambient.tv.ui.common.ArtworkImage
 import com.ambient.tv.ui.common.CenteredMarqueeTitle
 import com.ambient.tv.ui.common.MarqueeTitle
+import com.ambient.tv.ui.common.ArtworkCornerIconBadge
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.StatePanel
@@ -541,7 +542,6 @@ fun RadioScreen(
                                                 loading = state.startingStationId == station.id,
                                                 favorite = station.id in state.favoriteIds,
                                                 onClick = { viewModel.play(station, onOpenPlayer) },
-                                                onFavorite = { toggleStationFavorite(station) },
                                                 onFocused = {
                                                     focusedStationId = station.id
                                                     viewModel.onStationFocused(station.id)
@@ -951,7 +951,6 @@ private fun RadioStationTile(
     loading: Boolean,
     favorite: Boolean,
     onClick: () -> Unit,
-    onFavorite: () -> Unit,
     onFocused: () -> Unit,
 ) {
     var focused by remember(station.id) { mutableStateOf(false) }
@@ -991,6 +990,15 @@ private fun RadioStationTile(
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
                     RadioArtwork(station, Modifier.fillMaxSize())
+                    // Same artwork-corner badge as the watched status on MediaTile.
+                    // Favorite edits remain available from the player OSD or station list.
+                    if (favorite) {
+                        ArtworkCornerIconBadge(
+                            icon = Icons.Filled.Favorite,
+                            contentDescription = stringResource(R.string.radio_favorites),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp),
+                        )
+                    }
                     if (playing || loading) {
                         Box(
                             Modifier.align(Alignment.BottomEnd).padding(6.dp)
@@ -1017,12 +1025,6 @@ private fun RadioStationTile(
                 )
             }
         }
-        RadioFavoriteAction(
-            favorite = favorite,
-            onClick = onFavorite,
-            onFocused = onFocused,
-            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-        )
     }
 }
 

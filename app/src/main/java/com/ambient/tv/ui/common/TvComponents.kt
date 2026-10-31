@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
@@ -44,6 +45,30 @@ fun MetaBadge(
         contentAlignment = Alignment.Center,
     ) {
         Text(text = text, color = foreground, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp), maxLines = 1, softWrap = false)
+    }
+}
+
+/** Artwork-corner status icon using the same treatment as the "Watched" badge. */
+@Composable
+fun ArtworkCornerIconBadge(
+    icon: ImageVector,
+    contentDescription: String,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    Box(
+        modifier = modifier
+            .background(ArtworkChipFill, shape)
+            .border(1.dp, ArtworkChipBorder, shape)
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            modifier = Modifier.size(13.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
