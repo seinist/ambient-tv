@@ -333,6 +333,8 @@ internal fun SectionContent(
         filterFocusState.keepControls()
         initialContentFocusPending = false
     }
+    // Read this composition local while composing, never from the ordinary onSelect callback.
+    val alphabetHandheld = LocalHandheldUi.current
     // TV follows DPAD focus; touch scroll does not change focus, so handhelds follow the
     // first visible item instead. Keep both indicators independent to avoid scroll-to-focus loops.
     val initialLibraryLetter = libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey)
@@ -482,10 +484,10 @@ internal fun SectionContent(
                     if (showAlphabetBar) {
                         AlphabetBar(
                             letters = state.availableLetters,
-                            selected = alphabetTrackedLetter(LocalHandheldUi.current, viewportLetterState.value, visibleLibraryLetter),
+                            selected = alphabetTrackedLetter(alphabetHandheld, viewportLetterState.value, visibleLibraryLetter),
                             onSelect = { letter ->
                                 visibleLibraryLetter = letter
-                                if (LocalHandheldUi.current) viewportLetterState.value = letter
+                                if (alphabetHandheld) viewportLetterState.value = letter
                                 onSelectLetter(letter)
                             },
                             gridFocus = libraryFocusRequester,
