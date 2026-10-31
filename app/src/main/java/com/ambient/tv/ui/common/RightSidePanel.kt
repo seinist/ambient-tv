@@ -563,7 +563,11 @@ private fun RightSidePanelChrome(
                     }
                     if (target != null && focusRescue?.request?.invoke(target) == true) return@retryFocusFor true
                     if (target == null) {
-                        if (!panelHasFocus) runCatching { panelFocus.requestFocus() }
+                        // An unkeyed child (some dynamically constructed settings entries)
+                        // still needs an actual focusable row, not just the drawer's focus
+                        // group. Focusing only panelFocus left the D-pad with no selection.
+                        if (!bodyHasFocus && !focusFirstRow() && !panelHasFocus)
+                            runCatching { footerFocus.requestFocus() }
                         return@retryFocusFor true
                     }
                     if (!panelHasFocus && !parked) parked = parkOnFirstRow()
