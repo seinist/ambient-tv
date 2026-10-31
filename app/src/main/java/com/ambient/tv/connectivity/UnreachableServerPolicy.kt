@@ -46,7 +46,7 @@ fun probeOf(active: Boolean, state: ServerConnectionState): ServerProbe {
 }
 
 fun decideUnreachableServers(input: UnreachableServerInput): UnreachableServerDecision {
-    val unreachable = input.probes.filterValues { it == ServerProbe.UNREACHABLE }.keys
+    val unreachable = input.probes.filterValues { it == ServerProbe.UNREACHABLE || it == ServerProbe.HOST_REACHABLE }.keys
     val pending = input.probes.any { it.value == ServerProbe.PENDING }
     val otherMediaReachable = input.probes.any { (id, probe) ->
         probe == ServerProbe.REACHABLE && id !in unreachable
@@ -74,8 +74,15 @@ fun resumeHoldsUnreachablePrompt(status: ResumeConnectivityStatus): Boolean =
  * answers or is turned off; otherwise each recheck would flash its half-loaded library.
  */
 fun nextOfflineSystems(previous: Set<String>, probes: Map<String, ServerProbe>, settled: Boolean): Set<String> {
-    val kept = previous.filterTo(mutableSetOf()) { probes[it] == ServerProbe.PENDING || probes[it] == ServerProbe.UNREACHABLE }
-    if (settled) kept += probes.filterValues { it == ServerProbe.UNREACHABLE }.keys
+    // A NAS/PC answering on another port is not enough: the media service still needs to
+    // confirm its own API identity before the offline screen gives way to library content.
+    val kept = previous.filterTo(mutableSetOf()) {
+        probes[it] == ServerProbe.PENDING || probes[it] == ServerProbe.UNREACHABLE ||
+            probes[it] == ServerProbe.HOST_REACHABLE
+    }
+    if (settled) kept += probes.filterValues {
+        it == ServerProbe.UNREACHABLE || it == ServerProbe.HOST_REACHABLE
+    }.keys
     return kept
 }
 
