@@ -207,7 +207,10 @@ object PlaybackEngineFactory {
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
                         .setPreferredAudioLanguages(*languages.toTypedArray())
                         .setPreferredTextLanguages(*com.ambient.tv.data.local.LanguagePreferences.playbackLanguageTags(
-                            videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray()).build()
+                            videoImagePreferences(context).playbackSubtitleLanguage).toTypedArray())
+                        // Android Auto and other audio-only playback must not decode TV video tracks.
+                        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, audioOnly)
+                        .build()
                     // Apply the first selection before prepare() can start loading DASH tracks.
                     // maxVideoHeight is a quality step (short side): a square box also keeps portrait Shorts.
                     if (maxVideoHeight > 0) trackSelectionParameters = trackSelectionParameters.buildUpon()
