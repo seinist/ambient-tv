@@ -9,6 +9,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.HomeRowDefinition
 import com.ambient.tv.data.local.genre
+import com.ambient.tv.data.local.isLiveTvChannelRow
 import com.ambient.tv.data.local.homeRowType
 import com.ambient.tv.data.local.homeSystemReady
 import com.ambient.tv.domain.model.LibraryHub
@@ -192,6 +193,10 @@ class HomeViewModel @Inject constructor(
     val homeHeroStyleKey: String get() = appPreferences.homeHeroStyleKey
     val homeHeroIntensityPercent: Int get() = appPreferences.homeHeroIntensityPercent
     val homeHeroSpreadKey: String get() = appPreferences.homeHeroSpreadKey
+
+    /** Skeletons follow the enabled Home row styles instead of always drawing posters. */
+    fun loadingRowStyles(overviewSystem: String? = null): List<MediaTileStyle> =
+        homeLoadingRowStyles(appPreferences.homeRows, overviewSystem)
 
     private var plexOnly = false
     private var jellyfinOnly = false
@@ -2144,6 +2149,22 @@ class HomeViewModel @Inject constructor(
 
     private fun formatClock(epochSeconds: Long): String =
         HOME_CLOCK_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
+}
+
+/** Styles expected during cold cache hydration, before the rows themselves exist. */
+internal fun homeLoadingRowStyles(
+    definitions: List<HomeRowDefinition>,
+    overviewSystem: String? = null,
+): List<MediaTileStyle> {
+    val visible = definitions.asSequence()
+        .filter { it.enabled && (overviewSystem == null || it.system == overviewSystem) }
+        .map { definition ->
+            if (definition.isLiveTvChannelRow) MediaTileStyle.LANDSCAPE
+            else homeRowTileStyle(definition.displayMode)
+        }
+        .take(3)
+        .toList()
+    return visible.ifEmpty { List(3) { MediaTileStyle.POSTER } }
 }
 
 internal fun homeRowTileStyle(
