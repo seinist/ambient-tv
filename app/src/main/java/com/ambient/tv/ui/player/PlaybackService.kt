@@ -479,13 +479,15 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
                     .setState(PlaybackState.STATE_BUFFERING, 0L, 0f).build())
                 spotify.playUri(selection.uri) { success ->
-                    // The repository already rolls back the previous background engine on
-                    // failure. Do not keep Android Auto pinned to a dead Spotify session.
-                    // A late result must never replace a newer source or stop selection.
-                    if (success) carSpotifySelection.confirm(start)
-                    else if (carSpotifySelection.rollbackFailed(start)) {
-                        if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
-                        else updatePlatformState(BackgroundPlaybackSession.snapshot.value)
+                    // Run on this service's lifetime, never against a released MediaSession.
+                    scope.launch {
+                        // The repository already rolls back the previous background engine on
+                        // failure. A late result must not replace a newer source or stop selection.
+                        if (success) carSpotifySelection.confirm(start)
+                        else if (carSpotifySelection.rollbackFailed(start)) {
+                            if (carSpotifySelected) publishCarSpotify(spotify.playback.value)
+                            else updatePlatformState(BackgroundPlaybackSession.snapshot.value)
+                        }
                     }
                 }
             }
