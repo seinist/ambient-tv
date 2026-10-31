@@ -55,6 +55,10 @@ enum class RadioSection(val key: String) {
     }
 }
 
+/** Exactly the categories enabled for the menu, in the same canonical order on TV and handheld. */
+internal fun radioVisibleSections(enabledKeys: List<String>): List<RadioSection> =
+    RadioSection.entries.filter { it.key in enabledKeys }.ifEmpty { listOf(RadioSection.POPULAR) }
+
 internal val RadioSection.isFacetSection: Boolean
     get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
@@ -71,6 +75,7 @@ internal fun RadioUiState.awaitingInitialContent(): Boolean =
 
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
+    val visibleSections: List<RadioSection> = RadioSection.entries,
     /** First composition is pending even before the enter() effect has launched the API request. */
     val loading: Boolean = true,
     val loadingMore: Boolean = false,
@@ -100,7 +105,9 @@ class RadioViewModel @Inject constructor(
     private val playbackLauncher: RadioPlaybackLauncher,
     private val playbackQueue: RadioPlaybackQueue,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(RadioUiState())
+    private val _state = MutableStateFlow(RadioUiState(
+        visibleSections = radioVisibleSections(preferences.radioSubmenuKeys),
+    ))
     val state: StateFlow<RadioUiState> = _state.asStateFlow()
 
     private var loadJob: Job? = null
@@ -137,6 +144,10 @@ class RadioViewModel @Inject constructor(
         viewModelScope.launch {
             var favoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
             preferences.changes().collect {
+                val visibleSections = radioVisibleSections(preferences.radioSubmenuKeys)
+                if (_state.value.visibleSections != visibleSections) {
+                    _state.value = _state.value.copy(visibleSections = visibleSections)
+                }
                 val nextFavoriteIds = preferences.radioFavorites.mapTo(linkedSetOf(), RadioStation::id)
                 val favoritesChanged = nextFavoriteIds != favoriteIds
                 favoriteIds = nextFavoriteIds
