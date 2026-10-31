@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
@@ -80,6 +81,7 @@ import com.ambient.tv.ui.common.leftKeyAction
 import com.ambient.tv.ui.common.pageHeaderTop
 import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.SkeletonTile
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.TvChip
 import com.ambient.tv.ui.common.sortDirectionOptions
@@ -223,12 +225,15 @@ fun FilteredBrowseScreen(
                     focusChain = focusChain,
                 )
                 when (val value = state) {
-                    FilteredBrowseUiState.Loading -> LazyVerticalGrid(
-                        columns = GridCells.Adaptive(deviceDp(184.dp, 144.dp) * uhdScale),
-                        contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 14.dp, bottom = 36.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) { items(18) { SkeletonTile() } }
+                    FilteredBrowseUiState.Loading -> if (viewModel.loadingViewMode == BrowseViewMode.GRID) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Adaptive(deviceDp(184.dp, 144.dp) * uhdScale),
+                            contentPadding = PaddingValues(start = screenGutter(), end = screenGutter(), top = 14.dp, bottom = 36.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            userScrollEnabled = false,
+                        ) { items(18) { SkeletonTile() } }
+                    } else FilteredBrowseLoadingList()
                     is FilteredBrowseUiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         com.ambient.tv.ui.common.BrowseStatusPanel(
                             title = stringResource(R.string.library_load_failed),
@@ -292,6 +297,40 @@ fun FilteredBrowseScreen(
 private fun browseSortOrders(sort: BrowseSort) = when (sort) {
     BrowseSort.TITLE -> sortDirectionOptions(stringResource(R.string.library_sort_az), stringResource(R.string.library_sort_za))
     BrowseSort.YEAR -> sortDirectionOptions(stringResource(R.string.library_sort_oldest), stringResource(R.string.library_sort_newest))
+}
+
+/** First-frame list rows use the same artwork ratio, gutter, and spacing as BrowseList. */
+@Composable
+private fun FilteredBrowseLoadingList() {
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    val shape = RoundedCornerShape(10.dp)
+    LazyColumn(
+        allowUpExit = true,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(screenGutter(), 14.dp, screenGutter(), 36.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        userScrollEnabled = false,
+    ) {
+        items(12) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .58f), shape)
+                    .border(1.dp, Color.White.copy(alpha = .06f), shape)
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.width(166.dp).aspectRatio(16f / 9f).clip(shape)
+                    .then(Modifier.skeletonPulseAlpha(pulse)).background(fill, shape))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.fillMaxWidth(.65f).height(18.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    Box(Modifier.fillMaxWidth(.36f).height(12.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    Box(Modifier.fillMaxWidth(.88f).height(12.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                }
+            }
+        }
+    }
 }
 
 @Composable
