@@ -136,7 +136,7 @@ fun TelegramPlayerScreen(
                 title = stringResource(R.string.telegram_error),
                 body = failure ?: stringResource(R.string.settings_telegram_native_missing),
                 kind = if (failure == null) BrowseStatusKind.INFO else BrowseStatusKind.ERROR,
-                actionLabel = stringResource(R.string.action_back),
+                actionLabel = stringResource(R.string.back),
                 onAction = onBack,
             )
         } else {
