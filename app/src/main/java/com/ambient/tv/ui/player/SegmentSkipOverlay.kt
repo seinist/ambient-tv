@@ -37,9 +37,14 @@ internal fun SegmentSkipOverlay(
     val currentSeek by rememberUpdatedState(onSeek)
     val valid = snapshot.active && snapshot.metadata?.route == metadata.route && metadata.hasVideo && !metadata.isLive
     val position = snapshot.status.positionMs + metadata.timelineOffsetMs
+    fun mode(segment: com.ambient.tv.domain.model.PlaybackSegment): String = when (segment.type) {
+        "intro" -> metadata.introSkipMode
+        "credits" -> metadata.creditsSkipMode
+        "sponsor" -> if (metadata.sponsorSkipEnabled) "auto" else "off"
+        else -> "off"
+    }
     val segments = navigation.timeline.segments.filter {
-        (if (it.type == "intro") metadata.introSkipMode else metadata.creditsSkipMode) != "off" &&
-            (it.endMs >= 0 || onPlayNext != null)
+        mode(it) != "off" && (it.endMs >= 0 || onPlayNext != null)
     }
     val segment = policy.active(segments, position).takeIf { valid }
         ?.takeUnless { creditsHandledByNextUp && it.type == "credits" }
@@ -51,8 +56,18 @@ internal fun SegmentSkipOverlay(
             onPlayNext?.invoke(automatic)
             return
         }
-        currentSeek?.invoke(target.endMs)
-            ?: BackgroundPlaybackSession.seekTo((target.endMs - metadata.timelineOffsetMs).coerceAtLeast(0))
+        val duration = metadata.durationMs.takeIf { it > 0 }
+            ?: snapshot.status.durationMs.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs) ?: 0L
+        val terminal = duration > 0 && target.endMs >= duration - 750L
+        // A manual final-credits skip is an explicit Next request. Auto SponsorBlock must
+        // still respect Next Up / still-watching confirmation and never force that handoff.
+        if (terminal && !automatic && onPlayNext != null) {
+            onPlayNext.invoke(false)
+            return
+        }
+        val seekTarget = safeSegmentSkipTarget(target.endMs, position, duration) ?: return
+        currentSeek?.invoke(seekTarget)
+            ?: BackgroundPlaybackSession.seekTo((seekTarget - metadata.timelineOffsetMs).coerceAtLeast(0))
     }
     LaunchedEffect(mediaKey, valid, position, snapshot.status.playing, segments, metadata.introSkipMode, metadata.creditsSkipMode, canAutoAdvance, creditsHandledByNextUp) {
         if (valid) {
@@ -63,15 +78,16 @@ internal fun SegmentSkipOverlay(
                 val nextUpOwnsEnd = creditsHandledByNextUp && it == finalCredits &&
                     metadata.nextUpConfig.creditsDelaySeconds > 0 &&
                     metadata.nextUpConfig.autoplay && metadata.nextUpConfig.showOverlay
-                val mode = if (it.type == "intro") metadata.introSkipMode else metadata.creditsSkipMode
-                !nextUpOwnsEnd && mode == "auto" && (it.endMs >= 0 || canAutoAdvance)
+                !nextUpOwnsEnd && mode(it) == "auto" && (it.endMs >= 0 || canAutoAdvance)
             }
             policy.automaticTarget(automatic, position, snapshot.status.playing)?.let { skip(it, automatic = true) }
         }
     }
     // Leaving the segment re-arms the manual button, but never automatic skipping.
     LaunchedEffect(segment) { if (segment != dismissed) dismissed = null }
-    val visible = segment != null && segment != dismissed && !navigation.skipOverlayBlocked && !navigation.chaptersOpen && !nextUpVisible
+    // SponsorBlock is automatic and never exposes an incorrectly labeled credits button.
+    val visible = segment != null && segment.type != "sponsor" && segment != dismissed &&
+        !navigation.skipOverlayBlocked && !navigation.chaptersOpen && !nextUpVisible
     val restorePlayerFocus = !visible && focused
     LaunchedEffect(visible) {
         if (restorePlayerFocus && !nextUpVisible) {

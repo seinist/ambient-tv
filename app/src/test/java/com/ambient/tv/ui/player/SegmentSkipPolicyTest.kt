@@ -46,6 +46,23 @@ class SegmentSkipPolicyTest {
             intro.copy(endMs = 200_000), intro.copy(type = "commercial"), intro.copy(endMs = -1))
         assertEquals(listOf(intro, credits), normalizePlaybackSegments(invalid + credits + intro + intro, 100_000))
     }
+    @Test fun lastSegmentNeverSeeksToTheExactEndOrBackwards() {
+        assertEquals(98_500L, safeSegmentSkipTarget(100_000L, 80_000L, 100_000L))
+        assertEquals(99_000L, safeSegmentSkipTarget(99_000L, 80_000L, 100_000L))
+        assertNull(safeSegmentSkipTarget(100_000L, 99_300L, 100_000L))
+        assertNull(safeSegmentSkipTarget(-1L, 90_000L, 100_000L))
+        assertEquals(40_000L, safeSegmentSkipTarget(40_000L, 12_000L, 100_000L))
+    }
+
+    @Test fun sponsorSegmentsAreAutoHandledOncePerPlayback() {
+        val sponsor = PlaybackSegment("sponsor", 80_000L, 100_000L)
+        val policy = SegmentSkipPolicy()
+        assertNull(policy.automaticTarget(listOf(sponsor), 80_500L, false))
+        assertEquals(sponsor, policy.automaticTarget(listOf(sponsor), 80_500L, true))
+        assertNull(policy.automaticTarget(listOf(sponsor), 81_000L, true))
+        assertEquals(listOf(sponsor), normalizePlaybackSegments(listOf(sponsor), 100_000L))
+    }
+
     @Test fun embyMarkersPairWithoutRelyingOnChapterNames() {
         val segments = playbackSegmentsFromMarkers(listOf("IntroEnd" to 40_000L, "Chapter" to 0L,
             "IntroStart" to 10_000L, "CreditsStart" to 80_000L, "IntroStart" to 95_000L))

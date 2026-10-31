@@ -20,3 +20,20 @@ internal class SegmentSkipPolicy {
     }
     fun handled(segment: PlaybackSegment) { handled.add(segment) }
 }
+
+/**
+ * Seeking to the exact final DASH/HLS timestamp can leave YouTube/other decoders buffering
+ * forever without emitting EOF. Stop just short of the end so the renderer reaches EOF itself.
+ * A final segment shorter than this safety tail should simply play out, never seek backward.
+ */
+internal fun safeSegmentSkipTarget(endMs: Long, currentMs: Long, durationMs: Long): Long? {
+    if (endMs < 0) return null // Open-ended credits are handled by Next Up, not a seek.
+    if (durationMs <= 0 || endMs < durationMs - SEGMENT_END_PROXIMITY_MS) return endMs
+    val safe = (durationMs - SEGMENT_END_TAIL_MS).coerceAtLeast(0L)
+    return safe.takeIf { it > currentMs + SEGMENT_MIN_FORWARD_MS }
+}
+
+private const val SEGMENT_END_PROXIMITY_MS = 750L
+private const val SEGMENT_END_TAIL_MS = 1_500L
+private const val SEGMENT_MIN_FORWARD_MS = 250L
+
