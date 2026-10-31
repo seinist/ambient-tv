@@ -179,9 +179,10 @@ object SleepSession {
         userInput()
     }
 
-    /** "Stop now" in the prompt. */
+    /** "Stop now" in the prompt must perform the same timer-triggered standby as expiry. */
     fun stopNow() {
-        target?.sleepStop()
+        if (promptDeadline != null) stopForSleep()
+        else target?.sleepStop()
     }
 
     /** Once a second from the target's service loop. */
