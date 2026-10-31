@@ -393,6 +393,8 @@ internal data class LiveOsdModel(
     /** VLC: a short note about a track change, shown at the top of the OSD. */
     val message: String? = null,
 ) : com.ambient.tv.ui.player.PlayerOsdSpec {
+    override val sourceIdentity: String? get() = channel?.uuid
+
     @Composable
     override fun Content(visible: Boolean, panel: com.ambient.tv.ui.common.UnifiedPlayerPanel) {
         val seekFocusRequester = com.ambient.tv.ui.player.rememberPlayerSeekFocus()
