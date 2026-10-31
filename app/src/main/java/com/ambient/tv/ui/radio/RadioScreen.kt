@@ -186,7 +186,7 @@ fun RadioScreen(
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
     val initialContentId = remember(
-        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending,
+        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending, state.sortDescending,
     ) {
         if (requestedPagePending || !state.contentReady) null
         else radioInitialFocusId(
@@ -230,14 +230,14 @@ fun RadioScreen(
             else listState.firstVisibleItemIndex)?.let(::radioStationLetter)
     val showStationAlphabet = !showingFacets && stationLetters.size > 1 && !requestedPagePending
 
-    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
     if (!requestedPagePending && state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending) {
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending, state.sortDescending) {
         if (requestedPagePending || !state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
         if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
@@ -603,8 +603,19 @@ fun RadioScreen(
                             },
                             gridFocus = stationContentFocus,
                             onReturnToContent = {
-                                val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
-                                if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
+                                // A distant letter is not necessarily composed yet; scroll first,
+                                // then focus the exact matching sender instead of a nearby card.
+                                val targetIndex = state.stations.indexOfFirst { it.id == alphabetJumpTargetId }
+                                scrollScope.launch {
+                                    if (targetIndex >= 0) {
+                                        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(targetIndex)
+                                        else listState.scrollToItem(targetIndex)
+                                    }
+                                    val target = if (targetIndex >= 0) alphabetReturnRequester else initialFocusRequester
+                                    repeat(6) {
+                                        withFrameNanos { }
+                                        if (runCatching { target.requestFocus() }.getOrDefault(false)) return@launch
+                                    }
                                     runCatching { stationContentFocus.requestFocus() }
                                 }
                             },
