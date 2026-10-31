@@ -284,6 +284,7 @@ class SectionViewModel @Inject constructor(
     }
 
     fun setSortOrder(value: SectionSortOrder) {
+        selectedLetter = null
         preferences.setSectionSortOrder(stateKey(), value.name)
         rebuild()
     }
@@ -422,7 +423,7 @@ class SectionViewModel @Inject constructor(
         val applied = filters.copy(quality = quality, genre = genre, decade = decade, contentRating = contentRating)
 
         val sorted = applyLibraryViewOptions(sourceItems, sort, order, applied)
-        val letters = sorted.mapNotNull { libraryIndexLetter(it.title) }.distinct().sorted()
+        val letters = libraryAlphabetLetters(sorted)
         val rows = recommendationRows(sourceItems)
         val focusedRecommendationRow = (if (bufferedFocus != null) bufferedFocus.rowId else focusedRecommendationRowId ?: preferences.sectionFocusRow(stateKey()))
             ?.takeIf { rowId -> focused != null && rows.any { row -> row.id == rowId && row.items.any { focused in it.allRatingKeys } } }
