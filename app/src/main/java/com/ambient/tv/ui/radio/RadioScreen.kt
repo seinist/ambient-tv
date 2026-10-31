@@ -394,7 +394,8 @@ fun RadioScreen(
                     listRows = state.listRows,
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                 )
-                state.error && state.stations.isEmpty() && state.facets.isEmpty() -> Column(
+                state.error && !state.loading &&
+                    (if (showingFacets) state.facets.isEmpty() else state.stations.isEmpty()) -> Column(
                     Modifier.fillMaxWidth().pageContentUp(focusChain).focusGroup(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -408,7 +409,7 @@ fun RadioScreen(
                         onClick = viewModel::refresh,
                     )
                 }
-                showingFacets && state.facets.isEmpty() -> StatePanel(
+                showingFacets && state.facets.isEmpty() && state.contentReady -> StatePanel(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -468,7 +469,7 @@ fun RadioScreen(
                         )
                     }
                 }
-                state.stations.isEmpty() -> StatePanel(
+                state.stations.isEmpty() && state.contentReady -> StatePanel(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
