@@ -17,6 +17,7 @@ import javax.inject.Provider
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.di.SharedOkHttp
 import com.ambient.tv.network.MediaImageAuthInterceptor
+import com.ambient.tv.network.MediaArtworkDiskCacheInterceptor
 import com.ambient.tv.spotify.SpotifyRepository
 import com.ambient.tv.ui.UiLocaleContext
 import com.ambient.tv.connectivity.ResumeConnectivityMonitor
@@ -40,6 +41,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
     @Inject lateinit var dlnaRenderer: com.ambient.tv.renderer.DlnaRenderer
     @Inject lateinit var youTubeTvLink: com.ambient.tv.youtube.YouTubeTvLink
     @Inject lateinit var mediaImageAuthInterceptor: MediaImageAuthInterceptor
+    @Inject lateinit var mediaArtworkDiskCacheInterceptor: MediaArtworkDiskCacheInterceptor
     @Inject lateinit var performanceProfileResolver: PerformanceProfileResolver
     @Inject @SharedOkHttp lateinit var sharedConnectionPool: ConnectionPool
     @Inject @SharedOkHttp lateinit var sharedDispatcher: Dispatcher
@@ -83,6 +85,7 @@ class AmbientTvApplication : Application(), coil3.SingletonImageLoader.Factory {
             .allowRgb565(lowRam || performanceProfileResolver.current().constrainImageDecodeSize)
             .components {
                 // Coil 3 has no built-in network loading; the shared client keeps auth headers.
+                add(mediaArtworkDiskCacheInterceptor)
                 add(OkHttpNetworkFetcherFactory(callFactory = { imageClient }))
                 add(com.ambient.tv.data.photos.FileImageKeyer())
                 add(com.ambient.tv.data.photos.FileImageFetcher.Factory { filesPhotoSource.get() })

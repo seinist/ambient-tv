@@ -23,3 +23,20 @@ internal fun mergePartialHomeRows(
     // First load remains progressive; absent/empty rows are reconciled by the final publication.
     return updated + incoming.filterNot { it.id in currentIds }
 }
+
+/**
+ * Hydrated media rows may arrive after independent Radio/SmartTube/Photo rows already
+ * published a Loaded state. Merge by stable row id instead of skipping disk hydration.
+ * The visible row wins if a newer network response already supplied the same id.
+ */
+internal fun mergeColdStartHomeRows(
+    visible: List<ContentRowData>,
+    restored: List<ContentRowData>,
+): List<ContentRowData> {
+    val visibleIds = visible.mapTo(HashSet()) { it.id }
+    return restored.filterNot { it.id in visibleIds } + visible
+}
+
+/** Server reachability controls playback, but not cached Plex/Jellyfin/Emby posters. */
+internal fun homeRowHiddenByOffline(system: String, offline: Set<String>): Boolean =
+    system in offline && system !in setOf("plex", "jellyfin", "emby")

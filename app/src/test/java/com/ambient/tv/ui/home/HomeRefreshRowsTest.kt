@@ -40,4 +40,29 @@ class HomeRefreshRowsTest {
         val old = listOf(row("plex.continue", "old"), row("emby.recentlyAddedMovies", "old"))
         assertEquals(old, mergePartialHomeRows(old, emptyList(), "plex", false, false))
     }
+
+    @Test
+    fun coldStartHydrationMergesEvenWhenIndependentRowWasFirst() {
+        val cached = listOf(row("plex.recentlyAddedMovies", "cached"), row("jellyfin.continue", "cached"))
+        val radio = row("radio.favorites", "already visible")
+        assertEquals(cached + radio, mergeColdStartHomeRows(listOf(radio), cached))
+    }
+
+    @Test
+    fun newerOnScreenDataWinsOverStaleDiskRowWithSameId() {
+        val old = row("plex.recentlyAddedMovies", "cached")
+        val fresh = row("plex.recentlyAddedMovies", "new from server")
+        val independent = row("youtube.home", "already visible")
+        assertEquals(listOf(independent, fresh),
+            mergeColdStartHomeRows(listOf(independent, fresh), listOf(old)))
+    }
+
+    @Test
+    fun offlineServersRetainCachedPostersButNotLiveTvHomeRows() {
+        for (provider in listOf("plex", "jellyfin", "emby")) {
+            assertEquals(false, homeRowHiddenByOffline(provider, setOf(provider)))
+        }
+        assertEquals(true, homeRowHiddenByOffline("tvheadend", setOf("tvheadend")))
+        assertEquals(false, homeRowHiddenByOffline("tvheadend", emptySet()))
+    }
 }

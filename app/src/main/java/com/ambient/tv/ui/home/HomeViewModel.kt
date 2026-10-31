@@ -178,6 +178,7 @@ class HomeViewModel @Inject constructor(
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
+    private val homeRowSnapshots: HomeRowSnapshots,
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
     private val youtubePlaybackContext: YouTubeBrowsePlaybackContext,
@@ -552,7 +553,13 @@ class HomeViewModel @Inject constructor(
         _refreshing.value = true
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
-            if (_uiState.value !is HomeUiState.Loaded) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cachedRows() }?.let { libraryLoading = false; publishRows(it) }
+            // Independent providers may have published a Loaded state while the disk was read.
+            // Always merge restored media rows; never make hydration depend on who won first.
+            val restored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cachedRows() }.orEmpty()
+            if (restored.isNotEmpty() && generation == loadGeneration) {
+                val visible = (_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty()
+                publishRows(sortCombinedRows(mergeColdStartHomeRows(visible, restored)))
+            }
 
             if (!availability.hasNetwork()) {
                 failOrContinue(HomeUiState.Offline(activeServerName()))
@@ -668,7 +675,9 @@ class HomeViewModel @Inject constructor(
      */
     private fun failOrContinue(failure: HomeUiState) {
         val loaded = _uiState.value as? HomeUiState.Loaded
-        if (loaded != null && !loaded.onlyTrailers()) return
+        // An offline media server must not replace already visible cached Home feeds.
+        // Its reconnect entry is still appended to the existing independent rows.
+        if (loaded != null && loaded.rowKeys.isNotEmpty()) return
         unreachableServers.refresh()
         val now = unreachableServers.current()
         if (now.canDismiss || now.offline.isNotEmpty()) publishRows(emptyList())
@@ -1337,17 +1346,22 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 youtubeCacheRevision = restoredRevision
-                val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(emptySet())
+                // Publish this account's cached Home feeds before service discovery/network
+                // checks. Otherwise another provider fills Home while these rows remain missing.
+                definitions.forEach { definition ->
+                    homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
+                        ?.let { updateHomeYouTubeRow(generation, definition, it) }
+                }
+                val supportedResult = suspendResult { smartTubeEngine.supportedFeedKeys() }
+                // If the probe failed (rather than reporting an explicit signed-out state),
+                // retain the cached feeds and retry later; do not erase them as "unsupported".
+                val supported = supportedResult.getOrElse { definitions.mapTo(hashSetOf()) { it.contentKey } }
                 if (generation != youtubeRowsGeneration) return@launch
                 val available = definitions.filter { it.contentKey in supported }
                 val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
                 youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in supportedKeys }
                 youtubeSourceRows.keys.retainAll(supportedKeys)
                 val revision = youtubeContentCache.revision()
-                available.forEach { definition ->
-                    val stored = homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
-                    if (stored != null) updateHomeYouTubeRow(generation, definition, stored)
-                }
                 // Two feeds at a time; never fetch every Home feed or every item eagerly.
                 val permits = Semaphore(2)
                 coroutineScope {
@@ -1392,6 +1406,18 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Local favorites/recents do not depend on Radio Browser's public API. */
+    private fun radioHomeRow(definition: HomeRowDefinition, stations: List<RadioStation>): ContentRowData? =
+        stations.take(HOME_ROW_LIMIT).takeIf { it.isNotEmpty() }?.let { entries ->
+            ContentRowData(
+                title = definition.displayTitle(context),
+                items = entries.map { it.toHomeItem() },
+                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                id = "radio.${definition.contentKey}",
+                showDescription = false,
+            )
+        }
+
     private fun loadRadioRows() {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -1400,20 +1426,14 @@ class HomeViewModel @Inject constructor(
             radioRows = emptyList()
             return
         }
-        val definitions = appPreferences.homeRows
-            .filter { row ->
-                row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
-                    (row.contentKey in setOf(
-                        "home",
-                        HomeRowDefinition.RADIO_POPULAR,
-                        HomeRowDefinition.RADIO_FAVORITES,
-                        HomeRowDefinition.RADIO_RECENT,
-                    ) || row.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ||
-                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ||
-                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:"))
-            }
-            .distinctBy { it.contentKey.lowercase() }
-
+        val definitions = appPreferences.homeRows.filter { row ->
+            row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
+                (row.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR,
+                    HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT) ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:"))
+        }.distinctBy { it.contentKey.lowercase() }
         val enabledIds = definitions.mapTo(hashSetOf()) { "radio.${it.contentKey}" }
         radioRows = radioRows.filter { it.id in enabledIds }
         if (definitions.isEmpty()) {
@@ -1424,52 +1444,62 @@ class HomeViewModel @Inject constructor(
         radioRowsPending = true
         radioJob = viewModelScope.launch {
             try {
-            val built = coroutineScope {
-                definitions.map { definition ->
-                    async {
-                        val stations = when {
-                            definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
-                                suspendResult { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
-                            definition.contentKey == HomeRowDefinition.RADIO_FAVORITES ->
-                                appPreferences.radioFavorites.take(HOME_ROW_LIMIT)
-                            definition.contentKey == HomeRowDefinition.RADIO_RECENT ->
-                                appPreferences.recentRadioStations.take(HOME_ROW_LIMIT)
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        tag = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        countryCode = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        language = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            else -> emptyList()
-                        }
-                        stations.takeIf { it.isNotEmpty() }?.let { entries ->
-                            ContentRowData(
-                                title = definition.displayTitle(context),
-                                items = entries.map { it.toHomeItem() },
-                                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
-                                id = "radio.${definition.contentKey}",
-                                showDescription = false,
-                            )
-                        }
+                val cached = suspendResult { homeRowSnapshots.read("radio", enabledIds) }.getOrDefault(emptyList())
+                if (generation != radioRowsGeneration) return@launch
+                val lastRows = (cached + radioRows).associateBy { it.id }
+                radioRows = definitions.mapNotNull { definition ->
+                    lastRows["radio.${definition.contentKey}"]?.copy(
+                        title = definition.displayTitle(context),
+                        style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                    )
+                }
+                // Put locally stored stations on screen immediately, without waiting for
+                // the popular/genre/country/language network calls.
+                definitions.filter { it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT) }
+                    .forEach { definition ->
+                        val id = "radio.${definition.contentKey}"
+                        val entries = if (definition.contentKey == HomeRowDefinition.RADIO_FAVORITES)
+                            appPreferences.radioFavorites else appPreferences.recentRadioStations
+                        val row = radioHomeRow(definition, entries)
+                        radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
+                        homeRowSnapshots.save("radio", id, row)
                     }
-                }.awaitAll().filterNotNull()
-            }
-            if (generation == radioRowsGeneration) radioRows = built
+                if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+
+                // Coalesce the independent API replies into one Home publish. A dozen
+                // filter rows must not repeatedly rebuild the Home focus/layout tree.
+                val updates = coroutineScope {
+                    definitions.filterNot {
+                        it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT)
+                    }.map { definition -> async {
+                        val result = suspendResult {
+                            when {
+                                definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
+                                    radioRepository.popular(HOME_ROW_LIMIT)
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
+                                    radioRepository.search(tag = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
+                                    radioRepository.search(countryCode = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
+                                    radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                else -> emptyList()
+                            }
+                        }
+                        if (result.isFailure) null
+                        else "radio.${definition.contentKey}" to radioHomeRow(definition, result.getOrThrow())
+                    } }.awaitAll().filterNotNull()
+                }
+                if (generation == radioRowsGeneration && updates.isNotEmpty()) {
+                    updates.forEach { (id, row) ->
+                        // A failure retains its previous snapshot; a successful empty result
+                        // records a tombstone so deleted feeds do not reappear on cold start.
+                        homeRowSnapshots.save("radio", id, row)
+                        radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
+                    }
+                    if (!_uiState.value.isFailurePage()) {
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                    }
+                }
             } finally {
                 if (generation == radioRowsGeneration) {
                     radioRowsPending = false
@@ -1536,27 +1566,46 @@ class HomeViewModel @Inject constructor(
         trailerRowsPending = true
         trailerJob = viewModelScope.launch {
             try {
-            val locale = context.resources.configuration.locales[0]
-            for (definition in definitions) {
-                val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
-                val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-                val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                val cached = suspendResult { homeRowSnapshots.read("trailers", enabledIds) }.getOrDefault(emptyList())
                 if (generation != trailerRowsGeneration) return@launch
-                if (result.isFailure) continue
-                val entries = result.getOrThrow()
-                trailerRows = trailerRows.filterNot { it.id == "trailers.${feed.name}" }
-                if (entries.isNotEmpty()) trailerRows = trailerRows + ContentRowData(
-                    title = definition.displayTitle(context),
-                    items = entries.distinctBy { it.videos.first().key }.map { entry ->
-                        MediaItem(ratingKey = "trailer-video:${entry.videos.first().key}", title = entry.title.displayTitle,
-                            type = "trailer", index = null, thumbUrl = entry.title.posterUrl ?: entry.title.imageUrl, artUrl = entry.title.imageUrl,
-                            year = entry.title.year, summary = entry.title.overview, tagline = null, durationMs = null,
-                            viewOffsetMs = null, parentTitle = null, parentRatingKey = null, grandparentTitle = null,
-                            grandparentRatingKey = null, contentRating = null, rating = null, studio = "TMDB")
-                    }, style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE), id = "trailers.${feed.name}", showDescription = false)
-                // Trailers are an extra row: they must not cover an offline or error page.
-                if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
-            }
+                val lastRows = (cached + trailerRows).associateBy { it.id }
+                trailerRows = definitions.mapNotNull { definition ->
+                    lastRows["trailers.${definition.contentKey}"]?.copy(
+                        title = definition.displayTitle(context),
+                        style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE),
+                    )
+                }
+                if (!_uiState.value.isFailurePage()) {
+                    publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
+                val locale = context.resources.configuration.locales[0]
+                for (definition in definitions) {
+                    val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
+                    val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
+                    val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    if (generation != trailerRowsGeneration) return@launch
+                    if (result.isFailure) continue
+                    val entries = result.getOrThrow()
+                    val id = "trailers.${feed.name}"
+                    val row = entries.takeIf { it.isNotEmpty() }?.let { hits ->
+                        ContentRowData(
+                            title = definition.displayTitle(context),
+                            items = hits.distinctBy { it.videos.first().key }.map { entry ->
+                                MediaItem(ratingKey = "trailer-video:${entry.videos.first().key}", title = entry.title.displayTitle,
+                                    type = "trailer", index = null, thumbUrl = entry.title.posterUrl ?: entry.title.imageUrl, artUrl = entry.title.imageUrl,
+                                    year = entry.title.year, summary = entry.title.overview, tagline = null, durationMs = null,
+                                    viewOffsetMs = null, parentTitle = null, parentRatingKey = null, grandparentTitle = null,
+                                    grandparentRatingKey = null, contentRating = null, rating = null, studio = "TMDB")
+                            },
+                            style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE),
+                            id = id,
+                            showDescription = false,
+                        )
+                    }
+                    homeRowSnapshots.save("trailers", id, row)
+                    trailerRows = trailerRows.filterNot { it.id == id } + listOfNotNull(row)
+                    if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
             } finally {
                 if (generation == trailerRowsGeneration) {
                     trailerRowsPending = false
@@ -1568,12 +1617,12 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    private fun HomeUiState.isFailurePage() =
-        this is HomeUiState.Offline || this is HomeUiState.Error || this is HomeUiState.WakeTimedOut
-
-    /** Loaded only with trailer rows: no server content yet, so a server failure still shows. */
-    private fun HomeUiState.Loaded.onlyTrailers() = rows.isNotEmpty() && rows.all { it.id.startsWith("trailers.") } &&
-        liveTvItems.isEmpty() && recentTvItems.isEmpty() && tvRows.isEmpty()
+    private fun HomeUiState.isFailurePage(): Boolean {
+        val failure = this is HomeUiState.Offline || this is HomeUiState.Error || this is HomeUiState.WakeTimedOut
+        // A cached independent feed can recover Home from a media-server error page,
+        // without making that server appear online or hiding its wake/reconnect entry.
+        return failure && radioRows.isEmpty() && youtubeRows.isEmpty() && trailerRows.isEmpty() && photoRow == null
+    }
 
     private fun com.ambient.tv.data.photos.PhotoEntry.toHomeItem() = MediaItem(
         ratingKey = com.ambient.tv.ui.photos.PhotoLaunch.HOME_PREFIX + id,
@@ -1636,8 +1685,8 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Adds (or refreshes) the cross-system continue row: every server's in-progress titles in one
-     * row, most recently watched first, the same title from two servers once. Servers hidden as
-     * unreachable are left out; until a server answered, its cached list stands in.
+     * row, most recently watched first, the same title from two servers once. Offline media
+     * servers retain their cached lists until a verified fresh answer replaces them.
      */
     private fun withAllContinueRow(rows: List<ContentRowData>): List<ContentRowData> {
         val others = rows.filterNot { it.id == ALL_CONTINUE_ROW_ID }
@@ -1648,7 +1697,7 @@ class HomeViewModel @Inject constructor(
             HomeRowDefinition.SYSTEM_EMBY to embyRepository,
         ).filter { (system, _) -> system in appPreferences.allContinueSystems && homeSystemActive(system) }
         val items = sources.flatMap { (system, repository) ->
-            // The cached list only while that server's own rows are on screen (not when offline).
+            // Use the cached list only if the server has visible rows, even while it sleeps.
             continueBySystem[system]
                 ?: if (rows.any { it.id.startsWith("$system.") }) runCatching { repository.cachedOnDeck() }.getOrNull().orEmpty() else emptyList()
         }
@@ -1826,7 +1875,9 @@ class HomeViewModel @Inject constructor(
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
-            loading = (libraryLoading && previous?.loading != false) || homeAwaitingFirstResults(
+            // Rows restored from disk are usable during a wake: only an entirely empty
+            // Home stays in the skeleton state while providers have not answered.
+            loading = homeAwaitingFirstResults(
                 hasVisibleRows = rowKeys.isNotEmpty(),
                 libraryPending = libraryLoading,
                 radioPending = radioRowsPending,
@@ -1972,14 +2023,12 @@ class HomeViewModel @Inject constructor(
         else -> null
     }
 
-    private fun homeRowHidden(id: String): Boolean {
-        val hidden = unreachableServers.current().offline
-        if (hidden.isEmpty()) return false
-        return id.substringBefore('.') in hidden
-    }
+    private fun homeRowHidden(id: String): Boolean =
+        homeRowHiddenByOffline(id.substringBefore('.'), unreachableServers.current().offline)
 
     private fun homeSystemActive(system: String): Boolean {
-        if (system in unreachableServers.current().offline) return false
+        // Live TV still uses homeTvSourceVisible: only its explicit Online status enables cards.
+        if (homeRowHiddenByOffline(system, unreachableServers.current().offline)) return false
         return homeSystemReady(
         system,
         plexReady = plexOnly || appPreferences.isConfigured,

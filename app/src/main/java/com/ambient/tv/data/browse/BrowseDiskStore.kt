@@ -32,7 +32,14 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
     init {
         scope.launch {
             for (ignored in signal) {
-                delay(1_500)
+                // Debounce foreground writes so UI/rendering stay responsive. If the app
+                // backgrounds during the debounce, flush queued Home snapshots promptly
+                // before Android has a chance to reclaim this process.
+                var waitedMs = 0L
+                while (BrowseWorkBudget.foreground && waitedMs < 1_500L) {
+                    delay(250)
+                    waitedMs += 250
+                }
                 while (BrowseWorkBudget.foreground && !BrowseWorkBudget.idle()) delay(500)
                 while (true) {
                     val next = synchronized(pending) {
