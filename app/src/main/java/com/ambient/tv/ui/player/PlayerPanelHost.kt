@@ -137,6 +137,10 @@ internal fun PublishPlayerPanelKeys(handler: (KeyEvent) -> Boolean) {
     DisposableEffect(chrome) { onDispose { chrome.panelKeys.value = null } }
 }
 
+/** Reject an outgoing player's model until it describes the active channel. */
+internal fun playerOsdIdentityMatches(modelIdentity: String?, expectedIdentity: String?): Boolean =
+    expectedIdentity == null || modelIdentity == expectedIdentity
+
 /**
  * Draws the OSD and the panel of the active engine above it; place after the engine's content.
  * Both stay composed while the engine underneath is replaced (renderer switch).
@@ -172,7 +176,7 @@ internal fun PersistentPlayerOverlays(
             // An outgoing engine may keep its old OSD model for one composition frame.
             // Never paint it for the incoming live station while the renderer is replaced.
             val activeModel = chrome.osdModel.value?.takeIf { model ->
-                expectedSourceIdentity == null || model.sourceIdentity == expectedSourceIdentity
+                playerOsdIdentityMatches(model.sourceIdentity, expectedSourceIdentity)
             }
             if (!hideSourceInfo) {
                 activeModel?.Content(chrome.visible.value, navigation.panel)
