@@ -51,7 +51,7 @@ class RightPanelOverlayBackTest {
                 }
             }
         }
-        rule.mainClock.advanceTimeBy(PLAYER_PANEL_ENTER_MS + 80)
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_ENTER_MS + 80L)
         rule.waitForIdle()
         rule.runOnIdle {
             rule.activity.onBackPressedDispatcher.onBackPressed()
@@ -60,7 +60,7 @@ class RightPanelOverlayBackTest {
             assertEquals(0, drawerClosed.get())
             assertEquals(0, pageBack.get())
         }
-        rule.mainClock.advanceTimeBy(PLAYER_PANEL_EXIT_MS + 80)
+        rule.mainClock.advanceTimeBy(PLAYER_PANEL_EXIT_MS + 80L)
         rule.waitForIdle()
         rule.runOnIdle {
             assertEquals(1, drawerClosed.get())
