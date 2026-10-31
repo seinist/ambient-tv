@@ -213,6 +213,21 @@ fun HomeScreen(
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }
+    var restoreOverviewOptionsFocus by remember { mutableStateOf(false) }
+    // The Back button returns only after the outgoing right drawer finishes its slide.
+    // Requesting focus synchronously inside onClose still targets the covered header.
+    LaunchedEffect(showOverviewOptions, restoreOverviewOptionsFocus) {
+        if (!showOverviewOptions && restoreOverviewOptionsFocus) {
+            repeat(8) {
+                androidx.compose.runtime.withFrameNanos { }
+                if (runCatching { overviewOptionsFocus.requestFocus() }.getOrDefault(false)) {
+                    restoreOverviewOptionsFocus = false
+                    return@LaunchedEffect
+                }
+            }
+            restoreOverviewOptionsFocus = false
+        }
+    }
     if (onBack != null) {
         BackHandler(enabled = !showOverviewOptions) {
             viewModel.captureFocusForReturn()
@@ -290,7 +305,7 @@ fun HomeScreen(
                     viewModel.captureFocusForReturn()
                     onOpenAppHome()
                 },
-                onOpenOptions = { showOverviewOptions = true },
+                onOpenOptions = { restoreOverviewOptionsFocus = true; showOverviewOptions = true },
                 onRefresh = viewModel::reload,
                 refreshing = refreshing,
                 optionsModifier = Modifier.focusRequester(overviewOptionsFocus),
@@ -377,10 +392,7 @@ fun HomeScreen(
                     listRows = 6,
                     onGridColumns = { _ -> },
                     onListRows = { _ -> },
-                    onClose = {
-                        showOverviewOptions = false
-                        runCatching { overviewOptionsFocus.requestFocus() }
-                    },
+                    onClose = { showOverviewOptions = false },
                 )
             }
             }
