@@ -70,6 +70,11 @@ fun TelegramScreen(
     val canonical = sectionKey.takeIf { key -> sections.any { it.first == key } } ?: "recent"
     var lastKey by rememberSaveable(sectionKey) { mutableStateOf<String?>(null) }
     LaunchedEffect(sectionKey) { viewModel.open(sectionKey) }
+    // Menu -> content handoff waits for this category, not a stale prior category.
+    // An empty/error panel is ready once the initial request has finished.
+    com.ambient.tv.ui.navigation.ReportSidebarContentReady(
+        state.section == sectionKey && (!state.loading || state.rows.isNotEmpty()),
+    )
     Column(
         Modifier.fillMaxSize().handheldSwipeTabs(
             tabs = sections.map { it.first }, selected = canonical, onSelect = onSelectSection,
