@@ -14,3 +14,12 @@ internal fun homeTvSourceVisible(
     val system = sourceId.substringBefore(':')
     return system !in offlineSystems && (system != "tvheadend" || tvheadendOnline)
 }
+
+/** Publish an empty Android TV launcher channel only after all enabled sources are known down. */
+internal fun allHomeTvSourcesOffline(
+    systems: List<String>,
+    offlineSystems: Set<String>,
+    tvheadendFailed: Boolean,
+): Boolean = systems.isNotEmpty() && systems.all { system ->
+    system in offlineSystems || (system == "tvheadend" && tvheadendFailed)
+}
