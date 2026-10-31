@@ -107,7 +107,10 @@ class ServerConnectionManager @Inject constructor(
     suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
         if (connectRun.active) return@withContext false
         connectionMutex.withLock {
-            if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.hasPlexEndpoint) return@withLock false
+            // A passive probe must also run for a normally unpaused offline server.
+            // A dismissed wake remains dismissed: only a confirmed service response clears it.
+            if (!preferences.hasPlexEndpoint || (!force && _state.value is ServerConnectionState.Online &&
+                    hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE)) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
