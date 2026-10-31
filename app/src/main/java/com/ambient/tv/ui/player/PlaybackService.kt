@@ -70,7 +70,7 @@ class PlaybackService : MediaBrowserService() {
     @Inject lateinit var launcher: com.ambient.tv.launcher.LauncherPublisher
     @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
     @Inject lateinit var radioQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
-    @Inject lateinit var carCatalog: CarAudioCatalog
+    @Inject internal lateinit var carCatalog: CarAudioCatalog
     @Inject lateinit var spotify: SpotifyRepository
     private var carPlaybackJob: Job? = null
     private var carSpotifySelected = false
