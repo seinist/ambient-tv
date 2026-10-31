@@ -24,10 +24,10 @@ class YouTubeViewportPagingTest {
 
     @Test fun allSmartTubePresentationModesObserveTouchViewport() {
         val file = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt").readText()
-        assertEquals(1, Regex("ObserveYouTubeListViewport\\(rowId, rowState\\)").findAll(file).count())
+        assertEquals(2, Regex("ObserveYouTubeListViewport\\(rowId, rowState\\)").findAll(file).count())
         assertEquals(1, Regex("ObserveYouTubeGridViewport\\(null, gridState\\)").findAll(
             file.substringAfter("private fun LandscapeGrid(").substringBefore("private fun ListMode(")).count())
         assertEquals(2, Regex("youtubeViewportItemKeys\\(rows,").findAll(file).count())
-        assertEquals(2, Regex("ObserveYouTubeListViewport\\(null, rowState\\)").findAll(file).count())
+        assertEquals(1, Regex("ObserveYouTubeListViewport\\(null, rowState\\)").findAll(file).count())
     }
 }
