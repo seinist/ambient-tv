@@ -42,5 +42,6 @@ fun BrowseStatusPanel(
         modifier = modifier,
         icon = icon,
         centered = true,
+        phase = if (kind == BrowseStatusKind.ERROR) com.ambient.tv.notifications.FeedbackPhase.ERROR else null,
     )
 }
