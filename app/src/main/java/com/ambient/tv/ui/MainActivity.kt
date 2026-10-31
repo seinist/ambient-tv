@@ -174,6 +174,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
     @Inject lateinit var radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher
+    @Inject lateinit var radioPlaybackQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     @Inject lateinit var playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability
     @Inject lateinit var dlnaStore: com.ambient.tv.data.dlna.DlnaStore
     @Inject lateinit var liveTvBrowseRegistry: javax.inject.Provider<com.ambient.tv.livetv.LiveTvRegistry>
@@ -332,6 +333,8 @@ open class MainActivity : ComponentActivity() {
     /** All browse positions belong to the UI session, including stores held by background services. */
     private fun resetBrowseSessionPositions() {
         appPreferences.clearSessionFocus()
+        com.ambient.tv.ui.radio.RadioFocusMemory.clear()
+        radioPlaybackQueue.clearReturnFocus()
         com.ambient.tv.ui.detail.DetailFocusSessions.clear()
         liveTvBrowseRegistry.get().clearBrowsePositions()
         com.ambient.tv.livetv.LiveTvReturnFocus.clear()

@@ -266,8 +266,9 @@ private fun SpotifyHomeSkeleton() {
             Column(Modifier.width(deviceDp(190.dp, 160.dp)).padding(10.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.62f)))
                 Box(Modifier.fillMaxWidth(.76f).height(14.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.55f), RoundedCornerShape(999.dp)))
+                // SpotifyTile has no separate 44 dp action button: that old fake button made
+                // every placeholder noticeably taller than the tile after its first load.
                 Box(Modifier.fillMaxWidth(.52f).height(11.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.42f), RoundedCornerShape(999.dp)))
-                Box(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.48f), RoundedCornerShape(10.dp)))
             }
         }
     }

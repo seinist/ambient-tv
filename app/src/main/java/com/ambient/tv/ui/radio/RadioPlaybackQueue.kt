@@ -50,6 +50,11 @@ class RadioPlaybackQueue @Inject constructor() {
 
     fun snapshot(): State = state
 
+    /** Keep the playing radio queue, but do not restore an old player-return selection on cold UI start. */
+    @Synchronized fun clearReturnFocus() {
+        if (state.returnPending) state = state.copy(returnPending = false)
+    }
+
     /** Append one API page without replacing the running queue or changing its current UUID. */
     @Synchronized
     fun appendPage(source: RadioBrowseQueueSource, page: RadioSearchPage): Boolean {

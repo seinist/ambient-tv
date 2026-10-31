@@ -17,8 +17,9 @@ class HomeLoadingRowsTest {
             listOf(MediaTileStyle.LANDSCAPE, MediaTileStyle.LANDSCAPE, MediaTileStyle.POSTER),
             homeLoadingRowStyles(rows),
         )
+        // An overview owns its own default rows, even when they were not added to Home.
         assertEquals(
-            listOf(MediaTileStyle.LANDSCAPE),
+            listOf(MediaTileStyle.POSTER, MediaTileStyle.LANDSCAPE, MediaTileStyle.POSTER),
             homeLoadingRowStyles(rows, overviewSystem = "plex"),
         )
     }
@@ -26,6 +27,21 @@ class HomeLoadingRowsTest {
     @Test fun unknownRowsUseUnscaledPosterDefaults() {
         assertEquals(List(3) { MediaTileStyle.POSTER }, homeLoadingRowStyles(emptyList()))
         assertEquals(List(3) { MediaTileStyle.POSTER }, homeLoadingRowStyles(emptyList(), overviewSystem = "emby"))
+    }
+
+    @Test fun systemOverviewSkeletonUsesItsOwnLandscapeSetting() {
+        assertEquals(
+            listOf(MediaTileStyle.CONTINUE, MediaTileStyle.LANDSCAPE, MediaTileStyle.LANDSCAPE),
+            homeLoadingRowStyles(emptyList(), overviewSystem = "plex", overviewPageMode = HomeRowDefinition.DISPLAY_LANDSCAPE),
+        )
+    }
+
+    @Test fun hiddenSystemRowsDoNotGetSkeletons() {
+        val rows = listOf(HomeRowDefinition(id = "recent", system = "plex", contentKey = "recent", displayMode = "landscape"))
+        assertEquals(
+            listOf(MediaTileStyle.LANDSCAPE, MediaTileStyle.POSTER, MediaTileStyle.POSTER),
+            homeLoadingRowStyles(rows, overviewSystem = "plex", systemHomeHiddenRows = setOf("plex.continue")),
+        )
     }
 
     @Test fun atMostThreeVisibleSkeletonRowsArePrepared() {

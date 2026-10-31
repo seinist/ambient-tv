@@ -32,6 +32,15 @@ class RadioFocusPolicyTest {
         assertEquals("focused-station", radioInitialFocusId(RadioFocusMemory.last(scope), null, visible + "focused-station"))
     }
 
+    @Test fun newUiSessionDropsSavedRadioTilesEvenIfTheServiceKeepsTheProcessAlive() {
+        val scope = RadioFocusScope(RadioSection.POPULAR, null, "")
+        RadioFocusMemory.save(scope, "previous-session")
+        assertEquals("previous-session", RadioFocusMemory.last(scope))
+        RadioFocusMemory.clear()
+        assertNull(RadioFocusMemory.last(scope))
+        assertEquals("station-a", radioInitialFocusId(RadioFocusMemory.last(scope), null, visible))
+    }
+
     @Test fun focusScopeDistinguishesFacetAndSearchFromCategory() {
         val categories = RadioUiState(section = RadioSection.GENRES).focusScope()
         val nested = RadioUiState(
