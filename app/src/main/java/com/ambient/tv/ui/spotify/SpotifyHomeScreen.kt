@@ -155,22 +155,32 @@ fun SpotifyHomeScreen(
         if (!state.nativeAvailable) {
             Text(stringResource(R.string.spotify_native_missing), color = MaterialTheme.colorScheme.error)
         }
-        state.errorRes?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
-        state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        val browseError = state.errorRes?.let { stringResource(it) } ?: state.error
+        // Keep refresh failures as a small banner only when cached tiles remain visible.
+        if (state.items.isNotEmpty()) browseError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
         when {
             state.awaitingInitialContent(expectedSectionKey) -> SpotifyHomeSkeleton()
-            !state.webAuthorized && state.error == null && state.errorRes == null -> {
-                com.ambient.tv.ui.common.StatePanel(
+            !state.webAuthorized -> {
+                com.ambient.tv.ui.common.BrowseStatusPanel(
                     title = stringResource(R.string.spotify_error_not_authorized_settings),
+                    kind = com.ambient.tv.ui.common.BrowseStatusKind.INFO,
                     actionLabel = stringResource(R.string.action_sign_in),
                     onAction = viewModel::login,
-                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            browseError != null && state.items.isEmpty() -> {
+                com.ambient.tv.ui.common.BrowseStatusPanel(
+                    title = browseError,
+                    kind = com.ambient.tv.ui.common.BrowseStatusKind.ERROR,
+                    actionLabel = stringResource(R.string.action_reload),
+                    onAction = viewModel::reload,
                 )
             }
             state.canConfirmEmptySection(expectedSectionKey) -> {
-                com.ambient.tv.ui.common.StatePanel(
+                com.ambient.tv.ui.common.BrowseStatusPanel(
                     title = com.ambient.tv.ui.common.systemString(com.ambient.tv.ui.common.MediaSystem.SPOTIFY, R.string.spotify_empty),
-                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             else -> LazyVerticalGrid(columns = GridCells.Adaptive(deviceDp(190.dp, 144.dp)), modifier = Modifier.fillMaxSize().overlayLazyGridScrollbar(gridState).pageContentUp(focusChain).focusGroup(), state = gridState, contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
