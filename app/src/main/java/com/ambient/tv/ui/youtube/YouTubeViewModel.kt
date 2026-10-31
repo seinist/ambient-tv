@@ -85,6 +85,13 @@ class YouTubeViewModel @Inject constructor(
 ) : ViewModel() {
     /** Set on the channel page route: the screen shows that channel instead of a feed. */
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
+    // Render the requested destination from its first frame; no brief Home chip focus.
+    private val entryFeed = initialYouTubeBrowseFeed(
+        savedStateHandle.get<String>("feedKey"),
+        preferences.youtubeStartFeedKey,
+        preferences.youtubeFeedKeys,
+        channelId != null,
+    )
     // All channel pages share one view setup instead of one per visited channel.
     private fun stateKey(feed: YouTubeFeed) = if (channelId != null) "youtube:channel" else "youtube:${feed.key}"
     // Persisted selection may belong to an earlier app session. Start a fresh feed at the
@@ -186,6 +193,24 @@ class YouTubeViewModel @Inject constructor(
         }
     }
 
+    /** Touch scroll has no focused card: page the source row when its visible tail approaches the end. */
+    fun onViewportNearEnd(rowId: String?, lastVisibleIndex: Int, grid: Boolean) {
+        if (lastVisibleIndex < 0 || paging.session == null) return
+        val state = _uiState.value
+        if (state.loading || !state.available) return
+        val displayed = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
+        val visible = (if (rowId == null) displayed.singleOrNull()
+            else displayed.firstOrNull { it.id == rowId }) ?: return
+        val source = state.rows.firstOrNull { it.id == visible.id } ?: return
+        if (!paging.shouldLoadOnFocus(visible.id, lastVisibleIndex.coerceAtMost(visible.items.lastIndex),
+                visible.items.size, grid) ||
+            !paging.canLoad(visible.id, source.items.size) || visible.id in rowLoadJobs) return
+        rowLoadJobs[visible.id] = viewModelScope.launch {
+            try { continueRow(visible.id, showPlaceholder = true) }
+            finally { rowLoadJobs.remove(visible.id) }
+        }
+    }
+
     private suspend fun awaitQuietInput(maxWaitMs: Long = Long.MAX_VALUE) {
         var waited = 0L
         while (BrowseWorkBudget.recentlyInteracting() && waited < maxWaitMs) { delay(100); waited += 100 }
@@ -251,10 +276,11 @@ class YouTubeViewModel @Inject constructor(
         YouTubeUiState(
             available = engine.available,
             visibleFeeds = configuredFeeds,
-            viewMode = viewMode(YouTubeFeed.HOME),
-            sort = sort(YouTubeFeed.HOME),
-            sortDescending = storedDescending(YouTubeFeed.HOME, sort(YouTubeFeed.HOME)),
-            filter = filter(YouTubeFeed.HOME),
+            feed = entryFeed,
+            viewMode = viewMode(entryFeed),
+            sort = sort(entryFeed),
+            sortDescending = storedDescending(entryFeed, sort(entryFeed)),
+            filter = filter(entryFeed),
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
             mediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
