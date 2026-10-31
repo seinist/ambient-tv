@@ -15,6 +15,13 @@ import com.ambient.tv.ui.mobile.LocalHandheldUi
 
 private val AlphabetBarEntryHeight = 22.dp
 
+/**
+ * Finger-scrolling does not move DPAD focus. On handhelds, the A–Z marker therefore follows
+ * the first visible item; TVs keep the focused item as the authoritative letter.
+ */
+internal fun alphabetTrackedLetter(handheld: Boolean, scrollLetter: Char?, focusedLetter: Char?): Char? =
+    if (handheld) scrollLetter ?: focusedLetter else focusedLetter ?: scrollLetter
+
 @Composable
 fun AlphabetBar(
     letters: List<Char>,
