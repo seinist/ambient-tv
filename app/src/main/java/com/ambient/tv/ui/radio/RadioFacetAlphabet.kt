@@ -37,13 +37,14 @@ internal fun radioAlphabetFacets(
     descending: Boolean = false,
 ): List<RadioAlphabetFacet> {
     val collator = Collator.getInstance(locale).apply { strength = Collator.PRIMARY }
+    val comparator = Comparator<RadioAlphabetFacet> { left, right ->
+        val compared = collator.compare(left.title, right.title)
+        if (compared != 0) compared else left.facet.id.compareTo(right.facet.id)
+    }
     return facets.map { facet ->
         val title = radioFacetDisplayName(section, facet, locale)
         RadioAlphabetFacet(facet, title, radioFacetInitial(title))
-    }.sortedWith(Comparator { left, right ->
-        val compared = collator.compare(left.title, right.title)
-        if (compared != 0) compared else left.facet.id.compareTo(right.facet.id)
-    }.let { if (descending) it.reversed() else it })
+    }.sortedWith(if (descending) comparator.reversed() else comparator)
 }
 
 /**
