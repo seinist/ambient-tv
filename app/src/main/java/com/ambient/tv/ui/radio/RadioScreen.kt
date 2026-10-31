@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -50,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +81,7 @@ import com.ambient.tv.ui.common.ViewOption
 import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
+import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
@@ -167,11 +171,15 @@ fun RadioScreen(
         requestedSection.isFacetSection else state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
     // Alphabetical order uses the localized display names, not raw Radio Browser codes.
-    val sortedFacets = remember(state.section, state.facets, locale) {
-        radioAlphabetFacets(state.section, state.facets, locale)
+    val sortedFacets = remember(state.section, state.facets, locale, state.sortDescending) {
+        radioAlphabetFacets(state.section, state.facets, locale, descending = state.sortDescending)
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    // Senderlisten (auch Raster, Suche und Favoriten) verwenden denselben Index wie Kategorien.
+    // Die Sender selbst sind bereits vom ViewModel alphabetisch in der angezeigten Reihenfolge.
+    val stationJumps = remember(state.stations) { radioStationAlphabetJumps(state.stations) }
+    val stationLetters = remember(stationJumps) { stationJumps.mapNotNull { it.letter.singleOrNull() } }
     val effectiveViewMode = if (requestedPagePending && visibleSection.isFacetSection) RadioViewMode.LIST else state.effectiveViewMode()
     val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
@@ -207,12 +215,20 @@ fun RadioScreen(
     val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
     val alphabetRightFocusRequester = remember(focusScope) { FocusRequester() }
     val facetListFocus = remember(focusScope) { FocusRequester() }
+    val stationContentFocus = remember(focusScope, effectiveViewMode) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    var focusedStationId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
     // Scrolling changes the first visible row, but focusing another row takes precedence.
     var focusedFacetLetter by remember(focusScope, sortedFacets) { mutableStateOf<Char?>(null) }
     val visibleLetter = focusedFacetLetter
         ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+    // Prefer the focused tile over the first visible row, including after returning from playback.
+    val currentStationId = focusedStationId?.takeIf { id -> state.stations.any { it.id == id } } ?: initialContentId
+    val stationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
+        ?: state.stations.getOrNull(if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex
+            else listState.firstVisibleItemIndex)?.let(::radioStationLetter)
+    val showStationAlphabet = !showingFacets && stationLetters.size > 1 && !requestedPagePending
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -251,6 +267,13 @@ fun RadioScreen(
     val selectFacet: (RadioFacet) -> Unit = { facet ->
         pendingContentFocus = RadioFocusScope(state.section, facet.id, "")
         viewModel.selectFacet(facet)
+    }
+    val toggleStationFavorite: (RadioStation) -> Unit = { station ->
+        // The focused favorite disappears from this page; restore the neighboring station.
+        if (state.section == RadioSection.FAVORITES && station.id in state.favoriteIds) {
+            pendingContentFocus = focusScope
+        }
+        viewModel.toggleFavorite(station)
     }
     val clearFacet: () -> Unit = {
         pendingContentFocus = RadioFocusScope(state.section, null, "")
@@ -559,6 +582,9 @@ fun RadioScreen(
                     listRows = state.listRows,
                     onGridColumns = viewModel::setGridColumns,
                     onListRows = viewModel::setListRows,
+                    sortOrders = sortDirectionOptions("A–Z", "Z–A"),
+                    selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
+                    onSortOrder = { viewModel.setSortDescending(it == "DESCENDING") },
                     onClose = closeViewOptions,
                 )
             }
