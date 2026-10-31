@@ -9,13 +9,13 @@ import org.junit.Test
 class GridDensityPresentationTest {
     @Test fun radioPhonePortraitSettingsMatchRealRenderedGrid() {
         val shown = visibleGridColumns(8, ViewPreview.GRID, GridDensityProfile.RADIO_BROWSER, true, 411, 900)
-        assertEquals(handheldPortraitColumns(8, 411, 160f, 4), shown)
+        assertEquals(handheldPortraitColumns(8, 411, 160f, 8), shown)
         assertTrue(shown != 8)
     }
 
     @Test fun radioPhoneLandscapeSettingsMatchRealRenderedGrid() {
         val shown = visibleGridColumns(8, ViewPreview.GRID, GridDensityProfile.RADIO_BROWSER, true, 900, 411)
-        assertEquals(handheldGridColumns(8, 900, 160f, 4), shown)
+        assertEquals(handheldGridColumns(8, 900, 160f, 8), shown)
     }
 
     @Test fun mediaAndSmarttubeAccountForDifferentArtworkGeometry() {
