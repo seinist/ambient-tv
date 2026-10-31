@@ -22,6 +22,22 @@ class YouTubeViewportPagingTest {
         }
     }
 
+    @Test fun pageContinuationSkipsNonContentHeadersAtTheEndOfTheViewport() {
+        val targets = mapOf(
+            "youtube-list:a:a1" to ("a" to 0),
+            "youtube-list:a:a2" to ("a" to 1),
+            "youtube-list:b:b1" to ("b" to 0),
+        )
+        assertEquals(
+            "a" to 1,
+            youtubeLastVisibleSourceItem(
+                listOf("youtube-list:a:a1", "youtube-list:a:a2", "youtube-list-header:b"), targets,
+            ),
+        )
+        assertEquals("b" to 0, youtubeLastVisibleSourceItem(listOf("youtube-list:b:b1"), targets))
+        assertNull(youtubeLastVisibleSourceItem(listOf("youtube-list-header:b"), targets))
+    }
+
     @Test fun allSmartTubePresentationModesObserveTouchViewport() {
         val file = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt").readText()
         assertEquals(2, Regex("ObserveYouTubeListViewport\\(rowId, rowState\\)").findAll(file).count())
