@@ -41,6 +41,8 @@ import com.ambient.tv.car.CarAudioIds
 import com.ambient.tv.car.CarAudioCatalog
 import com.ambient.tv.car.CarAudioSelection
 import com.ambient.tv.car.toBrowserItem
+import com.ambient.tv.data.dlna.DlnaKeys
+import com.ambient.tv.data.files.FileKeys
 import com.ambient.tv.data.jellyfin.JellyfinBackend
 import com.ambient.tv.data.emby.EmbyBackend
 import com.ambient.tv.spotify.SpotifyRepository
@@ -76,6 +78,7 @@ class PlaybackService : MediaBrowserService() {
     private var carSpotifySelected = false
     private var carSpotifyStartGeneration = -1L
     private var carMusicQueue: List<String> = emptyList()
+    private var carLiveQueue: List<String> = emptyList()
     private var foregroundStarted = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var mediaSession: MediaSession
@@ -420,6 +423,7 @@ class PlaybackService : MediaBrowserService() {
                 if (carSpotifySelected) spotify.pause()
                 carSpotifySelected = false
                 carMusicQueue = emptyList()
+                carLiveQueue = emptyList()
                 radioPlaybackLauncher.play(selection.station, selection.queue)
                     .onFailure { Timber.w(it, "Android Auto radio playback failed") }
                 carCatalog.invalidate(CarAudioIds.RADIO_RECENT)
@@ -429,6 +433,7 @@ class PlaybackService : MediaBrowserService() {
                 carSpotifyStartGeneration = BackgroundPlaybackSession.snapshot.value.generation
                 carSpotifySelected = true
                 carMusicQueue = emptyList()
+                carLiveQueue = emptyList()
                 mediaSession.setPlaybackState(PlaybackState.Builder()
                     .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
                         PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY_FROM_MEDIA_ID or
@@ -443,10 +448,13 @@ class PlaybackService : MediaBrowserService() {
                 val item = selection.item
                 val url = item.streamUrl ?: return
                 carMusicQueue = selection.queue
+                carLiveQueue = emptyList()
                 repository.preparePlayback(item.ratingKey, 0)
                 val source = when {
                     JellyfinBackend.owns(item.ratingKey) -> "jellyfin"
                     EmbyBackend.owns(item.ratingKey) -> "emby"
+                    DlnaKeys.owns(item.ratingKey) -> "dlna"
+                    FileKeys.owns(item.ratingKey) -> "files"
                     else -> "plex"
                 }
                 PlaybackEngineFactory.create(
@@ -466,6 +474,38 @@ class PlaybackService : MediaBrowserService() {
                     audioOnly = true,
                 )
             }
+            is CarAudioSelection.Live -> {
+                if (carSpotifySelected) spotify.pause()
+                carSpotifySelected = false
+                carMusicQueue = emptyList()
+                carLiveQueue = selection.queue
+                val stream = selection.stream
+                val channel = selection.channel
+                val playbackId = carLiveQueue.firstOrNull {
+                    CarAudioIds.liveAudioSpec(it)?.second == channel.uuid
+                } ?: return
+                PlaybackEngineFactory.create(
+                    context = this,
+                    streamUrl = stream.url,
+                    startPositionMs = 0L,
+                    streamHeaders = stream.headers,
+                    mimeType = if (android.net.Uri.parse(stream.url).path.orEmpty().endsWith(".m3u8", true))
+                        androidx.media3.common.MimeTypes.APPLICATION_M3U8 else null,
+                    metadata = PlaybackMetadata(
+                        route = Destinations.LIVE_TV,
+                        title = channel.name,
+                        subtitle = channel.numberLabel.orEmpty(),
+                        source = selection.system,
+                        mediaId = playbackId,
+                        hasVideo = false,
+                        isLive = true,
+                        artworkUrl = channel.iconUrl,
+                        durationMs = 0L,
+                    ),
+                    audioOnly = true,
+                    liveStream = true,
+                )
+            }
         }
     }
 
@@ -477,6 +517,12 @@ class PlaybackService : MediaBrowserService() {
         val current = BackgroundPlaybackSession.snapshot.value.metadata
         if (current?.source == "radio") {
             playRadioAdjacent(next)
+            return
+        }
+        val liveIndex = carLiveQueue.indexOf(current?.mediaId)
+        val liveTarget = if (next) liveIndex + 1 else liveIndex - 1
+        if (liveIndex >= 0 && liveTarget in carLiveQueue.indices) {
+            requestCarAudioPlayback(carLiveQueue[liveTarget])
             return
         }
         val index = carMusicQueue.indexOf(current?.mediaId)
@@ -551,10 +597,13 @@ class PlaybackService : MediaBrowserService() {
         val hasNextRadio = metadata?.source == "radio" && radioQueue.next() != null
         val carIndex = carMusicQueue.indexOf(metadata?.mediaId)
         val carMusic = metadata?.source != "radio" && carIndex >= 0
-        val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0)
-        val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex)
+        val liveIndex = carLiveQueue.indexOf(metadata?.mediaId)
+        val carLive = metadata?.source in setOf("iptv", "tvheadend") && liveIndex >= 0
+        val hasPrevious = hasPreviousRadio || (carMusic && carIndex > 0) || (carLive && liveIndex > 0)
+        val hasNext = hasNextRadio || (carMusic && carIndex < carMusicQueue.lastIndex) ||
+            (carLive && liveIndex < carLiveQueue.lastIndex)
         mediaSession.setPlaybackState(PlaybackState.Builder()
-            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic))
+            .setActions(platformPlaybackActions(metadata?.source, hasPrevious, hasNext, carMusic || carLive))
             .setState(when {
                 !state.active || state.status.ended -> PlaybackState.STATE_STOPPED
                 state.status.error != null -> PlaybackState.STATE_ERROR
