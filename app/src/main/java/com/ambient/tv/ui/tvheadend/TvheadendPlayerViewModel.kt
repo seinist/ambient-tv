@@ -416,8 +416,8 @@ class TvheadendPlayerViewModel @Inject constructor(
     }
 
     private suspend fun acquireStream(
-        open: suspend () -> TvhPlaybackSource,
         pendingMetadata: PlaybackMetadata? = null,
+        open: suspend () -> TvhPlaybackSource,
     ): TvhPlaybackSource {
         val job = currentCoroutineContext()[Job]
         return withContext(NonCancellable) { streamMutex.withLock {
@@ -855,7 +855,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     liveTvSourceId = sourceId,
                 )
                 val source = timeshifted(acquireStream(
-                    { repository.liveStream(channel) },
+                    open = { repository.liveStream(channel) },
                     pendingMetadata = pendingMetadata,
                 ), channel.uuid)
                 val artwork = tvhPanelArtwork(null, channel.iconUrl)
