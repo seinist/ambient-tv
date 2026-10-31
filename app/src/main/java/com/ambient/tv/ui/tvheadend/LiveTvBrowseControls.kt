@@ -33,7 +33,9 @@ import com.ambient.tv.ui.common.LocalFilterFocusState
 import com.ambient.tv.ui.common.rememberFilterFocusState
 import com.ambient.tv.ui.common.retryFocusFor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 /** The header, filter bar and panel share one focus owner, including while content reloads. */
@@ -122,9 +124,13 @@ internal fun buildLiveTvChannelListing(
     events: List<LiveTvProgramme>,
     options: GuideOptions,
     now: Long,
+    checkActive: () -> Unit = {},
 ): LiveTvChannelListing {
+    checkActive()
     val programmes = events.groupBy { it.channelUuid }.mapValues { (_, group) -> guideEvents(group, now) }
+    checkActive()
     val visible = guideChannelsPrepared(channels, programmes, options)
+    checkActive()
     return LiveTvChannelListing(
         now = now,
         eventsByChannel = programmes,
@@ -187,7 +193,8 @@ internal fun rememberLiveTvChannelListing(
         if (!enabled) return@LaunchedEffect
         // A newer effect cancels its predecessor. No partial background result touches Compose.
         val built = withContext(Dispatchers.Default) {
-            buildLiveTvChannelListing(channels, events, options, now)
+            val worker = currentCoroutineContext()
+            buildLiveTvChannelListing(channels, events, options, now) { worker.ensureActive() }
         }
         completed = CompletedLiveTvListing(channels, events, options, now, built)
     }
