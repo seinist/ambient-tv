@@ -42,6 +42,26 @@ class RadioFacetAlphabetTest {
         assertEquals(entries.indexOfFirst { it.letter == "#" }, index.first { it.letter == "#" }.index)
     }
 
+    @Test fun alphabetIndexMirrorsActualRowsIncludingDigitsAndReverseOrder() {
+        val rows = listOf(
+            RadioAlphabetFacet(facet("digits", "80s"), "80s", "#"),
+            RadioAlphabetFacet(facet("a", "Ambient"), "Ambient", "A"),
+            RadioAlphabetFacet(facet("b", "Blues"), "Blues", "B"),
+            RadioAlphabetFacet(facet("z", "Zulu"), "Zulu", "Z"),
+        )
+        assertEquals(
+            listOf(RadioAlphabetJump("#", 0), RadioAlphabetJump("A", 1),
+                RadioAlphabetJump("B", 2), RadioAlphabetJump("Z", 3)),
+            radioAlphabetJumps(rows),
+        )
+        assertEquals(
+            listOf(RadioAlphabetJump("Z", 0), RadioAlphabetJump("B", 1),
+                RadioAlphabetJump("A", 2), RadioAlphabetJump("#", 3)),
+            radioAlphabetJumps(rows.reversed()),
+        )
+        assertEquals('B', rows.firstOrNull { it.facet.id == "b" }?.letter?.singleOrNull())
+    }
+
     @Test fun categoryOverviewAlwaysUsesListWhileStationViewsRetainUserPreference() {
         val facet = facet("r", "Rock")
         assertEquals(RadioViewMode.LIST,
