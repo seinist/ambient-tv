@@ -552,7 +552,13 @@ class HomeViewModel @Inject constructor(
         _refreshing.value = true
         loadJob = viewModelScope.launch {
             mediaRepository.restoreCache()
-            if (_uiState.value !is HomeUiState.Loaded) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cachedRows() }?.let { libraryLoading = false; publishRows(it) }
+            // Independent providers may have published a Loaded state while the disk was read.
+            // Always merge restored media rows; never make hydration depend on who won first.
+            val restored = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { cachedRows() }.orEmpty()
+            if (restored.isNotEmpty() && generation == loadGeneration) {
+                val visible = (_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty()
+                publishRows(sortCombinedRows(mergeColdStartHomeRows(visible, restored)))
+            }
 
             if (!availability.hasNetwork()) {
                 failOrContinue(HomeUiState.Offline(activeServerName()))
@@ -1337,17 +1343,22 @@ class HomeViewModel @Inject constructor(
                     }
                 }
                 youtubeCacheRevision = restoredRevision
-                val supported = suspendResult { smartTubeEngine.supportedFeedKeys() }.getOrDefault(emptySet())
+                // Publish this account's cached Home feeds before service discovery/network
+                // checks. Otherwise another provider fills Home while these rows remain missing.
+                definitions.forEach { definition ->
+                    homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
+                        ?.let { updateHomeYouTubeRow(generation, definition, it) }
+                }
+                val supportedResult = suspendResult { smartTubeEngine.supportedFeedKeys() }
+                // If the probe failed (rather than reporting an explicit signed-out state),
+                // retain the cached feeds and retry later; do not erase them as "unsupported".
+                val supported = supportedResult.getOrElse { definitions.mapTo(hashSetOf()) { it.contentKey } }
                 if (generation != youtubeRowsGeneration) return@launch
                 val available = definitions.filter { it.contentKey in supported }
                 val supportedKeys = available.mapTo(hashSetOf()) { it.contentKey }
                 youtubeRows = youtubeRows.filter { it.id.removePrefix("youtube.") in supportedKeys }
                 youtubeSourceRows.keys.retainAll(supportedKeys)
                 val revision = youtubeContentCache.revision()
-                available.forEach { definition ->
-                    val stored = homeYouTubeSourceRow(youtubeContentCache.get("feed:${definition.contentKey}").orEmpty(), HOME_ROW_LIMIT)
-                    if (stored != null) updateHomeYouTubeRow(generation, definition, stored)
-                }
                 // Two feeds at a time; never fetch every Home feed or every item eagerly.
                 val permits = Semaphore(2)
                 coroutineScope {
@@ -1636,8 +1647,8 @@ class HomeViewModel @Inject constructor(
 
     /**
      * Adds (or refreshes) the cross-system continue row: every server's in-progress titles in one
-     * row, most recently watched first, the same title from two servers once. Servers hidden as
-     * unreachable are left out; until a server answered, its cached list stands in.
+     * row, most recently watched first, the same title from two servers once. Offline media
+     * servers retain their cached lists until a verified fresh answer replaces them.
      */
     private fun withAllContinueRow(rows: List<ContentRowData>): List<ContentRowData> {
         val others = rows.filterNot { it.id == ALL_CONTINUE_ROW_ID }
@@ -1648,7 +1659,7 @@ class HomeViewModel @Inject constructor(
             HomeRowDefinition.SYSTEM_EMBY to embyRepository,
         ).filter { (system, _) -> system in appPreferences.allContinueSystems && homeSystemActive(system) }
         val items = sources.flatMap { (system, repository) ->
-            // The cached list only while that server's own rows are on screen (not when offline).
+            // Use the cached list only if the server has visible rows, even while it sleeps.
             continueBySystem[system]
                 ?: if (rows.any { it.id.startsWith("$system.") }) runCatching { repository.cachedOnDeck() }.getOrNull().orEmpty() else emptyList()
         }
@@ -1973,13 +1984,15 @@ class HomeViewModel @Inject constructor(
     }
 
     private fun homeRowHidden(id: String): Boolean {
-        val hidden = unreachableServers.current().offline
-        if (hidden.isEmpty()) return false
-        return id.substringBefore('.') in hidden
+        val system = id.substringBefore('.')
+        // A media server being asleep stops playback, not offline access to its
+        // persisted library posters. Live TV remains gated by homeTvSourceVisible.
+        if (system in CACHED_MEDIA_SYSTEMS) return false
+        return system in unreachableServers.current().offline
     }
 
     private fun homeSystemActive(system: String): Boolean {
-        if (system in unreachableServers.current().offline) return false
+        if (system !in CACHED_MEDIA_SYSTEMS && system in unreachableServers.current().offline) return false
         return homeSystemReady(
         system,
         plexReady = plexOnly || appPreferences.isConfigured,
@@ -2066,6 +2079,9 @@ class HomeViewModel @Inject constructor(
         const val ALL_CONTINUE_ROW_ID = "all.continue"
         const val HOME_FOCUS_STATE_KEY = "home"
         private const val HOME_FOCUS_PERSIST_DEBOUNCE_MS = 320L
+        private val CACHED_MEDIA_SYSTEMS = setOf(
+            HomeRowDefinition.SYSTEM_PLEX, HomeRowDefinition.SYSTEM_JELLYFIN, HomeRowDefinition.SYSTEM_EMBY,
+        )
         const val HOME_ROW_LIMIT = 24
         const val HOME_SOURCE_PREVIEW_LIMIT = 72
         const val HOME_RELEASE_PREVIEW_LIMIT = 32
