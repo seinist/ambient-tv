@@ -117,9 +117,6 @@ class TvheadendPlayerViewModel @Inject constructor(
             reopened = BackgroundPlaybackSession.cached(Destinations.tvhPlayer(kind, initialId, sourceId)) != null)
     var changingChannel by androidx.compose.runtime.mutableStateOf(false)
         private set
-    /** Counts channel changes; the player shows its OSD with the new channel's info for each. */
-    var zapVersion by androidx.compose.runtime.mutableIntStateOf(0)
-        private set
     private var fallbackAttempted = false
     private val localFallbackBackends = mutableSetOf<String>()
     private var videoFailureConfirmed = false
@@ -833,7 +830,6 @@ class TvheadendPlayerViewModel @Inject constructor(
                 // Retain the OSD while acquireStream serially retires the upstream session.
                 // PlaybackSessionContent suppresses EOF during the replacement.
                 currentChannelUuid = channel.uuid
-                zapVersion++
                 fallbackAttempted = false
                 localFallbackBackends.clear()
                 videoFailureConfirmed = false

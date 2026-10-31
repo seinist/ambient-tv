@@ -54,6 +54,15 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
         interact()
     }
 
+    /** A changed live channel restarts the info timeout without stealing expanded controls. */
+    fun showChannelInfo() {
+        val keepControls = presentation.expanded
+        update(if (keepControls) presentation.reveal() else presentation.compact())
+        // Up/Down keep zapping in compact info mode; OK claims normal navigation.
+        shownByZap.value = !keepControls
+        interact()
+    }
+
     fun showSeekFeedback() {
         update(presentation.compact(feedback = true))
         shownByZap.value = false
@@ -89,3 +98,7 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
 @Composable
 internal fun rememberPlayerOsdController(): PlayerOsdController =
     LocalPlayerChromeState.current?.osd ?: remember { PlayerOsdController() }
+
+/** Ignore the first metadata emission and repeated ICY/EPG updates for the same station. */
+internal fun channelIdentityChanged(previousId: String?, currentId: String?): Boolean =
+    previousId != null && currentId != null && previousId != currentId

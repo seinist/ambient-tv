@@ -48,6 +48,36 @@ class PlayerOsdControllerTest {
         assertFalse(osd.expanded)
     }
 
+    @Test fun newStationReopensCompactInformationAndRestartsTimeout() {
+        val osd = PlayerOsdController()
+        osd.hideImmediately()
+        val version = osd.interactionVersion
+        osd.showChannelInfo()
+        assertTrue(osd.show)
+        assertEquals(PlayerOsdMode.COMPACT, osd.mode)
+        assertTrue(osd.shownByZap.value)
+        assertTrue(osd.interactionVersion > version)
+        osd.reveal()
+        assertFalse(osd.shownByZap.value)
+    }
+
+    @Test fun channelChangesPreserveExpandedPlayerControls() {
+        val osd = PlayerOsdController()
+        osd.expand()
+        val version = osd.interactionVersion
+        osd.showChannelInfo()
+        assertTrue(osd.expanded)
+        assertFalse(osd.shownByZap.value)
+        assertTrue(osd.interactionVersion > version)
+    }
+
+    @Test fun metadataRefreshAndInitialTuneDoNotCountAsChannelChanges() {
+        assertFalse(channelIdentityChanged(null, "station-a"))
+        assertFalse(channelIdentityChanged("station-a", null))
+        assertFalse(channelIdentityChanged("station-a", "station-a"))
+        assertTrue(channelIdentityChanged("station-a", "station-b"))
+    }
+
     @Test fun anotherJumpRefreshesFeedbackTimeoutWithoutChangingPresentation() {
         val osd = PlayerOsdController()
         osd.showSeekFeedback()
