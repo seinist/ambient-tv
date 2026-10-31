@@ -211,6 +211,19 @@ fun RadioScreen(
     var focusAfterViewOptions by remember(viewModel) { mutableStateOf(false) }
     val gridState = rememberBrowseGridState()
     val listState = rememberBrowseListState()
+    // Both D-pad focus and visible scroll position can extend pageable radio station results.
+    ObserveRadioViewportPaging(
+        scope = focusScope,
+        mode = effectiveViewMode,
+        gridState = gridState,
+        listState = listState,
+        stationCount = state.stations.size,
+        hasMore = state.hasMore,
+        loading = state.loading,
+        loadingMore = state.loadingMore,
+        enabled = state.contentReady && !requestedPagePending && !showingFacets,
+        onNearEnd = { lastVisible -> viewModel.onViewportNearEnd(focusScope, lastVisible) },
+    )
     val focusChain = com.ambient.tv.ui.common.rememberPageFocusChain()
     val contextStageFocus = remember { FocusRequester() }
     val searchStageFocus = remember { FocusRequester() }
