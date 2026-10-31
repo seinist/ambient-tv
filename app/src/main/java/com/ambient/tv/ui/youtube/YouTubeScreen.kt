@@ -264,7 +264,10 @@ import kotlinx.coroutines.delay
         ) {
             when {
                 !state.available -> Message(state.error ?: stringResource(R.string.youtube_engine_missing), error = true)
-                state.loading || (state.refreshing && visibleRows.none { it.items.isNotEmpty() }) -> Loading(state.gridColumns)
+                state.loading || (state.refreshing && visibleRows.none { it.items.isNotEmpty() }) ->
+                    Loading(state.viewMode, state.gridColumns, state.listRows,
+                        sectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME && state.channel == null) ||
+                            populatedRows.hasSubsections())
                 state.error != null -> Message(state.error!!, error = true)
                 visibleRows.none { it.items.isNotEmpty() } -> if (filterModel.activeCount > 0) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1135,10 +1138,151 @@ private fun Card(
         }
     }
 }
+/** Keeps the first loading frame in the exact selected presentation family. */
+internal enum class YouTubeLoadingPresentation { ROWS, GRID, LIST, INFO_LIST, WALL, CINEMATIC }
+
+internal fun youtubeLoadingPresentation(mode: YouTubeViewMode, sectioned: Boolean): YouTubeLoadingPresentation =
+    when (mode) {
+        YouTubeViewMode.LANDSCAPE -> if (sectioned) YouTubeLoadingPresentation.ROWS else YouTubeLoadingPresentation.GRID
+        YouTubeViewMode.LIST -> YouTubeLoadingPresentation.LIST
+        YouTubeViewMode.INFO_LIST -> YouTubeLoadingPresentation.INFO_LIST
+        YouTubeViewMode.WALL -> YouTubeLoadingPresentation.WALL
+        YouTubeViewMode.CINEMATIC -> YouTubeLoadingPresentation.CINEMATIC
+    }
+
 @Composable
-private fun Loading(gridColumns: Int) {
-    // Shared skeleton clock (RESUMED only, read at draw time); Sparsam stays static.
-    YouTubeLoadingRows(gridColumns, com.ambient.tv.ui.common.rememberSkeletonPulseOrNull())
+private fun Loading(mode: YouTubeViewMode, gridColumns: Int, listRows: Int, sectioned: Boolean) {
+    // One shared pulse clock, not one recomposition on each loading frame.
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    when (youtubeLoadingPresentation(mode, sectioned)) {
+        YouTubeLoadingPresentation.ROWS -> YouTubeLoadingRows(gridColumns, pulse)
+        YouTubeLoadingPresentation.GRID -> YouTubeLoadingGrid(gridColumns)
+        YouTubeLoadingPresentation.LIST -> YouTubeLoadingList(listRows, detailed = false, sectioned, pulse)
+        YouTubeLoadingPresentation.INFO_LIST -> YouTubeLoadingList(listRows, detailed = true, sectioned, pulse)
+        YouTubeLoadingPresentation.WALL -> YouTubeLoadingWall(gridColumns, sectioned, pulse)
+        YouTubeLoadingPresentation.CINEMATIC -> YouTubeLoadingCinematic(sectioned, pulse)
+    }
+}
+
+@Composable
+private fun YouTubeLoadingHeading(pulse: State<Float>?) {
+    Box(Modifier.width(168.dp).height(18.dp)
+        .skeletonPulseAlpha(pulse)
+        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(9.dp)))
+}
+
+@Composable
+private fun YouTubeLoadingGrid(gridColumns: Int) {
+    LazyVerticalGrid(
+        columns = deviceDensityGridCells(landscapeGridColumns(gridColumns), 260.dp, 4),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        userScrollEnabled = false,
+    ) {
+        items(24) { RowEndPlaceholder(Modifier.fillMaxWidth(), showText = true) }
+    }
+}
+
+@Composable
+private fun YouTubeLoadingList(listRows: Int, detailed: Boolean, sectioned: Boolean, pulse: State<Float>?) {
+    val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val shape = RoundedCornerShape(10.dp)
+    LazyColumn(
+        allowUpExit = true,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp * rowScale),
+        userScrollEnabled = false,
+    ) {
+        if (sectioned) item("loading-heading") { YouTubeLoadingHeading(pulse) }
+        items(14) {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .58f), shape)
+                    .border(1.dp, Color.White.copy(alpha = .06f), shape)
+                    .padding(10.dp * rowScale),
+                horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.width(deviceDp(if (detailed) 190.dp else 128.dp, 104.dp) * rowScale)
+                    .aspectRatio(16f / 9f).clip(RoundedCornerShape(7.dp))
+                    .skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(7.dp)))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(Modifier.fillMaxWidth(.8f).height(18.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    Box(Modifier.fillMaxWidth(.5f).height(12.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    if (detailed) {
+                        Box(Modifier.fillMaxWidth(.65f).height(12.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubeLoadingWall(gridColumns: Int, sectioned: Boolean, pulse: State<Float>?) {
+    LazyVerticalGrid(
+        columns = deviceVideoGridCells((gridColumns + 2).coerceIn(6, 14)),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        userScrollEnabled = false,
+    ) {
+        if (sectioned) {
+            item(span = { GridItemSpan(maxLineSpan) }) { YouTubeLoadingHeading(pulse) }
+        }
+        items(48) { RowEndPlaceholder(Modifier.fillMaxWidth(), showText = false) }
+    }
+}
+
+@Composable
+private fun YouTubeLoadingCinematic(sectioned: Boolean, pulse: State<Float>?) {
+    if (sectioned) {
+        LazyColumn(
+            allowUpExit = true,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 36.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            userScrollEnabled = false,
+        ) {
+            items(2) {
+                Column {
+                    Box(Modifier.padding(start = screenGutter(), bottom = 10.dp)) { YouTubeLoadingHeading(pulse) }
+                    YouTubeCinematicLoadingSection(pulse, Modifier.fillMaxWidth().height(deviceHeroHeight(500.dp, 390.dp)), false)
+                }
+            }
+        }
+    } else {
+        YouTubeCinematicLoadingSection(pulse, Modifier.fillMaxSize().padding(top = 30.dp), true)
+    }
+}
+
+@Composable
+private fun YouTubeCinematicLoadingSection(pulse: State<Float>?, modifier: Modifier, flat: Boolean) {
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    Column(
+        modifier,
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            Modifier.padding(horizontal = screenGutter(), vertical = if (flat) 0.dp else 18.dp).fillMaxWidth(.62f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Box(Modifier.fillMaxWidth(.85f).height(28.dp).skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(7.dp)))
+            Box(Modifier.fillMaxWidth(.45f).height(14.dp).skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(7.dp)))
+        }
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = screenGutter(), vertical = if (flat) 18.dp else 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            userScrollEnabled = false,
+        ) {
+            items(6) { RowEndPlaceholder(Modifier.width(landscapeCardWidth()), showText = false) }
+        }
+    }
 }
 
 @Composable
