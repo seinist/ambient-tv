@@ -270,7 +270,7 @@ fun PhotoBrowserScreen(
                         up = if (timelineAvailable) focusChain.chips else focusChain.actions, focusChain = focusChain)
                 }
                 when {
-                    state.loading && visible.isEmpty() -> StatePanel(stringResource(R.string.photos_loading))
+                    (state.loading || state.refreshing) && visible.isEmpty() -> StatePanel(stringResource(R.string.photos_loading))
                     state.failed -> StatePanel(stringResource(R.string.photos_error), actionLabel = stringResource(R.string.photos_retry), onAction = viewModel::retry)
                     visible.isEmpty() -> StatePanel(stringResource(R.string.photos_empty))
                     else -> LazyVerticalGrid(
