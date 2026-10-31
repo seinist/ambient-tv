@@ -116,6 +116,9 @@ internal class RightPanelDismissOnce {
 private class StandaloneRightPanelMotion {
     val progress = Animatable(0f)
     val dismiss = RightPanelDismissOnce()
+    // The outer overlay owns the only BackHandler. The visible inner panel supplies the
+    // correct Back action (and focus hand-back), which is not always the outside-tap action.
+    var panelBack: (() -> Unit)? = null
 }
 
 private val LocalStandaloneRightPanelMotion = staticCompositionLocalOf<StandaloneRightPanelMotion?> { null }
@@ -168,7 +171,9 @@ fun RightPanelOverlay(
     // One system Back owner per standalone overlay. It remains enabled while the drawer
     // exits so a second Back is swallowed rather than navigates the browse grid.
     androidx.activity.compose.BackHandler {
-        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
+        val panelBack = motion.panelBack
+        if (panelBack != null) panelBack()
+        else if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
         else dismissOutside()
     }
     androidx.compose.runtime.CompositionLocalProvider(
@@ -496,8 +501,19 @@ private fun RightSidePanelChrome(
         }
         return
     }
-    // Android system Back and TV remote Back must always dismiss the modal rather than merely
-    // handing focus to the underlying view. A second Back during exit is consumed, not forwarded.
+    // The overlay remains the single Android BackHandler owner. Forward its Back to the
+    // inner panel's actual onBack (which may restore a header button or return to a parent).
+    // Outside taps still use their explicitly supplied action.
+    val updatedPanelBack = rememberUpdatedState<() -> Unit>({ dismissBack() })
+    if (standalone && inheritedMotion != null) {
+        androidx.compose.runtime.SideEffect {
+            inheritedMotion.panelBack = { updatedPanelBack.value() }
+        }
+        androidx.compose.runtime.DisposableEffect(inheritedMotion) {
+            onDispose { inheritedMotion.panelBack = null }
+        }
+    }
+    // Without a wrapper (player chrome or standalone column) the panel owns Back itself.
     androidx.activity.compose.BackHandler(
         enabled = playerPanelInteractive && !LocalRightPanelOverlayOwnsBack.current,
     ) { dismissBack() }
