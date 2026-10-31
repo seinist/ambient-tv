@@ -136,6 +136,8 @@ class YouTubeViewModel @Inject constructor(
     private var focusLoadJob: Job? = null
     private var initialPagingJob: Job? = null
     private val rowLoadJobs = HashMap<String, Job>()
+    /** The user may already have scrolled to a tail while the first feed request is in flight. */
+    private val visibleViewportEnds = linkedMapOf<String, Pair<Int, Boolean>>()
 
     /** Discards every row continuation state; [session] arms paging for that feed/search key. */
     private fun resetPaging(session: String?, revision: Long = pagingRevision) {
@@ -151,6 +153,11 @@ class YouTubeViewModel @Inject constructor(
     /** After a completed load: rows below SmartTube's minimum continue once, two at a time, while the user rests. */
     private fun armPaging(session: String, revision: Long) {
         resetPaging(session, revision)
+        // Re-evaluate visible tails: their LazyListState need not scroll again after the
+        // pagination session is armed, so snapshotFlow would not emit a second time.
+        visibleViewportEnds.toMap().forEach { (id, tail) ->
+            onViewportNearEnd(id.takeUnless { it == "__flat" }, tail.first, tail.second)
+        }
         val candidates = paging.initialCandidates(_uiState.value.rows)
         if (candidates.isEmpty()) return
         initialPagingJob = viewModelScope.launch {
@@ -195,7 +202,9 @@ class YouTubeViewModel @Inject constructor(
 
     /** Touch scroll has no focused card: page the source row when its visible tail approaches the end. */
     fun onViewportNearEnd(rowId: String?, lastVisibleIndex: Int, grid: Boolean) {
-        if (lastVisibleIndex < 0 || paging.session == null) return
+        if (lastVisibleIndex < 0) return
+        visibleViewportEnds[rowId ?: "__flat"] = lastVisibleIndex to grid
+        if (paging.session == null) return
         val state = _uiState.value
         if (state.loading || !state.available) return
         val displayed = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
@@ -516,6 +525,7 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value.rows.takeIf { preserveExtent && displayedContentKey == key }.orEmpty()
 
     private fun beginContentLoad(): Long {
+        visibleViewportEnds.clear()
         val generation = ++contentGeneration
         contentJob?.cancel()
         _uiState.value = _uiState.value.copy(refreshing = true, refreshError = null)
