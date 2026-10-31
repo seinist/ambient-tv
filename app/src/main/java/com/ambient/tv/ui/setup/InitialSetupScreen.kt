@@ -43,6 +43,7 @@ fun InitialSetupScreen(
     onUseYouTubeWithoutLogin: () -> Unit,
     onYouTubeSignedIn: () -> Unit,
     onSetupSpotify: () -> Unit,
+    onSetupTelegram: () -> Unit,
     onUseRadio: () -> Unit,
     onSetupTrailers: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -108,6 +109,7 @@ fun InitialSetupScreen(
                                         MediaSystem.IPTV -> onSetupIptv()
                                         MediaSystem.YOUTUBE -> youtubeStep = true
                                         MediaSystem.SPOTIFY -> onSetupSpotify()
+                                        MediaSystem.TELEGRAM -> onSetupTelegram()
                                         MediaSystem.RADIO -> onUseRadio()
                                         MediaSystem.TRAILERS -> onSetupTrailers()
                                         MediaSystem.FILES -> onUseFiles()
@@ -197,6 +199,7 @@ internal fun SetupSystemCard(system: MediaSystem, modifier: Modifier, onFocused:
                 MediaSystem.IPTV -> R.string.iptv_settings_hint
                 MediaSystem.YOUTUBE -> R.string.setup_desc_youtube
                 MediaSystem.SPOTIFY -> R.string.setup_desc_spotify
+                MediaSystem.TELEGRAM -> R.string.settings_telegram_enable_hint
                 MediaSystem.RADIO -> R.string.setup_desc_radio
                 MediaSystem.DLNA -> R.string.dlna_explanation
                 MediaSystem.FILES -> R.string.setup_desc_files

@@ -838,6 +838,7 @@ open class MainActivity : ComponentActivity() {
                         plexRefreshBus = plexRefreshBus,
                         mediaRepository = mediaRepository,
                         radioBrowserRepository = radioBrowserRepository,
+                        telegramRepository = telegramRepository,
                         radioPlaybackLauncher = radioPlaybackLauncher,
                         playbackAvailability = playbackAvailability,
                         lastInteractionElapsedMs = lastInteractionElapsedMs.longValue,
@@ -943,6 +944,7 @@ private fun AmbientTvApp(
     plexRefreshBus: PlexRefreshBus,
     mediaRepository: MediaRepository,
     radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository,
+    telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     radioPlaybackLauncher: com.ambient.tv.ui.radio.RadioPlaybackLauncher,
     playbackAvailability: com.ambient.tv.data.browse.PlaybackAvailability,
     lastInteractionElapsedMs: Long,
@@ -2023,6 +2025,7 @@ private fun AmbientTvApp(
                                 navController.navigate(Destinations.setupComplete(Destinations.YOUTUBE))
                             },
                             onSetupSpotify = { setupSource("spotify") },
+                            onSetupTelegram = { setupSource("telegram") },
                             onUseRadio = {
                                 if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
                                 appPreferences.radioEnabled = true

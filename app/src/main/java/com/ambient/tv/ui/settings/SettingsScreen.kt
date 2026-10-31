@@ -710,7 +710,8 @@ fun SettingsScreen(
                         SettingsCategory.TVHEADEND,
                         SettingsCategory.SPOTIFY,
                         SettingsCategory.RADIO,
-                        SettingsCategory.YOUTUBE -> {
+                        SettingsCategory.YOUTUBE,
+                        SettingsCategory.TELEGRAM -> {
                             settingsSystemCategoryItems(
                                 category = selectedCategory,
                                 handheldUi = handheldUi,
