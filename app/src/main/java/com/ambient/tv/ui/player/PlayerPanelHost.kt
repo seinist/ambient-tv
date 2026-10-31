@@ -142,7 +142,10 @@ internal fun PublishPlayerPanelKeys(handler: (KeyEvent) -> Boolean) {
  * Both stay composed while the engine underneath is replaced (renderer switch).
  */
 @Composable
-internal fun PersistentPlayerOverlays() {
+internal fun PersistentPlayerOverlays(
+    hideSourceInfo: Boolean = false,
+    expectedSourceIdentity: String? = null,
+) {
     val chrome = LocalPlayerChromeState.current ?: return
     val navigation = chrome.panels
     // Inside the engine's layout, a hiding OSD handed the focus back to the engine's focusable
@@ -166,8 +169,17 @@ internal fun PersistentPlayerOverlays() {
         chrome.panelKeys.value?.invoke(event) == true
     }) {
         CompositionLocalProvider(LocalPlayerPanelNavigation provides navigation) {
-            chrome.osdModel.value?.Content(chrome.visible.value, navigation.panel)
-            chrome.panelModel.value?.let { PlayerPanelContent(it, navigation) }
+            // An outgoing engine may keep its old OSD model for one composition frame.
+            // Never paint it for the incoming live station while the renderer is replaced.
+            val activeModel = chrome.osdModel.value?.takeIf { model ->
+                expectedSourceIdentity == null || model.sourceIdentity == expectedSourceIdentity
+            }
+            if (!hideSourceInfo) {
+                activeModel?.Content(chrome.visible.value, navigation.panel)
+                if (activeModel != null || expectedSourceIdentity == null) {
+                    chrome.panelModel.value?.let { PlayerPanelContent(it, navigation) }
+                }
+            }
         }
     }
 }
@@ -297,6 +309,8 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
  * engines sharing it keep one composed OSD across a renderer switch.
  */
 internal interface PlayerOsdSpec {
+    /** Only live channel players provide this to prevent stale OSD models on a channel change. */
+    val sourceIdentity: String? get() = null
     /** [visible]: the shared OSD visibility; [panel]: the open panel. */
     @Composable
     fun Content(visible: Boolean, panel: UnifiedPlayerPanel)
