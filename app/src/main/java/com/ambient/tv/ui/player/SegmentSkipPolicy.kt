@@ -37,3 +37,35 @@ private const val SEGMENT_END_PROXIMITY_MS = 750L
 private const val SEGMENT_END_TAIL_MS = 1_500L
 private const val SEGMENT_MIN_FORWARD_MS = 250L
 
+/**
+ * SponsorBlock is owned by the background playback service, not the Compose skip overlay:
+ * this keeps skipping functional in PiP/background and prevents two concurrent seeks.
+ * Mark a segment before seeking, including when the terminal safety tail is too short.
+ */
+internal class BackgroundSponsorSkipPolicy {
+    private var generation: Long? = null
+    private val handledStarts = mutableSetOf<Long>()
+
+    fun nextSeek(
+        playbackGeneration: Long,
+        ranges: List<LongRange>,
+        positionMs: Long,
+        durationMs: Long,
+        playing: Boolean,
+    ): Long? {
+        if (generation != playbackGeneration) {
+            generation = playbackGeneration
+            handledStarts.clear()
+        }
+        if (!playing || ranges.isEmpty()) return null
+        val segments = com.ambient.tv.youtube.youtubeSponsorTimeline(
+            com.ambient.tv.domain.model.PlaybackTimeline(), ranges, durationMs,
+        ).segments
+        val active = segments.firstOrNull {
+            it.type == "sponsor" && positionMs >= it.startMs && positionMs < it.endMs &&
+                it.startMs !in handledStarts
+        } ?: return null
+        handledStarts.add(active.startMs)
+        return safeSegmentSkipTarget(active.endMs, positionMs, durationMs)
+    }
+}
