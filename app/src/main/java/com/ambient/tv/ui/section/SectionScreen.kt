@@ -620,7 +620,11 @@ private fun SectionOptionsPanel(
         }
     }
     com.ambient.tv.ui.common.ViewOptionsPanel(
-        showDensity = selectedMode != SectionViewMode.CINEMATIC && selectedMode != SectionViewMode.POSTER_CINEMATIC,
+        // Recommendation poster/landscape modes are horizontal ContentRows with fixed
+        // tile geometry; the grid-density setting has no effect there.
+        showDensity = selectedMode !in setOf(SectionViewMode.CINEMATIC, SectionViewMode.POSTER_CINEMATIC) &&
+            !(state.page == SectionPage.RECOMMENDATIONS &&
+                selectedMode in setOf(SectionViewMode.POSTER, SectionViewMode.LANDSCAPE)),
         views = modes.map { mode -> com.ambient.tv.ui.common.ViewOption(mode.name, stringResource(when (mode) {
             SectionViewMode.POSTER -> R.string.library_view_poster
             SectionViewMode.LANDSCAPE -> R.string.library_view_landscape
