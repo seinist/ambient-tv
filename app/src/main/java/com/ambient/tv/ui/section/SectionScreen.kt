@@ -332,9 +332,7 @@ internal fun SectionContent(
         initialContentFocusPending = false
     }
     // The alphabet indicator represents the item that has focus, not just the top tile.
-    val initialLibraryLetter = state.items.firstOrNull { it.ratingKey == state.focusedRatingKey }
-        ?.let { libraryIndexLetter(it.title) }
-        ?: state.items.firstOrNull()?.let { libraryIndexLetter(it.title) }
+    val initialLibraryLetter = libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey)
     var visibleLibraryLetter by remember(state.items, state.focusedRatingKey, state.page, state.sortOrder, state.viewMode) {
         mutableStateOf(initialLibraryLetter)
     }
