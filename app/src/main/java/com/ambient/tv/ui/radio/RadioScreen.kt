@@ -524,7 +524,7 @@ fun RadioScreen(
                             com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                                 if (state.viewMode == RadioViewMode.GRID) {
                                     TvLazyVerticalGrid(
-                                        columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
+                                        columns = deviceDensityGridCells(state.gridColumns, 160.dp, 8),
                                         modifier = Modifier.fillMaxSize()
                                             .then(if (showStationAlphabet) Modifier else Modifier.overlayLazyGridScrollbar(gridState))
                                             .pageContentUp(focusChain).focusGroup(),
@@ -809,7 +809,7 @@ private fun RadioLoadingContent(
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
     when (layout) {
         RadioLoadingLayout.GRID -> androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-            columns = deviceDensityGridCells(gridColumns, 160.dp, 4),
+            columns = deviceDensityGridCells(gridColumns, 160.dp, 8),
             modifier = modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 40.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
