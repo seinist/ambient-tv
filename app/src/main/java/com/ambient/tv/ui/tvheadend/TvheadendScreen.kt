@@ -2,6 +2,7 @@ package com.ambient.tv.ui.tvheadend
 
 import com.ambient.tv.livetv.guideChannels
 import com.ambient.tv.livetv.LiveTvArt
+import com.ambient.tv.livetv.liveTvChannelRowArt
 import com.ambient.tv.livetv.liveTvProgrammeArt
 import com.ambient.tv.livetv.liveTvRecordingArt
 import com.ambient.tv.livetv.liveTvSeriesArt
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -619,8 +621,12 @@ internal fun ChannelRow(
                 }
             },
             leadingContent = {
-                if (art != null) LiveTvArtBox(art, channel.name, imageHeaders, Modifier.size(80.dp, 45.dp))
-                else ArtworkImage(channel.iconUrl, channel.name, Modifier.size(44.dp), contentScale = ContentScale.Fit, headers = imageHeaders)
+                // Reserve one 16:9 image slot for backdrops, channel logos and missing artwork.
+                // The image can change after the async TMDB lookup without shifting the text.
+                LiveTvArtBox(
+                    liveTvChannelRowArt(art, channel.iconUrl), channel.name, imageHeaders,
+                    Modifier.size(80.dp, 45.dp), logoPadding = 4.dp,
+                )
             },
             trailingContent = { if (current != null) androidx.compose.material3.IconButton(onClick = { onEvent(current) }) { androidx.compose.material3.Icon(Icons.Default.Info, stringResource(R.string.tvh_info)) } },
             modifier = modifier.clickable { onWatch(channel) },
@@ -987,11 +993,14 @@ private fun DvrRow(
 
 /** Row art: programme images cropped, channel logos fitted on the dark plate. */
 @Composable
-internal fun LiveTvArtBox(art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier) {
+internal fun LiveTvArtBox(
+    art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier,
+    logoPadding: Dp = 10.dp,
+) {
     Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
         if (art != null) ArtworkImage(
             model = art.url, title = title,
-            modifier = if (art.logo) Modifier.fillMaxSize().padding(10.dp) else Modifier.fillMaxSize(),
+            modifier = if (art.logo) Modifier.fillMaxSize().padding(logoPadding) else Modifier.fillMaxSize(),
             contentScale = if (art.logo) ContentScale.Fit else ContentScale.Crop,
             headers = art.headers(imageHeaders),
         )
