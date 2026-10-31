@@ -1,13 +1,5 @@
 package com.ambient.tv.ui.player
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -51,7 +43,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.platform.LocalDensity
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.UnifiedBackendPlayerPanel
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
@@ -188,8 +179,6 @@ internal fun PersistentPlayerOverlays(
     }
 }
 
-private data class PlayerPanelVisualTarget(val panel: UnifiedPlayerPanel, val depth: Int)
-
 @Composable
 private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.tv.ui.common.PlayerPanelNavigation?) {
     val panel = navigation?.panel ?: UnifiedPlayerPanel.NONE
@@ -203,8 +192,6 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
             val motion = LocalPlayerPanelMotion.current
             val outerInteractive = LocalPlayerPanelInteractive.current
             val stateHolder = LocalPlayerPanelStateHolder.current
-            val offsetPx = with(LocalDensity.current) { PLAYER_PANEL_CONTENT_OFFSET_DP.dp.roundToPx() }
-            val target = PlayerPanelVisualTarget(displayedPanel, motion.visualDepth)
             Box(Modifier.fillMaxSize()) {
                 Box(
                     Modifier
@@ -212,47 +199,16 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                         .graphicsLayer { alpha = model.scrimAlpha * motion.scrimProgress.value }
                         .background(Color.Black),
                 )
-                AnimatedContent(
-                    targetState = target,
-                    modifier = Modifier.fillMaxSize(),
-                    transitionSpec = {
-                        if (motion.reducedEffects) {
-                            fadeIn(tween(PLAYER_PANEL_REDUCED_MS)) togetherWith
-                                fadeOut(tween(PLAYER_PANEL_REDUCED_MS))
-                        } else {
-                            when (playerPanelContentMotion(initialState.depth, targetState.depth)) {
-                                PlayerPanelContentMotion.FORWARD ->
-                                    (fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
-                                        slideInHorizontally(
-                                            tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
-                                        ) { offsetPx }) togetherWith
-                                        (fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
-                                            slideOutHorizontally(
-                                                tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
-                                            ) { -offsetPx / 2 })
-                                PlayerPanelContentMotion.BACKWARD ->
-                                    (fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
-                                        slideInHorizontally(
-                                            tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
-                                        ) { -offsetPx }) togetherWith
-                                        (fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS)) +
-                                            slideOutHorizontally(
-                                                tween(PLAYER_PANEL_CONTENT_MS, easing = FastOutSlowInEasing),
-                                            ) { offsetPx / 2 })
-                                PlayerPanelContentMotion.REPLACE ->
-                                    fadeIn(tween(PLAYER_PANEL_CONTENT_FADE_MS)) togetherWith
-                                        fadeOut(tween(PLAYER_PANEL_CONTENT_FADE_MS))
-                            }
-                        }
-                    },
-                    label = "playerPanelLevel",
-                ) { visual ->
-                    val childInteractive = outerInteractive && visual == target
-                    CompositionLocalProvider(LocalPlayerPanelInteractive provides childInteractive) {
-                    Box(Modifier.fillMaxSize().playerPanelInteractionGuard(childInteractive)) {
+                // Draw exactly one complete panel chrome at a time. AnimatedContent previously
+                // kept both outgoing and incoming RightSidePanel backgrounds/borders alive during
+                // every submenu hop: they cross-faded on top of each other (visible flicker), and
+                // the old focus group competed with the newly opened parent after Back.
+                // PlayerPanelVisibility still owns the whole drawer's slide-in/slide-out.
+                CompositionLocalProvider(LocalPlayerPanelInteractive provides outerInteractive) {
+                    Box(Modifier.fillMaxSize().playerPanelInteractionGuard(outerInteractive)) {
                         val drawPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
                             UnifiedBackendPlayerPanel(
-                                panel = visual.panel,
+                                panel = displayedPanel,
                                 onPanelChange = { next -> model.onPanelChange?.invoke(next) ?: navigation?.open(next) },
                                 hasVideo = model.hasVideo,
                                 isLive = model.isLive,
@@ -296,11 +252,10 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                             )
                         }
                         if (stateHolder != null) {
-                            stateHolder.SaveableStateProvider(visual.panel.name) { drawPanel() }
+                            stateHolder.SaveableStateProvider(displayedPanel.name) { drawPanel() }
                         } else {
                             drawPanel()
                         }
-                    }
                     }
                 }
             }
