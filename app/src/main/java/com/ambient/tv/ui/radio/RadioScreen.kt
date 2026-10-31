@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -119,14 +120,35 @@ fun RadioScreen(
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
-
-    LaunchedEffect(viewModel, initialSectionKey) {
-        viewModel.enter(RadioSection.fromKey(initialSectionKey))
+    val requestedSection = RadioSection.fromKey(initialSectionKey) ?: RadioSection.POPULAR
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    // A NavHost destination is drawn before its resume/entry callback runs. A reused
+    // ViewModel may still say an old page was empty: never render that state as new data.
+    var entryPending by remember(viewModel, requestedSection) { mutableStateOf(true) }
+    DisposableEffect(lifecycleOwner, viewModel, requestedSection) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE &&
+                viewModel.state.value.needsRemoteRefreshOnReturn()
+            ) {
+                // Reset while this destination is leaving, *before* NavHost can render
+                // its next frame on return. Existing stations/facets stay visible.
+                entryPending = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    ReportSidebarContentReady(state.contentReady)
+    com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("radio")) {
+        viewModel.enter(requestedSection)
+        entryPending = false
+    }
+    val requestedPagePending = state.awaitingRequestedPage(requestedSection, entryPending)
+    val visibleSection = if (entryPending || state.section != requestedSection) requestedSection else state.section
+    ReportSidebarContentReady(!requestedPagePending && state.contentReady)
 
     val focusScope = state.focusScope()
-    val showingFacets = state.isFacetOverview()
+    val showingFacets = if (requestedPagePending && state.section != requestedSection)
+        requestedSection.isFacetSection else state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
     // Alphabetical order uses the localized display names, not raw Radio Browser codes.
     val sortedFacets = remember(state.section, state.facets, locale) {
@@ -134,7 +156,7 @@ fun RadioScreen(
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
-    val effectiveViewMode = state.effectiveViewMode()
+    val effectiveViewMode = if (requestedPagePending && visibleSection.isFacetSection) RadioViewMode.LIST else state.effectiveViewMode()
     val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
@@ -148,7 +170,6 @@ fun RadioScreen(
         )
     }
     var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(lifecycleOwner, viewModel) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             if (viewModel.consumePlayerReturn()) {
@@ -174,7 +195,7 @@ fun RadioScreen(
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
-    if (state.contentReady && contentIds.isNotEmpty()) {
+    if (!requestedPagePending && state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
@@ -244,7 +265,7 @@ fun RadioScreen(
                 .fillMaxSize()
                 .handheldSwipeTabs(
                     tabs = RadioSection.entries,
-                    selected = state.section,
+                    selected = visibleSection,
                     onSelect = selectSection,
                     enabled = !showViewOptions &&
                         !searchVisible &&
@@ -280,7 +301,8 @@ fun RadioScreen(
             ) {
                 SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
                 Text(
-                    radioPageSubtitle(state),
+                    if (requestedPagePending && state.section != requestedSection)
+                        radioSectionLabel(requestedSection) else radioPageSubtitle(state),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -290,15 +312,15 @@ fun RadioScreen(
             if (handheld) {
                 com.ambient.tv.ui.common.PageChipRow(
                     focusChain,
-                    selectedIndex = RadioSection.entries.indexOf(state.section),
+                    selectedIndex = RadioSection.entries.indexOf(visibleSection),
                 ) {
                     lazyItems(RadioSection.entries, key = { it.key }) { section ->
                         TvChip(
                             text = radioSectionLabel(section),
-                            selected = state.section == section &&
+                            selected = visibleSection == section &&
                                 state.submittedQuery.isBlank() &&
                                 state.selectedFacet == null,
-                            modifier = if (state.section == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
+                            modifier = if (visibleSection == section) Modifier.focusRequester(focusChain.selectedChip) else Modifier,
                             onClick = { selectSection(section) },
                         )
                     }
@@ -354,8 +376,8 @@ fun RadioScreen(
             }
 
             when {
-                state.awaitingInitialContent() -> RadioLoadingContent(
-                    layout = state.loadingLayout(),
+                requestedPagePending -> RadioLoadingContent(
+                    layout = state.requestedLoadingLayout(requestedSection),
                     gridColumns = state.gridColumns,
                     listRows = state.listRows,
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
