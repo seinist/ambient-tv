@@ -178,7 +178,6 @@ fun SearchScreen(
     if (onBack != null) {
         BackHandler(enabled = !showOptions) { onBack() }
     }
-    BackHandler(enabled = showOptions) { showOptions = false }
     CompositionLocalProvider(LocalFilterFocusState provides filterFocusState) {
         BrowseFocusContentIdentity(listOf(uiState.query, uiState.selectedSources, uiState.viewMode))
         val firstMedia = listOf(uiState.results, uiState.jellyfinResults, uiState.embyResults, uiState.trailerResults)
@@ -303,7 +302,7 @@ fun SearchScreen(
                 }
             }
             if (showOptions && uiState.hasResults) {
-                Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+                com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showOptions = false }) {
                 Box(Modifier.align(Alignment.TopEnd)) {
                     ViewOptionsPanel(
                         views = listOf(
@@ -318,6 +317,7 @@ fun SearchScreen(
                         onGridColumns = {}, onListRows = {},
                         onClose = { showOptions = false },
                     )
+                }
                 }
             }
         }

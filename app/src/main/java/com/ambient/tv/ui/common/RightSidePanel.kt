@@ -17,6 +17,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -47,6 +48,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -117,6 +119,75 @@ private class StandaloneRightPanelMotion {
 }
 
 private val LocalStandaloneRightPanelMotion = staticCompositionLocalOf<StandaloneRightPanelMotion?> { null }
+/** Wrapper-owned Back prevents screen/Modal Back handler registration order from changing dismissal. */
+private val LocalRightPanelOverlayOwnsBack = staticCompositionLocalOf { false }
+
+/**
+ * Every standalone right drawer and its dimming scrim share one entrance/exit animation.
+ * The panel's own BackHandler is the sole modal Back owner; the parent page must not clear
+ * its visible flag until the drawer's exit animation invokes onBack.
+ *
+ * Player-owned panels already animate their scrim through PlayerPanelVisibility and do not
+ * use this wrapper.
+ */
+@Composable
+fun RightPanelOverlay(
+    modifier: Modifier = Modifier,
+    onOutsideTap: () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val reducedEffects = LocalPerformanceProfile.current.reducedEffects
+    val motion = remember { StandaloneRightPanelMotion() }
+    val latestOutside = rememberUpdatedState(onOutsideTap)
+    val latestReduced = rememberUpdatedState(reducedEffects)
+    val scope = rememberCoroutineScope()
+    val uiSounds = LocalUiSoundPlayer.current
+
+    LaunchedEffect(motion, reducedEffects, motion.dismiss.closing) {
+        if (motion.dismiss.closing) return@LaunchedEffect
+        motion.progress.animateTo(
+            1f,
+            tween(if (reducedEffects) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                else com.ambient.tv.ui.player.PLAYER_PANEL_ENTER_MS, easing = FastOutSlowInEasing),
+        )
+    }
+
+    fun dismissOutside() {
+        val action = latestOutside.value
+        if (!motion.dismiss.claim()) return
+        scope.launch {
+            motion.progress.animateTo(
+                0f,
+                tween(if (latestReduced.value) com.ambient.tv.ui.player.PLAYER_PANEL_REDUCED_MS
+                    else com.ambient.tv.ui.player.PLAYER_PANEL_EXIT_MS, easing = FastOutSlowInEasing),
+            )
+            action()
+        }
+    }
+
+    // One system Back owner per standalone overlay. It remains enabled while the drawer
+    // exits so a second Back is swallowed rather than navigates the browse grid.
+    androidx.activity.compose.BackHandler {
+        if (uiSounds != null) uiSounds.perform(com.ambient.tv.ui.sound.UiSound.BACK) { dismissOutside() }
+        else dismissOutside()
+    }
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalStandaloneRightPanelMotion provides motion,
+        LocalRightPanelOverlayOwnsBack provides true,
+    ) {
+        Box(modifier.fillWindowHeight().fillMaxSize()) {
+            // Alpha updates only the draw layer. Keep the dimmer visible throughout dismissal,
+            // and release the underlying grid's focus only after the panel actually closes.
+            Box(
+                Modifier.fillMaxSize()
+                    .graphicsLayer { alpha = 0.38f * motion.progress.value }
+                    .background(Color.Black)
+                    .pointerInput(Unit) { detectTapGestures { dismissOutside() } },
+            )
+            content()
+        }
+    }
+}
 
 internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
 
@@ -347,6 +418,9 @@ private fun RightSidePanelChrome(
     val standaloneMotion = inheritedMotion ?: ownMotion
     val standalone = !playerPanelMotion.active
     val panelInteractive = playerPanelInteractive && (!standalone || !standaloneMotion.dismiss.closing)
+    // Block controls immediately on Back, but keep the existing focus owner until the exit
+    // animation completes. Otherwise Compose may move focus into the underlying grid mid-slide.
+    val keepPanelFocusDuringExit = standalone && standaloneMotion.dismiss.closing && playerPanelInteractive
     val dismissScope = rememberCoroutineScope()
     val uiSounds = LocalUiSoundPlayer.current
 
@@ -405,7 +479,9 @@ private fun RightSidePanelChrome(
     }
     // Android system Back and TV remote Back must always dismiss the modal rather than merely
     // handing focus to the underlying view. A second Back during exit is consumed, not forwarded.
-    androidx.activity.compose.BackHandler(enabled = playerPanelInteractive) { dismissBack() }
+    androidx.activity.compose.BackHandler(
+        enabled = playerPanelInteractive && !LocalRightPanelOverlayOwnsBack.current,
+    ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
@@ -465,10 +541,11 @@ private fun RightSidePanelChrome(
         }
     }
     if (requestHeaderFocus && panelInteractive) {
-        LaunchedEffect(Unit) {
-            delay(400)
+        LaunchedEffect(requestHeaderFocus, panelInteractive) {
+            // Do not leave focus on the old grid for 400 ms while the drawer enters.
+            // Give Compose one layout frame to attach the panel's controls, then claim focus.
+            androidx.compose.runtime.withFrameNanos { }
             if (panelHasFocus || !panelInteractive) return@LaunchedEffect
-            // Back only for a level that was just opened; elsewhere the next OK would leave it.
             if (footerAllowed || !focusFirstRow()) runCatching { footerFocus.requestFocus() }
         }
     }
@@ -498,7 +575,7 @@ private fun RightSidePanelChrome(
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
             .focusProperties {
-                canFocus = panelInteractive
+                canFocus = panelInteractive || keepPanelFocusDuringExit
                 onEnter = { if (!panelInteractive) cancelFocusChange() }
                 onExit = { cancelFocusChange() }
             }

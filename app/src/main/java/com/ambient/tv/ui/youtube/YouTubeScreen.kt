@@ -127,7 +127,6 @@ import kotlinx.coroutines.delay
         contentFocusTarget.rowId.takeIf { populatedRows.hasSubsections() })
     // The search row is also shown for a restored query; Back closes it before leaving the page.
     val searchVisible = showSearch || state.query.isNotBlank()
-    BackHandler(enabled=showViewOptions) { showViewOptions=false }
     BackHandler(enabled=searchVisible&&!showViewOptions) {
         viewModel.onQueryChanged("")
         showSearch=false
@@ -302,8 +301,8 @@ import kotlinx.coroutines.delay
             }
         }
     }
-        if (showViewOptions) Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha=.38f)))
-        if (showViewOptions) Box(Modifier.align(Alignment.TopEnd)) {
+        if (showViewOptions) com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showViewOptions = false }) {
+        Box(Modifier.align(Alignment.TopEnd)) {
             YouTubeViewOptionsPanel(
                 state = state,
                 filterModel = filterModel,
@@ -313,6 +312,7 @@ import kotlinx.coroutines.delay
                 onSetMediaSelection = viewModel::setMediaSelectionBehavior,
                 onClose = { showViewOptions=false },
             )
+        }
         }
     }
     }

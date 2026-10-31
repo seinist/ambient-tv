@@ -342,7 +342,6 @@ internal fun SectionContent(
         visibleLibraryLetter = libraryIndexLetter(item.title)
         onItemFocused(item)
     }
-    BackHandler(enabled = showOptions) { showOptions = false }
     // Match Files root-Back: stay on route, hand focus to the sidebar.
     if (onBack != null) {
         BackHandler(enabled = !showOptions) { optionsOpened = false; onBack() }
@@ -486,8 +485,8 @@ internal fun SectionContent(
                 }
             }
 
-            if (showOptions) Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
-            if (showOptions) Box(Modifier.align(Alignment.TopEnd)) {
+            if (showOptions) com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showOptions = false }) {
+            Box(Modifier.align(Alignment.TopEnd)) {
                 SectionOptionsPanel(
                     state = state,
                     onSetSort = { keepControlFocus(); onSetSort(it) },
@@ -499,6 +498,7 @@ internal fun SectionContent(
                     onSetListRows = { keepControlFocus(); onSetListRows(it) },
                     onClose = { showOptions = false },
                 )
+            }
             }
         }
     }

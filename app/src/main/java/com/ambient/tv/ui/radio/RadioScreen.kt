@@ -117,6 +117,15 @@ fun RadioScreen(
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     val selectSection = onSelectSection ?: viewModel::selectSection
     var showViewOptions by remember { mutableStateOf(false) }
+    var restoreViewOptionsFocus by remember { mutableStateOf(false) }
+    val viewOptionsFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(showViewOptions, restoreViewOptionsFocus) {
+        if (!showViewOptions && restoreViewOptionsFocus) {
+            withFrameNanos { }
+            runCatching { viewOptionsFocusRequester.requestFocus() }
+            restoreViewOptionsFocus = false
+        }
+    }
     var showSearch by remember { mutableStateOf(false) }
     val searchVisible = showSearch || state.query.isNotBlank() || state.submittedQuery.isNotBlank()
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
@@ -259,9 +268,9 @@ fun RadioScreen(
     val closeViewOptions: () -> Unit = {
         showViewOptions = false
         if (focusAfterViewOptions) pendingContentFocus = focusScope
+        else restoreViewOptionsFocus = true
         focusAfterViewOptions = false
     }
-    BackHandler(enabled = showViewOptions) { closeViewOptions() }
     BackHandler(enabled = !showViewOptions && searchVisible) {
         if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
         showSearch = false
@@ -308,7 +317,8 @@ fun RadioScreen(
                         loading = state.loading || state.loadingMore,
                         onClick = viewModel::refresh,
                     )
-                    ViewOptionsChip(0, onClick = { showViewOptions = true })
+                    ViewOptionsChip(0, onClick = { showViewOptions = true },
+                        modifier = Modifier.focusRequester(viewOptionsFocusRequester))
                 },
             ) {
                 SystemPageTitle(com.ambient.tv.ui.common.MediaSystem.RADIO)
@@ -531,7 +541,7 @@ fun RadioScreen(
         }
 
         if (showViewOptions) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
+            com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = closeViewOptions) {
             Box(Modifier.align(Alignment.TopEnd)) {
                 ViewOptionsPanel(
                     views = if (showingFacets) emptyList() else listOf(
@@ -551,6 +561,7 @@ fun RadioScreen(
                     onListRows = viewModel::setListRows,
                     onClose = closeViewOptions,
                 )
+            }
             }
         }
     }

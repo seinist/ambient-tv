@@ -312,14 +312,14 @@ fun PhotoBrowserScreen(
                 }
             }
             if (showOptions) {
-                Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f))
-                    .clickable { closeOptions() })
+                com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = ::closeOptions) {
                 FilterOptionsPanel(
                     title = stringResource(R.string.library_options),
                     model = sortModel,
                     onClose = ::closeOptions,
                     modifier = Modifier.align(Alignment.TopEnd),
                 )
+                }
             }
         }
     }

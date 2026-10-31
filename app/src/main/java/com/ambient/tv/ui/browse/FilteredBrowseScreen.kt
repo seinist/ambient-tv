@@ -121,7 +121,6 @@ fun FilteredBrowseScreen(
     var restoreSettingsFocus by rememberSaveable { mutableStateOf(false) }
     val filterBarShown = LocalFilterBarSetting.current.shown
     val loaded = state as? FilteredBrowseUiState.Loaded
-    BackHandler(enabled = showOptions) { showOptions = false }
     LaunchedEffect(showOptions, restoreOptionsFocus) {
         if (!showOptions && restoreOptionsFocus) {
             repeat(3) {
@@ -261,7 +260,7 @@ fun FilteredBrowseScreen(
                 }
             }
             if (showOptions && loaded != null) {
-                Box(Modifier.fillWindowHeight().fillMaxSize().background(Color.Black.copy(alpha = 0.38f)))
+                com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = { showOptions = false }) {
                 Box(Modifier.align(Alignment.TopEnd)) {
                     ViewOptionsPanel(
                         views = listOf(
@@ -281,6 +280,7 @@ fun FilteredBrowseScreen(
                         onSortOrder = selectSortOrder,
                         onClose = { showOptions = false },
                     )
+                }
                 }
             }
         }
