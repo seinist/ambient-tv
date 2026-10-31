@@ -85,6 +85,7 @@ import com.ambient.tv.ui.common.MediaTileStyle
 import com.ambient.tv.ui.common.MediaArtworkWithStreamIcons
 import com.ambient.tv.ui.common.StatePanel
 import com.ambient.tv.ui.common.SkeletonRow
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.common.PageHeader
 import com.ambient.tv.ui.common.LocalFilterFocusState
 import com.ambient.tv.ui.common.ViewOption
@@ -597,20 +598,44 @@ private fun SearchRows(
     }
 }
 
+internal enum class SearchLoadingArtwork { POSTER, LANDSCAPE, SQUARE }
+
+/** Search rows contain posters for media servers, landscape video, and square audio covers. */
+internal fun searchLoadingArtwork(system: MediaSystem): SearchLoadingArtwork = when (system) {
+    MediaSystem.SPOTIFY, MediaSystem.RADIO -> SearchLoadingArtwork.SQUARE
+    MediaSystem.YOUTUBE, MediaSystem.TVHEADEND -> SearchLoadingArtwork.LANDSCAPE
+    else -> SearchLoadingArtwork.POSTER
+}
+
+private fun androidx.compose.foundation.lazy.LazyListScope.sourceListStatusItem(
+    key: String,
+    system: MediaSystem,
+    state: SearchSourceState,
+    labelRes: Int? = null,
+    labelOverride: String? = null,
+) = sourceStatusItem(key, system, state, labelRes, labelOverride, SearchViewMode.LIST)
+
 private fun androidx.compose.foundation.lazy.LazyListScope.sourceStatusItem(
     key: String,
     system: MediaSystem,
     state: SearchSourceState,
     labelRes: Int? = null,
     labelOverride: String? = null,
+    mode: SearchViewMode = SearchViewMode.ROWS,
 ) {
     when (state) {
         SearchSourceState.LOADING -> item(key = key) {
-            SkeletonRow(
-                title = stringResource(R.string.search_source_loading, labelOverride ?: labelRes?.let { stringResource(it) } ?: searchSystemName(system)),
-                style = MediaTileStyle.POSTER,
-                itemCount = 4,
-            )
+            val title = stringResource(R.string.search_source_loading, labelOverride ?: labelRes?.let { stringResource(it) } ?: searchSystemName(system))
+            when {
+                mode == SearchViewMode.LIST -> SearchLoadingList(title, system)
+                searchLoadingArtwork(system) == SearchLoadingArtwork.SQUARE -> SearchLoadingSquareRow(title, system)
+                else -> SkeletonRow(
+                    title = title,
+                    style = if (searchLoadingArtwork(system) == SearchLoadingArtwork.LANDSCAPE)
+                        MediaTileStyle.LANDSCAPE else MediaTileStyle.POSTER,
+                    itemCount = 4,
+                )
+            }
         }
         SearchSourceState.ERROR, SearchSourceState.PARTIAL -> item(key = key) {
             Text(
@@ -620,6 +645,72 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourceStatusItem(
             )
         }
         else -> Unit
+    }
+}
+
+/** Same section and 1:1 cover silhouette as the Spotify and Radio search rows. */
+@Composable
+private fun SearchLoadingSquareRow(title: String, system: MediaSystem) {
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val shape = RoundedCornerShape(10.dp)
+    Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ContentSectionHeader(title)
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            userScrollEnabled = false,
+        ) {
+            items(4) {
+                Column(
+                    Modifier.width(if (system == MediaSystem.SPOTIFY) 220.dp else 250.dp)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = .72f), shape)
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(shape)
+                        .skeletonPulseAlpha(pulse).background(fill, shape))
+                    Box(Modifier.fillMaxWidth(.78f).height(17.dp)
+                        .skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(5.dp)))
+                    Box(Modifier.fillMaxWidth(.56f).height(12.dp)
+                        .skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(5.dp)))
+                }
+            }
+        }
+    }
+}
+
+/** Loading status is a list-shaped source section when Search is set to LIST. */
+@Composable
+private fun SearchLoadingList(title: String, system: MediaSystem) {
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    val shape = RoundedCornerShape(10.dp)
+    val artwork = searchLoadingArtwork(system)
+    val artWidth = when (artwork) {
+        SearchLoadingArtwork.POSTER -> 166.dp  // SearchMediaListItem uses landscape artwork
+        SearchLoadingArtwork.LANDSCAPE -> 132.dp
+        SearchLoadingArtwork.SQUARE -> 76.dp
+    }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ContentSectionHeader(title, modifier = Modifier.padding(top = 12.dp), startPadding = 0.dp, bottomPadding = 2.dp)
+        repeat(3) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .58f), shape)
+                    .border(1.dp, Color.White.copy(alpha = .06f), shape)
+                    .padding(if (artwork == SearchLoadingArtwork.POSTER) 14.dp else 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(if (artwork == SearchLoadingArtwork.POSTER) 20.dp else 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.width(artWidth).aspectRatio(if (artwork == SearchLoadingArtwork.SQUARE) 1f else 16f / 9f)
+                    .clip(shape).skeletonPulseAlpha(pulse).background(fill, shape))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.fillMaxWidth(.72f).height(18.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                    Box(Modifier.fillMaxWidth(.44f).height(12.dp).skeletonPulseAlpha(pulse).background(fill, shape))
+                }
+            }
+        }
     }
 }
 
@@ -988,7 +1079,7 @@ private fun SearchList(
         contentPadding = PaddingValues(bottom = 40.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        sourceStatusItem("plex-list-status", MediaSystem.PLEX, state.plexState)
+        sourceListStatusItem("plex-list-status", MediaSystem.PLEX, state.plexState)
         plexGroups.forEach { (groupRes, groupItems) ->
             item(key = "plex-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.PLEX, groupRes) }
             items(groupItems, key = { "plex-media:${it.ratingKey}" }) { item ->
@@ -1001,7 +1092,7 @@ private fun SearchList(
             }
         }
 
-        sourceStatusItem("jellyfin-list-status", MediaSystem.JELLYFIN, state.jellyfinState)
+        sourceListStatusItem("jellyfin-list-status", MediaSystem.JELLYFIN, state.jellyfinState)
         jellyfinGroups.forEach { (groupRes, groupItems) ->
             item(key = "jellyfin-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.JELLYFIN, groupRes) }
             items(groupItems, key = { "jellyfin-media:${it.ratingKey}" }) { item ->
@@ -1014,7 +1105,7 @@ private fun SearchList(
             }
         }
 
-        sourceStatusItem("emby-list-status", MediaSystem.EMBY, state.embyState)
+        sourceListStatusItem("emby-list-status", MediaSystem.EMBY, state.embyState)
         embyGroups.forEach { (groupRes, groupItems) ->
             item(key = "emby-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.EMBY, groupRes) }
             items(groupItems, key = { "emby-media:${it.ratingKey}" }) { item ->
@@ -1027,7 +1118,7 @@ private fun SearchList(
             }
         }
 
-        sourceStatusItem("trailers-list-status", MediaSystem.TRAILERS, state.trailerState)
+        sourceListStatusItem("trailers-list-status", MediaSystem.TRAILERS, state.trailerState)
         trailerGroups.forEach { (groupRes, groupItems) ->
             item(key = "trailers-list-header:$groupRes") { SearchListGroupHeader(MediaSystem.TRAILERS, groupRes) }
             items(groupItems, key = { "trailers-media:${it.ratingKey}" }) { item ->
@@ -1040,7 +1131,7 @@ private fun SearchList(
             }
         }
 
-        sourceStatusItem("tvheadend-list-status", MediaSystem.TVHEADEND, state.tvheadendState, labelOverride = state.liveTvSources.values.map { it.name }.distinct().joinToString(", ").ifBlank { null })
+        sourceListStatusItem("tvheadend-list-status", MediaSystem.TVHEADEND, state.tvheadendState, labelOverride = state.liveTvSources.values.map { it.name }.distinct().joinToString(", ").ifBlank { null })
         state.liveTvSources.values.forEach { source ->
             val channels = state.tvheadendResults.channels.filter { it.sourceId == source.id }
             val programs = state.tvheadendResults.programs.filter { it.sourceId == source.id }
@@ -1090,7 +1181,7 @@ private fun SearchList(
         }
 
         }
-        sourceStatusItem("youtube-list-status", MediaSystem.YOUTUBE, state.youtubeState)
+        sourceListStatusItem("youtube-list-status", MediaSystem.YOUTUBE, state.youtubeState)
         if (state.youtubeResults.isNotEmpty()) {
             item(key = "youtube-list-header") { SearchListGroupHeader(MediaSystem.YOUTUBE, R.string.search_videos) }
             items(state.youtubeResults, key = { "youtube:${it.videoId}" }) { item ->
@@ -1105,7 +1196,7 @@ private fun SearchList(
             }
         }
 
-        sourceStatusItem("spotify-list-status", MediaSystem.SPOTIFY, state.spotifyState)
+        sourceListStatusItem("spotify-list-status", MediaSystem.SPOTIFY, state.spotifyState)
         spotifyGroups.forEachIndexed { groupIndex, (type, groupItems) ->
             val titleRes = spotifyTypeTitleRes(type)
             item(key = "spotify-list-header:$type") { SearchListGroupHeader(MediaSystem.SPOTIFY, titleRes) }
@@ -1121,7 +1212,7 @@ private fun SearchList(
                 )
             }
         }
-        sourceStatusItem("radio-list-status", MediaSystem.RADIO, state.radioState)
+        sourceListStatusItem("radio-list-status", MediaSystem.RADIO, state.radioState)
         if (state.radioResults.isNotEmpty()) {
             item(key = "radio-list-header") { SearchListGroupHeader(MediaSystem.RADIO, R.string.radio_stations) }
             items(state.radioResults, key = { "radio:${it.id}" }) { station ->
