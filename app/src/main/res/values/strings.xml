@@ -2165,6 +2165,12 @@
     <string name="settings_home_radio_facet_all_added">All available entries are already on Home.</string>
     <string name="radio_search_placeholder">Search stations</string>
     <string name="radio_no_stations">No stations found</string>
+    <string name="radio_no_genres">No genres found</string>
+    <string name="radio_no_countries">No countries found</string>
+    <string name="radio_no_languages">No languages found</string>
+    <string name="radio_no_favorites">No favorite stations yet</string>
+    <string name="radio_no_recent">No recently played stations</string>
+    <string name="radio_no_search_results">No stations match your search</string>
     <string name="radio_error">Radio Browser is currently unavailable.</string>
     <string name="radio_load_more">Load more</string>
     <string name="radio_favorites">Favorites</string>
