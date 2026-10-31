@@ -189,6 +189,20 @@ fun RightPanelOverlay(
     }
 }
 
+/**
+ * Standalone browse drawers always slide their complete width, even when the UI profile
+ * requests shorter/reduced motion. Reusing the player's reducedEffects translation policy
+ * here mistakenly suppressed movement and left only a fade on low-end Android TVs.
+ *
+ * The playback panel retains its own playerPanelDrawerTranslationFraction policy; only
+ * the standalone shell needs this override.
+ */
+internal fun standaloneRightPanelTranslationFraction(progress: Float): Float =
+    com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(progress, reducedEffects = false)
+
+internal fun standaloneRightPanelAlpha(progress: Float): Float =
+    com.ambient.tv.ui.player.playerPanelDrawerAlpha(progress, reducedEffects = false)
+
 internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
 
 /** Scrollbar of the enclosing [RightSidePanel] while its body overflows; null otherwise. */
@@ -568,9 +582,19 @@ private fun RightSidePanelChrome(
             .graphicsLayer {
                 val progress = if (playerPanelMotion.active) playerPanelMotion.panelProgress.value
                     else standaloneMotion.progress.value
-                val reduced = if (playerPanelMotion.active) playerPanelMotion.reducedEffects else reducedEffects
-                translationX = size.width * com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(progress, reduced)
-                alpha = com.ambient.tv.ui.player.playerPanelDrawerAlpha(progress, reduced)
+                // Player-owned drawers use the player motion contract unchanged.
+                // Browse drawers must *always* translate off the right edge; reduced UI
+                // profiles shorten their duration, but may not turn the slide into a fade.
+                translationX = size.width * if (playerPanelMotion.active) {
+                    com.ambient.tv.ui.player.playerPanelDrawerTranslationFraction(
+                        progress, playerPanelMotion.reducedEffects,
+                    )
+                } else standaloneRightPanelTranslationFraction(progress)
+                alpha = if (playerPanelMotion.active) {
+                    com.ambient.tv.ui.player.playerPanelDrawerAlpha(
+                        progress, playerPanelMotion.reducedEffects,
+                    )
+                } else standaloneRightPanelAlpha(progress)
             }
             .background(overlayPanelBrush(), panelShape)
             .border(1.dp, overlayPanelBorder(), panelShape)
