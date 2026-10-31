@@ -2203,4 +2203,7 @@
     <string name="settings_sleep_standby_hint">With permission, Ambient TV requests standby when the timer finishes. Otherwise it releases the screen-on lock so Android can enter standby on its own. Whether the connected TV turns off depends on the device and HDMI-CEC.</string>
     <string name="settings_sleep_standby_unavailable">Immediate standby is not supported by this TV. The timer still stops playback and allows Android to enter standby automatically.</string>
     <string name="settings_sleep_standby_explanation">Allow Ambient TV to lock the screen only when a sleep timer ends. This is optional and can be disabled at any time.</string>
+    <string name="settings_auto_pip_title">Picture-in-picture</string>
+    <string name="settings_auto_pip_enable">Automatic picture-in-picture</string>
+    <string name="settings_auto_pip_hint">On phones, keep playing video in a floating Android window when leaving the app. Audio-only playback stays in the background.</string>
 </resources>
