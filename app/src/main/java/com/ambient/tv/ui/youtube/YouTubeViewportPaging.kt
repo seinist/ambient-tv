@@ -14,6 +14,12 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 internal val LocalYouTubeViewportContinuation =
     staticCompositionLocalOf<((String?, Int, Boolean) -> Unit)?> { null }
 
+/** If the last visible slot is a section header, use the last actual video card before it. */
+internal fun youtubeLastVisibleSourceItem(
+    visibleKeys: List<String>,
+    sourceIndices: Map<String, Pair<String, Int>>,
+): Pair<String, Int>? = visibleKeys.asReversed().firstNotNullOfOrNull(sourceIndices::get)
+
 /** Translate mixed headers/cards into source-relative positions for sectioned list and wall. */
 internal fun youtubeViewportItemKeys(rows: List<YouTubeRow>, prefix: String): Map<String, Pair<String, Int>> =
     buildMap {
@@ -34,8 +40,12 @@ internal fun ObserveYouTubeListViewport(
     if (!LocalHandheldUi.current || request == null) return
     LaunchedEffect(state, rowId, itemKeys, request) {
         snapshotFlow {
-            state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { item ->
-                if (itemKeys == null) rowId to item.index else itemKeys[item.key.toString()]
+            if (itemKeys == null) {
+                state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { rowId to it.index }
+            } else {
+                youtubeLastVisibleSourceItem(
+                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, itemKeys,
+                )
             }
         }.distinctUntilChanged().collect { target ->
             if (target != null) request(target.first, target.second, false)
@@ -53,8 +63,12 @@ internal fun ObserveYouTubeGridViewport(
     if (!LocalHandheldUi.current || request == null) return
     LaunchedEffect(state, rowId, itemKeys, request) {
         snapshotFlow {
-            state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { item ->
-                if (itemKeys == null) rowId to item.index else itemKeys[item.key.toString()]
+            if (itemKeys == null) {
+                state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { rowId to it.index }
+            } else {
+                youtubeLastVisibleSourceItem(
+                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, itemKeys,
+                )
             }
         }.distinctUntilChanged().collect { target ->
             if (target != null) request(target.first, target.second, true)
