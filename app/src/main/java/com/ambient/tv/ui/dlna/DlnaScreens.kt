@@ -380,9 +380,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             }
         }
         if (showOptions) {
-            BackHandler { closeOptions() }
-            Box(Modifier.fillWindowHeight().fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.38f))
-                .clickable { closeOptions() })
+            com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = ::closeOptions) {
             ViewOptionsPanel(
                 views = DlnaViewMode.entries.map { mode -> ViewOption(mode.name, stringResource(when (mode) {
                     DlnaViewMode.LIST -> R.string.library_view_list
@@ -397,6 +395,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 onClose = ::closeOptions,
                 modifier = Modifier.align(Alignment.TopEnd),
             )
+            }
         }
     }
 }
