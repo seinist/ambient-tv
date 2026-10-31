@@ -159,13 +159,7 @@ class UnreachableServerGate @Inject constructor(
 
     private fun startRetry(onlySystem: String?) {
         if (retryJob?.isActive == true) return
-        val offlineNow = current().offline
-        val failed = if (onlySystem == null) offlineNow else {
-            val machine = hosts.machine(onlySystem)
-            offlineNow.filterTo(mutableSetOf()) {
-                it == onlySystem || (machine != null && hosts.machine(it) == machine)
-            }
-        }
+        val failed = offlineRetryTargets(current().offline, onlySystem, hosts::machine)
         if (failed.isEmpty()) return
         retrying.value = true
         retryJob = scope.launch {
