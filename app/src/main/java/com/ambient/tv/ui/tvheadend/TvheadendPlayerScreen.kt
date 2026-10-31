@@ -371,8 +371,21 @@ fun TvheadendPlayerScreen(
                         },
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
-                    com.ambient.tv.ui.player.PersistentPlayerOverlays()
+                    com.ambient.tv.ui.player.PersistentPlayerOverlays(
+                        hideSourceInfo = viewModel.changingChannel,
+                        expectedSourceIdentity = current.channel?.uuid,
+                    )
                 }
+            }
+        }
+        // Covers outgoing video frames and chrome while a replacement stream is acquired.
+        // Never expose the previous channel's title/EPG during the new tune.
+        if (viewModel.changingChannel) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                PlayerBufferingSpinner(visible = true)
             }
         }
     }
