@@ -125,6 +125,11 @@ fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: Ho
         HostHealth.UNKNOWN -> probeOf(true, service)
     }
 
+/** A confirmed host outage invalidates an earlier identity. It must not automatically
+ * become Online again when an unrelated port opens during machine startup. */
+fun shouldInvalidateConfirmedService(service: ServerConnectionState, host: HostHealth): Boolean =
+    host == HostHealth.OFFLINE && service is ServerConnectionState.Online
+
 /** Host outages invalidate a usable connection, never an active attempt or its error detail. */
 internal fun hostAwareConnectionState(service: ServerConnectionState, host: HostHealth): ServerConnectionState =
     if (host == HostHealth.OFFLINE && service is ServerConnectionState.Online) ServerConnectionState.Offline
