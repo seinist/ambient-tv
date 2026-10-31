@@ -30,6 +30,9 @@ internal object RadioFocusMemory {
 
     @Synchronized fun last(scope: RadioFocusScope): String? = selections[scope]
 
+    /** A new browse UI session must never inherit a previous Activity's radio tile. */
+    @Synchronized fun clear() = selections.clear()
+
     @Synchronized fun save(scope: RadioFocusScope, itemId: String) {
         selections.remove(scope)
         selections[scope] = itemId
