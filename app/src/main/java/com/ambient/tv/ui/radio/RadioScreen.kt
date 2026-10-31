@@ -912,6 +912,29 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier, sharedPulse: Stat
     }
 }
 
+/**
+ * Small separately focusable favorite action, matching the sibling actions on LiveTV
+ * recording rows. It must not be nested inside the station's play Surface.
+ */
+@Composable
+private fun RadioFavoriteAction(
+    favorite: Boolean,
+    onClick: () -> Unit,
+    onFocused: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val description = stringResource(if (favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite)
+    TvActionButton(
+        text = "",
+        icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+        selected = favorite,
+        onClick = onClick,
+        modifier = modifier
+            .semantics { contentDescription = description }
+            .onFocusChanged { if (it.isFocused) onFocused() },
+    )
+}
+
 @Composable
 private fun RadioStationTile(
     station: RadioStation,
@@ -920,14 +943,13 @@ private fun RadioStationTile(
     loading: Boolean,
     favorite: Boolean,
     onClick: () -> Unit,
+    onFavorite: () -> Unit,
     onFocused: () -> Unit,
 ) {
     var focused by remember(station.id) { mutableStateOf(false) }
+    var cardHasFocus by remember(station.id) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    Box(Modifier.fillMaxWidth().onFocusChanged { cardHasFocus = it.hasFocus }) {
         Surface(
             onClick = onClick,
             colors = transparentSurfaceColors(),
@@ -946,13 +968,13 @@ private fun RadioStationTile(
             Column(
                 Modifier
                     .background(
-                        if (focused || playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        if (cardHasFocus || playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                         else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
                         shape,
                     )
                     .border(
                         2.dp,
-                        if (focused || playing) MaterialTheme.colorScheme.primary
+                        if (cardHasFocus || playing) MaterialTheme.colorScheme.primary
                         else Color.White.copy(alpha = 0.08f),
                         shape,
                     )
@@ -961,19 +983,9 @@ private fun RadioStationTile(
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
                     RadioArtwork(station, Modifier.fillMaxSize())
-                    if (favorite) {
-                        androidx.compose.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(20.dp),
-                        )
-                    }
                     if (playing || loading) {
                         Box(
-                            Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(6.dp)
+                            Modifier.align(Alignment.BottomEnd).padding(6.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
                                 .padding(horizontal = 9.dp, vertical = 5.dp),
@@ -986,7 +998,7 @@ private fun RadioStationTile(
                         }
                     }
                 }
-                CenteredMarqueeTitle(station.name, focused = focused)
+                CenteredMarqueeTitle(station.name, focused = cardHasFocus)
                 Text(
                     radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
                     style = MaterialTheme.typography.bodySmall,
@@ -997,6 +1009,12 @@ private fun RadioStationTile(
                 )
             }
         }
+        RadioFavoriteAction(
+            favorite = favorite,
+            onClick = onFavorite,
+            onFocused = onFocused,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+        )
     }
 }
 
@@ -1011,9 +1029,12 @@ private fun RadioStationList(
     loadingMore: Boolean,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
+    onFavorite: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
     initialFocusId: String?,
     initialFocusRequester: FocusRequester,
+    alphabetJumpId: String?,
+    alphabetReturnRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
@@ -1022,6 +1043,7 @@ private fun RadioStationList(
     ) com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse) else null
     TvLazyColumn(
         allowUpExit = true,
+        focusActionsOnRight = false,
         modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
@@ -1029,68 +1051,80 @@ private fun RadioStationList(
     ) {
         lazyItems(stations, key = { it.id }) { station ->
             var focused by remember(station.id) { mutableStateOf(false) }
+            var rowHasFocus by remember(station.id) { mutableStateOf(false) }
             val selected = playbackId == station.id
+            val favorite = station.id in favoriteIds
             val shape = RoundedCornerShape(10.dp)
-            Surface(
-                onClick = { onClick(station) },
-                colors = transparentSurfaceColors(),
-                scale = noSurfaceScale(),
-                shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = (if (station.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
-                    .fillMaxWidth()
-                    .browseFocusTarget(station.id)
-                    .mediaFocusMotion(focused, focusedScale = 1.012f)
-                    .activateOnTvKey { onClick(station) }
-                    .bringFocusedContextIntoView()
-                    .onFocusChanged {
-                        focused = it.isFocused
-                        if (it.isFocused) onFocused(station)
-                    },
+            val focusModifier = when (station.id) {
+                alphabetJumpId -> Modifier.focusRequester(alphabetReturnRequester)
+                initialFocusId -> Modifier.focusRequester(initialFocusRequester)
+                else -> Modifier
+            }
+            // The play target and the favorite button are siblings, as in LiveTV's DVR rows.
+            Row(
+                Modifier.fillMaxWidth()
+                    .onFocusChanged { rowHasFocus = it.hasFocus }
+                    .background(
+                        if (rowHasFocus || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
+                        else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                        shape,
+                    )
+                    .border(
+                        if (focused || rowHasFocus || selected) 2.dp else 1.dp,
+                        if (focused || rowHasFocus || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
+                        shape,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    Modifier
-                        .background(
-                            if (focused || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent,
-                            shape,
-                        )
-                        .border(
-                            if (focused || selected) 2.dp else 1.dp,
-                            if (focused || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
-                            shape,
-                        )
-                        .padding(10.dp * rowScale),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
-                    verticalAlignment = Alignment.CenterVertically,
+                Surface(
+                    onClick = { onClick(station) },
+                    colors = transparentSurfaceColors(),
+                    scale = noSurfaceScale(),
+                    shape = ClickableSurfaceDefaults.shape(shape),
+                    modifier = focusModifier.weight(1f)
+                        .browseFocusTarget(station.id)
+                        .mediaFocusMotion(focused, focusedScale = 1.012f)
+                        .activateOnTvKey { onClick(station) }
+                        .bringFocusedContextIntoView()
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused) onFocused(station)
+                        },
                 ) {
-                    Box(Modifier.size(72.dp * rowScale)) {
-                        RadioArtwork(station, Modifier.fillMaxSize())
-                        if ((selected && playing) || startingStationId == station.id) {
-                            androidx.compose.material3.Icon(
-                                Icons.Default.PlayArrow,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.align(Alignment.BottomEnd).size(22.dp),
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp * rowScale),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(72.dp * rowScale)) {
+                            RadioArtwork(station, Modifier.fillMaxSize())
+                            if ((selected && playing) || startingStationId == station.id) {
+                                androidx.compose.material3.Icon(
+                                    Icons.Default.PlayArrow,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.align(Alignment.BottomEnd).size(22.dp),
+                                )
+                            }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            MarqueeTitle(station.name, focused = rowHasFocus, style = MaterialTheme.typography.titleMedium)
+                            MarqueeTitle(
+                                radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
+                                focused = rowHasFocus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MarqueeTitle(station.name, focused = focused, style = MaterialTheme.typography.titleMedium)
-                        MarqueeTitle(
-                            radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
-                            focused = focused,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (station.id in favoriteIds) {
-                        androidx.compose.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
                 }
+                RadioFavoriteAction(
+                    favorite = favorite,
+                    onClick = { onFavorite(station) },
+                    onFocused = { onFocused(station) },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
             }
         }
         if (loadingMore) {
