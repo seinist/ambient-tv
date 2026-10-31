@@ -8,6 +8,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.snapshotFlow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.youtube.YouTubeRow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** Source row, last visible item index, and whether it is a grid. */
