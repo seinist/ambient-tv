@@ -75,6 +75,13 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
         interact()
     }
 
+    /** One handheld picture tap opens the action bar from compact, hidden or closing state. */
+    fun expandForHandheldTap(): Boolean {
+        if (expanded) return false
+        expand()
+        return true
+    }
+
     fun collapse() = showCompact()
 
     fun close() {

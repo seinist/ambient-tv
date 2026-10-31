@@ -405,36 +405,58 @@ private fun PlayerControlBarContent(
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     val handheldFullscreen = com.ambient.tv.ui.mobile.LocalHandheldFullscreen.current?.enabled == true
-    if (handheld && !handheldFullscreen) {
-        Row(modifier.fillMaxWidth().height(58.dp).horizontalScroll(rememberSessionBarScroll("windowed")),
-            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            leftContent()
-            Spacer(Modifier.width(12.dp))
-            com.ambient.tv.ui.mobile.HandheldFullscreenButton()
-            com.ambient.tv.ui.player.ChapterButton()
-            rightContent()
-        }
-        return
-    }
-    if (handheld) {
-        HandheldFullscreenControlBar(modifier, leftContent, rightContent)
-        return
-    }
-    val focusManager = LocalFocusManager.current
     val controlFocus = com.ambient.tv.ui.player.LocalPlayerControlFocus.current
     val osd = com.ambient.tv.ui.player.LocalPlayerChromeState.current?.osd
     val osdStow = com.ambient.tv.ui.player.LocalPlayerOsdStow.current
-    val collapse = com.ambient.tv.ui.player.rememberCollapsePlayerControls()
     val stowed = if (osd != null) !osd.expanded else controlFocus?.seekFocused == true || osdStow?.closing == true
     val interactive = osd?.let { it.expanded && !it.closing } ?: (osdStow?.closing != true)
-    // A fresh compact OSD starts fully stowed. One animation moves both the row and its
-    // information block; closing never adds another downward step to the compact endpoint.
+    // TV and handheld share one motion progress: the action row slides offscreen first,
+    // moving the seekbar and metadata down to the compact position above it.
     val ownStow = remember { androidx.compose.animation.core.Animatable(if (stowed) 1f else 0f) }
     val stow = osdStow?.progress ?: ownStow
-    LaunchedEffect(stowed) {
-        val target = if (stowed) 1f else 0f
-        stow.animateTo(target, androidx.compose.animation.core.tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+    LaunchedEffect(stowed, stow) {
+        stow.animateTo(if (stowed) 1f else 0f,
+            androidx.compose.animation.core.tween(250, easing = androidx.compose.animation.core.FastOutSlowInEasing))
     }
+    if (handheld) {
+        // Keep both phone layouts and their horizontal scrolling; only their shared wrapper
+        // moves. The measured height is used by ReferencePlayerBottomContent to stow the info.
+        androidx.compose.runtime.CompositionLocalProvider(LocalPlayerBarInteractive provides interactive) {
+            Column(
+                modifier.fillMaxWidth()
+                    .onSizeChanged { osdStow?.barHeightPx = it.height }
+                    .graphicsLayer {
+                        translationY = stow.value * (osdStow?.bottomInsetPx ?: 12.dp.toPx())
+                        alpha = when {
+                            stow.value >= 0.999f -> 0f
+                            osdStow == null -> 1f - stow.value
+                            else -> 1f
+                        }
+                    }
+                    .focusProperties { onEnter = { if (!interactive) cancelFocusChange() } }
+                    .focusGroup(),
+            ) {
+                if (handheldFullscreen) {
+                    HandheldFullscreenControlBar(Modifier, leftContent, rightContent)
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().height(58.dp).horizontalScroll(rememberSessionBarScroll("windowed")),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        leftContent()
+                        Spacer(Modifier.width(12.dp))
+                        com.ambient.tv.ui.mobile.HandheldFullscreenButton()
+                        com.ambient.tv.ui.player.ChapterButton()
+                        rightContent()
+                    }
+                }
+            }
+        }
+        return
+    }
+    val focusManager = LocalFocusManager.current
+    val collapse = com.ambient.tv.ui.player.rememberCollapsePlayerControls()
     val navigation = com.ambient.tv.ui.player.LocalPlaybackNavigation.current
     androidx.compose.runtime.CompositionLocalProvider(LocalPlayerBarInteractive provides interactive) {
     Column(

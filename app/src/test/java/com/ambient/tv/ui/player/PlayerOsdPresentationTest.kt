@@ -82,4 +82,15 @@ class PlayerOsdPresentationTest {
         assertEquals(PlayerOsdMode.COMPACT, reopened.mode)
         assertEquals(reopened, reopened.finishClose())
     }
+
+    @Test fun phoneStowCompletesBeforeTheFinalFadeAndPanelsSkipIt() {
+        assertEquals(300, playerOsdExitFadeDelayMs(true, true, 0f, handheld = true))
+        assertEquals(700, playerOsdExitFadeDelayMs(true, true, 0f, handheld = false))
+        // A bar already in its compact position should only fade out.
+        assertEquals(0, playerOsdExitFadeDelayMs(true, false, 1f, handheld = true))
+        // Opening a right-side settings panel must not wait for the stow animation.
+        assertEquals(0, playerOsdExitFadeDelayMs(false, true, 0f, handheld = true))
+        // An interrupted or in-progress bar movement must finish before fading.
+        assertEquals(300, playerOsdExitFadeDelayMs(true, false, 0.5f, handheld = true))
+    }
 }

@@ -203,6 +203,16 @@ fun PlayerPanelVisibility(
     }
 }
 
+/** Delay the final fade until the outgoing action row has slid away. Panels never stow the OSD. */
+internal fun playerOsdExitFadeDelayMs(
+    stowFirst: Boolean,
+    closingFromExpanded: Boolean,
+    stowFraction: Float,
+    handheld: Boolean,
+): Int = if (stowFirst && (closingFromExpanded || stowFraction < 0.999f)) {
+    if (handheld) 300 else 700
+} else 0
+
 /** Stow expanded controls, hold the compact information briefly, then fade the shared OSD. */
 @Composable
 fun PlayerOverlayVisibility(
@@ -227,13 +237,14 @@ fun PlayerOverlayVisibility(
         if (!show && !panelOpen) controlFocus?.resetForNextOpen()
     }
     visibility.targetState = show
-    val stow = remember(hidden) { PlayerOsdStow(initiallyCollapsed = !handheld && osd?.expanded == false) }
+    // Handheld reopening slides the action row in from below, even if the OSD expands immediately.
+    val stow = remember(hidden) { PlayerOsdStow(initiallyCollapsed = (handheld && osd != null) || osd?.expanded == false) }
     // A real dismissal stows the bar first; a panel takes over the screen right away.
     val stowFirst = !show && !panelOpen
     androidx.compose.runtime.SideEffect { stow.closing = stowFirst }
     // Capture once per dismissal; a moving bar must not change the fade delay midway through it.
     val fadeDelay = remember(show, panelOpen, osd?.transitionVersion) {
-        if (stowFirst && !handheld && (osd?.closingFromExpanded == true || stow.fraction < 0.999f)) 700 else 0
+        playerOsdExitFadeDelayMs(stowFirst, osd?.closingFromExpanded == true, stow.fraction, handheld)
     }
     val closeVersion = osd?.transitionVersion
     androidx.compose.runtime.LaunchedEffect(visibility.isIdle, visibility.currentState, visibility.targetState, closeVersion, panelOpen) {
@@ -268,7 +279,9 @@ fun PlayerOverlayVisibility(
                         swallowingGesture = true
                         try {
                             currentEvent.changes.forEach { it.consume() }
-                            if (!currentPanelOpen) osd?.reveal()
+                            if (!currentPanelOpen) {
+                                if (handheld) osd?.expandForHandheldTap() else osd?.reveal()
+                            }
                             do {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 event.changes.forEach { it.consume() }

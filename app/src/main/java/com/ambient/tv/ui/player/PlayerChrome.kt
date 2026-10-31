@@ -207,7 +207,7 @@ fun BoxScope.ReferencePlayerBottomContent(
                 .fillMaxWidth()
                 .then(if (handheld) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                 .padding(start = deviceDp(58.dp, 16.dp), end = deviceDp(58.dp, 16.dp), bottom = bottomInset)
-                .then(if (!handheld && stow != null) Modifier.graphicsLayer {
+                .then(if (stow != null) Modifier.graphicsLayer {
                     translationY = stow.fraction * (stow.barHeightPx + stow.gapPx)
                 } else Modifier)
                 .focusRequester(compactFocus)

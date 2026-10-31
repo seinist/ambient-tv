@@ -110,4 +110,30 @@ class PlayerOsdControllerTest {
         chrome.osd.finishClose(fade)
         assertEquals(PlayerOsdMode.COMPACT, chrome.osd.mode)
     }
+
+    @Test fun handheldPictureTapExpandsCompactAndHiddenOsdOnce() {
+        val osd = PlayerOsdController()
+        val interaction = osd.interactionVersion
+        assertTrue(osd.expandForHandheldTap())
+        assertTrue(osd.expanded)
+        assertTrue(osd.interactionVersion > interaction)
+        // An already expanded OSD delegates the next picture tap to the usual close action.
+        assertFalse(osd.expandForHandheldTap())
+        osd.hideImmediately()
+        assertTrue(osd.expandForHandheldTap())
+        assertTrue(osd.expanded)
+    }
+
+    @Test fun handheldPictureTapInterruptsClosingStow() {
+        val osd = PlayerOsdController()
+        osd.expand()
+        osd.close()
+        val outgoingVersion = osd.transitionVersion
+        assertTrue(osd.closing)
+        assertTrue(osd.expandForHandheldTap())
+        assertFalse(osd.closing)
+        assertTrue(osd.expanded)
+        osd.finishClose(outgoingVersion)
+        assertTrue(osd.visible.value)
+    }
 }
