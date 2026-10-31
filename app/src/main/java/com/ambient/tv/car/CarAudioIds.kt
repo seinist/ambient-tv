@@ -6,6 +6,8 @@ import java.util.Base64
 /** Opaque IDs: no server URL, Spotify token or stream credentials enter Android Auto's browse tree. */
 internal object CarAudioIds {
     const val ROOT = "car:root"
+    const val RADIO_ROOT = "car:radio:root"
+    const val SPOTIFY_ROOT = "car:spotify:root"
     const val RADIO_FAVORITES = "car:radio:favorites"
     const val RADIO_RECENT = "car:radio:recent"
     const val RADIO_POPULAR = "car:radio:popular"
@@ -57,7 +59,7 @@ internal object CarAudioIds {
         ?.removePrefix(MUSIC_ITEM)?.let(::decode)
 
     fun isFolder(id: String): Boolean =
-        id in setOf(ROOT, RADIO_FAVORITES, RADIO_RECENT, RADIO_POPULAR, SPOTIFY_HOME,
+        id in setOf(ROOT, RADIO_ROOT, SPOTIFY_ROOT, RADIO_FAVORITES, RADIO_RECENT, RADIO_POPULAR, SPOTIFY_HOME,
             SPOTIFY_LIKED, SPOTIFY_PLAYLISTS, SPOTIFY_ALBUMS, SPOTIFY_ARTISTS, MUSIC_LIBRARIES) ||
             musicSectionId(id) != null || musicItemId(id) != null ||
             spotifyCollectionId(id) != null
