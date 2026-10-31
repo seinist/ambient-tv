@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -79,12 +81,21 @@ internal fun FeedbackContent(
     onSecondaryAction: (() -> Unit)? = null,
     requestActionFocus: Boolean = false,
     actionLoading: Boolean = false,
+    icon: ImageVector? = null,
+    centered: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val statusColor = when (phase) {
         FeedbackPhase.ERROR -> colors.error
         FeedbackPhase.WARNING -> colors.onSurfaceVariant
         else -> colors.primary
+    }
+    val leadingIcon = when (phase) {
+        FeedbackPhase.SUCCESS -> Icons.Default.CheckCircle
+        FeedbackPhase.ERROR -> Icons.Default.ErrorOutline
+        FeedbackPhase.WARNING -> Icons.Default.WarningAmber
+        FeedbackPhase.INFO -> Icons.Default.Info
+        null -> icon
     }
     val focus = remember { FocusRequester() }
     val filterFocus = LocalFilterFocusState.current
@@ -109,27 +120,50 @@ internal fun FeedbackContent(
         .padding(if (page) if (handheld) if (wideHandheld) 18.dp else 20.dp else 28.dp else 14.dp)
     Column(responsiveBounds.then(modifier).then(surface).semantics { liveRegion = LiveRegionMode.Polite },
         verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
-            if (phase != null) Icon(when (phase) {
-                FeedbackPhase.SUCCESS -> Icons.Default.CheckCircle
-                FeedbackPhase.ERROR -> Icons.Default.ErrorOutline
-                FeedbackPhase.WARNING -> Icons.Default.WarningAmber
-                FeedbackPhase.INFO -> Icons.Default.Info
-            }, contentDescription = null, tint = statusColor, modifier = Modifier.size(if (page) 28.dp else 24.dp))
-            Column(Modifier.weight(1f, fill = !page), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(title, style = if (page) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall,
-                    color = colors.onSurface)
+        if (page && centered) {
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                leadingIcon?.let { image ->
+                    Box(
+                        Modifier.size(64.dp).background(statusColor.copy(alpha = .12f), RoundedCornerShape(20.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(image, contentDescription = null, tint = statusColor, modifier = Modifier.size(34.dp))
+                    }
+                }
+                Text(title, style = MaterialTheme.typography.headlineSmall, color = colors.onSurface,
+                    textAlign = TextAlign.Center)
                 body?.takeIf(String::isNotBlank)?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                        textAlign = TextAlign.Center)
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                leadingIcon?.let {
+                    Icon(it, contentDescription = null, tint = statusColor, modifier = Modifier.size(if (page) 28.dp else 24.dp))
+                }
+                Column(Modifier.weight(1f, fill = !page), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(title, style = if (page) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall,
+                        color = colors.onSurface)
+                    body?.takeIf(String::isNotBlank)?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                    }
                 }
             }
         }
         if (onAction != null && actionLabel != null || onSecondaryAction != null && secondaryActionLabel != null) {
-            DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Box(if (page && centered) Modifier.fillMaxWidth() else Modifier,
+                contentAlignment = if (page && centered) Alignment.Center else Alignment.CenterStart) {
+                DeviceActionRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (onAction != null && actionLabel != null) TvActionButton(actionLabel, onAction,
                     loading = actionLoading,
                     modifier = actionModifier.then(if (requestActionFocus) Modifier.focusRequester(focus) else Modifier))
                 if (onSecondaryAction != null && secondaryActionLabel != null) TvActionButton(secondaryActionLabel, onSecondaryAction)
+                }
             }
         }
     }
