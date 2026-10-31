@@ -109,6 +109,28 @@ class SleepSessionTest {
         assertFalse(SleepSession.standbyRequested)
     }
 
+    @Test fun stopNowInTheTimerPromptRespectsDeviceType() {
+        val tv = Target()
+        SleepSession.begin(tv, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(tv)
+        SleepSession.stopNow()
+        assertEquals(1, tv.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
+
+        SleepSession.resetForTest(clock)
+        val phone = Target(tvDevice = false)
+        SleepSession.begin(phone, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(phone)
+        SleepSession.stopNow()
+        assertEquals(1, phone.stops)
+        assertEquals(0, phone.standbyAttempts)
+        assertFalse(SleepSession.standbyRequested)
+    }
+
     @Test fun naturalEndOfItemAlsoRequestsTvStandbyWithoutPrompt() {
         val target = Target().apply { playing = false; ended = true }
         SleepSession.begin(target, { prefs() }, isLive = false, hadPlayer = false, replacingSource = false)
