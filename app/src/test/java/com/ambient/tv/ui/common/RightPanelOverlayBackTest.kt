@@ -37,7 +37,9 @@ class RightPanelOverlayBackTest {
             // Even a mistakenly enabled underlying page Back must not take the first key.
             BackHandler(enabled = true) { pageBack.incrementAndGet() }
             Box(Modifier.fillMaxSize()) {
-                if (open) RightPanelOverlay {
+                if (open) RightPanelOverlay(
+                    onOutsideTap = { drawerClosed.incrementAndGet(); open = false },
+                ) {
                     RightSidePanel(
                         title = "Ansicht",
                         onBack = { drawerClosed.incrementAndGet(); open = false },
