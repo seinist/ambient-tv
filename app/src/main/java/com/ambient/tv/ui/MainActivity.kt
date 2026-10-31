@@ -1412,7 +1412,9 @@ private fun AmbientTvApp(
 
     LaunchedEffect(currentRoute) {
         if (screensaverActive) onScreensaverActiveChanged(false)
-        onRegisterInteraction()
+        // Sleep-stop can navigate away from the player. That is NOT a user interaction:
+        // clearing standby here would prevent the TV from switching off.
+        if (!com.ambient.tv.ui.player.SleepSession.standbyRequested) onRegisterInteraction()
     }
 
     LaunchedEffect(playbackActive, screensaverActive, screensaverPreview) {
