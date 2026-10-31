@@ -58,6 +58,8 @@ class FilteredBrowseViewModel internal constructor(
     val reconnectSources: Set<String> = setOf(com.ambient.tv.data.browse.mediaProvider(id))
     val title: String = checkNotNull(savedStateHandle.get<String>("title"))
     private val stateKey = "browse:$kind:$id"
+    /** The selected layout is available before the first fetch completes. */
+    val loadingViewMode: BrowseViewMode get() = viewMode()
     private var sourceItems: List<MediaItem> = emptyList()
 
     private val _uiState = MutableStateFlow<FilteredBrowseUiState>(FilteredBrowseUiState.Loading)
