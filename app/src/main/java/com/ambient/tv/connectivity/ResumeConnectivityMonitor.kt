@@ -144,8 +144,11 @@ class ResumeConnectivityMonitor @Inject constructor(
         val healthAge = (now - lastHealthElapsedMs).coerceAtLeast(0L)
         // A healthy system may have been shut down while the phone was away, even after a
         // short background gap. Always validate after an actual foreground return.
-        if (lastStopElapsedMs < 0L &&
-            !ResumeConnectivityPolicy.shouldRecheck(backgroundedFor, healthAge)) return
+        if (!ResumeConnectivityPolicy.shouldRecheckOnStart(
+                wasBackgrounded = lastStopElapsedMs >= 0L,
+                backgroundedForMs = backgroundedFor,
+                lastHealthAgeMs = healthAge,
+            )) return
         requestRecheck(reason = "resume backgrounded=${backgroundedFor}ms healthAge=${healthAge}ms")
     }
 
