@@ -7,6 +7,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.radioLanguageDisplayName
+import com.ambient.tv.data.dlna.DlnaKeys
+import com.ambient.tv.data.files.FileKeys
+import com.ambient.tv.livetv.LiveTvChannel
+import com.ambient.tv.livetv.LiveTvPlaybackSource
+import java.util.Locale
 import com.ambient.tv.data.repository.RoutingMediaRepository
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.spotify.SpotifyBrowseItem
@@ -32,6 +38,8 @@ internal sealed interface CarAudioSelection {
     data class Radio(val station: RadioStation, val queue: List<RadioStation>) : CarAudioSelection
     data class Spotify(val uri: String) : CarAudioSelection
     data class Library(val item: MediaItem, val queue: List<String>) : CarAudioSelection
+    data class Live(val channel: LiveTvChannel, val stream: LiveTvPlaybackSource,
+        val queue: List<String>, val system: String) : CarAudioSelection
 }
 
 /** Read-only, driver-safe browse facade. Existing repositories and playback engines own the data. */
@@ -42,6 +50,7 @@ internal class CarAudioCatalog @Inject constructor(
     private val radio: RadioBrowserRepository,
     private val spotify: SpotifyRepository,
     private val media: RoutingMediaRepository,
+    private val auxiliary: CarAuxiliaryAudio,
 ) {
     private data class Page(val entries: List<CarAudioEntry>, val loadedAt: Long)
     private val pages = LinkedHashMap<String, Page>()
@@ -59,7 +68,7 @@ internal class CarAudioCatalog @Inject constructor(
         val now = SystemClock.elapsedRealtime()
         pages[parentId]?.takeIf { now - it.loadedAt < 45_000 }?.let { return it.entries }
         val fresh = try {
-            withTimeoutOrNull(9_000) { loadPage(parentId) } ?: emptyList()
+            withTimeoutOrNull(15_000) { loadCarPage(parentId) } ?: emptyList()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -69,7 +78,7 @@ internal class CarAudioCatalog @Inject constructor(
         if (fresh.isEmpty() && pages[parentId]?.entries?.isNotEmpty() == true) {
             return pages.getValue(parentId).entries
         }
-        val result = fresh.distinctBy { it.id }.take(80)
+        val result = fresh.distinctBy { it.id }.take(PAGE_SIZE + 1)
         pages[parentId] = Page(result, now)
         result.forEach { entry ->
             entriesById[entry.id] = entry
@@ -85,10 +94,13 @@ internal class CarAudioCatalog @Inject constructor(
 
     private fun root(): List<CarAudioEntry> = buildList {
         // Android Auto normally allows <= 4 root tabs. Nest providers' categories instead.
-        if (preferences.radioEnabled) add(folder(CarAudioIds.RADIO_ROOT, context.getString(R.string.car_audio_radio)))
+        if (preferences.radioEnabled || auxiliary.hasLive("iptv") || auxiliary.hasLive("tvheadend"))
+            add(folder(CarAudioIds.RADIO_ROOT, context.getString(R.string.car_audio_radio)))
         if (preferences.spotifyEnabled && spotify.webAuthorized)
             add(folder(CarAudioIds.SPOTIFY_ROOT, context.getString(R.string.car_audio_spotify)))
         add(folder(CarAudioIds.MUSIC_LIBRARIES, context.getString(R.string.car_audio_music_libraries)))
+        if (auxiliary.hasStorage())
+            add(folder(CarAudioIds.STORAGE_ROOT, context.getString(R.string.car_audio_storage)))
     }
 
     private fun folder(id: String, title: String, subtitle: String? = null) =
@@ -129,12 +141,80 @@ internal class CarAudioCatalog @Inject constructor(
         album?.images?.firstOrNull()?.url, playable = uri.startsWith("spotify:track:"),
     )
 
+    /** Bounded pages and explicit "More" folders work with the stock Android Auto UI. */
+    private suspend fun loadCarPage(requestId: String): List<CarAudioEntry> {
+        val (parent, offset) = CarAudioIds.moreSpec(requestId) ?: (requestId to 0)
+        val special = auxiliary.children(parent, offset, PAGE_SIZE)
+            ?: radioPage(parent, offset)
+        if (special != null) {
+            return special.items + if (special.hasMore && offset + PAGE_SIZE <= MAX_CURSOR)
+                listOf(folder(CarAudioIds.more(parent, offset + PAGE_SIZE), context.getString(R.string.car_audio_more)))
+            else emptyList()
+        }
+        val base = loadPage(parent)
+        val end = (offset + PAGE_SIZE).coerceAtMost(base.size)
+        val selected = base.drop(offset).take(PAGE_SIZE)
+        return if (end < base.size && end <= MAX_CURSOR) selected +
+            folder(CarAudioIds.more(parent, end), context.getString(R.string.car_audio_more))
+        else selected
+    }
+
+    private suspend fun radioPage(parent: String, offset: Int): CarAudioPage? {
+        fun slice(items: List<CarAudioEntry>) =
+            CarAudioPage(items.drop(offset).take(PAGE_SIZE), items.size > offset + PAGE_SIZE)
+        if (!preferences.radioEnabled) return when {
+            parent in setOf(CarAudioIds.RADIO_ALL, CarAudioIds.RADIO_GENRES,
+                CarAudioIds.RADIO_COUNTRIES, CarAudioIds.RADIO_LANGUAGES) ||
+                CarAudioIds.radioFacetId(parent) != null -> CarAudioPage(emptyList())
+            else -> null
+        }
+        return when (parent) {
+            CarAudioIds.RADIO_ALL -> radio.search(offset = offset, limit = PAGE_SIZE,
+                order = "name", reverse = false).let { CarAudioPage(it.items.map { station -> station.asEntry() }, it.hasMore) }
+            CarAudioIds.RADIO_GENRES -> slice(radio.tags(limit = 150)
+                .sortedBy { it.name.lowercase() }
+                .map { folder(CarAudioIds.radioFacet("tag", it.id), it.name) })
+            CarAudioIds.RADIO_COUNTRIES -> slice(radio.countries(limit = 200)
+                .sortedBy { it.name }
+                .map { facet ->
+                    val label = runCatching { Locale("", facet.id).getDisplayCountry(context.resources.configuration.locales[0]) }
+                        .getOrDefault(facet.name).takeIf { it.isNotBlank() } ?: facet.name
+                    folder(CarAudioIds.radioFacet("country", facet.id), label)
+                })
+            CarAudioIds.RADIO_LANGUAGES -> slice(radio.languages(limit = 200)
+                .map { facet ->
+                    val label = radioLanguageDisplayName(facet.languageCode, facet.name,
+                        context.resources.configuration.locales[0]) ?: facet.name
+                    folder(CarAudioIds.radioFacet("language", facet.id), label)
+                }.sortedBy { it.title.lowercase() })
+            else -> CarAudioIds.radioFacetId(parent)?.let { (kind, value) ->
+                val page = radio.search(
+                    tag = value.takeIf { kind == "tag" },
+                    countryCode = value.takeIf { kind == "country" },
+                    language = value.takeIf { kind == "language" },
+                    offset = offset, limit = PAGE_SIZE, order = "name", reverse = false,
+                )
+                CarAudioPage(page.items.map { it.asEntry() }, page.hasMore)
+            }
+        }
+    }
+
     private suspend fun loadPage(parentId: String): List<CarAudioEntry> = when (parentId) {
-        CarAudioIds.RADIO_ROOT -> if (preferences.radioEnabled) listOf(
-            folder(CarAudioIds.RADIO_FAVORITES, context.getString(R.string.car_audio_favorites)),
-            folder(CarAudioIds.RADIO_RECENT, context.getString(R.string.car_audio_recent)),
-            folder(CarAudioIds.RADIO_POPULAR, context.getString(R.string.car_audio_popular)),
-        ) else emptyList()
+        CarAudioIds.RADIO_ROOT -> buildList {
+            if (preferences.radioEnabled) {
+                add(folder(CarAudioIds.RADIO_FAVORITES, context.getString(R.string.car_audio_favorites)))
+                add(folder(CarAudioIds.RADIO_RECENT, context.getString(R.string.car_audio_recent)))
+                add(folder(CarAudioIds.RADIO_POPULAR, context.getString(R.string.car_audio_popular)))
+                add(folder(CarAudioIds.RADIO_ALL, context.getString(R.string.car_audio_all)))
+                add(folder(CarAudioIds.RADIO_GENRES, context.getString(R.string.car_audio_genres)))
+                add(folder(CarAudioIds.RADIO_COUNTRIES, context.getString(R.string.car_audio_countries)))
+                add(folder(CarAudioIds.RADIO_LANGUAGES, context.getString(R.string.car_audio_languages)))
+            }
+            if (auxiliary.hasLive("iptv"))
+                add(folder(CarAudioIds.LIVE_RADIO_IPTV, context.getString(R.string.car_audio_iptv_radio)))
+            if (auxiliary.hasLive("tvheadend"))
+                add(folder(CarAudioIds.LIVE_RADIO_TVH, context.getString(R.string.car_audio_tvh_radio)))
+        }
         CarAudioIds.SPOTIFY_ROOT -> if (spotifyEnabled()) listOf(
             folder(CarAudioIds.SPOTIFY_HOME, context.getString(R.string.car_audio_home)),
             folder(CarAudioIds.SPOTIFY_LIKED, context.getString(R.string.car_audio_liked)),
@@ -206,6 +286,7 @@ internal class CarAudioCatalog @Inject constructor(
 
     /** A selection is resolved through the authenticated repository, never a URI provided by a car client. */
     suspend fun resolve(id: String): CarAudioSelection? {
+        if (CarAudioIds.liveAudioSpec(id) != null) return auxiliary.resolveLive(id)
         CarAudioIds.stationId(id)?.let { stationId ->
             if (!preferences.radioEnabled) return null
             val station = entriesById[id]?.radioStation
@@ -230,8 +311,9 @@ internal class CarAudioCatalog @Inject constructor(
                 ?: preview?.takeIf { !it.streamUrl.isNullOrBlank() }
                 ?: return null
             if (!carAudioPlayableType(item.type)) return null
-            val queue = parents[id]?.let(pages::get)?.entries.orEmpty().filter { it.playable && it.libraryItem != null }
-                .mapNotNull { it.libraryItem?.ratingKey }
+            val queue = parents[id]?.let(pages::get)?.entries.orEmpty()
+                .filter { it.playable }
+                .mapNotNull { CarAudioIds.musicItemId(it.id) }
             return CarAudioSelection.Library(item, queue.ifEmpty { listOf(key) })
         }
         return null
@@ -241,21 +323,35 @@ internal class CarAudioCatalog @Inject constructor(
         entriesById[id] ?: when (val selection = resolve(id)) {
             is CarAudioSelection.Radio -> selection.station.asEntry()
             is CarAudioSelection.Library -> selection.item.asEntry()
+            is CarAudioSelection.Live -> CarAudioEntry(id, selection.channel.name,
+                selection.channel.numberLabel, selection.channel.iconUrl, playable = true)
             else -> null
         }
+
+    /** Multiple browse results for official Android Auto search UIs and voice search. */
+    suspend fun search(query: String): List<CarAudioEntry> {
+        val q = query.trim().take(120)
+        if (q.isBlank()) return emptyList()
+        val found = mutableListOf<CarAudioEntry>()
+        if (preferences.radioEnabled) {
+            runCatching { radio.search(query = q, limit = 30).items }
+                .getOrDefault(emptyList()).mapTo(found) { it.asEntry() }
+        }
+        found += auxiliary.searchLive(q, limit = 20)
+        found += auxiliary.searchStoredAudio(q, limit = 15)
+        if (spotifyEnabled()) {
+            runCatching { spotify.search(q).mapNotNull { it.asEntry() } }
+                .getOrDefault(emptyList()).take(15).let(found::addAll)
+        }
+        val unique = found.distinctBy { it.id }.take(60)
+        unique.forEach { entriesById[it.id] = it }
+        return unique
+    }
 
     suspend fun firstForVoiceSearch(query: String): CarAudioSelection? {
         val safeQuery = query.trim().take(120)
         if (safeQuery.isEmpty()) return null
-        if (preferences.radioEnabled) {
-            val found = radio.search(query = safeQuery, limit = 15).items.firstOrNull()
-            if (found != null) return CarAudioSelection.Radio(found, listOf(found))
-        }
-        if (spotifyEnabled()) {
-            spotify.search(safeQuery).firstOrNull {
-                it.type == SpotifyEntityType.TRACK && it.uri.startsWith("spotify:track:")
-            }?.let { return CarAudioSelection.Spotify("spotify:track:${it.id}") }
-        }
-        return null
+        return search(safeQuery).firstNotNullOfOrNull { resolve(it.id) }
     }
+    private companion object { const val PAGE_SIZE = 40; const val MAX_CURSOR = 1000 }
 }
