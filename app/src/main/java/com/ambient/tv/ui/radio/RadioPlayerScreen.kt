@@ -26,6 +26,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
@@ -112,6 +114,18 @@ private fun RadioPlayerContent(
     val radioSeekable = BackgroundPlaybackSession.canSeekCurrentRadioStream()
     val projectMBrowser = rememberProjectMBrowser(viewModel.projectmPresetCategoryKey)
 
+    // The stream's ICY title may update many times per station. Only a new station id
+    // reveals fresh channel information, after the new playback metadata is installed.
+    var lastRadioStationId by remember(viewModel) { mutableStateOf<String?>(null) }
+    val stationId = metadata?.takeIf { it.source == "radio" }?.mediaId
+    LaunchedEffect(stationId) {
+        if (com.ambient.tv.ui.player.channelIdentityChanged(lastRadioStationId, stationId) &&
+            panel == UnifiedPlayerPanel.NONE) {
+            osd.showChannelInfo()
+        }
+        if (stationId != null) lastRadioStationId = stationId
+    }
+
     LaunchedEffect(metadata?.source) {
         if (metadata != null && metadata.source != "radio") onBack()
     }
@@ -153,10 +167,12 @@ private fun RadioPlayerContent(
                         event.type == KeyEventType.KeyDown,
                         OsdKeyState(
                             content = OsdContent.LIVE,
-                            osdVisible = controlsVisible,
+                            osdVisible = controlsVisible && !osd.closing,
                             panelOpen = panel != UnifiedPlayerPanel.NONE,
-                            seekFeedbackVisible = false,
+                            seekFeedbackVisible = osd.seekFeedback,
+                            zapOsd = osd.shownByZap.value,
                             canSeekForward = false,
+                            closing = osd.closing,
                         ),
                         OsdSeekSteps(0L),
                         object : OsdKeyTarget {
@@ -169,8 +185,8 @@ private fun RadioPlayerContent(
                                 onBack()
                             }
                             override fun seek(deltaMs: Long, revealOsd: Boolean) = Unit
-                            override fun showOsd() { controlsVisible = true }
-                            override fun hideSeekFeedback() { controlsVisible = true }
+                            override fun showOsd() { osd.reveal() }
+                            override fun hideSeekFeedback() { osd.reveal() }
                             override fun restart() = Unit
                             override fun next() = viewModel.next()
                             override fun previousTrack() = viewModel.previous()
@@ -343,6 +359,10 @@ internal fun radioTimelineFraction(positionMs: Long, durationMs: Long): Float =
     if (durationMs > 0L) (positionMs.coerceIn(0L, durationMs).toDouble() / durationMs.toDouble()).toFloat()
     else 0f
 
+/** Unbounded live streams have no seek position. A full accent line denotes LIVE, not 100% played. */
+internal fun radioTimelineAccentFill(positionMs: Long, durationMs: Long): Float =
+    if (durationMs > 0L) radioTimelineFraction(positionMs, durationMs) else 1f
+
 /** Saturate before addition to avoid overflow from large seek deltas. */
 internal fun radioSeekTarget(positionMs: Long, durationMs: Long, deltaMs: Long): Long {
     if (durationMs <= 0L) return 0L
@@ -421,7 +441,7 @@ internal data class RadioOsdModel(
                     )
                 } else {
                     LinearProgressIndicator(
-                        progress = { radioTimelineFraction(positionMs, durationMs) },
+                        progress = { radioTimelineAccentFill(positionMs, durationMs) },
                         color = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator,
                         modifier = Modifier.fillMaxWidth(),
                     )
