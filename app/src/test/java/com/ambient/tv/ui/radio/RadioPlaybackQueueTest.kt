@@ -86,6 +86,18 @@ class RadioPlaybackQueueTest {
         assertEquals("b", queue.next()?.id)
     }
 
+    @Test fun coldStartClearsOnlyReturnFocusAndPreservesThePlayingQueue() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.POPULAR, null, "")
+        queue.replace(listOf(station("a"), station("b")), "b", RadioBrowseQueueSource(scope))
+        assertTrue(queue.snapshot().returnPending)
+        queue.clearReturnFocus()
+        assertFalse(queue.snapshot().returnPending)
+        assertNull(queue.consumeReturn(scope))
+        assertEquals("b", queue.current()?.id)
+        assertEquals("a", queue.previous()?.id)
+    }
+
     @Test fun returnFocusNeverEscapesTheOriginalBrowseScope() {
         val queue = RadioPlaybackQueue()
         val scope = RadioFocusScope(RadioSection.COUNTRIES, "DE", "")
