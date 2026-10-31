@@ -11,4 +11,12 @@
     <string name="car_audio_playlists">Playlists</string>
     <string name="car_audio_albums">Alben</string>
     <string name="car_audio_artists">Künstler</string>
+    <string name="car_audio_storage">DLNA &amp; Dateien</string>
+    <string name="car_audio_more">Weitere…</string>
+    <string name="car_audio_all">Alle Sender</string>
+    <string name="car_audio_genres">Genres</string>
+    <string name="car_audio_countries">Länder</string>
+    <string name="car_audio_languages">Sprachen</string>
+    <string name="car_audio_iptv_radio">IPTV-Radio</string>
+    <string name="car_audio_tvh_radio">TVHeadend-Radio</string>
 </resources>
