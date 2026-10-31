@@ -507,6 +507,8 @@ private fun Content(
     }
 
     val videos = populatedRows.flatMap { it.items }.distinctBy { it.videoId }
+    val sourceKeys = remember(populatedRows) { youtubeFlatViewportItemKeys(populatedRows) }
+    CompositionLocalProvider(LocalYouTubeFlatViewportKeys provides sourceKeys) {
     when (mode) {
         YouTubeViewMode.LANDSCAPE -> LandscapeGrid(videos, gridColumns, click, initialFocusRequester, focusTarget, onItemFocused)
         YouTubeViewMode.LIST -> ListMode(videos, listRows, click, false, initialFocusRequester, focusTarget, onItemFocused)
@@ -533,6 +535,7 @@ private fun Content(
             }
         }
         YouTubeViewMode.CINEMATIC -> Cinematic(videos, click, initialFocusRequester, focusTarget, onItemFocused)
+    }
     }
 }
 

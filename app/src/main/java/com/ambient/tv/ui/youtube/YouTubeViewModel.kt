@@ -137,6 +137,8 @@ class YouTubeViewModel @Inject constructor(
     private var focusLoadJob: Job? = null
     private var initialPagingJob: Job? = null
     private val rowLoadJobs = HashMap<String, Job>()
+    /** Limit concurrent API pages even when several visible TV rows request a continuation. */
+    private val continuationPermits = Semaphore(YouTubeRowPaging.MAX_INITIAL_PARALLEL)
     /** The user may already have scrolled to a tail while the first feed request is in flight. */
     private val visibleViewportEnds = linkedMapOf<String, Pair<Int, Boolean>>()
 
@@ -144,7 +146,7 @@ class YouTubeViewModel @Inject constructor(
     private fun startRowContinuation(rowId: String, showPlaceholder: Boolean) {
         if (rowId in rowLoadJobs) return
         val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            try { continueRow(rowId, showPlaceholder) }
+            try { continuationPermits.withPermit { continueRow(rowId, showPlaceholder) } }
             finally {
                 // A cancelled old feed must not remove the new feed's job with the same row ID.
                 if (rowLoadJobs[rowId] === coroutineContext[Job]) rowLoadJobs.remove(rowId)
@@ -176,10 +178,14 @@ class YouTubeViewModel @Inject constructor(
         val candidates = paging.initialCandidates(_uiState.value.rows)
         if (candidates.isEmpty()) return
         initialPagingJob = viewModelScope.launch {
-            val permits = Semaphore(YouTubeRowPaging.MAX_INITIAL_PARALLEL)
             coroutineScope {
                 candidates.forEach { rowId ->
-                    launch { permits.withPermit { awaitQuietInput(); continueRow(rowId, showPlaceholder = false) } }
+                    launch {
+                        continuationPermits.withPermit {
+                            awaitQuietInput()
+                            continueRow(rowId, showPlaceholder = false)
+                        }
+                    }
                 }
             }
         }

@@ -38,6 +38,24 @@ class YouTubeViewportPagingTest {
         assertNull(youtubeLastVisibleSourceItem(listOf("youtube-list-header:b"), targets))
     }
 
+    @Test fun flatGridsRememberTheCorrectSourceRowEvenWhenVideoIdsOverlap() {
+        val rows = listOf(
+            YouTubeRow("First", listOf(YouTubeItem("a", "A"), YouTubeItem("shared", "S")), "source-a"),
+            YouTubeRow("Second", listOf(YouTubeItem("shared", "S"), YouTubeItem("b", "B")), "source-b"),
+        )
+        val keys = youtubeFlatViewportItemKeys(rows)
+        assertEquals("source-a" to 0, keys["a"])
+        assertEquals("source-a" to 1, keys["shared"])
+        assertEquals("source-b" to 1, keys["b"])
+        assertEquals("source-b" to 1, youtubeLastVisibleSourceItem(listOf("a", "b"), keys))
+    }
+
+    @Test fun bothTvAndHandheldObserveTheVisibleTail() {
+        val source = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeViewportPaging.kt").readText()
+        assertEquals(false, source.contains("LocalHandheldUi"))
+        assertEquals(3, Regex("collectLatest").findAll(source).count()) // import and two collectors
+    }
+
     @Test fun allSmartTubePresentationModesObserveTouchViewport() {
         val file = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt").readText()
         assertEquals(2, Regex("ObserveYouTubeListViewport\\(rowId, rowState\\)").findAll(file).count())

@@ -6,14 +6,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.snapshotFlow
-import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.youtube.YouTubeRow
-import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** Source row, last visible item index, and whether it is a grid. */
 internal val LocalYouTubeViewportContinuation =
     staticCompositionLocalOf<((String?, Int, Boolean) -> Unit)?> { null }
+
+/** Preserve each video tile's originating row even in a combined flat feed. */
+internal val LocalYouTubeFlatViewportKeys =
+    staticCompositionLocalOf<Map<String, Pair<String, Int>>?> { null }
+
+/** First occurrence wins: flat YouTube grids deduplicate videos shared by several rows. */
+internal fun youtubeFlatViewportItemKeys(rows: List<YouTubeRow>): Map<String, Pair<String, Int>> =
+    buildMap {
+        rows.forEach { row ->
+            row.items.forEachIndexed { index, item ->
+                putIfAbsent(item.videoId, row.id to index)
+            }
+        }
+    }
 
 /** If the last visible slot is a section header, use the last actual video card before it. */
 internal fun youtubeLastVisibleSourceItem(
@@ -38,18 +52,22 @@ internal fun ObserveYouTubeListViewport(
     itemKeys: Map<String, Pair<String, Int>>? = null,
 ) {
     val request = LocalYouTubeViewportContinuation.current
-    if (!LocalHandheldUi.current || request == null) return
-    LaunchedEffect(state, rowId, itemKeys, request) {
+    val keys = itemKeys ?: if (rowId == null) LocalYouTubeFlatViewportKeys.current else null
+    if (request == null) return
+    LaunchedEffect(state, rowId, keys, request) {
         snapshotFlow {
-            if (itemKeys == null) {
+            if (keys == null) {
                 state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { rowId to it.index }
             } else {
                 youtubeLastVisibleSourceItem(
-                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, itemKeys,
+                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, keys,
                 )
             }
-        }.distinctUntilChanged().collect { target ->
-            if (target != null) request(target.first, target.second, false)
+        }.distinctUntilChanged().collectLatest { target ->
+            if (target != null) {
+                delay(160L) // Do not issue pages mid-fling or during remote scroll animations.
+                request(target.first, target.second, false)
+            }
         }
     }
 }
@@ -61,18 +79,22 @@ internal fun ObserveYouTubeGridViewport(
     itemKeys: Map<String, Pair<String, Int>>? = null,
 ) {
     val request = LocalYouTubeViewportContinuation.current
-    if (!LocalHandheldUi.current || request == null) return
-    LaunchedEffect(state, rowId, itemKeys, request) {
+    val keys = itemKeys ?: if (rowId == null) LocalYouTubeFlatViewportKeys.current else null
+    if (request == null) return
+    LaunchedEffect(state, rowId, keys, request) {
         snapshotFlow {
-            if (itemKeys == null) {
+            if (keys == null) {
                 state.layoutInfo.visibleItemsInfo.lastOrNull()?.let { rowId to it.index }
             } else {
                 youtubeLastVisibleSourceItem(
-                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, itemKeys,
+                    state.layoutInfo.visibleItemsInfo.map { it.key.toString() }, keys,
                 )
             }
-        }.distinctUntilChanged().collect { target ->
-            if (target != null) request(target.first, target.second, true)
+        }.distinctUntilChanged().collectLatest { target ->
+            if (target != null) {
+                delay(160L)
+                request(target.first, target.second, true)
+            }
         }
     }
 }
