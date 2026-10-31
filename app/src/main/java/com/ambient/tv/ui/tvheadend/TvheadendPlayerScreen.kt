@@ -172,6 +172,8 @@ fun TvheadendPlayerScreen(
     val tvhContext = LocalContext.current
     val activity = remember(tvhContext) { tvhContext.findActivity() }
     val ready = state as? TvheadendPlayerState.Ready
+    val pendingChannelUi = viewModel.changingChannel ||
+        (ready?.channel != null && ready.channel.uuid != viewModel.expectedChannelUuid)
     val readyMetadata = ready?.let(viewModel::metadata)
     val displaySnapshot by BackgroundPlaybackSession.snapshot.collectAsState()
     val displayRoute = readyMetadata?.route ?: displaySnapshot.metadata?.route
@@ -371,8 +373,21 @@ fun TvheadendPlayerScreen(
                         },
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
-                    com.ambient.tv.ui.player.PersistentPlayerOverlays()
+                    com.ambient.tv.ui.player.PersistentPlayerOverlays(
+                        hideSourceInfo = pendingChannelUi,
+                        expectedSourceIdentity = viewModel.expectedChannelUuid.takeIf { current.channel != null },
+                    )
                 }
+            }
+        }
+        // Covers outgoing video frames and chrome while a replacement stream is acquired.
+        // Never expose the previous channel's title/EPG during the new tune.
+        if (pendingChannelUi) {
+            Box(
+                Modifier.fillMaxSize().background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                PlayerBufferingSpinner(visible = true)
             }
         }
     }

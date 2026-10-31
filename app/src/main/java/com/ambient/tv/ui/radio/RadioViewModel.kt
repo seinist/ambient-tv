@@ -70,8 +70,12 @@ internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
     if (isFacetOverview()) RadioViewMode.LIST else viewMode
 
 /** An empty response is not proven until the first request for this exact page settles. */
-internal fun RadioUiState.awaitingInitialContent(): Boolean =
-    stations.isEmpty() && facets.isEmpty() && (loading || !contentReady)
+internal fun RadioUiState.awaitingInitialContent(): Boolean {
+    // A selected country/genre/language keeps the parent facets for Back. Those
+    // cached facets do NOT constitute a loaded station result for this child page.
+    val requestedItemsEmpty = if (isFacetOverview()) facets.isEmpty() else stations.isEmpty()
+    return requestedItemsEmpty && (loading || !contentReady)
+}
 
 /** A destination's old empty/error state is never the new route's first result. */
 internal fun RadioUiState.awaitingRequestedPage(
@@ -86,7 +90,7 @@ internal fun RadioUiState.requestedLoadingLayout(requestedSection: RadioSection)
 
 /** Preserve live content on back; only a no-result remote page needs first-frame shielding. */
 internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
-    stations.isEmpty() && facets.isEmpty() &&
+    (if (isFacetOverview()) facets.isEmpty() else stations.isEmpty()) &&
         (submittedQuery.isNotBlank() || selectedFacet != null ||
             section == RadioSection.POPULAR || section.isFacetSection)
 

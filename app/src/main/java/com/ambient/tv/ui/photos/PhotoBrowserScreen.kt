@@ -120,7 +120,6 @@ fun PhotoBrowserScreen(
         else -> "plex"
     }
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf(source)) { viewModel.enter(rootKey, title) }
-    ReportSidebarContentReady(!state.loading && viewerReturnApplied)
     val tokens = LocalUiTokens.current
     var showOptions by remember(rootKey) { mutableStateOf(false) }
     var restoreOptionsFocus by remember(rootKey) { mutableStateOf(false) }
@@ -146,6 +145,8 @@ fun PhotoBrowserScreen(
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     fun requester(id: String) = requesters.getOrPut(id) { FocusRequester() }
     val visible = if (state.timeline) state.timelineGroups.flatMap { it.entries } else state.entries
+    val emptyPending = com.ambient.tv.ui.common.awaitingEmptyBrowseResult(visible.isEmpty(), state.loading, state.refreshing)
+    ReportSidebarContentReady(viewerReturnApplied && !state.loading && !emptyPending)
     val folder = rootKey to state.current?.key
     var focusFolder by remember { mutableStateOf(folder) }
     BrowseFocusContentIdentity(
@@ -270,7 +271,7 @@ fun PhotoBrowserScreen(
                         up = if (timelineAvailable) focusChain.chips else focusChain.actions, focusChain = focusChain)
                 }
                 when {
-                    state.loading && visible.isEmpty() -> StatePanel(stringResource(R.string.photos_loading))
+                    emptyPending -> StatePanel(stringResource(R.string.photos_loading))
                     state.failed -> StatePanel(stringResource(R.string.photos_error), actionLabel = stringResource(R.string.photos_retry), onAction = viewModel::retry)
                     visible.isEmpty() -> StatePanel(stringResource(R.string.photos_empty))
                     else -> LazyVerticalGrid(

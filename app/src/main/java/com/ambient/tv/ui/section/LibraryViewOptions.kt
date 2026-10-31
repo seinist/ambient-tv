@@ -59,6 +59,16 @@ fun libraryIndexLetter(title: String): Char? {
     return if (first.isLetter()) first.uppercaseChar() else '#'
 }
 
+/** The index follows the actual visible list: # first in A-Z, last in Z-A. */
+fun libraryAlphabetLetters(sortedItems: List<MediaItem>): List<Char> =
+    sortedItems.mapNotNull { libraryIndexLetter(it.title) }.distinct()
+
+/** Initial indicator follows the last focused tile, then the first visible one. */
+fun libraryFocusedAlphabetLetter(sortedItems: List<MediaItem>, focusedRatingKey: String?): Char? =
+    sortedItems.firstOrNull { it.ratingKey == focusedRatingKey }
+        ?.let { libraryIndexLetter(it.title) }
+        ?: sortedItems.firstOrNull()?.let { libraryIndexLetter(it.title) }
+
 /** Library and recommendation layouts in picker order; each artwork-heavy mode has a poster twin. */
 val SELECTABLE_VIEW_MODES = listOf(
     SectionViewMode.POSTER,

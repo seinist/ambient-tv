@@ -331,8 +331,10 @@ internal fun SectionContent(
         filterFocusState.keepControls()
         initialContentFocusPending = false
     }
-    var visibleLibraryLetter by remember(state.items, state.page, state.sort, state.viewMode) {
-        mutableStateOf(state.items.firstOrNull()?.let { libraryIndexLetter(it.title) })
+    // The alphabet indicator represents the item that has focus, not just the top tile.
+    val initialLibraryLetter = libraryFocusedAlphabetLetter(state.items, state.focusedRatingKey)
+    var visibleLibraryLetter by remember(state.items, state.focusedRatingKey, state.page, state.sortOrder, state.viewMode) {
+        mutableStateOf(initialLibraryLetter)
     }
     // The bar follows the focused item, so moving sideways within a grid row updates it too.
     val onLibraryItemFocused: (MediaItem) -> Unit = { item ->

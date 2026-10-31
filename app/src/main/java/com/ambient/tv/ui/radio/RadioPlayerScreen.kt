@@ -59,6 +59,7 @@ import com.ambient.tv.ui.common.projectm.ProjectMVisualizer
 import com.ambient.tv.ui.common.projectm.rememberProjectMBrowser
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.systemName
+import com.ambient.tv.ui.player.PlayerBufferingSpinner
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.OsdContent
 import com.ambient.tv.ui.player.OsdKeyState
@@ -200,6 +201,17 @@ private fun RadioPlayerContent(
         ) {
             val analyzer = BackgroundPlaybackSession.currentAudioSpectrum()
             when {
+                viewModel.switchingStation -> {
+                    SystemLogo(
+                        MediaSystem.RADIO,
+                        Modifier.align(androidx.compose.ui.Alignment.Center),
+                        size = 120.dp,
+                    )
+                    PlayerBufferingSpinner(
+                        visible = true,
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center),
+                    )
+                }
                 metadata == null || metadata.source != "radio" -> Unit
                 viewModel.visualizerMode == "projectm" && ProjectMAvailability.isAvailable -> ProjectMVisualizer(
                     analyzer = analyzer,
@@ -252,6 +264,7 @@ private fun RadioPlayerContent(
                 PublishPlayerOsd(
                     RadioOsdModel(
                         station = station,
+                        stationId = metadata.mediaId,
                         stationName = metadata.title,
                         nowPlaying = metadata.subtitle,
                         artworkUrl = metadata.artworkUrl,
@@ -341,7 +354,10 @@ private fun RadioPlayerContent(
                 )
             }
 
-            PersistentPlayerOverlays()
+            PersistentPlayerOverlays(
+                hideSourceInfo = viewModel.switchingStation,
+                expectedSourceIdentity = stationId,
+            )
         }
     }
 }
@@ -373,6 +389,7 @@ internal fun radioSeekTarget(positionMs: Long, durationMs: Long, deltaMs: Long):
 
 internal data class RadioOsdModel(
     val station: RadioStation?,
+    val stationId: String,
     val stationName: String,
     val nowPlaying: String?,
     val artworkUrl: String?,
@@ -398,6 +415,8 @@ internal data class RadioOsdModel(
     val onOpenSleep: () -> Unit,
     val onOpenSettings: () -> Unit,
 ) : PlayerOsdSpec {
+    override val sourceIdentity: String get() = stationId
+
     @Composable
     override fun Content(visible: Boolean, panel: UnifiedPlayerPanel) {
         val playFocusRequester = rememberPlayerPlayFocus()

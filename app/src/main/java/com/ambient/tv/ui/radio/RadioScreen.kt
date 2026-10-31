@@ -200,7 +200,10 @@ fun RadioScreen(
     val facetListFocus = remember(focusScope) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    val visibleLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+    // Scrolling changes the first visible row, but focusing another row takes precedence.
+    var focusedFacetLetter by remember(focusScope, sortedFacets) { mutableStateOf<Char?>(null) }
+    val visibleLetter = focusedFacetLetter
+        ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -391,7 +394,8 @@ fun RadioScreen(
                     listRows = state.listRows,
                     modifier = Modifier.fillMaxSize().pageContentUp(focusChain),
                 )
-                state.error && state.stations.isEmpty() && state.facets.isEmpty() -> Column(
+                state.error && !state.loading &&
+                    (if (showingFacets) state.facets.isEmpty() else state.stations.isEmpty()) -> Column(
                     Modifier.fillMaxWidth().pageContentUp(focusChain).focusGroup(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -405,7 +409,7 @@ fun RadioScreen(
                         onClick = viewModel::refresh,
                     )
                 }
-                showingFacets && state.facets.isEmpty() -> StatePanel(
+                showingFacets && state.facets.isEmpty() && state.contentReady -> StatePanel(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -428,7 +432,11 @@ fun RadioScreen(
                             listRows = state.listRows,
                             state = listState,
                             onClick = selectFacet,
-                            onFocused = { viewModel.onFacetFocused(it.id) },
+                            onFocused = { facet ->
+                                viewModel.onFacetFocused(facet.id)
+                                focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == facet.id }
+                                    ?.letter?.singleOrNull()
+                            },
                             initialFocusId = initialContentId,
                             initialFocusRequester = initialFocusRequester,
                             alphabetJumpId = alphabetJumpTargetId,
@@ -442,6 +450,7 @@ fun RadioScreen(
                             letters = alphabetLetters,
                             selected = visibleLetter,
                             onSelect = { letter ->
+                                focusedFacetLetter = letter
                                 val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
                                     ?: return@AlphabetBar
                                 alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
@@ -460,7 +469,7 @@ fun RadioScreen(
                         )
                     }
                 }
-                state.stations.isEmpty() -> StatePanel(
+                state.stations.isEmpty() && state.contentReady -> StatePanel(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )

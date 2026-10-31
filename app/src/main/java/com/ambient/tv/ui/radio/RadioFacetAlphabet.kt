@@ -42,17 +42,11 @@ internal fun radioAlphabetFacets(section: RadioSection, facets: List<RadioFacet>
 }
 
 /**
- * The shared AlphabetBar shows only letters represented by the current localized list.
- * Keep alphabetic order for navigation, including non-Latin initials and "#" for symbols.
+ * Read the first occurrence of each letter from the already localized, sorted facet rows.
+ * This keeps '#' and non-Latin groups at their *actual* list positions, not after Z.
  */
 internal fun radioAlphabetJumps(entries: List<RadioAlphabetFacet>): List<RadioAlphabetJump> {
     val firstIndices = linkedMapOf<String, Int>()
     entries.forEachIndexed { index, entry -> firstIndices.putIfAbsent(entry.letter, index) }
-    val latin = ('A'..'Z').map(Char::toString)
-    val extras = firstIndices.keys.filterNot { it in latin }.sortedWith(
-        compareBy<String> { it != "#" }.thenBy { it },
-    )
-    return (latin + extras).mapNotNull { letter ->
-        firstIndices[letter]?.let { RadioAlphabetJump(letter, it) }
-    }
+    return firstIndices.map { (letter, index) -> RadioAlphabetJump(letter, index) }
 }

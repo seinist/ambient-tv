@@ -181,6 +181,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         setOf(state.server?.id?.let { "dlna:$it" } ?: "dlna"), viewModel::refreshOnReconnect,
     )
     val nodes = remember(state.page) { state.page?.nodes.orEmpty().sortedBy { !it.container } }
+    val emptyPending = com.ambient.tv.ui.common.awaitingEmptyBrowseResult(nodes.isEmpty(), state.loading, state.refreshing)
     val context = LocalContext.current
     val locationKey = com.ambient.tv.data.dlna.DlnaKeys.key(state.server?.id.orEmpty(), state.path.lastOrNull()?.objectId ?: "0")
     var keepHeaderFocus by remember(locationKey) { mutableStateOf(false) }
@@ -226,7 +227,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
         initialContentFocusPending = false
         restoreOptionsFocus = true
     }
-    ReportSidebarContentReady(!state.loading)
+    ReportSidebarContentReady(!state.loading && !emptyPending)
     BackHandler(enabled = !showOptions) { restoreOptionsFocus = false; if (!viewModel.up()) onBack() }
     val targetKey = focusedKey?.takeIf { key -> nodes.any { it.key == key } } ?: nodes.firstOrNull()?.key
     if (!state.loading) BrowseFocusInitialTarget(targetKey)
@@ -271,7 +272,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
             }) {
                 SystemPageTitle(MediaSystem.DLNA, title = state.server?.name)
             }
-            val failedOrEmptyFolder = !state.loading && state.path.isNotEmpty() &&
+            val failedOrEmptyFolder = !emptyPending && state.path.isNotEmpty() &&
                 nodes.isEmpty()
             DlnaBreadcrumb(
                 root = stringResource(R.string.dlna_root),
@@ -306,7 +307,7 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                 }
                 val rowScale = if (handheld) 1f else (7f / state.listRows.coerceIn(4, 10)).coerceIn(0.72f, 1.75f)
                 val columns = GridCells.Fixed(columnCount)
-                val pulse = if (state.loading && nodes.isEmpty()) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
+                val pulse = if (emptyPending) com.ambient.tv.ui.common.rememberSkeletonPulseOrNull() else null
                 SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = columns,
@@ -315,14 +316,14 @@ fun DlnaBrowserScreen(onPlay: (String) -> Unit, onManage: () -> Unit, onBack: ()
                     contentPadding = PaddingValues(end = 12.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    if (state.loading && nodes.isEmpty()) {
+                    if (emptyPending) {
                         if (state.viewMode == DlnaViewMode.LIST) {
                             items(state.listRows.coerceIn(4, 10)) { DlnaLoadingRow(pulse, rowScale) }
                         } else {
                             items(columnCount * 3) { SkeletonTile(style = style, showDescription = false, fillCell = true) }
                         }
                     } else {
-                        if (nodes.isEmpty() && state.error == null) {
+                        if (nodes.isEmpty() && !emptyPending && state.error == null) {
                             item("empty", span = { GridItemSpan(maxLineSpan) }) {
                                 Text(stringResource(R.string.dlna_empty), style = MaterialTheme.typography.bodyLarge)
                             }
