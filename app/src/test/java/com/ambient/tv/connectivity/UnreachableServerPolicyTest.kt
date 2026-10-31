@@ -67,8 +67,36 @@ class UnreachableServerPolicyTest {
         assertEquals(offline, nextOfflineSystems(offline, mapOf("plex" to ServerProbe.PENDING), settled = false))
         assertEquals(offline, nextOfflineSystems(offline, mapOf("plex" to ServerProbe.UNREACHABLE), settled = false))
         assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.REACHABLE), settled = true).isEmpty())
-        assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.HOST_REACHABLE), settled = true).isEmpty())
+        assertEquals(offline, nextOfflineSystems(offline, mapOf("plex" to ServerProbe.HOST_REACHABLE), settled = true))
         assertTrue(nextOfflineSystems(offline, mapOf("plex" to ServerProbe.INACTIVE), settled = true).isEmpty())
+    }
+
+    @Test
+    fun `a reachable host with an unready service remains offline`() {
+        val probes = mapOf("plex" to ServerProbe.HOST_REACHABLE)
+        assertEquals(setOf("plex"), decideUnreachableServers(UnreachableServerInput(probes)).unreachable)
+        assertEquals(setOf("plex"), nextOfflineSystems(emptySet(), probes, settled = true))
+        assertEquals(
+            ServerProbe.HOST_REACHABLE,
+            hostAwareProbe(true, ServerConnectionState.Offline, HostHealth.ONLINE),
+        )
+        assertEquals(
+            ServerProbe.INACTIVE,
+            hostAwareProbe(true, ServerConnectionState.NotConfigured, HostHealth.ONLINE),
+        )
+        assertTrue(nextOfflineSystems(setOf("plex"), mapOf("plex" to ServerProbe.REACHABLE), settled = true).isEmpty())
+    }
+
+    @Test
+    fun `retry one offline server also includes wakeable siblings on its machine`() {
+        val offline = setOf("plex", "jellyfin", "tvheadend")
+        val machine: (String) -> String? = { system ->
+            if (system == "plex" || system == "jellyfin") "host-A" else "host-B"
+        }
+        assertEquals(offline, offlineRetryTargets(offline, null, machine))
+        assertEquals(setOf("plex", "jellyfin"), offlineRetryTargets(offline, "jellyfin", machine))
+        assertEquals(setOf("tvheadend"), offlineRetryTargets(offline, "tvheadend", machine))
+        assertTrue(offlineRetryTargets(offline, "emby", machine).isEmpty())
     }
 
     @Test

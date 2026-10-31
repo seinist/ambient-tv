@@ -66,7 +66,7 @@ fun OfflineSystemGuard(system: String, onOpenSettings: (String) -> Unit, content
     if (system in state.offline) {
         val nextCheckAt by vm.nextAutomaticCheckAtElapsedMs.collectAsState()
         OfflineSystemPage(
-            system, state, vm::retry,
+            system, state, { vm.retrySystem(system) },
             // Go straight to this server's existing Wake-on-LAN group and MAC editor.
             { onOpenSettings("wake:" + system) },
             nextCheckAtElapsedMs = nextCheckAt,

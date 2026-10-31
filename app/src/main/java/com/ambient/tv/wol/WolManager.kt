@@ -16,6 +16,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -60,9 +62,13 @@ class WolManager @Inject constructor(
             ?: return Result.failure(IllegalArgumentException(context.getString(com.ambient.tv.R.string.wol_invalid_mac, macAddress)))
         val macBytes = macKey.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         val wireGuardHosts = if (network != null) listOfNotNull(wireGuardHost) else matchingWireGuardHosts(macKey, wireGuardHost)
+        val initiatingJob = currentCoroutineContext()[Job]
+        // Delayed bursts belong to the wake attempt, not the process lifetime. Cancelling the
+        // shared connect (or finishing it) must also stop its scheduled Magic Packets.
+        val wakeStillActive = { (initiatingJob?.isActive != false) && routeAlive() }
 
         // Check before coalescing too: an earlier successful wake says nothing about today's route.
-        if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(network, wireGuardHosts, routeAlive) }) {
+        if (!withContext(Dispatchers.IO) { wakeNetworkAvailable(network, wireGuardHosts, wakeStillActive) }) {
             return Result.failure(networkUnavailable(macAddress))
         }
         lastWakeBurstAtMs = System.currentTimeMillis()
@@ -76,7 +82,7 @@ class WolManager @Inject constructor(
                 packetCount = packetCount,
                 packetDelayMs = packetDelayMs,
                 wireGuardHosts = wireGuardHosts,
-                network = network, routeAlive = routeAlive,
+                network = network, routeAlive = wakeStillActive,
             )
         }
         val cycle: suspend () -> Result<Unit> = {
@@ -84,7 +90,10 @@ class WolManager @Inject constructor(
                 // UDP has no delivery guarantee (a congested tunnel, a NIC still settling into
                 // standby): repeat the burst while callers wait, once per wake cycle and NIC.
                 if (sent.isSuccess) followUps.launch {
-                    FOLLOW_UP_DELAYS_MS.forEach { wait -> delay(wait); if (!routeAlive() || burst().isFailure) return@launch }
+                    FOLLOW_UP_DELAYS_MS.forEach { wait ->
+                        delay(wait)
+                        if (!wakeStillActive() || burst().isFailure) return@launch
+                    }
                 }
             }
         }
@@ -157,6 +166,24 @@ class WolManager @Inject constructor(
         .filter(String::isNotBlank)
         .distinctBy { it.lowercase() }
 
+    /** Prefer the actual LAN for IPv4 broadcasts. The default route on a phone may be
+     * cellular (or VPN) even while Wi-Fi is connected and the server lives on that LAN. */
+    private fun preferredLanNetwork(): Network? {
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        return cm.allNetworks.mapNotNull { candidate ->
+            val caps = cm.getNetworkCapabilities(candidate) ?: return@mapNotNull null
+            val links = cm.getLinkProperties(candidate) ?: return@mapNotNull null
+            if (links.linkAddresses.none { it.address is Inet4Address && !it.address.isLoopbackAddress })
+                return@mapNotNull null
+            val priority = when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 0
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 1
+                else -> return@mapNotNull null
+            }
+            priority to candidate
+        }.minByOrNull { it.first }?.second
+    }
+
     private suspend fun sendMagicPacketBurst(
         macBytes: ByteArray,
         displayMacAddress: String,
@@ -184,6 +211,7 @@ class WolManager @Inject constructor(
                     .filter(String::isNotBlank)
                     .distinctBy { it.lowercase() }
 
+                val lanNetwork = if (network == null) preferredLanNetwork() else null
                 var sentPackets = 0
                 var firstError: Throwable? = null
                 repeat(packetCount) { index ->
@@ -192,7 +220,9 @@ class WolManager @Inject constructor(
                         runCatching {
                             DatagramSocket().use { socket ->
                                 if (!wakeNetworkAvailable(network, wireGuardHosts, routeAlive)) throw networkUnavailable(displayMacAddress)
-                                network?.bindSocket(socket)
+                                // The local broadcast uses Ethernet/Wi-Fi, never the phone's
+                                // cellular default. VPN wake targets still use Android's VPN routes.
+                                (network ?: lanNetwork.takeIf { target == broadcastAddress })?.bindSocket(socket)
                                 socket.broadcast = true
                                 socket.send(DatagramPacket(packet, packet.size, InetAddress.getByName(target), port))
                             }
@@ -223,7 +253,8 @@ class WolManager @Inject constructor(
             internal set
         private const val DEFAULT_PACKET_COUNT = 3
         private const val DEFAULT_PACKET_DELAY_MS = 200L
-        private const val DEFAULT_COALESCE_WINDOW_MS = 60_000L
+        // Share overlapping requests, but let a later explicit retry send a fresh burst.
+        private const val DEFAULT_COALESCE_WINDOW_MS = 5_000L
         private val FOLLOW_UP_DELAYS_MS = listOf(8_000L, 12_000L)
     }
 }

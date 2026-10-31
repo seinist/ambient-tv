@@ -551,7 +551,7 @@ internal fun LibraryContent(
         val unreachableVm: UnreachableServerViewModel = hiltViewModel()
         val gate by unreachableVm.state.collectAsState()
         gate.offline.firstOrNull()?.let { system ->
-            OfflineSystemPage(system, gate, unreachableVm::retry, { onOpenRelevantSettings("wake:$system") })
+            OfflineSystemPage(system, gate, { unreachableVm.retrySystem(system) }, { onOpenRelevantSettings("wake:$system") })
             return
         }
         Centered {
@@ -886,7 +886,7 @@ private fun HomeOfflineRow(system: String, columnFocus: RowColumnFocus?, rowKey:
         Row(Modifier.padding(horizontal = screenGutter())) {
             TvActionButton(
                 text = offlineActionLabel(gate, system),
-                onClick = vm::retry,
+                onClick = { vm.retrySystem(system) },
                 loading = gate.retrying,
                 modifier = Modifier.rowColumnFocusTarget(columnFocus, rowKey, system, soundsOnFocus = true).onFocusChanged { if (it.isFocused) onFocused() },
             )

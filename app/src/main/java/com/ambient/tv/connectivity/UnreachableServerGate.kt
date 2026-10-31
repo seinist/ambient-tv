@@ -152,12 +152,18 @@ class UnreachableServerGate @Inject constructor(
         tvheadend.allowWakeRetry()
     }
 
-    fun retry() {
+    fun retry() = startRetry(onlySystem = null)
+
+    /** The offline page reconnects its own server, plus siblings on the same machine for WOL. */
+    fun retrySystem(system: String) = startRetry(onlySystem = system)
+
+    private fun startRetry(onlySystem: String?) {
         if (retryJob?.isActive == true) return
+        val failed = offlineRetryTargets(current().offline, onlySystem, hosts::machine)
+        if (failed.isEmpty()) return
         retrying.value = true
         retryJob = scope.launch {
           try {
-            val failed = current().offline
             // One active recovery per machine. Siblings only refresh their own service identity.
             coroutineScope {
                 failed.groupBy { hosts.machine(it) ?: it }.values.forEach { systems -> launch {
@@ -178,7 +184,7 @@ class UnreachableServerGate @Inject constructor(
             }
             refresh()
             // Say how it ended: without this, a failed retry just shows the same dialog again.
-            val still = current().unreachable
+            val still = current().unreachable.intersect(failed)
             com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
                 key = "unreachable:retry:${System.currentTimeMillis()}",
                 message = if (still.isEmpty()) com.ambient.tv.R.string.unreachable_retry_success else com.ambient.tv.R.string.unreachable_retry_failed,

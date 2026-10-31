@@ -54,7 +54,13 @@ class JellyfinConnectionManager @Inject constructor(
         .addInterceptor(com.ambient.tv.diagnostics.DiagnosticHttpInterceptor).build()
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("jellyfin"))
+        val hostHealth = hosts.health("jellyfin")
+        // Invalidate the cached identity on a confirmed outage. A later open machine port
+        // must not resurrect an old Online state before this service answers its own API.
+        if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
+            _state.value = ServerConnectionState.Offline
+        }
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
     private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
@@ -82,7 +88,7 @@ class JellyfinConnectionManager @Inject constructor(
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        connectRun.joinOrStart(endpoint) { connect() }.also {
+        connectRun.joinOrStart(endpoint) { connect(forceNewWake = true) }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("jellyfin")
         }
     }
@@ -95,7 +101,14 @@ class JellyfinConnectionManager @Inject constructor(
     suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
         if (connectRun.active) return@withContext false
         connectionMutex.withLock {
-            if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.isJellyfinConfigured) return@withLock false
+            // A passive probe must also run for a normally unpaused offline server.
+            // A dismissed wake remains dismissed: only a confirmed service response clears it.
+            if (!shouldProbeInBackground(
+                    configured = preferences.isJellyfinConfigured,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("jellyfin") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.jellyfinHost)) return@withLock false
             val checkedEndpoint = endpointKey()
@@ -104,6 +117,7 @@ class JellyfinConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
+            hosts.online(hosts.begin("jellyfin")) // Successful API probe overrides stale port failures.
             _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
@@ -129,13 +143,13 @@ class JellyfinConnectionManager @Inject constructor(
         }
     }
 
-    private suspend fun connect(): Boolean {
+    private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
         var freshlyConfirmed = false
         val check = hosts.begin("jellyfin")
         val endpoint = endpointKey()
         return try {
-            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+            connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
                     else if (freshlyConfirmed) browseReconnects.request("jellyfin")
@@ -155,6 +169,7 @@ class JellyfinConnectionManager @Inject constructor(
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
         onConnected: () -> Unit,
+        forceNewWake: Boolean = false,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("jellyfin") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.isJellyfinConfigured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -184,7 +199,7 @@ class JellyfinConnectionManager @Inject constructor(
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),
                     wireGuardHost = preferences.jellyfinHost.takeIf { preferences.wireGuardJellyfinEnabled },
-                    retry = attempt > 0,
+                    retry = forceNewWake || attempt > 0,
                 )
             },
             retries = wakeRetries,
@@ -198,13 +213,13 @@ class JellyfinConnectionManager @Inject constructor(
         val identity = retryTransient(wait.identityDeadlineMs) { repository.getIdentity() }.getOrElse {
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.jellyfinHost}:${preferences.jellyfinPort}")); return false
         }
-        _state.value = ServerConnectionState.Online(identity)
         lastServerId = endpointKey
         lastSuccessfulCheckMs = System.currentTimeMillis()
         if (preferences.jellyfinMacAddress.isNullOrBlank()) {
             macResolver.resolve(host, preferences.jellyfinPort)?.macAddress?.let(preferences::updateActiveJellyfinServerMac)
         }
         hosts.online(hosts.begin("jellyfin")) // MAC discovery may have changed the shared machine key.
+        _state.value = ServerConnectionState.Online(identity)
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true

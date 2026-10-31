@@ -67,7 +67,13 @@ class ServerConnectionManager @Inject constructor(
 
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("plex"))
+        val hostHealth = hosts.health("plex")
+        // Invalidate the cached identity on a confirmed outage. A later open machine port
+        // must not resurrect an old Online state before this service answers its own API.
+        if (com.ambient.tv.connectivity.shouldInvalidateConfirmedService(service, hostHealth)) {
+            _state.value = ServerConnectionState.Offline
+        }
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
 
     /** Short checks only (background probe, server test); a wake never holds it. */
@@ -94,7 +100,7 @@ class ServerConnectionManager @Inject constructor(
         reconnectPause.clear()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        connectRun.joinOrStart(endpoint) { connect() }.also {
+        connectRun.joinOrStart(endpoint) { connect(forceNewWake = true) }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("plex")
         }
     }
@@ -107,7 +113,14 @@ class ServerConnectionManager @Inject constructor(
     suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
         if (connectRun.active) return@withContext false
         connectionMutex.withLock {
-            if ((!force && !reconnectPause.isPaused(endpointKey())) || !preferences.hasPlexEndpoint) return@withLock false
+            // A passive probe must also run for a normally unpaused offline server.
+            // A dismissed wake remains dismissed: only a confirmed service response clears it.
+            if (!shouldProbeInBackground(
+                    configured = preferences.hasPlexEndpoint,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("plex") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.host)) return@withLock false
             val checkedEndpoint = endpointKey()
@@ -116,6 +129,7 @@ class ServerConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
+            hosts.online(hosts.begin("plex")) // Successful API probe overrides stale port failures.
             _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
@@ -142,13 +156,13 @@ class ServerConnectionManager @Inject constructor(
         }
     }
 
-    private suspend fun connect(): Boolean {
+    private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
         var freshlyConfirmed = false
         val check = hosts.begin("plex")
         val endpoint = endpointKey()
         return try {
-            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+            connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
                     else if (freshlyConfirmed) browseReconnects.request("plex")
@@ -168,6 +182,7 @@ class ServerConnectionManager @Inject constructor(
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
         onConnected: () -> Unit,
+        forceNewWake: Boolean = false,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("plex") != com.ambient.tv.connectivity.HostHealth.OFFLINE
         if (!preferences.hasPlexEndpoint) {
@@ -203,7 +218,7 @@ class ServerConnectionManager @Inject constructor(
                     wolManager.sendWakeBurst(
                         mac.orEmpty(),
                         wireGuardHost = preferences.host.takeIf { preferences.wireGuardPlexEnabled },
-                        retry = attempt > 0,
+                        retry = forceNewWake || attempt > 0,
                     ).getOrThrow()
                 },
                 retries = wakeRetries,
@@ -231,11 +246,11 @@ class ServerConnectionManager @Inject constructor(
         }
 
         if (activeServerId != endpointKey()) return false
-        _state.value = ServerConnectionState.Online(identity)
         lastConnectedServerId = activeServerId
         lastSuccessfulCheckMs = System.currentTimeMillis()
         learnMacIfMissing()
         hosts.online(hosts.begin("plex")) // MAC discovery may have changed the shared machine key.
+        _state.value = ServerConnectionState.Online(identity)
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true

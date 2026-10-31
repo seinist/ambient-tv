@@ -94,7 +94,7 @@ class MachineWake @Inject constructor(
         notices = WakeNotices,
         group = machines::groupFor,
         send = { mac, broadcast, port, wireGuardHost, retry ->
-            wolManager.sendWakeBurst(mac, broadcast, port, wireGuardHost = wireGuardHost, retry = retry)
+            wolManager.sendWakeBurst(mac, broadcast, port, wireGuardHost = wireGuardHost, retry = true)
         },
         reachable = { host, port ->
             runInterruptible(Dispatchers.IO) {

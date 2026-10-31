@@ -46,7 +46,14 @@ class TvheadendConnectionManager @Inject constructor(
 ) {
     private val _state = MutableStateFlow<ServerConnectionState>(ServerConnectionState.NotConfigured)
     val state: StateFlow<ServerConnectionState> = combine(_state, hosts.states) { service, _ ->
-        com.ambient.tv.connectivity.hostAwareConnectionState(service, hosts.health("tvheadend"))
+        val hostHealth = hosts.health("tvheadend")
+        // Invalidate the cached identity on a confirmed outage. A later open machine port
+        // must not resurrect an old Online state before this service answers its own API.
+        if (hostHealth == com.ambient.tv.connectivity.HostHealth.OFFLINE &&
+            service is ServerConnectionState.Online) {
+            _state.value = ServerConnectionState.Offline
+        }
+        com.ambient.tv.connectivity.hostAwareConnectionState(service, hostHealth)
     }.stateIn(CoroutineScope(SupervisorJob() + Dispatchers.Default), SharingStarted.Eagerly, _state.value)
     private var lastSuccessfulCheckMs = 0L
     private var lastServerId: String? = null
@@ -83,7 +90,7 @@ class TvheadendConnectionManager @Inject constructor(
         resumeAutomaticReconnect()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        connectRun.joinOrStart(endpoint) { connect() }.also {
+        connectRun.joinOrStart(endpoint) { connect(forceNewWake = true) }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("tvheadend")
         }
     }
@@ -96,7 +103,14 @@ class TvheadendConnectionManager @Inject constructor(
     suspend fun checkInBackground(force: Boolean = false, retryForMs: Long = 0L): Boolean = withContext(Dispatchers.IO) {
         if (connectRun.active) return@withContext false
         connectionMutex.withLock {
-            if ((!force && !reconnectPause.isPaused(endpointKey())) || !configured) return@withLock false
+            // A passive probe must also run for a normally unpaused offline server.
+            // A dismissed wake remains dismissed: only a confirmed service response clears it.
+            if (!shouldProbeInBackground(
+                    configured = configured,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("tvheadend") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
@@ -106,6 +120,7 @@ class TvheadendConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
+            hosts.online(hosts.begin("tvheadend")) // Successful API probe overrides stale port failures.
             _state.value = ServerConnectionState.Online(identity(info.version))
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
@@ -131,13 +146,13 @@ class TvheadendConnectionManager @Inject constructor(
         }
     }
 
-    private suspend fun connect(): Boolean {
+    private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
         var freshlyConfirmed = false
         val check = hosts.begin("tvheadend")
         val endpoint = endpointKey()
         return try {
-            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+            connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
                     else if (freshlyConfirmed) browseReconnects.request("tvheadend")
@@ -165,6 +180,7 @@ class TvheadendConnectionManager @Inject constructor(
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
         onConnected: () -> Unit,
+        forceNewWake: Boolean = false,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("tvheadend") != HostHealth.OFFLINE
         if (!configured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -194,7 +210,7 @@ class TvheadendConnectionManager @Inject constructor(
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),
                     wireGuardHost = preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled },
-                    retry = attempt > 0,
+                    retry = forceNewWake || attempt > 0,
                 )
             },
             retries = wakeRetries,
@@ -212,10 +228,10 @@ class TvheadendConnectionManager @Inject constructor(
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.tvheadendHost}:${preferences.tvheadendPort}"))
             return false
         }
-        _state.value = ServerConnectionState.Online(identity(info.version))
         lastServerId = endpointKey
         lastSuccessfulCheckMs = System.currentTimeMillis()
         hosts.online(hosts.begin("tvheadend"))
+        _state.value = ServerConnectionState.Online(identity(info.version))
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true

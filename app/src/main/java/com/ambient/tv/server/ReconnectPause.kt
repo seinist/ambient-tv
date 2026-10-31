@@ -13,3 +13,13 @@ internal class ReconnectPause {
     /** A passive check reached the server: the dismissed outage is over. */
     fun onlineAgain() = clear()
 }
+
+/** Passive checks must try offline services regardless of whether automatic waking is paused.
+ * Only a fresh, healthy service can skip a non-forced check. Never infer service readiness
+ * merely from a different open port on the same physical machine. */
+internal fun shouldProbeInBackground(
+    configured: Boolean,
+    force: Boolean,
+    serviceOnline: Boolean,
+    hostOnline: Boolean,
+): Boolean = configured && (force || !serviceOnline || !hostOnline)

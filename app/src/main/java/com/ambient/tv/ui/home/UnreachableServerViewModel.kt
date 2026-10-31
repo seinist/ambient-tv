@@ -12,4 +12,5 @@ class UnreachableServerViewModel @Inject constructor(
     val state = gate.state
     val nextAutomaticCheckAtElapsedMs = gate.nextAutomaticCheckAtElapsedMs
     fun retry() = gate.retry()
+    fun retrySystem(system: String) = gate.retrySystem(system)
 }

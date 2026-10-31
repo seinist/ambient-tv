@@ -46,7 +46,7 @@ fun probeOf(active: Boolean, state: ServerConnectionState): ServerProbe {
 }
 
 fun decideUnreachableServers(input: UnreachableServerInput): UnreachableServerDecision {
-    val unreachable = input.probes.filterValues { it == ServerProbe.UNREACHABLE }.keys
+    val unreachable = input.probes.filterValues { it == ServerProbe.UNREACHABLE || it == ServerProbe.HOST_REACHABLE }.keys
     val pending = input.probes.any { it.value == ServerProbe.PENDING }
     val otherMediaReachable = input.probes.any { (id, probe) ->
         probe == ServerProbe.REACHABLE && id !in unreachable
@@ -74,9 +74,31 @@ fun resumeHoldsUnreachablePrompt(status: ResumeConnectivityStatus): Boolean =
  * answers or is turned off; otherwise each recheck would flash its half-loaded library.
  */
 fun nextOfflineSystems(previous: Set<String>, probes: Map<String, ServerProbe>, settled: Boolean): Set<String> {
-    val kept = previous.filterTo(mutableSetOf()) { probes[it] == ServerProbe.PENDING || probes[it] == ServerProbe.UNREACHABLE }
-    if (settled) kept += probes.filterValues { it == ServerProbe.UNREACHABLE }.keys
+    // A NAS/PC answering on another port is not enough: the media service still needs to
+    // confirm its own API identity before the offline screen gives way to library content.
+    val kept = previous.filterTo(mutableSetOf()) {
+        probes[it] == ServerProbe.PENDING || probes[it] == ServerProbe.UNREACHABLE ||
+            probes[it] == ServerProbe.HOST_REACHABLE
+    }
+    if (settled) kept += probes.filterValues {
+        it == ServerProbe.UNREACHABLE || it == ServerProbe.HOST_REACHABLE
+    }.keys
     return kept
+}
+
+/** Retry the selected offline service and other offline services sharing its physical machine.
+ * The wakeable sibling can send WOL while the requested service has no configured MAC. */
+fun offlineRetryTargets(
+    offline: Set<String>,
+    selectedSystem: String?,
+    machineFor: (String) -> String?,
+): Set<String> {
+    if (selectedSystem == null) return offline
+    if (selectedSystem !in offline) return emptySet()
+    val selectedMachine = machineFor(selectedSystem)
+    return offline.filterTo(mutableSetOf()) {
+        it == selectedSystem || (selectedMachine != null && machineFor(it) == selectedMachine)
+    }
 }
 
 /** Media server whose library [route] shows, or null for any other page. */
@@ -95,13 +117,18 @@ fun libraryRouteSystem(route: String?): String? {
 
 /** Host recovery clears stale reconnect prompts without claiming service authentication. */
 fun hostAwareProbe(configured: Boolean, service: ServerConnectionState, host: HostHealth): ServerProbe =
-    if (!configured) ServerProbe.INACTIVE
+    if (!configured || service == ServerConnectionState.NotConfigured) ServerProbe.INACTIVE
     else if (probeOf(true, service) == ServerProbe.PENDING) ServerProbe.PENDING
     else when (host) {
         HostHealth.ONLINE -> if (service is ServerConnectionState.Online) ServerProbe.REACHABLE else ServerProbe.HOST_REACHABLE
         HostHealth.OFFLINE -> ServerProbe.UNREACHABLE
         HostHealth.UNKNOWN -> probeOf(true, service)
     }
+
+/** A confirmed host outage invalidates an earlier identity. It must not automatically
+ * become Online again when an unrelated port opens during machine startup. */
+fun shouldInvalidateConfirmedService(service: ServerConnectionState, host: HostHealth): Boolean =
+    host == HostHealth.OFFLINE && service is ServerConnectionState.Online
 
 /** Host outages invalidate a usable connection, never an active attempt or its error detail. */
 internal fun hostAwareConnectionState(service: ServerConnectionState, host: HostHealth): ServerConnectionState =

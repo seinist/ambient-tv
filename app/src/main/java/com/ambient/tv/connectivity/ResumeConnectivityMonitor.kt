@@ -4,6 +4,7 @@ import com.ambient.tv.notifications.*
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -23,9 +24,12 @@ import com.ambient.tv.vpn.WireGuardRouteState
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -33,9 +37,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 /**
@@ -59,10 +62,31 @@ class ResumeConnectivityMonitor @Inject constructor(
 ) : DefaultLifecycleObserver {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val recheckMutex = Mutex()
-    private var recheckJob: Job? = null
+    // Conflated requests never cancel a running, app-scoped wake. A network change during a
+    // long wake is checked once more when that attempt completes.
+    private val recheckRequests = Channel<String>(Channel.CONFLATED)
+    private var networkChangeJob: Job? = null
     private var started = false
+    @Volatile private var foreground = false
     private var vpnCallbackRegistered = false
+    private var networkCallbackRegistered = false
+
+    init {
+        scope.launch {
+            for (reason in recheckRequests) {
+                try {
+                    runRecheck(reason)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    // A failed VPN/network setup must not terminate the only resume worker.
+                    Timber.w(error, "Resume connectivity worker failed")
+                    _status.value = ResumeConnectivityStatus.Idle
+                    _recheckGeneration.value = _recheckGeneration.value + 1
+                }
+            }
+        }
+    }
 
     private var lastStopElapsedMs: Long = -1L
     @Volatile private var lastHealthElapsedMs: Long = SystemClock.elapsedRealtime()
@@ -78,12 +102,23 @@ class ResumeConnectivityMonitor @Inject constructor(
     /** Bumped when the WireGuard route is marked failed (revoke / VPN network lost) so player UI can react. */
     val vpnDropGeneration: StateFlow<Long> = _vpnDropGeneration.asStateFlow()
 
+    private val ownedVpnNetworks = ConcurrentHashMap.newKeySet<Network>()
     private val vpnNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val cm = context.getSystemService(ConnectivityManager::class.java)
+            cm?.getLinkProperties(network)?.let { onLinkPropertiesChanged(network, it) }
+        }
+
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
+            if (wireGuardRoute.ownsCompanionNetwork(linkProperties)) ownedVpnNetworks.add(network)
+        }
+
         override fun onLost(network: Network) {
-            if (!wireGuardRoute.anySystemEnabled()) return
+            // Android reports other apps' VPNs too. Only our own tunnel loss matters.
+            if (!ownedVpnNetworks.remove(network) || !wireGuardRoute.anySystemEnabled()) return
             val current = wireGuardRoute.status.value
             if (current is WireGuardRouteState.Up || current is WireGuardRouteState.Connecting) {
-                Timber.w("VPN network lost while WireGuard route was active")
+                Timber.w("Ambient WireGuard network lost while route was active")
                 markVpnRouteFailed(context.getString(R.string.wg_vpn_network_lost))
             }
         }
@@ -94,6 +129,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         started = true
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
         registerVpnCallback()
+        registerNetworkCallback()
     }
 
     /** Called from [com.ambient.tv.vpn.WireGuardVpnService.onRevoke]. */
@@ -120,24 +156,60 @@ class ResumeConnectivityMonitor @Inject constructor(
     }
 
     override fun onStop(owner: LifecycleOwner) {
+        foreground = false
+        networkChangeJob?.cancel()
         lastStopElapsedMs = SystemClock.elapsedRealtime()
     }
 
     override fun onStart(owner: LifecycleOwner) {
+        foreground = true
         val now = SystemClock.elapsedRealtime()
         val backgroundedFor = if (lastStopElapsedMs < 0L) 0L else (now - lastStopElapsedMs).coerceAtLeast(0L)
         val healthAge = (now - lastHealthElapsedMs).coerceAtLeast(0L)
-        if (!ResumeConnectivityPolicy.shouldRecheck(backgroundedFor, healthAge)) return
+        // A healthy system may have been shut down while the phone was away, even after a
+        // short background gap. Always validate after an actual foreground return.
+        if (!ResumeConnectivityPolicy.shouldRecheckOnStart(
+                wasBackgrounded = lastStopElapsedMs >= 0L,
+                backgroundedForMs = backgroundedFor,
+                lastHealthAgeMs = healthAge,
+            )) return
         requestRecheck(reason = "resume backgrounded=${backgroundedFor}ms healthAge=${healthAge}ms")
     }
 
-    /** Manual / activity-level kick; coalesced with an in-flight recheck. */
+    /** Requests are coalesced, but an in-flight wake is allowed to finish or be cancelled
+     * explicitly by the user. Cancelling a recheck caller does not cancel SharedConnectRun. */
     fun requestRecheck(reason: String = "manual") {
         com.ambient.tv.network.LocalNetworkPolicy.clearCache()
-        recheckJob?.cancel()
-        recheckJob = scope.launch {
-            recheckMutex.withLock { runRecheck(reason) }
+        recheckRequests.trySend(reason)
+    }
+
+    private fun onNetworkChanged(reason: String) {
+        if (!foreground) return
+        networkChangeJob?.cancel()
+        networkChangeJob = scope.launch {
+            delay(NETWORK_SETTLE_MS)
+            if (foreground) requestRecheck(reason)
         }
+    }
+
+    private val connectivityCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = onNetworkChanged("network-available")
+        override fun onLost(network: Network) = onNetworkChanged("network-lost")
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallbackRegistered) return
+        val cm = context.getSystemService(ConnectivityManager::class.java) ?: return
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
+            .addTransportType(NetworkCapabilities.TRANSPORT_VPN)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+            .build()
+        runCatching {
+            cm.registerNetworkCallback(request, connectivityCallback)
+            networkCallbackRegistered = true
+        }.onFailure { Timber.w(it, "Failed to register connectivity NetworkCallback") }
     }
 
     fun noteHealthyNow() {
@@ -176,18 +248,22 @@ class ResumeConnectivityMonitor @Inject constructor(
 
         fun update(system: MediaSystem, phase: ResumeConnectivityStatus.ServerPhase, detail: String? = null) {
             // Notices come from each system's connection state (ConnectionNotifications), TVHeadend included.
-            progress.value = progress.value.copy(
-                servers = progress.value.servers.map {
+            progress.update { current ->
+                current.copy(servers = current.servers.map {
                     if (it.system == system) it.copy(phase = phase, detail = detail) else it
-                },
-            )
+                })
+            }
             _status.value = progress.value
         }
 
         kotlinx.coroutines.coroutineScope {
             targets.map { system ->
                 async {
-                    val online = runCatching { recheckSystem(system, ::update) }.getOrElse { error ->
+                    val online = try {
+                        recheckSystem(system, ::update)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
                         Timber.w(error, "Resume recheck failed for %s", system)
                         update(system, ResumeConnectivityStatus.ServerPhase.ERROR, error.message)
                         false
@@ -276,15 +352,19 @@ class ResumeConnectivityMonitor @Inject constructor(
 
     private fun isNetworkAvailable(): Boolean {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return true
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
-            caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        // A LAN without validated Internet is still useful for server probes and WOL.
+        // In particular, cellular may be the default while a local Wi-Fi network is available.
+        return cm.allNetworks.any { network ->
+            val caps = cm.getNetworkCapabilities(network) ?: return@any false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
     }
 
     private companion object {
         const val COMPLETED_STATUS_DISPLAY_MS = 2_000L
+        const val NETWORK_SETTLE_MS = 750L
     }
 }
