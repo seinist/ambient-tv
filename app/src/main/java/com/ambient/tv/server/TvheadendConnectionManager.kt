@@ -98,8 +98,12 @@ class TvheadendConnectionManager @Inject constructor(
         connectionMutex.withLock {
             // A passive probe must also run for a normally unpaused offline server.
             // A dismissed wake remains dismissed: only a confirmed service response clears it.
-            if (!configured || (!force && _state.value is ServerConnectionState.Online &&
-                    hosts.health("tvheadend") == com.ambient.tv.connectivity.HostHealth.ONLINE)) return@withLock false
+            if (!shouldProbeInBackground(
+                    configured = configured,
+                    force = force,
+                    serviceOnline = _state.value is ServerConnectionState.Online,
+                    hostOnline = hosts.health("tvheadend") == com.ambient.tv.connectivity.HostHealth.ONLINE,
+                )) return@withLock false
             if (preferences.localNetworkOnly &&
                 !LocalNetworkPolicy.isPotentiallyLocalHost(preferences.tvheadendHost)) return@withLock false
             val checkedEndpoint = endpointKey()
