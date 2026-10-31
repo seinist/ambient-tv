@@ -56,7 +56,7 @@ class TelegramVideoDataSource(
                 throw IOException("Invalid Telegram media part")
         }
         val relative = (position - partStart).toInt()
-        val count = minOf(length, part.size - relative, remaining.toInt().coerceAtMost(Int.MAX_VALUE))
+        val count = minOf(length, part.size - relative, remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
         if (count <= 0) throw IOException("Incomplete Telegram media part")
         part.copyInto(buffer, offset, relative, relative + count)
         position += count

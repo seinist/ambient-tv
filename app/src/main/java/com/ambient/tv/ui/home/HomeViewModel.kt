@@ -101,6 +101,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     key = "${when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> "radio"
+        ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> "telegram"
         ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "youtube"
         EmbyBackend.owns(ratingKey) -> "emby"
         JellyfinBackend.owns(ratingKey) -> "jellyfin"
@@ -113,6 +114,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     providerLabel = when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
+        ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> MediaSystem.TELEGRAM.customName ?: "Telegram"
         ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "SmartTube"
         EmbyBackend.owns(ratingKey) -> "Emby"
         JellyfinBackend.owns(ratingKey) -> "Jellyfin"
@@ -180,6 +182,7 @@ class HomeViewModel @Inject constructor(
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
+    private val telegramRepository: com.ambient.tv.data.telegram.TelegramRepository,
     private val homeRowSnapshots: HomeRowSnapshots,
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
@@ -225,6 +228,8 @@ class HomeViewModel @Inject constructor(
     private var trailerJob: Job? = null
     private var radioJob: Job? = null
     private var youtubeJob: Job? = null
+    private var telegramJob: Job? = null
+    private var telegramRowsPending = false
     // Keep empty Home in its loading phase until every enabled async row has answered.
     private var radioRowsPending = false
     private var radioRowsGeneration = 0
@@ -240,6 +245,7 @@ class HomeViewModel @Inject constructor(
     private var trailerRows: List<ContentRowData> = emptyList()
     private var radioRows: List<ContentRowData> = emptyList()
     private var youtubeRows: List<ContentRowData> = emptyList()
+    private var telegramRows: List<ContentRowData> = emptyList()
     /** The exact upstream SmartTube group per configured feed, for bounded next/previous. */
     private val youtubeSourceRows = mutableMapOf<String, YouTubeRow>()
     /** "Recently added photos" row; merged into every publish so provider reloads keep it. */
@@ -269,6 +275,7 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow<HomeUiState>(
         if (appPreferences.isConfigured || appPreferences.isJellyfinConfigured || appPreferences.isEmbyConfigured ||
             appPreferences.isTvheadendConfigured || appPreferences.radioEnabled ||
+            (appPreferences.telegramEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM }) ||
             (appPreferences.youtubeEnabled && appPreferences.homeRows.any { it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE }))
             HomeUiState.LoadingLibrary else HomeUiState.NotConfigured,
     )
@@ -308,6 +315,22 @@ class HomeViewModel @Inject constructor(
             focusedRowId = activeFocusedRowId,
             hero = hero,
         )
+    }
+
+    init {
+        viewModelScope.launch {
+            telegramRepository.authorized.collect { authorized ->
+                if (!authorized) {
+                    telegramJob?.cancel()
+                    telegramRowsPending = false
+                    telegramRows = emptyList()
+                    if (hasEntered && _uiState.value is HomeUiState.Loaded)
+                        publishRows((_uiState.value as HomeUiState.Loaded).rows)
+                } else if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly) {
+                    loadTelegramRows()
+                }
+            }
+        }
     }
 
     init {
@@ -438,6 +461,7 @@ class HomeViewModel @Inject constructor(
         loadTrailerRows()
         loadRadioRows()
         loadYouTubeRows()
+        loadTelegramRows()
         if (!plexOnly && !jellyfinOnly && !embyOnly && liveTvRegistry.configured().isNotEmpty()) startTvPreview()
         if ((jellyfinOnly || embyOnly) && !refreshing && _uiState.value !is HomeUiState.Loaded) {
             libraryLoading = true
@@ -462,6 +486,7 @@ class HomeViewModel @Inject constructor(
         if (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured) {
             if (appPreferences.isTvheadendConfigured || trailerJob?.isActive == true ||
                 radioJob?.isActive == true || radioRows.isNotEmpty() ||
+                telegramJob?.isActive == true || telegramRows.isNotEmpty() ||
                 youtubeJob?.isActive == true || youtubeRows.isNotEmpty() ||
                 (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
                     it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
@@ -1429,6 +1454,54 @@ class HomeViewModel @Inject constructor(
             )
         }
 
+    /** Telegram is account-private: never persist these rows in the shared Home snapshot cache. */
+    private fun loadTelegramRows() {
+        telegramJob?.cancel()
+        telegramRowsPending = false
+        if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.telegramEnabled ||
+            !telegramRepository.available) {
+            telegramRows = emptyList()
+            return
+        }
+        val definitions = appPreferences.homeRows.filter {
+            it.enabled && it.system == HomeRowDefinition.SYSTEM_TELEGRAM &&
+                it.contentKey in HomeRowDefinition.TELEGRAM_ROW_KEYS
+        }
+        if (definitions.isEmpty()) {
+            telegramRows = emptyList()
+            return
+        }
+        telegramRowsPending = true
+        telegramJob = viewModelScope.launch {
+            try {
+                val updates = coroutineScope {
+                    definitions.map { definition ->
+                        async {
+                            val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT)
+                            val items = com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries)
+                                .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            if (items.isEmpty()) null else ContentRowData(
+                                id = "telegram.${definition.contentKey}",
+                                title = definition.displayTitle(context),
+                                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                                items = items,
+                            )
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                telegramRows = updates
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Preserve previous authenticated rows for transient network failures.
+            } finally {
+                telegramRowsPending = false
+                if (!_uiState.value.isFailurePage())
+                    publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+            }
+        }
+    }
+
     private fun loadRadioRows() {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -1649,7 +1722,7 @@ class HomeViewModel @Inject constructor(
     private fun publishRows(rows: List<ContentRowData>) =
         publishRowsInternal(
             withAllContinueRow(applyOverviewStyle(rows)),
-            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || youtubeRows.isNotEmpty(),
+            hasRows = rows.isNotEmpty() || radioRows.isNotEmpty() || youtubeRows.isNotEmpty() || telegramRows.isNotEmpty(),
         )
 
     /** Re-applies the system overview's page view. Rows already carry a resolved tile style. */
@@ -1769,8 +1842,8 @@ class HomeViewModel @Inject constructor(
         @Suppress("NAME_SHADOWING")
         val rows = rows.filterNot {
             it.id == PHOTO_ROW_ID || it.id.startsWith("trailers.") || it.id.startsWith("radio.") ||
-                it.id.startsWith("youtube.") || homeRowHidden(it.id)
-        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows
+                it.id.startsWith("youtube.") || it.id.startsWith("telegram.") || homeRowHidden(it.id)
+        } + listOfNotNull(photoRow?.takeUnless { homeRowHidden(it.id) }) + trailerRows + radioRows + youtubeRows + telegramRows
         // Re-evaluate on every publish, not just when the preview was fetched: the server
         // can go offline while Home is still open and its cached preview is still in memory.
         val offlineTvSystems = unreachableServers.current().offline
@@ -1783,6 +1856,7 @@ class HomeViewModel @Inject constructor(
                 HomeRowDefinition.SYSTEM_YOUTUBE ->
                     !youtubeRowsPending && youtubeRows.none { it.id == "youtube.${row.contentKey}" }
                 HomeRowDefinition.SYSTEM_SPOTIFY -> true
+                HomeRowDefinition.SYSTEM_TELEGRAM -> false
                 HomeRowDefinition.SYSTEM_RADIO -> false
                 HomeRowDefinition.SYSTEM_TVHEADEND -> row.contentKey !in setOf("live", "recent_channels")
                 else -> false
@@ -1896,6 +1970,7 @@ class HomeViewModel @Inject constructor(
                 photoPending = photoRowPending,
                 trailerPending = trailerRowsPending,
                 youtubePending = youtubeRowsPending,
+                telegramPending = telegramRowsPending,
             ),
         )
         // Artwork is decoded only by visible cards. Speculation warms metadata, never bitmaps.
@@ -2048,6 +2123,7 @@ class HomeViewModel @Inject constructor(
         youtubeReady = appPreferences.youtubeEnabled,
         spotifyReady = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyRepository.webAuthorized,
         radioReady = appPreferences.radioEnabled,
+        telegramReady = appPreferences.telegramEnabled && telegramRepository.available,
         embyReady = embyOnly || appPreferences.isEmbyConfigured,
         photosReady = photoRepository.hasAnyPhotoSource(),
         trailersReady = appPreferences.trailersEnabled && trailerRepository.configured,
@@ -2227,4 +2303,5 @@ internal fun homeAwaitingFirstResults(
     photoPending: Boolean,
     trailerPending: Boolean,
     youtubePending: Boolean = false,
-): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending || youtubePending)
+    telegramPending: Boolean = false,
+): Boolean = !hasVisibleRows && (libraryPending || radioPending || liveTvPending || photoPending || trailerPending || youtubePending || telegramPending)
