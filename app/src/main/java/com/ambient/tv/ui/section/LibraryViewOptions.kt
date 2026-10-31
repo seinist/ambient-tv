@@ -59,6 +59,10 @@ fun libraryIndexLetter(title: String): Char? {
     return if (first.isLetter()) first.uppercaseChar() else '#'
 }
 
+/** The index follows the actual visible list: # first in A-Z, last in Z-A. */
+fun libraryAlphabetLetters(sortedItems: List<MediaItem>): List<Char> =
+    sortedItems.mapNotNull { libraryIndexLetter(it.title) }.distinct()
+
 /** Library and recommendation layouts in picker order; each artwork-heavy mode has a poster twin. */
 val SELECTABLE_VIEW_MODES = listOf(
     SectionViewMode.POSTER,
