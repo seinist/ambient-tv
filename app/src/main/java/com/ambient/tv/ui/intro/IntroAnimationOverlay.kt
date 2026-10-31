@@ -248,6 +248,8 @@ fun IntroAnimationOverlay(styleKey: String, onFinished: () -> Unit, modifier: Mo
             drawRect(background)
             when (style) {
                 IntroAnimation.HORIZON -> drawDaybreak(frame)
+                IntroAnimation.SIGNATURE -> drawSignature(frame)
+                IntroAnimation.PRISM -> drawPrism(frame)
                 else -> drawLightField(frame)
             }
             grain?.let { drawRect(it, alpha = 0.05f, blendMode = BlendMode.Overlay) }
@@ -367,7 +369,15 @@ private fun mix(a: Float, b: Float, f: Float) = a + (b - a) * f
  * "mbient" follows letter by letter, and the TV badge switches on last: a line of light opens
  * into the badge, then the label appears.
  */
-private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, start: Float, fromIcon: Boolean) {
+private fun DrawScope.drawWordmark(
+    frame: IntroFrame,
+    at: Offset,
+    width: Float,
+    start: Float,
+    fromIcon: Boolean,
+    signature: Boolean = false,
+    fixedPeak: Boolean = false,
+) {
     val t = frame.seconds - start
     val unit = width / (WORDMARK_RIGHT - WORDMARK_LEFT)
     val origin = Offset(
@@ -375,9 +385,9 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
         at.y - (WORDMARK_TOP + WORDMARK_BOTTOM) / 2f * unit,
     )
     fun mark(p: Offset) = origin + p * unit
-    val lettersFrom = if (fromIcon) 1.8f else 1.1f
-    val badgeFrom = lettersFrom + 1.1f
-    val appear = soft(phase(t, 0f, if (fromIcon) 1.1f else 1.6f))
+    val lettersFrom = if (signature) 1.0f else if (fromIcon) 1.8f else 1.1f
+    val badgeFrom = if (signature) 2.1f else lettersFrom + 1.1f
+    val appear = if (signature) 1f else soft(phase(t, 0f, if (fromIcon) 1.1f else 1.6f))
     val move = if (fromIcon) soft(phase(t, 1.1f, 2.3f)) else 1f
     val peak: List<Offset>
     val peakStroke: Float
@@ -406,23 +416,38 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
             }
         }
     } else {
-        val grow = 1.08f - 0.08f * appear
+        val grow = if (signature || fixedPeak) 1f else 1.08f - 0.08f * appear
         val pivot = mark(Offset(9.914f, -9.375f))
         peak = WORDMARK_PEAK.map { pivot + (mark(it) - pivot) * grow }
         peakStroke = WORDMARK_PEAK_STROKE * unit
     }
     if (appear > 0f) {
-        if (!IntroDraw.lite) {
+        if (!IntroDraw.lite && !signature) {
             val glowAt = Offset(peak[1].x, (peak[0].y + peak[1].y) / 2f)
             val glowSize = (peak[2].x - peak[0].x) * 1.6f
             lightPool(lerp(frame.accent, frame.second, frame.breath), glowAt, glowSize, (0.10f + 0.08f * frame.breath) * appear)
         }
         val path = Path().apply {
             moveTo(peak[0].x, peak[0].y)
-            lineTo(peak[1].x, peak[1].y)
-            lineTo(peak[2].x, peak[2].y)
+            if (signature) {
+                // Trace the actual brand A, not a temporary shape that morphs at the end.
+                val rise = soft(phase(t, 0f, 0.85f))
+                val fall = soft(phase(t, 0.85f, 1.55f))
+                val tip = mix(peak[0], peak[1], rise)
+                lineTo(tip.x, tip.y)
+                if (fall > 0f) {
+                    val foot = mix(peak[1], peak[2], fall)
+                    lineTo(foot.x, foot.y)
+                }
+            } else {
+                lineTo(peak[1].x, peak[1].y)
+                lineTo(peak[2].x, peak[2].y)
+            }
         }
-        drawPath(path, frame.accent.copy(alpha = appear), style = Stroke(peakStroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        if (!signature || t > 0f) {
+            val strokeAlpha = if (signature) soft(phase(t, 0f, 0.15f)) else appear
+            drawPath(path, frame.accent.copy(alpha = strokeAlpha), style = Stroke(peakStroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+        }
     }
     val line = soft(phase(t, badgeFrom, badgeFrom + 0.5f))
     if (line > 0f && !IntroDraw.lite) {
@@ -434,14 +459,20 @@ private fun DrawScope.drawWordmark(frame: IntroFrame, at: Offset, width: Float, 
         scale(unit, unit, pivot = Offset.Zero)
     }) {
         frame.wordmark.letters.forEachIndexed { i, (x, glyph) ->
-            val from = lettersFrom + 0.12f * i
-            val letter = soft(phase(t, from, from + 1.2f))
-            if (letter <= 0f) return@forEachIndexed
+            val from = lettersFrom + (if (signature) 0.18f else 0.12f) * i
+            val letter = soft(phase(t, from, from + (if (signature) 1f else 1.2f)))
+            val outline = if (signature) {
+                soft(phase(t, from, from + 0.4f)) * (1f - soft(phase(t, from + 0.4f, from + 0.95f)))
+            } else 0f
+            if (letter <= 0f && outline <= 0f) return@forEachIndexed
             withTransform({
-                translate(x, 2.4f * (1f - letter))
+                translate(x, if (signature) 0f else 2.4f * (1f - letter))
                 scale(GLYPH_SCALE, -GLYPH_SCALE, pivot = Offset.Zero)
             }) {
-                drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter))
+                if (outline > 0f) {
+                    drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * outline * 0.28f), style = Stroke(16f, join = StrokeJoin.Round))
+                }
+                if (letter > 0f) drawPath(glyph, frame.ink.copy(alpha = frame.ink.alpha * letter))
             }
         }
         if (line > 0f) {
@@ -515,4 +546,95 @@ private fun DrawScope.drawDaybreak(frame: IntroFrame) {
         blendMode = BlendMode.Plus,
     )
     drawWordmark(frame, stageCenter(), size.minDimension * 0.62f, start = 0.9f, fromIcon = false)
+}
+
+
+/** A quiet line-signature: the native A is traced, glyph outlines settle into ink. */
+private fun DrawScope.drawSignature(frame: IntroFrame) {
+    val t = frame.seconds
+    val stage = stageCenter()
+    val width = size.minDimension * 0.62f
+    if (!IntroDraw.lite) {
+        val trace = soft(phase(t, 0.25f, 1.0f)) * (1f - soft(phase(t, 1.5f, 3.3f)))
+        val idle = soft(phase(t, 4.1f, 4.8f))
+        val glow = 0.055f * trace + 0.015f * idle * (0.65f + 0.35f * frame.breath)
+        lightPool(frame.accent, Offset(stage.x - width * 0.43f, stage.y), width * 0.20f, glow)
+    }
+    drawWordmark(frame, stage, width, start = 0.4f, fromIcon = false, signature = true)
+}
+
+/** A transparent diagonal light band. No bitmap/video/shader dependency; cheap in lite mode. */
+private fun DrawScope.prismRibbon(
+    x: Float,
+    top: Float,
+    bottom: Float,
+    width: Float,
+    slant: Float,
+    color: Color,
+    opacity: Float,
+) {
+    if (opacity <= 0.002f) return
+    val ribbon = Path().apply {
+        moveTo(x - width / 2f - slant / 2f, top)
+        lineTo(x + width / 2f - slant / 2f, top)
+        lineTo(x + width / 2f + slant / 2f, bottom)
+        lineTo(x - width / 2f + slant / 2f, bottom)
+        close()
+    }
+    val reach = (width + kotlin.math.abs(slant)) / 2f
+    drawPath(
+        ribbon,
+        Brush.horizontalGradient(
+            0f to Color.Transparent,
+            0.25f to color.copy(alpha = opacity * 0.12f),
+            0.5f to color.copy(alpha = opacity),
+            0.75f to color.copy(alpha = opacity * 0.12f),
+            1f to Color.Transparent,
+            startX = x - reach,
+            endX = x + reach,
+        ),
+        blendMode = BlendMode.Plus,
+    )
+}
+
+/** Two soft refracted light planes reveal the logo; a restrained glint crosses the final wordmark. */
+private fun DrawScope.drawPrism(frame: IntroFrame) {
+    val t = frame.seconds
+    val stage = stageCenter()
+    val wordWidth = size.minDimension * 0.62f
+    if (!IntroDraw.lite) {
+        val intensity = soft(phase(t, 0f, 0.9f)) * (1f - soft(phase(t, 3.5f, 5.15f)))
+        val crossing = soft(phase(t, 0.2f, 4.4f))
+        prismRibbon(
+            x = size.width * (-0.18f + 1.25f * crossing),
+            top = 0f, bottom = size.height,
+            width = size.width * 0.32f, slant = size.width * 0.28f,
+            color = frame.accent, opacity = 0.15f * intensity,
+        )
+        prismRibbon(
+            x = size.width * (1.15f - 1.04f * crossing),
+            top = 0f, bottom = size.height,
+            width = size.width * 0.25f, slant = -size.width * 0.17f,
+            color = frame.second, opacity = 0.12f * intensity,
+        )
+    }
+
+    // The logo never changes position or scale as the planes pass.
+    drawWordmark(frame, stage, wordWidth, start = 0.6f, fromIcon = false, fixedPeak = true)
+
+    if (!IntroDraw.lite) {
+        val sheen = soft(phase(t, 2.0f, 2.25f)) * (1f - soft(phase(t, 4.5f, 5.1f)))
+        val sweep = soft(phase(t, 2.0f, 4.7f))
+        prismRibbon(
+            x = stage.x + wordWidth * (-0.56f + 1.12f * sweep),
+            top = stage.y - wordWidth * 0.11f,
+            bottom = stage.y + wordWidth * 0.11f,
+            width = wordWidth * 0.09f, slant = wordWidth * 0.075f,
+            color = lerp(frame.second, Color.White, 0.35f),
+            opacity = 0.10f * sheen,
+        )
+        val idle = soft(phase(t, 5.1f, 5.7f))
+        lightPool(lerp(frame.accent, frame.second, frame.breath), stage, wordWidth * 0.65f,
+            0.015f * idle * (0.65f + 0.35f * frame.breath), squash = 0.22f)
+    }
 }

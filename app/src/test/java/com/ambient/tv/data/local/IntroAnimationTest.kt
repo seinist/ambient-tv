@@ -1,6 +1,7 @@
 package com.ambient.tv.data.local
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class IntroAnimationTest {
@@ -15,6 +16,15 @@ class IntroAnimationTest {
     fun everyStyleHasADurationAndOffHasNone() {
         IntroAnimation.keys.filter { it != IntroAnimation.OFF }.forEach { assert(IntroAnimation.durationMs(it) in 1500..6000) }
         assertEquals(0, IntroAnimation.durationMs(IntroAnimation.OFF))
+    }
+
+    @Test fun signatureAndPrismAreSelectableWithExpectedTiming() {
+        assertEquals(listOf(IntroAnimation.OFF, IntroAnimation.BLOOM, IntroAnimation.HORIZON, IntroAnimation.SIGNATURE, IntroAnimation.PRISM), IntroAnimation.keys)
+        assertEquals(IntroAnimation.SIGNATURE, IntroAnimation.normalize("signature"))
+        assertEquals(IntroAnimation.PRISM, IntroAnimation.normalize("prism"))
+        assertEquals(4800, IntroAnimation.durationMs(IntroAnimation.SIGNATURE))
+        assertEquals(5200, IntroAnimation.durationMs(IntroAnimation.PRISM))
+        assertTrue(IntroAnimation.keys.distinct().size == IntroAnimation.keys.size)
     }
 
     @Test fun horizonStaysSelectableAndRetiredStylesFallBack() {

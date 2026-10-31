@@ -5,6 +5,8 @@
     <string name="settings_intro_off">Off</string>
     <string name="settings_intro_bloom">Light field</string>
     <string name="settings_intro_horizon">Daybreak</string>
+    <string name="settings_intro_signature">Signature</string>
+    <string name="settings_intro_prism">Prism</string>
     <string name="settings_intro_preview">Preview</string>
     <string name="intro_skip_hint">Press any key to continue</string>
 </resources>
