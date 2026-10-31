@@ -1,6 +1,5 @@
 package com.ambient.tv.ui.tvheadend
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -82,10 +81,8 @@ internal fun rememberLiveTvBrowseControls(browseState: LiveTvBrowseState, positi
 @Composable
 internal fun LiveTvBrowseOptionsPanel(controls: LiveTvBrowseControls, model: FilterBarModel) {
     if (!controls.showOptions) return
-    BackHandler { controls.closeOptions() }
     CompositionLocalProvider(LocalFilterFocusState provides controls.filterFocusState) {
-        Box(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
+        com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = controls::closeOptions) {
             FilterOptionsPanel(
                 title = stringResource(R.string.library_options),
                 model = model,
