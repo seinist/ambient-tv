@@ -10,6 +10,12 @@ import com.ambient.tv.util.suspendResult
 import android.os.Bundle
 import android.os.SystemClock
 import android.app.Activity
+import android.app.PictureInPictureParams
+import android.app.PictureInPictureUiState
+import android.content.res.Configuration
+import android.graphics.Rect
+import android.os.Build
+import android.util.Rational
 import android.content.Context
 import android.content.Intent
 import android.view.KeyEvent
@@ -186,6 +192,81 @@ open class MainActivity : ComponentActivity() {
     private val browseUiOwner = Any()
     private var ownsBrowseUiSession = false
 
+    /** The Android system owns the floating window; the video decoder stays in the app shell. */
+    internal var systemPipVisible by mutableStateOf(false)
+        private set
+    internal var systemPipEntering by mutableStateOf(false)
+        private set
+    private var pipAutoEntryAllowed = false
+    private var pipWasOpen = false
+    private var pipParams = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
+    private val pipAvailable by lazy {
+        packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
+    internal fun handheldPipSupported(): Boolean =
+        this is com.ambient.tv.ui.mobile.HandheldActivity && pipAvailable
+
+    /** Called only when playback eligibility, geometry, or the user's PiP preference changes. */
+    internal fun updateHandheldPip(eligible: Boolean, aspectRatio: Float, sourceRect: Rect?) {
+        if (!handheldPipSupported()) return
+        pipAutoEntryAllowed = eligible
+        val ratio = Rational((aspectRatio * 1000f).toInt().coerceIn(419, 2390), 1000)
+        pipParams = PictureInPictureParams.Builder()
+            .setAspectRatio(ratio)
+            .apply {
+                if (sourceRect != null && sourceRect.width() > 0 && sourceRect.height() > 0) {
+                    setSourceRectHint(sourceRect)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setAutoEnterEnabled(eligible)
+                    setSeamlessResizeEnabled(true)
+                }
+            }
+            .build()
+        // On Android 10/11 onUserLeaveHint enters explicitly; Android 12+ can auto-enter
+        // smoothly via the continuously updated eligibility flag.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { setPictureInPictureParams(pipParams) }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && pipAutoEntryAllowed &&
+            handheldPipSupported() && !isInPictureInPictureMode
+        ) {
+            systemPipEntering = true
+            if (!runCatching { enterPictureInPictureMode(pipParams) }.getOrDefault(false)) {
+                systemPipEntering = false
+            }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig)
+        if (inPictureInPictureMode) pipWasOpen = true
+        systemPipVisible = inPictureInPictureMode
+        systemPipEntering = false
+    }
+
+    override fun onPictureInPictureUiStateChanged(pipState: PictureInPictureUiState) {
+        super.onPictureInPictureUiStateChanged(pipState)
+        if (Build.VERSION.SDK_INT >= 35 && pipState.isTransitioningToPip) {
+            // Android 15+: remove app chrome at the beginning of the shrink animation.
+            systemPipEntering = true
+        }
+    }
+
+    private fun stopDismissedPipIfFinishing() {
+        if (pipWasOpen && isFinishing && !isChangingConfigurations) {
+            // PiP's X removes the Activity. Phone background policy otherwise deliberately
+            // keeps the audio running, which would leave a hidden video playing after dismissal.
+            BackgroundPlaybackSession.stop()
+            pipWasOpen = false
+        }
+    }
+
     private val lastInteractionElapsedMs = mutableLongStateOf(SystemClock.elapsedRealtime())
     private val screensaverActive = mutableStateOf(false)
     private val screensaverOverlayPresent = mutableStateOf(false)
@@ -224,6 +305,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        stopDismissedPipIfFinishing()
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = false
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
         com.ambient.tv.companion.CompanionRemoteInput.unregister(window)
@@ -241,6 +323,7 @@ open class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        stopDismissedPipIfFinishing()
         if (ownsBrowseUiSession) browseUiSessionPolicy.destroy(browseUiOwner, isChangingConfigurations)
         super.onDestroy()
     }
@@ -309,6 +392,7 @@ open class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (!isInPictureInPictureMode) pipWasOpen = false // PiP expanded back into the app.
         com.ambient.tv.ui.player.SleepSession.cancelStandbyRequest()
         registerInteraction()
         if (::appPreferences.isInitialized && com.ambient.tv.ui.mobile.isTelevision(this) && appPreferences.spotifyEnabled) {
