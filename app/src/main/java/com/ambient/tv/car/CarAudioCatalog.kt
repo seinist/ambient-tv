@@ -45,6 +45,10 @@ internal class CarAudioCatalog @Inject constructor(
     private val parents = LinkedHashMap<String, String>()
     private val maxItems = 500
 
+    fun invalidate(parentId: String) {
+        pages.remove(parentId)
+    }
+
     suspend fun children(parentId: String): List<CarAudioEntry> {
         if (!CarAudioIds.isFolder(parentId)) return emptyList()
         if (parentId == CarAudioIds.ROOT) return root()
@@ -200,7 +204,7 @@ internal class CarAudioCatalog @Inject constructor(
                 ?: preferences.radioFavorites.firstOrNull { it.id == stationId }
                 ?: preferences.recentRadioStations.firstOrNull { it.id == stationId }
                 ?: radio.station(stationId) ?: return null
-            val siblings = pages[parents[id]]?.entries.orEmpty()
+            val siblings = parents[id]?.let(pages::get)?.entries.orEmpty()
                 .mapNotNull { it.radioStation }
             return CarAudioSelection.Radio(station, siblings.ifEmpty { listOf(station) })
         }
@@ -212,7 +216,7 @@ internal class CarAudioCatalog @Inject constructor(
             val item = entriesById[id]?.libraryItem
                 ?: media.getMetadata(key).getOrNull() ?: return null
             if (!carAudioPlayableType(item.type) || item.streamUrl.isNullOrBlank()) return null
-            val queue = pages[parents[id]]?.entries.orEmpty().filter { it.playable && it.libraryItem != null }
+            val queue = parents[id]?.let(pages::get)?.entries.orEmpty().filter { it.playable && it.libraryItem != null }
                 .mapNotNull { it.libraryItem?.ratingKey }
             return CarAudioSelection.Library(item, queue.ifEmpty { listOf(key) })
         }
