@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +21,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -37,7 +41,7 @@ import androidx.tv.material3.MaterialTheme
 import com.ambient.tv.R
 import com.ambient.tv.ui.common.LocalPlayerPlayPauseFocus
 import com.ambient.tv.ui.player.LocalPlaybackNavigation
-import com.ambient.tv.ui.player.SeekPreview
+import com.ambient.tv.ui.player.LocalSeekPreviewOverlayState
 
 /** Plex-styled touch scrubber. Its track matches the TV player inside a compact 32dp touch strip. */
 @Composable
@@ -60,16 +64,23 @@ fun HandheldSeekBar(
     val fraction = dragFraction ?: (positionMs.toDouble() / durationMs.coerceAtLeast(1L))
         .toFloat().coerceIn(0f, 1f)
     val shownPosition = if (dragFraction != null) (fraction * durationMs).toLong() else positionMs
+    val preview = LocalSeekPreviewOverlayState.current
+    val previewTarget = dragFraction?.let { shownPosition }
+    val previewAvailable = previewTarget?.let { target ->
+        navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
+    } == true
+    SideEffect { preview?.update(previewTarget, durationMs, previewAvailable) }
+    DisposableEffect(preview) { onDispose { preview?.hide() } }
     val accessibilityLabel = stringResource(R.string.player_seekbar_description, elapsedLabel(shownPosition), elapsedLabel(durationMs))
 
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        SeekPreview(dragFraction?.let { shownPosition }, durationMs)
         com.ambient.tv.ui.player.CurrentChapterLabel(shownPosition)
         Box(
             Modifier
                 .fillMaxWidth()
                 // Tall enough to grab, without the empty bands a 48dp box left around the 6dp track.
                 .height(32.dp)
+                .onGloballyPositioned { preview?.trackBoundsInRoot = it.boundsInRoot() }
                 .then(if (playPauseFocus != null) Modifier.focusProperties { down = playPauseFocus } else Modifier)
                 .semantics {
                     contentDescription = accessibilityLabel

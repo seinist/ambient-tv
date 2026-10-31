@@ -372,55 +372,35 @@ private fun TimelineImage(frame: PreviewFrame, modifier: Modifier) {
     }
 }
 
+/**
+ * Drawing only: the preview is hosted above the OSD by SeekPreviewOverlay rather than inserted
+ * into the seekbar's Column. No zero-height layout or negative placement into the title row.
+ */
 @Composable
-fun SeekPreview(positionMs: Long?, durationMs: Long, modifier: Modifier = Modifier) {
+internal fun SeekPreviewCard(positionMs: Long, modifier: Modifier = Modifier) {
     val navigation = LocalPlaybackNavigation.current ?: return
     val timeline = navigation.timeline
-    var lastPosition by remember(navigation) { mutableLongStateOf(0L) }
-    SideEffect { if (positionMs != null) lastPosition = positionMs }
-    val shownPosition = positionMs ?: lastPosition
-    val chapter = timeline.chapterAt(shownPosition)
-    val frame = timeline.previewFrameAt(shownPosition)
-    val handheld = LocalHandheldUi.current
-    val previewWidth = if (handheld) 152.dp else 208.dp
-    val progress = if (durationMs > 0L) shownPosition.toFloat() / durationMs.toFloat() else 0f
-    val density = LocalDensity.current
+    val chapter = timeline.chapterAt(positionMs)
+    val frame = timeline.previewFrameAt(positionMs)
+    if (frame == null && chapter == null) return
     val chapterTitle = chapter?.let {
         it.meaningfulTitle ?: stringResource(R.string.player_chapter_number, timeline.chapters.indexOf(it) + 1)
     }
-    AnimatedVisibility(
-        visible = positionMs != null && (frame != null || chapter != null),
-        enter = fadeIn(tween(140)),
-        exit = fadeOut(tween(220)),
-        // Zero layout height, drawn upward: the card overlays the OSD above instead of pushing
-        // title and poster up, and it fades in place.
-        modifier = modifier.fillMaxWidth().layout { measurable, constraints ->
-            val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = androidx.compose.ui.unit.Constraints.Infinity))
-            layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
-        },
+    Box(
+        modifier.clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.86f)),
     ) {
-        BoxWithConstraints(Modifier.fillMaxWidth().clipToBounds()) {
-            val trackPx = if (constraints.hasBoundedWidth) constraints.maxWidth.toFloat() else 0f
-            val previewPx = with(density) { previewWidth.toPx() }
-            val x = seekPreviewOffset(trackPx, previewPx, progress)
-            Box(
-                Modifier.offset { IntOffset(x.roundToInt(), 0) }.width(previewWidth)
-                    .clip(RoundedCornerShape(12.dp)).background(Color.Black.copy(alpha = 0.86f)),
-            ) {
-                if (frame != null) {
-                    TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                }
-                Column(
-                    Modifier.align(Alignment.BottomStart).fillMaxWidth()
-                        .then(if (frame != null) Modifier.background(Color.Black.copy(alpha = 0.62f)) else Modifier)
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Text(timelineTime(shownPosition), color = Color.White, style = MaterialTheme.typography.labelLarge)
-                    chapterTitle?.let {
-                        Text(it, color = Color.White.copy(alpha = 0.75f), maxLines = 1, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+        if (frame != null) {
+            TimelineImage(frame, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+        }
+        Column(
+            Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                .then(if (frame != null) Modifier.background(Color.Black.copy(alpha = 0.62f)) else Modifier)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(timelineTime(positionMs), color = Color.White, style = MaterialTheme.typography.labelLarge)
+            chapterTitle?.let {
+                Text(it, color = Color.White.copy(alpha = 0.75f), maxLines = 1, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
