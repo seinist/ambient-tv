@@ -425,7 +425,10 @@ class HomeViewModel @Inject constructor(
         if (!appPreferences.isConfigured && !appPreferences.isJellyfinConfigured && !appPreferences.isEmbyConfigured) {
             if (appPreferences.isTvheadendConfigured || trailerJob?.isActive == true ||
                 radioJob?.isActive == true || radioRows.isNotEmpty() ||
-                youtubeJob?.isActive == true || youtubeRows.isNotEmpty()) {
+                youtubeJob?.isActive == true || youtubeRows.isNotEmpty() ||
+                (appPreferences.youtubeEnabled && appPreferences.homeRows.any {
+                    it.enabled && it.system == HomeRowDefinition.SYSTEM_YOUTUBE
+                })) {
                 // The independent TV job publishes as soon as channels are ready.
                 if (_uiState.value !is HomeUiState.Loaded) _uiState.value = HomeUiState.LoadingLibrary
             } else {
@@ -1325,9 +1328,9 @@ class HomeViewModel @Inject constructor(
                                     youtubeContentCache.replace(cacheKey, rows, revision)
                                 }
                                 val selected = homeYouTubeSourceRow(rows, HOME_ROW_LIMIT)
-                                if (selected != null || definition.contentKey !in youtubeSourceRows) {
-                                    updateHomeYouTubeRow(generation, definition, selected)
-                                }
+                                // A successful empty feed removes expired Home tiles. A failed
+                                // refresh keeps the previously shown cached source instead.
+                                updateHomeYouTubeRow(generation, definition, selected)
                             }
                         }
                     } }.awaitAll()
