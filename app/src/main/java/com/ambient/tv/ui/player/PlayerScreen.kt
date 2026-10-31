@@ -59,6 +59,7 @@ import androidx.tv.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -77,6 +78,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -1121,6 +1124,7 @@ internal fun TvPlayerSeekBar(
         return
     }
     val navigation = LocalPlaybackNavigation.current
+    val previewOverlay = LocalSeekPreviewOverlayState.current
     // Pointer gestures read the latest values; keying them on position restarted a drag every tick.
     val latestSeekState by androidx.compose.runtime.rememberUpdatedState(seekState)
     val latestPositionMs by androidx.compose.runtime.rememberUpdatedState(positionMs)
@@ -1167,6 +1171,18 @@ internal fun TvPlayerSeekBar(
     val progress = if (durationMs > 0) (displayedPosition.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
     val remaining = (durationMs - displayedPosition).coerceAtLeast(0L)
     val highlighted = focused || pointerTarget != null || passiveFeedback
+    val previewTarget = if (stowing) null else if (passiveFeedback) {
+        positionMs.takeIf { feedbackPreview }
+    } else if (focused || pointerTarget != null) {
+        pointerTarget ?: pendingTarget ?: lastPreview
+    } else null
+    val previewAvailable = previewTarget?.let { target ->
+        navigation?.timeline?.let { it.previewFrameAt(target) != null || it.chapterAt(target) != null }
+    } == true
+    SideEffect { previewOverlay?.update(previewTarget, durationMs, previewAvailable) }
+    DisposableEffect(previewOverlay) {
+        onDispose { previewOverlay?.hide() }
+    }
 
     val interactionModifier = if (acceptsInput) {
         Modifier
@@ -1281,12 +1297,12 @@ internal fun TvPlayerSeekBar(
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
         timelineContext?.invoke(displayedPosition)
-        SeekPreview(if (stowing) null else if (passiveFeedback) positionMs.takeIf { feedbackPreview } else if (focused || pointerTarget != null) pointerTarget ?: pendingTarget ?: lastPreview else null, durationMs)
         if (timelineContext == null) CurrentChapterLabel(displayedPosition)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (highlighted) 7.dp else 6.dp),
+                .height(if (highlighted) 7.dp else 6.dp)
+                .onGloballyPositioned { previewOverlay?.trackBoundsInRoot = it.boundsInRoot() },
         ) {
             // Offscreen so chapter gaps can be cut out of track and progress alike.
             Box(
