@@ -1837,7 +1837,9 @@ class HomeViewModel @Inject constructor(
             liveTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "live")?.displayTitle(context).orEmpty(),
             recentTvTitle = configuredRow(HomeRowDefinition.SYSTEM_TVHEADEND, "recent_channels")?.displayTitle(context).orEmpty(),
             initialFocusTarget = initialFocusTarget,
-            loading = (libraryLoading && previous?.loading != false) || homeAwaitingFirstResults(
+            // Rows restored from disk are usable during a wake: only an entirely empty
+            // Home stays in the skeleton state while providers have not answered.
+            loading = homeAwaitingFirstResults(
                 hasVisibleRows = rowKeys.isNotEmpty(),
                 libraryPending = libraryLoading,
                 radioPending = radioRowsPending,
