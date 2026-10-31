@@ -292,6 +292,8 @@ object BackgroundPlaybackSession {
         override fun sleepPause() { handle?.pause() }
         override fun sleepPlay() { handle?.play() }
         override fun sleepStop() = stop()
+        override fun sleepAllowsDeviceStandby() =
+            appContext?.let(com.ambient.tv.ui.mobile::isTelevision) == true
         override fun sleepEnterStandby() { appContext?.let(TvSleepStandby::request) }
     }
     private val completed = ArrayDeque<Snapshot>()
