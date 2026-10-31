@@ -69,6 +69,31 @@ class LibraryViewOptionsTest {
         assertEquals(listOf("Charlie", "Bravo", "alpha"), titles(items, sort = SectionSort.TITLE, order = SectionSortOrder.DESCENDING))
     }
 
+    @Test fun alphabetBarReflectsActualAscendingAndDescendingGridOrder() {
+        val items = listOf(item("Zulu"), item("80s"), item("Bravo"), item("alpha"), item("Älpler"))
+        val ascending = applyLibraryViewOptions(items, SectionSort.TITLE, SectionSortOrder.ASCENDING, LibraryFilters())
+        val descending = applyLibraryViewOptions(items, SectionSort.TITLE, SectionSortOrder.DESCENDING, LibraryFilters())
+        assertEquals(
+            ascending.mapNotNull { libraryIndexLetter(it.title) }.distinct(),
+            libraryAlphabetLetters(ascending),
+        )
+        assertEquals(
+            descending.mapNotNull { libraryIndexLetter(it.title) }.distinct(),
+            libraryAlphabetLetters(descending),
+        )
+        assertEquals('#', libraryAlphabetLetters(ascending).first())
+        assertEquals('#', libraryAlphabetLetters(descending).last())
+        assertEquals(libraryAlphabetLetters(ascending).reversed(), libraryAlphabetLetters(descending))
+    }
+
+    @Test fun selectedAlphabetLetterFollowsLastFocusedTileNotFirstVisibleTile() {
+        val items = listOf(item("80s"), item("Bravo"), item("Zulu"))
+        assertEquals('B', libraryFocusedAlphabetLetter(items, "Bravo"))
+        assertEquals('Z', libraryFocusedAlphabetLetter(items, "Zulu"))
+        assertEquals('#', libraryFocusedAlphabetLetter(items, "gone"))
+        assertEquals(null, libraryFocusedAlphabetLetter(emptyList(), null))
+    }
+
     @Test fun recentlyAddedAndRatingSortDescendingByDefault() {
         val items = listOf(
             item("old", addedAt = 10L, rating = 4.0),
