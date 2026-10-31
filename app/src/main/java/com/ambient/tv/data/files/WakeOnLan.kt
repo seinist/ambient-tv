@@ -100,7 +100,7 @@ class WakeOnLan {
                     broadcast = source.wolBroadcast,
                     port = source.wolPort,
                     wireGuardHost = source.host.takeIf { source.wireGuard },
-                    retry = attempt > 0,
+                    retry = manual || attempt > 0,
                 )
             },
             reachable = { online(source) },
