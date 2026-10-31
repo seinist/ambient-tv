@@ -85,6 +85,7 @@ class SegmentSkipPolicyTest {
     @Test fun sponsorSegmentsArrivingAfterPlaybackStartsBecomeSkippable() {
         val policy = BackgroundSponsorSkipPolicy()
         assertNull(policy.nextSeek(3, emptyList(), 20_000L, 60_000L, playing = true))
+        assertNull(policy.nextSeek(3, listOf(15_000L..30_000L), 20_000L, 0L, playing = true))
         assertEquals(30_000L, policy.nextSeek(3, listOf(15_000L..30_000L),
             20_000L, 60_000L, playing = true))
         assertNull(policy.nextSeek(3, listOf(-1L..30_000L), 20_000L,
