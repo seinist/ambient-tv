@@ -43,7 +43,7 @@ internal fun visibleGridColumns(
         }
     }
     return when (profile) {
-        GridDensityProfile.RADIO_BROWSER -> density(storedColumns, 160f, 4)
+        GridDensityProfile.RADIO_BROWSER -> density(storedColumns, 160f, 8)
         GridDensityProfile.SMARTTUBE -> if (preview == ViewPreview.WALL) {
             wall((storedColumns + 2).coerceIn(6, 14), 260f)
         } else density(landscapeGridColumns(storedColumns), 260f, 4)
