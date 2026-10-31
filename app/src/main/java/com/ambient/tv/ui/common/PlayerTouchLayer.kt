@@ -25,6 +25,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
 import androidx.media3.common.Player
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.player.LocalPlayerChromeState
 import com.ambient.tv.ui.player.PlayerPinchZoomGesture
 import com.ambient.tv.ui.player.VideoPresentation
 import com.ambient.tv.ui.player.playerZoomEdges
@@ -53,7 +54,7 @@ fun Player.pinchVideoAspectRatio(fallback: Float? = null): Float? = videoSize.le
  *
  * It deliberately sits between the native video surface and the Compose OSD. That means OSD
  * buttons keep receiving their own taps, while taps on otherwise empty video space still work.
- * A single tap toggles the OSD. Double-tapping the left/right thirds seeks when seeking is
+ * A single tap toggles the OSD; on handhelds it first expands compact controls. Double-tapping the left/right thirds seeks when seeking is
  * available; double-tapping the centre toggles play/pause.
  * On handheld video pages, a two-finger pinch scales the picture and snaps to its width/height
  * edges. OSD buttons and panels remain above this layer and keep their own touch handling.
@@ -67,6 +68,9 @@ fun PlayerTouchLayer(
     modifier: Modifier = Modifier,
     pinchZoom: PlayerPinchZoom? = null,
 ) {
+    val handheld = LocalHandheldUi.current
+    val osd = LocalPlayerChromeState.current?.osd
+    val panelOpen = LocalPlayerPanelNavigation.current?.panel?.let { it != UnifiedPlayerPanel.NONE } == true
     val currentToggleControls by rememberUpdatedState(onToggleControls)
     val currentTogglePlayback by rememberUpdatedState(onTogglePlayback)
     val currentSeekBack by rememberUpdatedState(onSeekBack)
@@ -135,7 +139,11 @@ fun PlayerTouchLayer(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { currentToggleControls() },
+                    onTap = {
+                        // A compact phone OSD has no action row: a picture tap must unfold it,
+                        // not hide the seekbar. An already expanded OSD keeps tap-to-dismiss.
+                        if (!handheld || panelOpen || osd?.expandForHandheldTap() != true) currentToggleControls()
+                    },
                     onDoubleTap = { position: Offset ->
                         when {
                             position.x < size.width * 0.35f && currentSeekBack != null -> currentSeekBack?.invoke()
