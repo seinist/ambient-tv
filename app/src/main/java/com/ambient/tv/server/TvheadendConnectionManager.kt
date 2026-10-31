@@ -83,7 +83,7 @@ class TvheadendConnectionManager @Inject constructor(
         resumeAutomaticReconnect()
         if (!connectRun.active) lastSuccessfulCheckMs = 0L
         val endpoint = endpointKey()
-        connectRun.joinOrStart(endpoint) { connect() }.also {
+        connectRun.joinOrStart(endpoint) { connect(forceNewWake = true) }.also {
             if (it && endpoint == endpointKey()) browseReconnects.request("tvheadend")
         }
     }
@@ -135,13 +135,13 @@ class TvheadendConnectionManager @Inject constructor(
         }
     }
 
-    private suspend fun connect(): Boolean {
+    private suspend fun connect(forceNewWake: Boolean = false): Boolean {
         val before = _state.value
         var freshlyConfirmed = false
         val check = hosts.begin("tvheadend")
         val endpoint = endpointKey()
         return try {
-            connectService(onConnected = { freshlyConfirmed = true }).also { connected ->
+            connectService(forceNewWake = forceNewWake, onConnected = { freshlyConfirmed = true }).also { connected ->
                 if (endpoint == endpointKey()) {
                     if (!connected) hosts.failure(check)
                     else if (freshlyConfirmed) browseReconnects.request("tvheadend")
@@ -169,6 +169,7 @@ class TvheadendConnectionManager @Inject constructor(
         wakePollMs: Long = 2_500L,
         wakeRetries: Int = preferences.wolRetryCount,
         onConnected: () -> Unit,
+        forceNewWake: Boolean = false,
     ): Boolean {
         if (reconnectPause.isPaused(endpointKey())) return _state.value is ServerConnectionState.Online && hosts.health("tvheadend") != HostHealth.OFFLINE
         if (!configured) { _state.value = ServerConnectionState.NotConfigured; return false }
@@ -198,7 +199,7 @@ class TvheadendConnectionManager @Inject constructor(
                 wolManager.sendWakeBurst(
                     mac.orEmpty(),
                     wireGuardHost = preferences.tvheadendHost.takeIf { preferences.wireGuardTvheadendEnabled },
-                    retry = attempt > 0,
+                    retry = forceNewWake || attempt > 0,
                 )
             },
             retries = wakeRetries,
