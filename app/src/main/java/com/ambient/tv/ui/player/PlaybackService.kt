@@ -354,9 +354,16 @@ class PlaybackService : MediaBrowserService() {
     /** Platform MediaBrowserService: Android Auto binds here; the normal media notification
      * keeps using exactly the same platform MediaSession token. */
     override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot? {
-        // The host must actually own the supplied package name (no spoofed browse clients).
+        // Do not expose a user's private radio/music library to arbitrary installed apps.
+        // Android Auto and other trusted media controllers qualify; our own UID is allowed.
         val owned = packageManager.getPackagesForUid(clientUid)?.contains(clientPackageName) == true
-        return if (owned) BrowserRoot(CarAudioIds.ROOT, null) else null
+        val trusted = if (owned) runCatching {
+            getSystemService(android.media.session.MediaSessionManager::class.java)
+                .isTrustedForMediaControl(
+                    android.media.session.MediaSessionManager.RemoteUserInfo(clientPackageName, -1, clientUid),
+                )
+        }.getOrDefault(false) else false
+        return if (owned && (clientUid == applicationInfo.uid || trusted)) BrowserRoot(CarAudioIds.ROOT, null) else null
     }
 
     override fun onLoadChildren(
