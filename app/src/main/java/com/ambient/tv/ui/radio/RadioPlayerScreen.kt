@@ -1,8 +1,12 @@
 package com.ambient.tv.ui.radio
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
@@ -29,8 +33,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -45,6 +51,7 @@ import com.ambient.tv.R
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.ui.common.AudioPlaybackVisualizer
+import com.ambient.tv.ui.common.CrossfadeBackdropImage
 import com.ambient.tv.ui.common.LocalPlayerPanelNavigation
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MetaBadge
@@ -52,14 +59,12 @@ import com.ambient.tv.ui.common.PlayerControlBar
 import com.ambient.tv.ui.common.PlayerExitButton
 import com.ambient.tv.ui.common.PlayerIconButton
 import com.ambient.tv.ui.common.PlayerSleepTimerButton
-import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.common.UnifiedPlayerPanel
 import com.ambient.tv.ui.common.projectm.ProjectMAvailability
 import com.ambient.tv.ui.common.projectm.ProjectMVisualizer
 import com.ambient.tv.ui.common.projectm.rememberProjectMBrowser
 import com.ambient.tv.ui.common.rememberPlayerPanelNavigation
 import com.ambient.tv.ui.common.systemName
-import com.ambient.tv.ui.player.PlayerBufferingSpinner
 import com.ambient.tv.ui.player.BackgroundPlaybackSession
 import com.ambient.tv.ui.player.OsdContent
 import com.ambient.tv.ui.player.OsdKeyState
@@ -67,7 +72,6 @@ import com.ambient.tv.ui.player.OsdKeyTarget
 import com.ambient.tv.ui.player.OsdSeekSteps
 import com.ambient.tv.ui.player.PersistentPlayerChrome
 import com.ambient.tv.ui.player.PersistentPlayerOverlays
-import com.ambient.tv.ui.player.PlaybackArtworkCard
 import com.ambient.tv.ui.player.PlayerOsdSpec
 import com.ambient.tv.ui.player.PlayerOverlayVisibility
 import com.ambient.tv.ui.player.PlayerPanelModel
@@ -105,6 +109,10 @@ private fun RadioPlayerContent(
     val session by BackgroundPlaybackSession.snapshot.collectAsState()
     val metadata = session.metadata
     val station = viewModel.currentStation()
+    // Artwork is driven by the selected target as soon as Next/Previous is pressed.
+    // The previous background can then fade directly into the new cover once loaded.
+    val pendingStation = viewModel.pendingStation.takeIf { viewModel.switchingStation }
+    val coverPresentation = radioCoverPresentation(metadata, pendingStation)
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
     var controlsVisible by rememberPlayerControlsVisible()
@@ -201,18 +209,9 @@ private fun RadioPlayerContent(
         ) {
             val analyzer = BackgroundPlaybackSession.currentAudioSpectrum()
             when {
-                viewModel.switchingStation -> {
-                    SystemLogo(
-                        MediaSystem.RADIO,
-                        Modifier.align(androidx.compose.ui.Alignment.Center),
-                        size = 120.dp,
-                    )
-                    PlayerBufferingSpinner(
-                        visible = true,
-                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center),
-                    )
-                }
-                metadata == null || metadata.source != "radio" -> Unit
+                coverPresentation == null -> Unit
+                // Visualizers stay composed across every station change; a replacement
+                // decoder does not need to replace the entire player UI with a logo.
                 viewModel.visualizerMode == "projectm" && ProjectMAvailability.isAvailable -> ProjectMVisualizer(
                     analyzer = analyzer,
                     intervalSeconds = viewModel.projectmPresetIntervalSeconds,
@@ -228,23 +227,43 @@ private fun RadioPlayerContent(
                     analyzer = analyzer,
                 )
                 else -> {
-                    if (!metadata.artworkUrl.isNullOrBlank()) {
-                        PlaybackArtworkCard(
-                            artworkUrl = metadata.artworkUrl,
-                            fallbackUrls = metadata.artworkFallbackUrls,
-                            title = metadata.title,
-                            headers = metadata.artworkHeaders,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .align(androidx.compose.ui.Alignment.Center)
-                                .size(280.dp),
-                        )
-                    } else {
-                        SystemLogo(
-                            MediaSystem.RADIO,
-                            Modifier.align(androidx.compose.ui.Alignment.Center),
-                            size = 120.dp,
-                        )
+                    // Reuse the shared image-aware crossfade: it holds the previous
+                    // cover until the next one is decoded, then fades directly to it.
+                    // No Radio Browser splash, spinner, or intermediate system logo.
+                    Crossfade(
+                        targetState = coverPresentation.hasArtwork,
+                        animationSpec = tween(200),
+                        label = "radio-cover-availability",
+                    ) { hasArtwork ->
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            if (hasArtwork) {
+                                val shape = RoundedCornerShape(8.dp)
+                                Box(
+                                    Modifier.size(280.dp)
+                                        .clip(shape)
+                                        .background(Color.Black.copy(alpha = 0.72f))
+                                        .border(1.dp, Color.White.copy(alpha = 0.18f), shape),
+                                ) {
+                                    CrossfadeBackdropImage(
+                                        model = coverPresentation.artworkUrl
+                                            ?: coverPresentation.fallbackUrls.firstOrNull(),
+                                        contentDescription = coverPresentation.stationName,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop,
+                                        headers = coverPresentation.headers,
+                                        durationMillis = 200,
+                                        retainPreviousOnError = false,
+                                    )
+                                }
+                            } else if (viewModel.visualizerMode == "cover") {
+                                // Stations without artwork use the existing spectrum,
+                                // not an unrelated provider image.
+                                AudioPlaybackVisualizer(
+                                    modifier = Modifier.fillMaxSize(),
+                                    analyzer = analyzer,
+                                )
+                            }
+                        }
                     }
                 }
             }
