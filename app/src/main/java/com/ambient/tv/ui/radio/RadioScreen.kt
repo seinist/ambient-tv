@@ -506,57 +506,111 @@ fun RadioScreen(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                else -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
-                    if (state.viewMode == RadioViewMode.GRID) {
-                        TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .overlayLazyGridScrollbar(gridState)
-                                .pageContentUp(focusChain)
-                                .focusGroup(),
-                            state = gridState,
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                else -> Row(
+                    Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight()
+                            .focusRequester(stationContentFocus).focusGroup(),
+                    ) {
+                        // Reuse the existing focus-aware A–Z bar in both grid and list mode.
+                        // While shown, D-pad Right goes to its top entry rather than page actions.
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showStationAlphabet },
                         ) {
-                            itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
-                                RadioStationTile(
-                                    station = station,
-                                    modifier = if (station.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
-                                    playing = playback.metadata?.source == "radio" &&
-                                        playback.metadata?.mediaId == station.id &&
-                                        playback.wantsToPlay,
-                                    loading = state.startingStationId == station.id,
-                                    favorite = station.id in state.favoriteIds,
-                                    onClick = { viewModel.play(station, onOpenPlayer) },
-                                    onFocused = { viewModel.onStationFocused(station.id) },
-                                )
-                            }
-                            if (state.loadingMore) {
-                                items(
-                                    count = RADIO_GRID_END_PLACEHOLDERS,
-                                    key = { radioGridEndPlaceholderKey(it) },
-                                ) {
-                                    RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+                            com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                                if (state.viewMode == RadioViewMode.GRID) {
+                                    TvLazyVerticalGrid(
+                                        columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
+                                        modifier = Modifier.fillMaxSize()
+                                            .then(if (showStationAlphabet) Modifier else Modifier.overlayLazyGridScrollbar(gridState))
+                                            .pageContentUp(focusChain).focusGroup(),
+                                        state = gridState,
+                                        contentPadding = PaddingValues(bottom = 40.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                                    ) {
+                                        itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
+                                            RadioStationTile(
+                                                station = station,
+                                                modifier = when (station.id) {
+                                                    alphabetJumpTargetId -> Modifier.focusRequester(alphabetReturnRequester)
+                                                    initialContentId -> Modifier.focusRequester(initialFocusRequester)
+                                                    else -> Modifier
+                                                },
+                                                playing = playback.metadata?.source == "radio" &&
+                                                    playback.metadata?.mediaId == station.id && playback.wantsToPlay,
+                                                loading = state.startingStationId == station.id,
+                                                favorite = station.id in state.favoriteIds,
+                                                onClick = { viewModel.play(station, onOpenPlayer) },
+                                                onFavorite = { toggleStationFavorite(station) },
+                                                onFocused = {
+                                                    focusedStationId = station.id
+                                                    viewModel.onStationFocused(station.id)
+                                                },
+                                            )
+                                        }
+                                        if (state.loadingMore) {
+                                            items(
+                                                count = RADIO_GRID_END_PLACEHOLDERS,
+                                                key = { radioGridEndPlaceholderKey(it) },
+                                            ) {
+                                                RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    RadioStationList(
+                                        stations = state.stations,
+                                        listRows = state.listRows,
+                                        playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
+                                        playing = playback.wantsToPlay,
+                                        startingStationId = state.startingStationId,
+                                        favoriteIds = state.favoriteIds,
+                                        loadingMore = state.loadingMore,
+                                        state = listState,
+                                        onClick = { station -> viewModel.play(station, onOpenPlayer) },
+                                        onFavorite = toggleStationFavorite,
+                                        onFocused = { station ->
+                                            focusedStationId = station.id
+                                            viewModel.onStationFocused(station.id)
+                                        },
+                                        initialFocusId = initialContentId,
+                                        initialFocusRequester = initialFocusRequester,
+                                        alphabetJumpId = alphabetJumpTargetId,
+                                        alphabetReturnRequester = alphabetReturnRequester,
+                                        modifier = Modifier.pageContentUp(focusChain),
+                                    )
                                 }
                             }
                         }
-                    } else {
-                        RadioStationList(
-                            stations = state.stations,
-                            listRows = state.listRows,
-                            playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
-                            playing = playback.wantsToPlay,
-                            startingStationId = state.startingStationId,
-                            favoriteIds = state.favoriteIds,
-                            loadingMore = state.loadingMore,
-                            state = listState,
-                            onClick = { station -> viewModel.play(station, onOpenPlayer) },
-                            onFocused = { station -> viewModel.onStationFocused(station.id) },
-                            initialFocusId = initialContentId,
-                            initialFocusRequester = initialFocusRequester,
-                            modifier = Modifier.pageContentUp(focusChain),
+                    }
+                    if (showStationAlphabet) {
+                        AlphabetBar(
+                            letters = stationLetters,
+                            selected = stationLetter,
+                            onSelect = { letter ->
+                                val index = stationJumps.firstOrNull { it.letter == letter.toString() }?.index
+                                    ?: return@AlphabetBar
+                                val target = state.stations.getOrNull(index) ?: return@AlphabetBar
+                                alphabetJumpTargetId = target.id
+                                focusedStationId = target.id
+                                scrollScope.launch {
+                                    if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+                                    else listState.scrollToItem(index)
+                                }
+                            },
+                            gridFocus = stationContentFocus,
+                            onReturnToContent = {
+                                val candidate = if (alphabetJumpTargetId != null) alphabetReturnRequester else initialFocusRequester
+                                if (!runCatching { candidate.requestFocus() }.getOrDefault(false)) {
+                                    runCatching { stationContentFocus.requestFocus() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxHeight(),
+                            firstEntryFocusRequester = alphabetRightFocusRequester,
+                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
