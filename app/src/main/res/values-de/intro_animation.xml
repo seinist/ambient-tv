@@ -5,6 +5,8 @@
     <string name="settings_intro_off">Aus</string>
     <string name="settings_intro_bloom">Lichtfeld</string>
     <string name="settings_intro_horizon">Morgenlicht</string>
+    <string name="settings_intro_signature">Signatur</string>
+    <string name="settings_intro_prism">Prisma</string>
     <string name="settings_intro_preview">Vorschau</string>
     <string name="intro_skip_hint">Beliebige Taste zum Fortfahren</string>
 </resources>
