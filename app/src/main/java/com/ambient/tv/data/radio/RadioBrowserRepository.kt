@@ -22,6 +22,8 @@ class RadioBrowserRepository @Inject constructor(
         tag: String? = null,
         offset: Int = 0,
         limit: Int = 50,
+        order: String = "clickcount",
+        reverse: Boolean = true,
     ): RadioSearchPage {
         val safeOffset = offset.coerceAtLeast(0)
         val safeLimit = limit.coerceIn(1, 100)
@@ -30,6 +32,8 @@ class RadioBrowserRepository @Inject constructor(
             countryCode = countryCode?.trim()?.uppercase()?.takeIf(String::isNotBlank),
             language = language?.trim()?.takeIf(String::isNotBlank),
             tag = tag?.trim()?.takeIf(String::isNotBlank),
+            order = order,
+            reverse = reverse,
             offset = safeOffset,
             limit = safeLimit,
         )

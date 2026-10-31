@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -50,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -78,6 +81,7 @@ import com.ambient.tv.ui.common.ViewOption
 import com.ambient.tv.ui.common.ViewOptionsChip
 import com.ambient.tv.ui.common.ViewOptionsPanel
 import com.ambient.tv.ui.common.ViewPreview
+import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
@@ -167,18 +171,22 @@ fun RadioScreen(
         requestedSection.isFacetSection else state.isFacetOverview()
     val locale = LocalContext.current.resources.configuration.locales[0]
     // Alphabetical order uses the localized display names, not raw Radio Browser codes.
-    val sortedFacets = remember(state.section, state.facets, locale) {
-        radioAlphabetFacets(state.section, state.facets, locale)
+    val sortedFacets = remember(state.section, state.facets, locale, state.sortDescending) {
+        radioAlphabetFacets(state.section, state.facets, locale, descending = state.sortDescending)
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    // Senderlisten (auch Raster, Suche und Favoriten) verwenden denselben Index wie Kategorien.
+    // Die Sender selbst sind bereits vom ViewModel alphabetisch in der angezeigten Reihenfolge.
+    val stationJumps = remember(state.stations) { radioStationAlphabetJumps(state.stations) }
+    val stationLetters = remember(stationJumps) { stationJumps.mapNotNull { it.letter.singleOrNull() } }
     val effectiveViewMode = if (requestedPagePending && visibleSection.isFacetSection) RadioViewMode.LIST else state.effectiveViewMode()
     val contentIds = if (showingFacets) sortedFacets.map { it.facet.id } else state.stations.map(RadioStation::id)
     val playingStationId = playback.metadata?.takeIf { it.source == "radio" }?.mediaId
     // Hold the initial selection stable while browsing: paging and metadata updates must not
     // jump the list back to a previously focused card.
     val initialContentId = remember(
-        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending,
+        focusScope, effectiveViewMode, state.contentReady, state.returnFocusRevision, requestedPagePending, state.sortDescending,
     ) {
         if (requestedPagePending || !state.contentReady) null
         else radioInitialFocusId(
@@ -207,21 +215,31 @@ fun RadioScreen(
     val alphabetReturnRequester = remember(focusScope) { FocusRequester() }
     val alphabetRightFocusRequester = remember(focusScope) { FocusRequester() }
     val facetListFocus = remember(focusScope) { FocusRequester() }
+    val stationContentFocus = remember(focusScope, effectiveViewMode) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    var focusedStationId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    // Scrolling changes the first visible row, but focusing another row takes precedence.
-    var focusedFacetLetter by remember(focusScope, sortedFacets) { mutableStateOf<Char?>(null) }
-    val visibleLetter = focusedFacetLetter
+    // Focus keeps its facet identity across locale/sort changes, rather than resetting
+    // the index indicator to the row currently at the top of the scrolling list.
+    var focusedFacetId by remember(focusScope) { mutableStateOf<String?>(null) }
+    val visibleLetter = sortedFacets.firstOrNull { it.facet.id == (focusedFacetId ?: initialContentId) }
+        ?.letter?.singleOrNull()
         ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+    // Prefer the focused tile over the first visible row, including after returning from playback.
+    val currentStationId = focusedStationId?.takeIf { id -> state.stations.any { it.id == id } } ?: initialContentId
+    val stationLetter = state.stations.firstOrNull { it.id == currentStationId }?.let(::radioStationLetter)
+        ?: state.stations.getOrNull(if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex
+            else listState.firstVisibleItemIndex)?.let(::radioStationLetter)
+    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending
 
-    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
+    BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
     if (!requestedPagePending && state.contentReady && contentIds.isNotEmpty()) {
         BrowseFocusInitialTarget(initialContentId)
         if (effectiveViewMode == RadioViewMode.GRID) RegisterBrowseFocusGrid(gridState, contentIds)
         else RegisterBrowseFocusList(listState, contentIds)
     }
-    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending) {
+    LaunchedEffect(focusScope, effectiveViewMode, state.contentReady, requestedPagePending, state.sortDescending) {
         if (requestedPagePending || !state.contentReady || initialContentId == null) return@LaunchedEffect
         val index = contentIds.indexOf(initialContentId).takeIf { it >= 0 } ?: return@LaunchedEffect
         if (effectiveViewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
@@ -251,6 +269,13 @@ fun RadioScreen(
     val selectFacet: (RadioFacet) -> Unit = { facet ->
         pendingContentFocus = RadioFocusScope(state.section, facet.id, "")
         viewModel.selectFacet(facet)
+    }
+    val toggleStationFavorite: (RadioStation) -> Unit = { station ->
+        // The focused favorite disappears from this page; restore the neighboring station.
+        if (state.section == RadioSection.FAVORITES && station.id in state.favoriteIds) {
+            pendingContentFocus = focusScope
+        }
+        viewModel.toggleFavorite(station)
     }
     val clearFacet: () -> Unit = {
         pendingContentFocus = RadioFocusScope(state.section, null, "")
@@ -443,9 +468,8 @@ fun RadioScreen(
                             state = listState,
                             onClick = selectFacet,
                             onFocused = { facet ->
+                                focusedFacetId = facet.id
                                 viewModel.onFacetFocused(facet.id)
-                                focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == facet.id }
-                                    ?.letter?.singleOrNull()
                             },
                             initialFocusId = initialContentId,
                             initialFocusRequester = initialFocusRequester,
@@ -460,10 +484,10 @@ fun RadioScreen(
                             letters = alphabetLetters,
                             selected = visibleLetter,
                             onSelect = { letter ->
-                                focusedFacetLetter = letter
                                 val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
                                     ?: return@AlphabetBar
                                 alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
+                                focusedFacetId = alphabetJumpTargetId
                                 scrollScope.launch { listState.scrollToItem(index) }
                             },
                             gridFocus = facetListFocus,
@@ -483,57 +507,122 @@ fun RadioScreen(
                     title = stringResource(R.string.radio_no_stations),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                else -> com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
-                    if (state.viewMode == RadioViewMode.GRID) {
-                        TvLazyVerticalGrid(
-                            columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .overlayLazyGridScrollbar(gridState)
-                                .pageContentUp(focusChain)
-                                .focusGroup(),
-                            state = gridState,
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                else -> Row(
+                    Modifier.fillMaxSize().pageContentUp(focusChain).focusGroup(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        Modifier.weight(1f).fillMaxHeight()
+                            .focusRequester(stationContentFocus).focusGroup(),
+                    ) {
+                        // Reuse the existing focus-aware A–Z bar in both grid and list mode.
+                        // While shown, D-pad Right goes to its top entry rather than page actions.
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showStationAlphabet },
                         ) {
-                            itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
-                                RadioStationTile(
-                                    station = station,
-                                    modifier = if (station.id == initialContentId) Modifier.focusRequester(initialFocusRequester) else Modifier,
-                                    playing = playback.metadata?.source == "radio" &&
-                                        playback.metadata?.mediaId == station.id &&
-                                        playback.wantsToPlay,
-                                    loading = state.startingStationId == station.id,
-                                    favorite = station.id in state.favoriteIds,
-                                    onClick = { viewModel.play(station, onOpenPlayer) },
-                                    onFocused = { viewModel.onStationFocused(station.id) },
-                                )
-                            }
-                            if (state.loadingMore) {
-                                items(
-                                    count = RADIO_GRID_END_PLACEHOLDERS,
-                                    key = { radioGridEndPlaceholderKey(it) },
-                                ) {
-                                    RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+                            com.ambient.tv.ui.common.SoftViewChange(state.viewMode, Modifier.fillMaxSize()) {
+                                if (state.viewMode == RadioViewMode.GRID) {
+                                    TvLazyVerticalGrid(
+                                        columns = deviceDensityGridCells(state.gridColumns, 160.dp, 4),
+                                        modifier = Modifier.fillMaxSize()
+                                            .then(if (showStationAlphabet) Modifier else Modifier.overlayLazyGridScrollbar(gridState))
+                                            .pageContentUp(focusChain).focusGroup(),
+                                        state = gridState,
+                                        contentPadding = PaddingValues(bottom = 40.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                                    ) {
+                                        itemsIndexed(state.stations, key = { _, station -> station.id }) { _, station ->
+                                            RadioStationTile(
+                                                station = station,
+                                                modifier = when (station.id) {
+                                                    alphabetJumpTargetId -> Modifier.focusRequester(alphabetReturnRequester)
+                                                    initialContentId -> Modifier.focusRequester(initialFocusRequester)
+                                                    else -> Modifier
+                                                },
+                                                playing = playback.metadata?.source == "radio" &&
+                                                    playback.metadata?.mediaId == station.id && playback.wantsToPlay,
+                                                loading = state.startingStationId == station.id,
+                                                favorite = station.id in state.favoriteIds,
+                                                onClick = { viewModel.play(station, onOpenPlayer) },
+                                                onFavorite = { toggleStationFavorite(station) },
+                                                onFocused = {
+                                                    focusedStationId = station.id
+                                                    viewModel.onStationFocused(station.id)
+                                                },
+                                            )
+                                        }
+                                        if (state.loadingMore) {
+                                            items(
+                                                count = RADIO_GRID_END_PLACEHOLDERS,
+                                                key = { radioGridEndPlaceholderKey(it) },
+                                            ) {
+                                                RadioEndPlaceholder(Modifier.width(deviceDp(190.dp, 160.dp)))
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    RadioStationList(
+                                        stations = state.stations,
+                                        listRows = state.listRows,
+                                        playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
+                                        playing = playback.wantsToPlay,
+                                        startingStationId = state.startingStationId,
+                                        favoriteIds = state.favoriteIds,
+                                        loadingMore = state.loadingMore,
+                                        state = listState,
+                                        onClick = { station -> viewModel.play(station, onOpenPlayer) },
+                                        onFavorite = toggleStationFavorite,
+                                        onFocused = { station ->
+                                            focusedStationId = station.id
+                                            viewModel.onStationFocused(station.id)
+                                        },
+                                        initialFocusId = initialContentId,
+                                        initialFocusRequester = initialFocusRequester,
+                                        alphabetJumpId = alphabetJumpTargetId,
+                                        alphabetReturnRequester = alphabetReturnRequester,
+                                        modifier = Modifier.pageContentUp(focusChain),
+                                    )
                                 }
                             }
                         }
-                    } else {
-                        RadioStationList(
-                            stations = state.stations,
-                            listRows = state.listRows,
-                            playbackId = playback.metadata?.mediaId.takeIf { playback.metadata?.source == "radio" },
-                            playing = playback.wantsToPlay,
-                            startingStationId = state.startingStationId,
-                            favoriteIds = state.favoriteIds,
-                            loadingMore = state.loadingMore,
-                            state = listState,
-                            onClick = { station -> viewModel.play(station, onOpenPlayer) },
-                            onFocused = { station -> viewModel.onStationFocused(station.id) },
-                            initialFocusId = initialContentId,
-                            initialFocusRequester = initialFocusRequester,
-                            modifier = Modifier.pageContentUp(focusChain),
+                    }
+                    if (showStationAlphabet) {
+                        AlphabetBar(
+                            letters = stationLetters,
+                            selected = stationLetter,
+                            onSelect = { letter ->
+                                val index = stationJumps.firstOrNull { it.letter == letter.toString() }?.index
+                                    ?: return@AlphabetBar
+                                val target = state.stations.getOrNull(index) ?: return@AlphabetBar
+                                alphabetJumpTargetId = target.id
+                                focusedStationId = target.id
+                                scrollScope.launch {
+                                    if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(index)
+                                    else listState.scrollToItem(index)
+                                }
+                            },
+                            gridFocus = stationContentFocus,
+                            onReturnToContent = {
+                                // A distant letter is not necessarily composed yet; scroll first,
+                                // then focus the exact matching sender instead of a nearby card.
+                                val targetIndex = state.stations.indexOfFirst { it.id == alphabetJumpTargetId }
+                                scrollScope.launch {
+                                    if (targetIndex >= 0) {
+                                        if (state.viewMode == RadioViewMode.GRID) gridState.scrollToItem(targetIndex)
+                                        else listState.scrollToItem(targetIndex)
+                                    }
+                                    val target = if (targetIndex >= 0) alphabetReturnRequester else initialFocusRequester
+                                    repeat(6) {
+                                        withFrameNanos { }
+                                        if (runCatching { target.requestFocus() }.getOrDefault(false)) return@launch
+                                    }
+                                    runCatching { stationContentFocus.requestFocus() }
+                                }
+                            },
+                            modifier = Modifier.fillMaxHeight(),
+                            firstEntryFocusRequester = alphabetRightFocusRequester,
+                            actionsFocus = focusChain.actions,
                         )
                     }
                 }
@@ -559,6 +648,9 @@ fun RadioScreen(
                     listRows = state.listRows,
                     onGridColumns = viewModel::setGridColumns,
                     onListRows = viewModel::setListRows,
+                    sortOrders = sortDirectionOptions("A–Z", "Z–A"),
+                    selectedSortOrder = if (state.sortDescending) "DESCENDING" else "ASCENDING",
+                    onSortOrder = { viewModel.setSortDescending(it == "DESCENDING") },
                     onClose = closeViewOptions,
                 )
             }
@@ -832,6 +924,29 @@ private fun RadioEndPlaceholder(modifier: Modifier = Modifier, sharedPulse: Stat
     }
 }
 
+/**
+ * Small separately focusable favorite action, matching the sibling actions on LiveTV
+ * recording rows. It must not be nested inside the station's play Surface.
+ */
+@Composable
+private fun RadioFavoriteAction(
+    favorite: Boolean,
+    onClick: () -> Unit,
+    onFocused: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val description = stringResource(if (favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite)
+    TvActionButton(
+        text = "",
+        icon = if (favorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+        selected = favorite,
+        onClick = onClick,
+        modifier = modifier
+            .semantics { contentDescription = description }
+            .onFocusChanged { if (it.isFocused) onFocused() },
+    )
+}
+
 @Composable
 private fun RadioStationTile(
     station: RadioStation,
@@ -840,14 +955,13 @@ private fun RadioStationTile(
     loading: Boolean,
     favorite: Boolean,
     onClick: () -> Unit,
+    onFavorite: () -> Unit,
     onFocused: () -> Unit,
 ) {
     var focused by remember(station.id) { mutableStateOf(false) }
+    var cardHasFocus by remember(station.id) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
-    Column(
-        Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
+    Box(Modifier.fillMaxWidth().onFocusChanged { cardHasFocus = it.hasFocus }) {
         Surface(
             onClick = onClick,
             colors = transparentSurfaceColors(),
@@ -866,13 +980,13 @@ private fun RadioStationTile(
             Column(
                 Modifier
                     .background(
-                        if (focused || playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        if (cardHasFocus || playing) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
                         else MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
                         shape,
                     )
                     .border(
                         2.dp,
-                        if (focused || playing) MaterialTheme.colorScheme.primary
+                        if (cardHasFocus || playing) MaterialTheme.colorScheme.primary
                         else Color.White.copy(alpha = 0.08f),
                         shape,
                     )
@@ -881,19 +995,9 @@ private fun RadioStationTile(
             ) {
                 Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
                     RadioArtwork(station, Modifier.fillMaxSize())
-                    if (favorite) {
-                        androidx.compose.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(20.dp),
-                        )
-                    }
                     if (playing || loading) {
                         Box(
-                            Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(6.dp)
+                            Modifier.align(Alignment.BottomEnd).padding(6.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
                                 .padding(horizontal = 9.dp, vertical = 5.dp),
@@ -906,7 +1010,7 @@ private fun RadioStationTile(
                         }
                     }
                 }
-                CenteredMarqueeTitle(station.name, focused = focused)
+                CenteredMarqueeTitle(station.name, focused = cardHasFocus)
                 Text(
                     radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
                     style = MaterialTheme.typography.bodySmall,
@@ -917,6 +1021,12 @@ private fun RadioStationTile(
                 )
             }
         }
+        RadioFavoriteAction(
+            favorite = favorite,
+            onClick = onFavorite,
+            onFocused = onFocused,
+            modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+        )
     }
 }
 
@@ -931,9 +1041,12 @@ private fun RadioStationList(
     loadingMore: Boolean,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
+    onFavorite: (RadioStation) -> Unit,
     onFocused: (RadioStation) -> Unit,
     initialFocusId: String?,
     initialFocusRequester: FocusRequester,
+    alphabetJumpId: String?,
+    alphabetReturnRequester: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val rowScale = (7f / listRows.coerceIn(4, 10)).coerceIn(.72f, 1.35f)
@@ -942,6 +1055,7 @@ private fun RadioStationList(
     ) com.ambient.tv.ui.common.rememberSharedPulse(com.ambient.tv.ui.common.SharedArtworkPulse) else null
     TvLazyColumn(
         allowUpExit = true,
+        focusActionsOnRight = false,
         modifier = modifier.fillMaxSize(),
         state = state,
         contentPadding = PaddingValues(vertical = 8.dp, horizontal = 2.dp),
@@ -949,68 +1063,80 @@ private fun RadioStationList(
     ) {
         lazyItems(stations, key = { it.id }) { station ->
             var focused by remember(station.id) { mutableStateOf(false) }
+            var rowHasFocus by remember(station.id) { mutableStateOf(false) }
             val selected = playbackId == station.id
+            val favorite = station.id in favoriteIds
             val shape = RoundedCornerShape(10.dp)
-            Surface(
-                onClick = { onClick(station) },
-                colors = transparentSurfaceColors(),
-                scale = noSurfaceScale(),
-                shape = ClickableSurfaceDefaults.shape(shape),
-                modifier = (if (station.id == initialFocusId) Modifier.focusRequester(initialFocusRequester) else Modifier)
-                    .fillMaxWidth()
-                    .browseFocusTarget(station.id)
-                    .mediaFocusMotion(focused, focusedScale = 1.012f)
-                    .activateOnTvKey { onClick(station) }
-                    .bringFocusedContextIntoView()
-                    .onFocusChanged {
-                        focused = it.isFocused
-                        if (it.isFocused) onFocused(station)
-                    },
+            val focusModifier = when (station.id) {
+                alphabetJumpId -> Modifier.focusRequester(alphabetReturnRequester)
+                initialFocusId -> Modifier.focusRequester(initialFocusRequester)
+                else -> Modifier
+            }
+            // The play target and the favorite button are siblings, as in LiveTV's DVR rows.
+            Row(
+                Modifier.fillMaxWidth()
+                    .onFocusChanged { rowHasFocus = it.hasFocus }
+                    .background(
+                        if (rowHasFocus || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f)
+                        else MaterialTheme.colorScheme.surface.copy(alpha = .58f),
+                        shape,
+                    )
+                    .border(
+                        if (focused || rowHasFocus || selected) 2.dp else 1.dp,
+                        if (focused || rowHasFocus || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
+                        shape,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    Modifier
-                        .background(
-                            if (focused || selected) MaterialTheme.colorScheme.primary.copy(alpha = .12f) else Color.Transparent,
-                            shape,
-                        )
-                        .border(
-                            if (focused || selected) 2.dp else 1.dp,
-                            if (focused || selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .06f),
-                            shape,
-                        )
-                        .padding(10.dp * rowScale),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
-                    verticalAlignment = Alignment.CenterVertically,
+                Surface(
+                    onClick = { onClick(station) },
+                    colors = transparentSurfaceColors(),
+                    scale = noSurfaceScale(),
+                    shape = ClickableSurfaceDefaults.shape(shape),
+                    modifier = focusModifier.weight(1f)
+                        .browseFocusTarget(station.id)
+                        .mediaFocusMotion(focused, focusedScale = 1.012f)
+                        .activateOnTvKey { onClick(station) }
+                        .bringFocusedContextIntoView()
+                        .onFocusChanged {
+                            focused = it.isFocused
+                            if (it.isFocused) onFocused(station)
+                        },
                 ) {
-                    Box(Modifier.size(72.dp * rowScale)) {
-                        RadioArtwork(station, Modifier.fillMaxSize())
-                        if ((selected && playing) || startingStationId == station.id) {
-                            androidx.compose.material3.Icon(
-                                Icons.Default.PlayArrow,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.align(Alignment.BottomEnd).size(22.dp),
+                    Row(
+                        Modifier.fillMaxWidth().padding(10.dp * rowScale),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp * rowScale),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(72.dp * rowScale)) {
+                            RadioArtwork(station, Modifier.fillMaxSize())
+                            if ((selected && playing) || startingStationId == station.id) {
+                                androidx.compose.material3.Icon(
+                                    Icons.Default.PlayArrow,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.align(Alignment.BottomEnd).size(22.dp),
+                                )
+                            }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            MarqueeTitle(station.name, focused = rowHasFocus, style = MaterialTheme.typography.titleMedium)
+                            MarqueeTitle(
+                                radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
+                                focused = rowHasFocus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MarqueeTitle(station.name, focused = focused, style = MaterialTheme.typography.titleMedium)
-                        MarqueeTitle(
-                            radioStationSubtitle(station, LocalContext.current.resources.configuration.locales[0]),
-                            focused = focused,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    if (station.id in favoriteIds) {
-                        androidx.compose.material3.Icon(
-                            Icons.Filled.Favorite,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
                 }
+                RadioFavoriteAction(
+                    favorite = favorite,
+                    onClick = { onFavorite(station) },
+                    onFocused = { onFocused(station) },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
             }
         }
         if (loadingMore) {
