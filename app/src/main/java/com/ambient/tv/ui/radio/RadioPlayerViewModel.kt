@@ -126,6 +126,8 @@ class RadioPlayerViewModel @Inject constructor(
                             tag = source.tag,
                             offset = source.nextOffset,
                             limit = RADIO_PAGE_SIZE,
+                            order = "name",
+                            reverse = source.sortDescending,
                         )
                     } catch (cancelled: CancellationException) {
                         throw cancelled

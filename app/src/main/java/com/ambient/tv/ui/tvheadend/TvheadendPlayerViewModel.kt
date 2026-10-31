@@ -175,7 +175,7 @@ class TvheadendPlayerViewModel @Inject constructor(
         changingChannel = true
         viewModelScope.launch {
             try {
-                val source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid)
+                val source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid)
                 val latest = _uiState.value as? TvheadendPlayerState.Ready
                 if (latest?.channel?.uuid == channel.uuid) _uiState.value = latest.copy(source = source)
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -354,7 +354,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                             )
                         } else {
                             val artwork = tvhPanelArtwork(entry.fanartUrl, entry.imageUrl)
-                            val source = acquireStream { repository.recordingStream(entry) }
+                            val source = acquireStream(open = { repository.recordingStream(entry) })
                             val resumeSource = source.copy(startPositionMs = savedResumeRequest.position(
                                 source.startPositionMs, preferences.resumeRewindSeconds, eligible = !source.isLive,
                             ))
@@ -388,7 +388,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                         } else {
                             val artwork = tvhPanelArtwork(null, channel.iconUrl)
                             _uiState.value = TvheadendPlayerState.Ready(
-                                source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid),
+                                source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid),
                                 channel = channel,
                                 artworkUrl = artwork.first,
                                 artworkFallbackUrls = artwork.second,
@@ -478,8 +478,8 @@ class TvheadendPlayerViewModel @Inject constructor(
             currentCoroutineContext().ensureActive()
             val latest = _uiState.value as? TvheadendPlayerState.Ready ?: return false
             if (changingChannel || latest.channel?.uuid != ready.channel?.uuid || latest.source.url != ready.source.url) return false
-            val playback = acquireStream { source.copy(url = opened.first, headers = emptyMap(), isLive = true,
-                durationMs = null, startPositionMs = 0) }
+            val playback = acquireStream(open = { source.copy(url = opened.first, headers = emptyMap(), isLive = true,
+                durationMs = null, startPositionMs = 0) })
             LiveTimeshift.useRecording(Destinations.tvhPlayer(kind, currentChannelUuid, sourceId), requireNotNull(buffer), opened.second)
             installed = true
             _uiState.value = latest.copy(source = playback, playingRecording = entry)
@@ -506,7 +506,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     if (changingChannel) return@launch
                     changingChannel = true
                     try {
-                        val source = timeshifted(acquireStream { repository.liveStream(channel) }, channel.uuid)
+                        val source = timeshifted(acquireStream(open = { repository.liveStream(channel) }), channel.uuid)
                         val (now, next) = loadProgramInfo(channel.uuid)
                         if (!stillCurrent()) return@launch
                         _uiState.value = ready.copy(source = source, playingRecording = null, nowEvent = now, nextEvent = next)
@@ -736,7 +736,7 @@ class TvheadendPlayerViewModel @Inject constructor(
                     .filterNot { it.name.equals(currentProfile, ignoreCase = true) }
                     .sortedByDescending { profile -> tvheadendFallbackProfileRank(profile.name, profile.profileClass) }
                 val selected = candidates.firstOrNull() ?: error(reason.ifBlank { context.getString(com.ambient.tv.R.string.tvh_no_fallback_profile) })
-                timeshifted(acquireStream { repository.liveStream(channel, selected.name) }, channel.uuid)
+                timeshifted(acquireStream(open = { repository.liveStream(channel, selected.name) }), channel.uuid)
             }.fold(
                 onSuccess = { source -> _uiState.value = current.copy(source = source, channel = channel, sourceHdrStandard = null) },
                 onFailure = { error ->

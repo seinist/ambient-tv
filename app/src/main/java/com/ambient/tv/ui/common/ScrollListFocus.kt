@@ -101,7 +101,10 @@ fun TvLazyColumn(
 ) {
     BrowseScrollBudget(state)
     val animate = !LocalPerformanceProfile.current.reducedEffects
-    LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
+    // The right alphabet index already serves as position/scroll navigation.
+    // Never draw a second scrollbar beside or underneath it.
+    LazyScrollbarFrame(modifier, LocalBrowseRightIndexFocus.current == null &&
+        (state.canScrollForward || state.canScrollBackward),
         scrollbar = { bar, contentFocus -> OverlayLazyScrollbar(state, bar, contentFocus) }) { listModifier ->
         val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.LazyColumn(
@@ -152,7 +155,10 @@ fun TvLazyVerticalGrid(
 ) {
     BrowseScrollBudget(state)
     val animate = !LocalPerformanceProfile.current.reducedEffects
-    LazyScrollbarFrame(modifier, state.canScrollForward || state.canScrollBackward,
+    // The right alphabet index already serves as position/scroll navigation.
+    // Never draw a second scrollbar beside or underneath it.
+    LazyScrollbarFrame(modifier, LocalBrowseRightIndexFocus.current == null &&
+        (state.canScrollForward || state.canScrollBackward),
         scrollbar = { bar, contentFocus -> OverlayLazyGridScrollbar(state, bar, contentFocus) }) { listModifier ->
         val scrollbarFocus = LocalBrowseRightIndexFocus.current ?: LocalLazyScrollbarRightTarget.current
         androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
