@@ -200,7 +200,10 @@ fun RadioScreen(
     val facetListFocus = remember(focusScope) { FocusRequester() }
     var alphabetJumpTargetId by remember(focusScope) { mutableStateOf<String?>(null) }
     val scrollScope = rememberCoroutineScope()
-    val visibleLetter = sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
+    // Scrolling changes the first visible row, but focusing another row takes precedence.
+    var focusedFacetLetter by remember(focusScope, sortedFacets) { mutableStateOf<Char?>(null) }
+    val visibleLetter = focusedFacetLetter
+        ?: sortedFacets.getOrNull(listState.firstVisibleItemIndex)?.letter?.singleOrNull()
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -428,7 +431,11 @@ fun RadioScreen(
                             listRows = state.listRows,
                             state = listState,
                             onClick = selectFacet,
-                            onFocused = { viewModel.onFacetFocused(it.id) },
+                            onFocused = { facet ->
+                                viewModel.onFacetFocused(facet.id)
+                                focusedFacetLetter = sortedFacets.firstOrNull { it.facet.id == facet.id }
+                                    ?.letter?.singleOrNull()
+                            },
                             initialFocusId = initialContentId,
                             initialFocusRequester = initialFocusRequester,
                             alphabetJumpId = alphabetJumpTargetId,
@@ -442,6 +449,7 @@ fun RadioScreen(
                             letters = alphabetLetters,
                             selected = visibleLetter,
                             onSelect = { letter ->
+                                focusedFacetLetter = letter
                                 val index = alphabetJumps.firstOrNull { it.letter == letter.toString() }?.index
                                     ?: return@AlphabetBar
                                 alphabetJumpTargetId = sortedFacets.getOrNull(index)?.facet?.id
