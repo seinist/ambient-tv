@@ -87,7 +87,7 @@ internal object CarAudioIds {
         val raw = id.takeIf { it.startsWith(MORE) }?.removePrefix(MORE)?.let(::decode) ?: return null
         val offset = raw.substringBefore('\n').toIntOrNull() ?: return null
         val parent = raw.substringAfter('\n', "")
-        return if (offset in 1..1000 && parent.isNotBlank() && !parent.startsWith(MORE) &&
+        return if (offset in 1..1_000_000 && parent.isNotBlank() && !parent.startsWith(MORE) &&
             (isFolderBase(parent) || radioFacetId(parent) != null || liveSourceId(parent) != null ||
                 liveGroupsId(parent) != null || liveGroupSpec(parent) != null ||
                 dlnaServerId(parent) != null || dlnaFolderId(parent) != null ||
@@ -147,7 +147,7 @@ internal object CarAudioIds {
         dlnaServerId(id) != null || dlnaFolderId(id) != null ||
         fileSourceId(id) != null || fileFolderId(id) != null || moreSpec(id) != null
 
-    /* Extra folders are resolved only through validated opaque IDs. */
+    // All dynamic folders are validated before querying source repositories.
 }
 
 /** Android Auto's standard media surface must not expose movies or video-only entries as audio. */
