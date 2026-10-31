@@ -1157,8 +1157,8 @@ private fun Loading(mode: YouTubeViewMode, gridColumns: Int, listRows: Int, sect
     when (youtubeLoadingPresentation(mode, sectioned)) {
         YouTubeLoadingPresentation.ROWS -> YouTubeLoadingRows(gridColumns, pulse)
         YouTubeLoadingPresentation.GRID -> YouTubeLoadingGrid(gridColumns)
-        YouTubeLoadingPresentation.LIST -> YouTubeLoadingList(listRows, detailed = false, sectioned, pulse)
-        YouTubeLoadingPresentation.INFO_LIST -> YouTubeLoadingList(listRows, detailed = true, sectioned, pulse)
+        YouTubeLoadingPresentation.LIST -> YouTubeLoadingList(listRows, false, sectioned, pulse)
+        YouTubeLoadingPresentation.INFO_LIST -> YouTubeLoadingList(listRows, true, sectioned, pulse)
         YouTubeLoadingPresentation.WALL -> YouTubeLoadingWall(gridColumns, sectioned, pulse)
         YouTubeLoadingPresentation.CINEMATIC -> YouTubeLoadingCinematic(sectioned, pulse)
     }
