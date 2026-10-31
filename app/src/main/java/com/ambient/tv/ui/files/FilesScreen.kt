@@ -166,7 +166,8 @@ fun FilesScreen(onPlay: (String, Boolean) -> Unit, onBack: () -> Unit, contentAc
                 OperationFeedbackContent(state.error!!, Modifier.align(Alignment.Center).widthIn(max = 680.dp), FeedbackLayout.PAGE,
                     actionLabel = stringResource(if (state.folders.isEmpty()) R.string.files_back else R.string.home_retry),
                     onAction = if (state.folders.isEmpty()) onBack else viewModel::refresh,
-                    actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus)
+                    actionModifier = Modifier.focusRequester(retryFocus), requestActionFocus = !keepHeaderFocus,
+                    centered = true)
             } else if (emptyPending) {
                 FullscreenSpinner(Modifier.align(Alignment.Center))
             } else {
