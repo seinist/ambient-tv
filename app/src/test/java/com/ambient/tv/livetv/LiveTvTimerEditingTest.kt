@@ -54,8 +54,10 @@ class LiveTvTimerEditingTest {
     }
 
     @Test fun recordingArtFallsBackThroughGuideTitleAndLogo() {
-        assertEquals(LiveTvArt("own"), liveTvRecordingArt(recording(image = "own", fanart = "fan"), emptyList(), listOf(channel)))
+        // Prefer landscape artwork (fanart, then TMDb) over a recording's poster/thumbnail.
+        assertEquals(LiveTvArt("fan"), liveTvRecordingArt(recording(image = "own", fanart = "fan"), emptyList(), listOf(channel)))
         assertEquals(LiveTvArt("fan"), liveTvRecordingArt(recording(fanart = "fan"), emptyList(), listOf(channel)))
+        assertEquals(LiveTvArt("own"), liveTvRecordingArt(recording(image = "own"), emptyList(), listOf(channel)))
         // The EPG event it was recorded from, by broadcast id or by channel, start and title.
         assertEquals(LiveTvArt("epg"), liveTvRecordingArt(recording(broadcast = "e9"), listOf(event("e9", "epg", start = 5)), listOf(channel)))
         assertEquals(LiveTvArt("epg"), liveTvRecordingArt(recording(), listOf(event("e1", "epg")), listOf(channel)))
