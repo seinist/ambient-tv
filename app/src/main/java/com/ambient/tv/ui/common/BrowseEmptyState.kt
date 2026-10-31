@@ -27,6 +27,8 @@ fun BrowseStatusPanel(
     kind: BrowseStatusKind = BrowseStatusKind.EMPTY,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    secondaryActionLabel: String? = null,
+    onSecondaryAction: (() -> Unit)? = null,
     modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier.fillMaxSize(),
 ) {
     val icon = when (kind) {
@@ -39,6 +41,8 @@ fun BrowseStatusPanel(
         body = body,
         actionLabel = actionLabel,
         onAction = onAction,
+        secondaryActionLabel = secondaryActionLabel,
+        onSecondaryAction = onSecondaryAction,
         modifier = modifier,
         icon = icon,
         centered = true,
