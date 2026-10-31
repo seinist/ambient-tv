@@ -533,12 +533,15 @@ private fun RightSidePanelChrome(
     // one remembered for later (e.g. after "Warten" in a player dialog).
     fun parkOnFirstRow(): Boolean = focusRescue?.park?.invoke(::focusFirstRow) ?: focusFirstRow()
     val dialogOwnsFocus = focusRescue?.dialogOwnsFocus?.invoke() == true
-    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused, dialogOwnsFocus, panelInteractive) {
+    val pendingHandBack = focusRescue?.pendingHandBack?.invoke() == true
+    LaunchedEffect(retainFocus, panelHasFocus, windowInfo.isWindowFocused,
+        dialogOwnsFocus, panelInteractive, pendingHandBack) {
         if (!panelInteractive) return@LaunchedEffect
         // A player dialog's focus return owns the hand-back: a paused target of ours is obsolete.
         if (dialogOwnsFocus) rescue.pausedTarget = null
         if (!panelRescueShouldStart(retainFocus, isHandheld, hadPanelFocus, panelHasFocus,
-                windowInfo.isWindowFocused, rescue.pausedTarget, dialogOwnsFocus)) return@LaunchedEffect
+                windowInfo.isWindowFocused, rescue.pausedTarget, dialogOwnsFocus,
+                pendingHandBack)) return@LaunchedEffect
         if (rescue.job?.isActive == true) return@LaunchedEffect
         val target = rescue.pausedTarget ?: focusRescue?.target?.invoke()
         rescue.pausedTarget = null
