@@ -120,8 +120,8 @@ class TvheadendConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
-            _state.value = ServerConnectionState.Online(identity(info.version))
             hosts.online(hosts.begin("tvheadend")) // Successful API probe overrides stale port failures.
+            _state.value = ServerConnectionState.Online(identity(info.version))
             resumeAutomaticReconnect()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastServerId = checkedEndpoint
@@ -228,10 +228,10 @@ class TvheadendConnectionManager @Inject constructor(
             _state.value = ServerConnectionState.Error(com.ambient.tv.notifications.failureReasonText(context, it, "${preferences.tvheadendHost}:${preferences.tvheadendPort}"))
             return false
         }
-        _state.value = ServerConnectionState.Online(identity(info.version))
         lastServerId = endpointKey
         lastSuccessfulCheckMs = System.currentTimeMillis()
         hosts.online(hosts.begin("tvheadend"))
+        _state.value = ServerConnectionState.Online(identity(info.version))
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true
