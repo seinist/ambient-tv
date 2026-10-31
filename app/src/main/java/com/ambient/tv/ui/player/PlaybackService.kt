@@ -81,6 +81,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private var carPlaybackJob: Job? = null
     private var carSpotifySelected = false
     private var carSpotifyStartGeneration = -1L
+    private val sponsorSkip = BackgroundSponsorSkipPolicy()
     private var carMusicQueue: List<String> = emptyList()
     private var carLiveQueue: List<String> = emptyList()
     private var foregroundStarted = false
@@ -228,10 +229,16 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     lastRecentChannel = recentChannel
                 } else if (!playback.active || liveMetadata == null) lastRecentChannel = null
                 val youtubeState = playback.metadata?.resumeState as? YouTubePlayback
-                if (playback.playing && preferences.youtubeSponsorBlockEnabled && youtubeState?.isLive == false) {
-                    youtubeState.sponsorSegments.firstOrNull { playback.status.positionMs in it }?.let {
-                        BackgroundPlaybackSession.seekTo(it.last + 1)
-                    }
+                if (playback.metadata?.sponsorSkipEnabled == true && preferences.youtubeSponsorBlockEnabled &&
+                    youtubeState?.isLive == false) {
+                    // The service is the sole SponsorBlock skipper (including background/PiP).
+                    // Never seek to the exact end of a DASH/HLS stream or repeat the same segment.
+                    val duration = playback.metadata.durationMs.takeIf { it > 0 }
+                        ?: playback.status.durationMs
+                    sponsorSkip.nextSeek(
+                        playback.generation, youtubeState.sponsorSegments, playback.status.positionMs,
+                        duration, playback.playing,
+                    )?.let(BackgroundPlaybackSession::seekTo)
                 }
                 for (finished in BackgroundPlaybackSession.takeCompleted()) enqueueReport(finished, stopped = true)
                 val state = BackgroundPlaybackSession.snapshot.value
