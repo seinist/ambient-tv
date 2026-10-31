@@ -57,6 +57,7 @@ internal class CarAudioCatalog @Inject constructor(
     private val entriesById = LinkedHashMap<String, CarAudioEntry>()
     private val parents = LinkedHashMap<String, String>()
     private val maxItems = 500
+    private val maxPages = 90
 
     fun invalidate(parentId: String) {
         pages.remove(parentId)
@@ -80,6 +81,7 @@ internal class CarAudioCatalog @Inject constructor(
         }
         val result = fresh.distinctBy { it.id }.take(PAGE_SIZE + 1)
         pages[parentId] = Page(result, now)
+        while (pages.size > maxPages) pages.remove(pages.keys.first())
         result.forEach { entry ->
             entriesById[entry.id] = entry
             parents[entry.id] = parentId
@@ -346,6 +348,7 @@ internal class CarAudioCatalog @Inject constructor(
         }
         val unique = found.distinctBy { it.id }.take(60)
         unique.forEach { entriesById[it.id] = it }
+        while (entriesById.size > maxItems) entriesById.remove(entriesById.keys.first())
         return unique
     }
 
@@ -354,5 +357,5 @@ internal class CarAudioCatalog @Inject constructor(
         if (safeQuery.isEmpty()) return null
         return search(safeQuery).firstNotNullOfOrNull { resolve(it.id) }
     }
-    private companion object { const val PAGE_SIZE = 40; const val MAX_CURSOR = 1000 }
+    private companion object { const val PAGE_SIZE = 40; const val MAX_CURSOR = 1_000_000 }
 }
