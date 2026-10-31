@@ -178,6 +178,7 @@ class HomeViewModel @Inject constructor(
     private val plexRefreshBus: PlexRefreshBus,
     private val spotifyRepository: SpotifyRepository,
     private val radioRepository: RadioBrowserRepository,
+    private val homeRowSnapshots: HomeRowSnapshots,
     private val smartTubeEngine: SmartTubeEngine,
     private val youtubeContentCache: YouTubeContentCache,
     private val youtubePlaybackContext: YouTubeBrowsePlaybackContext,
@@ -1403,6 +1404,18 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** Local favorites/recents do not depend on Radio Browser's public API. */
+    private fun radioHomeRow(definition: HomeRowDefinition, stations: List<RadioStation>): ContentRowData? =
+        stations.take(HOME_ROW_LIMIT).takeIf { it.isNotEmpty() }?.let { entries ->
+            ContentRowData(
+                title = definition.displayTitle(context),
+                items = entries.map { it.toHomeItem() },
+                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                id = "radio.${definition.contentKey}",
+                showDescription = false,
+            )
+        }
+
     private fun loadRadioRows() {
         val generation = ++radioRowsGeneration
         radioJob?.cancel()
@@ -1411,20 +1424,14 @@ class HomeViewModel @Inject constructor(
             radioRows = emptyList()
             return
         }
-        val definitions = appPreferences.homeRows
-            .filter { row ->
-                row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
-                    (row.contentKey in setOf(
-                        "home",
-                        HomeRowDefinition.RADIO_POPULAR,
-                        HomeRowDefinition.RADIO_FAVORITES,
-                        HomeRowDefinition.RADIO_RECENT,
-                    ) || row.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ||
-                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ||
-                        row.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:"))
-            }
-            .distinctBy { it.contentKey.lowercase() }
-
+        val definitions = appPreferences.homeRows.filter { row ->
+            row.enabled && row.system == HomeRowDefinition.SYSTEM_RADIO &&
+                (row.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR,
+                    HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT) ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ||
+                    row.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:"))
+        }.distinctBy { it.contentKey.lowercase() }
         val enabledIds = definitions.mapTo(hashSetOf()) { "radio.${it.contentKey}" }
         radioRows = radioRows.filter { it.id in enabledIds }
         if (definitions.isEmpty()) {
@@ -1435,52 +1442,56 @@ class HomeViewModel @Inject constructor(
         radioRowsPending = true
         radioJob = viewModelScope.launch {
             try {
-            val built = coroutineScope {
-                definitions.map { definition ->
-                    async {
-                        val stations = when {
-                            definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
-                                suspendResult { radioRepository.popular(HOME_ROW_LIMIT) }.getOrDefault(emptyList())
-                            definition.contentKey == HomeRowDefinition.RADIO_FAVORITES ->
-                                appPreferences.radioFavorites.take(HOME_ROW_LIMIT)
-                            definition.contentKey == HomeRowDefinition.RADIO_RECENT ->
-                                appPreferences.recentRadioStations.take(HOME_ROW_LIMIT)
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        tag = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        countryCode = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
-                                suspendResult {
-                                    radioRepository.search(
-                                        language = definition.contentKey.substringAfter(':'),
-                                        limit = HOME_ROW_LIMIT,
-                                    ).items
-                                }.getOrDefault(emptyList())
-                            else -> emptyList()
-                        }
-                        stations.takeIf { it.isNotEmpty() }?.let { entries ->
-                            ContentRowData(
-                                title = definition.displayTitle(context),
-                                items = entries.map { it.toHomeItem() },
-                                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
-                                id = "radio.${definition.contentKey}",
-                                showDescription = false,
-                            )
-                        }
+                val cached = suspendResult { homeRowSnapshots.read("radio", enabledIds) }.getOrDefault(emptyList())
+                if (generation != radioRowsGeneration) return@launch
+                val lastRows = (cached + radioRows).associateBy { it.id }
+                radioRows = definitions.mapNotNull { definition ->
+                    lastRows["radio.${definition.contentKey}"]?.copy(
+                        title = definition.displayTitle(context),
+                        style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                    )
+                }
+                // Put locally stored stations on screen immediately, without waiting for
+                // the popular/genre/country/language network calls.
+                definitions.filter { it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT) }
+                    .forEach { definition ->
+                        val id = "radio.${definition.contentKey}"
+                        val entries = if (definition.contentKey == HomeRowDefinition.RADIO_FAVORITES)
+                            appPreferences.radioFavorites else appPreferences.recentRadioStations
+                        val row = radioHomeRow(definition, entries)
+                        radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
+                        homeRowSnapshots.save("radio", id, row)
                     }
-                }.awaitAll().filterNotNull()
-            }
-            if (generation == radioRowsGeneration) radioRows = built
+                if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+
+                coroutineScope {
+                    definitions.filterNot {
+                        it.contentKey in setOf(HomeRowDefinition.RADIO_FAVORITES, HomeRowDefinition.RADIO_RECENT)
+                    }.map { definition -> async {
+                        val result = suspendResult {
+                            when {
+                                definition.contentKey in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
+                                    radioRepository.popular(HOME_ROW_LIMIT)
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
+                                    radioRepository.search(tag = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
+                                    radioRepository.search(countryCode = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                definition.contentKey.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
+                                    radioRepository.search(language = definition.contentKey.substringAfter(':'), limit = HOME_ROW_LIMIT).items
+                                else -> emptyList()
+                            }
+                        }
+                        if (generation != radioRowsGeneration || result.isFailure) return@async
+                        val id = "radio.${definition.contentKey}"
+                        val row = radioHomeRow(definition, result.getOrThrow())
+                        // Only a successful (possibly empty) result replaces the disk copy.
+                        homeRowSnapshots.save("radio", id, row)
+                        radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
+                        if (!_uiState.value.isFailurePage()) {
+                            publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                        }
+                    } }.awaitAll()
+                }
             } finally {
                 if (generation == radioRowsGeneration) {
                     radioRowsPending = false
@@ -1547,27 +1558,46 @@ class HomeViewModel @Inject constructor(
         trailerRowsPending = true
         trailerJob = viewModelScope.launch {
             try {
-            val locale = context.resources.configuration.locales[0]
-            for (definition in definitions) {
-                val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
-                val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
-                val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                val cached = suspendResult { homeRowSnapshots.read("trailers", enabledIds) }.getOrDefault(emptyList())
                 if (generation != trailerRowsGeneration) return@launch
-                if (result.isFailure) continue
-                val entries = result.getOrThrow()
-                trailerRows = trailerRows.filterNot { it.id == "trailers.${feed.name}" }
-                if (entries.isNotEmpty()) trailerRows = trailerRows + ContentRowData(
-                    title = definition.displayTitle(context),
-                    items = entries.distinctBy { it.videos.first().key }.map { entry ->
-                        MediaItem(ratingKey = "trailer-video:${entry.videos.first().key}", title = entry.title.displayTitle,
-                            type = "trailer", index = null, thumbUrl = entry.title.posterUrl ?: entry.title.imageUrl, artUrl = entry.title.imageUrl,
-                            year = entry.title.year, summary = entry.title.overview, tagline = null, durationMs = null,
-                            viewOffsetMs = null, parentTitle = null, parentRatingKey = null, grandparentTitle = null,
-                            grandparentRatingKey = null, contentRating = null, rating = null, studio = "TMDB")
-                    }, style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE), id = "trailers.${feed.name}", showDescription = false)
-                // Trailers are an extra row: they must not cover an offline or error page.
-                if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
-            }
+                val lastRows = (cached + trailerRows).associateBy { it.id }
+                trailerRows = definitions.mapNotNull { definition ->
+                    lastRows["trailers.${definition.contentKey}"]?.copy(
+                        title = definition.displayTitle(context),
+                        style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE),
+                    )
+                }
+                if (!_uiState.value.isFailurePage()) {
+                    publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
+                val locale = context.resources.configuration.locales[0]
+                for (definition in definitions) {
+                    val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == definition.contentKey } ?: continue
+                    val language = when (appPreferences.trailerLanguage) { "de" -> "de-DE"; "en" -> "en-US"; else -> locale.toLanguageTag() }
+                    val result = trailerRepository.feed(feed, language, locale.country.ifBlank { "US" })
+                    if (generation != trailerRowsGeneration) return@launch
+                    if (result.isFailure) continue
+                    val entries = result.getOrThrow()
+                    val id = "trailers.${feed.name}"
+                    val row = entries.takeIf { it.isNotEmpty() }?.let { hits ->
+                        ContentRowData(
+                            title = definition.displayTitle(context),
+                            items = hits.distinctBy { it.videos.first().key }.map { entry ->
+                                MediaItem(ratingKey = "trailer-video:${entry.videos.first().key}", title = entry.title.displayTitle,
+                                    type = "trailer", index = null, thumbUrl = entry.title.posterUrl ?: entry.title.imageUrl, artUrl = entry.title.imageUrl,
+                                    year = entry.title.year, summary = entry.title.overview, tagline = null, durationMs = null,
+                                    viewOffsetMs = null, parentTitle = null, parentRatingKey = null, grandparentTitle = null,
+                                    grandparentRatingKey = null, contentRating = null, rating = null, studio = "TMDB")
+                            },
+                            style = homeRowTileStyle(definition.displayMode, MediaTileStyle.LANDSCAPE),
+                            id = id,
+                            showDescription = false,
+                        )
+                    }
+                    homeRowSnapshots.save("trailers", id, row)
+                    trailerRows = trailerRows.filterNot { it.id == id } + listOfNotNull(row)
+                    if (!_uiState.value.isFailurePage()) publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
             } finally {
                 if (generation == trailerRowsGeneration) {
                     trailerRowsPending = false
