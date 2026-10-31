@@ -2017,16 +2017,12 @@ class HomeViewModel @Inject constructor(
         else -> null
     }
 
-    private fun homeRowHidden(id: String): Boolean {
-        val system = id.substringBefore('.')
-        // A media server being asleep stops playback, not offline access to its
-        // persisted library posters. Live TV remains gated by homeTvSourceVisible.
-        if (system in CACHED_MEDIA_SYSTEMS) return false
-        return system in unreachableServers.current().offline
-    }
+    private fun homeRowHidden(id: String): Boolean =
+        homeRowHiddenByOffline(id.substringBefore('.'), unreachableServers.current().offline)
 
     private fun homeSystemActive(system: String): Boolean {
-        if (system !in CACHED_MEDIA_SYSTEMS && system in unreachableServers.current().offline) return false
+        // Live TV still uses homeTvSourceVisible: only its explicit Online status enables cards.
+        if (homeRowHiddenByOffline(system, unreachableServers.current().offline)) return false
         return homeSystemReady(
         system,
         plexReady = plexOnly || appPreferences.isConfigured,
@@ -2113,9 +2109,6 @@ class HomeViewModel @Inject constructor(
         const val ALL_CONTINUE_ROW_ID = "all.continue"
         const val HOME_FOCUS_STATE_KEY = "home"
         private const val HOME_FOCUS_PERSIST_DEBOUNCE_MS = 320L
-        private val CACHED_MEDIA_SYSTEMS = setOf(
-            HomeRowDefinition.SYSTEM_PLEX, HomeRowDefinition.SYSTEM_JELLYFIN, HomeRowDefinition.SYSTEM_EMBY,
-        )
         const val HOME_ROW_LIMIT = 24
         const val HOME_SOURCE_PREVIEW_LIMIT = 72
         const val HOME_RELEASE_PREVIEW_LIMIT = 32
