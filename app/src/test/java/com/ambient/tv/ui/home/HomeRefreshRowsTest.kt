@@ -56,4 +56,13 @@ class HomeRefreshRowsTest {
         assertEquals(listOf(independent, fresh),
             mergeColdStartHomeRows(listOf(independent, fresh), listOf(old)))
     }
+
+    @Test
+    fun offlineServersRetainCachedPostersButNotLiveTvHomeRows() {
+        for (provider in listOf("plex", "jellyfin", "emby")) {
+            assertEquals(false, homeRowHiddenByOffline(provider, setOf(provider)))
+        }
+        assertEquals(true, homeRowHiddenByOffline("tvheadend", setOf("tvheadend")))
+        assertEquals(false, homeRowHiddenByOffline("tvheadend", emptySet()))
+    }
 }
