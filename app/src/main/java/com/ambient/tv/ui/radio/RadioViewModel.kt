@@ -595,6 +595,7 @@ class RadioViewModel @Inject constructor(
                 tag = facet?.id.takeIf { current.section == RadioSection.GENRES },
                 nextOffset = current.nextOffset,
                 hasMore = current.hasMore,
+                sortDescending = current.sortDescending,
             )
             playbackLauncher.play(station, visibleStations, source)
                 .onSuccess {
