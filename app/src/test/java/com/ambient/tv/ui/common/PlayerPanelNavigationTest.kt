@@ -219,4 +219,31 @@ class PlayerPanelNavigationTest {
         nav.activity.pointerPressed(first, false)
         assertTrue(nav.closeForInactivity(nav.activity.version))
     }
+
+    @Test fun implicitSublevelOriginRestoresLastFocusedParentRow() {
+        val nav = PlayerPanelNavigation()
+        nav.open(UnifiedPlayerPanel.VIDEO)
+        nav.noteFocused("entry:Motion")
+        // Nested SVP/section callbacks sometimes open without a fromOrigin wrapper.
+        nav.open(UnifiedPlayerPanel.VIDEO_SECTION)
+        nav.noteFocused("entry:SVP")
+        nav.open(UnifiedPlayerPanel.VIDEO_SVP)
+        nav.back()
+        assertEquals(UnifiedPlayerPanel.VIDEO_SECTION, nav.panel)
+        assertEquals("entry:SVP", nav.restoreKey)
+        nav.back()
+        assertEquals(UnifiedPlayerPanel.VIDEO, nav.panel)
+        assertEquals("entry:Motion", nav.restoreKey)
+    }
+
+    @Test fun explicitOriginHasPriorityOverLastFocusedParentRow() {
+        val nav = PlayerPanelNavigation()
+        nav.open(UnifiedPlayerPanel.SETTINGS)
+        nav.noteFocused("entry:Audio")
+        nav.fromOrigin("entry:Video", root = false) {
+            nav.open(UnifiedPlayerPanel.VIDEO)
+        }
+        nav.back()
+        assertEquals("entry:Video", nav.restoreKey)
+    }
 }
