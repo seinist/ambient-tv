@@ -23,6 +23,7 @@ import timber.log.Timber
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -85,6 +86,13 @@ class YouTubeViewModel @Inject constructor(
 ) : ViewModel() {
     /** Set on the channel page route: the screen shows that channel instead of a feed. */
     private val channelId: String? = savedStateHandle.get<String>("channelId")?.takeIf(String::isNotBlank)
+    // Render the requested destination from its first frame; no brief Home chip focus.
+    private val entryFeed = initialYouTubeBrowseFeed(
+        savedStateHandle.get<String>("feedKey"),
+        preferences.youtubeStartFeedKey,
+        preferences.youtubeFeedKeys,
+        channelId != null,
+    )
     // All channel pages share one view setup instead of one per visited channel.
     private fun stateKey(feed: YouTubeFeed) = if (channelId != null) "youtube:channel" else "youtube:${feed.key}"
     // Persisted selection may belong to an earlier app session. Start a fresh feed at the
@@ -129,6 +137,24 @@ class YouTubeViewModel @Inject constructor(
     private var focusLoadJob: Job? = null
     private var initialPagingJob: Job? = null
     private val rowLoadJobs = HashMap<String, Job>()
+    /** Limit concurrent API pages even when several visible TV rows request a continuation. */
+    private val continuationPermits = Semaphore(YouTubeRowPaging.MAX_INITIAL_PARALLEL)
+    /** The user may already have scrolled to a tail while the first feed request is in flight. */
+    private val visibleViewportEnds = linkedMapOf<String, Pair<Int, Boolean>>()
+
+    /** Register before starting: Main.immediate may otherwise complete a job before assignment. */
+    private fun startRowContinuation(rowId: String, showPlaceholder: Boolean) {
+        if (rowId in rowLoadJobs) return
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            try { continuationPermits.withPermit { continueRow(rowId, showPlaceholder) } }
+            finally {
+                // A cancelled old feed must not remove the new feed's job with the same row ID.
+                if (rowLoadJobs[rowId] === coroutineContext[Job]) rowLoadJobs.remove(rowId)
+            }
+        }
+        rowLoadJobs[rowId] = job
+        job.start()
+    }
 
     /** Discards every row continuation state; [session] arms paging for that feed/search key. */
     private fun resetPaging(session: String?, revision: Long = pagingRevision) {
@@ -144,13 +170,24 @@ class YouTubeViewModel @Inject constructor(
     /** After a completed load: rows below SmartTube's minimum continue once, two at a time, while the user rests. */
     private fun armPaging(session: String, revision: Long) {
         resetPaging(session, revision)
+        // Re-evaluate visible tails: their LazyListState need not scroll again after the
+        // pagination session is armed, so snapshotFlow would not emit a second time.
+        visibleViewportEnds.toMap().forEach { (id, tail) ->
+            onViewportNearEnd(id.takeUnless { it == "__flat" }, tail.first, tail.second)
+        }
         val candidates = paging.initialCandidates(_uiState.value.rows)
         if (candidates.isEmpty()) return
         initialPagingJob = viewModelScope.launch {
-            val permits = Semaphore(YouTubeRowPaging.MAX_INITIAL_PARALLEL)
             coroutineScope {
                 candidates.forEach { rowId ->
-                    launch { permits.withPermit { awaitQuietInput(); continueRow(rowId, showPlaceholder = false) } }
+                    launch {
+                        // Background prefill must not monopolize both permits while awaiting
+                        // idle input: focused/visible rows need to load promptly instead.
+                        awaitQuietInput()
+                        continuationPermits.withPermit {
+                            continueRow(rowId, showPlaceholder = false)
+                        }
+                    }
                 }
             }
         }
@@ -180,10 +217,25 @@ class YouTubeViewModel @Inject constructor(
             delay(YouTubeRowPaging.FOCUS_SETTLE_MS)
             while (BrowseWorkBudget.scrolling.get() > 0) delay(50)
             if (focusedRowId != target || target in rowLoadJobs) return@launch
-            rowLoadJobs[target] = viewModelScope.launch {
-                try { continueRow(target, showPlaceholder = true) } finally { rowLoadJobs.remove(target) }
-            }
+            startRowContinuation(target, showPlaceholder = true)
         }
+    }
+
+    /** Touch scroll has no focused card: page the source row when its visible tail approaches the end. */
+    fun onViewportNearEnd(rowId: String?, lastVisibleIndex: Int, grid: Boolean) {
+        if (lastVisibleIndex < 0) return
+        visibleViewportEnds[rowId ?: "__flat"] = lastVisibleIndex to grid
+        if (paging.session == null) return
+        val state = _uiState.value
+        if (state.loading || !state.available) return
+        val displayed = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
+        val visible = (if (rowId == null) displayed.singleOrNull()
+            else displayed.firstOrNull { it.id == rowId }) ?: return
+        val source = state.rows.firstOrNull { it.id == visible.id } ?: return
+        if (!paging.shouldLoadOnFocus(visible.id, lastVisibleIndex.coerceAtMost(visible.items.lastIndex),
+                visible.items.size, grid) ||
+            !paging.canLoad(visible.id, source.items.size) || visible.id in rowLoadJobs) return
+        startRowContinuation(visible.id, showPlaceholder = true)
     }
 
     private suspend fun awaitQuietInput(maxWaitMs: Long = Long.MAX_VALUE) {
@@ -218,7 +270,9 @@ class YouTubeViewModel @Inject constructor(
                 ?.let { contentCache.appendItems(session, rowId, it, pagingRevision) }
                 ?: _uiState.value.rows
             val after = rows.firstOrNull { it.id == rowId }?.items?.size ?: 0
-            paging.finish(rowId, token, page?.takeIf { after > before }, after)
+            if (com.ambient.tv.youtube.youtubeContinuationStalled(page, before, after))
+                paging.fail(rowId, token)
+            else paging.finish(rowId, token, page, after)
             finished = true
             Timber.tag("youtube-rows").d("Row %s continued: +%d items (total %d, more=%s)", rowId, after - before, after, page?.hasMore)
             // One state update: appended items and removed placeholders arrive together.
@@ -251,10 +305,11 @@ class YouTubeViewModel @Inject constructor(
         YouTubeUiState(
             available = engine.available,
             visibleFeeds = configuredFeeds,
-            viewMode = viewMode(YouTubeFeed.HOME),
-            sort = sort(YouTubeFeed.HOME),
-            sortDescending = storedDescending(YouTubeFeed.HOME, sort(YouTubeFeed.HOME)),
-            filter = filter(YouTubeFeed.HOME),
+            feed = entryFeed,
+            viewMode = viewMode(entryFeed),
+            sort = sort(entryFeed),
+            sortDescending = storedDescending(entryFeed, sort(entryFeed)),
+            filter = filter(entryFeed),
             gridColumns = preferences.libraryGridColumns,
             listRows = preferences.libraryListRows,
             mediaSelectionBehaviorKey = preferences.youtubeMediaSelectionBehaviorKey,
@@ -288,7 +343,7 @@ class YouTubeViewModel @Inject constructor(
     fun enter(initialFeedKey: String?) {
         if (!entered) {
             entered = true
-            val feed = initialFeedKey?.let(YouTubeFeed::fromKey)
+            val feed = initialFeedKey?.let(YouTubeFeed::fromKey)?.takeIf { it in configuredFeeds }
             if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
         }
         restorePlayedFocus()
@@ -488,6 +543,7 @@ class YouTubeViewModel @Inject constructor(
         _uiState.value.rows.takeIf { preserveExtent && displayedContentKey == key }.orEmpty()
 
     private fun beginContentLoad(): Long {
+        visibleViewportEnds.clear()
         val generation = ++contentGeneration
         contentJob?.cancel()
         _uiState.value = _uiState.value.copy(refreshing = true, refreshError = null)
@@ -521,7 +577,9 @@ class YouTubeViewModel @Inject constructor(
                 val supported = suspendResult { engine.supportedFeedKeys() }.getOrDefault(setOf("home"))
                 if (generation != contentGeneration) return@launch
                 // A transient capability/auth probe during recovery must not change the open tab.
-                val feeds = configuredFeeds.filter { it.key in supported || (preserveFeedSelection && it == feed) }
+                // A transient SmartTube capability probe must never switch a clicked category
+                // to Home during loading. Keep the explicitly requested, enabled destination.
+                val feeds = configuredFeeds.filter { it.key in supported || it == feed }
                     .ifEmpty { listOf(YouTubeFeed.HOME) }
                 val selectedFeed = feed.takeIf { it in feeds } ?: feeds.first()
                 if (_uiState.value.visibleFeeds != feeds || _uiState.value.feed != selectedFeed) {
