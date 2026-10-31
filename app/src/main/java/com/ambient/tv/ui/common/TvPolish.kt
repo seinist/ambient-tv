@@ -541,6 +541,8 @@ fun CrossfadeBackdropImage(
     focusCrop: Boolean = false,
     /** Fixed decode bound instead of the measured (full-screen) size, for dimmed backdrops. */
     decodeSize: IntSize? = null,
+    /** False when an unavailable incoming image must not retain unrelated previous art. */
+    retainPreviousOnError: Boolean = true,
 ) {
     val context = LocalContext.current
     val layers = remember { androidx.compose.runtime.mutableStateListOf<BackdropLayer>() }
@@ -603,8 +605,10 @@ fun CrossfadeBackdropImage(
                         loaded = true
                     },
                     onError = {
-                        // Keep showing the previous image rather than fading to nothing.
-                        if (layers.size > 1) layers.remove(layer)
+                        // Backdrops retain their last valid artwork, but changing radio
+                        // stations must never leave the previous station's cover indefinitely.
+                        if (!retainPreviousOnError) layers.clear()
+                        else if (layers.size > 1) layers.remove(layer)
                     },
                 )
             }
