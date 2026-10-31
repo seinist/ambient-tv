@@ -175,25 +175,19 @@ internal class CarAuxiliaryAudio @Inject constructor(
     }
 
     /** Search only explicit audio channel kinds, never general live TV programme titles. */
-    suspend fun searchLive(query: String, limit: Int = 25): List<CarAudioEntry> =
-        liveTv.configured().asSequence().filter { it.source.system in setOf("iptv", "tvheadend") }
-            .flatMap { repo ->
-                // Can't call suspending channels() inside Sequence.flatMap. Materialize in the
-                // bounded loop below instead.
-                emptySequence<CarAudioEntry>()
-            }.toList().let {
-                val results = mutableListOf<CarAudioEntry>()
-                for (repo in liveTv.configured().filter { it.source.system in setOf("iptv", "tvheadend") }) {
-                    if (results.size >= limit) break
-                    val channels = runCatching { repo.channels() }.getOrDefault(emptyList())
-                    results += channels.filter { it.kind == LiveTvChannelKind.RADIO &&
-                        it.name.contains(query, ignoreCase = true) }
-                        .take(limit - results.size)
-                        .map { CarAudioEntry(CarAudioIds.liveAudio(repo.source.id, it.uuid), it.name,
-                            repo.source.name, it.iconUrl, playable = true) }
-                }
-                results
-            }
+    suspend fun searchLive(query: String, limit: Int = 25): List<CarAudioEntry> {
+        val results = mutableListOf<CarAudioEntry>()
+        for (repo in liveTv.configured().filter { it.source.system in setOf("iptv", "tvheadend") }) {
+            if (results.size >= limit) break
+            val channels = runCatching { repo.channels() }.getOrDefault(emptyList())
+            results += channels.filter { it.kind == LiveTvChannelKind.RADIO &&
+                it.name.contains(query, ignoreCase = true) }
+                .take(limit - results.size)
+                .map { CarAudioEntry(CarAudioIds.liveAudio(repo.source.id, it.uuid), it.name,
+                    repo.source.name, it.iconUrl, playable = true) }
+        }
+        return results
+    }
 
     suspend fun searchStoredAudio(query: String, limit: Int = 25): List<CarAudioEntry> {
         if (!preferences.filesEnabled) return emptyList()
