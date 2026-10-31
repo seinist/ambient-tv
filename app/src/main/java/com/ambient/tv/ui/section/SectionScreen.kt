@@ -343,7 +343,7 @@ internal fun SectionContent(
         mutableStateOf<Char?>(null)
     }
     val onLibraryViewportChanged: (Char?) -> Unit = remember(viewportLetterState) {
-        { letter -> viewportLetterState.value = letter }
+        { letter: Char? -> viewportLetterState.value = letter }
     }
     val onLibraryItemFocused: (MediaItem) -> Unit = { item ->
         markInitialFocusHandled()
