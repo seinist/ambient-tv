@@ -85,7 +85,7 @@ fun TelegramScreen(
             focusChain = chain,
             actions = {
                 TvChip(
-                    text = stringResource(R.string.action_refresh),
+                    text = stringResource(R.string.tvh_refresh),
                     selected = false,
                     icon = Icons.Filled.Refresh,
                     onClick = { viewModel.open(sectionKey, refresh = true) },
@@ -123,7 +123,7 @@ fun TelegramScreen(
                 title = stringResource(R.string.telegram_error),
                 body = state.error,
                 kind = BrowseStatusKind.ERROR,
-                actionLabel = stringResource(R.string.action_refresh),
+                actionLabel = stringResource(R.string.tvh_refresh),
                 onAction = { viewModel.open(sectionKey, refresh = true) },
                 modifier = Modifier.weight(1f),
             )
