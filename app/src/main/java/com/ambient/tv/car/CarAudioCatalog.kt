@@ -80,18 +80,10 @@ internal class CarAudioCatalog @Inject constructor(
     }
 
     private fun root(): List<CarAudioEntry> = buildList {
-        if (preferences.radioEnabled) {
-            add(folder(CarAudioIds.RADIO_FAVORITES, "Radio-Favoriten"))
-            add(folder(CarAudioIds.RADIO_RECENT, "Zuletzt gehörte Radios"))
-            add(folder(CarAudioIds.RADIO_POPULAR, "Beliebte Radios"))
-        }
-        if (preferences.spotifyEnabled && spotify.webAuthorized) {
-            add(folder(CarAudioIds.SPOTIFY_HOME, "Spotify"))
-            add(folder(CarAudioIds.SPOTIFY_LIKED, "Lieblingssongs"))
-            add(folder(CarAudioIds.SPOTIFY_PLAYLISTS, "Spotify-Playlists"))
-            add(folder(CarAudioIds.SPOTIFY_ALBUMS, "Spotify-Alben"))
-            add(folder(CarAudioIds.SPOTIFY_ARTISTS, "Spotify-Künstler"))
-        }
+        // Android Auto normally allows <= 4 root tabs. Nest providers' categories instead.
+        if (preferences.radioEnabled) add(folder(CarAudioIds.RADIO_ROOT, "Radio"))
+        if (preferences.spotifyEnabled && spotify.webAuthorized)
+            add(folder(CarAudioIds.SPOTIFY_ROOT, "Spotify"))
         add(folder(CarAudioIds.MUSIC_LIBRARIES, "Musikbibliotheken"))
     }
 
@@ -134,6 +126,18 @@ internal class CarAudioCatalog @Inject constructor(
     )
 
     private suspend fun loadPage(parentId: String): List<CarAudioEntry> = when (parentId) {
+        CarAudioIds.RADIO_ROOT -> if (preferences.radioEnabled) listOf(
+            folder(CarAudioIds.RADIO_FAVORITES, "Favoriten"),
+            folder(CarAudioIds.RADIO_RECENT, "Zuletzt gehört"),
+            folder(CarAudioIds.RADIO_POPULAR, "Beliebt"),
+        ) else emptyList()
+        CarAudioIds.SPOTIFY_ROOT -> if (spotifyEnabled()) listOf(
+            folder(CarAudioIds.SPOTIFY_HOME, "Startseite"),
+            folder(CarAudioIds.SPOTIFY_LIKED, "Lieblingssongs"),
+            folder(CarAudioIds.SPOTIFY_PLAYLISTS, "Playlists"),
+            folder(CarAudioIds.SPOTIFY_ALBUMS, "Alben"),
+            folder(CarAudioIds.SPOTIFY_ARTISTS, "Künstler"),
+        ) else emptyList()
         CarAudioIds.RADIO_FAVORITES ->
             if (preferences.radioEnabled) preferences.radioFavorites.map { it.asEntry() } else emptyList()
         CarAudioIds.RADIO_RECENT ->
