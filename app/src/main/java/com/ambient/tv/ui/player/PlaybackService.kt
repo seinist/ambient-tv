@@ -338,6 +338,155 @@ class PlaybackService : MediaBrowserService() {
         }
     }
 
+
+    /** Platform MediaBrowserService: Android Auto binds here; the normal media notification
+     * keeps using exactly the same platform MediaSession token. */
+    override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot? {
+        // The host must actually own the supplied package name (no spoofed browse clients).
+        val owned = packageManager.getPackagesForUid(clientUid)?.contains(clientPackageName) == true
+        return if (owned) BrowserRoot(CarAudioIds.ROOT, null) else null
+    }
+
+    override fun onLoadChildren(
+        parentId: String,
+        result: MediaBrowserService.Result<MutableList<MediaBrowser.MediaItem>>,
+    ) {
+        if (!CarAudioIds.isFolder(parentId)) { result.sendResult(null); return }
+        result.detach()
+        scope.launch {
+            val entries = try {
+                carCatalog.children(parentId)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "Android Auto browse failed for %s", parentId)
+                emptyList()
+            }
+            result.sendResult(entries.map { it.toBrowserItem() }.toMutableList())
+        }
+    }
+
+    override fun onLoadItem(
+        itemId: String,
+        result: MediaBrowserService.Result<MediaBrowser.MediaItem>,
+    ) {
+        result.detach()
+        scope.launch {
+            val entry = runCatching { carCatalog.entry(itemId) }.getOrNull()
+            result.sendResult(entry?.toBrowserItem())
+        }
+    }
+
+    private fun requestCarAudioPlayback(itemId: String) {
+        carPlaybackJob?.cancel()
+        carPlaybackJob = scope.launch {
+            try {
+                carCatalog.resolve(itemId)?.let { startCarAudio(it) }
+                    ?: Timber.w("Android Auto rejected unavailable/non-audio item")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "Android Auto playback selection failed")
+                mediaSession.setPlaybackState(PlaybackState.Builder()
+                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PLAY_PAUSE)
+                    .setState(PlaybackState.STATE_ERROR, 0L, 0f).build())
+            }
+        }
+    }
+
+    private suspend fun startCarAudio(selection: CarAudioSelection) {
+        when (selection) {
+            is CarAudioSelection.Radio -> {
+                if (carSpotifySelected) spotify.pause()
+                carSpotifySelected = false
+                carMusicQueue = emptyList()
+                radioPlaybackLauncher.play(selection.station, selection.queue)
+                    .onFailure { Timber.w(it, "Android Auto radio playback failed") }
+                carCatalog.invalidate(CarAudioIds.RADIO_RECENT)
+                notifyChildrenChanged(CarAudioIds.RADIO_RECENT)
+            }
+            is CarAudioSelection.Spotify -> {
+                carSpotifyStartGeneration = BackgroundPlaybackSession.snapshot.value.generation
+                carSpotifySelected = true
+                carMusicQueue = emptyList()
+                mediaSession.setPlaybackState(PlaybackState.Builder()
+                    .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                        PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
+                    .setState(PlaybackState.STATE_BUFFERING, 0L, 0f).build())
+                spotify.playUri(selection.uri)
+            }
+            is CarAudioSelection.Library -> {
+                if (carSpotifySelected) spotify.pause()
+                carSpotifySelected = false
+                val item = selection.item
+                val url = item.streamUrl ?: return
+                carMusicQueue = selection.queue
+                repository.preparePlayback(item.ratingKey, 0)
+                val source = when {
+                    JellyfinBackend.owns(item.ratingKey) -> "jellyfin"
+                    EmbyBackend.owns(item.ratingKey) -> "emby"
+                    else -> "plex"
+                }
+                PlaybackEngineFactory.create(
+                    context = this,
+                    streamUrl = url,
+                    startPositionMs = item.viewOffsetMs?.coerceAtLeast(0L) ?: 0L,
+                    metadata = PlaybackMetadata(
+                        route = Destinations.player(item.ratingKey),
+                        title = item.title,
+                        subtitle = item.parentTitle.orEmpty(),
+                        source = source,
+                        mediaId = item.ratingKey,
+                        hasVideo = false,
+                        artworkUrl = item.thumbUrl,
+                        durationMs = item.durationMs ?: 0L,
+                    ),
+                    audioOnly = true,
+                )
+            }
+        }
+    }
+
+    private fun skipCarAudio(next: Boolean) {
+        if (carSpotifySelected) {
+            if (next) spotify.next() else spotify.previous()
+            return
+        }
+        val current = BackgroundPlaybackSession.snapshot.value.metadata
+        if (current?.source == "radio") {
+            playRadioAdjacent(next)
+            return
+        }
+        val index = carMusicQueue.indexOf(current?.mediaId)
+        val target = if (next) index + 1 else index - 1
+        if (index >= 0 && target in carMusicQueue.indices) {
+            requestCarAudioPlayback(CarAudioIds.musicItem(carMusicQueue[target]))
+        }
+    }
+
+    /** Spotify owns the actual Connect audio engine; the Auto browser mirrors its state, not a
+     * competing decoder. Spotify's own foreground service remains responsible for its audio focus. */
+    private fun publishCarSpotify(state: SpotifyPlaybackState) {
+        if (!carSpotifySelected) return
+        val track = state.current
+        mediaSession.setMetadata(MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, track?.name.orEmpty())
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, track?.artists?.joinToString(", ") { it.name }.orEmpty())
+            .putLong(MediaMetadata.METADATA_KEY_DURATION, track?.durationMs ?: state.durationMs)
+            .build())
+        mediaSession.setPlaybackState(PlaybackState.Builder()
+            .setActions(PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE or
+                PlaybackState.ACTION_STOP or PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or PlaybackState.ACTION_SEEK_TO)
+            .setState(when {
+                state.playing -> PlaybackState.STATE_PLAYING
+                state.error != null -> PlaybackState.STATE_ERROR
+                else -> PlaybackState.STATE_PAUSED
+            }, state.positionMs, if (state.playing) 1f else 0f)
+            .build())
+    }
+
     // Media-session notifications are exempt from Android 13's notification permission.
     @android.annotation.SuppressLint("NotificationPermission")
     private fun updatePlatformState(state: BackgroundPlaybackSession.Snapshot) {
