@@ -438,6 +438,8 @@ class SettingsViewModel @Inject constructor(
         mediaSubmenus = MediaSubmenuDraft(
             spotify = appPreferences.spotifySubmenuKeys,
             radio = appPreferences.radioSubmenuKeys,
+            telegram = appPreferences.telegramSubmenuKeys,
+            telegramEnabled = appPreferences.telegramEnabled,
         ),
         host = appPreferences.host,
         port = appPreferences.port.toString(),
@@ -1846,6 +1848,19 @@ class SettingsViewModel @Inject constructor(
         spotifyRepository.reconcileReceiverForPlatform()
     }
 
+    fun onTelegramEnabledChanged(value: Boolean) {
+        appPreferences.telegramEnabled = value
+        _uiState.update { it.copy(mediaSubmenus = it.mediaSubmenus.copy(telegramEnabled = value)) }
+    }
+
+    fun onTelegramSubmenuChanged(key: String, enabled: Boolean) = _uiState.update { state ->
+        if (key !in AppPreferences.TELEGRAM_SUBMENU_KEYS) return@update state
+        val keys = state.telegramSubmenuKeys.toMutableList()
+        if (enabled && key !in keys) keys.add(key)
+        if (!enabled) keys.remove(key)
+        state.copy(mediaSubmenus = state.mediaSubmenus.copy(telegram = keys))
+    }
+
     fun onRadioEnabledChanged(value: Boolean) {
         appPreferences.radioEnabled = value
         _uiState.update { it.copy(radioEnabled = value) }
@@ -2894,6 +2909,8 @@ class SettingsViewModel @Inject constructor(
         appPreferences.youtubeEnabled = state.youtubeEnabled
         appPreferences.spotifyEnabled = state.spotifyEnabled
         appPreferences.radioEnabled = state.radioEnabled
+        appPreferences.telegramEnabled = state.telegramEnabled
+        appPreferences.telegramSubmenuKeys = state.telegramSubmenuKeys
         if (state.spotifyClientId != appPreferences.spotifyClientId) {
             spotifyRepository.logoutWebApi()
         }

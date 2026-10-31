@@ -650,6 +650,49 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             }
         }
 
+        SettingsCategory.TELEGRAM -> {
+            item {
+                TvSettingRow(
+                    systemString(MediaSystem.TELEGRAM, R.string.settings_telegram_enable),
+                    stringResource(R.string.settings_telegram_enable_hint),
+                    uiState.telegramEnabled,
+                    viewModel::onTelegramEnabledChanged,
+                )
+            }
+            if (uiState.telegramEnabled) {
+                item { SystemNameField(MediaSystem.TELEGRAM, uiState, viewModel) }
+                item(key = "telegram-account") {
+                    SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
+                        Text(stringResource(R.string.settings_telegram_native_missing),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.settings_telegram_notice),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                item(key = "telegram-submenu") {
+                    SettingsGroup(title = stringResource(R.string.settings_submenu_items),
+                        subtitle = stringResource(R.string.settings_submenu_items_hint)) {
+                        listOf(
+                            "recent" to R.string.telegram_recent,
+                            "channels" to R.string.telegram_channels,
+                            "videos" to R.string.telegram_videos,
+                            "youtube" to R.string.telegram_youtube,
+                            "audio" to R.string.telegram_audio,
+                            "photos" to R.string.telegram_photos,
+                        ).forEach { (key, label) ->
+                            TvSettingRow(title = stringResource(label),
+                                checked = key in uiState.telegramSubmenuKeys,
+                                onCheckedChange = { value -> viewModel.onTelegramSubmenuChanged(key, value) })
+                        }
+                        SubmenuSettingsRow(MediaSystem.TELEGRAM, uiState,
+                            viewModel::onSidebarSettingsShortcutChanged)
+                    }
+                }
+            }
+        }
+
         SettingsCategory.RADIO -> {
             item {
                 TvSettingRow(

@@ -31,6 +31,8 @@ data class WireGuardLiveState(
 data class MediaSubmenuDraft(
     val spotify: List<String> = AppPreferences.DEFAULT_SPOTIFY_SUBMENU_KEYS,
     val radio: List<String> = AppPreferences.DEFAULT_RADIO_SUBMENU_KEYS,
+    val telegram: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
+    val telegramEnabled: Boolean = false,
 )
 
 /** Runtime-only server authentication state, nested to stay below the JVM method-slot limit. */
@@ -334,6 +336,8 @@ internal fun SettingsUiState.editableValues(): List<Any?> = listOf(
     youtubeEnabled,
     spotifyEnabled,
     radioEnabled,
+    telegramEnabled,
+    telegramSubmenuKeys,
     spotifyClientId,
     spotifyDeviceName,
     spotifyBitrateKbps,
@@ -520,6 +524,8 @@ internal fun mergeStoredSettings(draft: SettingsUiState, baseline: SettingsUiSta
     mediaSubmenus = MediaSubmenuDraft(
         spotify = if (draft.spotifySubmenuKeys != baseline.spotifySubmenuKeys) draft.spotifySubmenuKeys else stored.spotifySubmenuKeys,
         radio = if (draft.radioSubmenuKeys != baseline.radioSubmenuKeys) draft.radioSubmenuKeys else stored.radioSubmenuKeys,
+        telegram = if (draft.telegramSubmenuKeys != baseline.telegramSubmenuKeys) draft.telegramSubmenuKeys else stored.telegramSubmenuKeys,
+        telegramEnabled = if (draft.telegramEnabled != baseline.telegramEnabled) draft.telegramEnabled else stored.telegramEnabled,
     ),
     host = if (draft.host != baseline.host) draft.host else stored.host,
     port = if (draft.port != baseline.port) draft.port else stored.port,
@@ -728,3 +734,7 @@ val SettingsUiState.spotifySubmenuKeys: List<String>
 
 val SettingsUiState.radioSubmenuKeys: List<String>
     get() = mediaSubmenus.radio
+
+/** Telegram fields live alongside submenu drafts so the SettingsUiState JVM constructor stays small. */
+val SettingsUiState.telegramEnabled: Boolean get() = mediaSubmenus.telegramEnabled
+val SettingsUiState.telegramSubmenuKeys: List<String> get() = mediaSubmenus.telegram
