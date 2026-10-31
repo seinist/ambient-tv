@@ -21,6 +21,7 @@ class MiniPlayerArtworkFallbackTest {
         assertNull(miniPlayerMonogram("Radio Browser"))
         assertNull(miniPlayerMonogram("unknown"))
         assertNull(miniPlayerMonogram("unbekannt"))
+        assertNull(miniPlayerMonogram("https://stream.example.net/live"))
     }
 
     @Test fun noArtworkUrlsStillDrawsACircleWhenItHasFallbackContent() {
