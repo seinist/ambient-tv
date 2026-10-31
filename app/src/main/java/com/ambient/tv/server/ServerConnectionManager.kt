@@ -130,8 +130,8 @@ class ServerConnectionManager @Inject constructor(
                 ?: return@withLock false
             // A connect that started meanwhile owns the state; never overwrite its result.
             if (checkedEndpoint != endpointKey() || connectRun.startedSince(connectGeneration)) return@withLock false
-            _state.value = ServerConnectionState.Online(identity)
             hosts.online(hosts.begin("plex")) // Successful API probe overrides stale port failures.
+            _state.value = ServerConnectionState.Online(identity)
             reconnectPause.onlineAgain()
             lastSuccessfulCheckMs = System.currentTimeMillis()
             lastConnectedServerId = checkedEndpoint
@@ -247,11 +247,11 @@ class ServerConnectionManager @Inject constructor(
         }
 
         if (activeServerId != endpointKey()) return false
-        _state.value = ServerConnectionState.Online(identity)
         lastConnectedServerId = activeServerId
         lastSuccessfulCheckMs = System.currentTimeMillis()
         learnMacIfMissing()
         hosts.online(hosts.begin("plex")) // MAC discovery may have changed the shared machine key.
+        _state.value = ServerConnectionState.Online(identity)
         resumeConnectivity.get().noteHealthyNow()
         onConnected()
         return true
