@@ -169,6 +169,14 @@ class YouTubeRowPagingTest {
     }
 
     @Test
+    fun continuationJobsCannotRemainStuckAfterImmediateCompletion() {
+        val file = File("src/main/java/com/ambient/tv/ui/youtube/YouTubeViewModel.kt").readText()
+        assertTrue(file.contains("viewModelScope.launch(start = CoroutineStart.LAZY)"))
+        assertTrue(file.contains("rowLoadJobs[rowId] = job\n        job.start()"))
+        assertTrue(file.contains("rowLoadJobs[rowId] === coroutineContext[Job]"))
+    }
+
+    @Test
     fun rowEndPlaceholdersUseTheSharedDampedPulse() {
         val source = listOf(File("src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt"), File("app/src/main/java/com/ambient/tv/ui/youtube/YouTubeScreen.kt"))
             .first { it.exists() }.readText()
