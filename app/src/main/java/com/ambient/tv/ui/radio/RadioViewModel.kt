@@ -69,6 +69,23 @@ internal fun RadioUiState.effectiveViewMode(): RadioViewMode =
 internal fun RadioUiState.awaitingInitialContent(): Boolean =
     stations.isEmpty() && facets.isEmpty() && (loading || !contentReady)
 
+/** The requested sidebar route must be resolved before an old page can report "empty". */
+internal fun RadioUiState.awaitingRequestedPage(
+    requestedSection: RadioSection,
+    entryPending: Boolean,
+): Boolean = entryPending || section != requestedSection || awaitingInitialContent()
+
+/** A new route's placeholders must match its layout, not the former page's cached mode. */
+internal fun RadioUiState.requestedLoadingLayout(requestedSection: RadioSection): RadioLoadingLayout =
+    if (section == requestedSection) loadingLayout()
+    else copy(section = requestedSection, selectedFacet = null, submittedQuery = "").loadingLayout()
+
+/** An empty remote page needs revalidation whenever its suspended destination resumes. */
+internal fun RadioUiState.needsRemoteRefreshOnReturn(): Boolean =
+    stations.isEmpty() && facets.isEmpty() &&
+        (submittedQuery.isNotBlank() || selectedFacet != null ||
+            section == RadioSection.POPULAR || section.isFacetSection)
+
 data class RadioUiState(
     val section: RadioSection = RadioSection.POPULAR,
     /** First composition is pending even before the enter() effect has launched the API request. */
@@ -159,7 +176,11 @@ class RadioViewModel @Inject constructor(
 
     fun enter(initialSection: RadioSection? = null) {
         if (entered) {
-            initialSection?.let(::selectSection)
+            // An old entry may already have reported "no stations" or an API error.
+            // Unlike selecting the same chip, re-entering this destination always retries.
+            // Keep the actual facet/search context when returning from the player.
+            if (initialSection != null && initialSection != _state.value.section) selectSection(initialSection)
+            else refresh()
             return
         }
         entered = true
