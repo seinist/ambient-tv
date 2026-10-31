@@ -2194,4 +2194,12 @@
     <string name="offline_auto_check_now">Automatische Prüfung steht an…</string>
     <string name="offline_auto_check_in">Nächste automatische Prüfung in %1$d s</string>
     <string name="offline_wake_settings">Wake-on-LAN einstellen</string>
+    <string name="sleep_standby_admin_label">Ambient TV Sleep-Timer-Standby</string>
+    <string name="sleep_standby_admin_description">Erlaubt Ambient TV, nach Ablauf des Sleep-Timers das TV-Gerät in Standby zu versetzen.</string>
+    <string name="settings_sleep_standby_title">TV-Standby nach Timer-Ablauf</string>
+    <string name="settings_sleep_standby_enable">Sofortiges TV-Standby erlauben</string>
+    <string name="settings_sleep_standby_disable">Sofortiges TV-Standby deaktivieren</string>
+    <string name="settings_sleep_standby_hint">Mit Berechtigung fordert Ambient TV nach Timer-Ablauf den Standby an. Andernfalls gibt es die Bildschirm-Wachhaltung frei, damit Android selbst abschalten kann. Ob ein angeschlossener Fernseher ausgeht, hängt vom Gerät und HDMI-CEC ab.</string>
+    <string name="settings_sleep_standby_unavailable">Dieses TV-Gerät unterstützt kein sofortiges Standby über Geräteverwaltung. Der Timer beendet trotzdem die Wiedergabe und lässt Android automatisch einschlafen.</string>
+    <string name="settings_sleep_standby_explanation">Ambient TV darf das Gerät nur nach Ablauf des Sleep-Timers sperren. Diese Berechtigung ist freiwillig und kann jederzeit deaktiviert werden.</string>
 </resources>

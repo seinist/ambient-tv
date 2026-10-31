@@ -14,6 +14,10 @@ interface SleepTarget {
     fun sleepPlay()
     /** Ends playback (timer ran out or "stop now" in the prompt). */
     fun sleepStop()
+    /** Device standby is never allowed for phones, tablets or automotive. */
+    fun sleepAllowsDeviceStandby(): Boolean = false
+    /** TV only, called after stopping playback if [sleepAllowsDeviceStandby] is true. */
+    fun sleepEnterStandby() {}
 }
 
 /** Clocks behind the sleep timer; replaced in tests. */
@@ -45,6 +49,10 @@ object SleepSession {
     /** Set while the non-pausing pre-warning is shown; the elapsed-realtime stop deadline. */
     var warningDeadline by mutableStateOf<Long?>(null)
         private set
+    /** Timer expired: allow Android TV to sleep even if the app screensaver is enabled. */
+    var standbyRequested by mutableStateOf(false)
+        private set
+    fun cancelStandbyRequest() { standbyRequested = false }
     private var daily by mutableStateOf<DailyStopPlan?>(null)
     /** The daily stop time applies to this session; the player menu can skip it for today. */
     val dailyStopActive: Boolean get() = daily != null
@@ -64,6 +72,7 @@ object SleepSession {
      * timer) arms the automatic timer and the daily stop time; zapping and next episode continue.
      */
     fun begin(target: SleepTarget, preferences: () -> AppPreferences?, isLive: Boolean, hadPlayer: Boolean, replacingSource: Boolean) {
+        standbyRequested = false
         val now = clock.realtimeMs()
         val kept = keptAtMs
         keptAtMs = null
@@ -107,6 +116,7 @@ object SleepSession {
 
     /** The user's timer from the player menu. "Off" ends only that one; the daily stop time stays. */
     fun set(value: SleepTimerConfig) {
+        standbyRequested = false
         promptDeadline = null
         warningDeadline = null
         auto = false
@@ -169,9 +179,10 @@ object SleepSession {
         userInput()
     }
 
-    /** "Stop now" in the prompt. */
+    /** "Stop now" in the prompt must perform the same timer-triggered standby as expiry. */
     fun stopNow() {
-        target?.sleepStop()
+        if (promptDeadline != null) stopForSleep()
+        else target?.sleepStop()
     }
 
     /** Once a second from the target's service loop. */
@@ -232,7 +243,8 @@ object SleepSession {
     }
 
     private fun stopForSleep() {
-        target?.sleepStop()
+        val ending = target ?: return
+        ending.sleepStop()
         // Visible after the player closes, and in the history for whoever finds the TV stopped.
         runCatching {
             com.ambient.tv.notifications.AppNotifications.post(com.ambient.tv.notifications.AppNotice(
@@ -240,10 +252,16 @@ object SleepSession {
                 kind = com.ambient.tv.notifications.NoticeKind.PLAYBACK,
             ))
         }
+        // A phone timer must stop audio/video only. No lock, power or standby request.
+        if (ending.sleepAllowsDeviceStandby()) {
+            standbyRequested = true
+            ending.sleepEnterStandby()
+        }
     }
 
     /** Tests: back to a clean state. */
     internal fun resetForTest(clock: SleepClock) {
+        standbyRequested = false
         this.clock = clock
         target = null
         prefs = null

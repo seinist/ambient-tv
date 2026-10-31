@@ -20,16 +20,19 @@ class SleepSessionTest {
         fun advance(ms: Long) { rt += ms; epoch += ms }
     }
 
-    private class Target : SleepTarget {
+    private class Target(private val tvDevice: Boolean = true) : SleepTarget {
         var playing = true
         var ended = false
         var stops = 0
         var pauses = 0
+        var standbyAttempts = 0
         override fun sleepStatus() = PlaybackStatus(playing = playing, ended = ended)
         override fun sleepWantsToPlay() = playing
         override fun sleepPause() { pauses++; playing = false }
         override fun sleepPlay() { playing = true }
         override fun sleepStop() { stops++; SleepSession.end(this) }
+        override fun sleepAllowsDeviceStandby() = tvDevice
+        override fun sleepEnterStandby() { standbyAttempts++ }
     }
 
     private fun prefs(auto: String = AppPreferences.SLEEP_AUTO_START_OFF, daily: Int = -1, warning: Int = 1) =
@@ -84,8 +87,59 @@ class SleepSessionTest {
         clock.advance(PlaybackSleepTimer.PROMPT_MS)
         SleepSession.tick(target)
         assertEquals(1, target.stops)
+        assertEquals(1, target.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
+        SleepSession.cancelStandbyRequest()
+        assertFalse(SleepSession.standbyRequested)
         assertNull(SleepSession.target)
         assertEquals(SleepTimerKind.OFF, SleepSession.config.kind)
+    }
+
+    @Test fun phoneStopsPlaybackButNeverRequestsStandby() {
+        val phone = Target(tvDevice = false)
+        SleepSession.begin(phone, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(phone)
+        assertEquals(1, phone.pauses)
+        clock.advance(PlaybackSleepTimer.PROMPT_MS)
+        SleepSession.tick(phone)
+        assertEquals(1, phone.stops)
+        assertEquals(0, phone.standbyAttempts)
+        assertFalse(SleepSession.standbyRequested)
+    }
+
+    @Test fun stopNowInTheTimerPromptRespectsDeviceType() {
+        val tv = Target()
+        SleepSession.begin(tv, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(tv)
+        SleepSession.stopNow()
+        assertEquals(1, tv.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
+
+        SleepSession.resetForTest(clock)
+        val phone = Target(tvDevice = false)
+        SleepSession.begin(phone, { prefs() }, false, false, false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.DURATION, 1))
+        clock.advance(60_000)
+        SleepSession.tick(phone)
+        SleepSession.stopNow()
+        assertEquals(1, phone.stops)
+        assertEquals(0, phone.standbyAttempts)
+        assertFalse(SleepSession.standbyRequested)
+    }
+
+    @Test fun naturalEndOfItemAlsoRequestsTvStandbyWithoutPrompt() {
+        val target = Target().apply { playing = false; ended = true }
+        SleepSession.begin(target, { prefs() }, isLive = false, hadPlayer = false, replacingSource = false)
+        SleepSession.set(SleepTimerConfig(SleepTimerKind.END_OF_ITEM))
+        SleepSession.tick(target)
+        assertEquals(0, target.pauses)
+        assertEquals(1, target.stops)
+        assertEquals(1, target.standbyAttempts)
+        assertTrue(SleepSession.standbyRequested)
     }
 
     @Test fun continuingAfterTheDailyStopDropsItButKeepsTheUserTimer() {

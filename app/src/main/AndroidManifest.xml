@@ -29,6 +29,8 @@
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />
+    <!-- Standby via Device Admin is optional; TVs without this feature remain installable. -->
+    <uses-feature android:name="android.software.device_admin" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
@@ -65,6 +67,18 @@
             android:name="android.software.leanback.supports_touch"
             android:value="true" />
 
+        <!-- Opt-in force-lock only; Android shows its own approval screen in Settings. -->
+        <receiver
+            android:name=".ui.player.SleepTimerDeviceAdminReceiver"
+            android:label="@string/sleep_standby_admin_label"
+            android:description="@string/sleep_standby_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data android:name="android.app.device_admin" android:resource="@xml/sleep_timer_device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
         <service android:name=".companion.CompanionReceiverService" android:exported="false"
             android:foregroundServiceType="connectedDevice" />
         <!-- Live TV reminders: the alarm itself, and re-arming after a reboot or an update. -->

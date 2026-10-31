@@ -54,6 +54,11 @@ class SpotifyPlaybackService : Service() {
             com.ambient.tv.ui.player.SleepSession.end(this)
             stopPlaybackCompletely()
         }
+        override fun sleepAllowsDeviceStandby() =
+            com.ambient.tv.ui.mobile.isTelevision(this@SpotifyPlaybackService)
+        override fun sleepEnterStandby() {
+            com.ambient.tv.ui.player.TvSleepStandby.request(this@SpotifyPlaybackService)
+        }
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var session: MediaSession
