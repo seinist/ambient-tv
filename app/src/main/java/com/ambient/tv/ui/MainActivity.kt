@@ -1284,6 +1284,9 @@ private fun AmbientTvApp(
                     it.active && it.metadata?.hasVideo == true,
                     it.playing,
                     it.wantsToPlay,
+                    it.metadata?.isTrailer == true,
+                    com.ambient.tv.ui.player.handheldPipAspectRatio(
+                        it.metadata?.sourceWidth, it.metadata?.sourceHeight, it.metadata?.sourceAspectRatioHint),
                 )
             }
             .distinctUntilChanged()
@@ -1293,9 +1296,14 @@ private fun AmbientTvApp(
             it.active && it.metadata?.hasVideo == true,
             it.playing,
             it.wantsToPlay,
+            it.metadata?.isTrailer == true,
+            com.ambient.tv.ui.player.handheldPipAspectRatio(
+                it.metadata?.sourceWidth, it.metadata?.sourceHeight, it.metadata?.sourceAspectRatioHint),
         )
     } })
     val onPlayerScreen = currentRoute in setOf(Destinations.PLAYER, Destinations.TVH_PLAYER, Destinations.YOUTUBE_PLAYER)
+    val activity = androidx.activity.compose.LocalActivity.current
+    val pipPresentation = (activity as? MainActivity)?.let { it.systemPipVisible || it.systemPipEntering } == true
     // Keep one native video plane alive for the complete playback lifetime. Fullscreen, browse
     // and mini-player transitions now only change Compose chrome above it; they never recreate the
     // decoder surface. The preference controls whether browse pages reveal it, not whether the
@@ -1310,7 +1318,7 @@ private fun AmbientTvApp(
     // plane only exists while something can see it: the player screen, or the ambient backdrop.
     // Its surface going away detaches the renderer's video output the same way a screen change
     // does (audio and the session keep running) and comes back on the next frame it is shown.
-    val videoPlaneVisible = persistentVideoHost && (onPlayerScreen || showVisibleBackgroundVideo)
+    val videoPlaneVisible = persistentVideoHost && (onPlayerScreen || showVisibleBackgroundVideo || pipPresentation)
     // Sidebar selections target this group directly. Spatial focus search is unreliable while
     // Navigation Compose is replacing one destination tree with another.
     val contentFocusRequester = remember { FocusRequester() }
@@ -1318,6 +1326,28 @@ private fun AmbientTvApp(
     var initialContentEntryPending by remember(sidebarDestinationKey) { mutableStateOf(waitsForSidebarContent) }
     val focusManager = LocalFocusManager.current
     val focusSoundView = LocalView.current
+    val autoPipEnabled by remember(appPreferences) {
+        appPreferences.changes().map { appPreferences.autoPictureInPicture }.distinctUntilChanged()
+    }.collectAsState(initial = appPreferences.autoPictureInPicture)
+    val pipOrientation = androidx.compose.ui.platform.LocalConfiguration.current.orientation
+    LaunchedEffect(handheld, backgroundPlayback, autoPipEnabled, onPlayerScreen, pipOrientation) {
+        val pipActivity = activity as? MainActivity ?: return@LaunchedEffect
+        val eligible = com.ambient.tv.ui.player.handheldPipEligible(
+            handheld = handheld,
+            supported = pipActivity.handheldPipSupported(),
+            enabled = autoPipEnabled,
+            active = backgroundPlayback.active,
+            hasVideo = backgroundPlayback.activeVideo,
+            wantsToPlay = backgroundPlayback.wantsToPlay,
+            isTrailer = backgroundPlayback.isTrailer,
+        )
+        // The fullscreen video fills the app shell; a minimized audio/artwork strip has no
+        // visible video rect and must not pretend that the full screen is its source.
+        val sourceRect = android.graphics.Rect().takeIf {
+            onPlayerScreen && focusSoundView.getGlobalVisibleRect(it) && it.width() > 0 && it.height() > 0
+        }
+        pipActivity.updateHandheldPip(eligible, backgroundPlayback.pipAspectRatio, sourceRect)
+    }
     SilenceSystemMenuSounds()
     val sidebarFocusRequester = remember { FocusRequester() }
     var sidebarHasFocus by remember { mutableStateOf(false) }
@@ -1475,7 +1505,6 @@ private fun AmbientTvApp(
     androidx.compose.runtime.SideEffect { com.ambient.tv.ui.player.SleepWarningKeyGate.playerRoute = onPlayerRoute }
     val playbackActive = currentRoute == Destinations.PHOTO_VIEWER || currentRoute == Destinations.PLAYER || currentRoute == Destinations.TVH_PLAYER || currentRoute == Destinations.YOUTUBE_PLAYER || currentRoute == Destinations.SPOTIFY_PLAYER || currentRoute == Destinations.RADIO_PLAYER || backgroundPlayback.active
 
-    val activity = androidx.activity.compose.LocalActivity.current
     // Handheld video pages are fullscreen exactly while the window is landscape, so turning the
     // device switches into fullscreen and back. Television keeps its manifest orientation.
     val handheldFullscreen = com.ambient.tv.ui.mobile.rememberHandheldFullscreen(activity, onPlayerScreen)
@@ -1727,17 +1756,20 @@ private fun AmbientTvApp(
         onOpenLocal = { route -> guardedSettingsExit { navController.navigate(route) { launchSingleTop = true } } }) {
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (!persistentVideoHost) {
+            if (!pipPresentation && !persistentVideoHost) {
                 AppBackground(Modifier.fillMaxSize())
             }
             if (videoPlaneVisible) {
-                // HbbTV can show the picture in a smaller window of its menus.
-                PersistentPlaybackVideoHost(Modifier.fillMaxSize().then(com.ambient.tv.ui.player.PlaybackVideoWindow.modifier))
+                // HbbTV may have a smaller video window. PiP always uses the entire video plane.
+                PersistentPlaybackVideoHost(
+                    Modifier.fillMaxSize().then(if (pipPresentation) Modifier else com.ambient.tv.ui.player.PlaybackVideoWindow.modifier),
+                    systemPip = pipPresentation,
+                )
             }
-            if (persistentVideoHost && !showVisibleBackgroundVideo && !onPlayerScreen) {
+            if (!pipPresentation && persistentVideoHost && !showVisibleBackgroundVideo && !onPlayerScreen) {
                 AppBackground(Modifier.fillMaxSize())
             }
-            if (persistentVideoHost) {
+            if (!pipPresentation && persistentVideoHost) {
                 com.ambient.tv.ui.player.BackgroundVideoScrim(
                     visible = showVisibleBackgroundVideo,
                     dimPercent = backgroundVideoDimPercent,
@@ -1749,7 +1781,7 @@ private fun AmbientTvApp(
                     Destinations.ITEM_TRAILERS, Destinations.TMDB_TRAILERS, Destinations.PHOTO_VIEWER) || screensaverOverlayPresent,
                 backgroundVideo = showVisibleBackgroundVideo,
             )
-            if (showHomeBackground) {
+            if (!pipPresentation && showHomeBackground) {
                 com.ambient.tv.ui.home.HomeHeroAmbient(
                     heroContent = homeBackgroundArtwork,
                     heroStyleKey = homeBackground.style,
@@ -1758,6 +1790,9 @@ private fun AmbientTvApp(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+            // Keep NavHost/players composed (and their native decoders alive) while the Android
+            // system shows the video surface alone. Removing the tree would stop playback.
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (pipPresentation) 0f else 1f }) {
             CompositionLocalProvider(
                 com.ambient.tv.ui.common.LocalHomeBackgroundVisible provides showHomeBackground,
                 com.ambient.tv.ui.common.LocalHomeBackgroundArtwork provides homeBackgroundArtwork,
@@ -2748,6 +2783,7 @@ private fun AmbientTvApp(
                 )
             }
             }
+            } // Keep-composed, invisible phone chrome during PiP.
         }
     }
     } // PlaybackPresentationProvider
@@ -2798,5 +2834,7 @@ private data class ShellPlaybackState(
     val activeVideo: Boolean,
     val playing: Boolean,
     val wantsToPlay: Boolean,
+    val isTrailer: Boolean,
+    val pipAspectRatio: Float,
 )
 
