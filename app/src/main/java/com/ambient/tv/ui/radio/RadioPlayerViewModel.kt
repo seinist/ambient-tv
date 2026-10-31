@@ -28,8 +28,11 @@ class RadioPlayerViewModel @Inject constructor(
     private val repository: RadioBrowserRepository,
 ) : ViewModel() {
     private val nextMutex = Mutex()
-    /** Hide the outgoing station's information until its replacement has settled. */
+    /** Suppress outgoing station details until the replacement is committed. */
     var switchingStation by mutableStateOf(false)
+        private set
+    /** Preview the *target* artwork immediately; never replace the whole player with a splash. */
+    var pendingStation by mutableStateOf<RadioStation?>(null)
         private set
     private var queueRevision by mutableIntStateOf(0)
     var visualizerMode by mutableStateOf(preferences.audioVisualizerModeKey)
@@ -89,14 +92,22 @@ class RadioPlayerViewModel @Inject constructor(
     fun previous() {
         if (switchingStation) return
         val station = queue.previous() ?: return
+        pendingStation = station
         switchingStation = true
         viewModelScope.launch {
-            try { launcher.play(station) } finally { switchingStation = false }
+            try {
+                launcher.play(station)
+            } finally {
+                pendingStation = null
+                switchingStation = false
+            }
         }
     }
 
     fun next() {
-        if (switchingStation || (queue.next() == null && queue.snapshot().source?.hasMore != true)) return
+        val immediateNext = queue.next()
+        if (switchingStation || (immediateNext == null && queue.snapshot().source?.hasMore != true)) return
+        pendingStation = immediateNext
         switchingStation = true
         viewModelScope.launch {
             try {
@@ -126,9 +137,14 @@ class RadioPlayerViewModel @Inject constructor(
                     queueRevision++
                     station = queue.next()
                 }
-                station?.let { launcher.play(it) }
+                station?.let { nextStation ->
+                    // An asynchronously fetched next page now has its next station identity.
+                    pendingStation = nextStation
+                    launcher.play(nextStation)
+                }
             }
             } finally {
+                pendingStation = null
                 switchingStation = false
             }
         }
