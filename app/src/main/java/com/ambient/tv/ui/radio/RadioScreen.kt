@@ -261,7 +261,6 @@ fun RadioScreen(
         if (focusAfterViewOptions) pendingContentFocus = focusScope
         focusAfterViewOptions = false
     }
-    BackHandler(enabled = showViewOptions) { closeViewOptions() }
     BackHandler(enabled = !showViewOptions && searchVisible) {
         if (state.submittedQuery.isNotBlank() || state.query.isNotBlank()) clearSearch()
         showSearch = false
@@ -531,7 +530,7 @@ fun RadioScreen(
         }
 
         if (showViewOptions) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .38f)))
+            com.ambient.tv.ui.common.RightPanelOverlay(onOutsideTap = closeViewOptions) {
             Box(Modifier.align(Alignment.TopEnd)) {
                 ViewOptionsPanel(
                     views = if (showingFacets) emptyList() else listOf(
@@ -551,6 +550,7 @@ fun RadioScreen(
                     onListRows = viewModel::setListRows,
                     onClose = closeViewOptions,
                 )
+            }
             }
         }
     }
