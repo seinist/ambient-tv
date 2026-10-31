@@ -175,6 +175,18 @@ class PlaybackService : MediaBrowserService() {
                     carSpotifySelected = false
                 }
                 if (!carSpotifySelected) updatePlatformState(state)
+                else if (!state.active) {
+                    // Spotify has its own Connect foreground service. A browser connection
+                    // must not keep an obsolete radio/media foreground notification alive.
+                    if (wakeLock.isHeld) wakeLock.release()
+                    abandonFocus()
+                    if (foregroundStarted) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        foregroundStarted = false
+                    }
+                    getSystemService(NotificationManager::class.java).cancel(NOTIFICATION)
+                    lastNotification = null
+                }
             }
         }
         scope.launch {
