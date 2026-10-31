@@ -2206,4 +2206,20 @@
     <string name="settings_auto_pip_title">Picture-in-picture</string>
     <string name="settings_auto_pip_enable">Automatic picture-in-picture</string>
     <string name="settings_auto_pip_hint">On phones, keep playing video in a floating Android window when leaving the app. Audio-only playback stays in the background.</string>
+    <string name="telegram_title">Telegram</string>
+    <string name="settings_page_telegram_hint">Browse media, channels and YouTube links from your Telegram account.</string>
+    <string name="settings_telegram_enable">Enable Telegram</string>
+    <string name="settings_telegram_enable_hint">Browse media, channels and YouTube links from your Telegram account.</string>
+    <string name="settings_telegram_native_missing">Telegram needs the Monogram MTProto backend before you can sign in or browse private channels.</string>
+    <string name="settings_telegram_notice">Telegram integration is in development. No account credentials are sent until the native client is connected.</string>
+    <string name="telegram_recent">Recent media</string>
+    <string name="telegram_channels">Channels</string>
+    <string name="telegram_videos">Videos</string>
+    <string name="telegram_youtube">YouTube links</string>
+    <string name="telegram_audio">Music and audio</string>
+    <string name="telegram_photos">Photos</string>
+    <string name="telegram_no_results">No Telegram media found</string>
+    <string name="telegram_error">Telegram media is not available</string>
+    <string name="telegram_home_row">Telegram · %1$s</string>
+    <string name="telegram_account">Telegram account</string>
 </resources>
