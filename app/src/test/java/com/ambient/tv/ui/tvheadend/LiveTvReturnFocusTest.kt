@@ -53,6 +53,23 @@ class LiveTvReturnFocusTest {
         assertEquals(TvhFocusTarget("channel:c", "c"), liveTvFocusTarget(TvheadendTab.GUIDE, dashboard, GuideOptions(), "channel:c", "c", now))
     }
 
+    @Test fun preparedGuideMaintainsTheSameReturnFocusAndLiveZapSelection() {
+        val options = GuideOptions()
+        val listing = buildLiveTvChannelListing(channels, events, options, now)
+        assertEquals(
+            liveTvFocusTarget(TvheadendTab.LIVE, dashboard, options, "c", null, now),
+            liveTvFocusTarget(TvheadendTab.LIVE, dashboard, options, "c", null, now, listing),
+        )
+        assertEquals(
+            liveTvFocusTarget(TvheadendTab.GUIDE, dashboard, options, "event:a3", "a", now),
+            liveTvFocusTarget(TvheadendTab.GUIDE, dashboard, options, "event:a3", "a", now, listing),
+        )
+        assertEquals(
+            liveTvFocusTarget(TvheadendTab.GUIDE, dashboard, options, "event:gone", "zz", now),
+            liveTvFocusTarget(TvheadendTab.GUIDE, dashboard, options, "event:gone", "zz", now, listing),
+        )
+    }
+
     @Test fun channelHiddenByFilterKeepsThePreviousSelection() {
         val tvOnly = GuideOptions(kind = LiveTvChannelKind.TV)
         assertNull(returnFocusSelections("r", dashboard, tvOnly, now))
@@ -88,7 +105,9 @@ class LiveTvReturnFocusTest {
 
     @Test fun browserScrollsToTheTargetBeforeFocusing() {
         val guide = File("src/main/java/com/ambient/tv/ui/tvheadend/Guide.kt").readText()
-        val restore = guide.substringAfter("LaunchedEffect(restoreFocus, focusTarget, visibleChannels)")
+        val marker = "LaunchedEffect(restoreFocus, focusTarget, visibleChannels, filterFocusState, listing.building)"
+        assertTrue(guide.contains(marker))
+        val restore = guide.substringAfter(marker)
         assertTrue(restore.indexOf("scrollToItem") in 0 until restore.indexOf("firstContentFocusRequester.requestFocus()"))
         val screen = File("src/main/java/com/ambient/tv/ui/tvheadend/TvheadendScreen.kt").readText()
         assertTrue(screen.contains("viewModel.consumeReturnFocus()"))
