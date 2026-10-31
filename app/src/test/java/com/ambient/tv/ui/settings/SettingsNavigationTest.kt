@@ -58,7 +58,7 @@ class SettingsNavigationTest {
         assertTrue(showsInAreaIndex(SettingsCategory.APPEARANCE, SettingsArea.START, listed = false))
         assertFalse(showsInAreaIndex(SettingsCategory.PLEX, SettingsArea.STREAMING, listed = true))
         assertEquals(
-            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES),
+            listOf(MediaSystem.PLEX, MediaSystem.JELLYFIN, MediaSystem.EMBY, MediaSystem.DLNA, MediaSystem.TVHEADEND, MediaSystem.IPTV, MediaSystem.YOUTUBE, MediaSystem.TELEGRAM, MediaSystem.SPOTIFY, MediaSystem.RADIO, MediaSystem.TRAILERS, MediaSystem.FILES),
             MediaSystem.addOrder,
         )
     }

@@ -19,7 +19,7 @@ internal object CompanionBackupPolicy {
         "youtubeAutoplayNextEnabled", "youtubeMediaSelectionBehaviorKey", "introSkipMode", "creditsSkipMode",
         "nextUpEnabled", "nextUpLeadSeconds", "nextUpCreditsDelaySeconds", "nextUpAutoplayEpisodes", "nextUpAutoplayCollections", "nextUpOverlayEnabled",
         "nextUpStillWatchingEpisodes", "sleepAutoStartKey", "sleepWarningMinutes", "sleepDailyStopMinute", "bigSeekJumpSeconds", "pauseRewindSeconds", "pauseRewindMinPauseSeconds", "resumeRewindSeconds", "sidebarSystemOrder", "sidebarDividersAfter", "sidebarEntryOrder", "sidebarEntryDividers", "systemNames",
-        "spotifySubmenuKeys", "radioSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
+        "spotifySubmenuKeys", "radioSubmenuKeys", "telegramSubmenuKeys", "tvheadendSubmenuKeys", "sidebarSettingsShortcutHidden",
         "homeHeroIntensityPercent", "homeHeroSpreadKey", "homeBackgroundEverywhere", "focusArtworkBackdrop", "chooseServerOnStartup", "themeMusicVolume", "plexAutoRefreshIntervalSeconds",
         "plexThemeMusicEnabled", "jellyfinThemeMusicEnabled", "embyThemeMusicEnabled", "tvheadendShowOnHome",
         "playerTechBadgesVisible", "osdHiddenButtons", "visibleBackgroundVideoPlayback", "backgroundVideoDimPercent",
@@ -70,7 +70,7 @@ internal object CompanionBackupPolicy {
      * search history and hardware probes. Moving one into a synced set is a product decision.
      */
     private val deviceOnly = setOf(
-        "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
+        "telegramEnabled", "spotifyDeviceName", "spotifyBitrateKbps", "spotifyVisualizerModeKey", "plexHiddenSectionKeys",
         "jellyfinHiddenSectionKeys", "embyHiddenSectionKeys", "localNetworkOnly", "wolRetryCount", "svpAvailable",
         "plexAudioPassthroughEnabled", "tvheadendAudioPassthroughEnabled", "screensaverPhotoAlbumKey",
         "screensaverPhotoAlbumTitle", "homeRows", "systemHomeHiddenRows", "libraryPreferences", "recentSearches",
