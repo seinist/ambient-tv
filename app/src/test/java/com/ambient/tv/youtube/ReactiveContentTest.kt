@@ -5,6 +5,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -92,6 +93,30 @@ class ReactiveContentTest {
             assertEquals(listOf(1, 2), result.await())
             assertTrue(feed.disposable.disposed)
         }
+    }
+
+    @Test fun hotSubscriptionReturnsItsSnapshotWhenObservationWindowEnds() = runBlocking {
+        val received = mutableListOf<String>()
+        val completed = flow {
+            emit("updated subscription row")
+            awaitCancellation()
+        }.collectBoundedSnapshot(timeoutMs = 50L, maxEmissions = 128) {
+            received += it
+        }
+        assertFalse(completed)
+        assertEquals(listOf("updated subscription row"), received)
+    }
+
+    @Test fun completedSubscriptionDoesNotWaitForTimeout() = runBlocking {
+        val received = mutableListOf<String>()
+        val completed = flow {
+            emit("first row")
+            emit("second row")
+        }.collectBoundedSnapshot(timeoutMs = 1_000L, maxEmissions = 128) {
+            received += it
+        }
+        assertTrue(completed)
+        assertEquals(listOf("first row", "second row"), received)
     }
 
     @Test fun `plain synchronous content is left to the normal mapper`() {
