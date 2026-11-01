@@ -80,6 +80,29 @@ silently reuse old MTProto binaries. Distributions must include these GPL
 patches and corresponding source. Verify join, leave, reconnect, account cache
 invalidation and all four ABIs on real devices before marking the PR ready.
 
+## Settings backups and migration
+
+The ordinary Ambient TV settings backup includes Monogram activation, visible
+submenus/TV chips, Home-row definitions, system names, sidebar order and
+section view-mode preferences (including `ROWS`, `GRID`, `LIST` and `INFO_LIST`).
+It does **not** include the Telegram application API ID/hash.
+
+Select **Export with credentials** and enter a backup passphrase to include the
+**application API ID and hash**. The exported file is encrypted with
+`BackupEncryption`; imported values are validated and stored in the encrypted
+`TokenStore` on the receiving device. Older backups and backups without
+credentials leave a device's configured Monogram API identity untouched. To
+avoid breaking a live native MTProto client, an incoming identity that differs
+from already configured credentials is rejected before settings are modified.
+Sign out and set matching API credentials in Monogram settings first.
+
+**User account login state is never portable.** Native authorization, phone/QR
+codes, 2FA material, private messages, original media and cached thumbnails are
+not exported, including with credentials. A restored installation needs a new
+Telegram sign-in. Companion transfers follow the same secret classification:
+API credentials move only with an explicit credentials transfer and can be
+adopted only on a device without an existing application identity.
+
 ## Distribution / legal considerations
 
 Monogram's native module and its original logo artwork are GPL-3.0-only.
