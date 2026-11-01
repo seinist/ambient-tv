@@ -24,6 +24,7 @@ import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.ui.common.QrCodeDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -77,10 +78,13 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                     TvActionButton(text = stringResource(R.string.action_sign_out), onClick = viewModel::logout)
                 }
                 else -> {
-                    TvActionButton(
-                        text = stringResource(R.string.monogram_sign_in_qr),
-                        onClick = viewModel::qr,
-                    )
+                    // A phone cannot scan a QR displayed on its own screen.
+                    if (!LocalHandheldUi.current) {
+                        TvActionButton(
+                            text = stringResource(R.string.monogram_sign_in_qr),
+                            onClick = viewModel::qr,
+                        )
+                    }
                     TvTextField(
                         value = phone,
                         onValueChange = { phone = it },
@@ -132,6 +136,10 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
             hint = stringResource(R.string.monogram_qr_hint),
             payload = qr,
             onDismiss = { qrDismissed = true },
+            footer = {
+                TvActionButton(text = stringResource(R.string.action_close),
+                    onClick = { qrDismissed = true })
+            },
         )
     }
 }

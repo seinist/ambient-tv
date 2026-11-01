@@ -183,8 +183,8 @@ android {
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
-        buildConfigField("int", "MONOGRAM_API_ID", monogramApiId.toString())
-        buildConfigField("String", "MONOGRAM_API_HASH", quotedBuildConfigString(monogramApiHash))
+        buildConfigField("int", "MONOGRAM_API_ID", (if (monogramEnabled) monogramApiId else 0).toString())
+        buildConfigField("String", "MONOGRAM_API_HASH", quotedBuildConfigString(if (monogramEnabled) monogramApiHash else ""))
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))

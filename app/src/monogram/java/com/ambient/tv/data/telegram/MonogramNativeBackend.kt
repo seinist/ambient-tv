@@ -288,7 +288,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                 actual.readBytes()
             } finally {
                 temp.delete()
-                if (actual?.parentFile == dir) actual.delete()
+                actual?.takeIf { it.parentFile == dir }?.delete()
             }
         }
 }

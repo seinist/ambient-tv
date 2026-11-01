@@ -516,7 +516,7 @@ youtube_engine_ready() {
 ensure_monogram_native() {
     [[ "${MONOGRAM_NATIVE:-0}" == "1" ]] || return 0
     [[ -f "$MONOGRAM_BUILD_SCRIPT" ]] || fail "Missing $MONOGRAM_BUILD_SCRIPT"
-    local selected="${MONOGRAM_ABIS:-${1:-arm64-v8a armeabi-v7a x86 x86_64}}"
+    local selected="${1:-${MONOGRAM_ABIS:-arm64-v8a armeabi-v7a x86 x86_64}}"
     log "Building only the pinned Monogram MTProto runtime for $selected"
     MONOGRAM_ABIS="$selected" bash "$MONOGRAM_BUILD_SCRIPT"
 }
@@ -916,7 +916,7 @@ prepare_nnedi3_quality_ladder() {
 }
 
 build_debug() {
-    ensure_monogram_native
+    ensure_monogram_native "${SUPPORTED_ABIS[*]}"
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_youtube_engine
@@ -1114,7 +1114,7 @@ build_release_variant_adb() {
 }
 
 build_release() {
-    ensure_monogram_native
+    ensure_monogram_native "${SUPPORTED_ABIS[*]}"
     UPDATE_APKS=()
     UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
     rm -f "$DIST_DIR/update.json"
