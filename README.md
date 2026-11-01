@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0%20%28352%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0%20%28353%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0` (352)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0` (353)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
 
 </p>
 
@@ -237,7 +237,7 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 
 > **Unofficial client, uses the Telegram API.** Monogram in Ambient TV is not an app made by Telegram.
 
-**License:** The Monogram build is **GPL-3.0-only**. Its complete source is this repository plus the pinned upstream refs in `gradle/external-versions.properties` (`MONOGRAM_REF` and its mono-rs submodule), with the changes from `scripts/patch_monogram_leave.py`; every upstream file that script changes carries a dated modification notice.
+**License:** The Monogram build is **GPL-3.0-only**. Its complete source is this repository plus the pinned upstream Monogram release in `gradle/external-versions.properties` (`MONOGRAM_VERSION`, currently release 0.4.3, with its reviewed tag commit `MONOGRAM_REF` and mono-rs submodule commit `MONOGRAM_MONO_RS_REF`), with the changes from `scripts/patch_monogram_leave.py`; every upstream file that script changes carries a dated modification notice.
 
 <details>
 <summary>Use your own Telegram API ID and hash, then sign in by TV QR or phone code</summary>

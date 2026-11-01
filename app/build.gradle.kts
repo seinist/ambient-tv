@@ -141,8 +141,11 @@ val selectedAbis = when (apkAbiMode) {
 }
 if (monogramEnabled) {
     val stamp = file("libs/.monogram-native-version")
-    require(stamp.isFile && stamp.readLines().contains("ref=${externalVersion("MONOGRAM_REF")}")) {
-        "Monogram AAR pin mismatch; rebuild with ./build.sh monogram"
+    // Pinned to an upstream release tag plus the reviewed commit that tag pointed to.
+    val stampLines = if (stamp.isFile) stamp.readLines() else emptyList()
+    require(stampLines.contains("version=${externalVersion("MONOGRAM_VERSION")}") &&
+        stampLines.contains("ref=${externalVersion("MONOGRAM_REF")}")) {
+        "Monogram AAR pin mismatch (release ${externalVersion("MONOGRAM_VERSION")}); rebuild with ./build.sh monogram"
     }
     val patchBytes = file("../scripts/patch_monogram_leave.py").readBytes()
     val patchHash = MessageDigest.getInstance("SHA-256").digest(patchBytes)
@@ -201,6 +204,7 @@ android {
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
         buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
         buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
+        buildConfigField("String", "MONOGRAM_VERSION", quotedBuildConfigString(externalVersion("MONOGRAM_VERSION")))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))

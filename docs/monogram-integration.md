@@ -9,15 +9,15 @@ the top of the Monogram account card in Settings (and so in the first-run
 setup, which opens that page), before API credentials or sign-in.
 
 The Monogram build is **GPL-3.0-only**. Its corresponding source is this
-repository plus the pinned upstream refs (`MONOGRAM_REF` in
-`gradle/external-versions.properties` and its mono-rs submodule) with the
+repository plus the pinned upstream release (`MONOGRAM_VERSION`, with
+`MONOGRAM_REF` and `MONOGRAM_MONO_RS_REF` in `gradle/external-versions.properties`) with the
 changes from `scripts/patch_monogram_leave.py`.
 
 ## What is built
 
 Only upstream `monogram-android/monogram:native/mtproto` is compiled.
-The build invokes `./gradlew :native:mtproto:assembleRelease` in an independent,
-SHA-pinned upstream checkout. It never builds or packages Monogram's
+The build invokes `./gradlew :native:mtproto:assembleRelease` in an independent
+checkout of a pinned upstream **release tag**. It never builds or packages Monogram's
 `:app`, `core:ui`, `core:database`, `feature:auth`, `feature:chats`,
 `feature:dialog`, `feature:folders`, `feature:profile`, `feature:settings`,
 `network:bridge`, `network:http` or `native:markup` modules.
@@ -88,9 +88,34 @@ Ambient TV.
 MONOGRAM_ABIS="arm64-v8a" ./build.sh monogram  # narrow standalone native build
 MONOGRAM_NATIVE=1 ./build.sh arm64       # APK with Monogram, only arm64 runtime
 MONOGRAM_NATIVE=1 ./build.sh release     # APKs for all four ABIs
-./build.sh monogram-check               # compare pinned upstream SHA
+./build.sh monogram-check               # compare the pin with the latest upstream release
 ./build.sh monogram-update              # explicitly move pin; review before shipping
 ```
+
+### Release pin
+
+Monogram is pinned to an upstream GitHub **release**, not to a branch head or
+an arbitrary commit. Upstream publishes every release as a *pre-release*
+(there is no non-pre-release yet), so pre-releases are accepted; drafts are not.
+
+| Key | Value | Meaning |
+|---|---|---|
+| `MONOGRAM_VERSION` | `0.4.3` | Upstream release tag (published 2026-11-01, pre-release; the tag has no `v` prefix) |
+| `MONOGRAM_REF` | `04ce208ed1cd49067226f3f28e4adef47f779114` | Commit the tag pointed to when reviewed |
+| `MONOGRAM_MONO_RS_REF` | `0bc5195bf004d7fec8038626edf680c5edbdb906` | `vendor/mono-rs` submodule commit at that tag |
+
+`scripts/build_monogram_native.sh` fetches only the tag, and fails if the tag
+no longer points to `MONOGRAM_REF` or the submodule is not at
+`MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=` and
+`patch=`; the app build fails if the AAR was built for another release.
+`./build.sh monogram-check` asks the GitHub releases API for the newest
+published release (pre-releases included) and prints its tag, whether it is a
+pre-release, its commit and mono-rs commit; `monogram-update` writes them.
+
+The previous pin, commit `075cca21`, differs from release 0.4.3 only in
+upstream `app/build.gradle.kts` (version 0.4.2 → 0.4.3); `native/` and the
+mono-rs submodule are identical, so `scripts/patch_monogram_leave.py` applies
+unchanged.
 
 External pins are in `gradle/external-versions.properties`. Monogram is NOT
 silently upgraded through a normal `libs-update` of unrelated dependencies:

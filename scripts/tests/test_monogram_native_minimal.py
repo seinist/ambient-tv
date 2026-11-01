@@ -119,6 +119,38 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn("Unofficial client, uses the Telegram API.",
                       (ROOT / "docs/monogram-integration.md").read_text())
 
+    def test_monogram_is_pinned_to_a_release_tag_with_a_verified_commit(self):
+        import re
+        props = (ROOT / "gradle" / "external-versions.properties").read_text()
+        shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
+        gradle = (ROOT / "app" / "build.gradle.kts").read_text()
+        updater = (ROOT / "scripts" / "update_monogram_pin.py").read_text()
+        self.assertRegex(props, r"(?m)^MONOGRAM_VERSION=v?\d+(\.\d+)+$")
+        self.assertRegex(props, r"(?m)^MONOGRAM_REF=[0-9a-f]{40}$")
+        self.assertRegex(props, r"(?m)^MONOGRAM_MONO_RS_REF=[0-9a-f]{40}$")
+        # The tag is fetched (not a bare commit) and a moved tag fails the build.
+        self.assertIn('"+refs/tags/$version:refs/tags/$version"', shell)
+        self.assertIn('[[ "$tag_commit" == "$ref" ]]', shell)
+        self.assertIn('[[ "$submodule_commit" == "$mono_rs_ref" ]]', shell)
+        self.assertNotIn('fetch --depth=1 origin "$ref"', shell)
+        self.assertIn("version=%s", shell)
+        self.assertIn('"version=${externalVersion("MONOGRAM_VERSION")}"', gradle)
+        # Pin updates follow GitHub releases, pre-releases included, never a branch head.
+        self.assertIn("/releases", updater)
+        self.assertNotIn("commits/develop", updater)
+
+    def test_latest_release_includes_pre_releases_but_not_drafts(self):
+        spec = importlib.util.spec_from_file_location(
+            "monogram_pin", ROOT / "scripts" / "update_monogram_pin.py")
+        pin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin)
+        releases = [
+            {"tag_name": "0.4.2", "prerelease": True, "draft": False, "published_at": "2026-10-17T10:19:53Z"},
+            {"tag_name": "0.5.0", "prerelease": False, "draft": True, "published_at": None},
+            {"tag_name": "0.4.3", "prerelease": True, "draft": False, "published_at": "2026-11-01T12:02:16Z"},
+        ]
+        self.assertEqual("0.4.3", pin.latest_release(releases)["tag_name"])
+
     def test_unused_sticker_qr_and_waveform_native_code_is_pruned(self):
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
         patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()
