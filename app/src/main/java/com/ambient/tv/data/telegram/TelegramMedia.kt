@@ -19,10 +19,13 @@ data class TelegramMedia(
     val publishedAtMs: Long = 0,
     val youtubeVideoId: String? = null,
     val protectedContent: Boolean = false,
+    /** Hidden text_url entities from Telegram, not necessarily visible in the caption. */
+    val linkedYouTubeVideoIds: List<String> = emptyList(),
 ) {
     /** A linked YouTube video is a separate media card, even inside a post with an attachment. */
     val youtubeIds: List<String>
-        get() = (telegramYouTubeIds(summary.orEmpty()) + listOfNotNull(youtubeVideoId)).distinct()
+        get() = (telegramYouTubeIds(summary.orEmpty()) + linkedYouTubeVideoIds +
+            listOfNotNull(youtubeVideoId)).distinct()
     val mediaKey: String get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
         telegramYouTubeMediaKey(chatId, messageId, youtubeVideoId) else telegramMediaKey(chatId, messageId)
     val previewUrl: String? get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
@@ -121,7 +124,8 @@ fun TelegramMedia.playerMetadata(): PlaybackMetadata = PlaybackMetadata(
 
 /** Parse only actual youtube.com / youtu.be hosts. Do not mistake lookalike domains for YouTube. */
 fun telegramYouTubeIds(text: String): List<String> {
-    val urls = Regex("""(?i)(?:https?://)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/[^\s<>"']+""")
+    // Do not parse a YouTube-looking suffix of an attacker-controlled host.
+    val urls = Regex("""(?i)(?<![a-z0-9_.-])(?:https?://)?(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/[^\s<>"']+""")
     val validId = Regex("[A-Za-z0-9_-]{11}")
     return urls.findAll(text).mapNotNull { match ->
         val value = match.value.let { if (it.startsWith("http", ignoreCase = true)) it else "https://$it" }
