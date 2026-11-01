@@ -123,7 +123,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 TelegramChannel(
                     chatId = o.getLong("chat"), title = o.getString("title"),
                     description = o.optString("description").takeIf(String::isNotBlank),
-                    thumbnailUrl = safePreview(o.optString("thumb")))
+                    thumbnailUrl = safePreview(o.optString("thumb")),
+                    subscribed = if (o.has("member")) o.optBoolean("member") else null)
             }.getOrNull() }
         } }
 
@@ -171,13 +172,15 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                         val o = array!!.getJSONObject(i)
                         TelegramChannel(o.getLong("chat"), o.getString("title"),
                             description = o.optString("description").takeIf(String::isNotBlank),
-                            thumbnailUrl = safePreview(o.optString("thumb")))
+                            thumbnailUrl = safePreview(o.optString("thumb")),
+                            subscribed = if (o.has("member")) o.optBoolean("member") else null)
                     }.getOrNull() }
                 }
                 val array = JSONArray()
                 (past + entries).distinctBy(TelegramChannel::chatId).take(240).forEach { c ->
                     array.put(JSONObject().put("chat", c.chatId).put("title", c.title)
-                        .put("description", c.description).put("thumb", c.thumbnailUrl))
+                        .put("description", c.description).put("thumb", c.thumbnailUrl)
+                        .also { obj -> c.subscribed?.let { obj.put("member", it) } })
                 }
                 write(account, "channels", array)
             }
