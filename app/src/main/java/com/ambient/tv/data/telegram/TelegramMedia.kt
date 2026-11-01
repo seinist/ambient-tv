@@ -21,6 +21,11 @@ data class TelegramMedia(
     val protectedContent: Boolean = false,
     /** Hidden text_url entities from Telegram, not necessarily visible in the caption. */
     val linkedYouTubeVideoIds: List<String> = emptyList(),
+    /** Picture size Telegram reports for videos and photos; 0 when unknown. */
+    val width: Int = 0,
+    val height: Int = 0,
+    /** Original file name of a document, audio or video; null when Telegram has none. */
+    val fileName: String? = null,
 ) {
     /** A linked YouTube video is a separate media card, even inside a post with an attachment. */
     val youtubeIds: List<String>

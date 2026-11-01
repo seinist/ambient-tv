@@ -698,6 +698,24 @@ private fun TelegramPlaybackContent(
                     ),
                 )
             }
+            // Details dialog (OSD button Details or the Info key): only what the post carries.
+            val locale = context.resources.configuration.locales[0]
+            val playerDuration = if (ownsSession) snapshot.status.durationMs.coerceAtLeast(0L) else 0L
+            com.ambient.tv.ui.player.PublishPlayerDetail(
+                remember(media, channel, locale, playerDuration > 0L && media.durationMs <= 0L) {
+                    com.ambient.tv.ui.player.playerDetailForTelegram(
+                        media = media,
+                        channel = channel,
+                        formatDate = { ms ->
+                            java.text.DateFormat.getDateTimeInstance(
+                                java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT, locale,
+                            ).format(java.util.Date(ms))
+                        },
+                        formatSize = { bytes -> android.text.format.Formatter.formatShortFileSize(context, bytes) },
+                        playerDurationMs = playerDuration,
+                    )
+                },
+            )
             PersistentPlayerOverlays(expectedSourceIdentity = media.mediaKey)
         }
     }
@@ -800,6 +818,7 @@ internal data class TelegramOsd(
                             )
                         }
                         PlayerSleepTimerButton(onOpenSleep, selected = panel == UnifiedPlayerPanel.SLEEP)
+                        com.ambient.tv.ui.player.PlayerDetailsButton()
                         PlayerIconButton(
                             Icons.Filled.Settings,
                             stringResource(R.string.player_playback_settings),

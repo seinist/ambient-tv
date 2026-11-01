@@ -119,6 +119,9 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
                     protectedContent = o.optBoolean("protected"),
                     linkedYouTubeVideoIds = youtubeLinks(o),
+                    width = o.optInt("width").coerceAtLeast(0),
+                    height = o.optInt("height").coerceAtLeast(0),
+                    fileName = o.optString("file").takeIf(String::isNotBlank),
                 )
             }.getOrNull() }
         } }
@@ -151,7 +154,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     .put("duration", m.durationMs).put("size", m.fileSize)
                     .put("published", m.publishedAtMs).put("youtube", m.youtubeVideoId)
                     .put("youtubeLinks", JSONArray(m.linkedYouTubeVideoIds))
-                    .put("protected", m.protectedContent))
+                    .put("protected", m.protectedContent)
+                    .put("width", m.width).put("height", m.height).put("file", m.fileName))
                 }
                 write(account, "media:$section", array)
             }
@@ -169,7 +173,10 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 publishedAtMs = o.optLong("published"),
                 youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
                 protectedContent = o.optBoolean("protected"),
-                linkedYouTubeVideoIds = youtubeLinks(o))
+                linkedYouTubeVideoIds = youtubeLinks(o),
+                width = o.optInt("width").coerceAtLeast(0),
+                height = o.optInt("height").coerceAtLeast(0),
+                fileName = o.optString("file").takeIf(String::isNotBlank))
         }.getOrNull() }
     }
 

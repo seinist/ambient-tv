@@ -419,6 +419,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             youtubeVideoId = if (type == TelegramMediaKind.YOUTUBE) youtube else null,
             linkedYouTubeVideoIds = youtubeLinks,
             protectedContent = m.noforwards,
+            width = m.mediaWidth?.takeIf { it > 0 } ?: 0,
+            height = m.mediaHeight?.takeIf { it > 0 } ?: 0,
+            fileName = m.fileName?.trim()?.takeIf(String::isNotEmpty),
         )
     }
 
