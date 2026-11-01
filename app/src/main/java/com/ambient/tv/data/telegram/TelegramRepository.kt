@@ -219,7 +219,7 @@ class TelegramRepository @Inject constructor(
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
-        if (client?.cacheIdentity != port.cacheIdentity) revokePlaybackUrls()
+        if (client !== port) revokePlaybackUrls()
         client = port
         mutableAuthorized.value = true
     }
@@ -246,7 +246,13 @@ class TelegramRepository @Inject constructor(
             sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
             mime = "application/octet-stream",
             fileName = "monogram-media.bin",
-        ) { TelegramSeekableMedia(this@TelegramRepository, media) }
+        ) { TelegramSeekableMedia(
+            media = media,
+            partLoader = { offset -> kotlinx.coroutines.runBlocking {
+                mediaPart(media.chatId, media.messageId, offset)
+            } },
+            authorized = { client === authenticated },
+        ) }
         // An account may be logged out while the URL is being registered on a worker.
         if (client !== authenticated) {
             mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
