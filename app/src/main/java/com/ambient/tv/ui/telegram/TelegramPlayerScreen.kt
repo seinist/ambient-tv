@@ -398,6 +398,8 @@ private fun TelegramPlaybackContent(
                     onRendererSelected = { key, global -> viewModel.chooseRenderer(key, global) },
                     showRenderer = media.kind != TelegramMediaKind.PHOTO,
                     showVideo = metadata.hasVideo,
+                    showAudio = media.kind != TelegramMediaKind.PHOTO,
+                    showSubtitles = media.kind == TelegramMediaKind.VIDEO,
                     showVisualizer = media.kind == TelegramMediaKind.AUDIO,
                     ),
                 )
