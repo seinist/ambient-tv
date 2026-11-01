@@ -66,6 +66,37 @@ update. Generated AARs, upstream source and credentials are git-ignored.
 The assembly script merges per-ABI AARs only if their non-native Java resources
 are identical.
 
+## Account setup and sign-in (Android TV / phone)
+
+The in-app Monogram account section follows the same **Settings → Media sources
+& accounts** workflow as Spotify: application credentials, the current account
+status, then the available sign-in actions in a single settings card.
+
+1. Create an application at https://my.telegram.org/apps, then open
+   **Settings → Media sources & accounts → Monogram** in a Monogram-enabled APK.
+   Use the **Open Telegram API applications** action: on Android TV it shows a
+   QR to the dashboard; on the phone it opens the browser.
+2. Enter **API ID** and **API hash**, select **Save API credentials**, then
+   enable Monogram. The status becomes **Not signed in to Telegram** until a
+   user account is authorized.
+3. **TV QR method:** Select **Sign in with QR code**. Telegram on a separate,
+   already signed-in phone scans the QR through **Settings → Devices**. The
+   QR contains `tg://login?token=...`, **not** a web callback like Spotify.
+   Closing the dialog does not sign into Telegram; the account status reflects
+   actual native authorization.
+4. **Phone/code method (also on TV):** Enter an international phone number,
+   request a code, confirm the code and enter the optional two-step verification
+   password. A phone uses this method because it cannot scan its own screen.
+5. The **Connected account** status confirms native authorization. From here
+   the user can browse six tabs/Home rows: Recent media, Channels, Videos,
+   YouTube links, Music & audio and Photos. **Sign out** revokes access to
+   account-private media and cache. The API ID/hash can only be changed after
+   sign-out.
+
+The UI keeps input errors visible and never stores phone verification codes,
+QR tokens or 2FA passwords in preferences or backups. The APK does not
+use Spotify's OAuth redirect URI or callback server for Telegram.
+
 ## Minimal channel leave patch
 
 The pinned upstream Monogram MTProto interface provides joinChat but no
