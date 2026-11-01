@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import svp_dependency as svp
+import update_monogram_pin as monogram
 
 ROOT = Path(__file__).resolve().parents[1]
 PROPS = ROOT / "gradle" / "external-versions.properties"
@@ -147,6 +148,12 @@ def projectm_latest() -> dict[str, str]:
     return {"PROJECTM_REF": tag, "PROJECTM_COMMIT": resolve_tag_commit("projectM-visualizer/projectm", tag)}
 
 
+def monogram_latest() -> dict[str, str]:
+    # Pre-releases count: upstream publishes every Monogram release that way.
+    pins, _meta = monogram.resolve_latest()
+    return pins
+
+
 def svp_latest() -> dict[str, str]:
     releases = github(f"/repos/{svp.REPO}/releases?per_page=100")
     published = [r for r in releases if not r.get("draft") and not r.get("prerelease")]
@@ -199,18 +206,25 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true")
     group.add_argument("--apply", action="store_true")
-    parser.add_argument("--only", choices=("svp",), help="Check/update only Open-SVPFlow")
+    parser.add_argument("--only", choices=("svp", "monogram"),
+                        help="Check/update only Open-SVPFlow or Monogram")
     args = parser.parse_args()
+    include_rest = args.only is None
+    include_svp = args.only in (None, "svp")
+    include_monogram = args.only in (None, "monogram")
 
     current = load_props()
-    svp.verify(ROOT / "native/ambientsvp", svp.pinned_revision(ROOT))
-    managed = [PROPS, *(ROOT / "native/ambientsvp" / name for name in svp.UPDATE_FILES)]
-    if not args.only:
+    if include_svp:
+        svp.verify(ROOT / "native/ambientsvp", svp.pinned_revision(ROOT))
+    managed = [PROPS]
+    if include_svp:
+        managed.extend(ROOT / "native/ambientsvp" / name for name in svp.UPDATE_FILES)
+    if include_rest:
         managed.append(CATALOG)
     originals = {path: path.read_bytes() for path in managed}
     latest: dict[str, str] = {}
     current_libvlc = latest_libvlc = None
-    if not args.only:
+    if include_rest:
         latest.update(smarttube_latest())
         latest.update(mpv_latest())
         latest.update(ffmpeg_latest())
@@ -218,7 +232,10 @@ def main() -> int:
         latest.update(rusty_latest())
         current_libvlc = catalog_version("libvlc")
         latest_libvlc = libvlc_latest_stable(current_libvlc)
-    latest.update(svp_latest())
+    if include_svp:
+        latest.update(svp_latest())
+    if include_monogram:
+        latest.update(monogram_latest())
 
     labels = [
         ("SmartTube", "SMARTTUBE_VERSION"),
@@ -234,8 +251,13 @@ def main() -> int:
         ("Spotify/Rusty", "SPOTIFY_RUSTY_REF"),
         ("Open-SVPFlow", "SVPFLOW_VERSION"),
         ("Open-SVPFlow commit", "SVPFLOW_REF"),
+        ("Monogram", "MONOGRAM_VERSION"),
+        ("Monogram commit", "MONOGRAM_REF"),
+        ("Monogram mono-rs", "MONOGRAM_MONO_RS_REF"),
+        ("Monogram rustls", "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION"),
     ]
     changed = False
+    monogram_changed = False
     manual_rusty_update = "SPOTIFY_RUSTY_REF" in latest and not same_pin(current.get("SPOTIFY_RUSTY_REF", "?"), latest["SPOTIFY_RUSTY_REF"], "SPOTIFY_RUSTY_REF")
     print("Managed external libraries:")
     for label, key in labels:
@@ -248,7 +270,14 @@ def main() -> int:
         else:
             marker = "ok" if is_same else "UPDATE"
             changed |= not is_same
+            if key.startswith("MONOGRAM_"):
+                monogram_changed |= not is_same
         print(f"  {label:22} {old:44} -> {new:44} [{marker}]")
+    if ("MONOGRAM_VERSION" in latest
+            and current.get("MONOGRAM_VERSION") == latest["MONOGRAM_VERSION"]
+            and not same_pin(current.get("MONOGRAM_REF", ""), latest["MONOGRAM_REF"], "MONOGRAM_REF")):
+        print(f"  WARNING: Monogram release tag {latest['MONOGRAM_VERSION']} moved: "
+              f"{current.get('MONOGRAM_REF')} -> {latest['MONOGRAM_REF']}")
     if current_libvlc is not None:
         marker = "UPDATE" if current_libvlc != latest_libvlc else "ok"
         changed |= current_libvlc != latest_libvlc
@@ -266,7 +295,7 @@ def main() -> int:
         if "SPOTIFY_RUSTY_REF" in safe_latest:
             safe_latest["SPOTIFY_RUSTY_REF"] = current.get("SPOTIFY_RUSTY_REF", safe_latest["SPOTIFY_RUSTY_REF"])
         updates = {}
-        if current["SVPFLOW_REF"] != latest["SVPFLOW_REF"]:
+        if "SVPFLOW_REF" in latest and current["SVPFLOW_REF"] != latest["SVPFLOW_REF"]:
             print("Preparing matching SVP Rust pins, Cargo.lock, Vulkan shader and notices...")
             updates.update(svp.stage_update(ROOT, latest["SVPFLOW_REF"], get_bytes))
         current.update(safe_latest)
@@ -274,13 +303,19 @@ def main() -> int:
         if latest_libvlc is not None:
             updates[CATALOG] = render_catalog_version("libvlc", latest_libvlc).encode()
         svp.apply_files(updates, {path: originals[path] for path in updates})
-        print("\nUpdated managed pins and matching SVP source assets (no native build).")
-        print("The next normal build detects changed native inputs and rebuilds affected runtimes automatically.")
-        print("SVP only: ./build.sh svp. Upstream API/shader changes still require build and playback regression tests.")
-        if not args.only:
+        if include_svp:
+            print("\nUpdated managed pins and matching SVP source assets (no native build).")
+            print("The next normal build detects changed native inputs and rebuilds affected runtimes automatically.")
+            print("SVP only: ./build.sh svp. Upstream API/shader changes still require build and playback regression tests.")
+        else:
+            print("\nUpdated managed pins (no native build).")
+        if include_rest:
             print("SmartTube is refreshed automatically when its compatible release/submodule pins change.")
+        if monogram_changed:
+            print("Monogram pin updated. Confirm scripts/patch_monogram_leave.py still applies, "
+                  "rebuild with ./build.sh monogram, and review the UniFFI ABI, auth, streaming and GPL license.")
     elif changed or manual_rusty_update:
-        print("\nUpdates are available. Apply with: ./build.sh libs-update" + (" svp" if args.only else ""))
+        print("\nUpdates are available. Apply with: ./build.sh libs-update" + (f" {args.only}" if args.only else ""))
         if manual_rusty_update:
             print("Spotify/Rusty requires porting its Kotlin/JNI changes before changing its pin.")
     else:

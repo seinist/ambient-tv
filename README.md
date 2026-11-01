@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0%20%28353%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0%20%28380%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0` (353)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (repo)** <!-- version:start -->`1.0` (380)<!-- version:end --> · **Min Android** API 29 · **License** [CC0 1.0](LICENSE)
 
 </p>
 
@@ -242,7 +242,7 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 <details>
 <summary>Use your own Telegram API ID and hash, then sign in by TV QR or phone code</summary>
 
-**Availability:** Monogram is an *opt-in native MTProto build*, not part of a standard Ambient TV APK. For a local build, use `MONOGRAM_NATIVE=1 ./build.sh arm64` (or `release` for the four ABIs). See [Monogram integration/build notes](docs/monogram-integration.md). The native code and original artwork are GPL-3.0-only; distribution requires a separate GPL/license and Telegram API terms review. The optional native release and three renderer backends are still being validated on devices.
+**Availability:** `./build.sh release` includes the pinned GPL-3.0-only Monogram runtime in all four ABI APKs. Debug and single-ABI builds (`./build.sh arm64` and the others) leave it out unless `MONOGRAM_NATIVE=1`. `MONOGRAM_NATIVE=0 ./build.sh release` builds the plain release. See [Monogram integration/build notes](docs/monogram-integration.md). The native code and original artwork are GPL-3.0-only; distribution requires a separate GPL/license and Telegram API terms review. Native release builds and the three renderer backends are still being validated on devices.
 
 1. Sign in at [my.telegram.org/apps](https://my.telegram.org/apps) using **your own Telegram account** and create a Telegram API application. Copy its **API ID** (a number) and **API hash** (32 hexadecimal characters).
 2. In a Monogram-enabled Ambient TV build, open **Settings › Media sources & accounts › Monogram**. The credentials section is available even before turning the system on.

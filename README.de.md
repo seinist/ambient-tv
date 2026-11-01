@@ -11,7 +11,7 @@
 
 <!-- version-badge:start -->
 
-[![Version](https://img.shields.io/badge/Version-1.0%20%28353%29-E5A00D)](#)
+[![Version](https://img.shields.io/badge/Version-1.0%20%28380%29-E5A00D)](#)
 
 <!-- version-badge:end -->
 
@@ -37,7 +37,7 @@
 
 <p align="center">
 
-**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0` (353)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
+**Package** `com.ambient.tv` · **Version (Repo)** <!-- version:start -->`1.0` (380)<!-- version:end --> · **Min. Android** API 29 · **Lizenz** [CC0 1.0](LICENSE)
 
 </p>
 
@@ -242,7 +242,7 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 <details>
 <summary>Eigene Telegram-API-ID und API-Hash hinterlegen und per TV-QR-Code oder Telefoncode anmelden</summary>
 
-**Voraussetzung:** Monogram ist ein *optionaler nativer MTProto-Build* und nicht in der Standard-APK von Ambient TV enthalten. Für einen eigenen Build: `MONOGRAM_NATIVE=1 ./build.sh arm64` (oder `release` für alle vier ABIs). Siehe [Monogram-Build und Integration](docs/monogram-integration.md). Die native Bibliothek und das ursprüngliche Logo stehen unter GPL-3.0-only; vor einer Verteilung müssen GPL-Lizenzpflichten und Telegram-API-Bedingungen geklärt werden. Native Release-Builds und die drei Renderer benötigen noch Gerätetests.
+**Voraussetzung:** `./build.sh release` packt die gepinnte Monogram-Laufzeit unter GPL-3.0-only in alle vier ABI-APKs. Debug und Einzel-ABI-Builds (`./build.sh arm64` und die übrigen) lassen sie weg, außer mit `MONOGRAM_NATIVE=1`. `MONOGRAM_NATIVE=0 ./build.sh release` baut den Release ohne Monogram. Siehe [Monogram-Build und Integration](docs/monogram-integration.md). Die native Bibliothek und das ursprüngliche Logo stehen unter GPL-3.0-only; vor einer Verteilung müssen GPL-Lizenzpflichten und Telegram-API-Bedingungen geklärt werden. Native Release-Builds und die drei Renderer benötigen noch Gerätetests.
 
 1. Mit deinem **Telegram-Konto** unter [my.telegram.org/apps](https://my.telegram.org/apps) anmelden und eine Telegram-API-Anwendung erstellen. **API-ID** (Zahl) und **API-Hash** (32 Hex-Zeichen) kopieren.
 2. In der Monogram-fähigen Ambient-TV-App **Einstellungen › Medienquellen & Konten › Monogram** öffnen. Die API-Felder sind auch bei noch deaktiviertem System verfügbar.

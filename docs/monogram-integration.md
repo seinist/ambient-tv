@@ -37,10 +37,11 @@ upstream Rust release already uses `opt-level="z"`, full LTO, stripping and
 The saved native bytes from this trim must be confirmed by a passing four-ABI
 CI rebuild and compared with the previously recorded raw ELF figures.
 
-The adapter lives under `app/src/monogram/java` and is included only when
-`MONOGRAM_NATIVE=1`. Normal builds contain neither the AAR, its JNA/Rustls
-dependencies nor the Kotlin adapter. Each ABI APK ships only its matching native
-library. For x86, the build explicitly compiles `i686-linux-android`;
+The adapter lives under `app/src/monogram/java` and is included when
+`MONOGRAM_NATIVE=1`. `./build.sh release` sets that flag for all four ABIs.
+Debug and single-ABI builds leave it unset, so they contain neither the AAR,
+its JNA/Rustls dependencies nor the Kotlin adapter. Each ABI APK ships only its
+matching native library. For x86, the build explicitly compiles `i686-linux-android`;
 if the native Rust crate cannot target it, the build must **fail** rather
 than silently ship an unusable x86 APK.
 
@@ -86,10 +87,15 @@ Ambient TV.
 ```sh
 ./build.sh monogram                     # build the pinned native AAR, all Android ABIs
 MONOGRAM_ABIS="arm64-v8a" ./build.sh monogram  # narrow standalone native build
-MONOGRAM_NATIVE=1 ./build.sh arm64       # APK with Monogram, only arm64 runtime
-MONOGRAM_NATIVE=1 ./build.sh release     # APKs for all four ABIs
-./build.sh monogram-check               # compare the pin with the latest upstream release
-./build.sh monogram-update              # explicitly move pin; review before shipping
+./build.sh release                       # four ABI APKs, Monogram included
+MONOGRAM_NATIVE=0 ./build.sh release     # four ABI APKs without Monogram
+MONOGRAM_NATIVE=1 ./build.sh arm64       # one ABI APK with Monogram
+./build.sh libs-check                   # includes the Monogram release pin
+./build.sh libs-update                  # moves the Monogram pin with the other libraries
+./build.sh libs-check monogram          # compare only the Monogram pin
+./build.sh libs-update monogram         # move only the Monogram pin
+./build.sh monogram-check               # alias of libs-check monogram
+./build.sh monogram-update              # alias of libs-update monogram
 ```
 
 ### Release pin
@@ -108,19 +114,23 @@ an arbitrary commit. Upstream publishes every release as a *pre-release*
 no longer points to `MONOGRAM_REF` or the submodule is not at
 `MONOGRAM_MONO_RS_REF`. The AAR stamp records `version=`, `ref=`, `abis=` and
 `patch=`; the app build fails if the AAR was built for another release.
-`./build.sh monogram-check` asks the GitHub releases API for the newest
-published release (pre-releases included) and prints its tag, whether it is a
-pre-release, its commit and mono-rs commit; `monogram-update` writes them.
+`./build.sh libs-check` asks the GitHub releases API for the newest published
+release (pre-releases included) and prints its tag, commit, mono-rs commit and
+rustls version together with the other managed libraries. `./build.sh libs-update`
+writes that pin. `monogram-check` and `monogram-update` do the same for Monogram
+only.
 
 The previous pin, commit `075cca21`, differs from release 0.4.3 only in
 upstream `app/build.gradle.kts` (version 0.4.2 → 0.4.3); `native/` and the
 mono-rs submodule are identical, so `scripts/patch_monogram_leave.py` applies
 unchanged.
 
-External pins are in `gradle/external-versions.properties`. Monogram is NOT
-silently upgraded through a normal `libs-update` of unrelated dependencies:
-the UniFFI ABI, MTProto models and licensing must be rechecked on every pin
-update. Generated AARs, upstream source and credentials are git-ignored.
+External pins are in `gradle/external-versions.properties`. `./build.sh libs-check`
+and `./build.sh libs-update` include the Monogram release pin with the other
+managed libraries. An ordinary APK build still does not fetch a newer release.
+The UniFFI ABI, MTProto models and licensing must be rechecked on every pin
+update, and the native AAR rebuilt with `./build.sh monogram`. Generated AARs,
+upstream source and credentials are git-ignored.
 The assembly script merges per-ABI AARs only if their non-native Java resources
 are identical.
 
@@ -249,9 +259,10 @@ adopted only on a device without an existing application identity.
 ## Distribution / legal considerations
 
 Monogram's native module and its original logo artwork are GPL-3.0-only.
-The logo artwork lives in `app/src/monogram/res` and is packaged only in
-`MONOGRAM_NATIVE` builds; normal builds use a separate CC0 icon from
-`app/src/plain/res` and show no Monogram/Telegram UI at all.
+The logo artwork lives in `app/src/monogram/res` and is packaged in
+`./build.sh release` and other `MONOGRAM_NATIVE=1` builds. Debug and single-ABI
+builds use a separate CC0 icon from `app/src/plain/res` and show no
+Monogram/Telegram UI at all.
 An optional compile-time flag, separate source directory or independent
 dependency build **does not** waive the GPL. If distributing a Monogram-enabled
 Ambient TV binary, review GPL-3.0-compatible distribution of the combined

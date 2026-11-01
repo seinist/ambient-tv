@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./build.sh debug          # MPV (if needed) + debug APK
-#   ./build.sh release        # MPV (if needed) + release APK
+#   ./build.sh release        # release APKs for all ABIs, including Monogram
 #   ./build.sh arm64          # arm64-v8a release APK only
 #   ./build.sh armv7          # armeabi-v7a release APK only
 #   ./build.sh x86            # x86 release APK only (emulator)
@@ -16,17 +16,18 @@
 #   ./build.sh mpv            # only build/install native MPV libraries
 #   ./build.sh svp            # only build/update the pinned Open-SVPFlow runtime
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
-#   ./build.sh monogram-check / monogram-update  # check/update reviewed source pin
+#   ./build.sh monogram-check / monogram-update  # check/update only the Monogram pin
 #   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
-#   ./build.sh libs-check [svp]  # check all managed libraries, or only SVP
-#   ./build.sh libs-update [svp] # update pins/assets/lockfile (no native build)
-#                               # lib-check / lib-update are aliases
+#   ./build.sh libs-check [svp|monogram]  # check managed libraries, or only one
+#   ./build.sh libs-update [svp|monogram] # update pins/assets/lockfile (no native build)
+#                               # includes the Monogram release pin; lib-check / lib-update are aliases
 #
 # Environment overrides:
-#   MONOGRAM_NATIVE=1         Include Monogram's native runtime in the APK (GPL distribution).
+#   MONOGRAM_NATIVE=1         Include Monogram in debug or single-ABI APKs (GPL distribution).
+#   MONOGRAM_NATIVE=0         Omit Monogram from ./build.sh release.
 #   MONOGRAM_ABIS="arm64-v8a" Restrict standalone Monogram native build to ABI(s).
 #   SKIP_MPV_NATIVE=1         Do not build/check MPV before Android artifacts.
 #   REBUILD_MPV=1             Force rebuilding MPV even when .so files exist.
@@ -71,7 +72,6 @@ PROJECTM_SCRIPT="$ROOT_DIR/scripts/build_projectm_android.sh"
 YOUTUBE_ENGINE_SCRIPT="$ROOT_DIR/scripts/fetch_smarttube_engine.sh"
 SPOTIFY_ENGINE_SCRIPT="$ROOT_DIR/scripts/build_spotify_engine.sh"
 MONOGRAM_BUILD_SCRIPT="$ROOT_DIR/scripts/build_monogram_native.sh"
-MONOGRAM_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_monogram_pin.py"
 EXTERNAL_VERSIONS="$ROOT_DIR/gradle/external-versions.properties"
 LIB_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_external_libraries.py"
 NNEDI3_VENDOR_SCRIPT="$ROOT_DIR/scripts/vendor_nnedi3_quality_ladder.py"
@@ -1134,6 +1134,11 @@ build_release_variant_adb() {
 }
 
 build_release() {
+    # Full release APKs ship Monogram. Debug and single-ABI release stay opt-in.
+    if [[ -z "${MONOGRAM_NATIVE+x}" ]]; then
+        export MONOGRAM_NATIVE=1
+        log "Including pinned Monogram MTProto in this release (GPL-3.0-only). Set MONOGRAM_NATIVE=0 to leave it out."
+    fi
     ensure_monogram_native "${SUPPORTED_ABIS[*]}"
     UPDATE_APKS=()
     UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
@@ -1146,7 +1151,7 @@ build_release() {
     ensure_projectm
     verify_gradle_build_graph
     log "Building Ambient TV RELEASE APKs (arm64-v8a, armeabi-v7a, x86, x86_64)"
-    run_release_gradle :app:packageRelease
+    run_release_gradle :app:packageRelease -PMONOGRAM_NATIVE="$MONOGRAM_NATIVE"
     mkdir -p "$DIST_DIR"
 
     local release_dir="$ROOT_DIR/app/build/outputs/apk/release"
@@ -1203,7 +1208,7 @@ fi
 if [[ "$MODE" == "libs-check" || "$MODE" == "lib-check" || "$MODE" == "deps-check" || "$MODE" == "libraries-check" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --check "${library_args[@]}"
@@ -1212,7 +1217,7 @@ fi
 if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-update" || "$MODE" == "libraries-update" ]]; then
     command -v python3 >/dev/null 2>&1 || fail "python3 is required"
     [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
-    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp]"
+    [[ $# -le 2 ]] || fail "Usage: $0 $MODE [svp|monogram]"
     library_args=()
     [[ $# -eq 1 ]] || library_args=(--only "$2")
     python3 "$LIB_UPDATE_SCRIPT" --apply "${library_args[@]}"
@@ -1221,8 +1226,12 @@ if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-up
 fi
 
 if [[ "$MODE" == "monogram-check" || "$MODE" == "monogram-update" ]]; then
-    [[ -f "$MONOGRAM_UPDATE_SCRIPT" ]] || fail "Missing $MONOGRAM_UPDATE_SCRIPT"
-    python3 "$MONOGRAM_UPDATE_SCRIPT" "$([[ "$MODE" == "monogram-update" ]] && echo --apply || echo --check)"
+    command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+    [[ -f "$LIB_UPDATE_SCRIPT" ]] || fail "Missing library updater: $LIB_UPDATE_SCRIPT"
+    python3 "$LIB_UPDATE_SCRIPT" "$([[ "$MODE" == "monogram-update" ]] && echo --apply || echo --check)" --only monogram
+    if [[ "$MODE" == "monogram-update" ]]; then
+        log "External pins updated. Review the diff and rebuild/test before committing."
+    fi
     exit 0
 fi
 
@@ -1312,7 +1321,7 @@ case "$MODE" in
         ;;
     *)
         cat >&2 <<EOT
-Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-size|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp for library updates]
+Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-size|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp|monogram for library updates]
 EOT
         exit 2
         ;;

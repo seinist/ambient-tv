@@ -21,6 +21,7 @@ This performs a network check for the managed external components without modify
 - projectM — newest stable GitHub release
 - Spotify native core (`SerafiniJose/rusty`) — newest stable GitHub release/tag
 - Open-SVPFlow — newest published versioned release, or an explicitly named nightly when no stable version exists; always resolved to an exact commit
+- Monogram (GPL-3.0-only, opt-in) — newest published GitHub release, including pre-releases; the tag commit, the `vendor/mono-rs` submodule commit, and the `rustls-platform-verifier-android` version from that release. Drafts are ignored. Moving the pin does not build the native AAR.
 
 ## Apply updates
 
@@ -44,6 +45,16 @@ SVP participates in both commands. To update only SVP (without changing other li
 ./build.sh libs-update svp
 ./build.sh svp                 # build/test the pinned native engine, no APK
 ```
+
+Monogram participates in both commands as well. To update only that pin:
+
+```bash
+./build.sh libs-check monogram
+./build.sh libs-update monogram
+./build.sh monogram            # build the pinned native AAR, no APK
+```
+
+`monogram-check` and `monogram-update` are aliases for the Monogram-only commands. After the pin moves, confirm `scripts/patch_monogram_leave.py` still applies and review the UniFFI ABI, auth, streaming and GPL license before distributing. An ordinary APK build does not fetch a newer Monogram release.
 
 `lib-check` / `lib-update` are also accepted aliases. SVP updates require Python 3.11+ and stable Rust via rustup. Updating resolves Cargo dependencies but does not compile a native runtime. It stages all three Rust dependency pins, `Cargo.lock`, the matching Vulkan shader, upstream provenance, and notices together. Download/resolution failures leave the current sources and pins intact; upstream license changes require manual review. Ordinary builds never fetch a newer release automatically.
 

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "merge_monogram_aars.py"
@@ -151,6 +152,37 @@ class MinimalMonogramTests(unittest.TestCase):
         ]
         self.assertEqual("0.4.3", pin.latest_release(releases)["tag_name"])
 
+    def test_resolve_latest_reads_release_commit_submodule_and_rustls(self):
+        spec = importlib.util.spec_from_file_location(
+            "monogram_pin_resolve", ROOT / "scripts" / "update_monogram_pin.py")
+        pin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin)
+        commit, mono_rs = "a" * 40, "b" * 40
+
+        def fake_json(url):
+            if url.endswith("/releases?per_page=30"):
+                return [{"tag_name": "0.4.3", "prerelease": True, "draft": False,
+                         "published_at": "2026-11-01T12:02:16Z"}]
+            if "/git/ref/tags/" in url:
+                return {"object": {"type": "commit", "sha": commit}}
+            if "vendor/mono-rs" in url:
+                return {"type": "submodule", "sha": mono_rs}
+            raise AssertionError(url)
+
+        lock = b'name = "rustls-platform-verifier-android"\nversion = "0.2.0"\n'
+        with mock.patch.object(pin, "get_json", side_effect=fake_json), \
+             mock.patch.object(pin, "get", return_value=lock) as fetch:
+            pins, meta = pin.resolve_latest()
+        fetch.assert_called_once()
+        self.assertIn("/native/Cargo.lock", fetch.call_args.args[0])
+        self.assertEqual({
+            "MONOGRAM_VERSION": "0.4.3",
+            "MONOGRAM_REF": commit,
+            "MONOGRAM_MONO_RS_REF": mono_rs,
+            "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION": "0.2.0",
+        }, pins)
+        self.assertEqual({"kind": "pre-release", "published_at": "2026-11-01T12:02:16Z"}, meta)
+
     def test_unused_sticker_qr_and_waveform_native_code_is_pruned(self):
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
         patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()
@@ -165,6 +197,15 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn("LottieNative.kt", patch)
         self.assertIn("VpxNative.kt", patch)
         self.assertIn("source.count(start) != 1", patch)
+
+    def test_full_release_includes_monogram_by_default(self):
+        shell = (ROOT / "build.sh").read_text()
+        release = shell.split("build_release() {", 1)[1].split("gen_keystore()", 1)[0]
+        self.assertIn('[[ -z "${MONOGRAM_NATIVE+x}" ]]', release)
+        self.assertLess(release.index("export MONOGRAM_NATIVE=1"), release.index("ensure_monogram_native"))
+        self.assertIn('-PMONOGRAM_NATIVE="$MONOGRAM_NATIVE"', release)
+        self.assertEqual(shell.count("export MONOGRAM_NATIVE=1"), 1)
+        self.assertEqual(shell.count('-PMONOGRAM_NATIVE="$MONOGRAM_NATIVE"'), 1)
 
     def test_opt_in_and_native_module_only_build_graph(self):
         gradle = (ROOT / "app" / "build.gradle.kts").read_text()

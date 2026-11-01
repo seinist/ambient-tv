@@ -365,7 +365,7 @@ Einstellungen › Systeme & Konten › **IPTV**: beliebig viele M3U-Wiedergabeli
 
 ### 4.11 Monogram (Telegram-Medien; optionaler nativer Build)
 
-**Verfügbarkeit:** Optionaler Build mit `MONOGRAM_NATIVE=1` und einer gepinnten nativen MTProto-Bibliothek unter GPL-3.0-only. Standard-APKs enthalten Monogram nicht. Anleitung im [README](../README.de.md#monogram-einrichten-optionale-telegram-medien) und in der [technischen Doku](monogram-integration.md). Die Native-ABIs, Renderer und Gerätetests sind noch nicht vollständig verifiziert.
+**Verfügbarkeit:** `./build.sh release` enthält die gepinnte native MTProto-Bibliothek unter GPL-3.0-only. Debug- und Einzel-ABI-APKs enthalten sie nicht, außer mit `MONOGRAM_NATIVE=1`. Anleitung im [README](../README.de.md#monogram-einrichten-optionale-telegram-medien) und in der [technischen Doku](monogram-integration.md). Die Native-ABIs, Renderer und Gerätetests sind noch nicht vollständig verifiziert.
 
 | Einstellung | Optionen / Werte | Standard | Geräte | Beschreibung |
 | --- | --- | --- | --- | --- |

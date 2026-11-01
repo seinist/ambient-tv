@@ -129,7 +129,8 @@ class SvpUpdateTest(unittest.TestCase):
 
     def test_check_is_read_only_and_does_not_query_other_libraries(self):
         before = {p: p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
-        with mock.patch.object(updater, "smarttube_latest", side_effect=AssertionError("out of scope")):
+        with mock.patch.object(updater, "smarttube_latest", side_effect=AssertionError("out of scope")), \
+             mock.patch.object(updater, "monogram_latest", side_effect=AssertionError("out of scope")):
             self.assertEqual(self.run_updater("--check"), 0)
         self.assertEqual(before, {p: p.read_bytes() for p in before})
 
@@ -152,10 +153,41 @@ class SvpUpdateTest(unittest.TestCase):
                 stack.enter_context(mock.patch.object(updater, name, return_value={k: v for k, v in props.items() if k.startswith(prefix)}))
             stack.enter_context(mock.patch.object(updater, "rusty_latest", return_value={"SPOTIFY_RUSTY_REF": "new-jni"}))
             stack.enter_context(mock.patch.object(updater, "libvlc_latest_stable", return_value="3.7.6"))
+            stack.enter_context(mock.patch.object(updater, "monogram_latest", return_value={
+                k: props[k] for k in (
+                    "MONOGRAM_VERSION", "MONOGRAM_REF", "MONOGRAM_MONO_RS_REF",
+                    "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")
+            }))
             self.run_updater("--apply", only=False)
         self.assertIn(f"SPOTIFY_RUSTY_REF={props['SPOTIFY_RUSTY_REF']}", self.props.read_text())
+        self.assertIn(f"MONOGRAM_REF={props['MONOGRAM_REF']}", self.props.read_text())
         self.assertIn('libvlc = "3.7.6"', self.catalog.read_text())
         svp.verify(self.crate, NEW)
+
+    def test_monogram_only_apply_updates_monogram_and_keeps_other_pins(self):
+        before = self.props.read_text().splitlines()
+        new = {
+            "MONOGRAM_VERSION": "0.9.1",
+            "MONOGRAM_REF": "d" * 40,
+            "MONOGRAM_MONO_RS_REF": "e" * 40,
+            "MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION": "0.9.0",
+        }
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(updater, "ROOT", self.root))
+            stack.enter_context(mock.patch.object(updater, "PROPS", self.props))
+            stack.enter_context(mock.patch.object(updater, "CATALOG", self.catalog))
+            stack.enter_context(mock.patch.object(updater, "monogram_latest", return_value=new))
+            stack.enter_context(mock.patch.object(updater, "svp_latest", side_effect=AssertionError("svp")))
+            stack.enter_context(mock.patch.object(updater, "smarttube_latest", side_effect=AssertionError("smarttube")))
+            stack.enter_context(mock.patch.object(sys, "argv", ["updater", "--apply", "--only", "monogram"]))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            self.assertEqual(updater.main(), 0)
+        text = self.props.read_text()
+        for key, value in new.items():
+            self.assertIn(f"{key}={value}", text)
+        kept = lambda lines: [line for line in lines if not line.startswith("MONOGRAM_")]
+        self.assertEqual(kept(before), kept(text.splitlines()))
+        self.assertEqual(svp.pinned_revision(self.root), self.old)
 
     def test_fingerprint_changes_on_engine_source_and_stays_location_independent(self):
         (self.root / "scripts").mkdir()

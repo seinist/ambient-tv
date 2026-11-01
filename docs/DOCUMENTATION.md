@@ -365,7 +365,7 @@ Settings › Systems & accounts › **IPTV**: any number of M3U playlists (http/
 
 ### 4.11 Monogram (Telegram media; optional native build)
 
-**Availability:** Optional `MONOGRAM_NATIVE=1` build with a pinned GPL-3.0-only native MTProto module. Standard APKs do not ship Monogram. See the [README setup guide](../README.md#monogram-setup-optional-telegram-media-integration) and [native build notes](monogram-integration.md). Native ABI, renderer and device testing is still in progress.
+**Availability:** `./build.sh release` ships the pinned GPL-3.0-only native MTProto module. Debug and single-ABI APKs do not, unless built with `MONOGRAM_NATIVE=1`. See the [README setup guide](../README.md#monogram-setup-optional-telegram-media-integration) and [native build notes](monogram-integration.md). Native ABI, renderer and device testing is still in progress.
 
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |

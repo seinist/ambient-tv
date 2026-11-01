@@ -1,8 +1,9 @@
 # GitHub-Release-Builds
 
 Der Workflow **Build release** ruft `bash build.sh release` auf und baut alle vier
-Architekturen inklusive nativer Engines. Er erstellt signierte APKs, `update.json`
-und einen GitHub-Release-Entwurf. Die Dateinamen kommen unverändert aus `build.sh`.
+Architekturen inklusive nativer Engines und Monogram. Er erstellt signierte APKs,
+`update.json` und einen GitHub-Release-Entwurf. Die Dateinamen kommen unverändert
+aus `build.sh`.
 
 ## Einmalige Einrichtung
 
