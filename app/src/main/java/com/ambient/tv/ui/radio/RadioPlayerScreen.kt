@@ -109,10 +109,17 @@ private fun RadioPlayerContent(
     val session by BackgroundPlaybackSession.snapshot.collectAsState()
     val metadata = session.metadata
     val station = viewModel.currentStation()
-    // Artwork is driven by the selected target as soon as Next/Previous is pressed.
-    // The previous background can then fade directly into the new cover once loaded.
-    val pendingStation = viewModel.pendingStation.takeIf { viewModel.switchingStation }
+    val switchingStation = viewModel.switchingStation
+    // Artwork and OSD labels always come from the requested station, never the outgoing stream.
+    val pendingStation = viewModel.pendingStation.takeIf { switchingStation }
     val coverPresentation = radioCoverPresentation(metadata, pendingStation)
+    val osdStation = radioOsdStationPresentation(
+        metadata = metadata,
+        selectedStation = station,
+        pendingStation = pendingStation,
+        switching = switchingStation,
+        loadingLabel = stringResource(R.string.player_loading),
+    )
     val panelNavigation = rememberPlayerPanelNavigation()
     var panel by panelNavigation
     var controlsVisible by rememberPlayerControlsVisible()
@@ -152,6 +159,7 @@ private fun RadioPlayerContent(
         controlsVisible,
         session.playing,
         panel != UnifiedPlayerPanel.NONE,
+        changingItem = switchingStation,
     ) { visible ->
         if (!visible) runCatching { rootFocusRequester.requestFocus() }
         controlsVisible = visible
@@ -197,9 +205,16 @@ private fun RadioPlayerContent(
                             override fun showOsd() { osd.reveal() }
                             override fun hideSeekFeedback() { osd.reveal() }
                             override fun restart() = Unit
-                            override fun next() = viewModel.next()
-                            override fun previousTrack() = viewModel.previous()
+                            override fun next() {
+                                if (panel == UnifiedPlayerPanel.NONE) osd.showChannelInfo()
+                                viewModel.next()
+                            }
+                            override fun previousTrack() {
+                                if (panel == UnifiedPlayerPanel.NONE) osd.showChannelInfo()
+                                viewModel.previous()
+                            }
                             override fun zap(delta: Int) {
+                                if (panel == UnifiedPlayerPanel.NONE) osd.showChannelInfo()
                                 if (delta > 0) viewModel.next() else viewModel.previous()
                             }
                         },
@@ -279,21 +294,21 @@ private fun RadioPlayerContent(
                 )
             }
 
-            if (metadata != null && metadata.source == "radio") {
-                PublishPlayerOsd(
-                    RadioOsdModel(
-                        station = station,
-                        stationId = metadata.mediaId,
-                        stationName = metadata.title,
-                        nowPlaying = metadata.subtitle,
-                        artworkUrl = metadata.artworkUrl,
-                        artworkFallbackUrls = metadata.artworkFallbackUrls,
-                        artworkHeaders = metadata.artworkHeaders,
+            val radioOsdModel = osdStation?.let { target ->
+                RadioOsdModel(
+                        station = target.station,
+                        stationId = target.stationId,
+                        stationName = target.stationName,
+                        nowPlaying = target.nowPlaying,
+                        artworkUrl = target.artworkUrl,
+                        artworkFallbackUrls = target.artworkFallbackUrls,
+                        artworkHeaders = target.artworkHeaders,
                         playing = session.playing,
-                        positionMs = session.status.positionMs,
-                        durationMs = session.status.durationMs,
-                        seekable = radioSeekable,
-                        favorite = viewModel.favorite,
+                        positionMs = if (target.switching) 0L else session.status.positionMs,
+                        durationMs = if (target.switching) 0L else session.status.durationMs,
+                        seekable = !target.switching && radioSeekable,
+                        favorite = if (target.switching) target.station?.let { viewModel.isFavorite(it.id) } == true else viewModel.favorite,
+                        favoriteEnabled = !target.switching,
                         hasPrevious = viewModel.hasPrevious(),
                         hasNext = viewModel.hasNext(),
                         showAudio = audioSession != null,
@@ -307,9 +322,15 @@ private fun RadioPlayerContent(
                                 )
                             }
                         },
-                        onPrevious = viewModel::previous,
-                        onNext = viewModel::next,
-                        onFavorite = viewModel::toggleFavorite,
+                        onPrevious = {
+                            if (panel == UnifiedPlayerPanel.NONE) osd.showChannelInfo()
+                            viewModel.previous()
+                        },
+                        onNext = {
+                            if (panel == UnifiedPlayerPanel.NONE) osd.showChannelInfo()
+                            viewModel.next()
+                        },
+                        onFavorite = { if (!viewModel.switchingStation) viewModel.toggleFavorite() },
                         onStop = {
                             BackgroundPlaybackSession.stop()
                             onBack()
@@ -319,13 +340,14 @@ private fun RadioPlayerContent(
                         onOpenVisualizer = { panel = UnifiedPlayerPanel.VISUALIZER },
                         onOpenSleep = { panel = UnifiedPlayerPanel.SLEEP },
                         onOpenSettings = { panel = UnifiedPlayerPanel.SETTINGS },
-                    ),
-                    visible = controlsVisible,
                 )
+            }
+            if (radioOsdModel != null) {
+                PublishPlayerOsd(radioOsdModel, visible = controlsVisible)
 
                 val infoLines = buildList {
                     add(stringResource(R.string.player_nerd_backend) to "Media3")
-                    station?.let { current ->
+                    osdStation.station?.let { current ->
                         current.codec?.takeIf { it.isNotBlank() }?.let {
                             add(stringResource(R.string.player_audio) to it)
                         }
@@ -373,9 +395,12 @@ private fun RadioPlayerContent(
                 )
             }
 
+            // Never unmount the OSD during tuning: keep focus, stow state and the current
+            // visibility animation. The same-frame model prevents an old station identity
+            // from creating a blank OSD frame before PublishPlayerOsd's SideEffect runs.
             PersistentPlayerOverlays(
-                hideSourceInfo = viewModel.switchingStation,
-                expectedSourceIdentity = stationId,
+                expectedSourceIdentity = osdStation?.stationId,
+                immediateOsdModel = radioOsdModel,
             )
         }
     }
@@ -419,6 +444,7 @@ internal data class RadioOsdModel(
     val durationMs: Long,
     val seekable: Boolean,
     val favorite: Boolean,
+    val favoriteEnabled: Boolean = true,
     val hasPrevious: Boolean,
     val hasNext: Boolean,
     val showAudio: Boolean,
@@ -532,6 +558,7 @@ internal data class RadioOsdModel(
                             stringResource(if (favorite) R.string.radio_remove_favorite else R.string.radio_add_favorite),
                             onFavorite,
                             selected = favorite,
+                            enabled = favoriteEnabled,
                             osd = com.ambient.tv.ui.player.OsdButton.FAVORITE,
                         )
                         if (showAudio) {
