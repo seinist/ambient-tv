@@ -13,4 +13,10 @@ class UnreachableServerViewModel @Inject constructor(
     val nextAutomaticCheckAtElapsedMs = gate.nextAutomaticCheckAtElapsedMs
     fun retry() = gate.retry()
     fun retrySystem(system: String) = gate.retrySystem(system)
+
+    /** Same machine key as the wake notification; stop jobs rather than dismissing the card. */
+    fun cancelWake(machine: String) {
+        com.ambient.tv.notifications.WakeCancellationJobs.cancel(machine)
+        gate.cancelMachineWake(machine)
+    }
 }
