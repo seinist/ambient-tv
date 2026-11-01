@@ -227,7 +227,7 @@ internal fun SidebarContent(
     // Like every system with a login: in the menu only once signed in (sign-in lives in Settings).
     val spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized
     val radioEnabled = sidebarState.radioEnabled
-    val telegramEnabled = sidebarState.telegramEnabled
+    val telegramEnabled = sidebarState.telegramEnabled && sidebarState.telegramAuthorized
     val tvheadendEnabled = sidebarState.tvheadendEnabled
     val tvheadendUsable = tvheadendEnabled && !sidebarState.tvheadendLoginRejected
     val spotifyAuthorized = sidebarState.spotifyAuthorized
@@ -400,7 +400,7 @@ internal fun SidebarContent(
     val activeSystem = systems.firstOrNull { system -> system.entries.any { it.isActive(activeRoute) } }
     // Home: systems that contribute home-like rows (media servers, Live TV, YT, Spotify). Files-only has no Home.
     // Search: only backends SearchViewModel can query — FilesRepository.search is a stub, so Files is excluded.
-    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled, sidebarState.telegramHomeEnabled)
+    val showHome = sidebarState.trailersConfigured || sidebarShowsHome(plexShown, jellyfinShown, embyShown, tvheadendUsable, youtubeEnabled, spotifyEnabled, sidebarState.radioHomeEnabled, sidebarState.telegramHomeEnabled && telegramEnabled)
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = plexShown,
         jellyfinConfigured = jellyfinShown,

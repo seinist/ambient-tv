@@ -9,6 +9,7 @@ import com.ambient.tv.data.dlna.DlnaStore
 import com.ambient.tv.connectivity.UnreachableServerGate
 import com.ambient.tv.connectivity.HostConnectivity
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.data.local.SystemNameOverrides
 import com.ambient.tv.domain.repository.MediaRepository
 import com.ambient.tv.data.jellyfin.JellyfinRepository
@@ -45,6 +46,7 @@ data class SidebarUiState(
     val spotifyEnabled: Boolean = false,
     val radioEnabled: Boolean = false,
     val telegramEnabled: Boolean = false,
+    val telegramAuthorized: Boolean = false,
     val telegramHomeEnabled: Boolean = false,
     val telegramSubmenuKeys: List<String> = AppPreferences.DEFAULT_TELEGRAM_SUBMENU_KEYS,
     val radioHomeEnabled: Boolean = false,
@@ -90,6 +92,7 @@ class SidebarViewModel @Inject constructor(
     private val embyConnectionManager: EmbyConnectionManager,
     private val smartTubeEngine: SmartTubeEngine,
     private val spotifyProvider: javax.inject.Provider<SpotifyRepository>,
+    private val telegramRepository: TelegramRepository,
     private val photoRepository: com.ambient.tv.data.photos.PhotoRepository,
     private val unreachableServers: UnreachableServerGate,
     private val hosts: HostConnectivity,
@@ -110,6 +113,7 @@ class SidebarViewModel @Inject constructor(
             spotifyEnabled = appPreferences.spotifyEnabled,
             radioEnabled = appPreferences.radioEnabled,
             telegramEnabled = appPreferences.telegramEnabled,
+            telegramAuthorized = telegramRepository.available,
             telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
             telegramSubmenuKeys = appPreferences.telegramSubmenuKeys,
             radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
@@ -192,6 +196,11 @@ class SidebarViewModel @Inject constructor(
         }
 
     init {
+        viewModelScope.launch {
+            telegramRepository.authorized.collect { allowed ->
+                _uiState.update { it.copy(telegramAuthorized = allowed) }
+            }
+        }
         viewModelScope.launch {
             observeSidebarAvailability(
                 hosts.states,
@@ -303,6 +312,7 @@ class SidebarViewModel @Inject constructor(
                 spotifyEnabled = appPreferences.spotifyEnabled,
                 radioEnabled = appPreferences.radioEnabled,
             telegramEnabled = appPreferences.telegramEnabled,
+            telegramAuthorized = telegramRepository.available,
             telegramHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_TELEGRAM },
             telegramSubmenuKeys = appPreferences.telegramSubmenuKeys,
                 radioHomeEnabled = appPreferences.homeRows.any { it.enabled && it.system == com.ambient.tv.data.local.HomeRowDefinition.SYSTEM_RADIO },
