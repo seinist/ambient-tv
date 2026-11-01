@@ -2252,4 +2252,12 @@
     <string name="monogram_api_setup_hint">Get an API ID and hash at my.telegram.org/apps. They are saved encrypted on this device and are not compiled into the app.</string>
     <string name="monogram_leave_channel">Leave channel</string>
     <string name="monogram_leave_failed">Could not leave this channel</string>
+    <string name="monogram_login_signed_out">Not signed in to Telegram</string>
+    <string name="monogram_login_busy">Connecting to Telegram…</string>
+    <string name="monogram_login_check_code">Enter the login code sent by Telegram</string>
+    <string name="monogram_login_check_password">Enter your Telegram two-step verification password</string>
+    <string name="monogram_login_enable_source">Enable Monogram above to connect your Telegram account.</string>
+    <string name="monogram_login_phone_alternative">Or sign in with your Telegram phone number</string>
+    <string name="monogram_api_open_dashboard">Open Telegram API applications</string>
+    <string name="monogram_api_open_failed">No browser is available on this device.</string>
 </resources>
