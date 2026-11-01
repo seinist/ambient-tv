@@ -2131,9 +2131,14 @@ class AppPreferences @Inject constructor(
         }
     }
 
-    /** Landscape page views (also from older backups or a phone) become poster; YouTube has no poster view. */
+    /** Only legacy library layouts turn landscape/rows into posters. SmartTube and
+     * Monogram use a native landscape/ROWS mode and must keep it across backup import. */
     private fun withPosterSectionViews(values: Map<String, String>): Map<String, String> = values.mapValues { (key, value) ->
-        if (key.startsWith("section_view_") && !key.startsWith("section_view_youtube:") && value in setOf("LANDSCAPE", "ROWS")) "POSTER" else value
+        val preservesLandscapeRows = key.startsWith("section_view_youtube:") ||
+            key.startsWith("section_view_monogram.") ||
+            key.startsWith("section_view_telegram.")
+        if (key.startsWith("section_view_") && !preservesLandscapeRows &&
+            value in setOf("LANDSCAPE", "ROWS")) "POSTER" else value
     }
 
     fun updateActiveServerMac(mac: String) {
