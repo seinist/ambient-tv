@@ -33,6 +33,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
      * connecting are serialized: an artwork request must never block video seeking. */
     private val mutex = Mutex()
     private val browseMutex = Mutex()
+    private val diskChunkLock = Any()
     private val accountIdFile = File(session.parentFile, "account.id")
     private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
@@ -163,8 +164,10 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             phone = null
             codeHash = null
             loginState = MonogramLoginState(MonogramLoginStep.READY)
-            cache.deleteRecursively()
-            cache.mkdirs()
+            synchronized(diskChunkLock) {
+                cache.deleteRecursively()
+                cache.mkdirs()
+            }
             accountIdFile.delete()
             accountId = null
         }
@@ -319,10 +322,13 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
             val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
-            if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
-                cacheFile.setLastModified(System.currentTimeMillis())
-                return@nativeCall cacheFile.readBytes()
+            val cached = synchronized(diskChunkLock) {
+                if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                    cacheFile.setLastModified(System.currentTimeMillis())
+                    cacheFile.readBytes()
+                } else null
             }
+            if (cached != null) return@nativeCall cached
             val currentIdentity = accountId
             val temp = File.createTempFile("part-", ".bin", dir)
             var actual: File? = null
@@ -334,10 +340,17 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                     "Invalid Monogram chunk size"
                 }
                 val payload = actual.readBytes()
-                if (accountId == currentIdentity && native.isAuthorized(h)) {
-                    // An account switch must never publish the previous account's bytes.
-                    if (!cacheFile.isFile) actual.copyTo(cacheFile, overwrite = false)
-                    trimChunkCache(dir)
+                // An account switch/log-out invalidates in-flight native file results.
+                check(accountId == currentIdentity && native.isAuthorized(h)) {
+                    "Monogram session changed during media download"
+                }
+                synchronized(diskChunkLock) {
+                    if (accountId == currentIdentity) {
+                        if (!cacheFile.isFile) runCatching {
+                            actual.copyTo(cacheFile, overwrite = false)
+                        }
+                        trimChunkCache(dir)
+                    }
                 }
                 payload
             } finally {
