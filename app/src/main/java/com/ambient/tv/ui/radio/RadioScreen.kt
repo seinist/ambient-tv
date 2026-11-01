@@ -88,6 +88,7 @@ import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.activateOnTvKey
 import com.ambient.tv.ui.common.bringFocusedContextIntoView
 import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusHoldEntry
 import com.ambient.tv.ui.common.BrowseFocusInitialTarget
 import com.ambient.tv.ui.common.RegisterBrowseFocusGrid
 import com.ambient.tv.ui.common.RegisterBrowseFocusList
@@ -119,6 +120,9 @@ fun RadioScreen(
     onSelectSection: ((RadioSection) -> Unit)? = null,
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
+    // Back from the player recreates this page: take its station (also one reached by zapping) before
+    // anything reads the focus memory, so entry never starts from the old card or the first tile.
+    val returnedFromPlayer = remember(viewModel) { viewModel.consumePlayerReturn() }
     val state by viewModel.state.collectAsState()
     val playback by BackgroundPlaybackSession.snapshot.collectAsState()
     val selectSection = onSelectSection ?: viewModel::selectSection
@@ -199,7 +203,17 @@ fun RadioScreen(
             contentIds,
         )
     }
-    var pendingContentFocus by remember(viewModel) { mutableStateOf<RadioFocusScope?>(null) }
+    var pendingContentFocus by remember(viewModel) {
+        mutableStateOf(if (returnedFromPlayer) viewModel.state.value.focusScope() else null)
+    }
+    // Until that station has focus, the app's page entry waits instead of falling back to the first tile.
+    BrowseFocusHoldEntry(pendingContentFocus != null && pendingContentFocus == focusScope && !handheld)
+    // Never hold entry for good (list still loading after a network error): then the page decides.
+    LaunchedEffect(returnedFromPlayer) {
+        if (!returnedFromPlayer) return@LaunchedEffect
+        kotlinx.coroutines.delay(3_000)
+        pendingContentFocus = null
+    }
     LaunchedEffect(lifecycleOwner, viewModel) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
             if (viewModel.consumePlayerReturn()) {

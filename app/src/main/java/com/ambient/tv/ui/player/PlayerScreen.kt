@@ -1294,8 +1294,16 @@ internal fun TvPlayerSeekBar(
             .then(interactionModifier),
         verticalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        timelineContext?.invoke(displayedPosition)
-        if (timelineContext == null) CurrentChapterLabel(displayedPosition)
+        // Chapter and programme lines sit right under the preview: they step aside like the header.
+        val contextAlpha by seekPreviewYieldAlpha()
+        // No wrapper without content: an empty child would still get the column spacing.
+        if (timelineContext != null) {
+            Column(Modifier.graphicsLayer { alpha = contextAlpha }, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                timelineContext(displayedPosition)
+            }
+        } else {
+            CurrentChapterLabel(displayedPosition, Modifier.graphicsLayer { alpha = contextAlpha })
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()

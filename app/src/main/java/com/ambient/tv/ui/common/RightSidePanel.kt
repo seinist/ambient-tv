@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
@@ -519,7 +520,12 @@ private fun RightSidePanelChrome(
     ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
+    val backDispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    var backArmed by remember { mutableStateOf(false) }
     var panelHasFocus by remember { mutableStateOf(false) }
+    // The drawer's own focus group holding focus (no row inside it) is not a usable selection:
+    // nothing is highlighted and the D-pad has nowhere to go until OK picks a row.
+    var drawerSelfFocused by remember { mutableStateOf(false) }
     var bodyHasFocus by remember { mutableStateOf(false) }
     // A rebuilt level that already held focus rescues it like a panel that just lost it.
     var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
@@ -583,6 +589,13 @@ private fun RightSidePanelChrome(
             }
         }
     }
+    LaunchedEffect(drawerSelfFocused, panelInteractive) {
+        if (!drawerSelfFocused || !panelInteractive) return@LaunchedEffect
+        // Let a pending rescue place its remembered row first; then fall back to a real row.
+        androidx.compose.runtime.withFrameNanos { }
+        androidx.compose.runtime.withFrameNanos { }
+        if (drawerSelfFocused && !focusFirstRow()) runCatching { footerFocus.requestFocus() }
+    }
     if (requestHeaderFocus && panelInteractive) {
         LaunchedEffect(requestHeaderFocus, panelInteractive) {
             // Do not leave focus on the old grid for 400 ms while the drawer enters.
@@ -630,6 +643,7 @@ private fun RightSidePanelChrome(
             .focusRequester(panelFocus)
             .onFocusChanged {
                 panelHasFocus = it.hasFocus
+                drawerSelfFocused = it.isFocused
                 if (it.hasFocus) {
                     hadPanelFocus = true
                     focusRescue?.onFocused?.invoke()
@@ -648,6 +662,22 @@ private fun RightSidePanelChrome(
                     }
                     false
                 }
+            }
+            // Bubbling phase: rows that use Back themselves (drop-ups, editors) see it first.
+            // Left unconsumed, Compose turns Back into FocusDirection.Exit: focus jumps onto
+            // this focusable drawer, the key is used up and Back never navigates. Hand it to
+            // the back dispatcher like the platform would, on release.
+            .onKeyEvent { event ->
+                if (!rightPanelBackKey(event.key) || TvTextFieldFocus.anyFocused || backDispatcher == null)
+                    return@onKeyEvent false
+                when (event.type) {
+                    KeyEventType.KeyDown -> if (event.nativeKeyEvent.repeatCount == 0) backArmed = true
+                    KeyEventType.KeyUp -> if (backArmed) {
+                        backArmed = false
+                        if (!event.nativeKeyEvent.isCanceled) backDispatcher.onBackPressed()
+                    }
+                }
+                true
             }
             .then(if (!panelInteractive) Modifier.playerPanelInteractionGuard(false) else Modifier)
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
