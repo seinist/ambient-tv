@@ -68,8 +68,10 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
 
     fun playPrevious(previousId: String) {
         val state = _uiState.value
+        val sourcePrevious = browseSession?.let { browseContext.previousLoaded(it, videoId)?.videoId }
         if (isTrailer || state.loading || state.playback?.isLive == true || state.playback?.videoId != videoId ||
-            state.previousVideoId != previousId || !playbackHistory.requestPrevious(videoId, previousId)) return
+            state.previousVideoId != previousId ||
+            !playbackHistory.requestPrevious(videoId, previousId, fromSource = sourcePrevious == previousId)) return
         navigateTo(previousId)
     }
 
@@ -167,6 +169,13 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
             val chapterStart = YouTubeStartRequest.take(videoId)
             val rewindSeconds = savedResumeRequest.takeSeconds(preferences.resumeRewindSeconds,
                 eligible = !isTrailer && chapterStart == null && !reusedSession && !playback.isLive)
+            val fromBrowse = !isTrailer && browseSession?.let { browseContext.contains(it, videoId) } == true
+            // Source adjacency is authoritative, including PREVIOUS entries that have never
+            // been played in this player. History is only used for a standalone player.
+            val previousId = if (fromBrowse) browseContext.previousLoaded(browseSession!!, videoId)?.videoId
+                else playbackHistory.previousVideoId
+            val nextInSource = if (fromBrowse) browseContext.nextLoaded(browseSession!!, videoId)
+                else playbackHistory.nextVideo
             _uiState.value = YouTubePlayerState(false, when {
                 isTrailer -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
                 revisitingVideo -> playback.copy(resumeMs = 0, resumeResolved = true, resumeRewindSeconds = 0)
@@ -174,15 +183,13 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                 reusedSession -> playback.copy(resumeResolved = true, resumeRewindSeconds = 0)
                 else -> com.ambient.tv.youtube.prepareYouTubeSavedResume(playback, rewindSeconds)
             },
-                nextVideo = playbackHistory.nextVideo,
-                previousVideoId = playbackHistory.previousVideoId,
-                successorsLoading = !isTrailer && playbackHistory.nextVideo == null &&
-                    browseSession?.let { browseContext.contains(it, videoId) } == true)
+                nextVideo = nextInSource,
+                previousVideoId = previousId,
+                successorsLoading = fromBrowse && nextInSource == null)
             if (isTrailer) return@launch
-            // Next Up uses the original feed/row, including its continuation pages.
-            // No metadata suggestion is ever substituted for a missing browse successor.
-            if (playbackHistory.nextVideo == null && browseSession != null &&
-                browseContext.contains(browseSession, videoId)) {
+            // Next Up uses only the originating feed/row, including continuation pages.
+            // Never substitute Home or account recommendations at the end of the source.
+            if (fromBrowse && nextInSource == null && browseSession != null) {
                 launch {
                     val next = try {
                         browseContext.next(browseSession, videoId)
@@ -195,7 +202,7 @@ class YouTubePlayerViewModel @Inject constructor(@dagger.hilt.android.qualifiers
                     }
                     _uiState.update { state ->
                         if (state.playback?.videoId == videoId) state.copy(
-                            nextVideo = playbackHistory.nextVideo ?: next,
+                            nextVideo = next,
                             successorsLoading = false,
                         ) else state
                     }
