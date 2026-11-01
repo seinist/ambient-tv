@@ -190,10 +190,13 @@ class RadioPlayerViewModel @Inject constructor(
             }
             if (!queue.appendPage(source, page)) break
             ++queueRevision
-            // A page can resolve the desired station without changing the playing stream.
+            // Preserve the requested UUID when this page resolves it: subsequent page sorts
+            // can insert rows before it without retargeting playback.
+            cursor.stabilize(queue.snapshot())
             pendingStation = cursor.target(queue.snapshot())
         }
         val snapshot = queue.snapshot()
+        cursor.stabilize(snapshot)
         if (cursor.target(snapshot) == null) cursor.clampToLoaded(snapshot)
         return cursor.target(snapshot).also { pendingStation = it }
     }
