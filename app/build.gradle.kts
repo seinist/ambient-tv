@@ -1,4 +1,5 @@
 import java.io.File
+import java.security.MessageDigest
 import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipFile
@@ -144,7 +145,7 @@ if (monogramEnabled) {
         "Monogram AAR pin mismatch; rebuild with ./build.sh monogram"
     }
     val patchBytes = file("../scripts/patch_monogram_leave.py").readBytes()
-    val patchHash = java.security.MessageDigest.getInstance("SHA-256").digest(patchBytes)
+    val patchHash = MessageDigest.getInstance("SHA-256").digest(patchBytes)
         .joinToString("") { "%02x".format(it) }
     require(stamp.readLines().contains("patch=$patchHash")) {
         "Monogram Native patch changed; rebuild the MTProto AAR"
