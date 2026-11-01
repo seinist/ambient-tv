@@ -173,6 +173,13 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
         }
     }
 
+    override suspend fun refreshCatalog() {
+        browseMutex.withLock {
+            chats.clear()
+            chatsExhausted = false
+        }
+    }
+
     private fun requireAuthorized(h: Long) {
         check(native.isAuthorized(h)) { "Monogram account is not authorized" }
     }

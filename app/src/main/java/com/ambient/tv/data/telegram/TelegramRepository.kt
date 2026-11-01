@@ -43,6 +43,8 @@ interface TelegramClientPort {
     val accountName: String
     /** Stable native account identity; no cache is shared across different logins. */
     val cacheIdentity: String? get() = null
+    /** Invalidates native catalog memory, not encrypted disk fallback. */
+    suspend fun refreshCatalog() = Unit
     suspend fun channels(cursor: String? = null, limit: Int = 60): TelegramChannelPage
     suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
@@ -183,6 +185,7 @@ class TelegramRepository @Inject constructor(
     }
 
     /** Cache is only read after native account authorization confirms the same identity. */
+    suspend fun refreshCatalog() { client?.refreshCatalog() }
     suspend fun cachedChannels(): List<TelegramChannel> =
         client?.cacheIdentity?.let { diskCache.channels(it) }.orEmpty()
     suspend fun cachedBrowse(section: String): List<TelegramMedia> =

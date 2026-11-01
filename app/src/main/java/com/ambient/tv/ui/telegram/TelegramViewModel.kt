@@ -141,7 +141,7 @@ class TelegramViewModel @Inject constructor(
                 mutableState.value = mutableState.value.copy(rows = cached)
             }
         }
-        fetchPage(key, cursor = null, generation = generation)
+        fetchPage(key, cursor = null, generation = generation, invalidate = refresh)
     }
 
     fun loadMore() {
@@ -152,9 +152,10 @@ class TelegramViewModel @Inject constructor(
         fetchPage(current.section, cursor = next, generation = pageGeneration)
     }
 
-    private fun fetchPage(section: String, cursor: String?, generation: Int) {
+    private fun fetchPage(section: String, cursor: String?, generation: Int, invalidate: Boolean = false) {
         loadJob = viewModelScope.launch {
             try {
+                if (invalidate) repository.refreshCatalog()
                 // An audio/YouTube filter may encounter many consecutive text-only
                 // pages. Follow bounded empty continuations without publishing a
                 // misleading "no results" panel while content still exists.
