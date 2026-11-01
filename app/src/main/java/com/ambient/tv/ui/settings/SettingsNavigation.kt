@@ -27,6 +27,7 @@ internal fun settingsShortcutItemKey(key: String?): String? {
         SettingsCategory.BACKGROUND -> target.takeIf { it == "video" }?.let { "background:$it" }
         SettingsCategory.SEEK -> target.takeIf { it == "controls" }?.let { "seek:$it" }
         SettingsCategory.SPOTIFY -> target.takeIf { it == "account" }?.let { "spotify:$it" }
+        SettingsCategory.TELEGRAM -> target.takeIf { it == "account" }?.let { "telegram-account" }
         SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY ->
             target.takeIf { it == "customization" }?.let { "${category.name.lowercase(Locale.ROOT)}:$it" }
         else -> null
@@ -119,6 +120,7 @@ internal enum class SettingsCategory(val area: SettingsArea, val titleRes: Int, 
             "sync", "transfer" -> TRANSFER
             "tvh", "tvheadend" -> TVHEADEND
             "iptv", "m3u" -> IPTV
+            "monogram", "telegram", "mtproto" -> TELEGRAM
             "live_tv", "livetv", "timeshift", "reminders" -> LIVE_TV
             "locale", "language" -> LANGUAGE
             "nav", "navigation", "media_selection", "mediaselection" -> MEDIA_SELECTION
@@ -226,6 +228,12 @@ internal fun settingsSearchTargetKey(category: SettingsCategory, query: String):
         }
         SettingsCategory.SPOTIFY -> when {
             listOf("developer", "entwickler", "client", "advanced").any { it in q } -> "spotify:account"
+            else -> null
+        }
+        SettingsCategory.TELEGRAM -> when {
+            listOf("api", "hash", "anmeld", "login", "account", "konto", "code", "qr",
+                "phone", "telefon", "monogram", "telegram", "mtproto").any { it in q } ->
+                    "telegram-account"
             else -> null
         }
         SettingsCategory.PLEX, SettingsCategory.JELLYFIN, SettingsCategory.EMBY -> {
