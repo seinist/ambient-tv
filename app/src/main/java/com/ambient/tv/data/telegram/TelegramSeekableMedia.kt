@@ -2,7 +2,6 @@ package com.ambient.tv.data.telegram
 
 import com.ambient.tv.data.files.SeekableMedia
 import java.io.IOException
-import kotlinx.coroutines.runBlocking
 
 /**
  * Adapts authenticated MTProto ranges to Ambient TV's existing private MediaFileServer.
@@ -10,8 +9,9 @@ import kotlinx.coroutines.runBlocking
  * No account credentials or Telegram file identifiers are exposed by its loopback URL.
  */
 internal class TelegramSeekableMedia(
-    private val repository: TelegramRepository,
     private val media: TelegramMedia,
+    private val partLoader: (Long) -> ByteArray,
+    private val authorized: () -> Boolean,
 ) : SeekableMedia {
     override val size: Long = media.fileSize
     private var partStart = -1L
@@ -23,6 +23,7 @@ internal class TelegramSeekableMedia(
 
     @Synchronized
     override fun read(position: Long, buffer: ByteArray, count: Int): Int {
+        if (!authorized()) throw IOException("Monogram session is no longer authorized")
         if (position < 0 || count < 0) throw IOException("Invalid Monogram media range")
         if (position >= size) return -1
         if (count == 0) return 0
@@ -33,7 +34,7 @@ internal class TelegramSeekableMedia(
             if (partStart < 0 || at < partStart || at >= partStart + part.size) {
                 partStart = telegramPartOffset(at)
                 part = try {
-                    runBlocking { repository.mediaPart(media.chatId, media.messageId, partStart) }
+                    partLoader(partStart)
                 } catch (error: Exception) {
                     throw IOException("Authenticated Monogram read failed", error)
                 }
@@ -47,6 +48,7 @@ internal class TelegramSeekableMedia(
             part.copyInto(buffer, copied, within, within + amount)
             copied += amount
         }
+        if (!authorized()) throw IOException("Monogram account changed during media read")
         return copied
     }
 
