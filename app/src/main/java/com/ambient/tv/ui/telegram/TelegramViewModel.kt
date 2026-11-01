@@ -81,6 +81,8 @@ class TelegramViewModel @Inject constructor(
     private val preferences: AppPreferences,
 ) : ViewModel() {
     val visibleSections: List<String> get() = preferences.telegramSubmenuKeys
+    suspend fun channel(chatId: Long): TelegramChannel? = repository.channel(chatId)
+    suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
     internal fun viewMode(section: String): MonogramBrowseLayout =
         runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: "ROWS") }
             .getOrDefault(MonogramBrowseLayout.ROWS)
@@ -133,7 +135,7 @@ class TelegramViewModel @Inject constructor(
             val cached = if (key == "channels") repository.cachedChannels().let { list ->
                 if (list.isEmpty()) emptyList() else listOf(ContentRowData(
                     id = "telegram.channels", title = "Monogram",
-                    style = MediaTileStyle.POSTER,
+                    style = MediaTileStyle.LANDSCAPE,
                     items = list.map(TelegramChannel::toBrowseItem)))
             } else telegramRows(key, repository.cachedBrowse(key))
             if (generation == pageGeneration && mutableState.value.section == key &&
@@ -172,7 +174,7 @@ class TelegramViewModel @Inject constructor(
                         pageRows = if (page.items.isEmpty()) emptyList() else listOf(ContentRowData(
                             id = "telegram.channels",
                             title = "Monogram",
-                            style = MediaTileStyle.POSTER,
+                            style = MediaTileStyle.LANDSCAPE,
                             items = page.items.distinctBy(TelegramChannel::chatId).map(TelegramChannel::toBrowseItem),
                         ))
                         pageMedia = emptyList()
