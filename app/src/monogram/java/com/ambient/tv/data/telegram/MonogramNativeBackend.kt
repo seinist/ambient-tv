@@ -2,7 +2,7 @@ package com.ambient.tv.data.telegram
 
 import android.content.Context
 import android.util.Base64
-import com.ambient.tv.BuildConfig
+import com.ambient.tv.data.local.TokenStore
 import java.io.File
 import org.json.JSONArray
 import kotlinx.coroutines.Dispatchers
@@ -20,7 +20,7 @@ import uniffi.monogram_mtproto.QrLoginDto
  * The ONLY application-side dependency on Monogram, compiled exclusively with
  * MONOGRAM_NATIVE=1. Uses upstream :native:mtproto, never its UI/feature modules.
  */
-class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, TelegramClientPort {
+class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore) : MonogramAuthClientPort, TelegramClientPort {
     private val app = context.applicationContext
     private val native = MtprotoNativeLoader.loadOrStub().also {
         check(it !== MtprotoNative.Stub) { "Monogram native MTProto library is missing" }
@@ -60,8 +60,10 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
         withContext(Dispatchers.IO) {
             val current = mutex.withLock {
                 if (handle == 0L) {
-                    handle = native.createClient(BuildConfig.MONOGRAM_API_ID,
-                        BuildConfig.MONOGRAM_API_HASH, session.absolutePath)
+                    val (id, hash) = checkNotNull(tokenStore.monogramCredentials()) {
+                        "Configure the Monogram API ID and hash in Settings first"
+                    }
+                    handle = native.createClient(id, hash, session.absolutePath)
                     native.setDownloadChunkKib(512)
                     connected = false
                 }
@@ -73,6 +75,35 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             }
             action(current)
         }
+
+    /** Application credentials changed while logged out: never reuse the old MTProto handle. */
+    override suspend fun resetForCredentials() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (handle != 0L) {
+                check(!native.isAuthorized(handle)) { "Sign out before changing Monogram API credentials" }
+                native.destroyClient(handle)
+                handle = 0L
+                connected = false
+            }
+            synchronized(diskChunkLock) {
+                cacheGeneration++
+                cache.deleteRecursively()
+                cache.mkdirs()
+                previewWrites = 0
+            }
+            session.delete()
+            accountIdFile.delete()
+            accountId = null
+            chats.clear()
+            chatsExhausted = false
+            phone = null
+            codeHash = null
+            qrExpiresAt = 0L
+            epoch++
+            label = "Monogram"
+            loginState = MonogramLoginState(MonogramLoginStep.READY)
+        }
+    }
 
     private fun authorized(id: Long? = null): MonogramLoginState {
         if (id != null) {
