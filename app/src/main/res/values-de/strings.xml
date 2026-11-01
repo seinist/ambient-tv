@@ -2247,6 +2247,7 @@
     <string name="monogram_join_channel">Kanal beitreten</string>
     <string name="monogram_joined_channel">Beigetreten</string>
     <string name="monogram_join_failed">Kanalbeitritt fehlgeschlagen</string>
+    <string name="monogram_unofficial_notice">Inoffizieller Client, nutzt die Telegram-API.</string>
     <string name="monogram_api_settings">Telegram-API-Zugangsdaten</string>
     <string name="monogram_api_id">API-ID</string>
     <string name="monogram_api_hash">API-Hash</string>

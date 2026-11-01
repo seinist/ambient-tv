@@ -4,6 +4,15 @@ Ambient TV uses the name and icon **Monogram** for its Telegram-backed media
 system. The app's stable internal `telegram` key is retained for preference and
 Home-row migrations.
 
+**Unofficial client, uses the Telegram API.** The same plain notice is shown at
+the top of the Monogram account card in Settings (and so in the first-run
+setup, which opens that page), before API credentials or sign-in.
+
+The Monogram build is **GPL-3.0-only**. Its corresponding source is this
+repository plus the pinned upstream refs (`MONOGRAM_REF` in
+`gradle/external-versions.properties` and its mono-rs submodule) with the
+changes from `scripts/patch_monogram_leave.py`.
+
 ## What is built
 
 Only upstream `monogram-android/monogram:native/mtproto` is compiled.
@@ -169,6 +178,25 @@ The AAR stamp includes this patch's SHA-256 checksum. A patch change cannot
 silently reuse old MTProto binaries. Distributions must include these GPL
 patches and corresponding source. Verify join, leave, reconnect, account cache
 invalidation and all four ABIs on real devices before marking the PR ready.
+
+### Modification notices (GPL-3.0 section 5a)
+
+The patch script writes a dated notice at the top of every upstream file it
+changes, for example:
+
+```
+// Modified by Ambient TV, 2026-11-01: added leave_chat (Telegram channels.leaveChannel).
+// Changed by scripts/patch_monogram_leave.py; distributed under GPL-3.0-only.
+```
+
+The notice is added once (re-running the script changes nothing) and also to
+files patched by an earlier version of the script. The date is fixed in the
+script, not taken from the build, so builds stay reproducible; update it with
+the description when the patch changes. Two unused upstream Kotlin facades are
+removed instead of modified: `native/mtproto/.../LottieNative.kt` and
+`native/mtproto/.../VpxNative.kt`. Changing the script changes its SHA-256 in
+the AAR stamp, so the Monogram AAR must be rebuilt (`./build.sh monogram`);
+normal builds and unit tests do not use the AAR.
 
 ## Settings backups and migration
 

@@ -92,6 +92,33 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn('nativeLeaveChat', patch)
         self.assertIn('mono_proto_client::dispatch::leave_chat', patch)
 
+    def test_every_patched_upstream_file_gets_a_dated_gpl_modification_notice(self):
+        import re
+        patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()
+        self.assertRegex(patch, r'MODIFICATION_DATE = "\d{4}-\d{2}-\d{2}"')
+        self.assertIn('NOTICE_MARKER = "Modified by Ambient TV, "', patch)
+        # Idempotent: added only when the marker is absent.
+        self.assertIn("if NOTICE_MARKER not in result:", patch)
+        notices = patch[patch.index("MODIFICATIONS = {"):patch.index("def modification_notice")]
+        patched = set(re.findall(r'^\w+ = "((?:native|vendor)/[^"]+)"$', patch, re.M))
+        self.assertTrue(patched)
+        for relative in patched:
+            self.assertIn(f'"{relative}"', notices)
+
+    def test_unofficial_client_notice_and_gpl_scope_are_documented(self):
+        for values, text in (("values", "Unofficial client, uses the Telegram API."),
+                             ("values-en", "Unofficial client, uses the Telegram API."),
+                             ("values-de", "Inoffizieller Client, nutzt die Telegram-API.")):
+            strings = (ROOT / "app/src/main/res" / values / "strings.xml").read_text()
+            self.assertIn(f'<string name="monogram_unofficial_notice">{text}</string>', strings)
+        settings = (ROOT / "app/src/main/java/com/ambient/tv/ui/settings/MonogramAccountSettings.kt").read_text()
+        self.assertIn("R.string.monogram_unofficial_notice", settings)
+        self.assertIn("Unofficial client, uses the Telegram API.", (ROOT / "README.md").read_text())
+        self.assertIn("Inoffizieller Client, nutzt die Telegram-API.", (ROOT / "README.de.md").read_text())
+        self.assertIn("GPL-3.0-only", (ROOT / "README.md").read_text())
+        self.assertIn("Unofficial client, uses the Telegram API.",
+                      (ROOT / "docs/monogram-integration.md").read_text())
+
     def test_unused_sticker_qr_and_waveform_native_code_is_pruned(self):
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
         patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()

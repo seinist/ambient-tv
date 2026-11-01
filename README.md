@@ -235,6 +235,10 @@ Without either, debug builds work and release APKs stay unsigned. `./build.sh ge
 
 ### Monogram setup (optional Telegram media integration)
 
+> **Unofficial client, uses the Telegram API.** Monogram in Ambient TV is not an app made by Telegram.
+
+**License:** The Monogram build is **GPL-3.0-only**. Its complete source is this repository plus the pinned upstream refs in `gradle/external-versions.properties` (`MONOGRAM_REF` and its mono-rs submodule), with the changes from `scripts/patch_monogram_leave.py`; every upstream file that script changes carries a dated modification notice.
+
 <details>
 <summary>Use your own Telegram API ID and hash, then sign in by TV QR or phone code</summary>
 

@@ -2333,6 +2333,7 @@
     <string name="monogram_join_channel">Join channel</string>
     <string name="monogram_joined_channel">Joined</string>
     <string name="monogram_join_failed">Unable to join this channel</string>
+    <string name="monogram_unofficial_notice">Unofficial client, uses the Telegram API.</string>
     <string name="monogram_api_settings">Telegram API credentials</string>
     <string name="monogram_api_id">API ID</string>
     <string name="monogram_api_hash">API hash</string>

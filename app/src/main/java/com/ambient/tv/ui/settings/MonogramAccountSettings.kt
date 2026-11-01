@@ -129,6 +129,10 @@ internal fun MonogramAccountSettings(
     // live sign-in status, and context-appropriate actions. No Telegram session is saved here.
     SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Shown before any API key or sign-in step: this is not Telegram's own app.
+            Text(stringResource(R.string.monogram_unofficial_notice),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface)
             Text(stringResource(R.string.monogram_api_settings),
                 style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.monogram_api_setup_hint),

@@ -4,12 +4,48 @@
 The source is GPL-3.0-only. Original upstream ref and exact modifications are
 retained for corresponding-source distribution. Fails closed on changed upstream
 API/ABI and is idempotent for local repeated builds.
+
+Every upstream file this script changes gets a dated modification notice at its
+top (GPL-3.0 section 5a). Files it removes are listed in docs/monogram-integration.md.
 """
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1]).resolve()
 changes = {}
+
+# GPL-3.0 section 5a: modified files carry a prominent notice with a relevant date.
+# The date is fixed (not the build date) so repeated builds stay reproducible.
+MODIFICATION_DATE = "2026-11-01"
+NOTICE_MARKER = "Modified by Ambient TV, "
+COMMENT_PREFIX = {".rs": "//", ".kt": "//", ".toml": "#"}
+MODIFICATIONS = {
+    "vendor/mono-rs/crates/mono-proto-messages/src/membership.rs":
+        "added leave_chat (Telegram channels.leaveChannel)",
+    "vendor/mono-rs/crates/mono-proto-client/src/membership.rs":
+        "added leave_chat client call",
+    "vendor/mono-rs/crates/mono-proto-client/src/dispatch.rs":
+        "added leave_chat dispatch",
+    "native/mtproto-rs/src/ffi.rs":
+        "added leave_chat export; removed sticker, VPX, waveform and QR exports",
+    "native/mtproto-rs/src/lib.rs":
+        "removed sticker, VPX, waveform and QR modules",
+    "native/mtproto-rs/Cargo.toml":
+        "removed rxing (QR) and tlottie (sticker) dependencies",
+    "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNative.kt":
+        "added leaveChat",
+    "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNativeUniFfi.kt":
+        "added leaveChat binding",
+}
+
+
+def modification_notice(relative: str) -> str:
+    what = MODIFICATIONS.get(relative)
+    prefix = COMMENT_PREFIX.get(Path(relative).suffix)
+    if what is None or prefix is None:
+        raise SystemExit(f"No modification notice defined for {relative}")
+    return (f"{prefix} {NOTICE_MARKER}{MODIFICATION_DATE}: {what}.\n"
+            f"{prefix} Changed by scripts/patch_monogram_leave.py; distributed under GPL-3.0-only.\n")
 
 def amend(relative: str, before: str, after: str) -> None:
     path = root / relative
@@ -193,7 +229,11 @@ for relative, expected in unused_wrappers.items():
 
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
-    if path.read_text(encoding="utf-8") != result:
+    current = path.read_text(encoding="utf-8")
+    # Every recorded file is patched (a fresh change or one made by an earlier run).
+    if NOTICE_MARKER not in result:
+        result = modification_notice(path.relative_to(root).as_posix()) + result
+    if current != result:
         path.write_text(result, encoding="utf-8")
 for relative in unused_wrappers:
     (root / relative).unlink(missing_ok=True)
