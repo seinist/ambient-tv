@@ -113,8 +113,88 @@ add_before(adapter,
 """,
            "override fun leaveChat(handle: Long, chatId: Long)")
 
+# Ambient TV needs Telegram account/media transport, not Monogram sticker animation,
+# VPX video-sticker decoding, waveform generation, or its separate Rust QR codec.
+# Ambient's QR renderer is already used for account setup. Remove these transitive
+# Rust dependencies *before* compiling while retaining the pinned UniFFI media API.
+# This is intentionally a source patch: Cargo's LTO cannot remove exported FFI.
+def drop_span(relative: str, start: str, end: str, marker: str) -> None:
+    path = root / relative
+    source = changes.get(path, path.read_text(encoding="utf-8"))
+    if marker in source:
+        return
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise SystemExit(f"Unexpected pinned optional API in {relative}: missing/ambiguous boundary")
+    first, last = source.index(start), source.index(end)
+    if first >= last:
+        raise SystemExit(f"Unexpected optional API order in {relative}")
+    changes[path] = source[:first] + marker + "\n\n" + source[last:]
+
+
+def drop_tail(relative: str, start: str, expected_tail: str, marker: str) -> None:
+    path = root / relative
+    source = changes.get(path, path.read_text(encoding="utf-8"))
+    if marker in source:
+        return
+    if source.count(start) != 1 or not source.rstrip().endswith(expected_tail):
+        raise SystemExit(f"Unexpected pinned optional API tail in {relative}")
+    changes[path] = source[:source.index(start)] + marker + "\n"
+
+
+crate = "native/mtproto-rs/Cargo.toml"
+amend(crate,
+      'rxing = { version = "0.9.3", default-features = false, features = ["qrcode", "encoders", "decoders", "encoding_rs"] }',
+      '# Ambient TV generates and scans QR in its existing Android UI, not Rust.')
+amend(crate,
+      'flate2 = "1"\ntlottie = { path = "../../vendor/tlottie", default-features = false, features = ["cpu", "std"] }',
+      '# TGS/Lottie stickers are not rendered by the Ambient TV MTProto adapter.')
+
+lib = "native/mtproto-rs/src/lib.rs"
+amend(lib,
+      'mod lottie;\nmod qr;\n#[allow(unsafe_code)]\nmod vpx;\nmod waveform;',
+      '// Ambient TV omits sticker, waveform and redundant QR-only Rust modules.')
+amend(lib,
+      'pub use qr::QrCodeMatrix;',
+      '// No native QR matrix needed: Ambient TV has its own QR renderer.')
+
+ffi = "native/mtproto-rs/src/ffi.rs"
+amend(ffi,
+      "use crate::lottie;\nuse crate::qr;\nuse crate::vpx;\nuse crate::waveform;",
+      "// Ambient TV: omitted native sticker, waveform and QR helpers.")
+amend(ffi,
+      "InstantViewDto, JoinChatDto, LottieSize, MessageDto, MessagesPageDto, MtprotoError,",
+      "InstantViewDto, JoinChatDto, MessageDto, MessagesPageDto, MtprotoError,")
+amend(ffi,
+      "UpdateEventDto, UpdatesStateDto, UploadItemDto, VpxAlphaFrame, VpxFrame, WallpaperCatalogDto,",
+      "UpdateEventDto, UpdatesStateDto, UploadItemDto, WallpaperCatalogDto,")
+drop_span(
+    ffi,
+    "#[uniffi::export]\npub fn create_lottie(data: Vec<u8>)",
+    "#[uniffi::export]\npub fn get_message_read_participants(",
+    "// Ambient TV: sticker renderer and VPX decoder exports omitted.",
+)
+drop_tail(
+    ffi,
+    "#[uniffi::export]\npub fn decode_vpx_alpha_packet(",
+    "qr::decode(luma, width, height)\n}",
+    "// Ambient TV: sticker alpha, waveform and native QR exports omitted.",
+)
+
+# The upstream Kotlin facades reference UniFFI exports removed above.
+# They are not used by Ambient TV; exclude them from the compiled AAR.
+unused_wrappers = {
+    "native/mtproto/src/main/java/org/monogram/mtproto/LottieNative.kt": "object LottieNative",
+    "native/mtproto/src/main/java/org/monogram/mtproto/VpxNative.kt": "object VpxNative",
+}
+for relative, expected in unused_wrappers.items():
+    wrapper = root / relative
+    if wrapper.exists() and expected not in wrapper.read_text(encoding="utf-8"):
+        raise SystemExit(f"Unexpected pinned Kotlin facade in {relative}")
+
 # Commit files only after every source contract has been checked.
 for path, result in changes.items():
     if path.read_text(encoding="utf-8") != result:
         path.write_text(result, encoding="utf-8")
-print("Applied pinned channels.leaveChannel extension to MTProto-only sources")
+for relative in unused_wrappers:
+    (root / relative).unlink(missing_ok=True)
+print("Applied pinned channel leave and size-focused MTProto-only source patch")
