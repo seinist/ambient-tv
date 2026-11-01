@@ -81,6 +81,10 @@ class TelegramViewModel @Inject constructor(
     private val repository: TelegramRepository,
     private val preferences: AppPreferences,
 ) : ViewModel() {
+    // The system screen presents account status like Spotify instead of claiming
+    // the native module is missing when only Telegram sign-in is missing.
+    val login = repository.login
+    val apiCredentialsReady: Boolean get() = repository.apiCredentialsReady
     val visibleSections: List<String> get() = preferences.telegramSubmenuKeys
     suspend fun channel(chatId: Long): TelegramChannel? = repository.channel(chatId)
     suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
