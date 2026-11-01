@@ -158,7 +158,7 @@ class TelegramViewModel @Inject constructor(
                         pageMedia = page.items
                         next = page.nextCursor
                     }
-                    if (pageRows.isNotEmpty() || next == null || next == requestCursor) break
+                    if (pageRows.isNotEmpty() || next == null || next == requestCursor || attempt == 4) break
                     requestCursor = next
                 }
                 if (generation != pageGeneration || mutableState.value.section != section) return@launch
