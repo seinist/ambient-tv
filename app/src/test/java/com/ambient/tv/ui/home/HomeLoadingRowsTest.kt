@@ -24,6 +24,12 @@ class HomeLoadingRowsTest {
         )
     }
 
+    @Test fun smartTubeSkeletonIsLandscapeLikeItsRows() {
+        val rows = listOf(HomeRowDefinition(id = "subs", system = HomeRowDefinition.SYSTEM_YOUTUBE,
+            contentKey = "subscriptions", displayMode = "poster"))
+        assertEquals(MediaTileStyle.LANDSCAPE, homeLoadingRowStyles(rows).first())
+    }
+
     @Test fun unknownRowsUseUnscaledPosterDefaults() {
         assertEquals(List(3) { MediaTileStyle.POSTER }, homeLoadingRowStyles(emptyList()))
         assertEquals(List(3) { MediaTileStyle.POSTER }, homeLoadingRowStyles(emptyList(), overviewSystem = "emby"))

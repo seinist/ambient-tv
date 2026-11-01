@@ -2,6 +2,7 @@ package com.ambient.tv.ui.setup
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
@@ -44,6 +45,8 @@ fun InitialSetupScreen(
     onYouTubeSignedIn: () -> Unit,
     onSetupSpotify: () -> Unit,
     onSetupTelegram: () -> Unit,
+    /** Signed in from the Monogram step of this screen (like SmartTube's sign-in step). */
+    onTelegramSignedIn: () -> Unit = onSetupTelegram,
     onUseRadio: () -> Unit,
     onSetupTrailers: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -53,6 +56,9 @@ fun InitialSetupScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     var youtubeStep by rememberSaveable { mutableStateOf(false) }
+    var telegramStep by rememberSaveable { mutableStateOf(false) }
+    val telegramFocus = remember { FocusRequester() }
+    val telegramBackFocus = remember { FocusRequester() }
     var lastSystem by rememberSaveable { mutableStateOf(MediaSystem.PLEX.key) }
     val requesters = remember { MediaSystem.entries.associateWith { FocusRequester() } }
     val loginFocus = remember { FocusRequester() }
@@ -64,12 +70,22 @@ fun InitialSetupScreen(
     val tokens = LocalUiTokens.current
     fun cancelLogin() { viewModel.cancelYouTubeSignIn(); runCatching { loginFocus.requestFocus() } }
     DisposableEffect(viewModel) { onDispose { viewModel.cancelYouTubeSignIn() } }
+    BackHandler(telegramStep) { telegramStep = false }
+    LaunchedEffect(telegramStep) {
+        if (!telegramStep) return@LaunchedEffect
+        repeat(3) {
+            withFrameNanos { }
+            if (runCatching { telegramFocus.requestFocus() }.getOrDefault(false) ||
+                runCatching { telegramBackFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
     BackHandler(youtubeStep) {
         if (state.youtubeLoading || state.youtubeSignInCode != null) cancelLogin() else youtubeStep = false
     }
-    LaunchedEffect(youtubeStep) {
+    LaunchedEffect(youtubeStep, telegramStep) {
         repeat(3) {
             withFrameNanos { }
+            if (telegramStep) return@LaunchedEffect
             val target = if (youtubeStep) { if (state.youtubeAvailable) loginFocus else backFocus } else requesters.getValue(MediaSystem.fromKey(lastSystem) ?: MediaSystem.PLEX)
             if (runCatching { target.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
         }
@@ -85,7 +101,19 @@ fun InitialSetupScreen(
         Text(stringResource(if (youtubeStep) R.string.setup_youtube_title else R.string.setup_welcome), style = MaterialTheme.typography.headlineLarge)
         Text(stringResource(if (youtubeStep) R.string.setup_youtube_intro else R.string.setup_intro),
             style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (!youtubeStep) {
+        if (telegramStep) {
+            // Same account card as Settings › Monogram (API identity, QR, phone, 2FA), inline.
+            SystemBadge(MediaSystem.TELEGRAM)
+            val account: com.ambient.tv.ui.settings.MonogramAccountViewModel = hiltViewModel()
+            val login by account.login.collectAsState()
+            val signedIn = login.step == com.ambient.tv.data.telegram.MonogramLoginStep.AUTHORIZED
+            LaunchedEffect(signedIn) { if (signedIn) { telegramStep = false; onTelegramSignedIn() } }
+            Box(Modifier.fillMaxWidth().focusRequester(telegramFocus).focusGroup()) {
+                com.ambient.tv.ui.settings.MonogramAccountSettings(viewModel = account)
+            }
+            TvActionButton(stringResource(R.string.back), { telegramStep = false },
+                modifier = Modifier.focusRequester(telegramBackFocus))
+        } else if (!youtubeStep) {
             val companion: com.ambient.tv.companion.CompanionViewModel = hiltViewModel()
             val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
             TvActionButton(stringResource(if (handheld) R.string.companion_setup_phone else R.string.companion_setup_tv),
@@ -109,7 +137,7 @@ fun InitialSetupScreen(
                                         MediaSystem.IPTV -> onSetupIptv()
                                         MediaSystem.YOUTUBE -> youtubeStep = true
                                         MediaSystem.SPOTIFY -> onSetupSpotify()
-                                        MediaSystem.TELEGRAM -> onSetupTelegram()
+                                        MediaSystem.TELEGRAM -> telegramStep = true
                                         MediaSystem.RADIO -> onUseRadio()
                                         MediaSystem.TRAILERS -> onSetupTrailers()
                                         MediaSystem.FILES -> onUseFiles()

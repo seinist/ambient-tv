@@ -228,6 +228,9 @@ class SearchViewModel @Inject constructor(
         _uiState.update { state -> clearResults(state.copy(selectedSources = state.availableSources)) }
     }
 
+    /** Query whose Telegram results are on screen; see performSearch. */
+    private var telegramAnsweredQuery: String? = null
+
     fun onQueryChanged(query: String) {
         searchJob?.cancel()
         searchRevision++
@@ -288,6 +291,10 @@ class SearchViewModel @Inject constructor(
         val embyEnabled = SearchSource.EMBY in enabled
         val trailersEnabled = SearchSource.TRAILERS in enabled
         val telegramEnabled = SearchSource.TELEGRAM in enabled
+        // Returning to the page re-runs the search (entry/reconnect refresh). Telegram rate-limits
+        // searches (FLOOD_WAIT): keep its answer to this exact query instead of asking again.
+        val reuseTelegram = preserveResults && telegramEnabled && telegramAnsweredQuery == query &&
+            _uiState.value.telegramState == SearchSourceState.READY
         val youtubeEnabled = SearchSource.YOUTUBE in enabled
         val spotifyEnabled = SearchSource.SPOTIFY in enabled
         val radioEnabled = SearchSource.RADIO in enabled
@@ -315,7 +322,8 @@ class SearchViewModel @Inject constructor(
                 jellyfinState = if (jellyfinEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 embyState = if (embyEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 trailerState = if (trailersEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
-                telegramState = if (telegramEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
+                telegramState = if (reuseTelegram) SearchSourceState.READY
+                    else if (telegramEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 youtubeState = if (youtubeEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 spotifyState = if (spotifyEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
                 radioState = if (radioEnabled) SearchSourceState.LOADING else SearchSourceState.DISABLED,
@@ -385,13 +393,16 @@ class SearchViewModel @Inject constructor(
             }
             // One request per submitted search (never per keystroke, no system suggestions):
             // Telegram rate-limits searches with FLOOD_WAIT.
-            if (telegramEnabled) launch {
+            if (telegramEnabled && !reuseTelegram) launch {
                 val result = suspendResult {
                     telegramRepository.search(query).map { it.toMediaItem() }
                 }
                 updateForQuery(query, revision) { state ->
                     result.fold(
-                        onSuccess = { state.copy(telegramResults = it, telegramState = SearchSourceState.READY) },
+                        onSuccess = {
+                            telegramAnsweredQuery = query
+                            state.copy(telegramResults = it, telegramState = SearchSourceState.READY)
+                        },
                         onFailure = { failure -> state.copy(telegramState = SearchSourceState.ERROR,
                             telegramRetryAfterSeconds = (failure as? com.ambient.tv.data.telegram.TelegramFloodWaitException)?.seconds) },
                     )

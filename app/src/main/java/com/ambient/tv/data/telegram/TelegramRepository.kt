@@ -159,11 +159,6 @@ class TelegramRepository @Inject constructor(
     @Volatile private var client: TelegramClientPort? = null
     private val playbackUrls = LinkedHashMap<String, String>()
     private val streamEpoch = java.util.concurrent.atomic.AtomicLong()
-    init {
-        if (nativeAvailable && preferences.telegramEnabled) {
-            scope.launch { restoreIfNeeded() }
-        }
-    }
 
     private fun applyLogin(state: MonogramLoginState) {
         mutableLogin.value = state.copy(busy = false)
@@ -544,6 +539,14 @@ class TelegramRepository @Inject constructor(
             appContext.getString(R.string.monogram_error_account_changed)
         }
         return bytes
+    }
+
+    // Last in the class: the IO coroutine may reach disconnect()/installAuthorized() at once,
+    // and those use properties that must already be initialized by the constructor.
+    init {
+        if (nativeAvailable && preferences.telegramEnabled) {
+            scope.launch { restoreIfNeeded() }
+        }
     }
 }
 

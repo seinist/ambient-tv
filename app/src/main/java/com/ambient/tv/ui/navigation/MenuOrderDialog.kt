@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.runtime.Composable
@@ -76,6 +77,7 @@ internal fun menuSystemIcon(system: MediaSystem): ImageVector = when (system) {
     MediaSystem.FILES -> Icons.Filled.Folder
     MediaSystem.TRAILERS -> Icons.Filled.Movie
     MediaSystem.YOUTUBE -> Icons.Filled.SmartDisplay
+    MediaSystem.TELEGRAM -> Icons.Filled.Subscriptions
     MediaSystem.SPOTIFY -> Icons.Filled.Headphones
     MediaSystem.TVHEADEND, MediaSystem.IPTV -> Icons.Filled.Tv
     else -> Icons.Filled.VideoLibrary

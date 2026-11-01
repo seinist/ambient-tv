@@ -70,6 +70,8 @@ fun AppNotificationHost(
     hidden: Boolean = false,
     playback: Boolean = false,
     autoFocusWake: Boolean = true,
+    /** The focused cancel button went away (wake done or cancelled): give focus back. */
+    onWakeFocusReleased: () -> Unit = {},
 ) {
     val window = remember { Any() }
     DisposableEffect(dialog) {
@@ -153,6 +155,7 @@ fun AppNotificationHost(
         if (activeWakes.isNotEmpty()) {
             val wakeVm: UnreachableServerViewModel = hiltViewModel()
             TvWakeCancelBar(activeWakes, autoFocus = autoFocusWake && !playback, onCancel = wakeVm::cancelWake,
+                onFocusReleased = onWakeFocusReleased,
                 modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
@@ -168,8 +171,11 @@ private fun TvWakeCancelBar(
     wakes: List<AppNotice>,
     autoFocus: Boolean,
     onCancel: (String) -> Unit,
+    onFocusReleased: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val currentRelease by androidx.compose.runtime.rememberUpdatedState(onFocusReleased)
     val colors = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
     Column(
@@ -206,6 +212,12 @@ private fun TvWakeCancelBar(
                     )
                 }
                 BackHandler(enabled = focused) { onCancel(machine) }
+                // Removed while focused: without this the next D-pad press started over at the
+                // first element of the screen. Posted, because the node is still being removed.
+                val focusedNow by androidx.compose.runtime.rememberUpdatedState(focused)
+                androidx.compose.runtime.DisposableEffect(Unit) {
+                    onDispose { if (focusedNow) view.post { currentRelease() } }
+                }
             }
         }
     }

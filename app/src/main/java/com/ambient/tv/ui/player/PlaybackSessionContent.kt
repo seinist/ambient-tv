@@ -244,7 +244,24 @@ fun PlaybackSessionContent(
     ) else null
 
     val creditsDue = earlyCreditsEnabled && finalCredits != null && creditsRemainingMs == 0L && snapshot.status.playing
-    LaunchedEffect(acquired, atEnd, creditsDue, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+    // The countdown runs on the known duration; autoplay used to wait for the engine's EOF only.
+    // A stream that stalls in its last segment, or ends without reporting EOF, left Next Up at
+    // "0" forever. Once the countdown has reached 0, hand over after a short grace for a real EOF.
+    val countdownExpired = !atEnd && !creditsDue && nextUpDue && config.autoplay && !stillWatching &&
+        creditsRemainingMs == null && timing.remainingMs <= 0L && snapshot.wantsToPlay
+    LaunchedEffect(acquired, atEnd, creditsDue, countdownExpired, candidateKey, showNextUp, nextUpDue, config.autoplay, stillWatching, queuePending, changingItem, metadata.successorsLoading, snapshot.generation) {
+        if (countdownExpired) {
+            kotlinx.coroutines.delay(NEXT_UP_EOF_GRACE_MS)
+            val current = BackgroundPlaybackSession.snapshot.value
+            if (!acquired || !ownsSnapshot || changingItem || metadata.successorsLoading ||
+                current.replacingSource || current.generation != snapshot.generation ||
+                current.metadata?.route != metadata.route ||
+                com.ambient.tv.companion.CompanionQueuePlayback.pending ||
+                (handledKey != null && handledKey == candidateKey)) return@LaunchedEffect
+            // Only the autoplay hand-over: never stop playback before a real end here.
+            playNext(automatic = true)
+            return@LaunchedEffect
+        }
         val current = BackgroundPlaybackSession.snapshot.value
         if (!acquired || (!atEnd && !creditsDue) || !ownsSnapshot || changingItem || metadata.successorsLoading ||
             current.replacingSource || current.generation != snapshot.generation || current.metadata?.route != metadata.route ||
@@ -329,3 +346,6 @@ fun PlaybackSessionContent(
         }
     }
 }
+
+/** How long Next Up waits at a countdown of 0 for the engine's own end before handing over. */
+internal const val NEXT_UP_EOF_GRACE_MS = 2_000L
