@@ -2,7 +2,7 @@
 
 <img src="branding/png/wordmark/ambient-tv-wordmark-readme.png" alt="Ambient TV" width="420">
 
-**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, Spotify, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3.**
+**Android-TV- und Handy-Client für lokale Medien – Plex, Jellyfin, Emby, TVHeadend, SmartTube, Spotify, DLNA, Dateien/NAS und Fotos in einer App, abgespielt mit MPV, VLC oder Media3. Optional mit Monogram (Telegram-Medien).**
 
 [![Android 10+](https://img.shields.io/badge/Android-API%2029%2B-3DDC84?logo=android&logoColor=white)](#voraussetzungen)
 [![Android TV](https://img.shields.io/badge/Android%20TV-ready-3DDC84?logo=androidtv&logoColor=white)](#funktionen)
@@ -72,6 +72,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **IPTV** – M3U-Wiedergabelisten mit XMLTV-Programmführer
 - **SmartTube** – YouTube-Feeds, **SponsorBlock**, Anmeldung per QR-Code
 - **Spotify** – Connect-Empfänger + native Wiedergabe (librespot)
+- **Monogram** *(optionaler GPL-/MTProto-Build)* – Telegram-Kanalmedien, vollständige Beitragstexte, Vorschaubilder und YouTube-Links, sechs Home-Reihen, QR-/Telefon-/2FA-Anmeldung; Media3/VLC/MPV-Anbindung (Gerätetests stehen noch aus)
 - **Trailer** (TMDB) · **DLNA-Server** · **Fotos**
 - **Dateien** – Lokal/USB, **SMB 1/2/3**, **NFSv3/v4**, **WebDAV** (HTTP/HTTPS), **SFTP** (Passwort oder SSH-Schlüssel)
 - **Musik in Dateien/NAS** — Titel-Tags, Albumreihenfolge und Cover aus dem Ordner
@@ -133,7 +134,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 - **Uhr** in den Kopfzeilen, auf der Startseite und im Player (Format, Datum, Aussehen)
 - **Lichtstimmungen** über der Startseite, **Filterleiste** über Mediatheken, Programmführer, Trailern und YouTube
 - **Leistungsmodus** Auto / Ausgewogen / Sparsam, Bildschirmschoner, Startbildschirm-Kanäle
-- **Einstellungs-Backup** (Schema 72, optional verschlüsselt) · DE/EN UI
+- **Einstellungs-Backup** (Schema 76; API-Daten nur im passwortverschlüsselten Export mit Zugangsdaten) · DE/EN UI
 
 </td>
 </tr>
@@ -148,7 +149,7 @@ Ambient TV entsteht in der Freizeit, aus Liebe zu einem guten Fernsehabend. Wenn
 | **Geräte** | Android TV / Google TV, Handys und Tablets mit **Android API 29+** |
 | **ABIs** | arm64-v8a · armeabi-v7a · x86 · x86_64 |
 | **Geräteabhängig** | Vulkan-Ausgabe/-Dekodierung, SDR → HDR (Android 14+, HDR10-Display), Passthrough-Formate, SVP |
-| **Netzwerk** | LAN zu Medienserver/NAS; Internet für Plex-Link, SmartTube, Spotify, Trailer |
+| **Netzwerk** | LAN zu Medienserver/NAS; Internet für Plex-Link, SmartTube, Spotify, Trailer und optional Monogram |
 | **Build** | **JDK 17**, Android SDK/NDK (`ANDROID_NDK_HOME` oder `ANDROID_NDK_ROOT`); optional Keystore |
 
 ## Bauen
@@ -207,7 +208,7 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 | --- | --- |
 | Start & Bedienung | Home-Reihen, Medienauswahl, Sprache, Bibliothek |
 | Darstellung | Theme, Akzent, Skalierung, **Leistung**, Hintergrundvideo, Bildschirmschoner |
-| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Spotify / Trailer / DLNA / Dateien |
+| Systeme & Konten | Plex / Jellyfin / Emby / TVH / IPTV / SmartTube / Spotify / optional Monogram / Trailer / DLNA / Dateien |
 | Geräte & Netzwerk | Handy & Geräte, UPnP-Receiver, WireGuard / VPN, Server & Wake-on-LAN |
 | Wiedergabe | Player-Backend, Untertitel, „Als Nächstes“, Sprungweite |
 | Bild & Ton | Bild-/Audioprofile, Visualizer, Fotos |
@@ -229,6 +230,25 @@ Ohne beides funktionieren Debug-Builds, Release-APKs bleiben unsigniert. `./buil
 4. In den **Settings** der App die **Client ID** kopieren.
 5. In Ambient TV: **Einstellungen › Medienquellen & Konten › Spotify** → im Abschnitt **Spotify-Konto** bei **Spotify-Client-ID** einfügen, dann **Anmelden**.
 6. Neue Apps laufen im **Development mode**: im Dashboard unter **User Management** die Spotify-Konten (Name + E-Mail) eintragen, die sich anmelden dürfen.
+
+</details>
+
+### Monogram einrichten (optionale Telegram-Medien)
+
+<details>
+<summary>Eigene Telegram-API-ID und API-Hash hinterlegen und per TV-QR-Code oder Telefoncode anmelden</summary>
+
+**Voraussetzung:** Monogram ist ein *optionaler nativer MTProto-Build* und nicht in der Standard-APK von Ambient TV enthalten. Für einen eigenen Build: `MONOGRAM_NATIVE=1 ./build.sh arm64` (oder `release` für alle vier ABIs). Siehe [Monogram-Build und Integration](docs/monogram-integration.md). Die native Bibliothek und das ursprüngliche Logo stehen unter GPL-3.0-only; vor einer Verteilung müssen GPL-Lizenzpflichten und Telegram-API-Bedingungen geklärt werden. Native Release-Builds und die drei Renderer benötigen noch Gerätetests.
+
+1. Mit deinem **Telegram-Konto** unter [my.telegram.org/apps](https://my.telegram.org/apps) anmelden und eine Telegram-API-Anwendung erstellen. **API-ID** (Zahl) und **API-Hash** (32 Hex-Zeichen) kopieren.
+2. In der Monogram-fähigen Ambient-TV-App **Einstellungen › Medienquellen & Konten › Monogram** öffnen. Die API-Felder sind auch bei noch deaktiviertem System verfügbar.
+3. **API-ID** und **API-Hash** eintragen und **API-Zugangsdaten speichern** wählen. Der Hash wird verdeckt eingegeben; die Werte landen verschlüsselt auf dem Gerät, **nicht** fest in der APK.
+4. **Monogram aktivieren**. Im Kontoabschnitt erscheint der Anmeldestatus mit den passenden Wegen:
+   - **Android TV:** **Mit QR-Code anmelden** wählen. Telegram auf einem **bereits angemeldeten Handy** öffnen, unter **Einstellungen › Geräte** den QR-Code scannen und die Anmeldung bestätigen. Dies ist ein Telegram-`tg://`-Anmeldetoken und **kein** Spotify-Web-Callback.
+   - **Handy oder Alternative am TV:** Telefonnummer mit Ländervorwahl eintragen, **Anmeldecode senden** wählen und den von Telegram erhaltenen Code bestätigen. Bei Bedarf das Passwort für die **Zwei-Schritt-Verifizierung** eingeben. Am Handy wird der QR-Login nicht angezeigt, da es den eigenen Bildschirm nicht scannen kann.
+5. Sobald **Verbundenes Konto** erscheint, die Monogram-Tabs bzw. sechs Home-Reihen einrichten: **Neue Medien, Kanäle, Videos, YouTube-Links, Musik und Audio, Fotos**. YouTube-Videos öffnen sich über die vorhandene SmartTube-Auswahl; vollständige Telegram-Beitragstexte stehen auf der Detailseite.
+
+**Backup:** Das normale Einstellungsbackup sichert Monogram, Menü/TV-Chips und Home-Reihen. **Export mit Zugangsdaten** enthält außerdem API-ID und API-Hash in einer passwortverschlüsselten Sicherung, **nicht** aber die Telegram-Anmeldung oder privat heruntergeladene Medien. Nach einem Gerätewechsel ist eine erneute Anmeldung erforderlich. Zum Ändern der API-Zugangsdaten zuvor abmelden.
 
 </details>
 
