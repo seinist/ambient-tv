@@ -11,6 +11,13 @@ class YouTubeHomeSelectionTest {
         assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.HOME, false, false, true))
     }
 
+    @Test fun closingHomeSearchDoesNotRequestAnotherFeedRefresh() {
+        assertTrue(youtubeRestoreHomeAfterSearch("cats", ""))
+        assertTrue(youtubeRestoreHomeAfterSearch("cats", "c"))
+        assertFalse(youtubeRestoreHomeAfterSearch("c", ""))
+        assertFalse(youtubeRestoreHomeAfterSearch("", "c"))
+    }
+
     @Test fun subscriptionsAndChannelPagesStillRefreshOnEntry() {
         assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.SUBSCRIPTIONS, false, false, false))
         assertTrue(youtubeShouldRefreshOnEntry(YouTubeFeed.HOME, false, true, false))
