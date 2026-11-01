@@ -109,8 +109,7 @@ fun TelegramScreen(
     onSelectSection: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenChannel: (Long) -> Unit,
-    onOpenMedia: (Long, Int) -> Unit,
-    onOpenYouTube: (String) -> Unit,
+    onOpenPost: (Long, Int) -> Unit,
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
@@ -217,12 +216,14 @@ fun TelegramScreen(
                 .toLongOrNull()?.let(onOpenChannel)
             return
         }
-        val media = viewModel.selected(item.ratingKey) ?: return
-        if (media.kind == TelegramMediaKind.YOUTUBE) {
-            media.youtubeVideoId?.let(onOpenYouTube)
-        } else if (media.playableOnTelegram) {
+        // A short click opens the post detail, where its full caption, linked YouTube
+        // videos and (when allowed) the local media player are separate actions.
+        val selected = viewModel.selected(item.ratingKey)
+        if (selected?.playableOnTelegram == true) {
             viewModel.rememberPlaybackQueue(origin.map(MediaItem::ratingKey), item.ratingKey)
-            telegramMediaIds(item.ratingKey)?.let { (chat, message) -> onOpenMedia(chat, message) }
+        }
+        com.ambient.tv.data.telegram.telegramPostIds(item.ratingKey)?.let { (chat, message) ->
+            onOpenPost(chat, message)
         }
     }
     val activeSortCount = (if (channelFilter != "all") 1 else 0) +
