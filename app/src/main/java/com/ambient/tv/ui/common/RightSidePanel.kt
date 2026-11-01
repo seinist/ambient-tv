@@ -197,6 +197,30 @@ fun RightPanelOverlay(
 
 internal fun rightPanelBackKey(key: Key): Boolean = key == Key.Back || key == Key.Escape
 
+/**
+ * Left unconsumed, Compose turns Back into FocusDirection.Exit and moves focus to the nearest
+ * focusable ancestor (a drawer, the player's root). That uses the key up: nothing closes, and
+ * focus sits on a container with no visible selection. Placed on an overlay, this hands an
+ * unconsumed Back to the back dispatcher on release, like the platform. Bubbling phase: a
+ * focused child that handles Back itself still gets it first; text fields keep it for the IME.
+ */
+fun Modifier.dispatchBackOnRelease(): Modifier = composed {
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+        ?.onBackPressedDispatcher ?: return@composed Modifier
+    var armed by remember { mutableStateOf(false) }
+    onKeyEvent { event ->
+        if (!rightPanelBackKey(event.key) || TvTextFieldFocus.anyFocused) return@onKeyEvent false
+        when (event.type) {
+            KeyEventType.KeyDown -> if (event.nativeKeyEvent.repeatCount == 0) armed = true
+            KeyEventType.KeyUp -> if (armed) {
+                armed = false
+                if (!event.nativeKeyEvent.isCanceled) dispatcher.onBackPressed()
+            }
+        }
+        true
+    }
+}
+
 /** Scrollbar of the enclosing [RightSidePanel] while its body overflows; null otherwise. */
 internal val LocalRightPanelScrollbarFocus = androidx.compose.runtime.staticCompositionLocalOf<FocusRequester?> { null }
 
@@ -520,8 +544,6 @@ private fun RightSidePanelChrome(
     ) { dismissBack() }
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
-    val backDispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
-    var backArmed by remember { mutableStateOf(false) }
     var panelHasFocus by remember { mutableStateOf(false) }
     // The drawer's own focus group holding focus (no row inside it) is not a usable selection:
     // nothing is highlighted and the D-pad has nowhere to go until OK picks a row.
@@ -663,22 +685,8 @@ private fun RightSidePanelChrome(
                     false
                 }
             }
-            // Bubbling phase: rows that use Back themselves (drop-ups, editors) see it first.
-            // Left unconsumed, Compose turns Back into FocusDirection.Exit: focus jumps onto
-            // this focusable drawer, the key is used up and Back never navigates. Hand it to
-            // the back dispatcher like the platform would, on release.
-            .onKeyEvent { event ->
-                if (!rightPanelBackKey(event.key) || TvTextFieldFocus.anyFocused || backDispatcher == null)
-                    return@onKeyEvent false
-                when (event.type) {
-                    KeyEventType.KeyDown -> if (event.nativeKeyEvent.repeatCount == 0) backArmed = true
-                    KeyEventType.KeyUp -> if (backArmed) {
-                        backArmed = false
-                        if (!event.nativeKeyEvent.isCanceled) backDispatcher.onBackPressed()
-                    }
-                }
-                true
-            }
+            // Rows that use Back themselves (drop-ups, editors) still see it first.
+            .dispatchBackOnRelease()
             .then(if (!panelInteractive) Modifier.playerPanelInteractionGuard(false) else Modifier)
             .then(if (retainFocus) Modifier.focusRestorer() else Modifier)
             .focusGroup()
