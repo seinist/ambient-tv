@@ -52,6 +52,10 @@ interface TelegramClientPort {
     /** Invalidates native catalog memory, not encrypted disk fallback. */
     suspend fun refreshCatalog() = Unit
     suspend fun channels(cursor: String? = null, limit: Int = 60): TelegramChannelPage
+    /** Read the channel for a selected post without materializing the whole subscription feed. */
+    suspend fun channel(chatId: Long): TelegramChannel? = null
+    /** Joining is a real MTProto action; unsupported leave must not be simulated locally. */
+    suspend fun joinChannel(chatId: Long): Boolean = false
     suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
@@ -288,6 +292,24 @@ class TelegramRepository @Inject constructor(
     suspend fun refreshCatalog() { client?.refreshCatalog() }
     suspend fun cachedChannels(): List<TelegramChannel> =
         client?.cacheIdentity?.let { diskCache.channels(it) }.orEmpty()
+
+    suspend fun channel(chatId: Long): TelegramChannel? {
+        val account = client ?: return null
+        val cached = account.cacheIdentity?.let { diskCache.channels(it) }
+            ?.firstOrNull { it.chatId == chatId }
+        return try {
+            account.channel(chatId) ?: cached
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { cached }
+    }
+
+    suspend fun joinChannel(chatId: Long): Boolean {
+        val account = client ?: return false
+        val joined = account.joinChannel(chatId)
+        if (joined) account.refreshCatalog()
+        return joined
+    }
     suspend fun cachedBrowse(section: String): List<TelegramMedia> =
         client?.cacheIdentity?.let { diskCache.media(it, section) }.orEmpty()
 
