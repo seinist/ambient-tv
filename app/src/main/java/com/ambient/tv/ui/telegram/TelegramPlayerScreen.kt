@@ -328,8 +328,6 @@ private fun TelegramPlaybackContent(
                 )
             }
             val ownsSession = snapshot.metadata?.mediaId == media.mediaKey
-            val trackControls = monogramRendererControls(
-                BackgroundPlaybackSession.activeHandle().takeIf { ownsSession })
             val position = if (ownsSession) snapshot.status.positionMs else 0L
             val duration = if (ownsSession) snapshot.status.durationMs.takeIf { it > 0 }
                 ?: metadata.durationMs else metadata.durationMs
@@ -358,8 +356,13 @@ private fun TelegramPlaybackContent(
                 ),
                 visible = controlsVisible,
             )
-            PublishPlayerPanel(
-                PlayerPanelModel(
+            // Native track enumeration is expensive: match the other player screens and only
+            // request it while the OSD or right panel is visible.
+            if (controlsVisible || panel != UnifiedPlayerPanel.NONE) {
+                val trackControls = monogramRendererControls(
+                    if (ownsSession) BackgroundPlaybackSession.activeHandle() else null)
+                PublishPlayerPanel(
+                    PlayerPanelModel(
                     scrimAlpha = 0.32f,
                     projectMBrowser = null,
                     audioSession = BackgroundPlaybackSession.currentAudioSession(),
@@ -396,8 +399,9 @@ private fun TelegramPlaybackContent(
                     showRenderer = media.kind != TelegramMediaKind.PHOTO,
                     showVideo = metadata.hasVideo,
                     showVisualizer = media.kind == TelegramMediaKind.AUDIO,
-                ),
-            )
+                    ),
+                )
+            }
             PersistentPlayerOverlays(expectedSourceIdentity = media.mediaKey)
         }
     }
