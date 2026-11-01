@@ -69,7 +69,7 @@ are identical.
 ## Size budget and release APK measurement
 
 The optional native CI workflow records the **raw MTProto ELF** and compressed
-AAR size separately for each ABI. It enforces an early **10 MB raw ELF budget**.
+AAR size separately for each ABI. It enforces an early **12 MB raw ELF budget**.
 This does **not** prove the final APK fits: Android can store native libraries
 uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
 
