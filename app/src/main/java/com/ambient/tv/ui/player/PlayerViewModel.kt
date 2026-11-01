@@ -115,6 +115,8 @@ sealed interface PlayerUiState {
          */
         val engineStreamUrl: String? = null,
         val engineStartPositionMs: Long = 0,
+        /** The metadata this state was built from, kept for the player's details dialog (no new request). */
+        val item: MediaItem? = null,
     ) : PlayerUiState {
         val nextVideoItem: MediaItem? get() = nextEpisode ?: nextCollectionItem
         /** What the engine was built from: the item's own stream, or the first of a gapless chain. */
@@ -607,6 +609,7 @@ class PlayerViewModel @Inject constructor(
                     if (transitionToken != null && !BackgroundPlaybackSession.isSourceReplacement(transitionToken)) return
                     itemTransitionToken = null
                     PlayerUiState.Ready(
+                        item = item,
                         streamUrl = selectedPlan.url,
                         playbackMode = selectedPlan.mode,
                         playbackReason = selectedPlan.reason,
@@ -839,6 +842,7 @@ class PlayerViewModel @Inject constructor(
         )
         val sourceKey = version.sourceRatingKey ?: next.ratingKey
         val state = now.copy(
+            item = item,
             streamUrl = plan.url,
             playbackReason = plan.reason,
             title = item.title,

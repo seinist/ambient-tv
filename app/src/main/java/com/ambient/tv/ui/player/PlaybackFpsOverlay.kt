@@ -57,7 +57,7 @@ fun BoxScope.PlaybackFpsOverlay(
     sourceFps: Double? = null,
     svpStatus: String? = null,
 ) {
-    if (!enabled || nerdStatsVisible) return
+    if (!enabled || nerdStatsVisible || playerDetailsOpen()) return
     val display = rememberPlaybackDisplayOutput()
     val video = rememberPlaybackVideoResolution(enabled)
     val hz = display.refreshHz ?: refreshHz

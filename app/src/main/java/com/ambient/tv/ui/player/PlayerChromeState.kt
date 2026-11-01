@@ -36,6 +36,8 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     /** The active engine's OSD and panel content and remote handling; see [PersistentPlayerOverlays]. */
     internal val panelModel = mutableStateOf<PlayerPanelModel?>(null)
     internal val osdModel = mutableStateOf<PlayerOsdSpec?>(null)
+    /** What the details dialog shows; published by the screen, so a renderer switch keeps it. */
+    internal val detail = mutableStateOf<PlayerDetailInfo?>(null)
     internal val panelKeys = mutableStateOf<((androidx.compose.ui.input.key.KeyEvent) -> Boolean)?>(null)
     val panels = PlayerPanelNavigation()
     internal val focus = PlayerControlFocus()
@@ -73,6 +75,9 @@ fun PersistentPlayerChrome(
         LocalPlayerChangingItem provides changingItem,
     ) {
         PlayerPanelAutoHide(chrome, changingItem)
+        // Info opens the details dialog when its action-bar button is switched on.
+        val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
+        val hiddenButtons = osdHiddenButtons()
         LaunchedEffect(chrome) {
             androidx.compose.runtime.snapshotFlow { chrome.visible.value }.collect { if (!it) chrome.shownByZap.value = false }
         }
@@ -81,6 +86,14 @@ fun PersistentPlayerChrome(
             .onPreviewKeyEvent {
                 // Shared by every renderer, including when the OSD or side panel owns focus.
                 val session = chrome.panelModel.value?.audioSession
+                if (it.key == Key.Info) {
+                    val detail = chrome.detail.value
+                    if (detail != null && osdButtonVisible(OsdButton.DETAILS, detail.osdPlayer, hiddenButtons)) {
+                        if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                            it.nativeKeyEvent.repeatCount == 0) toggleDetailsByInfoKey(chrome.panels, detailsLabel)
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 if (it.key == Key.O && !it.isCtrlPressed && !it.isAltPressed &&
                     !it.isMetaPressed && !it.isShiftPressed && session != null) {
                     if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
@@ -101,6 +114,12 @@ fun PersistentPlayerChrome(
                 }
             }) { content() }
     }
+}
+
+/** Info opens the details (recorded as opened from the Details button) or closes them again. */
+internal fun toggleDetailsByInfoKey(navigation: PlayerPanelNavigation, detailsLabel: String) {
+    if (navigation.panel == com.ambient.tv.ui.common.UnifiedPlayerPanel.DETAILS) closePlayerDetails(navigation)
+    else openPlayerDetails(navigation, detailsLabel)
 }
 
 @Composable

@@ -477,6 +477,21 @@ fun YouTubePlayerScreen(
                 }
             }
             // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
+            val channelTitle = state.channel?.title
+            com.ambient.tv.ui.player.PublishPlayerDetail(androidx.compose.runtime.remember(playback, channelTitle) {
+                playback?.let {
+                    com.ambient.tv.ui.player.playerDetailForYouTube(
+                        title = it.title,
+                        author = it.author,
+                        channelTitle = channelTitle,
+                        description = it.description,
+                        imageUrl = it.imageUrl,
+                        fallbackImageUrls = com.ambient.tv.youtube.youtubePanelThumbnailUrls(it.videoId),
+                        isLive = it.isLive,
+                        durationMs = it.durationMs,
+                    )
+                }
+            })
             com.ambient.tv.ui.player.PersistentPlayerOverlays()
             }
         }
@@ -1792,6 +1807,7 @@ internal data class YouTubeOsdModel(
                         PlayerIconButton(Icons.Filled.Subtitles, stringResource(R.string.player_subtitles), { navigation?.open(UnifiedPlayerPanel.SUBTITLES) }, selected = panel == UnifiedPlayerPanel.SUBTITLES, osd = com.ambient.tv.ui.player.OsdButton.SUBTITLES)
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { navigation?.open(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                         PlayerSleepTimerButton({ navigation?.open(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
+                        com.ambient.tv.ui.player.PlayerDetailsButton()
                         com.ambient.tv.ui.common.PlayerDiagnosticsButtons()
                         com.ambient.tv.ui.common.PlayerToolButtons()
                         PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { navigation?.open(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)

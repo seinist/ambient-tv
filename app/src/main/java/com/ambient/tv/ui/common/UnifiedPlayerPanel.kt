@@ -98,7 +98,9 @@ enum class UnifiedPlayerPanel {
     /** Which action-bar buttons the current player shows. */
     OSD_BUTTONS,
     /** A-B repeat, frame step and screenshot. */
-    TOOLS;
+    TOOLS,
+    /** Information about what is playing, shown as a dialog over the picture. */
+    DETAILS;
 
     val isAudio: Boolean get() = this == AUDIO || this == AUDIO_SECTION || this == AUDIO_CODECS
     val isVisualizer: Boolean get() = this == VISUALIZER || this == VISUALIZER_SETTINGS
@@ -219,7 +221,9 @@ class PlayerPanelNavigation {
     /** Timeout dismisses the whole path without restoring a hidden OSD button. */
     internal fun closeForInactivity(expectedActivity: Int): Boolean {
         if (panel == UnifiedPlayerPanel.NONE || activity.version != expectedActivity ||
-            activity.blocked || dialogFocusOwner != null) return false
+            activity.blocked || dialogFocusOwner != null ||
+            // The details dialog is reading matter: it stays until the viewer closes it.
+            panel == UnifiedPlayerPanel.DETAILS) return false
         path.clear()
         videoState.leave()
         audioState.leave()
