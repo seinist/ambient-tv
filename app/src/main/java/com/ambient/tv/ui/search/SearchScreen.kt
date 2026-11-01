@@ -338,12 +338,15 @@ private fun searchSourceLabel(source: SearchSource): String = when (source) {
 @Composable
 private fun RecentSearches(recent: List<String>, onSelect: (String) -> Unit, onClear: () -> Unit) {
     if (recent.isEmpty()) { Text(stringResource(R.string.search_hint), color = MaterialTheme.colorScheme.onSurfaceVariant); return }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(R.string.search_recent), style = MaterialTheme.typography.titleMedium)
-        TvChip(text = stringResource(R.string.search_clear_recent), icon = Icons.Filled.Delete, onClick = onClear)
-    }
-    LazyRow(state = rememberLazyListState(), modifier = Modifier.containRowFocusExit(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        items(recent, key = { it }) { query -> TvChip(text = query, onClick = { onSelect(query) }) }
+    // Its own column: inside the page's Box, heading and chips were drawn on top of each other.
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.search_recent), style = MaterialTheme.typography.titleMedium)
+            TvChip(text = stringResource(R.string.search_clear_recent), icon = Icons.Filled.Delete, onClick = onClear)
+        }
+        LazyRow(state = rememberLazyListState(), modifier = Modifier.containRowFocusExit(), contentPadding = PaddingValues(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(recent, key = { it }) { query -> TvChip(text = query, onClick = { onSelect(query) }) }
+        }
     }
 }
 

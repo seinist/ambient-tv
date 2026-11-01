@@ -367,6 +367,36 @@ private fun formatTvhChromeDuration(ms: Long): String = com.ambient.tv.ui.common
  * The live-TV and recording OSD of Media3, VLC and MPV: the active engine supplies its values and
  * actions, PersistentPlayerOverlays draws it above the engine. Fields keep each engine's details.
  */
+/**
+ * While a new channel tunes, a visible OSD stays on screen: it keeps its layout and controls
+ * but shows only the target channel (name, logo). Programme, position and badges of the
+ * previous channel are dropped. Null when [previous] already describes [target].
+ */
+internal fun liveOsdHandover(
+    previous: com.ambient.tv.ui.player.PlayerOsdSpec?,
+    target: TvhChannel?,
+): LiveOsdModel? {
+    val live = previous as? LiveOsdModel ?: return null
+    if (target == null || live.channel?.uuid == target.uuid) return null
+    return live.copy(
+        source = live.source.copy(title = target.name, subtitle = null, description = null),
+        channel = target,
+        artworkUrl = null,
+        artworkFallbackUrls = emptyList(),
+        nowEvent = null,
+        nextEvent = null,
+        positionMs = 0L,
+        durationMs = 0L,
+        playing = false,
+        loading = true,
+        paused = false,
+        mediaBadges = emptyList(),
+        svpBadge = null,
+        audioBadge = null,
+        message = null,
+    )
+}
+
 internal data class LiveOsdModel(
     val source: TvhPlaybackSource,
     val channel: TvhChannel?,

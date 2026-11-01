@@ -259,6 +259,21 @@ internal fun playerDetailForLiveTv(
     )
 }
 
+/**
+ * Live TV while a channel change is tuning: the new channel without any programme, never the old
+ * channel's. The details stay published, so the Details button does not vanish while zapping.
+ */
+internal fun playerDetailForLiveTune(
+    tuning: Boolean,
+    target: LiveTvChannel?,
+    channel: LiveTvChannel?,
+    now: LiveTvProgramme?,
+    next: LiveTvProgramme?,
+    recording: LiveTvRecording?,
+): PlayerDetailInfo? =
+    if (tuning) playerDetailForLiveTv(target, null, null, null)
+    else playerDetailForLiveTv(channel, now, next, recording)
+
 /** Radio: station, current song and stream facts. */
 internal fun playerDetailForRadio(
     stationName: String,

@@ -36,8 +36,11 @@ internal fun backgroundPlaybackAction(
     television: Boolean,
     screenOn: Boolean,
     externalFlow: Boolean,
+    pictureInPicture: Boolean = false,
 ): BackgroundPlaybackAction = when {
     !active -> BackgroundPlaybackAction.NONE
+    // The picture-in-picture window is still on screen: that is not the background.
+    pictureInPicture && screenOn -> BackgroundPlaybackAction.KEEP
     // A standby or screen off always ends the wait for the opened screen.
     externalFlow && screenOn -> BackgroundPlaybackAction.DEFER
     // A phone plays on in the background: video and live TV continue as sound, like music.

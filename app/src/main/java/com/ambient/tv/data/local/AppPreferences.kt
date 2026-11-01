@@ -87,6 +87,12 @@ class AppPreferences @Inject constructor(
         }
 
     init {
+        if (!prefs.getBoolean(KEY_SYSTEM_NAMES_LABEL_CLEANUP, false)) {
+            val stored = systemNames
+            val cleaned = SystemNameOverrides.withoutLegacyLabelCopies(stored)
+            if (cleaned != stored) prefs.edit { putString("system_names", json.encodeToString(cleaned)) }
+            prefs.edit { putBoolean(KEY_SYSTEM_NAMES_LABEL_CLEANUP, true) }
+        }
         SystemNameOverrides.names = systemNames
         if (!prefs.getBoolean(KEY_SECTION_VIEWS_DEFAULT_POSTER, false)) {
             val stored = prefs.all.mapNotNull { (key, value) -> (value as? String)?.let { key to it } }.toMap()
@@ -2219,6 +2225,7 @@ class AppPreferences @Inject constructor(
         // Plex's own rows repeat much of what the other rows show, and a library has many of them.
         val DEFAULT_SYSTEM_HOME_HIDDEN_ROWS = setOf("${HomeRowDefinition.SYSTEM_PLEX}.${HomeRowDefinition.CONTENT_HUBS}")
         const val KEY_SECTION_VIEWS_DEFAULT_POSTER = "section_views_default_poster"
+        const val KEY_SYSTEM_NAMES_LABEL_CLEANUP = "system_names_label_cleanup_v1"
         const val KEY_HOME_ROWS_DEFAULT_POSTER = "home_rows_default_poster_v2"
         val ALL_CONTINUE_DEFAULT_SYSTEMS = setOf(
             HomeRowDefinition.SYSTEM_PLEX,

@@ -404,7 +404,7 @@ private fun RadioPlayerContent(
             // from creating a blank OSD frame before PublishPlayerOsd's SideEffect runs.
             val locale = LocalContext.current.resources.configuration.locales[0]
             com.ambient.tv.ui.player.PublishPlayerDetail(remember(osdStation, locale) {
-                osdStation?.takeIf { !it.switching }?.let { shown ->
+                osdStation?.takeIf(::radioOsdHasDetail)?.let { shown ->
                     val current = shown.station
                     com.ambient.tv.ui.player.playerDetailForRadio(
                         stationName = shown.stationName,

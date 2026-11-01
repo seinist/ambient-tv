@@ -57,6 +57,7 @@ fun HandheldNavigationHost(
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyEnabled = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized,
         radioHomeEnabled = sidebarState.radioHomeEnabled,
+        telegramHomeEnabled = sidebarState.telegramHomeEnabled && sidebarState.telegramEnabled && sidebarState.telegramAuthorized,
     )
     val showSearch = sidebarShowsGlobalSearch(
         plexConfigured = sidebarState.plexEnabled,
@@ -358,6 +359,13 @@ private fun HandheldSources(
             }
             add(withSettings(MediaSystem.SPOTIFY, entries))
         }
+        // Same entries as the TV sidebar; like there, only once signed in.
+        if (sidebarState.telegramEnabled && sidebarState.telegramAuthorized) add(withSettings(
+            MediaSystem.TELEGRAM,
+            com.ambient.tv.ui.navigation.telegramMenuEntries(sidebarState.telegramSubmenuKeys).map { entry ->
+                SourceEntry(entry.key, stringResource(entry.title), Destinations.telegramSection(entry.key))
+            },
+        ))
         if (radio) add(withSettings(
             MediaSystem.RADIO,
             handheldRadioSubmenuKeys(sidebarState.radioSubmenuKeys).map { key ->
