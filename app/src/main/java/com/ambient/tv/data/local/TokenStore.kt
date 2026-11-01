@@ -42,6 +42,31 @@ class TokenStore @Inject constructor(
         get() = prefs.getString("iptv_sources", null)
         set(value) = prefs.edit { if (value.isNullOrBlank()) remove("iptv_sources") else putString("iptv_sources", value) }
 
+    /**
+     * Telegram application credentials are configured per installation, just like Spotify's
+     * client ID. The ID and hash are written in one encrypted-preferences transaction;
+     * neither is ever written to the plain AppPreferences or included in a normal backup.
+     */
+    val monogramApiId: String get() = prefs.getString("monogram_api_id", "").orEmpty()
+    val monogramApiHash: String get() = prefs.getString("monogram_api_hash", "").orEmpty()
+
+    fun monogramCredentials(): Pair<Int, String>? {
+        val id = monogramApiId.toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val hash = monogramApiHash.takeIf { it.matches(Regex("[a-fA-F0-9]{32}")) }
+            ?: return null
+        return id to hash
+    }
+
+    fun setMonogramCredentials(id: Int, hash: String) {
+        require(id > 0 && hash.matches(Regex("[a-fA-F0-9]{32}"))) {
+            "Invalid Monogram API application credentials"
+        }
+        prefs.edit {
+            putString("monogram_api_id", id.toString())
+            putString("monogram_api_hash", hash.lowercase(java.util.Locale.ROOT))
+        }
+    }
+
     /** OpenSubtitles.com: the user's own API consumer key and (optional) account for the download quota. */
     var openSubtitlesApiKey: String?
         get() = prefs.getString("opensubtitles_api_key", null)
