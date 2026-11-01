@@ -2233,4 +2233,12 @@
     <string name="monogram_qr_pending">Warte auf die Bestätigung am Handy …</string>
     <string name="monogram_search_loaded">Geladene Monogram-Medien durchsuchen</string>
     <string name="monogram_resend_code">Anmeldecode erneut senden</string>
+    <string name="monogram_post_detail">Monogram-Beitrag</string>
+    <string name="monogram_post_text">Beitragstext</string>
+    <string name="monogram_open_photo">Foto öffnen</string>
+    <string name="monogram_open_youtube">In SmartTube öffnen</string>
+    <string name="monogram_protected_post">Dieser Beitrag schränkt die Medienwiedergabe ein. Text und Links bleiben lesbar.</string>
+    <string name="monogram_join_channel">Kanal beitreten</string>
+    <string name="monogram_joined_channel">Beigetreten</string>
+    <string name="monogram_join_failed">Kanalbeitritt fehlgeschlagen</string>
 </resources>
