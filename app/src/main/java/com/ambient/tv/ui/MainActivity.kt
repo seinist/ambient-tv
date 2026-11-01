@@ -2769,6 +2769,8 @@ private fun AmbientTvApp(
                 // The intro shows connectivity itself; held cards keep their full reading time.
                 hidden = screensaverOverlayPresent || com.ambient.tv.ui.intro.IntroPresentation.active,
                 playback = onPlayerScreen,
+                // Settings already has an in-place Wake/Cancel toggle. Do not steal its D-pad focus.
+                autoFocusWake = currentRoute != Destinations.SETTINGS && currentRoute != Destinations.SETUP_SETTINGS,
             )
             com.ambient.tv.companion.CompanionDialogs(companionVm)
             if (!handheld) com.ambient.tv.companion.CompanionRemoteInput.Overlay(activity?.window)
