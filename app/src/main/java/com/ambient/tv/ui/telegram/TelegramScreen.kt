@@ -21,6 +21,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Subscriptions
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -47,6 +53,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.telegram.TelegramMediaKind
+import com.ambient.tv.data.telegram.TelegramChannel
 import com.ambient.tv.data.telegram.telegramMediaIds
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ArtworkImage
@@ -93,6 +100,8 @@ import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 private val sections = listOf(
     "recent" to R.string.telegram_recent,
@@ -113,6 +122,16 @@ fun TelegramScreen(
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val activeChannelId = remember(sectionKey) {
+        sectionKey.takeIf { it.startsWith("channel:") }?.substringAfter(':')?.toLongOrNull()
+    }
+    var activeChannel by remember(sectionKey) { mutableStateOf<TelegramChannel?>(null) }
+    var joiningChannel by remember(sectionKey) { mutableStateOf(false) }
+    var channelError by remember(sectionKey) { mutableStateOf<String?>(null) }
+    val channelScope = rememberCoroutineScope()
+    LaunchedEffect(activeChannelId) {
+        activeChannel = activeChannelId?.let { viewModel.channel(it) }
+    }
     val chain = rememberPageFocusChain()
     val focus = rememberRowColumnFocus()
     val rowList = rememberBrowseListState()
@@ -259,8 +278,65 @@ fun TelegramScreen(
                     )
                     ViewOptionsChip(activeSortCount, onClick = { showViewOptions = true },
                         modifier = Modifier.focusRequester(viewOptionsFocus))
+                    if (activeChannel?.subscribed == false) {
+                        TvChip(
+                            text = stringResource(R.string.monogram_join_channel),
+                            selected = false,
+                            icon = Icons.Filled.Subscriptions,
+                            iconOnly = true,
+                            loading = joiningChannel,
+                            onClick = {
+                                val id = activeChannelId
+                                if (id != null && !joiningChannel) {
+                                    joiningChannel = true
+                                    channelError = null
+                                    channelScope.launch {
+                                        try {
+                                            if (viewModel.joinChannel(id)) {
+                                                activeChannel = activeChannel?.copy(subscribed = true)
+                                            } else channelError = "Monogram channel join not accepted"
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (error: Exception) {
+                                            channelError = error.message ?: "Monogram channel join failed"
+                                        } finally { joiningChannel = false }
+                                    }
+                                }
+                            },
+                        )
+                    }
                 },
-                title = { SystemPageTitle(MediaSystem.TELEGRAM) },
+                title = {
+                    if (activeChannelId == null) {
+                        SystemPageTitle(MediaSystem.TELEGRAM)
+                    } else {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            val label = activeChannel?.title ?: state.rows.firstOrNull()?.title ?: "Monogram"
+                            activeChannel?.thumbnailUrl?.let { url ->
+                                ArtworkImage(url, label, Modifier.size(48.dp).clip(CircleShape))
+                            } ?: Icon(
+                                Icons.Filled.AccountCircle, label,
+                                Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Column {
+                                Text(label, style = MaterialTheme.typography.headlineMedium,
+                                    maxLines = 1)
+                                if (activeChannel?.subscribed == true) {
+                                    Text(stringResource(R.string.monogram_joined_channel),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary)
+                                }
+                                channelError?.let {
+                                    Text(it, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                },
             )
             PageChipRow(chain, contentPadding = PaddingValues(horizontal = screenGutter()),
                 selectedIndex = shownTabs.indexOfFirst { it.first == canonical }.coerceAtLeast(0)) {
@@ -342,8 +418,7 @@ fun TelegramScreen(
                         gridItems(flat, key = { it.ratingKey }) { item ->
                             MediaTile(
                                 item = item,
-                                style = if (sectionKey == "channels") com.ambient.tv.ui.common.MediaTileStyle.POSTER
-                                    else com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
+                                style = com.ambient.tv.ui.common.MediaTileStyle.LANDSCAPE,
                                 fillCell = true,
                                 modifier = Modifier.browseFocusTarget(item.ratingKey),
                                 onFocused = {
