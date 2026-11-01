@@ -20,6 +20,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +53,8 @@ fun ContentRow(
     onRowFocused: () -> Unit = {},
     restoreRatingKey: String? = null,
     columnFocus: RowColumnFocus? = null,
+    /** Works for touch/wheel scrolling as well as remote focus, without extra row controls. */
+    onViewportNearEnd: ((Int) -> Unit)? = null,
 ) {
     val handheld = com.ambient.tv.ui.mobile.LocalHandheldUi.current
     // A row recycled out of the list comes back scrolled to the tile it was left on.
@@ -61,6 +66,15 @@ fun ContentRow(
         initialFirstVisibleItemIndex = (restoreIndex - 1).coerceAtLeast(0),
     )
     BrowseScrollBudget(rowState)
+    if (onViewportNearEnd != null) {
+        LaunchedEffect(rowState, row.id, row.items.size) {
+            snapshotFlow { rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+                .distinctUntilChanged()
+                .collect { last ->
+                    if (last >= 0 && last >= row.items.size - 8) onViewportNearEnd(last)
+                }
+        }
+    }
     RegisterRowColumnFocus(columnFocus, row.id, rowState, remember(row.items) { row.items.map { it.ratingKey } })
     var rowHadFocus by remember(row.id) { mutableStateOf(false) }
     var lastFocusedKey by remember(row.id) { mutableStateOf<String?>(null) }

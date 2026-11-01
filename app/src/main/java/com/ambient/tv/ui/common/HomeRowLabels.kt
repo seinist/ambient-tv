@@ -24,7 +24,7 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
         }
         val name = MediaSystem.TELEGRAM.customName ?: context.getString(R.string.telegram_title)
         return context.getString(R.string.telegram_home_row, context.getString(key))
-            .replace("Telegram", name)
+            .replaceFirst(context.getString(R.string.telegram_title), name)
     }
     if (system == HomeRowDefinition.SYSTEM_TRAILERS) {
         val feed = com.ambient.tv.trailers.TrailerFeed.entries.firstOrNull { it.name == contentKey }

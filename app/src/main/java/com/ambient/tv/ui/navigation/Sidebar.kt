@@ -316,7 +316,7 @@ internal fun SidebarContent(
             add(MenuSystem("spotify", systemName(MediaSystem.SPOTIFY, "Spotify"), Icons.Filled.Headphones, entries, system = MediaSystem.SPOTIFY))
         }
         if (telegramEnabled) add(MenuSystem(
-            "telegram", systemName(MediaSystem.TELEGRAM), Icons.Filled.Send, system = MediaSystem.TELEGRAM,
+            "telegram", systemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
             entries = listOf(
                 Triple("recent", R.string.telegram_recent, Icons.Filled.Update),
                 Triple("channels", R.string.telegram_channels, Icons.Filled.Subscriptions),

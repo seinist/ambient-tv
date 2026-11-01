@@ -1055,6 +1055,13 @@ private fun AmbientTvApp(
         collectionId: String? = null,
         collectionSort: String? = null,
     ) {
+        if (ratingKey.startsWith(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)) {
+            ratingKey.removePrefix(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)
+                .toLongOrNull()?.let { chatId ->
+                    navigateToSection(Destinations.telegramSection("channel:$chatId"))
+                }
+            return
+        }
         com.ambient.tv.data.telegram.telegramMediaIds(ratingKey)?.let { (chatId, messageId) ->
             if (mediaSelectionBusy) return
             mediaSelectionBusy = true

@@ -8,7 +8,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import com.ambient.tv.ui.common.rememberBrowseListState
+import com.ambient.tv.ui.common.BrowseFocusContentIdentity
+import com.ambient.tv.ui.common.BrowseFocusInitialTarget
+import com.ambient.tv.ui.common.RegisterBrowseFocusRows
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
@@ -66,11 +69,17 @@ fun TelegramScreen(
     val state by viewModel.state.collectAsState()
     val chain = rememberPageFocusChain()
     val focus = rememberRowColumnFocus()
-    val listState = rememberLazyListState()
+    val listState = rememberBrowseListState()
     val visibleSections = sections.filter { it.first in viewModel.visibleSections || it.first == sectionKey }
         .ifEmpty { sections.take(1) }
     val canonical = sectionKey.takeIf { key -> visibleSections.any { it.first == key } } ?: "recent"
     var lastKey by rememberSaveable(sectionKey) { mutableStateOf<String?>(null) }
+    BrowseFocusContentIdentity(sectionKey)
+    BrowseFocusInitialTarget(state.rows.firstOrNull()?.items?.firstOrNull()?.ratingKey,
+        state.rows.firstOrNull()?.id)
+    RegisterBrowseFocusRows(listState, state.rows.map { row ->
+        row.id to row.items.map { it.ratingKey }
+    })
     LaunchedEffect(sectionKey) { viewModel.open(sectionKey) }
     // Menu -> content handoff waits for this category, not a stale prior category.
     // An empty/error panel is ready once the initial request has finished.
@@ -121,7 +130,7 @@ fun TelegramScreen(
                 kind = BrowseStatusKind.INFO,
                 modifier = Modifier.weight(1f),
             )
-            state.error != null -> BrowseStatusPanel(
+            state.error != null && state.rows.isEmpty() -> BrowseStatusPanel(
                 title = stringResource(R.string.telegram_error),
                 body = state.error,
                 kind = BrowseStatusKind.ERROR,
@@ -132,6 +141,8 @@ fun TelegramScreen(
             state.rows.isEmpty() -> BrowseStatusPanel(
                 title = stringResource(R.string.telegram_no_results),
                 kind = BrowseStatusKind.EMPTY,
+                actionLabel = if (state.nextCursor != null) stringResource(R.string.action_reload) else null,
+                onAction = if (state.nextCursor != null) viewModel::loadMore else null,
                 modifier = Modifier.weight(1f),
             )
             else -> LazyColumn(
@@ -143,8 +154,8 @@ fun TelegramScreen(
                     ContentRow(
                         row = row,
                         columnFocus = focus,
-                        restoreRatingKey = lastKey?.takeIf { key -> row.items.any { it.ratingKey == key } }
-                            ?: row.items.firstOrNull()?.ratingKey,
+                        restoreRatingKey = lastKey?.takeIf { key -> row.items.any { it.ratingKey == key } },
+                        onViewportNearEnd = { viewModel.loadMore() },
                         onItemFocused = { focused ->
                             lastKey = focused.ratingKey
                             // A single long LazyRow does not move the LazyColumn scroll index:
@@ -168,6 +179,21 @@ fun TelegramScreen(
                             }
                         },
                     )
+                }
+                if (state.loadingMore) {
+                    item(key = "monogram-loading-more") {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.padding(18.dp),
+                        )
+                    }
+                }
+                if (state.pageError != null) {
+                    item(key = "monogram-page-retry") {
+                        TvActionButton(
+                            text = stringResource(R.string.action_reload),
+                            onClick = viewModel::loadMore,
+                        )
+                    }
                 }
             }
         }

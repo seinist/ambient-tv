@@ -31,6 +31,7 @@ data class TelegramBrowseState(
     val error: String? = null,
     val nextCursor: String? = null,
     val loadingMore: Boolean = false,
+    val pageError: String? = null,
 )
 
 fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
@@ -86,6 +87,20 @@ class TelegramViewModel @Inject constructor(
 
     private var pageGeneration = 0
 
+    init {
+        // A restored session is asynchronous; repaint without re-entering the route.
+        viewModelScope.launch {
+            repository.authorized.collect { signedIn ->
+                if (signedIn) open(mutableState.value.section, refresh = true)
+                else {
+                    loadJob?.cancel()
+                    pageGeneration++
+                    mutableState.value = TelegramBrowseState(section = mutableState.value.section)
+                }
+            }
+        }
+    }
+
     fun open(section: String, refresh: Boolean = false) {
         val key = section.takeIf { it in setOf("recent", "channels", "videos", "youtube", "audio", "photos") ||
             (it.startsWith("channel:") && it.substringAfter(':').toLongOrNull() != null) } ?: "recent"
@@ -95,7 +110,7 @@ class TelegramViewModel @Inject constructor(
         pageGeneration++
         mutableState.value = current.copy(
             section = key, loading = repository.available,
-            loadingMore = false, nextCursor = null,
+            loadingMore = false, nextCursor = null, pageError = null,
             available = repository.available,
             rows = if (current.section == key) current.rows else emptyList(),
             media = if (current.section == key) current.media else emptyMap(),
@@ -109,55 +124,69 @@ class TelegramViewModel @Inject constructor(
         val current = mutableState.value
         val next = current.nextCursor ?: return
         if (!current.available || current.loading || current.loadingMore || current.error != null) return
-        mutableState.value = current.copy(loadingMore = true)
+        mutableState.value = current.copy(loadingMore = true, pageError = null)
         fetchPage(current.section, cursor = next, generation = pageGeneration)
     }
 
     private fun fetchPage(section: String, cursor: String?, generation: Int) {
         loadJob = viewModelScope.launch {
             try {
-                val pageRows: List<ContentRowData>
-                val pageMedia: List<TelegramMedia>
-                val next: String?
-                if (section == "channels") {
-                    val page = repository.channelsPage(cursor)
-                    pageRows = if (page.items.isEmpty()) emptyList() else listOf(ContentRowData(
-                        id = "telegram.channels",
-                        title = "Monogram",
-                        style = MediaTileStyle.POSTER,
-                        items = page.items.distinctBy(TelegramChannel::chatId).map(TelegramChannel::toBrowseItem),
-                    ))
-                    pageMedia = emptyList()
-                    next = page.nextCursor
-                } else {
-                    val page = repository.browsePage(section, cursor)
-                    pageRows = telegramRows(section, page.items)
-                    pageMedia = page.items
-                    next = page.nextCursor
+                // An audio/YouTube filter may encounter many consecutive text-only
+                // pages. Follow bounded empty continuations without publishing a
+                // misleading "no results" panel while content still exists.
+                var requestCursor = cursor
+                var pageRows = emptyList<ContentRowData>()
+                var pageMedia = emptyList<TelegramMedia>()
+                var next: String? = null
+                val seen = mutableSetOf<String?>()
+                for (attempt in 0 until 5) {
+                    if (generation != pageGeneration || mutableState.value.section != section) return@launch
+                    if (!seen.add(requestCursor)) break
+                    if (section == "channels") {
+                        val page = repository.channelsPage(requestCursor)
+                        pageRows = if (page.items.isEmpty()) emptyList() else listOf(ContentRowData(
+                            id = "telegram.channels",
+                            title = "Monogram",
+                            style = MediaTileStyle.POSTER,
+                            items = page.items.distinctBy(TelegramChannel::chatId).map(TelegramChannel::toBrowseItem),
+                        ))
+                        pageMedia = emptyList()
+                        next = page.nextCursor
+                    } else {
+                        val page = repository.browsePage(section, requestCursor)
+                        pageRows = telegramRows(section, page.items)
+                        pageMedia = page.items
+                        next = page.nextCursor
+                    }
+                    if (pageRows.isNotEmpty() || next == null || next == requestCursor) break
+                    requestCursor = next
                 }
                 if (generation != pageGeneration || mutableState.value.section != section) return@launch
-                val existing = if (cursor != null) mutableState.value.rows else emptyList()
+                val previous = if (cursor != null) mutableState.value.rows else emptyList()
                 val merged = LinkedHashMap<String, ContentRowData>()
-                (existing + pageRows).forEach { row ->
-                    val previous = merged[row.id]
-                    merged[row.id] = if (previous == null) row else previous.copy(
-                        title = row.title,
-                        items = (previous.items + row.items).distinctBy(MediaItem::ratingKey),
+                (previous + pageRows).forEach { row ->
+                    val old = merged[row.id]
+                    merged[row.id] = if (old == null) row else old.copy(
+                        items = (old.items + row.items).distinctBy(MediaItem::ratingKey),
                     )
                 }
+                val earlier = if (cursor != null) mutableState.value.media else emptyMap()
                 mutableState.value = TelegramBrowseState(
                     section = section, available = true, rows = merged.values.toList(),
-                    media = (if (cursor != null) mutableState.value.media else emptyMap()) +
-                        pageMedia.associateBy(TelegramMedia::mediaKey),
-                    nextCursor = next?.takeIf { it != cursor },
+                    media = earlier + pageMedia.associateBy(TelegramMedia::mediaKey),
+                    nextCursor = next?.takeUnless { it == requestCursor },
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                if (generation == pageGeneration) mutableState.value = mutableState.value.copy(
-                    loading = false, loadingMore = false,
-                    error = failure.message ?: "Monogram request failed",
-                )
+                if (generation == pageGeneration) {
+                    val old = mutableState.value
+                    mutableState.value = old.copy(
+                        loading = false, loadingMore = false,
+                        error = if (old.rows.isEmpty()) (failure.message ?: "Monogram request failed") else null,
+                        pageError = if (old.rows.isNotEmpty()) (failure.message ?: "Monogram request failed") else null,
+                    )
+                }
             }
         }
     }
