@@ -172,6 +172,7 @@ open class MainActivity : ComponentActivity() {
     @Inject lateinit var performanceProfileResolver: com.ambient.tv.ui.performance.PerformanceProfileResolver
     @Inject lateinit var plexRefreshBus: PlexRefreshBus
     @Inject lateinit var browseReconnects: com.ambient.tv.data.browse.BrowseReconnects
+    @Inject lateinit var browseDiskStore: dagger.Lazy<com.ambient.tv.data.browse.BrowseDiskStore>
     @Inject lateinit var tokenStore: TokenStore
     @Inject lateinit var mediaRepository: MediaRepository
     @Inject lateinit var radioBrowserRepository: com.ambient.tv.data.radio.RadioBrowserRepository
@@ -316,6 +317,9 @@ open class MainActivity : ComponentActivity() {
         stopDismissedPipIfFinishing()
         com.ambient.tv.data.browse.BrowseWorkBudget.foreground = false
         com.ambient.tv.data.browse.BrowseWorkBudget.interact()
+        // Display snapshots (e.g. a deferred YouTube refresh) must reach disk before Android
+        // may reclaim the process, also while playback had kept the writer waiting.
+        browseDiskStore.get().flush()
         com.ambient.tv.companion.CompanionRemoteInput.unregister(window)
         if (this is com.ambient.tv.ui.mobile.HandheldActivity || com.ambient.tv.ui.mobile.isTelevision(this)) companionManager.foreground(false, com.ambient.tv.ui.mobile.isTelevision(this))
         SpotifyPlaybackTakeoverUiPresence.onActivityStopped()
