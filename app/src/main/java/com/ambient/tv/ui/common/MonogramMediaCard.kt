@@ -130,13 +130,10 @@ internal fun MonogramMediaCard(
             durationLabel = { formatPlaybackClock(it) },
         )
     }
-    val surfaceModifier = if (fillCell) {
-        modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
-    } else {
-        modifier.wrapContentWidth(Alignment.Start)
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .width(width)
-    }
+    // SmartTube cards are the full row/grid cell. Adding MediaTile's outer 8dp
+    // gutters here would shrink the artwork and break density/placeholder alignment.
+    val surfaceModifier = if (fillCell) modifier.fillMaxWidth()
+        else modifier.wrapContentWidth(Alignment.Start).width(width)
     Surface(
         onClick = activate,
         colors = transparentSurfaceColors(),
