@@ -17,6 +17,23 @@ class YouTubeBrowsePlaybackContextTest {
         assertNull(nextPlayableBrowseVideo(subscriptions, "home-recommendation"))
     }
 
+    @Test fun previousFromThirdItemReachesSecondAndFirstInSameRow() {
+        val videos = listOf(video("abo-1"), video("abo-2"), video("abo-3"), video("abo-4"))
+        assertEquals("abo-2", previousPlayableBrowseVideo(videos, "abo-3")?.videoId)
+        assertEquals("abo-1", previousPlayableBrowseVideo(videos, "abo-2")?.videoId)
+        assertNull(previousPlayableBrowseVideo(videos, "abo-1"))
+        assertNull(previousPlayableBrowseVideo(videos, "another-category"))
+    }
+
+    @Test fun previousSkipsUnplayableTilesJustLikeNext() {
+        val videos = listOf(video("a"),
+            com.ambient.tv.youtube.YouTubeItem("live", "Live", isLive = true),
+            video(youtubeChannelKey("UC123")),
+            com.ambient.tv.youtube.YouTubeItem("soon", "Soon", isUpcoming = true),
+            video("b"))
+        assertEquals("a", previousPlayableBrowseVideo(videos, "b")?.videoId)
+    }
+
     @Test fun insertedItemsDoNotChangeTheIdentityOfTheCurrentVideo() {
         val row = listOf(video("new"), video("abo-1"), video("abo-2"))
         assertEquals("abo-2", nextPlayableBrowseVideo(row, "abo-1")?.videoId)
