@@ -37,6 +37,23 @@ class RadioPaginationTest {
             nextOffset = 96, facetStationCount = 80))
     }
 
+    @Test fun paginatedCatalogsNeverOfferIncompleteAlphabetJump() {
+        val facet = com.ambient.tv.data.radio.RadioFacet("DE", "Germany", 2300)
+        assertFalse(radioStationAlphabetAllowed(RadioSection.COUNTRIES, facet, ""))
+        assertFalse(radioStationAlphabetAllowed(RadioSection.GENRES, facet, ""))
+        assertFalse(radioStationAlphabetAllowed(RadioSection.LANGUAGES, facet, ""))
+        assertFalse(radioStationAlphabetAllowed(RadioSection.POPULAR, null, "radio"))
+        assertTrue(radioStationAlphabetAllowed(RadioSection.POPULAR, null, ""))
+        assertTrue(radioStationAlphabetAllowed(RadioSection.FAVORITES, null, ""))
+        assertTrue(radioStationAlphabetAllowed(RadioSection.RECENT, null, ""))
+    }
+
+    @Test fun cappedFacetOverviewsUseScrollbarInsteadOfPartialAlphabet() {
+        assertTrue(radioFacetAlphabetAllowed(149))
+        assertFalse(radioFacetAlphabetAllowed(150))
+        assertFalse(radioFacetAlphabetAllowed(5))
+    }
+
     @Test fun pagingMatchesSmartTubeGridTuning() {
         assertEquals(10, RADIO_GRID_CONTINUE_THRESHOLD)
         assertEquals(350L, RADIO_FOCUS_SETTLE_MS)
