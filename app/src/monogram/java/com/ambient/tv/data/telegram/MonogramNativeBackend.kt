@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Base64
 import com.ambient.tv.BuildConfig
 import java.io.File
+import org.json.JSONArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -301,7 +302,16 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
     }
 
     private fun media(h: Long, m: MessageDto, channel: String): TelegramMedia? {
-        val youtube = telegramYouTubeIds(m.text.orEmpty()).firstOrNull()
+        // Telegram 'text_url' entities can hide an actual video link behind a title.
+        // Resolve every URL, but validate hosts/IDs with the same trusted parser.
+        val hiddenLinks = runCatching {
+            val entities = JSONArray(m.entitiesJson.orEmpty())
+            (0 until entities.length()).mapNotNull { index ->
+                entities.optJSONObject(index)?.optString("url")?.takeIf(String::isNotBlank)
+            }
+        }.getOrDefault(emptyList())
+        val youtubeLinks = telegramYouTubeIds(m.text.orEmpty() + " " + hiddenLinks.joinToString(" "))
+        val youtube = youtubeLinks.firstOrNull()
         val type = when (m.mediaKind?.lowercase()) {
             "video", "gif" -> TelegramMediaKind.VIDEO
             "audio", "voice" -> TelegramMediaKind.AUDIO
@@ -325,6 +335,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             fileSize = m.fileSize ?: 0L,
             publishedAtMs = m.date * 1000L,
             youtubeVideoId = if (type == TelegramMediaKind.YOUTUBE) youtube else null,
+            linkedYouTubeVideoIds = youtubeLinks,
             protectedContent = m.noforwards,
         )
     }
