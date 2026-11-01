@@ -58,6 +58,7 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.telegram.TelegramMediaKind
 import com.ambient.tv.data.telegram.TelegramChannel
+import com.ambient.tv.data.telegram.MonogramLoginStep
 import com.ambient.tv.data.telegram.telegramMediaIds
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.common.ArtworkImage
@@ -135,6 +136,7 @@ fun TelegramScreen(
     viewModel: TelegramViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val login by viewModel.login.collectAsState()
     val activeChannelId = remember(sectionKey) {
         sectionKey.takeIf { it.startsWith("channel:") }?.substringAfter(':')?.toLongOrNull()
     }
@@ -384,11 +386,25 @@ fun TelegramScreen(
             }
             when {
                 !state.available -> BrowseStatusPanel(
-                    title = stringResource(R.string.telegram_error),
-                    body = stringResource(R.string.settings_telegram_native_missing),
+                    title = stringResource(
+                        if (login.step == MonogramLoginStep.UNAVAILABLE) R.string.telegram_error
+                        else R.string.monogram_login_signed_out,
+                    ),
+                    body = stringResource(
+                        when {
+                            login.step == MonogramLoginStep.UNAVAILABLE ->
+                                R.string.settings_telegram_native_missing
+                            !viewModel.apiCredentialsReady -> R.string.monogram_api_required
+                            else -> R.string.monogram_login_signed_out
+                        },
+                    ),
                     kind = BrowseStatusKind.INFO,
-                    actionLabel = stringResource(R.string.nav_settings),
-                    onAction = onOpenSettings, modifier = Modifier.weight(1f),
+                    actionLabel = stringResource(
+                        if (login.step == MonogramLoginStep.UNAVAILABLE || !viewModel.apiCredentialsReady)
+                            R.string.nav_settings else R.string.action_sign_in,
+                    ),
+                    onAction = onOpenSettings,
+                    modifier = Modifier.weight(1f),
                 )
                 state.loading && state.rows.isEmpty() -> BrowseStatusPanel(
                     title = stringResource(R.string.telegram_recent),
