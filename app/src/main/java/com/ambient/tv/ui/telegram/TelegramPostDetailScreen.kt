@@ -42,6 +42,7 @@ import com.ambient.tv.ui.common.PageUtilityBar
 import com.ambient.tv.ui.common.SystemBadge
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.skeletonPulseAlpha
 import com.ambient.tv.ui.theme.screenGutter
 import java.text.DateFormat
 import java.util.Date
@@ -87,8 +88,7 @@ fun TelegramPostDetailScreen(
         PageBackground(Modifier.fillMaxSize())
         val selected = media
         when {
-            loading && selected == null ->
-                androidx.compose.material3.CircularProgressIndicator(Modifier.align(Alignment.Center))
+            loading && selected == null -> TelegramPostDetailSkeleton()
             selected == null -> BrowseStatusPanel(
                 title = stringResource(R.string.telegram_error),
                 body = error,
@@ -159,5 +159,26 @@ fun TelegramPostDetailScreen(
         }
         PageUtilityBar(onBack = onBack, onSettings = onOpenSettings,
             leftNavigatesBack = false, modifier = Modifier.align(Alignment.TopCenter))
+    }
+}
+
+/** Same column, paddings and block sizes as the loaded post, so content replaces it in place. */
+@Composable
+private fun TelegramPostDetailSkeleton() {
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    val fill = MaterialTheme.colorScheme.surfaceVariant
+    fun Modifier.bar(radius: androidx.compose.ui.unit.Dp) =
+        skeletonPulseAlpha(pulse).background(fill, RoundedCornerShape(radius))
+    Column(
+        Modifier.fillMaxSize()
+            .padding(start = screenGutter(), end = screenGutter(), top = 94.dp, bottom = 36.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Box(Modifier.width(96.dp).height(24.dp).bar(12.dp))                      // SystemBadge
+        Box(Modifier.fillMaxWidth(.6f).height(34.dp).bar(8.dp))                  // headlineLarge title
+        Box(Modifier.width(180.dp).height(48.dp).bar(24.dp))                     // channel button
+        Box(Modifier.width(140.dp).height(14.dp).bar(4.dp))                      // date
+        Box(Modifier.fillMaxWidth().height(230.dp).bar(12.dp))                   // thumbnail
+        Box(Modifier.width(140.dp).height(48.dp).bar(24.dp))                     // play button
     }
 }

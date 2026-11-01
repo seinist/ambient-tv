@@ -73,8 +73,13 @@ import com.ambient.tv.ui.common.LocalFilterBarSetting
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MediaTile
 import com.ambient.tv.ui.common.LocalMonogramRowCardWidth
-import com.ambient.tv.ui.common.GridDensityProfile
-import com.ambient.tv.ui.common.visibleGridColumns
+import com.ambient.tv.ui.common.MONOGRAM_PAGE_END_PLACEHOLDERS
+import com.ambient.tv.ui.common.MonogramCardPlaceholder
+import com.ambient.tv.ui.common.MonogramListItemPlaceholder
+import com.ambient.tv.ui.common.MonogramLoadingState
+import com.ambient.tv.ui.common.monogramPageEndPlaceholderKey
+import com.ambient.tv.ui.common.monogramRowCardWidth
+import com.ambient.tv.ui.common.monogramRowVisibleColumns
 import com.ambient.tv.ui.common.MonogramArtwork
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.monogramCardMeta
@@ -407,10 +412,12 @@ fun TelegramScreen(
                     onAction = onOpenSettings,
                     modifier = Modifier.weight(1f),
                 )
-                state.loading && state.rows.isEmpty() -> BrowseStatusPanel(
-                    title = stringResource(R.string.telegram_recent),
-                    body = stringResource(R.string.settings_telegram_notice),
-                    kind = BrowseStatusKind.INFO, modifier = Modifier.weight(1f),
+                // Placeholders follow the selected view, density and list rows, so the first
+                // page replaces them in place (same as YouTube and the library screens).
+                state.loading && state.rows.isEmpty() -> MonogramLoadingState(
+                    layout = layout.placeholderLayout(),
+                    gridColumns = gridColumns, listRows = listRows,
+                    modifier = Modifier.weight(1f),
                 )
                 state.error != null && state.rows.isEmpty() -> BrowseStatusPanel(
                     title = stringResource(R.string.telegram_error),
@@ -435,15 +442,8 @@ fun TelegramScreen(
                             // SmartTube computes row-card widths from the viewport and the same
                             // density setting, rather than using a fixed TV poster width on phones.
                             BoxWithConstraints(Modifier.fillMaxWidth()) {
-                                val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-                                val handheld = LocalHandheldUi.current
-                                val count = visibleGridColumns(
-                                    gridColumns, ViewPreview.LANDSCAPE, GridDensityProfile.SMARTTUBE,
-                                    handheld, configuration.screenWidthDp, configuration.screenHeightDp,
-                                ).coerceAtLeast(1)
-                                val gap = 16.dp
-                                val cardWidth = ((maxWidth - screenGutter() * 2 - gap * (count - 1)) / count)
-                                    .coerceAtLeast(if (handheld) 104.dp else 160.dp)
+                                // Shared with MonogramLoadingState so placeholders have the same width.
+                                val cardWidth = monogramRowCardWidth(maxWidth, monogramRowVisibleColumns(gridColumns))
                                 CompositionLocalProvider(LocalMonogramRowCardWidth provides cardWidth) {
                                     ContentRow(
                                         row = row, columnFocus = focus,
@@ -487,6 +487,11 @@ fun TelegramScreen(
                                 onClick = { choose(item, flat) },
                             )
                         }
+                        if (state.loadingMore) {
+                            items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
+                                MonogramCardPlaceholder(fillCell = true)
+                            }
+                        }
                     }
                 else ->
                     androidx.compose.foundation.lazy.LazyColumn(
@@ -504,13 +509,16 @@ fun TelegramScreen(
                                         viewModel.loadMore()
                                 })
                         }
+                        if (state.loadingMore) {
+                            items(MONOGRAM_PAGE_END_PLACEHOLDERS, key = ::monogramPageEndPlaceholderKey) {
+                                MonogramListItemPlaceholder(listRows,
+                                    detailed = layout == MonogramBrowseLayout.INFO_LIST)
+                            }
+                        }
                     }
             }
-            if (state.loadingMore) {
-                androidx.compose.material3.CircularProgressIndicator(
-                    modifier = Modifier.padding(start = screenGutter(), bottom = 10.dp),
-                )
-            }
+            // Next pages show card-shaped placeholders inside the grid/list (and the refresh
+            // chip's spinner); a spinner below the list would shrink the viewport and shift it.
             if (state.pageError != null) {
                 TvActionButton(
                     text = stringResource(R.string.action_reload),

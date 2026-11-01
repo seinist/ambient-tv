@@ -220,6 +220,7 @@ fun HomeScreen(
     // View mode, Home row order and hidden system rows may change while this screen survives.
     // Do not freeze their loading formats in remember(viewModel, provider).
     val loadingRowStyles = viewModel.loadingRowStyles(overviewProvider)
+    val loadingRowsMonogram = viewModel.loadingRowsMonogram(overviewProvider)
     var showOverviewOptions by remember { mutableStateOf(false) }
     val overviewViewMode by viewModel.overviewViewMode.collectAsState()
     val overviewOptionsFocus = remember { FocusRequester() }
@@ -331,7 +332,7 @@ fun HomeScreen(
             when (val state = uiState) {
                 HomeUiState.NotConfigured -> NotConfiguredDialog(onAddSystem)
                 // Connection progress is presented by the global, non-focusable notification host.
-                HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows(loadingRowStyles)
+                HomeUiState.LoadingLibrary, is HomeUiState.Waking -> LoadingRows(loadingRowStyles, loadingRowsMonogram)
                 is HomeUiState.Loaded -> SoftViewChange(
                     if (systemOverview) overviewViewMode else Unit,
                     Modifier.fillMaxSize(),
@@ -339,6 +340,7 @@ fun HomeScreen(
                     LibraryContent(
                         state = state,
                         loadingRowStyles = loadingRowStyles,
+                        loadingRowsMonogram = loadingRowsMonogram,
                         heroContent = viewModel.heroContent,
                         homeHeroStyleKey = homeHeroStyleKey,
                         homeHeroIntensityPercent = homeHeroIntensityPercent,
@@ -520,8 +522,10 @@ private fun NotConfiguredDialog(onAddSystem: () -> Unit) {
 }
 
 @Composable
-private fun LoadingRows(rowStyles: List<MediaTileStyle>) {
+private fun LoadingRows(rowStyles: List<MediaTileStyle>, monogramRows: List<Boolean> = emptyList()) {
     val styles = rowStyles.ifEmpty { listOf(MediaTileStyle.POSTER) }
+    // Monogram rows render SmartTube-style MonogramMediaCards, not MediaTiles: use their placeholder.
+    fun monogram(index: Int) = monogramRows.getOrElse(index) { false }
     if (LocalHandheldUi.current) {
         // On phones Home has no hero: placeholders start at the same top position as real rows.
         LazyColumn(
@@ -529,8 +533,9 @@ private fun LoadingRows(rowStyles: List<MediaTileStyle>) {
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
         ) {
-            items(styles.take(3)) { style ->
-                SkeletonRow(title = "", modifier = Modifier.padding(top = 8.dp), style = style, itemCount = 7)
+            itemsIndexed(styles.take(3)) { index, style ->
+                if (monogram(index)) com.ambient.tv.ui.common.MonogramSkeletonRow(Modifier.padding(top = 8.dp), itemCount = 7)
+                else SkeletonRow(title = "", modifier = Modifier.padding(top = 8.dp), style = style, itemCount = 7)
             }
         }
         return
@@ -565,7 +570,10 @@ private fun LoadingRows(rowStyles: List<MediaTileStyle>) {
             com.ambient.tv.ui.common.LocalHeroRowTiles provides true,
             com.ambient.tv.ui.common.LocalHeroRowTileScale provides rowScale,
         ) {
-            SkeletonRow(
+            if (monogram(0)) com.ambient.tv.ui.common.MonogramSkeletonRow(
+                modifier = Modifier.align(Alignment.BottomStart).padding(bottom = HeroRowBottomMargin, top = 8.dp),
+                itemCount = 7,
+            ) else SkeletonRow(
                 title = "",
                 modifier = Modifier.align(Alignment.BottomStart).padding(bottom = HeroRowBottomMargin, top = 8.dp),
                 style = styles.first(),
@@ -580,6 +588,7 @@ private fun LoadingRows(rowStyles: List<MediaTileStyle>) {
 internal fun LibraryContent(
     state: HomeUiState.Loaded,
     loadingRowStyles: List<MediaTileStyle>,
+    loadingRowsMonogram: List<Boolean> = emptyList(),
     heroContent: StateFlow<HomeHeroContent?>,
     homeHeroStyleKey: String,
     homeHeroIntensityPercent: Int,
@@ -608,7 +617,7 @@ internal fun LibraryContent(
 ) {
     // Keep partial rows out of the focus tree until the initial library load settles.
     if (state.loading && (state.rowKeys.isEmpty() || state.initialFocusTarget != HomeInitialFocusTarget.NONE)) {
-        LoadingRows(loadingRowStyles)
+        LoadingRows(loadingRowStyles, loadingRowsMonogram)
         return
     }
     if (state.rowKeys.isEmpty()) {

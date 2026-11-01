@@ -208,6 +208,14 @@ class HomeViewModel @Inject constructor(
             systemHomeHiddenRows = appPreferences.systemHomeHiddenRows,
         )
 
+    /** Per loading row: true when it stands in for a Monogram row (SmartTube-style cards). */
+    fun loadingRowsMonogram(overviewSystem: String? = null): List<Boolean> =
+        homeLoadingRowsMonogram(
+            definitions = appPreferences.homeRows,
+            overviewSystem = overviewSystem,
+            systemHomeHiddenRows = appPreferences.systemHomeHiddenRows,
+        )
+
     private var plexOnly = false
     private var jellyfinOnly = false
     private var embyOnly = false
@@ -2302,16 +2310,15 @@ class HomeViewModel @Inject constructor(
         HOME_CLOCK_FORMATTER.format(Instant.ofEpochSecond(epochSeconds))
 }
 
-/** Styles expected during cold cache hydration, before the rows themselves exist. */
-internal fun homeLoadingRowStyles(
+/** Rows whose placeholders are drawn during cold cache hydration, in on-screen order. */
+private fun homeLoadingRowDefinitions(
     definitions: List<HomeRowDefinition>,
-    overviewSystem: String? = null,
-    overviewPageMode: String? = null,
-    systemHomeHiddenRows: Set<String> = emptySet(),
-): List<MediaTileStyle> {
+    overviewSystem: String?,
+    systemHomeHiddenRows: Set<String>,
+): List<HomeRowDefinition> =
     // Home uses the editor order. A system's own overview uses its own default rows even
     // when the user did not add them to Home, with the saved overview presentation applied.
-    val rows = if (overviewSystem == null) {
+    if (overviewSystem == null) {
         definitions.filter { it.enabled }
     } else {
         systemHomeRowTypes(overviewSystem).filterNot { contentKey ->
@@ -2322,6 +2329,24 @@ internal fun homeLoadingRowStyles(
             } ?: HomeRowDefinition(system = overviewSystem, contentKey = contentKey)
         }
     }
+
+/** Parallel to [homeLoadingRowStyles]: which placeholder rows stand in for Monogram rows. */
+internal fun homeLoadingRowsMonogram(
+    definitions: List<HomeRowDefinition>,
+    overviewSystem: String? = null,
+    systemHomeHiddenRows: Set<String> = emptySet(),
+): List<Boolean> =
+    homeLoadingRowDefinitions(definitions, overviewSystem, systemHomeHiddenRows)
+        .map { it.system == HomeRowDefinition.SYSTEM_TELEGRAM }.take(3)
+
+/** Styles expected during cold cache hydration, before the rows themselves exist. */
+internal fun homeLoadingRowStyles(
+    definitions: List<HomeRowDefinition>,
+    overviewSystem: String? = null,
+    overviewPageMode: String? = null,
+    systemHomeHiddenRows: Set<String> = emptySet(),
+): List<MediaTileStyle> {
+    val rows = homeLoadingRowDefinitions(definitions, overviewSystem, systemHomeHiddenRows)
     val visible = rows.asSequence().map { definition ->
         when {
             definition.isLiveTvChannelRow -> MediaTileStyle.LANDSCAPE

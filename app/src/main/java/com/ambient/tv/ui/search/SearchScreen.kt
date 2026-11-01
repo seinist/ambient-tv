@@ -657,6 +657,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourceStatusItem(
             val title = stringResource(R.string.search_source_loading, labelOverride ?: labelRes?.let { stringResource(it) } ?: searchSystemName(system))
             when {
                 mode == SearchViewMode.LIST -> SearchLoadingList(title, system)
+                // Telegram results render as MonogramMediaCard (MediaTile routes them), not MediaTile.
+                system == MediaSystem.TELEGRAM -> SearchLoadingMonogramRow(title)
                 searchLoadingArtwork(system) == SearchLoadingArtwork.SQUARE -> SearchLoadingSquareRow(title, system)
                 else -> SkeletonRow(
                     title = title,
@@ -680,6 +682,22 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sourceStatusItem(
             )
         }
         else -> Unit
+    }
+}
+
+/** Same header, row paddings and SmartTube-style card as the Telegram search rows. */
+@Composable
+private fun SearchLoadingMonogramRow(title: String) {
+    val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
+    Column(Modifier.padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ContentSectionHeader(title)
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
+            userScrollEnabled = false,
+        ) {
+            items(4) { com.ambient.tv.ui.common.MonogramCardPlaceholder(pulse = pulse) }
+        }
     }
 }
 
@@ -721,7 +739,9 @@ private fun SearchLoadingList(title: String, system: MediaSystem) {
     val pulse = com.ambient.tv.ui.common.rememberSkeletonPulseOrNull()
     val fill = MaterialTheme.colorScheme.surfaceVariant
     val shape = RoundedCornerShape(10.dp)
-    val artwork = searchLoadingArtwork(system)
+    // Telegram's list results use SearchMediaListItem like the media servers, so they share
+    // that geometry even though their row/card artwork is landscape.
+    val artwork = if (system == MediaSystem.TELEGRAM) SearchLoadingArtwork.POSTER else searchLoadingArtwork(system)
     val artWidth = when (artwork) {
         SearchLoadingArtwork.POSTER -> 166.dp  // SearchMediaListItem uses landscape artwork
         SearchLoadingArtwork.LANDSCAPE -> 132.dp
