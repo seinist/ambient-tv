@@ -522,7 +522,8 @@ fun BoxScope.PlaybackNerdStatsOverlay(
     /** What the user set for picture and sound ([rememberNerdSettingRows]), after the engine's values. */
     settingRows: Pair<List<NerdStatsOverlayRow>, List<NerdStatsOverlayRow>> = emptyList<NerdStatsOverlayRow>() to emptyList(),
 ) {
-    if (!enabled || model == null || model.isEmpty) return
+    // The details dialog over the picture hides the stats until it is closed.
+    if (!enabled || model == null || model.isEmpty || playerDetailsOpen()) return
     Column(
         modifier = modifier
             .align(alignment)

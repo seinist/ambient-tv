@@ -295,6 +295,9 @@
     <string name="player_off">Off</string>
     <string name="player_no_track">No track available</string>
     <string name="player_playback_info">Playback</string>
+    <string name="player_details">Details</string>
+    <string name="player_detail_next">Up next</string>
+    <string name="player_detail_now_playing">Now playing</string>
     <string name="player_stats_for_nerds">Stats for Nerds</string>
     <string name="player_fps_overlay">FPS / refresh rate / resolution</string>
     <string name="player_tech_badges">Renderer and codec strip</string>

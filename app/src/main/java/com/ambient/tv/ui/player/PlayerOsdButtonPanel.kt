@@ -40,7 +40,7 @@ private val OsdButton.section: OsdButtonSection get() = when (this) {
     OsdButton.FAVORITE -> OsdButtonSection.RADIO
     OsdButton.SCREENSHOT, OsdButton.BOOKMARK, OsdButton.AB_REPEAT, OsdButton.FRAME_STEP,
     OsdButton.LYRICS, OsdButton.TOOLS -> OsdButtonSection.TOOLS
-    OsdButton.STATS, OsdButton.FPS -> OsdButtonSection.INFORMATION
+    OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS -> OsdButtonSection.INFORMATION
 }
 
 @Composable

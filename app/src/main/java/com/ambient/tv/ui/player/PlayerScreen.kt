@@ -227,6 +227,7 @@ fun PlayerScreen(
                 onPlayNext = onPlayNext,
             )
                 // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
+                PublishPlayerDetail(remember(state) { playerDetailForMedia(state) })
                 PersistentPlayerOverlays()
             }
         }

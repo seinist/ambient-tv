@@ -296,6 +296,9 @@
     <string name="player_off">Aus</string>
     <string name="player_no_track">Keine Spur verfügbar</string>
     <string name="player_playback_info">Wiedergabe</string>
+    <string name="player_details">Details</string>
+    <string name="player_detail_next">Als Nächstes</string>
+    <string name="player_detail_now_playing">Läuft gerade</string>
     <string name="player_stats_for_nerds">Stats für Nerds</string>
     <string name="player_fps_overlay">FPS / Bildwiederholrate / Auflösung</string>
     <string name="player_tech_badges">Renderer- und Codec-Leiste</string>
