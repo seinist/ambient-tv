@@ -320,7 +320,8 @@ object BackgroundPlaybackSession {
 
     /** Activity.onStart: a session whose service start was refused in the background gets it now. */
     fun retryBlockedPlaybackService(context: Context) {
-        if (!playbackServiceBlocked || !snapshot.value.active) return
+        // A playback that stopped in the meantime still needs the service to save its position.
+        if (!playbackServiceBlocked || (!snapshot.value.active && completed.isEmpty())) return
         startPlaybackService(context.applicationContext)
     }
 
@@ -590,6 +591,8 @@ object BackgroundPlaybackSession {
     fun setSleepTimer(value: SleepTimerConfig) {
         checkThread()
         SleepSession.set(value)
+        // "Stop after this item" must not leave the next song queued in a minimized engine.
+        Media3GaplessQueue.refresh()
     }
 
     /** "OK: +30 min" on the pre-warning or "Extend" in the notification. */

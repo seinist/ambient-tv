@@ -637,24 +637,15 @@ private fun PlayerContent(
         }
     }
 
-    // Gapless music: the prepared next song waits in the player's queue behind the current one.
-    val gaplessNext by viewModel.gaplessNext.collectAsState()
+    // Gapless music: the prepared next song waits in the engine's queue (Media3GaplessQueue) and
+    // stays there when this screen leaves. While the screen is open it adopts the song itself
+    // (onMediaItemTransition above); minimized or in the background the queue does.
     val endOfItemSleep = BackgroundPlaybackSession.sleepTimer.kind == SleepTimerKind.END_OF_ITEM
-    LaunchedEffect(exoPlayer, gaplessNext, endOfItemSleep) {
-        val index = exoPlayer.currentMediaItemIndex
-        if (exoPlayer.mediaItemCount > index + 1) exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount)
-        val next = gaplessNext ?: return@LaunchedEffect
-        // "Stop after this item" must still end at the item's end.
-        if (endOfItemSleep) return@LaunchedEffect
-        exoPlayer.addMediaItem(androidx.media3.common.MediaItem.Builder().setUri(next.streamUrl).setMediaId(next.ratingKey).build())
-    }
-    // Only this screen can take the next song over. Minimized, the song ends as before instead of
-    // the engine playing on under the previous song's title.
+    LaunchedEffect(exoPlayer, endOfItemSleep) { Media3GaplessQueue.refresh() }
     DisposableEffect(exoPlayer) {
-        onDispose {
-            val index = exoPlayer.currentMediaItemIndex
-            if (exoPlayer.mediaItemCount > index + 1) runCatching { exoPlayer.removeMediaItems(index + 1, exoPlayer.mediaItemCount) }
-        }
+        Media3GaplessQueue.attachScreen(exoPlayer)
+        viewModel.queuePreparedGaplessNext()
+        onDispose { Media3GaplessQueue.detachScreen(exoPlayer) }
     }
 
     com.ambient.tv.ui.player.PlayerControlsAutoHide(
@@ -814,6 +805,9 @@ private fun PlayerContent(
             durationMs = durationMs,
             isPlaying = isPlaying,
             isBuffering = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
+            paused = shouldShowPlayerPaused(playWhenReady,
+                active = playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED,
+                changingItem = changingItem),
             nerdStats = nerdStats,
             panel = panel,
             onPanelChange = { target ->
@@ -879,6 +873,7 @@ private fun PlayerControlsOverlay(
     durationMs: Long,
     isPlaying: Boolean,
     isBuffering: Boolean,
+    paused: Boolean,
     nerdStats: Media3NerdStats,
     panel: UnifiedPlayerPanel,
     onPanelChange: (UnifiedPlayerPanel) -> Unit,
@@ -929,6 +924,7 @@ private fun PlayerControlsOverlay(
         clockEndPadding = deviceDp(48.dp, 16.dp),
         isPlaying = isPlaying,
         loading = isBuffering,
+        paused = paused,
         seekState = seekState,
         onSeekBarSeek = { deltaMs -> onSeekBy(deltaMs); onInteraction() },
         onSeekBarInteraction = { if (osd != null) osd.interact() else onInteraction() },
@@ -1096,6 +1092,7 @@ internal fun TvPlayerSeekBar(
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
+    paused: Boolean = false,
 ) {
     val seekable = interactive && durationMs > 0L
     val osd = LocalPlayerChromeState.current?.osd
@@ -1120,7 +1117,7 @@ internal fun TvPlayerSeekBar(
         Modifier
     }
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && seekable) {
-        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime)
+        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime, paused = paused)
         return
     }
     val navigation = LocalPlaybackNavigation.current
@@ -1363,11 +1360,17 @@ internal fun TvPlayerSeekBar(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
-                color = Color.White.copy(alpha = 0.82f),
-                fontSize = 13.sp,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                PlayerPausedIndicator(paused)
+                Text(
+                    if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 13.sp,
+                )
+            }
             val endFormatter = com.ambient.tv.ui.common.rememberTimeFormatter()
             val endsAt = if (showEndTime && durationMs > 0L) {
                 java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(endFormatter)

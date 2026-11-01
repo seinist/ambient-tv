@@ -257,7 +257,9 @@ class PlayerViewModel @Inject constructor(
             episode = state.episodeIndex.takeIf { episode }, imdbId = state.imdbId, fileMediaId = fileKey)
     }
 
-    fun metadata(state: PlayerUiState.Ready): PlaybackMetadata {
+    fun metadata(state: PlayerUiState.Ready): PlaybackMetadata = metadata(state, parentMediaIds)
+
+    private fun metadata(state: PlayerUiState.Ready, parentMediaIds: List<String>): PlaybackMetadata {
         val ratingKey = state.requestedRatingKey
         val reopenRoute = state.playbackRoute ?: reopenRoute
         val companionMedia = runCatching { companionMapper.fromRoute(reopenRoute) }.getOrNull()
@@ -435,6 +437,10 @@ class PlayerViewModel @Inject constructor(
                     else _uiState.update { current ->
                         if (current is PlayerUiState.Ready) current.copy(successorsLoading = false) else current
                     }
+                } else {
+                    // Reopened while playing: this screen takes the queued next song over again.
+                    parentMediaIds = BackgroundPlaybackSession.snapshot.value.metadata?.parentMediaIds ?: parentMediaIds
+                    prepareGaplessNext(it.nextAudioTrack)
                 }
                 return
             }
@@ -733,6 +739,73 @@ class PlayerViewModel @Inject constructor(
         gaplessJob?.cancel()
         gaplessJob = null
         _gaplessNext.value = null
+        Media3GaplessQueue.clear()
+    }
+
+    private fun prepareGaplessNext(next: MediaItem?) {
+        clearGaplessNext()
+        val current = _uiState.value as? PlayerUiState.Ready ?: return
+        if (next == null) return
+        val expected = current.requestedRatingKey
+        gaplessJob = viewModelScope.launch {
+            val prepared = resolveGaplessNext(current, next) ?: return@launch
+            currentCoroutineContext().ensureActive()
+            val now = _uiState.value as? PlayerUiState.Ready ?: return@launch
+            if (now.requestedRatingKey != expected) return@launch
+            _gaplessNext.value = prepared
+            queueGaplessNext(now.playbackRoute ?: reopenRoute, prepared)
+        }
+    }
+
+    /** The screen's engine is ready: queue a song prepared before the engine existed. */
+    fun queuePreparedGaplessNext() {
+        val prepared = _gaplessNext.value ?: return
+        val now = _uiState.value as? PlayerUiState.Ready ?: return
+        queueGaplessNext(now.playbackRoute ?: reopenRoute, prepared)
+    }
+
+    /** Hands the prepared song to the running Media3 engine, which keeps it while minimized. */
+    private fun queueGaplessNext(fromRoute: String, prepared: GaplessNext) {
+        val player = (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player ?: return
+        val parents = gaplessParents(prepared.item)
+        Media3GaplessQueue.offer(player, GaplessQueue.Entry(
+            ratingKey = prepared.ratingKey,
+            streamUrl = prepared.streamUrl,
+            fromRoute = fromRoute,
+            metadata = metadata(prepared.state, parents),
+            continuation = { continueGaplessWithoutScreen(prepared, parents) },
+        ))
+    }
+
+    private fun gaplessParents(item: MediaItem): List<String> =
+        listOfNotNull(item.parentRatingKey, item.grandparentRatingKey).distinct()
+
+    /**
+     * The engine played on to [adopted] without the player screen (minimized or in the background).
+     * Fills in its successor for the notification and the reopened player, and queues that song.
+     * Runs outside viewModelScope: this ViewModel may already be gone. Uses only app singletons
+     * and the stored state, never this ViewModel's per-item fields.
+     */
+    private suspend fun continueGaplessWithoutScreen(adopted: GaplessNext, parents: List<String>) {
+        val route = adopted.state.playbackRoute ?: return
+        mediaRepository.preparePlayback(adopted.state.sourceRatingKey, adopted.state.sourceMediaIndex)
+        val next = mediaRepository.getNextTrack(adopted.ratingKey).getOrNull()
+        currentCoroutineContext().ensureActive()
+        if (BackgroundPlaybackSession.snapshot.value.metadata?.route != route) return
+        val state = adopted.state.copy(successorsLoading = false, nextAudioTrack = next)
+        BackgroundPlaybackSession.updateMetadata(metadata(state, parents))
+        val prepared = next?.let { resolveGaplessNext(state, it) } ?: return
+        currentCoroutineContext().ensureActive()
+        if (BackgroundPlaybackSession.snapshot.value.metadata?.route != route) return
+        val player = (BackgroundPlaybackSession.activeHandle() as? Media3PlaybackHandle)?.player ?: return
+        val nextParents = gaplessParents(prepared.item)
+        Media3GaplessQueue.offer(player, GaplessQueue.Entry(
+            ratingKey = prepared.ratingKey,
+            streamUrl = prepared.streamUrl,
+            fromRoute = route,
+            metadata = metadata(prepared.state, nextParents),
+            continuation = { continueGaplessWithoutScreen(prepared, nextParents) },
+        ))
     }
 
     /**
@@ -740,85 +813,79 @@ class PlayerViewModel @Inject constructor(
      * the same source that Media3 can also play directly. Anything else (server conversion,
      * multichannel, another renderer) keeps the normal item change.
      */
-    private fun prepareGaplessNext(next: MediaItem?) {
-        clearGaplessNext()
-        val current = _uiState.value as? PlayerUiState.Ready ?: return
-        if (next == null || !appPreferences.gaplessMusicEnabled) return
+    private suspend fun resolveGaplessNext(current: PlayerUiState.Ready, next: MediaItem): GaplessNext? {
+        if (!appPreferences.gaplessMusicEnabled) return null
         val onMedia3 = com.ambient.tv.ui.player.backend.PlaybackBackendResolver.resolve(current.playbackBackendKey) ==
             com.ambient.tv.ui.player.backend.PlaybackBackend.MEDIA3
-        if (!gaplessEligible(current.mediaType, current.playbackMode, onMedia3, current.serverAudioConversionCodec)) return
-        if (titleSource(next.ratingKey) != titleSource(current.requestedRatingKey)) return
-        val expected = current.requestedRatingKey
-        gaplessJob = viewModelScope.launch {
-            val item = mediaRepository.getMetadata(next.ratingKey).getOrNull() ?: return@launch
-            if (!item.type.equals("track", true) && !item.type.equals("audio", true)) return@launch
-            val versionIndex = displayVersionSelector.selectIndex(item.mediaVersions, 0)
-            val version = item.mediaVersions.getOrNull(versionIndex) ?: return@launch
-            val assessment = codecCapabilities.assess(version)
-            val audio = version.selectedAudioTrack
-            if (!assessment.audioSupported || (audio?.channels ?: 2) > 2) return@launch
-            val route = AudioPassthroughPolicy.probeCached(context)
-            if (shouldConvertAudioOnServer(appPreferences.audioSettings.currentForRoute(route.profile),
-                    audio?.codec ?: assessment.audioCodec, audio?.channels, route, assessment.audioSupported)) return@launch
-            val plan = PlaybackPlanner.directPlay(version)?.takeIf { it.mode == PlaybackMode.DIRECT_PLAY } ?: return@launch
-            currentCoroutineContext().ensureActive()
-            val now = _uiState.value as? PlayerUiState.Ready ?: return@launch
-            if (now.requestedRatingKey != expected) return@launch
-            val panelArtwork = PlaybackPanelArtworkResolver.resolve(
-                backdropUrl = item.artUrl,
-                thumbnailUrl = item.thumbUrl,
-                highQualityAssets = performanceProfileResolver.effectiveHighQualityAssets(),
-            )
-            val sourceKey = version.sourceRatingKey ?: next.ratingKey
-            val state = now.copy(
-                streamUrl = plan.url,
-                playbackReason = plan.reason,
-                title = item.title,
-                artworkUrl = item.thumbUrl,
-                posterArtUrl = item.posterArtUrl,
-                panelArtworkUrl = panelArtwork.primaryUrl,
-                panelArtworkFallbackUrls = panelArtwork.fallbackUrls,
-                mediaType = item.type,
-                parentTitle = item.parentTitle,
-                grandparentTitle = item.grandparentTitle,
-                seasonIndex = item.parentIndex,
-                episodeIndex = item.index,
-                year = item.year,
-                imdbId = null,
-                summary = item.summary,
-                tagline = item.tagline,
-                startPositionMs = 0L,
-                durationMs = item.durationMs,
-                videoCodec = version.videoCodec,
-                videoDynamicRange = version.videoDynamicRange,
-                videoBitDepth = null,
-                videoProfile = null,
-                audioCodec = assessment.audioCodec,
-                container = version.container,
-                sourceBitrateKbps = version.bitrateKbps,
-                audioTracks = version.tracks.filter { it.type == MediaTrackType.AUDIO },
-                subtitleTracks = emptyList(),
-                hardwareAudioDecoder = assessment.hardwareAudioDecoder,
-                timelineOffsetMs = 0L,
-                nextEpisode = null,
-                nextCollectionItem = null,
-                nextAudioTrack = null,
-                sourceRatingKey = sourceKey,
-                sourceMediaIndex = version.sourceMediaIndex,
-                selectedVersionIndex = versionIndex,
-                companionVersions = emptyList(),
-                timelineSeekMs = null,
-                requestedRatingKey = next.ratingKey,
-                serverAudioStreamId = null,
-                serverAudioConversionCodec = null,
-                playbackRoute = com.ambient.tv.ui.navigation.Destinations.player(next.ratingKey, 0,
-                    collectionId = collectionId, collectionSort = collectionSort),
-                successorsLoading = true,
-                engineStreamUrl = now.playerStreamUrl,
-                engineStartPositionMs = now.playerStartPositionMs,
-            )
-            _gaplessNext.value = GaplessNext(next.ratingKey, plan.url, state, item)
-        }
+        if (!gaplessEligible(current.mediaType, current.playbackMode, onMedia3, current.serverAudioConversionCodec)) return null
+        if (titleSource(next.ratingKey) != titleSource(current.requestedRatingKey)) return null
+        val item = mediaRepository.getMetadata(next.ratingKey).getOrNull() ?: return null
+        if (!item.type.equals("track", true) && !item.type.equals("audio", true)) return null
+        val versionIndex = displayVersionSelector.selectIndex(item.mediaVersions, 0)
+        val version = item.mediaVersions.getOrNull(versionIndex) ?: return null
+        val assessment = codecCapabilities.assess(version)
+        val audio = version.selectedAudioTrack
+        if (!assessment.audioSupported || (audio?.channels ?: 2) > 2) return null
+        val route = AudioPassthroughPolicy.probeCached(context)
+        if (shouldConvertAudioOnServer(appPreferences.audioSettings.currentForRoute(route.profile),
+                audio?.codec ?: assessment.audioCodec, audio?.channels, route, assessment.audioSupported)) return null
+        val plan = PlaybackPlanner.directPlay(version)?.takeIf { it.mode == PlaybackMode.DIRECT_PLAY } ?: return null
+        currentCoroutineContext().ensureActive()
+        val now = current
+        val panelArtwork = PlaybackPanelArtworkResolver.resolve(
+            backdropUrl = item.artUrl,
+            thumbnailUrl = item.thumbUrl,
+            highQualityAssets = performanceProfileResolver.effectiveHighQualityAssets(),
+        )
+        val sourceKey = version.sourceRatingKey ?: next.ratingKey
+        val state = now.copy(
+            streamUrl = plan.url,
+            playbackReason = plan.reason,
+            title = item.title,
+            artworkUrl = item.thumbUrl,
+            posterArtUrl = item.posterArtUrl,
+            panelArtworkUrl = panelArtwork.primaryUrl,
+            panelArtworkFallbackUrls = panelArtwork.fallbackUrls,
+            mediaType = item.type,
+            parentTitle = item.parentTitle,
+            grandparentTitle = item.grandparentTitle,
+            seasonIndex = item.parentIndex,
+            episodeIndex = item.index,
+            year = item.year,
+            imdbId = null,
+            summary = item.summary,
+            tagline = item.tagline,
+            startPositionMs = 0L,
+            durationMs = item.durationMs,
+            videoCodec = version.videoCodec,
+            videoDynamicRange = version.videoDynamicRange,
+            videoBitDepth = null,
+            videoProfile = null,
+            audioCodec = assessment.audioCodec,
+            container = version.container,
+            sourceBitrateKbps = version.bitrateKbps,
+            audioTracks = version.tracks.filter { it.type == MediaTrackType.AUDIO },
+            subtitleTracks = emptyList(),
+            hardwareAudioDecoder = assessment.hardwareAudioDecoder,
+            timelineOffsetMs = 0L,
+            nextEpisode = null,
+            nextCollectionItem = null,
+            nextAudioTrack = null,
+            sourceRatingKey = sourceKey,
+            sourceMediaIndex = version.sourceMediaIndex,
+            selectedVersionIndex = versionIndex,
+            companionVersions = emptyList(),
+            timelineSeekMs = null,
+            requestedRatingKey = next.ratingKey,
+            serverAudioStreamId = null,
+            serverAudioConversionCodec = null,
+            playbackRoute = com.ambient.tv.ui.navigation.Destinations.player(next.ratingKey, 0,
+                collectionId = collectionId, collectionSort = collectionSort),
+            successorsLoading = true,
+            engineStreamUrl = now.playerStreamUrl,
+            engineStartPositionMs = now.playerStartPositionMs,
+        )
+        return GaplessNext(next.ratingKey, plan.url, state, item)
     }
 
     /**
@@ -849,7 +916,7 @@ class PlayerViewModel @Inject constructor(
         serverUnreachableRetryAttempted = false
         videoFallbackAttempted = false
         lastReadyForAudioRecovery = null
-        parentMediaIds = listOfNotNull(prepared.item.parentRatingKey, prepared.item.grandparentRatingKey).distinct()
+        parentMediaIds = gaplessParents(prepared.item)
         val state = prepared.state
         if (!BackgroundPlaybackSession.continueWithNextItem(fromRoute, metadata(state))) return false
         _uiState.value = state

@@ -305,6 +305,9 @@ private fun RadioPlayerContent(
                         artworkFallbackUrls = target.artworkFallbackUrls,
                         artworkHeaders = target.artworkHeaders,
                         playing = session.playing,
+                        paused = com.ambient.tv.ui.player.shouldShowPlayerPaused(session.wantsToPlay,
+                            active = metadata?.source == "radio", changingItem = target.switching,
+                            ended = session.status.ended),
                         positionMs = if (target.switching) 0L else session.status.positionMs,
                         durationMs = if (target.switching) 0L else session.status.durationMs,
                         seekable = !target.switching && radioSeekable,
@@ -442,6 +445,7 @@ internal data class RadioOsdModel(
     val artworkFallbackUrls: List<String>,
     val artworkHeaders: Map<String, String>,
     val playing: Boolean,
+    val paused: Boolean = false,
     val positionMs: Long,
     val durationMs: Long,
     val seekable: Boolean,
@@ -470,6 +474,7 @@ internal data class RadioOsdModel(
         val seekFocusRequester = rememberPlayerSeekFocus()
         val osd = com.ambient.tv.ui.player.rememberPlayerOsdController()
         val header = radioHeaderPresentation(stationName, nowPlaying, systemName(MediaSystem.RADIO))
+        val hasSeekbar = radioTimelineMode(durationMs, seekable) == RadioTimelineMode.SEEK
         PlayerOverlayVisibility(visible = visible) {
             ReferencePlayerOverlayBackground()
             ReferencePlayerClock(
@@ -493,15 +498,17 @@ internal data class RadioOsdModel(
                         artworkFallbackUrls = artworkFallbackUrls,
                         artworkHeaders = artworkHeaders,
                         artworkAspectRatio = 1f,
+                        showPaused = paused && !hasSeekbar,
                     )
                 }
                 // Match Live-TV radio: the timeline is always present under the header.
                 // No EPG/duration for an ordinary internet radio stream means a passive
                 // live indicator, not a fake zero-length, interactive seek control.
-                if (radioTimelineMode(durationMs, seekable) == RadioTimelineMode.SEEK) {
+                if (hasSeekbar) {
                     TvPlayerSeekBar(
                         positionMs = positionMs.coerceIn(0L, durationMs),
                         durationMs = durationMs,
+                        paused = paused,
                         onSeekBy = onSeekBy,
                         onInteraction = osd::interact,
                         onTogglePlayback = onToggle,

@@ -162,6 +162,24 @@ fun PlaybackSessionContent(
     // A hidden overlay still has to ask the still-watching question at the end.
     val showNextUp = nextUpDue && (config.showOverlay || (atEnd && stillWatching))
 
+    // A new title (autoplay, Next Up, Next/Previous, gapless music) shows the OSD briefly once
+    // it is ready; the normal auto-hide timeout follows. The chrome outlives items and
+    // renderers, so its first title and a renderer switch of the same title stay quiet.
+    val titleIdentity = playbackTitleIdentity(metadata.source, metadata.mediaId, metadata.isLive)
+    val titleReady = acquired && ownsSnapshot && !changingItem && snapshot.active
+    val panelActivity = chrome?.panels?.activity
+    val windowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
+    val titleOsdBlocked = chrome == null || chrome.panels.panel != com.ambient.tv.ui.common.UnifiedPlayerPanel.NONE ||
+        chrome.panels.dialogFocusOwner != null || panelActivity?.blocked == true ||
+        panelActivity?.popupWindowFocused == true || !windowInfo.isWindowFocused || showNextUp
+    val currentTitleOsdBlocked by androidx.compose.runtime.rememberUpdatedState(titleOsdBlocked)
+    LaunchedEffect(titleIdentity, titleReady) {
+        if (chrome == null || titleIdentity == null || !titleReady) return@LaunchedEffect
+        val previous = chrome.readyTitleIdentity
+        chrome.readyTitleIdentity = titleIdentity
+        if (titleChangeRevealsOsd(previous, titleIdentity, titleReady, currentTitleOsdBlocked)) chrome.osd.reveal()
+    }
+
     var wasNextUpVisible by remember(timelineKey) { mutableStateOf(false) }
     LaunchedEffect(showNextUp) {
         if (wasNextUpVisible && !showNextUp && handledKey != candidateKey) navigation.returnToControls()

@@ -292,6 +292,7 @@
     <string name="settings_system_home_genres_hint">Genre rows of this system.</string>
     <string name="player_loading">Loading…</string>
     <string name="player_pause">Pause</string>
+    <string name="player_paused">Paused</string>
     <string name="player_play">Play</string>
     <string name="player_subtitles">Subtitles</string>
     <string name="player_audio_track_title">Audio track</string>
