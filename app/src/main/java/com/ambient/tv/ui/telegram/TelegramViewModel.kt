@@ -18,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 internal const val TELEGRAM_CHANNEL_ITEM_PREFIX = "telegram-channel:"
@@ -101,6 +102,12 @@ class TelegramViewModel @Inject constructor(
     private var pageGeneration = 0
 
     init {
+        // Membership changes must remove/insert channel rows without restarting the app.
+        viewModelScope.launch {
+            repository.catalogRevision.drop(1).collect {
+                if (repository.available) open(mutableState.value.section, refresh = true)
+            }
+        }
         // A restored session is asynchronous; repaint without re-entering the route.
         viewModelScope.launch {
             repository.authorized.collect { signedIn ->
@@ -133,15 +140,17 @@ class TelegramViewModel @Inject constructor(
         // Paint last authorized-account snapshot first; a live refresh replaces it.
         val generation = pageGeneration
         viewModelScope.launch {
+            val cachedEntries = if (key == "channels") emptyList() else repository.cachedBrowse(key)
             val cached = if (key == "channels") repository.cachedChannels().let { list ->
                 if (list.isEmpty()) emptyList() else listOf(ContentRowData(
                     id = "telegram.channels", title = "Monogram",
                     style = MediaTileStyle.LANDSCAPE,
                     items = list.map(TelegramChannel::toBrowseItem)))
-            } else telegramRows(key, repository.cachedBrowse(key))
+            } else telegramRows(key, cachedEntries)
             if (generation == pageGeneration && mutableState.value.section == key &&
                 mutableState.value.rows.isEmpty() && cached.isNotEmpty()) {
-                mutableState.value = mutableState.value.copy(rows = cached)
+                mutableState.value = mutableState.value.copy(
+                    rows = cached, media = cachedEntries.associateBy(TelegramMedia::mediaKey))
             }
         }
         fetchPage(key, cursor = null, generation = generation, invalidate = refresh)

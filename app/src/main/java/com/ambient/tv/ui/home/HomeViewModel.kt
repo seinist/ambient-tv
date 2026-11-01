@@ -324,6 +324,12 @@ class HomeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            telegramRepository.catalogRevision.drop(1).collect {
+                if (hasEntered && !plexOnly && !jellyfinOnly && !embyOnly &&
+                    telegramRepository.available) loadTelegramRows()
+            }
+        }
+        viewModelScope.launch {
             telegramRepository.authorized.collect { authorized ->
                 if (!authorized) {
                     telegramJob?.cancel()

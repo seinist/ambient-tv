@@ -255,6 +255,11 @@ class TelegramRepository @Inject constructor(
                 busy = false, error = error.message ?: "Monogram logout failed")
         }
     }
+    private val mutableCatalogRevision = MutableStateFlow(0L)
+    val catalogRevision: StateFlow<Long> = mutableCatalogRevision.asStateFlow()
+    /** A channel exit revokes local content immediately, before disk cleanup completes. */
+    private val blockedChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
+
     private val mutableAuthorized = MutableStateFlow(false)
     val authorized: StateFlow<Boolean> = mutableAuthorized.asStateFlow()
     val available: Boolean get() = client != null
@@ -265,6 +270,7 @@ class TelegramRepository @Inject constructor(
         if (client !== port) {
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
+            blockedChannels.clear()
         }
         client = port
         mutableAuthorized.value = true
@@ -273,6 +279,7 @@ class TelegramRepository @Inject constructor(
     fun disconnect() {
         streamEpoch.incrementAndGet()
         revokePlaybackUrls()
+        blockedChannels.clear()
         client = null
         clearPlaybackQueues()
         mutableAuthorized.value = false
@@ -328,6 +335,7 @@ class TelegramRepository @Inject constructor(
     suspend fun refreshCatalog() { client?.refreshCatalog() }
     suspend fun cachedChannels(): List<TelegramChannel> =
         client?.cacheIdentity?.let { diskCache.channels(it) }.orEmpty()
+            .filterNot { it.chatId in blockedChannels }
 
     suspend fun channel(chatId: Long): TelegramChannel? {
         val account = client ?: return null
@@ -343,7 +351,11 @@ class TelegramRepository @Inject constructor(
     suspend fun joinChannel(chatId: Long): Boolean {
         val account = client ?: return false
         val joined = account.joinChannel(chatId)
-        if (joined) account.refreshCatalog()
+        if (joined) {
+            blockedChannels.remove(chatId)
+            account.refreshCatalog()
+            mutableCatalogRevision.value++
+        }
         return joined
     }
 
@@ -351,19 +363,23 @@ class TelegramRepository @Inject constructor(
         val account = client ?: return false
         val left = account.leaveChannel(chatId)
         if (left) {
+            blockedChannels.add(chatId)
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
             clearPlaybackQueues()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
+            mutableCatalogRevision.value++
         }
         return left
     }
     suspend fun cachedBrowse(section: String): List<TelegramMedia> =
         client?.cacheIdentity?.let { diskCache.media(it, section) }.orEmpty()
+            .filterNot { it.chatId in blockedChannels }
 
     suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage {
         val selected = client ?: return TelegramChannelPage(emptyList())
         val page = selected.channels(cursor, limit)
+            .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         selected.cacheIdentity?.let { id ->
             if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null)
         }
@@ -372,6 +388,7 @@ class TelegramRepository @Inject constructor(
     suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage {
         val selected = client ?: return TelegramMediaPage(emptyList())
         val page = selected.browse(section, cursor, limit)
+            .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
         selected.cacheIdentity?.let { id ->
             if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null)
         }
@@ -389,7 +406,27 @@ class TelegramRepository @Inject constructor(
         throw cancelled
     } catch (_: Exception) { cachedBrowse(section).take(limit) }
 
-    suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = client?.media(chatId, messageId)
+    /** Hydrate the full post text on a disconnected launch only for the verified active account. */
+    suspend fun media(chatId: Long, messageId: Int): TelegramMedia? {
+        val selected = client ?: return null
+        if (chatId in blockedChannels) return null
+        val live = try {
+            selected.media(chatId, messageId)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { null }
+        if (live != null) return live
+        val identity = selected.cacheIdentity ?: return null
+        val sections = listOf("recent", "videos", "youtube", "audio", "photos", "channel:$chatId")
+        for (section in sections) {
+            val cached = diskCache.media(identity, section)
+                .firstOrNull { it.chatId == chatId && it.messageId == messageId }
+            if (cached != null) return cached.takeIf {
+                client === selected && chatId !in blockedChannels
+            }
+        }
+        return null
+    }
     suspend fun photoFile(chatId: Long, messageId: Int): String? = client?.photoFile(chatId, messageId)
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         checkNotNull(client) { "Telegram account is not authorized" }.mediaPart(chatId, messageId, offset)
