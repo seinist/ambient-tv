@@ -28,6 +28,8 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
     private data class Pending(val scope: String, val key: String, val valid: () -> Boolean, val encode: () -> String)
     private val pending = linkedMapOf<Pair<String, String>, Pending>()
     private val signal = Channel<Unit>(Channel.CONFLATED)
+    /** Set by [flush]: write queued snapshots now instead of waiting for an idle foreground. */
+    @Volatile private var flushing = false
 
     init {
         scope.launch {
@@ -36,15 +38,16 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
                 // backgrounds during the debounce, flush queued Home snapshots promptly
                 // before Android has a chance to reclaim this process.
                 var waitedMs = 0L
-                while (BrowseWorkBudget.foreground && waitedMs < 1_500L) {
+                while (!flushing && BrowseWorkBudget.foreground && waitedMs < 1_500L) {
                     delay(250)
                     waitedMs += 250
                 }
-                while (BrowseWorkBudget.foreground && !BrowseWorkBudget.idle()) delay(500)
+                while (!flushing && BrowseWorkBudget.foreground && !BrowseWorkBudget.idle()) delay(500)
                 while (true) {
                     val next = synchronized(pending) {
                         pending.entries.firstOrNull()?.let { pending.remove(it.key) }
-                    } ?: break
+                    }
+                    if (next == null) { flushing = false; break }
                     if (!next.valid()) continue
                     try {
                         checkBrowseWriteBudget()
@@ -75,6 +78,8 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
                         } finally { db.endTransaction() }
                         prune()
                     } catch (_: BrowseWritePaused) {
+                        // Back in the foreground: the normal idle wait applies again.
+                        flushing = false
                         // Rollback has already restored the old entry. Never overwrite a newer queued snapshot.
                         synchronized(pending) {
                             if (pending.size < 256) pending.putIfAbsent(next.scope to next.key, next)
@@ -86,7 +91,7 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
                     }
                     // Yield between entries; encoding and SQLite never execute on the main thread.
                     delay(25)
-                    if (BrowseWorkBudget.foreground && !BrowseWorkBudget.idle()) {
+                    if (!flushing && BrowseWorkBudget.foreground && !BrowseWorkBudget.idle()) {
                         signal.trySend(Unit)
                         break
                     }
@@ -100,6 +105,16 @@ class BrowseDiskStore @Inject constructor(@ApplicationContext context: Context) 
             pending[scope to key] = Pending(scope, key, valid, encode)
             while (pending.size > 256) pending.remove(pending.keys.first())
         }
+        signal.trySend(Unit)
+    }
+
+    /**
+     * The Activity stopped: write every queued snapshot right away. Playback or input otherwise
+     * defers writes, and a process killed in the background would lose the newest display state.
+     */
+    fun flush() {
+        if (synchronized(pending) { pending.isEmpty() }) return
+        flushing = true
         signal.trySend(Unit)
     }
 

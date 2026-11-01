@@ -43,9 +43,10 @@ internal fun stableYouTubeRows(
 /** Only a completed feed replaces disk membership. Partial responses remain process-local. */
 @Singleton
 class YouTubeContentCache() {
-    @Inject constructor(disk: BrowseDiskStore, engine: SmartTubeEngine) : this() {
+    @Inject constructor(disk: BrowseDiskStore, engine: SmartTubeEngine) : this(disk, { engine.browseScope() })
+    internal constructor(disk: BrowseDiskStore, scope: suspend () -> String) : this() {
         this.disk = disk
-        scopeResolver = { engine.browseScope() }
+        scopeResolver = scope
     }
     private val entries = LinkedHashMap<String, List<YouTubeRow>>(16, 0.75f, true)
     private val details = LinkedHashMap<String, YouTubeMetadata>(16, .75f, true)
@@ -103,33 +104,37 @@ class YouTubeContentCache() {
         return if (appended === current) current else storeRows(key, appended)
     }
 
-    /**
-     * [keepVisible]: an automatic refresh of tiles already on screen (cold start, entry). Their
-     * order and membership stay; new videos are appended. YouTube's recommendations differ on
-     * every request, so a complete replace swapped nearly every tile under the user's focus.
-     * Disk still receives the fresh server result, which the next start shows.
-     */
-    @Synchronized fun replace(
-        key: String,
-        incoming: List<YouTubeRow>,
-        expected: Long = generation,
-        keepVisible: Boolean = false,
-    ): List<YouTubeRow> {
+    @Synchronized fun replace(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val previous = get(key).orEmpty()
-        val rows = storeRows(key, if (keepVisible && previous.isNotEmpty())
-            stableYouTubeRows(previous, incoming, complete = false)
-        else reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
-        val namespace = source
-        if (namespace != null) disk?.put(namespace, "rows:$key", { generation == expected }) {
-            // Persist the server's current ordering for the next cold start; the active view
-            // uses stable ordering until the user leaves, avoiding a reflow under focus.
-            com.ambient.tv.data.browse.encodeBrowseJson(json, incoming.take(MAX_ROWS).map { row -> row.copy(items = row.items.take(MAX_ITEMS_PER_ROW).map { it.copy(
+        val rows = storeRows(key, reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
+        // Persist the server's current ordering for the next cold start; the active view
+        // uses stable ordering until the user leaves, avoiding a reflow under focus.
+        persist(key, incoming, expected)
+        return rows
+    }
+
+    /**
+     * A feed that stopped early (emission or time limit) still delivered usable rows. Keep them as
+     * display state for the next opening: merged like a partial response, so nothing that is
+     * already cached gets deleted, and written to disk unlike other partial responses.
+     */
+    @Synchronized fun persistPartial(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
+        if (expected != generation) return emptyList()
+        if (incoming.isEmpty()) return get(key).orEmpty()
+        val rows = merge(key, incoming, expected)
+        persist(key, rows, expected)
+        return rows
+    }
+
+    private fun persist(key: String, rows: List<YouTubeRow>, expected: Long) {
+        val namespace = source ?: return
+        disk?.put(namespace, "rows:$key", { generation == expected }) {
+            com.ambient.tv.data.browse.encodeBrowseJson(json, rows.take(MAX_ROWS).map { row -> row.copy(items = row.items.take(MAX_ITEMS_PER_ROW).map { it.copy(
                 imageUrl = com.ambient.tv.data.browse.displayArtworkUrl(it.imageUrl),
                 backgroundUrl = com.ambient.tv.data.browse.displayArtworkUrl(it.backgroundUrl),
             ) }) })
         }
-        return rows
     }
 
     private fun storeRows(key: String, rows: List<YouTubeRow>): List<YouTubeRow> {
