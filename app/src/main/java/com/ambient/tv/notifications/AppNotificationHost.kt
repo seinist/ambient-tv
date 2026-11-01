@@ -4,9 +4,12 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -19,6 +22,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalAccessibilityManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -28,11 +34,13 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.dismiss
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -42,6 +50,8 @@ import androidx.tv.material3.Text
 import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.ui.common.MediaSystem
+import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.home.UnreachableServerViewModel
 import com.ambient.tv.ui.common.SystemLogo
 import com.ambient.tv.ui.common.systemName
 import com.ambient.tv.ui.mobile.LocalHandheldUi
@@ -53,7 +63,7 @@ private object NotificationWindows {
     val dialogs = mutableStateListOf<Any>()
 }
 
-/** Only the active window presents the shared queue. TV overlays add no input or focus targets; handheld cards support swipe dismissal. */
+/** The active window presents status cards. On TV, active wakes also expose a focusable cancel action. */
 @Composable
 fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playback: Boolean = false) {
     val window = remember { Any() }
@@ -109,6 +119,13 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
     // one stable surface, so wake/resume/provider updates never stack separate connection cards.
     val connections = visible.filter { it.notice.kind in CONNECTIVITY_KINDS }
     val others = visible.filterNot { it.notice.kind in CONNECTIVITY_KINDS }
+    // The wake action is essential, so it must remain available even if notice duration is OFF.
+    // A card may represent several services; each machine still has exactly one cancel action.
+    val activeWakes = if (!handheld && ownsPresentation && !hidden && !dialog)
+        snapshot.pending.map(NoticeEntry::notice).filter {
+            it.kind == NoticeKind.WAKE && it.phase == NoticePhase.WORKING && it.key.startsWith("wake:")
+        }.distinctBy(AppNotice::key)
+    else emptyList()
     Box(Modifier.fillMaxSize()
         .then(if (handheld) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier)
         .padding(horizontal = if (handheld) 16.dp else 40.dp, vertical = 32.dp)) {
@@ -126,6 +143,64 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
                         NotificationCard(entry.notice, reduced)
                     }
                 }
+            }
+        }
+        if (activeWakes.isNotEmpty()) {
+            val wakeVm: UnreachableServerViewModel = hiltViewModel()
+            TvWakeCancelBar(activeWakes, autoFocus = !playback, onCancel = wakeVm::cancelWake,
+                modifier = Modifier.align(Alignment.BottomCenter))
+        }
+    }
+}
+
+/**
+ * On television a notification is deliberately non-focusable. Put the real cancel action
+ * outside it, at the bottom of the screen; Back cancels only when this button has focus.
+ * Each row is identified by the machine key, so one wake never stops unrelated servers.
+ */
+@Composable
+private fun TvWakeCancelBar(
+    wakes: List<AppNotice>,
+    autoFocus: Boolean,
+    onCancel: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        modifier.widthIn(max = 560.dp).heightIn(max = 300.dp)
+            .background(colors.surface.copy(alpha = .98f), shape)
+            .border(1.dp, colors.onSurface.copy(alpha = .16f), shape)
+            .verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        wakes.forEachIndexed { index, notice ->
+            key(notice.key) {
+                val machine = notice.key.removePrefix("wake:")
+                val focus = remember { FocusRequester() }
+                var focused by remember { mutableStateOf(false) }
+                if (index == 0 && autoFocus) {
+                    LaunchedEffect(notice.key, autoFocus) {
+                        withFrameNanos { }
+                        runCatching { focus.requestFocus() }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(noticeTitle(notice), style = MaterialTheme.typography.titleSmall,
+                            color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(noticeMessage(notice), style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    TvActionButton(
+                        text = stringResource(R.string.home_cancel_wake),
+                        onClick = { onCancel(machine) },
+                        modifier = Modifier.focusRequester(focus)
+                            .onFocusChanged { focused = it.isFocused },
+                    )
+                }
+                BackHandler(enabled = focused) { onCancel(machine) }
             }
         }
     }
@@ -301,7 +376,23 @@ private fun NotificationCard(notice: AppNotice, reduced: Boolean, grouped: Boole
     }
 }
 
-/** Timed work (a wake): how far into its time budget, and roughly how long it may still take. */
+/** Fixed-height label/value row: moving from 10 to 9 seconds never reflows a handheld card. */
+@Composable
+private fun WakeCountdownRow(label: String, seconds: Int?) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(if (seconds == null) "" else stringResource(R.string.notice_wake_seconds, seconds),
+            modifier = Modifier.width(60.dp),
+            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+            textAlign = TextAlign.End)
+    }
+}
+
+/** Timed work (a wake): duration is a wait budget, not actual boot-completion progress. */
 @Composable
 private fun TimedProgress(notice: AppNotice, color: androidx.compose.ui.graphics.Color) {
     val now by produceState(System.currentTimeMillis(), notice.progressStartedAt, notice.progressTotalMs) {
@@ -312,11 +403,11 @@ private fun TimedProgress(notice: AppNotice, color: androidx.compose.ui.graphics
     val secondsLeft = ((notice.progressTotalMs - elapsed).coerceAtLeast(0L) + 999) / 1000
     LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().height(4.dp),
         color = color, trackColor = color.copy(alpha = .2f), drawStopIndicator = {})
-    if (secondsLeft > 0) Text(stringResource(R.string.notice_wake_remaining, secondsLeft.toInt()),
-        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    // Keep the row at zero: removing it just before completion made the whole card jump.
+    WakeCountdownRow(stringResource(R.string.notice_wake_remaining_label), secondsLeft.toInt())
 }
 
-/** Which magic packet went out, when the next one follows, or how the wake ended. */
+/** WOL packets and next retry keep the same layout while the seconds tick down. */
 @Composable
 private fun WakePackets(notice: AppNotice) {
     if (notice.packets <= 0 || notice.packetsSent <= 0) return
@@ -324,17 +415,22 @@ private fun WakePackets(notice: AppNotice) {
         while (true) { value = System.currentTimeMillis(); delay(500) }
     }
     val secondsToNext = ((notice.nextPacketAt - now).coerceAtLeast(0L) + 999) / 1000
+    val waitingForNext = notice.phase == NoticePhase.WORKING && notice.packetsSent < notice.packets
     val text = when {
         notice.phase == NoticePhase.SUCCESS -> stringResource(R.string.notice_wake_packets_success, notice.packetsSent)
         notice.phase == NoticePhase.ERROR -> stringResource(R.string.notice_wake_packets_failed, notice.packetsSent, notice.packets)
         notice.packets == 1 -> stringResource(R.string.notice_wake_packet_single)
-        notice.nextPacketAt > 0 && secondsToNext > 0 ->
-            stringResource(R.string.notice_wake_packet_next, notice.packetsSent, notice.packets, secondsToNext.toInt())
-        notice.packetsSent >= notice.packets -> stringResource(R.string.notice_wake_packet_last, notice.packetsSent, notice.packets)
-        // The wait ran out: the next burst is going out right now.
-        else -> stringResource(R.string.notice_wake_packet_sending, notice.packetsSent + 1, notice.packets)
+        waitingForNext -> stringResource(R.string.notice_wake_packet_sent_short, notice.packetsSent, notice.packets)
+        else -> stringResource(R.string.notice_wake_packet_last, notice.packetsSent, notice.packets)
     }
-    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (notice.phase == NoticePhase.WORKING && notice.packets > 1) {
+        WakeCountdownRow(
+            label = stringResource(if (waitingForNext) R.string.notice_wake_next_packet_label else R.string.notice_wake_waiting_label),
+            seconds = if (waitingForNext) secondsToNext.toInt() else null,
+        )
+    }
 }
 
 private fun kindIcon(kind: NoticeKind) = when (kind) {
