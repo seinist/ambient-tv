@@ -144,9 +144,17 @@ internal fun PlayerDetailsButton() {
 @Composable
 internal fun PublishPlayerDetail(info: PlayerDetailInfo?) {
     val chrome = LocalPlayerChromeState.current ?: return
-    androidx.compose.runtime.SideEffect { chrome.detail.value = info }
+    val hidden = osdHiddenButtons()
+    val enabled = info != null && osdButtonVisible(OsdButton.DETAILS, info.osdPlayer, hidden)
+    androidx.compose.runtime.SideEffect {
+        chrome.detail.value = info
+        chrome.detailEnabled.value = enabled
+    }
     androidx.compose.runtime.DisposableEffect(chrome) {
-        onDispose { chrome.detail.value = null }
+        onDispose {
+            chrome.detail.value = null
+            chrome.detailEnabled.value = false
+        }
     }
 }
 

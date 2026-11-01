@@ -38,6 +38,8 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     internal val osdModel = mutableStateOf<PlayerOsdSpec?>(null)
     /** What the details dialog shows; published by the screen, so a renderer switch keeps it. */
     internal val detail = mutableStateOf<PlayerDetailInfo?>(null)
+    /** Whether the Details button is switched on for this player; Info only opens the dialog then. */
+    internal val detailEnabled = mutableStateOf(false)
     internal val panelKeys = mutableStateOf<((androidx.compose.ui.input.key.KeyEvent) -> Boolean)?>(null)
     val panels = PlayerPanelNavigation()
     internal val focus = PlayerControlFocus()
@@ -77,7 +79,6 @@ fun PersistentPlayerChrome(
         PlayerPanelAutoHide(chrome, changingItem)
         // Info opens the details dialog when its action-bar button is switched on.
         val detailsLabel = androidx.compose.ui.res.stringResource(com.ambient.tv.R.string.player_details)
-        val hiddenButtons = osdHiddenButtons()
         LaunchedEffect(chrome) {
             androidx.compose.runtime.snapshotFlow { chrome.visible.value }.collect { if (!it) chrome.shownByZap.value = false }
         }
@@ -88,7 +89,7 @@ fun PersistentPlayerChrome(
                 val session = chrome.panelModel.value?.audioSession
                 if (it.key == Key.Info) {
                     val detail = chrome.detail.value
-                    if (detail != null && osdButtonVisible(OsdButton.DETAILS, detail.osdPlayer, hiddenButtons)) {
+                    if (detail != null && chrome.detailEnabled.value) {
                         if (it.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
                             it.nativeKeyEvent.repeatCount == 0) toggleDetailsByInfoKey(chrome.panels, detailsLabel)
                         return@onPreviewKeyEvent true
