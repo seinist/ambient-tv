@@ -2,7 +2,7 @@
 
 **Languages:** **English** · [Deutsch](DOCUMENTATION.de.md)
 
-**App:** Ambient TV (`com.ambient.tv`) · version `1.0` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 72
+**App:** Ambient TV (`com.ambient.tv`) · version `1.0` (see `version.properties` for versionCode) · minSdk 29, target/compileSdk 37 · settings backup schema 76
 **License:** [CC0 1.0 Universal](../LICENSE)
 
 This compendium lists what the app does today: every settings page, the player's Video and Audio panels, and the media sources. Labels are the real UI texts from `app/src/main/res/values*/`. Defaults are read from the code (`AppPreferences`, `AudioOptions`, `VideoImageOptions`, `SettingsUiState`). Nothing here is planned work.
@@ -52,6 +52,7 @@ Ambient TV is one APK with two interfaces: a D-pad UI with a sidebar for Android
 | IPTV | M3U playlists, XMLTV guide, channel groups, live player | All |
 | SmartTube | YouTube feeds, sign-in by device code, SponsorBlock, "Watch on TV" phone link | All |
 | Spotify | Native playback (librespot) and Spotify Connect receiver; Premium needed for playback | All |
+| Monogram (optional GPL/MTProto build) | Telegram channel media, full post captions, six Home rows, YouTube links via SmartTube; TV QR or phone code/2FA login | All |
 | Trailers | TMDB trailers and a "Now in cinemas" row; needs your own TMDB key | All |
 | DLNA | Browse UPnP/DLNA media servers on the LAN | All |
 | Files | Local/USB folders, SMB 1/2/3, NFSv3/v4, WebDAV and SFTP sources, favorites, recently opened, continue watching | All |
@@ -71,7 +72,7 @@ Settings has five areas. Each area lists its pages; the settings search finds pa
 | Area | Pages |
 | --- | --- |
 | **Interface & controls** | Home rows · When selecting media · Language · Library · Look & feel · Background video · Screensaver · Menu sounds · Clock |
-| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Trailers · DLNA · Files (configured systems first, then "add" entries) |
+| **Media sources & accounts** | Plex · Jellyfin · Emby · TVHeadend · IPTV · SmartTube · Spotify · Monogram (opt-in build) · Trailers · DLNA · Files (configured systems first, then "add" entries) |
 | **Devices & network** | Phone & devices · UPnP receiver · WireGuard / VPN · Servers & Wake-on-LAN |
 | **Playback** | Default player · Subtitles · Intros, credits & next up · Seek & resume · Picture profiles · Audio profiles · Audio visualization · Photos |
 | **App & data** | Notifications · Transfer accounts and settings · Settings backup · Diagnostics · About this app |
@@ -96,7 +97,7 @@ Every media system page also has:
 | Setting | Options / values | Default | Devices | Description |
 | --- | --- | --- | --- | --- |
 | Customize Home | Show, reorder, remove rows | Plex: Continue watching, Recently added, Collections; TVHeadend: Live TV | All | Row editor for the app's Home. |
-| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Spotify Home / Liked songs / Playlists / Albums / Artists / Now playing; Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
+| Add a row | Continue watching · All systems; per system: Continue watching, Recently added, Collections, Libraries; Recently watched TV channels; TVHeadend Live TV / Guide / Recordings / Timers; SmartTube Home / Subscriptions / History / Playlists / Shorts / Music / News / Gaming / Live / Kids; Spotify Home / Liked songs / Playlists / Albums / Artists / Now playing; Monogram Recent media / Channels / Videos / YouTube links / Music & audio / Photos (opt-in); Trailers / Now in cinemas; Recently added photos; Top in genre; shortcuts to system sections | — | All | Content rows or shortcuts to a section of a system. |
 | Systems in "Continue watching · All systems" | Plex, Jellyfin, Emby | All on | All | Which servers feed the combined row. Shown when that row is on Home. |
 | Show on the home screen | On / Off | On | TV | Watch Next plus the channels "Continue watching" and "Recently added" on the Android TV launcher. Shown when the launcher supports it. |
 | Clear TV channel history | Action | — | All | The recent-channels row keeps up to 12 channels on this device; not in backups. |
@@ -359,6 +360,27 @@ In folders with music the app reads the tags in the background (MP3/ID3v2, FLAC,
 ### 4.10 IPTV (M3U/XMLTV)
 
 Settings › Systems & accounts › **IPTV**: any number of M3U playlists (http/https) with an optional XMLTV guide (`.xml` or `.xml.gz`; empty = the playlist's `url-tvg`) and an optional user agent. Channels, groups, logos, `tvg-chno` and `#EXTVLCOPT` user agent/referrer are used. Each playlist appears in the menu under **IPTV** with Live and Guide and uses the Live TV views and player. The playlist is cached for 6 h, the guide for 12 h (offline, the last loaded playlist is used). Addresses are stored encrypted and are only part of backups that include credentials. No recordings/timers.
+
+---
+
+### 4.11 Monogram (Telegram media; optional native build)
+
+**Availability:** Optional `MONOGRAM_NATIVE=1` build with a pinned GPL-3.0-only native MTProto module. Standard APKs do not ship Monogram. See the [README setup guide](../README.md#monogram-setup-optional-telegram-media-integration) and [native build notes](monogram-integration.md). Native ABI, renderer and device testing is still in progress.
+
+| Setting | Options / values | Default | Devices | Description |
+| --- | --- | --- | --- | --- |
+| Enable Monogram (internal system key: Telegram) | On / Off | Off | All | Exposes private channel media only after Telegram authorization. |
+| API ID + API hash | Number + masked 32-character hexadecimal hash | Empty | All | Create a Telegram API application at [my.telegram.org/apps](https://my.telegram.org/apps). Both fields are available while Monogram is disabled, and are stored together in encrypted preferences (never compiled into APKs). |
+| Save API credentials | Action | — | All | Validates ID/hash and resets the unsigned native client. To change them, sign out first. |
+| Monogram account: QR sign-in | Scan and approve from Telegram's Devices page | — | TV | The code is a Telegram `tg://login` token, not a Spotify OAuth web callback. Requires another already signed-in device. |
+| Monogram account: phone code | International phone number; request/confirm/resend code | — | TV, Phone | The phone route works without scanning your own screen; an optional two-step verification password is requested when required. |
+| Account status / Sign out | Connected account · Sign out | Signed out | All | The account/catalog/menus become active after authorization; sign-out revokes private access and cache. |
+| Submenu TV chips and Home rows | Recent media · Channels · Videos · YouTube links · Music & audio · Photos | All six allowed | All | Each category can be selected independently in the Home editor and in the system menu. |
+| Layout and cards | Rows · Grid · List · Info list | Rows | All | SmartTube-style 16:9 cards with channel avatar/name, post date and runtime; bounded lazy paging, focus restore. |
+| Post details / YouTube | Full post caption and YouTube thumbnails | — | All | Link-only or mixed photo/video posts expose each YouTube URL; linked videos open with SmartTube's normal selection behavior. |
+| Player and channel OSD | Media3 · VLC · MPV; channel avatar, join/leave | Global player choice | All | MTProto byte-range streaming and shared OSD. Real device verification still required. |
+
+**Backups:** Ordinary settings backups include Monogram layout, system name, TV chips and Home rows. Only the encrypted *Export with credentials* includes API ID/hash. Native Telegram sessions, login codes, passwords, private media and thumbnails never travel across devices. Monogram GPL and Telegram API license/terms review are required before distributing opt-in binaries.
 
 ---
 
@@ -855,7 +877,8 @@ Under **App & data › Backup**:
 - **Export without credentials** (default): no Plex tokens, no TVHeadend password; file-source passwords only when exporting with credentials. Before saving, an optional passphrase can be set (entered twice, show/hide toggle); leave it empty for a plain JSON file as before
 - **Export with credentials:** only when needed; the file is encrypted with a passphrase (at least 8 characters, AES-256-GCM, PBKDF2) that import asks for. Without the passphrase the backup cannot be restored. Companion transfers stay TLS-protected.
 - Encrypted files are a small JSON envelope (`"format":"ambient-tv-encrypted-backup"`, version 1, PBKDF2-HMAC-SHA256 with 310 000 iterations, random 16-byte salt and 12-byte IV, AES-256-GCM). Import detects plain vs. encrypted files automatically and asks for the passphrase; a wrong passphrase or a damaged file shows an error and the dialog stays open for another try.
-- Import restores settings and server profiles (schema up to current **72**)
+- Import restores settings and server profiles (schema up to current **76**)
+- Monogram system status, six menu/TV chips, Home rows and views are included in ordinary backups; Telegram API ID/hash only in passphrase-encrypted **credentials** exports. Telegram login/2FA, native session and downloaded private media are never portable; sign in again on a new device.
 - IPTV playlists and the OpenSubtitles key and account are only part of backups **with credentials** (playlist addresses often carry the provider account); a backup without credentials leaves the device's own unchanged. Timeshift size, timeshift/direct-recording switches (since schema 59) and reminder lead time are always backed up, scheduled reminders are not.
 - File sources and WOL are backed up; **local folder permissions (SAF) are not portable** and must be granted again on a new device
 - OAuth sessions and device IDs are not meant as a “portable login” — re-sign in accounts if needed
