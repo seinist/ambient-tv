@@ -97,6 +97,23 @@ fun BoxScope.ReferencePlayerClock(
     }
 }
 
+/**
+ * Alpha for OSD content above the seekbar while the seek preview shows there: it steps aside
+ * quickly and returns only after the preview has faded out. Layout stays, only pixels fade.
+ */
+@Composable
+internal fun seekPreviewYieldAlpha(): androidx.compose.runtime.State<Float> {
+    val previewVisible = LocalSeekPreviewOverlayState.current?.showing == true
+    return animateFloatAsState(
+        targetValue = if (previewVisible) 0f else 1f,
+        animationSpec = tween(
+            durationMillis = if (previewVisible) 90 else 200,
+            delayMillis = if (previewVisible) 0 else SEEK_PREVIEW_EXIT_MS,
+        ),
+        label = "Seek preview yield",
+    )
+}
+
 @Composable
 fun ReferencePlayerHeader(
     title: String,
@@ -112,15 +129,7 @@ fun ReferencePlayerHeader(
 ) {
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
-    val previewVisible = LocalSeekPreviewOverlayState.current?.showing == true
-    val headerAlpha by animateFloatAsState(
-        targetValue = if (previewVisible) 0f else 1f,
-        animationSpec = tween(
-            durationMillis = if (previewVisible) 90 else 180,
-            delayMillis = if (previewVisible) 0 else 200,
-        ),
-        label = "Seek preview header",
-    )
+    val headerAlpha by seekPreviewYieldAlpha()
     Row(
         modifier = modifier.fillMaxWidth().graphicsLayer { alpha = headerAlpha },
         horizontalArrangement = Arrangement.spacedBy(16.dp),
