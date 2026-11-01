@@ -551,7 +551,7 @@ class AppPreferences @Inject constructor(
         set(value) = prefs.edit { putBoolean(KEY_INITIAL_SETUP_COMPLETED, value) }
 
     val needsInitialSetup: Boolean
-        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !telegramEnabled && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
+        get() = !initialSetupCompleted && !filesEnabled && !radioEnabled && !(com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && telegramEnabled) && !isConfigured && !isJellyfinConfigured && !isEmbyConfigured && !isTvheadendConfigured
 
     var host: String
         get() = prefs.getString(KEY_HOST, "") ?: ""

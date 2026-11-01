@@ -84,10 +84,13 @@ enum class MediaSystem(
     companion object {
         private val brands = Regex(entries.mapNotNull { it.brand }.joinToString("|") { Regex.escape(it) })
 
-        /** Logo catalog on first launch and on Settings › Add system. */
+        /**
+         * Logo catalog on first launch and on Settings › Add system. Monogram (Telegram) is only
+         * offered by builds that contain its optional native MTProto core.
+         */
         val addOrder: List<MediaSystem> = listOf(
             PLEX, JELLYFIN, EMBY, DLNA, TVHEADEND, IPTV, YOUTUBE, TELEGRAM, SPOTIFY, RADIO, TRAILERS, FILES,
-        )
+        ).filter { it != TELEGRAM || com.ambient.tv.BuildConfig.MONOGRAM_NATIVE }
 
         fun fromKey(key: String?): MediaSystem? = when (key?.lowercase()) {
             "tv", "tvh", "live_tv" -> TVHEADEND

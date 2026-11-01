@@ -306,6 +306,8 @@ internal fun SettingsHub(
         if (category == SettingsCategory.ADVANCED || !handheld && category == SettingsCategory.TRANSFER) return@filter false
         // The UPnP receiver only runs on TVs; phones are senders.
         if (category == SettingsCategory.RECEIVER && handheld) return@filter false
+        // Monogram needs the optional native core; normal builds show no Telegram page at all.
+        if (category == SettingsCategory.TELEGRAM && !com.ambient.tv.BuildConfig.MONOGRAM_NATIVE) return@filter false
         // A renamed system is still found under its provider name.
         val haystack = buildString {
             append(title); append(' '); append(hint); append(' ')
@@ -1055,7 +1057,7 @@ internal fun sourceConfigured(category: SettingsCategory, state: SettingsUiState
     SettingsCategory.EMBY -> state.embyEnabled && state.embyConfigured
     SettingsCategory.TVHEADEND -> state.tvheadendEnabled && state.tvheadendHost.isNotBlank()
     SettingsCategory.YOUTUBE -> state.youtubeEnabled
-            SettingsCategory.TELEGRAM -> state.telegramEnabled
+    SettingsCategory.TELEGRAM -> com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && state.telegramEnabled
     SettingsCategory.TRAILERS -> state.trailersConfigured
     SettingsCategory.SPOTIFY -> state.spotifyEnabled && state.spotifyWebAuthorized
     SettingsCategory.RADIO -> state.radioEnabled

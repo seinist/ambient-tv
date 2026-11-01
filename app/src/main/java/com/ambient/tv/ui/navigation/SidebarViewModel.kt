@@ -190,7 +190,7 @@ class SidebarViewModel @Inject constructor(
             if (appPreferences.youtubeEnabled) add("youtube")
             if (appPreferences.spotifyEnabled) add("spotify")
             if (appPreferences.radioEnabled) add("radio")
-            if (appPreferences.telegramEnabled) add("telegram")
+            if (com.ambient.tv.BuildConfig.MONOGRAM_NATIVE && appPreferences.telegramEnabled) add("telegram")
             if (appPreferences.filesEnabled) add("files")
             if (dlnaStore.servers().isNotEmpty()) add("dlna")
         }
