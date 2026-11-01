@@ -45,7 +45,11 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private var handle = 0L
     private var connected = false
     private var epoch = System.nanoTime()
-    private var chats = mutableListOf<ChatDto>()
+    /**
+     * Paged by browse calls under [browseMutex], but also read by the player/detail lookup and
+     * cleared by login/logout. Copy-on-write iteration never throws ConcurrentModificationException.
+     */
+    private val chats = java.util.concurrent.CopyOnWriteArrayList<ChatDto>()
     private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
     private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
@@ -84,29 +88,44 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         mutex.withLock {
             if (handle != 0L) {
                 check(!native.isAuthorized(handle)) { "Sign out before changing Monogram API credentials" }
-                native.destroyClient(handle)
-                handle = 0L
-                connected = false
             }
-            synchronized(diskChunkLock) {
-                cacheGeneration++
-                cache.deleteRecursively()
-                cache.mkdirs()
-                previewWrites = 0
-            }
-            leftChannels.clear()
-            session.delete()
-            accountIdFile.delete()
-            accountId = null
-            chats.clear()
-            chatsExhausted = false
-            phone = null
-            codeHash = null
-            qrExpiresAt = 0L
-            epoch++
-            label = "Monogram"
-            loginState = MonogramLoginState(MonogramLoginStep.READY)
+            wipeLocalLocked()
         }
+    }
+
+    /**
+     * Server logout failed (e.g. offline): this device must still forget the account. Removes
+     * the native session file, account id and every cached thumbnail, photo and media chunk.
+     */
+    override suspend fun forgetLocalSession() = withContext(Dispatchers.IO) {
+        mutex.withLock { wipeLocalLocked() }
+    }
+
+    private fun wipeLocalLocked() {
+        if (handle != 0L) {
+            runCatching { native.destroyClient(handle) }
+            handle = 0L
+            connected = false
+        }
+        synchronized(diskChunkLock) {
+            cacheGeneration++
+            cache.deleteRecursively()
+            cache.mkdirs()
+            previewWrites = 0
+        }
+        leftChannels.clear()
+        recentFeeds.clear()
+        // account.session, account.id and any native side files of this account.
+        session.parentFile?.listFiles()?.forEach { it.deleteRecursively() }
+        accountId = null
+        chats.clear()
+        chatsExhausted = false
+        phone = null
+        codeHash = null
+        qrExpiresAt = 0L
+        epoch++
+        label = "Monogram"
+        loginState = MonogramLoginState(MonogramLoginStep.READY)
     }
 
     private fun authorized(id: Long? = null): MonogramLoginState {
@@ -305,6 +324,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun leaveChannel(chatId: Long): Boolean =
         browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
+            // The patched UniFFI call returns Unit and throws MtprotoException when Telegram
+            // rejects channels.leaveChannel, so reaching the next line means it was accepted.
             native.leaveChat(h, chatId)
             leftChannels.add(chatId)
             synchronized(diskChunkLock) {
@@ -406,7 +427,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
      */
     private fun fullChannelCatalog(h: Long): List<ChatDto> {
         var previous = -1
-        repeat(64) {
+        repeat(64) { round ->
+            // Each round may issue up to six messages.getDialogs pages. Pace large accounts so
+            // the first "recent" load does not trip Telegram's FLOOD_WAIT limits.
+            if (round > 0) Thread.sleep(CATALOG_ROUND_PAUSE_MS)
             val current = knownChannels(h, Int.MAX_VALUE)
             if (chatsExhausted) return current
             if (chats.size == previous) return current
@@ -494,7 +518,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
-        val title = knownChannels(h, 1).firstOrNull { it.id == chatId }?.title ?: "Monogram"
+        // No paging here: browse owns the mutable dialog index under browseMutex. A player or
+        // detail lookup only reads the copy-on-write snapshot, or one getChats fallback.
+        val title = (chats.firstOrNull { it.id == chatId }
+            ?: native.getChats(h).firstOrNull { it.id == chatId })?.title ?: "Monogram"
         native.getMessage(h, chatId, messageId)?.let { media(h, it, title) }
     }
 
@@ -559,7 +586,10 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         }
 
     private fun trimChunkCache(dir: File) {
-        val files = dir.listFiles()?.filter { it.isFile && it.name.endsWith(".bin") }
+        // part-*.bin are temp files of downloads still in flight; only completed chunks count.
+        val files = dir.listFiles()?.filter {
+            it.isFile && it.name.endsWith(".bin") && !it.name.startsWith("part-")
+        }
             ?.sortedBy { it.lastModified() } ?: return
         var bytes = files.sumOf { it.length() }
         for (item in files) {
@@ -567,5 +597,9 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             bytes -= item.length()
             item.delete()
         }
+    }
+
+    private companion object {
+        const val CATALOG_ROUND_PAUSE_MS = 300L
     }
 }

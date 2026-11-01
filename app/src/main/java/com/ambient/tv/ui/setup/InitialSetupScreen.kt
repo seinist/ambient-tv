@@ -199,7 +199,7 @@ internal fun SetupSystemCard(system: MediaSystem, modifier: Modifier, onFocused:
                 MediaSystem.IPTV -> R.string.iptv_settings_hint
                 MediaSystem.YOUTUBE -> R.string.setup_desc_youtube
                 MediaSystem.SPOTIFY -> R.string.setup_desc_spotify
-                MediaSystem.TELEGRAM -> R.string.settings_telegram_enable_hint
+                MediaSystem.TELEGRAM -> R.string.settings_page_telegram_hint
                 MediaSystem.RADIO -> R.string.setup_desc_radio
                 MediaSystem.DLNA -> R.string.dlna_explanation
                 MediaSystem.FILES -> R.string.setup_desc_files

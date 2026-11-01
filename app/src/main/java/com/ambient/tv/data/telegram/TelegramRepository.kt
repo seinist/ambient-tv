@@ -2,6 +2,7 @@ package com.ambient.tv.data.telegram
 
 import android.content.Context
 import com.ambient.tv.BuildConfig
+import com.ambient.tv.R
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.local.TokenStore
 import com.ambient.tv.data.files.MediaFileServer
@@ -40,6 +41,8 @@ interface MonogramAuthClientPort {
     suspend fun logout()
     /** Destroys the unauthenticated native client after a credentials change. */
     suspend fun resetForCredentials() = Unit
+    /** Forgets this device's session and caches even when the server logout failed. */
+    suspend fun forgetLocalSession() = Unit
 }
 
 /** Results are cursor-based; tokens never escape the authenticated account. */
@@ -101,12 +104,12 @@ class TelegramRepository @Inject constructor(
     suspend fun configureApiCredentials(idText: String, hashText: String) =
         sessionRestoreMutex.withLock {
             val id = idText.trim().toIntOrNull()?.takeIf { it > 0 }
-                ?: throw IllegalArgumentException("Invalid Monogram API ID")
+                ?: throw IllegalArgumentException(appContext.getString(R.string.monogram_error_api_id))
             val hash = hashText.trim().lowercase(java.util.Locale.ROOT)
-            require(hash.matches(Regex("[a-f0-9]{32}"))) { "Invalid Monogram API hash" }
+            require(hash.matches(Regex("[a-f0-9]{32}"))) { appContext.getString(R.string.monogram_error_api_hash) }
             check(!available && !mutableLogin.value.busy &&
                 mutableLogin.value.step in setOf(MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE)) {
-                "Sign out of Monogram before changing application credentials"
+                appContext.getString(R.string.monogram_error_signout_first)
             }
             if (id.toString() == tokenStore.monogramApiId && hash == tokenStore.monogramApiHash) {
                 return@withLock
@@ -144,7 +147,7 @@ class TelegramRepository @Inject constructor(
         } catch (error: Exception) {
             // Keep the sign-in controls reachable if the session is invalid.
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
-                error = error.message ?: "Monogram session restore failed")
+                error = error.message ?: appContext.getString(R.string.monogram_error_session_restore))
         }
     }
     @Volatile private var client: TelegramClientPort? = null
@@ -206,16 +209,30 @@ class TelegramRepository @Inject constructor(
         }
     }
 
+    /** One sign-in/sign-out step at a time; a second tap while busy is ignored atomically. */
+    private val loginMutex = Mutex()
+
     private suspend fun transition(block: suspend MonogramAuthClientPort.() -> MonogramLoginState) {
         if (!apiCredentialsReady) {
-            mutableLogin.value = mutableLogin.value.copy(error = "Configure the Monogram API ID and hash first")
+            mutableLogin.value = mutableLogin.value.copy(error = appContext.getString(R.string.monogram_api_required))
             return
         }
         val target = obtainBackend() ?: run {
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.UNAVAILABLE)
             return
         }
-        if (mutableLogin.value.busy) return
+        if (!loginMutex.tryLock()) return
+        try {
+            runTransition(target, block)
+        } finally {
+            loginMutex.unlock()
+        }
+    }
+
+    private suspend fun runTransition(
+        target: MonogramAuthClientPort,
+        block: suspend MonogramAuthClientPort.() -> MonogramLoginState,
+    ) {
         val previous = mutableLogin.value
         mutableLogin.value = previous.copy(busy = true, error = null)
         try {
@@ -227,7 +244,7 @@ class TelegramRepository @Inject constructor(
             // Wrong OTP / two-factor password MUST keep the same input step.
             // Disconnecting on an auth error could also invalidate an existing session.
             mutableLogin.value = previous.copy(
-                busy = false, error = error.message ?: "Monogram request failed")
+                busy = false, error = error.message ?: appContext.getString(R.string.monogram_error_request))
         }
     }
     suspend fun requestQr() = transition { beginQrLogin() }
@@ -238,21 +255,32 @@ class TelegramRepository @Inject constructor(
     suspend fun confirmPassword(password: String) = transition { submitTwoFactorPassword(password) }
     suspend fun signOut() {
         val target = obtainBackend() ?: return
-        val before = mutableLogin.value
-        mutableLogin.value = before.copy(busy = true, error = null)
+        if (!loginMutex.tryLock()) return
         try {
+            val before = mutableLogin.value
+            mutableLogin.value = before.copy(busy = true, error = null)
             val identity = client?.cacheIdentity
-            target.logout()
-            // Disconnect FIRST: in-flight browse calls must not repopulate cache
-            // after the explicit logout cleanup finishes.
-            applyLogin(MonogramLoginState(MonogramLoginStep.READY))
-            identity?.let { diskCache.clearAccount(it) }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            mutableLogin.value = before.copy(busy = false)
-            throw cancelled
-        } catch (error: Exception) {
-            mutableLogin.value = before.copy(
-                busy = false, error = error.message ?: "Monogram logout failed")
+            try {
+                target.logout()
+                // Disconnect FIRST: in-flight browse calls must not repopulate cache
+                // after the explicit logout cleanup finishes.
+                applyLogin(MonogramLoginState(MonogramLoginStep.READY))
+                identity?.let { diskCache.clearAccount(it) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                mutableLogin.value = before.copy(busy = false)
+                throw cancelled
+            } catch (_: Exception) {
+                // Telegram could not confirm the logout (often offline). This device still
+                // forgets the account: no client, no session file and no private caches remain.
+                disconnect()
+                runCatching { target.forgetLocalSession() }
+                identity?.let { runCatching { diskCache.clearAccount(it) } }
+                restoredSessionOnce = false
+                mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
+                    error = appContext.getString(R.string.monogram_logout_local_only))
+            }
+        } finally {
+            loginMutex.unlock()
         }
     }
     private val mutableCatalogRevision = MutableStateFlow(0L)
@@ -287,7 +315,46 @@ class TelegramRepository @Inject constructor(
         blockedChannels.clear()
         client = null
         clearPlaybackQueues()
+        clearResumePositions()
         mutableAuthorized.value = false
+    }
+
+    /**
+     * Last playback position per post for renderer switches and reopening after the 30 s
+     * background stop. Kept in memory only (never on disk or in backups) and dropped on
+     * logout, account switch and channel exit, because post ids are account-private.
+     */
+    private val resumePositions = LinkedHashMap<String, Long>()
+
+    fun resumePositionMs(mediaKey: String): Long =
+        synchronized(resumePositions) { resumePositions[mediaKey] ?: 0L }
+
+    fun rememberResumePosition(mediaKey: String, positionMs: Long, durationMs: Long) {
+        synchronized(resumePositions) {
+            resumePositions.remove(mediaKey)
+            // Finished (or nearly finished) items start from the beginning next time.
+            if (!monogramResumeWorthKeeping(positionMs, durationMs)) return
+            resumePositions[mediaKey] = positionMs
+            while (resumePositions.size > RESUME_MAX_ENTRIES) resumePositions.remove(resumePositions.keys.first())
+        }
+    }
+
+    /** Start used by the player session that is (or was last) acquired for a post. */
+    private var sessionStart: Pair<String, Long>? = null
+
+    fun noteSessionStart(mediaKey: String, positionMs: Long) {
+        synchronized(resumePositions) { sessionStart = mediaKey to positionMs }
+    }
+
+    fun sessionStartMs(mediaKey: String): Long = synchronized(resumePositions) {
+        sessionStart?.takeIf { it.first == mediaKey }?.second ?: 0L
+    }
+
+    private fun clearResumePositions() {
+        synchronized(resumePositions) {
+            resumePositions.clear()
+            sessionStart = null
+        }
     }
 
     /**
@@ -297,8 +364,8 @@ class TelegramRepository @Inject constructor(
      */
     suspend fun playerHttpUrl(media: TelegramMedia): String = withContext(Dispatchers.IO) {
         require(media.playableOnTelegram && media.kind != TelegramMediaKind.PHOTO &&
-            media.fileSize > 0L) { "Monogram media cannot be streamed" }
-        val authenticated = checkNotNull(client) { "Monogram account is not authorized" }
+            media.fileSize > 0L) { appContext.getString(R.string.monogram_error_not_streamable) }
+        val authenticated = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         val generation = streamEpoch.get()
         val key = "${authenticated.cacheIdentity}:${media.mediaKey}"
         synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
@@ -316,7 +383,7 @@ class TelegramRepository @Inject constructor(
         // An account may be logged out while the URL is being registered on a worker.
         if (client !== authenticated || streamEpoch.get() != generation) {
             mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
-            error("Monogram account changed during stream setup")
+            error(appContext.getString(R.string.monogram_error_account_changed))
         }
         synchronized(playbackUrls) {
             playbackUrls[key] = url
@@ -334,6 +401,7 @@ class TelegramRepository @Inject constructor(
 
     private companion object {
         const val MONOGRAM_LOCAL_MEDIA_SOURCE = "monogram-mtproto"
+        const val RESUME_MAX_ENTRIES = 200
     }
 
     /** Cache is only read after native account authorization confirms the same identity. */
@@ -382,6 +450,7 @@ class TelegramRepository @Inject constructor(
             streamEpoch.incrementAndGet()
             revokePlaybackUrls()
             clearPlaybackQueues()
+            clearResumePositions()
             account.cacheIdentity?.let { diskCache.clearAccount(it) }
             mutableCatalogRevision.value++
         }
@@ -458,7 +527,7 @@ class TelegramRepository @Inject constructor(
     }
     suspend fun photoFile(chatId: Long, messageId: Int): String? {
         val selected = client ?: return null
-        check(chatId !in blockedChannels) { "Channel was left" }
+        check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
         val result = selected.photoFile(chatId, messageId)
@@ -466,14 +535,18 @@ class TelegramRepository @Inject constructor(
             chatId !in blockedChannels }
     }
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
-        val selected = checkNotNull(client) { "Monogram account is not authorized" }
-        check(chatId !in blockedChannels) { "Channel was left" }
+        val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
+        check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
         val generation = streamEpoch.get()
         val identity = selected.cacheIdentity
         val bytes = selected.mediaPart(chatId, messageId, offset)
         check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
-            "Monogram session or membership changed during media transfer"
+            appContext.getString(R.string.monogram_error_account_changed)
         }
         return bytes
     }
 }
+
+/** Positions under 10 s or within the last 15 s are not worth resuming. */
+internal fun monogramResumeWorthKeeping(positionMs: Long, durationMs: Long): Boolean =
+    positionMs >= 10_000L && (durationMs <= 0L || positionMs < durationMs - 15_000L)

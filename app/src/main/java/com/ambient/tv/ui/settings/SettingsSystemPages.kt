@@ -654,7 +654,7 @@ internal fun LazyListScope.settingsSystemCategoryItems(
             item {
                 TvSettingRow(
                     systemString(MediaSystem.TELEGRAM, R.string.settings_telegram_enable),
-                    stringResource(R.string.settings_telegram_enable_hint),
+                    stringResource(R.string.settings_page_telegram_hint),
                     uiState.telegramEnabled,
                     viewModel::onTelegramEnabledChanged,
                 )
