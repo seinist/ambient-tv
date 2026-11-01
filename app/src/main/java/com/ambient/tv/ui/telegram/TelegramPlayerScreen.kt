@@ -363,7 +363,7 @@ internal data class TelegramOsd(
                     leftContent = {
                         if (hasPrevious) PlayerIconButton(
                             Icons.Filled.SkipPrevious,
-                            stringResource(R.string.player_previous),
+                            stringResource(R.string.player_previous_item),
                             onPrevious,
                         )
                         if (media.kind != TelegramMediaKind.PHOTO) PlayerIconButton(
