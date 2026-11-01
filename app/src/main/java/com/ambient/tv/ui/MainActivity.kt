@@ -1058,7 +1058,9 @@ private fun AmbientTvApp(
         if (ratingKey.startsWith(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)) {
             ratingKey.removePrefix(com.ambient.tv.ui.telegram.TELEGRAM_CHANNEL_ITEM_PREFIX)
                 .toLongOrNull()?.let { chatId ->
-                    navigateToSection(Destinations.telegramSection("channel:$chatId"))
+                    navController.navigate(Destinations.telegramSection("channel:$chatId")) {
+                        launchSingleTop = true
+                    }
                 }
             return
         }
