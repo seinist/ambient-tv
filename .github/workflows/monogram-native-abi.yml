@@ -40,6 +40,9 @@ jobs:
             rust: x86_64-linux-android
     env:
       MONOGRAM_ABIS: ${{ matrix.abi }}
+      # This job compiles MTProto and the Kotlin adapter, not the unrelated MPV audio stack.
+      # Otherwise prepareLocalAudio can trigger Meson/toolchain work on clean runners.
+      SKIP_MPV_NATIVE: "1"
 
     steps:
       - uses: actions/checkout@v5
