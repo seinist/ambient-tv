@@ -30,6 +30,33 @@ class YouTubePlaybackHistoryTest {
         assertFalse(history.requestPrevious("a", "missing"))
     }
 
+    @Test fun thirdRowItemCanStepBackToUnvisitedSecondThenFirstAndForwardAgain() {
+        val history = playedHistory("row-3")
+        assertFalse(history.requestPrevious("row-3", "row-2"))
+        assertTrue(history.requestPrevious("row-3", "row-2", fromSource = true))
+        assertTrue(history.startsAtBeginning("row-2"))
+        assertTrue(history.loaded(video("row-2")))
+        assertEquals("row-3", history.nextVideo?.videoId)
+        assertTrue(history.requestPrevious("row-2", "row-1", fromSource = true))
+        assertTrue(history.loaded(video("row-1")))
+        assertNull(history.previousVideoId)
+        assertEquals("row-2", history.nextVideo?.videoId)
+        assertTrue(history.requestNext("row-1", "row-2"))
+        assertTrue(history.loaded(video("row-2")))
+        assertTrue(history.requestNext("row-2", "row-3"))
+        assertTrue(history.loaded(video("row-3")))
+        assertNull(history.nextVideo)
+        assertEquals("row-2", history.previousVideoId)
+    }
+
+    @Test fun previousFromSourceCannotJumpPastAVisitedPredecessor() {
+        val history = playedHistory("a", "b")
+        assertFalse(history.requestPrevious("b", "wrong", fromSource = true))
+        assertTrue(history.requestPrevious("b", "a", fromSource = true))
+        assertTrue(history.loaded(video("a")))
+        assertFalse(history.requestPrevious("a", "outside", fromSource = false))
+    }
+
     @Test fun previousThenNextTraversesTheSameVideosWithoutAppendingThemAgain() {
         val history = playedHistory("a", "b", "c")
         assertTrue(history.requestPrevious("c", "b"))
