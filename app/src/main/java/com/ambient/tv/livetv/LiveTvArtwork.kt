@@ -33,6 +33,17 @@ fun liveTvRecordingArt(
     return channels.firstOrNull { it.uuid == entry.channelUuid }?.iconUrl?.let { LiveTvArt(it, logo = true) }
 }
 
+/**
+ * The EPG is only 86 dp high. Request TMDb's small backdrop variant for these cards;
+ * keep the full-res URL for detail dialogs, player and recordings.
+ */
+fun LiveTvArt.asGuideThumbnail(): LiveTvArt {
+    val fullSizePrefix = "https://image.tmdb.org/t/p/w780/"
+    return if (external && url.startsWith(fullSizePrefix)) copy(
+        url = "https://image.tmdb.org/t/p/w300/" + url.removePrefix(fullSizePrefix),
+    ) else this
+}
+
 /** A programme's art: its own image, art found by title, then the channel logo. */
 fun liveTvProgrammeArt(event: LiveTvProgramme, channels: List<LiveTvChannel>, titleArt: Map<String, String> = emptyMap()): LiveTvArt? {
     titleArt[liveTvArtKey(event.title)]?.let { return LiveTvArt(it, external = true) }
