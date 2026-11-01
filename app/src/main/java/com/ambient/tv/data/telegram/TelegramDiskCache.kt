@@ -96,6 +96,13 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         url?.takeIf { it.isNotBlank() && (!it.startsWith("file:") ||
             runCatching { File(java.net.URI(it)).isFile }.getOrDefault(false)) }
 
+    private fun youtubeLinks(item: JSONObject): List<String> {
+        val values = item.optJSONArray("youtubeLinks") ?: return emptyList()
+        return (0 until values.length()).mapNotNull { index ->
+            values.optString(index).takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+        }
+    }
+
     suspend fun media(account: String, section: String): List<TelegramMedia> =
         withContext(Dispatchers.IO) { lock.withLock {
             val array = read(account, "media:$section") ?: return@withLock emptyList()
@@ -111,6 +118,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     publishedAtMs = o.optLong("published"),
                     youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
                     protectedContent = o.optBoolean("protected"),
+                    linkedYouTubeVideoIds = youtubeLinks(o),
                 )
             }.getOrNull() }
         } }
@@ -142,6 +150,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     .put("summary", m.summary).put("thumb", m.thumbnailUrl)
                     .put("duration", m.durationMs).put("size", m.fileSize)
                     .put("published", m.publishedAtMs).put("youtube", m.youtubeVideoId)
+                    .put("youtubeLinks", JSONArray(m.linkedYouTubeVideoIds))
                     .put("protected", m.protectedContent))
                 }
                 write(account, "media:$section", array)
@@ -159,7 +168,8 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                 durationMs = o.optLong("duration"), fileSize = o.optLong("size"),
                 publishedAtMs = o.optLong("published"),
                 youtubeVideoId = o.optString("youtube").takeIf(String::isNotBlank),
-                protectedContent = o.optBoolean("protected"))
+                protectedContent = o.optBoolean("protected"),
+                linkedYouTubeVideoIds = youtubeLinks(o))
         }.getOrNull() }
     }
 
