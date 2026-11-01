@@ -26,6 +26,7 @@ import com.ambient.tv.data.telegram.MonogramLoginStep
 import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.ui.common.QrCodeDialog
 import com.ambient.tv.ui.common.TvActionButton
+import com.ambient.tv.ui.common.SettingsActionRow
 import com.ambient.tv.ui.common.TvTextField
 import com.ambient.tv.ui.common.openLoginLink
 import com.ambient.tv.ui.mobile.LocalHandheldUi
