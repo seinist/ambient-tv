@@ -91,6 +91,7 @@ class TelegramRepository @Inject constructor(
 
     @Synchronized
     fun activateHomePlaybackQueue(selected: String) {
+        if (selected in activeQueue) return
         val found = queues.values.firstOrNull { selected in it }
         activeQueue = found ?: listOf(selected)
     }

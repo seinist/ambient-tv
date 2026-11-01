@@ -341,6 +341,7 @@ fun HomeScreen(
                         homeHeroSpreadKey = homeHeroSpreadKey,
                         focusSnapshot = focusSnapshot,
                         onItemClick = openItem,
+                        onTelegramRowItemClick = viewModel::activateTelegramRow,
                         onYouTubeHomeVideoClick = { videoId, rowId ->
                             viewModel.captureFocusForReturn()
                             onYouTubeVideoClick(videoId, viewModel.youtubePlaybackToken(rowId, videoId))
@@ -570,6 +571,7 @@ internal fun LibraryContent(
     homeHeroSpreadKey: String,
     focusSnapshot: HomeFocusSnapshot,
     onItemClick: (String) -> Unit,
+    onTelegramRowItemClick: (String, String) -> Unit = { _, _ -> },
     onItemFocused: (String, MediaItem) -> Unit,
     onOpenRelevantSettings: (String) -> Unit,
     onWatchLiveChannel: (TvhChannel) -> Unit,
@@ -642,7 +644,11 @@ internal fun LibraryContent(
                         ContentRow(row = row, onItemClick = { item ->
                             val videoId = homeYouTubeVideoId(item.ratingKey)
                             if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
-                            else onItemClick(item.ratingKey)
+                            else {
+                                if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
+                                    onTelegramRowItemClick(row.id, item.ratingKey)
+                                onItemClick(item.ratingKey)
+                            }
                         }, onItemFocused = { onItemFocused(row.id, it) })
                     }
                 }
@@ -879,7 +885,11 @@ internal fun LibraryContent(
                                     onItemClick = { item ->
                                         val videoId = homeYouTubeVideoId(item.ratingKey)
                                         if (videoId != null) onYouTubeHomeVideoClick(videoId, row.id)
-                                        else onItemClick(item.ratingKey)
+                                        else {
+                                if (item.ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX))
+                                    onTelegramRowItemClick(row.id, item.ratingKey)
+                                onItemClick(item.ratingKey)
+                            }
                                     },
                                     onItemFocused = { item -> restoreArmed = false; onItemFocused(row.id, item) },
                                     onRowFocused = { centeredRowKey.value = rowKey },

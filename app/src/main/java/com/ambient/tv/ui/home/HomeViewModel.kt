@@ -1456,6 +1456,13 @@ class HomeViewModel @Inject constructor(
         }
 
     /** Telegram is account-private: never persist these rows in the shared Home snapshot cache. */
+    /** Home passes its exact source row, including on touch where no tile has focus. */
+    fun activateTelegramRow(rowId: String, itemKey: String) {
+        val source = telegramRows.firstOrNull { it.id == rowId } ?: return
+        telegramRepository.activatePlaybackQueue(
+            source.items.map(MediaItem::ratingKey), itemKey)
+    }
+
     private fun loadTelegramRows() {
         telegramJob?.cancel()
         telegramRowsPending = false
