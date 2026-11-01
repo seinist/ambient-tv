@@ -3,6 +3,7 @@ package com.ambient.tv.data.telegram
 import android.content.Context
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.data.local.AppPreferences
+import com.ambient.tv.data.files.MediaFileServer
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -64,6 +65,7 @@ class TelegramRepository @Inject constructor(
     @ApplicationContext context: Context,
     private val diskCache: TelegramDiskCache,
     private val preferences: AppPreferences,
+    private val mediaFileServer: MediaFileServer,
 ) {
     // Loading Rust/UniFFI is expensive; never initialize it on the UI thread
     // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
@@ -111,6 +113,7 @@ class TelegramRepository @Inject constructor(
     }
     @Volatile private var client: TelegramClientPort? = null
     /** Exact launch row (not a guessed global "recent" queue). Switching pages never changes it. */
+    private val playbackUrls = LinkedHashMap<String, String>()
     private val queues = LinkedHashMap<String, List<String>>()
     private var activeQueue: List<String> = emptyList()
 
@@ -216,14 +219,55 @@ class TelegramRepository @Inject constructor(
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
+        if (client?.cacheIdentity != port.cacheIdentity) revokePlaybackUrls()
         client = port
         mutableAuthorized.value = true
     }
 
     fun disconnect() {
+        revokePlaybackUrls()
         client = null
         clearPlaybackQueues()
         mutableAuthorized.value = false
+    }
+
+    /**
+     * Native VLC/MPV cannot read a Media3 DataSource. Use the same bounded, capability-token
+     * loopback transport as SMB/NAS. The URL contains no account identifier or credentials,
+     * while every byte is fetched through the currently authorized Monogram session.
+     */
+    suspend fun playerHttpUrl(media: TelegramMedia): String = withContext(Dispatchers.IO) {
+        require(media.playableOnTelegram && media.kind != TelegramMediaKind.PHOTO &&
+            media.fileSize > 0L) { "Monogram media cannot be streamed" }
+        val authenticated = checkNotNull(client) { "Monogram account is not authorized" }
+        val key = "${authenticated.cacheIdentity}:${media.mediaKey}"
+        synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
+        val url = mediaFileServer.register(
+            sourceId = MONOGRAM_LOCAL_MEDIA_SOURCE,
+            mime = "application/octet-stream",
+            fileName = "monogram-media.bin",
+        ) { TelegramSeekableMedia(this@TelegramRepository, media) }
+        // An account may be logged out while the URL is being registered on a worker.
+        if (client !== authenticated) {
+            mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
+            error("Monogram account changed during stream setup")
+        }
+        synchronized(playbackUrls) {
+            playbackUrls[key] = url
+            // MediaFileServer itself bounds its capability registry. Keep our URL
+            // references smaller, so no evicted token is reused by a future renderer.
+            while (playbackUrls.size > 24) playbackUrls.remove(playbackUrls.keys.first())
+        }
+        url
+    }
+
+    private fun revokePlaybackUrls() {
+        synchronized(playbackUrls) { playbackUrls.clear() }
+        mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
+    }
+
+    private companion object {
+        const val MONOGRAM_LOCAL_MEDIA_SOURCE = "monogram-mtproto"
     }
 
     /** Cache is only read after native account authorization confirms the same identity. */
