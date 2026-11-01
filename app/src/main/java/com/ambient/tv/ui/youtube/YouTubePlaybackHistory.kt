@@ -4,7 +4,7 @@ import com.ambient.tv.youtube.YouTubeItem
 
 /** The videos opened by this player destination, independent of its decoder and browse history. */
 internal class YouTubePlaybackHistory {
-    private data class Request(val videoId: String, val index: Int?)
+    private data class Request(val videoId: String, val index: Int?, val prepend: Boolean = false)
 
     private val videos = mutableListOf<YouTubeItem>()
     private var index = -1
@@ -14,9 +14,20 @@ internal class YouTubePlaybackHistory {
     val previousVideoId: String? get() = videos.getOrNull(index - 1)?.videoId
     val nextVideo: YouTubeItem? get() = videos.getOrNull(index + 1)
 
-    fun requestPrevious(currentId: String, previousId: String): Boolean {
-        if (pending != null || currentVideoId != currentId || previousVideoId != previousId) return false
-        pending = Request(previousId, index - 1)
+    fun requestPrevious(
+        currentId: String,
+        previousId: String,
+        fromSource: Boolean = false,
+    ): Boolean {
+        if (pending != null || currentVideoId != currentId || previousId.isBlank() || previousId == currentId) return false
+        val visitedPrevious = previousVideoId
+        when {
+            visitedPrevious == previousId -> pending = Request(previousId, index - 1)
+            // Starting halfway through a source row must still allow stepping backwards
+            // to items that have never been played inside this player destination.
+            visitedPrevious == null && fromSource -> pending = Request(previousId, null, prepend = true)
+            else -> return false
+        }
         return true
     }
 
@@ -30,7 +41,8 @@ internal class YouTubePlaybackHistory {
     }
 
     /** Revisited videos start at zero, including ones whose saved position is already at EOF. */
-    fun startsAtBeginning(videoId: String): Boolean = pending?.let { it.videoId == videoId && it.index != null } == true
+    fun startsAtBeginning(videoId: String): Boolean =
+        pending?.let { it.videoId == videoId && (it.index != null || it.prepend) } == true
 
     /** Confirm only successful loads. Retries and renderer remounts never add another history entry. */
     fun loaded(video: YouTubeItem): Boolean {
@@ -46,12 +58,19 @@ internal class YouTubePlaybackHistory {
             return true
         }
         if (request.videoId != video.videoId) return false
-        if (request.index == null) {
-            videos += video
-            index = videos.lastIndex
-        } else {
-            index = request.index
-            videos[index] = video
+        when {
+            request.prepend -> {
+                videos.add(0, video)
+                index = 0
+            }
+            request.index == null -> {
+                videos += video
+                index = videos.lastIndex
+            }
+            else -> {
+                index = request.index
+                videos[index] = video
+            }
         }
         pending = null
         return true

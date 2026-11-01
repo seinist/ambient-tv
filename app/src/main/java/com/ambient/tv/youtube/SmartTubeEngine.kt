@@ -46,9 +46,11 @@ class SmartTubeEngine @Inject constructor(
     /** Freeze a row's upstream page handle for one player session, even if Home refreshes. */
     fun forkRowContinuation(sourceScope: String, playerScope: String, rowId: String): Boolean {
         val group = rowContinuations[sourceScope]?.get(rowId) ?: return false
-        rowContinuations[playerScope] = java.util.concurrent.ConcurrentHashMap<String, Any>().apply {
-            put(rowId, group)
-        }
+        // Flat grids can combine several source rows. Keep all forked handles in the
+        // same player scope instead of replacing the first one with each new fork.
+        rowContinuations.computeIfAbsent(playerScope) {
+            java.util.concurrent.ConcurrentHashMap<String, Any>()
+        }[rowId] = group
         return true
     }
 
@@ -848,10 +850,21 @@ class SmartTubeEngine @Inject constructor(
             try {
                 val stream = invocation.value?.let(::reactiveContent)
                 if (stream != null) {
+                    val subscriptionsFeed = method.contains("Subscriptions") ||
+                        method.contains("SubscribedChannels")
                     var emissions = 0
-                    withTimeout(30_000) { stream.take(16).collect { emissions++; publish(it) } }
-                    if (emissions >= 16) throw IncompleteYouTubeFeedException()
-
+                    val finished = stream.collectBoundedSnapshot(
+                        timeoutMs = 30_000L,
+                        maxEmissions = if (subscriptionsFeed) 128 else 16,
+                    ) { emissions++; publish(it) }
+                    if (subscriptionsFeed) {
+                        // Subscription observables may stay open indefinitely after receiving
+                        // all current groups. A timed-out but populated snapshot is usable;
+                        // the next explicit visit still performs a fresh upstream request.
+                        if (!finished && accumulated.isEmpty()) throw IncompleteYouTubeFeedException()
+                    } else if (!finished || emissions >= 16) {
+                        throw IncompleteYouTubeFeedException()
+                    }
                 } else {
                     publish(unwrapReactive(invocation.value))
                 }

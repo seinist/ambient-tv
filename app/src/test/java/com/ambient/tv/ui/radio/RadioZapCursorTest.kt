@@ -95,7 +95,7 @@ class RadioZapCursorTest {
         assertFalse(cursor.canMove(queue.snapshot(), 1))
     }
 
-    @Test fun noWrapAndRequestedStationIsStableAfterAlphabeticalPageMerge() {
+    @Test fun noWrapAndRequestedStationIsStableAfterAppendingTheNextPage() {
         val queue = RadioPlaybackQueue()
         val scope = RadioFocusScope(RadioSection.COUNTRIES, "US", "")
         val source = RadioBrowseQueueSource(scope, countryCode = "US", nextOffset = 48, hasMore = true)
@@ -107,10 +107,10 @@ class RadioZapCursorTest {
         assertTrue(queue.appendPage(source, RadioSearchPage(
             listOf(station("a"), station("c"), station("e")), 48, 48, hasMore = false,
         )))
-        // The selected station is tracked by UUID, not an index that shifts on re-sort.
+        // Appending the server's next page preserves the already visible order and UUID.
         assertEquals("d", cursor.target(queue.snapshot())?.id)
         assertTrue(cursor.move(queue.snapshot(), -1))
-        assertEquals("c", cursor.target(queue.snapshot())?.id)
+        assertEquals("b", cursor.target(queue.snapshot())?.id)
         assertEquals("b", queue.current()?.id)
     }
 }

@@ -77,6 +77,14 @@ class RadioStationAlphabetTest {
             RadioAlphabetJump("N",2),RadioAlphabetJump("Z",3)), radioStationAlphabetJumps(extended))
     }
 
+    @Test fun pagingAppendsServerOrderedItemsInsteadOfLocallyResortingThem() {
+        val first = listOf(station("last", "Zulu"), station("early", "Alpha"))
+        val page = listOf(station("middle", "Middle"), station("early", "Duplicate"))
+        val combined = radioAppendPagedStations(first, page)
+        assertEquals(listOf("last", "early", "middle"), combined.map { it.id })
+        assertEquals("Alpha", combined[1].name)
+    }
+
     @Test fun removingFavoritePrefersNextThenPreviousAndNeverLosesTheWholeList() {
         val items = listOf(station("a"), station("b"), station("c"))
         assertEquals("c", radioFocusAfterRemovingFavorite(items, "b"))

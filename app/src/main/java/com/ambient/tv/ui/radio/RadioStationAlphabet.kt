@@ -42,6 +42,20 @@ internal fun radioStationAlphabetJumps(stations: List<RadioStation>): List<Radio
     return firstIndices.map { (letter, index) -> RadioAlphabetJump(letter, index) }
 }
 
+/**
+ * Radio Browser already orders each remote page by the requested API sort. Locally sorting
+ * their union with a locale-specific Collator can insert newly fetched stations *above* the
+ * user's visible tail, making a successful scroll continuation appear to add nothing.
+ * Preserve the server's stable page order for every paginated station catalog.
+ */
+internal fun radioAppendPagedStations(
+    existing: List<RadioStation>,
+    incoming: List<RadioStation>,
+): List<RadioStation> {
+    val seen = HashSet<String>()
+    return (existing + incoming).filter { it.id.isNotBlank() && seen.add(it.id) }
+}
+
 /** Removing a favorite keeps focus in its former row, preferring the next station. */
 internal fun radioFocusAfterRemovingFavorite(stations: List<RadioStation>, removedId: String): String? {
     val index = stations.indexOfFirst { it.id == removedId }
