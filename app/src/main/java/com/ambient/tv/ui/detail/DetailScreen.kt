@@ -769,8 +769,8 @@ private fun DetailContent(
                 }
             }
 
-            if (item.directors.isNotEmpty() || item.writers.isNotEmpty() || item.studio != null || singleVersionFileName(item) != null) {
-                item(key = "credits") { CreditsSection(item) }
+            if (item.directors.isNotEmpty() || item.writers.isNotEmpty() || item.studio != null || com.ambient.tv.ui.common.singleVersionFileName(item) != null) {
+                item(key = "credits") { com.ambient.tv.ui.common.DetailCreditsSection(item) }
             }
 
             item { Box(Modifier.height(36.dp)) }
@@ -899,7 +899,7 @@ private fun DetailHero(
         // retain the previous layout.
         val heroCoverUrl = if (item.type == "episode") item.posterArtUrl else item.thumbUrl
         heroCoverUrl?.takeIf { it.isNotBlank() }?.let { coverUrl ->
-            DetailArtwork(
+            com.ambient.tv.ui.common.DetailPosterArtwork(
                 item = item,
                 model = coverUrl,
             )
@@ -922,58 +922,16 @@ private fun DetailHero(
                     .bringFocusedContextIntoView(skipFirstFocus = true),
                 verticalArrangement = Arrangement.spacedBy(13.dp),
             ) {
-                val eyebrow = when (item.type) {
-                    "episode" -> listOfNotNull(item.grandparentTitle, item.parentTitle, item.index?.let { stringResource(R.string.detail_episode_number, it) }).joinToString(" · ")
-                    "season" -> item.parentTitle.orEmpty()
-                    else -> item.studio.orEmpty()
-                }
-                if (eyebrow.isNotBlank()) {
-                    Text(eyebrow, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                com.ambient.tv.ui.common.DetailEyebrow(com.ambient.tv.ui.common.detailEyebrow(item))
 
                 // Source mark and title/clear logo share one line, like the Home hero.
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    com.ambient.tv.ui.common.SystemBadge(when {
-                        com.ambient.tv.data.emby.EmbyBackend.owns(item.ratingKey) -> com.ambient.tv.ui.common.MediaSystem.EMBY
-                        com.ambient.tv.data.jellyfin.JellyfinBackend.owns(item.ratingKey) -> com.ambient.tv.ui.common.MediaSystem.JELLYFIN
-                        else -> com.ambient.tv.ui.common.MediaSystem.PLEX
-                    })
-                    TitleLogo(
-                        title = item.title,
-                        logoUrl = item.logoUrl,
-                        textStyle = MaterialTheme.typography.headlineLarge,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        maxLogoWidth = deviceDp(520.dp, 280.dp),
-                        lockSlotToSingleLine = true,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
+                com.ambient.tv.ui.common.DetailTitleRow(
+                    title = item.title,
+                    logoUrl = item.logoUrl,
+                    system = com.ambient.tv.ui.common.detailMediaSystem(item.ratingKey),
+                )
 
-                val primaryMeta = buildList {
-                    item.year?.let { add(it.toString()) }
-                    formatDuration(item.durationMs)?.let(::add)
-                    if (item.type == "show") item.leafCount?.let { add(stringResource(R.string.detail_episode_count, it)) }
-                }
-                if (primaryMeta.isNotEmpty() || !item.contentRating.isNullOrBlank() || item.rating != null || item.audienceRating != null || item.criticRating != null) {
-                    DeviceActionRow(
-                        horizontalArrangement = Arrangement.spacedBy(9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (primaryMeta.isNotEmpty()) {
-                            Text(
-                                text = primaryMeta.joinToString(" · "),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                        item.contentRating?.takeIf { it.isNotBlank() }?.let { ContentRatingBadge(it) }
-                        if (item.rating != null || item.audienceRating != null || item.criticRating != null) {
-                            PrimaryRatingScoreBadge(item)
-                        }
-                    }
-                }
+                com.ambient.tv.ui.common.DetailPrimaryMetaRow(com.ambient.tv.ui.common.detailPrimaryMeta(item), item)
 
                 // Technical information belongs on the detail page rather than being repeated as
                 // permanent top-right icons on every library cover. Keep the most useful flags
@@ -999,19 +957,9 @@ private fun DetailHero(
                     }
                 }
 
-                item.tagline?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic))
-                }
-                item.summary?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.bodyLarge, maxLines = 5)
-                }
-                if (item.genres.isNotEmpty()) {
-                    Text(
-                        item.genres.take(5).joinToString("  ·  "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                com.ambient.tv.ui.common.DetailTagline(item.tagline)
+                com.ambient.tv.ui.common.DetailSummary(item.summary)
+                com.ambient.tv.ui.common.DetailGenres(item.genres)
 
                 availabilityMessage?.let { Text(stringResource(it), style = MaterialTheme.typography.bodyMedium) }
                 DeviceActionRow(
@@ -1070,34 +1018,6 @@ private fun DetailHero(
             }
         }
     }
-}
-
-@Composable
-private fun DetailArtwork(
-    item: MediaItem,
-    model: Any,
-) {
-    val aspectRatio = when (item.type) {
-        // Music artwork is usually square on both Plex and Jellyfin.
-        "album", "artist", "track" -> 1f
-        else -> 2f / 3f
-    }
-    val width = if (LocalHandheldUi.current) 144.dp else when (item.type) {
-        "album", "artist", "track" -> 210.dp
-        else -> 190.dp
-    }
-    val shape = RoundedCornerShape(14.dp)
-
-    ArtworkImage(
-        model = model,
-        title = item.title,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .width(width)
-            .aspectRatio(aspectRatio)
-            .clip(shape)
-            .border(1.dp, Color.White.copy(alpha = 0.14f), shape),
-    )
 }
 
 @Composable
@@ -1863,32 +1783,6 @@ private fun CastSection(
         }
     }
 }
-
-@Composable
-private fun CreditsSection(item: MediaItem) {
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = screenGutter()),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(stringResource(R.string.detail_more_info), style = MaterialTheme.typography.titleMedium)
-        item.directors.takeIf { it.isNotEmpty() }?.let { Text(stringResource(R.string.detail_directors, it.joinToString(", ")), style = MaterialTheme.typography.bodySmall) }
-        item.writers.takeIf { it.isNotEmpty() }?.let { Text(stringResource(R.string.detail_writers, it.joinToString(", ")), style = MaterialTheme.typography.bodySmall) }
-        item.studio?.let { Text(stringResource(R.string.detail_studio, it), style = MaterialTheme.typography.bodySmall) }
-        item.originallyAvailableAt?.let { Text(stringResource(R.string.detail_release_date, it), style = MaterialTheme.typography.bodySmall) }
-        // With several versions the picker lists each file; a single file is named here instead.
-        singleVersionFileName(item)?.let { name ->
-            Text(
-                stringResource(R.string.detail_file_name, name),
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-            )
-        }
-    }
-}
-
-private fun singleVersionFileName(item: MediaItem): String? =
-    item.mediaVersions.singleOrNull()?.fileName?.takeIf { it.isNotBlank() }
 
 @Composable
 private fun rememberMaxDisplayPixels(): Long {

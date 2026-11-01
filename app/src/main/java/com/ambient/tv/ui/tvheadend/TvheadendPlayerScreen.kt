@@ -373,6 +373,15 @@ fun TvheadendPlayerScreen(
                         },
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
+                    val detailRecording = current.playingRecording ?: current.recordingArtSource
+                    com.ambient.tv.ui.player.PublishPlayerDetail(
+                        androidx.compose.runtime.remember(current.channel, current.nowEvent, current.nextEvent, detailRecording, pendingChannelUi) {
+                            // Never show the previous channel's programme during a new tune.
+                            if (pendingChannelUi) null else com.ambient.tv.ui.player.playerDetailForLiveTv(
+                                current.channel, current.nowEvent, current.nextEvent, detailRecording,
+                            )
+                        },
+                    )
                     com.ambient.tv.ui.player.PersistentPlayerOverlays(
                         hideSourceInfo = pendingChannelUi,
                         expectedSourceIdentity = viewModel.expectedChannelUuid.takeIf { current.channel != null },
@@ -1388,58 +1397,6 @@ private fun TvhTrackPanel(
 @Composable
 private fun TvhTrackRow(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     RightPanelChoice(text = label, selected = selected, onClick = onClick, modifier = modifier)
-}
-
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-@Composable
-private fun TvhPlaybackInfoPanel(
-    source: com.ambient.tv.tvheadend.domain.TvhPlaybackSource,
-    videoFormat: Format?,
-    audioFormat: Format?,
-    onBack: () -> Unit,
-) {
-    val videoDecoder = remember(videoFormat) { RuntimeCodecSupport.assess(videoFormat) }
-    val audioDecoder = remember(audioFormat) { RuntimeCodecSupport.assess(audioFormat) }
-    RightSidePanel(
-        title = stringResource(R.string.player_playback_info),
-        onBack = onBack,
-        onOutsideTap = com.ambient.tv.ui.common.LocalPlayerPanelNavigation.current?.let { nav -> { nav.close() } } ?: onBack,
-        requestHeaderFocus = true,
-    ) {
-        infoLine(stringResource(R.string.player_info_backend), "Media3 / ExoPlayer → MediaCodec → SurfaceView")
-        infoLine(stringResource(R.string.player_info_tvh_profile), source.streamProfile ?: stringResource(R.string.player_info_default))
-        infoLine(stringResource(R.string.player_video_label), formatDescription(videoFormat))
-        infoLine(stringResource(R.string.player_info_video_decoder), decoderDescription(videoDecoder))
-        infoLine(stringResource(R.string.player_audio), formatDescription(audioFormat))
-        infoLine(stringResource(R.string.player_info_audio_decoder), decoderDescription(audioDecoder))
-        videoFormat?.frameRate?.takeIf { it > 0f }?.let { infoLine(stringResource(R.string.player_info_frame_rate), stringResource(R.string.player_info_frame_rate_value, it)) }
-    }
-}
-
-@Composable
-private fun infoLine(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Text(value, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-    }
-}
-
-@Composable
-private fun decoderDescription(value: com.ambient.tv.ui.player.RuntimeDecoderAssessment): String = when {
-    !value.supported -> stringResource(R.string.player_info_no_decoder)
-    value.hardwareAccelerated -> stringResource(R.string.player_info_hardware_decoder, value.decoderName ?: "MediaCodec")
-    else -> stringResource(R.string.player_info_software_decoder, value.decoderName ?: "MediaCodec")
-}
-
-@Composable
-private fun formatDescription(format: Format?): String {
-    if (format == null) return stringResource(R.string.player_info_preparing)
-    return buildList {
-        format.sampleMimeType?.let(::add)
-        if (format.width > 0 && format.height > 0) add("${format.width}×${format.height}")
-        if (format.channelCount > 0) add(stringResource(R.string.player_info_channels, format.channelCount))
-        if (format.sampleRate > 0) add("${format.sampleRate} Hz")
-    }.joinToString(" · ").ifBlank { stringResource(R.string.player_info_unknown) }
 }
 
 private fun selectedFormat(tracks: Tracks, type: Int): Format? {

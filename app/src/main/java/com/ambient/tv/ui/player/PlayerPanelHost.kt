@@ -207,7 +207,11 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .graphicsLayer { alpha = model.scrimAlpha * motion.scrimProgress.value }
+                        .graphicsLayer {
+                            // The details dialog is read over the picture: dim it a little more.
+                            val dim = if (activeLevel == UnifiedPlayerPanel.DETAILS) maxOf(model.scrimAlpha, 0.5f) else model.scrimAlpha
+                            alpha = dim * motion.scrimProgress.value
+                        }
                         .background(Color.Black),
                 )
                 // Draw exactly one complete panel chrome at a time. AnimatedContent previously
@@ -216,6 +220,16 @@ private fun PlayerPanelContent(model: PlayerPanelModel, navigation: com.ambient.
                 // the old focus group competed with the newly opened parent after Back.
                 // PlayerPanelVisibility still owns the whole drawer's slide-in/slide-out.
                 CompositionLocalProvider(LocalPlayerPanelInteractive provides outerInteractive) {
+                    if (activeLevel == UnifiedPlayerPanel.DETAILS) {
+                        // A dialog over the picture instead of a side panel.
+                        Box(Modifier.fillMaxSize().playerPanelInteractionGuard(outerInteractive)) {
+                            PlayerDetailDialog(
+                                info = LocalPlayerChromeState.current?.detail?.value,
+                                onClose = { navigation?.let(::closePlayerDetails) },
+                            )
+                        }
+                        return@CompositionLocalProvider
+                    }
                     Box(Modifier.fillMaxSize().playerPanelInteractionGuard(outerInteractive)) {
                         val drawPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
                             UnifiedBackendPlayerPanel(
@@ -400,6 +414,7 @@ private fun PlayerOsdContent(model: PlayerOsdModel, visible: Boolean, panel: Uni
                         PlayerIconButton(Icons.Filled.Movie, stringResource(R.string.player_video), { model.onPanelChange(UnifiedPlayerPanel.VIDEO) }, selected = panel.isVideo, osd = com.ambient.tv.ui.player.OsdButton.VIDEO)
                     }
                     PlayerSleepTimerButton({ model.onPanelChange(UnifiedPlayerPanel.SLEEP) }, selected = panel == UnifiedPlayerPanel.SLEEP)
+                    PlayerDetailsButton()
                     com.ambient.tv.ui.common.PlayerDiagnosticsButtons(hasVideo = model.hasVideo)
                     com.ambient.tv.ui.common.PlayerToolButtons()
                     PlayerIconButton(Icons.Filled.Settings, stringResource(R.string.player_playback_settings), { model.onPanelChange(UnifiedPlayerPanel.SETTINGS) }, selected = panel != UnifiedPlayerPanel.NONE)

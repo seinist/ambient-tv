@@ -142,23 +142,26 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
                 if (rowId in source.forkedRows) source.playerScope else source.scope,
                 rowId,
             )
-            synchronized(this) {
-                current?.takeIf { it === source && it.token == token }?.let { session ->
-                    if (page == null || !page.hasMore) session.exhaustedRows.add(rowId)
-                    if (page != null) {
-                        val known = session.items.mapTo(HashSet()) { it.videoId }
-                        val visible = youtubePlayableContinuationItems(
-                            page.items, session.sort, session.filter, session.descending,
-                        )
-                        session.items += visible.filter { known.add(it.videoId) }
-                        // Put raw continuation items back in their actual source row on return.
-                        if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items)
-                    }
-                }
-            }
+            appendContinuation(token, rowId, page)
             nextLoaded(token, videoId)?.let { return@withLock it }
         }
         nextLoaded(token, videoId)
+    }
+
+    /**
+     * Adds a lazily loaded page to the queue exactly as the browse page shows it (same sort
+     * and filter). Played items of such a page are valid return targets like the first page.
+     */
+    @Synchronized
+    internal fun appendContinuation(token: Long, rowId: String, page: com.ambient.tv.youtube.YouTubeRowPage?) {
+        val session = current?.takeIf { it.token == token } ?: return
+        if (page == null || !page.hasMore) session.exhaustedRows.add(rowId)
+        if (page == null) return
+        val known = session.items.mapTo(HashSet()) { it.videoId }
+        val visible = youtubePlayableContinuationItems(page.items, session.sort, session.filter, session.descending)
+        session.items += visible.filter { known.add(it.videoId) }
+        // Put raw continuation items back in their actual source row on return.
+        if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items)
     }
 
     private companion object {

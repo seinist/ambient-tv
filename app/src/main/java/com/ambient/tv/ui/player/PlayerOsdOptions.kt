@@ -42,17 +42,17 @@ private val osdHiddenState = mutableStateOf<Set<String>?>(null)
 /** Player whose action bar is on screen; each keeps its own hidden OSD buttons. */
 enum class OsdPlayer(val buttons: List<OsdButton>) {
     MEDIA(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.AUDIO,
-        OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.STATS, OsdButton.FPS) + toolButtons),
+        OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS) + toolButtons),
     YOUTUBE(listOf(OsdButton.SEEK, OsdButton.STOP, OsdButton.NEXT, OsdButton.EXIT, OsdButton.CHAPTERS, OsdButton.CHANNEL,
-        OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP, OsdButton.STATS,
+        OsdButton.SUBSCRIBE, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.STATS,
         OsdButton.FPS) + toolButtons),
     LIVE_TV(listOf(OsdButton.ZAP, OsdButton.SEEK, OsdButton.STOP, OsdButton.RECORD, OsdButton.GO_LIVE, OsdButton.EXIT,
         OsdButton.CHAPTERS, OsdButton.AUDIO, OsdButton.SUBTITLES, OsdButton.VIDEO, OsdButton.VISUALIZER, OsdButton.SLEEP,
-        OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV) + toolButtons),
+        OsdButton.DETAILS, OsdButton.STATS, OsdButton.FPS, OsdButton.TELETEXT, OsdButton.TELETEXT_SUBTITLES, OsdButton.HBBTV) + toolButtons),
     SPOTIFY(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.SLEEP, OsdButton.SHUFFLE,
         OsdButton.REPEAT, OsdButton.VOLUME, OsdButton.VISUALIZER)),
     RADIO(listOf(OsdButton.NEXT, OsdButton.STOP, OsdButton.EXIT, OsdButton.FAVORITE, OsdButton.AUDIO,
-        OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.TOOLS)),
+        OsdButton.VISUALIZER, OsdButton.SLEEP, OsdButton.DETAILS, OsdButton.TOOLS)),
 }
 
 /**
@@ -66,6 +66,8 @@ enum class OsdButton(@StringRes val label: Int, val optIn: Boolean = false) {
     SUBSCRIBE(R.string.youtube_subscribe), FAVORITE(R.string.radio_favorite), AUDIO(R.string.player_audio), SUBTITLES(R.string.player_subtitles),
     VIDEO(R.string.player_video), VISUALIZER(R.string.player_visualizer), SLEEP(R.string.player_sleep_timer),
     SHUFFLE(R.string.spotify_shuffle), REPEAT(R.string.osd_button_repeat), VOLUME(R.string.osd_button_volume),
+    // Details dialog over the picture: off until switched on.
+    DETAILS(R.string.player_details, optIn = true),
     STATS(R.string.player_stats_for_nerds, optIn = true), FPS(R.string.player_fps_overlay, optIn = true),
     // Werkzeuge: off until switched on, like the diagnostics toggles.
     SCREENSHOT(R.string.player_tools_screenshot, optIn = true), BOOKMARK(R.string.player_tools_bookmarks, optIn = true),

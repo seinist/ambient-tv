@@ -1,6 +1,7 @@
 package com.ambient.tv.ui.common
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.automirrored.filled.ViewList
@@ -73,6 +74,7 @@ internal val OsdButton.icon: ImageVector get() = when (this) {
     OsdButton.SLEEP -> Icons.Filled.Bedtime
     OsdButton.SHUFFLE -> Icons.Filled.Shuffle
     OsdButton.REPEAT -> Icons.Filled.Repeat
+    OsdButton.DETAILS -> Icons.Outlined.Info
     OsdButton.STATS -> Icons.Filled.Info
     OsdButton.FPS -> Icons.Filled.Speed
     OsdButton.SCREENSHOT -> Icons.Filled.PhotoCamera

@@ -402,6 +402,23 @@ private fun RadioPlayerContent(
             // Never unmount the OSD during tuning: keep focus, stow state and the current
             // visibility animation. The same-frame model prevents an old station identity
             // from creating a blank OSD frame before PublishPlayerOsd's SideEffect runs.
+            val locale = LocalContext.current.resources.configuration.locales[0]
+            com.ambient.tv.ui.player.PublishPlayerDetail(remember(osdStation, locale) {
+                osdStation?.takeIf { !it.switching }?.let { shown ->
+                    val current = shown.station
+                    com.ambient.tv.ui.player.playerDetailForRadio(
+                        stationName = shown.stationName,
+                        nowPlaying = shown.nowPlaying,
+                        artworkUrl = shown.artworkUrl,
+                        artworkFallbackUrls = shown.artworkFallbackUrls,
+                        artworkHeaders = shown.artworkHeaders,
+                        stationInfo = current?.let { radioStationSubtitle(it, locale) },
+                        tags = current?.tags.orEmpty(),
+                        codec = current?.codec,
+                        bitrateKbps = current?.bitrateKbps,
+                    )
+                }
+            })
             PersistentPlayerOverlays(
                 hideSourceInfo = osdStation == null,
                 expectedSourceIdentity = osdStation?.stationId,
@@ -591,6 +608,7 @@ internal data class RadioOsdModel(
                             osd = com.ambient.tv.ui.player.OsdButton.VISUALIZER,
                         )
                         PlayerSleepTimerButton(onOpenSleep, selected = panel == UnifiedPlayerPanel.SLEEP)
+                        com.ambient.tv.ui.player.PlayerDetailsButton()
                         PlayerIconButton(
                             Icons.Filled.Settings,
                             stringResource(R.string.player_playback_settings),
