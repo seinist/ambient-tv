@@ -320,7 +320,8 @@ object BackgroundPlaybackSession {
 
     /** Activity.onStart: a session whose service start was refused in the background gets it now. */
     fun retryBlockedPlaybackService(context: Context) {
-        if (!playbackServiceBlocked || !snapshot.value.active) return
+        // A playback that stopped in the meantime still needs the service to save its position.
+        if (!playbackServiceBlocked || (!snapshot.value.active && completed.isEmpty())) return
         startPlaybackService(context.applicationContext)
     }
 
