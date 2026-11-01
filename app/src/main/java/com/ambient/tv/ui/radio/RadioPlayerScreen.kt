@@ -30,6 +30,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -399,6 +400,7 @@ private fun RadioPlayerContent(
             // visibility animation. The same-frame model prevents an old station identity
             // from creating a blank OSD frame before PublishPlayerOsd's SideEffect runs.
             PersistentPlayerOverlays(
+                hideSourceInfo = osdStation == null,
                 expectedSourceIdentity = osdStation?.stationId,
                 immediateOsdModel = radioOsdModel,
             )
@@ -477,18 +479,22 @@ internal data class RadioOsdModel(
                     .padding(top = 34.dp, end = 48.dp),
             )
             ReferencePlayerBottomContent(onTogglePlayback = onToggle) {
-                ReferencePlayerHeader(
-                    // Radio matches TVHeadend: station and live status are context,
-                    // the current track is the headline and the artist is its subtitle.
-                    modifier = Modifier.heightIn(min = deviceDp(104.dp, 56.dp)),
-                    title = header.title,
-                    contextLine = header.contextLine + "  •  " + stringResource(R.string.tvh_live).uppercase(),
-                    subtitle = header.subtitle,
-                    artworkUrl = artworkUrl,
-                    artworkFallbackUrls = artworkFallbackUrls,
-                    artworkHeaders = artworkHeaders,
-                    artworkAspectRatio = 1f,
-                )
+                // Replace only the header artwork/composition on station identity changes.
+                // The OSD host, focus and button animations remain the same instance.
+                key(stationId) {
+                    ReferencePlayerHeader(
+                        // Radio matches TVHeadend: station and live status are context,
+                        // the current track is the headline and the artist is its subtitle.
+                        modifier = Modifier.heightIn(min = deviceDp(104.dp, 56.dp)),
+                        title = header.title,
+                        contextLine = header.contextLine + "  •  " + stringResource(R.string.tvh_live).uppercase(),
+                        subtitle = header.subtitle,
+                        artworkUrl = artworkUrl,
+                        artworkFallbackUrls = artworkFallbackUrls,
+                        artworkHeaders = artworkHeaders,
+                        artworkAspectRatio = 1f,
+                    )
+                }
                 // Match Live-TV radio: the timeline is always present under the header.
                 // No EPG/duration for an ordinary internet radio stream means a passive
                 // live indicator, not a fake zero-length, interactive seek control.
