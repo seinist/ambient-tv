@@ -345,16 +345,6 @@ class TelegramRepository @Inject constructor(
         }
     }
 
-    /**
-     * Final position of a playback that stopped outside the player screen (background audio,
-     * the 30 s background stop, notification Stop). A renderer that never reported a position
-     * leaves the earlier entry untouched; a finished item is dropped by the usual rules.
-     */
-    fun rememberStoppedPlayback(mediaKey: String, positionMs: Long, durationMs: Long, ended: Boolean) {
-        if (!monogramStopPositionKnown(positionMs, ended)) return
-        rememberResumePosition(mediaKey, positionMs, durationMs)
-    }
-
     /** Start used by the player session that is (or was last) acquired for a post. */
     private var sessionStart: Pair<String, Long>? = null
 
@@ -602,9 +592,6 @@ class TelegramRepository @Inject constructor(
 /** Positions under 10 s or within the last 15 s are not worth resuming. */
 internal fun monogramResumeWorthKeeping(positionMs: Long, durationMs: Long): Boolean =
     positionMs >= 10_000L && (durationMs <= 0L || positionMs < durationMs - 15_000L)
-
-/** A stop at position 0 without an end usually means the decoder never started; keep the old entry. */
-internal fun monogramStopPositionKnown(positionMs: Long, ended: Boolean): Boolean = ended || positionMs > 0L
 
 /** The search screen stops waiting for Telegram after this long. */
 internal const val TELEGRAM_SEARCH_TIMEOUT_MS = 15_000L

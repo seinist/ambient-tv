@@ -78,8 +78,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
     @Inject lateinit var radioQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     @Inject internal lateinit var carCatalog: CarAudioCatalog
     @Inject lateinit var spotify: SpotifyRepository
-    // Resolved only for a Telegram playback: the repository is never touched on other sources.
-    @Inject lateinit var telegram: javax.inject.Provider<com.ambient.tv.data.telegram.TelegramRepository>
     private var carPlaybackJob: Job? = null
     private val carSpotifySelection = CarSpotifySelection()
     private val carSpotifySelected: Boolean get() = carSpotifySelection.active
@@ -275,9 +273,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun enqueueReport(state: BackgroundPlaybackSession.Snapshot, stopped: Boolean) {
         if (state.replacingSource) return
         if (state.metadata?.isTrailer == true) return
-        if (state.metadata?.liveTvSession == null && state.metadata?.source !in setOf("plex", "jellyfin", "emby", "dlna", "youtube", "files", "telegram")) return
-        // Telegram keeps only an in-memory resume point; it needs the final position, not progress.
-        if (state.metadata?.source == "telegram" && !stopped) return
+        if (state.metadata?.liveTvSession == null && state.metadata?.source !in setOf("plex", "jellyfin", "emby", "dlna", "youtube", "files")) return
         reportQueue.put(state.generation, state, stopped)
         reports.trySend(Unit)
     }
@@ -349,11 +345,6 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     ended = if (metadata.hasVideo) completed else state.status.ended && state.status.error == null,
                     streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
                 "youtube" -> youtube.updateHistory(metadata.mediaId, position)
-                // Also covers playback that continued in the background after leaving the player
-                // and the background stop; nothing here resumes playback.
-                "telegram" -> if (stopped) telegram.get().rememberStoppedPlayback(metadata.mediaId, position,
-                    state.status.durationMs.takeIf { it > 0 } ?: metadata.durationMs,
-                    ended = state.status.ended && state.status.error == null)
             }
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
