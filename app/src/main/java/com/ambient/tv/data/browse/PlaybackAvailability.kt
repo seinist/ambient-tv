@@ -66,7 +66,8 @@ class PlaybackAvailability @Inject constructor(
     suspend fun route(route: String): Boolean = when {
         route.startsWith("player/") -> media(Uri.decode(route.substringAfter("player/").substringBefore('?')))
         route.startsWith("tvh_player/") -> network() && liveSource(route)
-        route.startsWith("youtube_player/") || route.startsWith("spotify_player") -> network()
+        route.startsWith("youtube_player/") || route.startsWith("telegram_player/") ||
+            route.startsWith("spotify_player") -> network()
         else -> true
     }
 

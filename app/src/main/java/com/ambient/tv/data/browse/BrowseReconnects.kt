@@ -131,7 +131,7 @@ class BrowseReconnects @Inject constructor(
                 if (revision == seen) return@collect
                 seen = revision
                 if (connectivity.activeNetwork != null) {
-                    request(setOf("youtube", "spotify", "trailers", "files", "dlna", "iptv"))
+                    request(setOf("youtube", "telegram", "spotify", "trailers", "files", "dlna", "iptv"))
                 }
             }
         }
