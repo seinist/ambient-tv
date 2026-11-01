@@ -205,6 +205,7 @@ class Media3PlaybackHandle(
         val gateRelease = if (joinsReleaseGate) com.ambient.tv.ui.player.backend.nativeAudioReleases.beginRelease() else null
         detachVideoOutput()
         released = true
+        Media3GaplessQueue.released(player)
         Media3ResumePrimer.release(player)
         player.removeListener(conversionListener)
         hdrOutput.release()
