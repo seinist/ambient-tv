@@ -53,6 +53,17 @@ class LiveTvArtworkTest {
         assertNull(liveTvChannelRowArt(null, null))
     }
 
+    @Test fun guideUsesSmallBackdropButDoesNotResizeLogosOrOriginals() {
+        val backdrop = LiveTvArt("https://image.tmdb.org/t/p/w780/wide.jpg", external = true)
+        val thumb = backdrop.asGuideThumbnail()
+        assertEquals("https://image.tmdb.org/t/p/w300/wide.jpg", thumb.url)
+        assertTrue(thumb.external)
+        assertEquals(backdrop.url, backdrop.url)
+        val logo = LiveTvArt("https://tv.example/logo.png", logo = true)
+        assertSame(logo, logo.asGuideThumbnail())
+        assertSame(backdrop.copy(external = false), backdrop.copy(external = false).asGuideThumbnail())
+    }
+
     @Test fun artCacheKeepsMissesBrieflyAndHitsAcrossRestarts() {
         val now = 10_000_000_000L
         val positive = LiveTvArtworkRepository.encodeEntry(now, "https://image.tmdb.org/t/p/w780/bg.jpg")
