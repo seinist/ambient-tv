@@ -2280,7 +2280,7 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.telegram.TelegramScreen(
                                 sectionKey = "recent",
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
-                                onOpenSettings = { openSystemSettings("telegram") },
+                                onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
                                 onOpenPost = { chatId, messageId ->
                                     navController.navigate(Destinations.telegramDetail(chatId, messageId))
@@ -2294,7 +2294,7 @@ private fun AmbientTvApp(
                             com.ambient.tv.ui.telegram.TelegramScreen(
                                 sectionKey = entry.arguments?.getString("sectionKey") ?: "recent",
                                 onSelectSection = { key -> navigateSidebar(Destinations.telegramSection(key)) },
-                                onOpenSettings = { openSystemSettings("telegram") },
+                                onOpenSettings = { openSystemSettings("telegram:account") },
                                 onOpenChannel = { chatId -> navigateToSection(Destinations.telegramSection("channel:$chatId")) },
                                 onOpenPost = { chatId, messageId ->
                                     navController.navigate(Destinations.telegramDetail(chatId, messageId))
@@ -2312,7 +2312,7 @@ private fun AmbientTvApp(
                             messageId = entry.arguments?.getInt("messageId") ?: 0,
                             repository = telegramRepository,
                             onBack = ::navigateBack,
-                            onOpenSettings = { openSystemSettings("telegram") },
+                            onOpenSettings = { openSystemSettings("telegram:account") },
                             onOpenChannel = { id ->
                                 navController.navigate(Destinations.telegramSection("channel:$id"))
                             },
