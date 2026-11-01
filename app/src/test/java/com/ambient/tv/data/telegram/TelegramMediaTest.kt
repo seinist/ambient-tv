@@ -59,4 +59,29 @@ class TelegramMediaTest {
         """.trimIndent()
         assertEquals(listOf("dQw4w9WgXcQ", "9bZkp7q19f0"), telegramYouTubeIds(text))
     }
+    @Test fun youtubeTabExpandsEveryLinkedVideoEvenInAttachedMedia() {
+        val combined = video.copy(
+            summary = "Watch https://youtu.be/dQw4w9WgXcQ and https://youtube.com/shorts/9bZkp7q19f0",
+            linkedYouTubeVideoIds = listOf("E7wJTI-1dvQ"),
+        )
+        val items = combined.youtubePosts()
+        assertEquals(3, items.size)
+        assertEquals(3, items.map { it.mediaKey }.distinct().size)
+        assertTrue(items.all { it.kind == TelegramMediaKind.YOUTUBE })
+        assertTrue(items.all { it.previewUrl?.startsWith("https://i.ytimg.com/vi/") == true })
+        assertEquals(video.chatId to video.messageId, telegramPostIds(items[1].mediaKey))
+        assertEquals(video.chatId to video.messageId, telegramPostIds(video.mediaKey))
+        assertNull(telegramPostIds("telegram-youtube:1:2:invalid"))
+    }
+
+    @Test fun youtubeLinksMustBeFromRealYoutubeHost() {
+        val text = """
+            https://maliciousyoutube.com/watch?v=dQw4w9WgXcQ
+            https://evil-youtube.com/watch?v=dQw4w9WgXcQ
+            https://evil.youtube.com/watch?v=dQw4w9WgXcQ
+            https://youtube.com/watch?v=9bZkp7q19f0
+        """.trimIndent()
+        assertEquals(listOf("9bZkp7q19f0"), telegramYouTubeIds(text))
+    }
+
 }
