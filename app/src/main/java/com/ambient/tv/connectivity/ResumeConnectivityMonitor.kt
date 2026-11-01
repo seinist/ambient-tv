@@ -350,6 +350,7 @@ class ResumeConnectivityMonitor @Inject constructor(
         if (preferences.filesEnabled && preferences.fileSources.any { it.kind != "local" }) add(MediaSystem.FILES)
     }
 
+    @Suppress("DEPRECATION") // A synchronous snapshot of every network. activeNetwork misses Wi-Fi when cellular is the default route.
     private fun isNetworkAvailable(): Boolean {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return true
         // A LAN without validated Internet is still useful for server probes and WOL.

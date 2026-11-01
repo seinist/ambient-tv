@@ -258,7 +258,7 @@ class TelegramPlayerViewModel @Inject constructor(
                     val selected = repository.media(targetChat, targetMessage)
                     val playable = selected != null && selected.playableOnTelegram &&
                         (direction == 0 || selected.kind != TelegramMediaKind.PHOTO)
-                    if (playable && selected != null) {
+                    if (playable) {
                         show(selected, requestToken)
                         return@launch
                     }

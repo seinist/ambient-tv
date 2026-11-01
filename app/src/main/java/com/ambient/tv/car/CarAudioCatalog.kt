@@ -180,7 +180,10 @@ internal class CarAudioCatalog @Inject constructor(
             CarAudioIds.RADIO_COUNTRIES -> slice(radio.countries(limit = 200)
                 .sortedBy { it.name }
                 .map { facet ->
-                    val label = runCatching { Locale("", facet.id).getDisplayCountry(context.resources.configuration.locales[0]) }
+                    val label = runCatching {
+                        Locale.Builder().setRegion(facet.id).build()
+                            .getDisplayCountry(context.resources.configuration.locales[0])
+                    }
                         .getOrDefault(facet.name).takeIf { it.isNotBlank() } ?: facet.name
                     folder(CarAudioIds.radioFacet("country", facet.id), label)
                 })

@@ -168,6 +168,7 @@ class WolManager @Inject constructor(
 
     /** Prefer the actual LAN for IPv4 broadcasts. The default route on a phone may be
      * cellular (or VPN) even while Wi-Fi is connected and the server lives on that LAN. */
+    @Suppress("DEPRECATION") // getAllNetworks is the synchronous snapshot of non-default networks.
     private fun preferredLanNetwork(): Network? {
         val cm = context.getSystemService(ConnectivityManager::class.java) ?: return null
         return cm.allNetworks.mapNotNull { candidate ->

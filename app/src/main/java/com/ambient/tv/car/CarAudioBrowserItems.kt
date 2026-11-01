@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION") // Android Auto still browses through MediaBrowserServiceCompat.
+
 package com.ambient.tv.car
 
 import android.support.v4.media.MediaBrowserCompat

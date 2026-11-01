@@ -248,10 +248,10 @@ open class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onPictureInPictureModeChanged(inPictureInPictureMode: Boolean, newConfig: Configuration) {
-        super.onPictureInPictureModeChanged(inPictureInPictureMode, newConfig)
-        if (inPictureInPictureMode) pipWasOpen = true
-        systemPipVisible = inPictureInPictureMode
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) pipWasOpen = true
+        systemPipVisible = isInPictureInPictureMode
         systemPipEntering = false
     }
 
