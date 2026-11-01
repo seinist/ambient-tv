@@ -659,11 +659,12 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     viewModel::onTelegramEnabledChanged,
                 )
             }
+            // Like Spotify, allow entering API credentials before the system is activated.
+            item(key = "telegram-account") {
+                MonogramAccountSettings(allowSignIn = uiState.telegramEnabled)
+            }
             if (uiState.telegramEnabled) {
                 item { SystemNameField(MediaSystem.TELEGRAM, uiState, viewModel) }
-                item(key = "telegram-account") {
-                    MonogramAccountSettings()
-                }
                 item(key = "telegram-submenu") {
                     SettingsGroup(title = stringResource(R.string.settings_submenu_items),
                         subtitle = stringResource(R.string.settings_submenu_items_hint)) {
