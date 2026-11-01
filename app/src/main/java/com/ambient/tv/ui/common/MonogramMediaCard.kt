@@ -123,7 +123,7 @@ internal fun MonogramMediaCard(
     val meta = remember(item, androidx.compose.ui.platform.LocalConfiguration.current.locales[0]) {
         monogramCardMeta(item,
             dateLabel = { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) },
-            durationLabel = { formatDuration(it) },
+            durationLabel = { formatPlaybackClock(it) },
         )
     }
     val surfaceModifier = if (fillCell) {
