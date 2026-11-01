@@ -140,6 +140,8 @@ internal fun playerOsdIdentityMatches(modelIdentity: String?, expectedIdentity: 
 internal fun PersistentPlayerOverlays(
     hideSourceInfo: Boolean = false,
     expectedSourceIdentity: String? = null,
+    /** Same-frame replacement when a new station is selected before PublishPlayerOsd's SideEffect. */
+    immediateOsdModel: PlayerOsdSpec? = null,
 ) {
     val chrome = LocalPlayerChromeState.current ?: return
     val navigation = chrome.panels
@@ -167,6 +169,8 @@ internal fun PersistentPlayerOverlays(
             // An outgoing engine may keep its old OSD model for one composition frame.
             // Never paint it for the incoming live station while the renderer is replaced.
             val activeModel = chrome.osdModel.value?.takeIf { model ->
+                playerOsdIdentityMatches(model.sourceIdentity, expectedSourceIdentity)
+            } ?: immediateOsdModel?.takeIf { model ->
                 playerOsdIdentityMatches(model.sourceIdentity, expectedSourceIdentity)
             }
             if (!hideSourceInfo) {
