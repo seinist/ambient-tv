@@ -2124,6 +2124,13 @@ private fun AmbientTvApp(
                             },
                             onSetupSpotify = { setupSource("spotify") },
                             onSetupTelegram = { setupSource("telegram") },
+                            onTelegramSignedIn = {
+                                // Like SmartTube: signing in from the setup step enables the system.
+                                if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
+                                appPreferences.telegramEnabled = true
+                                appPreferences.initialSetupCompleted = true
+                                navController.navigate(Destinations.setupComplete(Destinations.TELEGRAM))
+                            },
                             onUseRadio = {
                                 if (!appPreferences.initialSetupCompleted) appPreferences.youtubeEnabled = false
                                 appPreferences.radioEnabled = true
@@ -2975,6 +2982,8 @@ private fun AmbientTvApp(
                 playback = onPlayerScreen,
                 // Settings already has an in-place Wake/Cancel toggle. Do not steal its D-pad focus.
                 autoFocusWake = currentRoute != Destinations.SETTINGS && currentRoute != Destinations.SETUP_SETTINGS,
+                // The page's content group restores its last focused control.
+                onWakeFocusReleased = { requestContentFocus() },
             )
             com.ambient.tv.companion.CompanionDialogs(companionVm)
             if (!handheld) com.ambient.tv.companion.CompanionRemoteInput.Overlay(activity?.window)
