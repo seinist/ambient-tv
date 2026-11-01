@@ -260,6 +260,11 @@ class TelegramRepository @Inject constructor(
     /** A channel exit revokes local content immediately, before disk cleanup completes. */
     private val blockedChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
 
+    /** Reject results of requests that finished after logout, account switch or channel exit. */
+    private fun sameAccount(source: TelegramClientPort, identity: String?, generation: Long): Boolean =
+        client === source && source.cacheIdentity == identity &&
+            streamEpoch.get() == generation
+
     private val mutableAuthorized = MutableStateFlow(false)
     val authorized: StateFlow<Boolean> = mutableAuthorized.asStateFlow()
     val available: Boolean get() = client != null
@@ -333,19 +338,29 @@ class TelegramRepository @Inject constructor(
 
     /** Cache is only read after native account authorization confirms the same identity. */
     suspend fun refreshCatalog() { client?.refreshCatalog() }
-    suspend fun cachedChannels(): List<TelegramChannel> =
-        client?.cacheIdentity?.let { diskCache.channels(it) }.orEmpty()
-            .filterNot { it.chatId in blockedChannels }
+    suspend fun cachedChannels(): List<TelegramChannel> {
+        val source = client ?: return emptyList()
+        val generation = streamEpoch.get()
+        val identity = source.cacheIdentity ?: return emptyList()
+        val cached = diskCache.channels(identity)
+        return if (sameAccount(source, identity, generation))
+            cached.filterNot { it.chatId in blockedChannels } else emptyList()
+    }
 
     suspend fun channel(chatId: Long): TelegramChannel? {
         val account = client ?: return null
-        val cached = account.cacheIdentity?.let { diskCache.channels(it) }
+        if (chatId in blockedChannels) return null
+        val generation = streamEpoch.get()
+        val identity = account.cacheIdentity
+        val cached = identity?.let { diskCache.channels(it) }
             ?.firstOrNull { it.chatId == chatId }
-        return try {
+        val found = try {
             account.channel(chatId) ?: cached
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) { cached }
+        return found.takeIf { sameAccount(account, identity, generation) &&
+            chatId !in blockedChannels }
     }
 
     suspend fun joinChannel(chatId: Long): Boolean {
@@ -372,14 +387,22 @@ class TelegramRepository @Inject constructor(
         }
         return left
     }
-    suspend fun cachedBrowse(section: String): List<TelegramMedia> =
-        client?.cacheIdentity?.let { diskCache.media(it, section) }.orEmpty()
-            .filterNot { it.chatId in blockedChannels }
+    suspend fun cachedBrowse(section: String): List<TelegramMedia> {
+        val source = client ?: return emptyList()
+        val generation = streamEpoch.get()
+        val identity = source.cacheIdentity ?: return emptyList()
+        val cached = diskCache.media(identity, section)
+        return if (sameAccount(source, identity, generation))
+            cached.filterNot { it.chatId in blockedChannels } else emptyList()
+    }
 
     suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage {
         val selected = client ?: return TelegramChannelPage(emptyList())
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
         val page = selected.channels(cursor, limit)
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
+        if (!sameAccount(selected, identity, generation)) return TelegramChannelPage(emptyList())
         selected.cacheIdentity?.let { id ->
             if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null)
         }
@@ -387,8 +410,11 @@ class TelegramRepository @Inject constructor(
     }
     suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage {
         val selected = client ?: return TelegramMediaPage(emptyList())
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
         val page = selected.browse(section, cursor, limit)
             .let { result -> result.copy(items = result.items.filterNot { it.chatId in blockedChannels }) }
+        if (!sameAccount(selected, identity, generation)) return TelegramMediaPage(emptyList())
         selected.cacheIdentity?.let { id ->
             if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null)
         }
@@ -410,24 +436,44 @@ class TelegramRepository @Inject constructor(
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia? {
         val selected = client ?: return null
         if (chatId in blockedChannels) return null
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
         val live = try {
             selected.media(chatId, messageId)
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (_: Exception) { null }
+        if (!sameAccount(selected, identity, generation) || chatId in blockedChannels) return null
         if (live != null) return live
-        val identity = selected.cacheIdentity ?: return null
+        if (identity == null) return null
         val sections = listOf("recent", "videos", "youtube", "audio", "photos", "channel:$chatId")
         for (section in sections) {
             val cached = diskCache.media(identity, section)
                 .firstOrNull { it.chatId == chatId && it.messageId == messageId }
             if (cached != null) return cached.takeIf {
-                client === selected && chatId !in blockedChannels
+                sameAccount(selected, identity, generation) && chatId !in blockedChannels
             }
         }
         return null
     }
-    suspend fun photoFile(chatId: Long, messageId: Int): String? = client?.photoFile(chatId, messageId)
-    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
-        checkNotNull(client) { "Telegram account is not authorized" }.mediaPart(chatId, messageId, offset)
+    suspend fun photoFile(chatId: Long, messageId: Int): String? {
+        val selected = client ?: return null
+        check(chatId !in blockedChannels) { "Channel was left" }
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val result = selected.photoFile(chatId, messageId)
+        return result.takeIf { sameAccount(selected, identity, generation) &&
+            chatId !in blockedChannels }
+    }
+    suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
+        val selected = checkNotNull(client) { "Monogram account is not authorized" }
+        check(chatId !in blockedChannels) { "Channel was left" }
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val bytes = selected.mediaPart(chatId, messageId, offset)
+        check(sameAccount(selected, identity, generation) && chatId !in blockedChannels) {
+            "Monogram session or membership changed during media transfer"
+        }
+        return bytes
+    }
 }

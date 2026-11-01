@@ -506,7 +506,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
         val actual = File(native.downloadMessageDisplay(h, chatId, messageId, output.path))
             .canonicalFile
-        require(actual.parentFile == dir && actual.length() > 0L) {
+        require(actual.parentFile == dir && actual.length() > 0L &&
+            chatId !in leftChannels) {
             "Monogram full-resolution photo unavailable"
         }
         actual.toURI().toString()
@@ -538,11 +539,12 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 }
                 val payload = actual.readBytes()
                 // An account switch/log-out invalidates in-flight native file results.
-                check(accountId == currentIdentity && native.isAuthorized(h)) {
+                check(accountId == currentIdentity && native.isAuthorized(h) &&
+                    chatId !in leftChannels) {
                     "Monogram session changed during media download"
                 }
                 synchronized(diskChunkLock) {
-                    if (accountId == currentIdentity) {
+                    if (accountId == currentIdentity && chatId !in leftChannels) {
                         if (!cacheFile.isFile) runCatching {
                             actual.copyTo(cacheFile, overwrite = false)
                         }
