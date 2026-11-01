@@ -114,6 +114,7 @@ class TelegramRepository @Inject constructor(
     @Volatile private var client: TelegramClientPort? = null
     /** Exact launch row (not a guessed global "recent" queue). Switching pages never changes it. */
     private val playbackUrls = LinkedHashMap<String, String>()
+    private val streamEpoch = java.util.concurrent.atomic.AtomicLong()
     private val queues = LinkedHashMap<String, List<String>>()
     private var activeQueue: List<String> = emptyList()
 
@@ -219,12 +220,16 @@ class TelegramRepository @Inject constructor(
 
     /** Install only an already authenticated Monogram client, never a partially signed-in one. */
     fun installAuthorized(port: TelegramClientPort) {
-        if (client !== port) revokePlaybackUrls()
+        if (client !== port) {
+            streamEpoch.incrementAndGet()
+            revokePlaybackUrls()
+        }
         client = port
         mutableAuthorized.value = true
     }
 
     fun disconnect() {
+        streamEpoch.incrementAndGet()
         revokePlaybackUrls()
         client = null
         clearPlaybackQueues()
@@ -240,6 +245,7 @@ class TelegramRepository @Inject constructor(
         require(media.playableOnTelegram && media.kind != TelegramMediaKind.PHOTO &&
             media.fileSize > 0L) { "Monogram media cannot be streamed" }
         val authenticated = checkNotNull(client) { "Monogram account is not authorized" }
+        val generation = streamEpoch.get()
         val key = "${authenticated.cacheIdentity}:${media.mediaKey}"
         synchronized(playbackUrls) { playbackUrls[key] }?.let { return@withContext it }
         val url = mediaFileServer.register(
@@ -251,10 +257,10 @@ class TelegramRepository @Inject constructor(
             partLoader = { offset -> kotlinx.coroutines.runBlocking {
                 mediaPart(media.chatId, media.messageId, offset)
             } },
-            authorized = { client === authenticated },
+            authorized = { client === authenticated && streamEpoch.get() == generation },
         ) }
         // An account may be logged out while the URL is being registered on a worker.
-        if (client !== authenticated) {
+        if (client !== authenticated || streamEpoch.get() != generation) {
             mediaFileServer.revoke(MONOGRAM_LOCAL_MEDIA_SOURCE)
             error("Monogram account changed during stream setup")
         }
