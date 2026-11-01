@@ -377,6 +377,9 @@ internal fun MpvTvheadendPlaybackSurface(
             durationMs = snapshot.durationMs,
             playing = snapshot.isPlaying,
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
+            paused = com.ambient.tv.ui.player.shouldShowPlayerPaused(snapshot.wantsToPlay,
+                changingItem = changingItem,
+                ended = BackgroundPlaybackSession.snapshot.value.status.ended),
             backendLabel = "MPV",
             mediaBadges = listOfNotNull(
                 controller.sourceHdrStandard?.label,
