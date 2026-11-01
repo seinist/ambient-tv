@@ -92,7 +92,10 @@ class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepos
 }
 
 @Composable
-internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltViewModel()) {
+internal fun MonogramAccountSettings(
+    allowSignIn: Boolean = true,
+    viewModel: MonogramAccountViewModel = hiltViewModel(),
+) {
     val login by viewModel.login.collectAsState()
     val revision by viewModel.credentialsRevision.collectAsState()
     val saveError by viewModel.credentialsError.collectAsState()
@@ -104,7 +107,7 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
         MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE) && !login.busy && !saving
     val validId = apiId.toIntOrNull()?.let { it > 0 } == true
     val validHash = apiHash.matches(Regex("[A-Fa-f0-9]{32}"))
-    LaunchedEffect(Unit) { viewModel.initialize() }
+    LaunchedEffect(allowSignIn) { if (allowSignIn) viewModel.initialize() }
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -164,6 +167,9 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
             )
         }
     }
+    // The application ID/hash can be configured before enabling the system, but session
+    // authorization is never started for a disabled source.
+    if (!allowSignIn) return
     SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             when (login.step) {
