@@ -38,6 +38,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import com.ambient.tv.domain.model.MediaItem
 import com.ambient.tv.ui.mobile.LocalHandheldUi
+import com.ambient.tv.ui.sound.LocalUiSoundPlayer
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
