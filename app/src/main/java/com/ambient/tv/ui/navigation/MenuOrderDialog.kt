@@ -120,7 +120,6 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
         if (state.embyEnabled) add(MediaSystem.EMBY)
         if (state.trailersConfigured) add(MediaSystem.TRAILERS)
         if (state.youtubeEnabled) add(MediaSystem.YOUTUBE)
-        if (state.telegramEnabled) add(MediaSystem.TELEGRAM)
         if (state.spotifyEnabled && state.spotifyAuthorized) add(MediaSystem.SPOTIFY)
         if (state.telegramEnabled && state.telegramAuthorized) add(MediaSystem.TELEGRAM)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)

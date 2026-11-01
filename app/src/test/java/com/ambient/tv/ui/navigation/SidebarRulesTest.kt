@@ -53,8 +53,8 @@ class SidebarRulesTest {
     }
 
     @Test fun monogramParticipatesInTheSharedMenuEditorLikeSmartTube() {
-        val state = SidebarUiState(youtubeEnabled = true, telegramEnabled = true, systemOrder = listOf("telegram", "youtube"))
+        val state = SidebarUiState(youtubeEnabled = true, telegramEnabled = true, telegramAuthorized = true, systemOrder = listOf("telegram", "youtube"))
         assertEquals(listOf(MediaSystem.TELEGRAM, MediaSystem.YOUTUBE), menuOrderSystems(state))
-        assertEquals(listOf(MediaSystem.YOUTUBE), menuOrderSystems(state.copy(telegramEnabled = false)))
+        assertEquals(listOf(MediaSystem.YOUTUBE), menuOrderSystems(state.copy(telegramAuthorized = false)))
     }
 }
