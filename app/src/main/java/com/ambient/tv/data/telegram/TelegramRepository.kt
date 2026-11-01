@@ -203,8 +203,10 @@ class TelegramRepository @Inject constructor(
         try {
             val identity = client?.cacheIdentity
             target.logout()
-            identity?.let { diskCache.clearAccount(it) }
+            // Disconnect FIRST: in-flight browse calls must not repopulate cache
+            // after the explicit logout cleanup finishes.
             applyLogin(MonogramLoginState(MonogramLoginStep.READY))
+            identity?.let { diskCache.clearAccount(it) }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             mutableLogin.value = before.copy(busy = false)
             throw cancelled
