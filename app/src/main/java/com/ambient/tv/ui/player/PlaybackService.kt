@@ -108,6 +108,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private val reports = Channel<Unit>(Channel.CONFLATED)
     private val reportQueue = PlaybackReportQueue<BackgroundPlaybackSession.Snapshot>()
     private var reporting = false
+    private var reportInFlight: PlaybackReportQueue.Entry<BackgroundPlaybackSession.Snapshot>? = null
+    private val positions = PlaybackPositionMemory()
     private var lastReportState: Triple<Long, Boolean, Boolean>? = null
     private var focusEpoch = 0L
     private var retiredGeneration: Long? = null
@@ -211,6 +213,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                 while (true) {
                     val queued = reportQueue.take() ?: break
                     reporting = true
+                    reportInFlight = queued
                     try {
                         withTimeout(8_000) { report(queued.value, queued.stopped) }
                     } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
@@ -218,6 +221,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
                         if (queued.stopped) queued.value.metadata?.let { notifyNotSaved(it) }
                     } finally {
                         reporting = false
+                        reportInFlight = null
                     }
                 }
             }
@@ -226,6 +230,12 @@ class PlaybackService : MediaBrowserServiceCompat() {
             while (true) {
                 BackgroundPlaybackSession.tick()
                 val playback = BackgroundPlaybackSession.snapshot.value
+                // Remembered for every source and renderer, also while playing on in the
+                // background after the player screen was left.
+                playback.metadata?.takeIf { !playback.replacingSource }?.let {
+                    positions.record(playback.generation, playback.status.positionMs,
+                        playback.status.positionMs + it.timelineOffsetMs)
+                }
                 val liveMetadata = playback.metadata?.takeIf { it.isLive && it.historyScope != null }
                 val recentChannel = liveMetadata?.historyScope?.let { it to liveMetadata.mediaId }
                 if (playback.playing && playback.status.error == null && recentChannel != null && recentChannel != lastRecentChannel) {
@@ -303,7 +313,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private suspend fun report(state: BackgroundPlaybackSession.Snapshot, stopped: Boolean) {
         val metadata = state.metadata ?: return
         if (metadata.isTrailer) return
-        val position = state.requestedTimelinePositionMs ?: (state.status.positionMs + metadata.timelineOffsetMs)
+        val position = positions.finalPosition(state.generation,
+            state.requestedTimelinePositionMs ?: (state.status.positionMs + metadata.timelineOffsetMs),
+            state.status.positionMs, requestedSeek = state.requestedTimelinePositionMs != null,
+            ended = state.status.ended, stopped = stopped)
         val duration = metadata.durationMs.takeIf { it > 0 }
             ?: state.status.durationMs.takeIf { it > 0 }?.plus(metadata.timelineOffsetMs) ?: 0L
         val completed = metadata.hasVideo && !metadata.isLive && playbackIsComplete(
@@ -863,6 +876,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
         if (retiredGeneration == null || BackgroundPlaybackSession.snapshot.value.generation == retiredGeneration) {
             BackgroundPlaybackSession.stop()
         }
+        sendRemainingReports()
         abandonFocus()
         if (wakeLock.isHeld) wakeLock.release()
         artworkJob?.cancel()
@@ -872,6 +886,25 @@ class PlaybackService : MediaBrowserServiceCompat() {
         scope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
+    }
+
+    /**
+     * The system can end this service while a playback is still open (for example paused audio
+     * in the background) or before the last stop was sent. Those final positions must not die
+     * with [scope]: they are sent from a scope that outlives the service.
+     */
+    private fun sendRemainingReports() {
+        for (finished in BackgroundPlaybackSession.takeCompleted()) enqueueReport(finished, stopped = true)
+        val pending = buildList {
+            reportInFlight?.takeIf { it.stopped }?.let(::add)
+            while (true) add(reportQueue.take() ?: break)
+        }
+        if (pending.isEmpty()) return
+        finalReports.launch {
+            for (queued in pending) {
+                kotlinx.coroutines.withTimeoutOrNull(8_000) { report(queued.value, queued.stopped) }
+            }
+        }
     }
 
     /**
@@ -887,6 +920,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     // MediaBrowserServiceCompat owns onBind: avoid a second ad-hoc browser binder.
 
     companion object {
+        /** Outlives a destroyed service so the final positions can still be sent. */
+        private val finalReports = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private const val CHANNEL = "playback"
         private const val NOTIFICATION = 410
         const val ACTION_OPEN = "com.ambient.tv.OPEN_PLAYBACK"
