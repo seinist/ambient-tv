@@ -5,6 +5,9 @@ import java.lang.reflect.Proxy
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** Reflection keeps RxJava/upstream types out of the app's public content API. */
 internal fun reactiveContent(value: Any): Flow<Any>? {
@@ -45,3 +48,18 @@ internal fun reactiveContent(value: Any): Flow<Any>? {
         }
     }
 }
+
+/**
+ * A hot SmartTube observable may not call onComplete after delivering its rows.
+ * Bound how long a refresh observes it, but keep every emission collected so far.
+ *
+ * Returns false when the observation window expires, not when the caller is cancelled.
+ */
+internal suspend fun <T> Flow<T>.collectBoundedSnapshot(
+    timeoutMs: Long,
+    maxEmissions: Int,
+    onEmission: suspend (T) -> Unit,
+): Boolean = withTimeoutOrNull(timeoutMs) {
+    take(maxEmissions).collect { onEmission(it) }
+    true
+} ?: false
