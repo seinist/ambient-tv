@@ -46,9 +46,11 @@ class SmartTubeEngine @Inject constructor(
     /** Freeze a row's upstream page handle for one player session, even if Home refreshes. */
     fun forkRowContinuation(sourceScope: String, playerScope: String, rowId: String): Boolean {
         val group = rowContinuations[sourceScope]?.get(rowId) ?: return false
-        rowContinuations[playerScope] = java.util.concurrent.ConcurrentHashMap<String, Any>().apply {
-            put(rowId, group)
-        }
+        // Flat grids can combine several source rows. Keep all forked handles in the
+        // same player scope instead of replacing the first one with each new fork.
+        rowContinuations.computeIfAbsent(playerScope) {
+            java.util.concurrent.ConcurrentHashMap<String, Any>()
+        }[rowId] = group
         return true
     }
 
