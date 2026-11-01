@@ -70,7 +70,7 @@ class RadioPlaybackQueueTest {
         assertNull(queue.consumeReturn(scope))
     }
 
-    @Test fun appendedPageUsesSameAlphabeticalOrderAsBrowseAndPreservesReverseFlag() {
+    @Test fun appendedPagePreservesServerCursorOrderAndReverseFlag() {
         val queue = RadioPlaybackQueue()
         val scope = RadioFocusScope(RadioSection.COUNTRIES, "DE", "")
         val source = RadioBrowseQueueSource(scope, countryCode = "DE",
@@ -80,10 +80,10 @@ class RadioPlaybackQueueTest {
             items = listOf(station("a"), station("c")), offset = 48, limit = 48, hasMore = false,
         )
         assertTrue(queue.appendPage(source, page))
-        assertEquals(listOf("z", "c", "b", "a"), queue.snapshot().stations.map { it.id })
+        assertEquals(listOf("z", "b", "a", "c"), queue.snapshot().stations.map { it.id })
         assertEquals(true, queue.snapshot().source?.sortDescending)
-        queue.select("c")
-        assertEquals("b", queue.next()?.id)
+        queue.select("b")
+        assertEquals("a", queue.next()?.id)
     }
 
     @Test fun coldStartClearsOnlyReturnFocusAndPreservesThePlayingQueue() {
