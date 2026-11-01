@@ -15,12 +15,25 @@ data class SpotifyAccountBackup(
     val scopes: String = "",
 )
 
+/** Portable *application* credentials, never a Telegram user session or auth token.
+ * Serialized only inside passphrase-protected credential exports. */
+@Serializable
+data class MonogramApiBackup(
+    val apiId: Int,
+    val apiHash: String,
+)
+
 internal fun validateAccountBackup(backup: SettingsBackup) {
     backup.smartTubeAccounts?.let { accounts ->
         require(accounts.size <= 50 && accounts.distinctBy { it.id }.size == accounts.size)
         accounts.forEach {
             require(it.id.isNotBlank() && it.id.length <= 256 && it.name.length <= 1024)
             require(it.credential == null || it.credential.isNotBlank() && it.credential.length <= 32 * 1024)
+        }
+    }
+    backup.monogramApiCredentials?.let { api ->
+        require(api.apiId > 0 && api.apiHash.matches(Regex("[a-fA-F0-9]{32}"))) {
+            "Invalid Monogram API application credentials in backup"
         }
     }
     backup.spotifyAccount?.let {
