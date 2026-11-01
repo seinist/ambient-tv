@@ -107,7 +107,9 @@ class RadioZapCursorTest {
         assertTrue(queue.appendPage(source, RadioSearchPage(
             listOf(station("a"), station("c"), station("e")), 48, 48, hasMore = false,
         )))
-        // The base is tracked by UUID, not an index that becomes stale when pages reorder.
+        // The selected station is tracked by UUID, not an index that shifts on re-sort.
+        assertEquals("d", cursor.target(queue.snapshot())?.id)
+        assertTrue(cursor.move(queue.snapshot(), -1))
         assertEquals("c", cursor.target(queue.snapshot())?.id)
         assertEquals("b", queue.current()?.id)
     }
