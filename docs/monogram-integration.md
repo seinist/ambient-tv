@@ -25,7 +25,7 @@ media fetching remain intact; broader mono-rs functionality cannot all be
 safely removed without independent, reviewed upstream feature work. The
 upstream Rust release already uses `opt-level="z"`, full LTO, stripping and
 `panic="abort"`. R8 also shrinks Kotlin/Java code in release APKs.
-The saved native bytes from this trim must be proven by a passing four-ABI
+The saved native bytes from this trim must be confirmed by a passing four-ABI
 CI rebuild and compared with the previously recorded raw ELF figures.
 
 The adapter lives under `app/src/monogram/java` and is included only when
@@ -52,9 +52,24 @@ QR/phone/2FA login remains disabled until both fields are valid.
 Application credentials can be edited only while signed out and with no
 authentication in progress. Saving an update destroys the old unsigned native
 client, discards stale local session files and starts a new application context.
-User session credentials are kept separately under `noBackupFilesDir`, with
-Monogram's Android Keystore-backed wrapping. Phone codes, QR tokens and
-2FA passwords are not persisted by Ambient TV.
+User session credentials are kept separately under `noBackupFilesDir`
+(app-private, excluded from Android backups). Ambient TV adds no extra
+encryption layer to this session file; its protection is the Android app
+sandbox. Phone codes, QR tokens and 2FA passwords are not persisted by
+Ambient TV.
+
+## Local data and sign-out
+
+- Thumbnails, opened photos and streamed media chunks are cached **unencrypted**
+  in the app-private `cacheDir/monogram` (sandboxed, never backed up, size-bounded,
+  may be cleared by Android). In-flight `part-*.bin` downloads are never trimmed.
+- Resume positions for reopening a post are kept **in memory only** and dropped on
+  sign-out, account change and leaving a channel.
+- **Sign out** first asks Telegram to end the session. Afterwards, and also when
+  Telegram cannot confirm the logout (for example offline), this device deletes the
+  native session file, the account id and the complete Monogram media cache. In the
+  offline case the session may still be listed under Telegram › Settings › Devices
+  until it is ended there; the app says so.
 
 **Migration:** Builds that previously relied on `telegram.properties` or
 `-PMONOGRAM_API_ID` now require entering the credentials in Monogram Settings.
@@ -77,9 +92,10 @@ are identical.
 
 ## Size budget and release APK measurement
 
-The optional native CI workflow records the **raw MTProto ELF** and compressed
-AAR size separately for each ABI. It enforces an early **12 MB raw ELF budget**.
-This does **not** prove the final APK fits: Android can store native libraries
+An optional native CI workflow (recording the **raw MTProto ELF** and compressed
+AAR size per ABI with an early **12 MB raw ELF budget**) is not part of this
+change; it is proposed separately for workflow approval. A raw ELF budget alone
+does **not** show that the final APK fits: Android can store native libraries
 uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
 
 To measure the **actual extra bytes per ABI**, use the full normal release build
@@ -180,6 +196,9 @@ adopted only on a device without an existing application identity.
 ## Distribution / legal considerations
 
 Monogram's native module and its original logo artwork are GPL-3.0-only.
+The logo artwork lives in `app/src/monogram/res` and is packaged only in
+`MONOGRAM_NATIVE` builds; normal builds use a separate CC0 icon from
+`app/src/plain/res` and show no Monogram/Telegram UI at all.
 An optional compile-time flag, separate source directory or independent
 dependency build **does not** waive the GPL. If distributing a Monogram-enabled
 Ambient TV binary, review GPL-3.0-compatible distribution of the combined
