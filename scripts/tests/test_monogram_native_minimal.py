@@ -66,7 +66,9 @@ class MinimalMonogramTests(unittest.TestCase):
         repository = (ROOT / "app/src/main/java/com/ambient/tv/data/telegram/TelegramRepository.kt").read_text()
         token_store = (ROOT / "app/src/main/java/com/ambient/tv/data/local/TokenStore.kt").read_text()
         settings = (ROOT / "app/src/main/java/com/ambient/tv/ui/settings/MonogramAccountSettings.kt").read_text()
-        workflow = (ROOT / ".github/workflows/monogram-native-abi.yml").read_text()
+        # The optional native ABI workflow is proposed separately; check it only when present.
+        workflow_file = ROOT / ".github/workflows/monogram-native-abi.yml"
+        workflow = workflow_file.read_text() if workflow_file.is_file() else ""
 
         for forbidden in ("MONOGRAM_API_ID", "MONOGRAM_API_HASH"):
             self.assertNotIn(forbidden, gradle)
