@@ -2242,4 +2242,12 @@
     <string name="monogram_join_channel">Join channel</string>
     <string name="monogram_joined_channel">Joined</string>
     <string name="monogram_join_failed">Unable to join this channel</string>
+    <string name="monogram_api_settings">Telegram API credentials</string>
+    <string name="monogram_api_id">API ID</string>
+    <string name="monogram_api_hash">API hash</string>
+    <string name="monogram_api_save">Save API credentials</string>
+    <string name="monogram_api_ready">API credentials configured</string>
+    <string name="monogram_api_required">Enter your own API ID and hash to sign in.</string>
+    <string name="monogram_api_sign_out_first">Sign out of Monogram before editing the API credentials.</string>
+    <string name="monogram_api_setup_hint">Get an API ID and hash at my.telegram.org/apps. They are saved encrypted on this device and are not compiled into the app.</string>
 </resources>
