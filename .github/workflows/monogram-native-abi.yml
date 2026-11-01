@@ -8,6 +8,8 @@ on:
       - "app/src/monogram/**"
       - "scripts/build_monogram_native.sh"
       - "scripts/merge_monogram_aars.py"
+      - "scripts/monogram_size_audit.py"
+      - "scripts/measure_monogram_apk.sh"
       - "app/build.gradle.kts"
       - "gradle/external-versions.properties"
       - ".github/workflows/monogram-native-abi.yml"
@@ -78,6 +80,26 @@ jobs:
               assert all(p.startswith(f'jni/{abi}/') for p in libs), libs
               print(abi, 'native library', len(jar.read(f'jni/{abi}/libmonogram_mtproto.so')), 'bytes')
           PY
+      # This is only an *early* ELF/AAR gate. Full 15 MB APK growth is measured
+      # by ./build.sh monogram-size (requires all existing native media engines).
+      - name: Audit native MTProto size (10 MB raw ELF budget)
+        run: |
+          python3 scripts/monogram_size_audit.py \
+            --abi "${{ matrix.abi }" \
+            --aar app/libs/monogram-mtproto.aar --max-native-mb 10 \
+            --json "monogram-native-size-${{ matrix.abi }.json" \
+            --markdown "monogram-native-size-${{ matrix.abi }.md"
+          cat "monogram-native-size-${{ matrix.abi }.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload native size report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: monogram-native-size-${{ matrix.abi }
+          path: monogram-native-size-${{ matrix.abi }.*
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Compile Ambient TV opt-in Kotlin adapter
         run: |
           ./gradlew --no-daemon --no-configuration-cache :app:compileDebugKotlin \
