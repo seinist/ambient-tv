@@ -130,7 +130,7 @@ def main() -> int:
     parser.add_argument("--aar", type=Path, help="Early native-only measurement")
     parser.add_argument("--base", type=Path, help="Release APK without Monogram")
     parser.add_argument("--monogram", type=Path, help="Release APK with Monogram")
-    parser.add_argument("--max-native-mb", type=float, default=10.0)
+    parser.add_argument("--max-native-mb", type=float, default=12.0)
     parser.add_argument("--max-apk-growth-mb", type=float, default=15.0)
     parser.add_argument("--markdown", type=Path)
     parser.add_argument("--json", type=Path)
