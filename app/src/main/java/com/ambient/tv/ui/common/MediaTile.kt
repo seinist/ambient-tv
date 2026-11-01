@@ -26,6 +26,10 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -254,7 +258,24 @@ fun MediaTile(
                     .padding(2.dp),
             ) {
                 val imageUrl = mediaTileImageUrl(item, resolvedStyle)
-                MediaArtworkWithStreamIcons(
+                // Monogram channel cards follow SmartTube's round-avatar treatment.
+                // Content remains the normal shared card/focus component on TV and phone.
+                if (item.ratingKey.startsWith("telegram-channel:")) {
+                    Box(
+                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (imageUrl != null) ArtworkImage(
+                            model = imageUrl, title = item.title,
+                            modifier = Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
+                            contentScale = ContentScale.Crop,
+                        ) else Icon(
+                            Icons.Filled.AccountCircle, contentDescription = item.title,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+                        )
+                    }
+                } else MediaArtworkWithStreamIcons(
                     item = item,
                     model = imageUrl,
                     title = item.title,
