@@ -18,6 +18,10 @@ internal object YouTubeHomeSelection {
     }
 }
 
+/** Closing or shortening an actual search restores Home's snapshot without a network call. */
+internal fun youtubeRestoreHomeAfterSearch(previous: String, next: String): Boolean =
+    previous.trim().length >= 2 && next.trim().length < 2
+
 internal fun youtubeShouldRefreshOnEntry(
     feed: YouTubeFeed,
     firstEntry: Boolean,
