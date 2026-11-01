@@ -2335,4 +2335,6 @@
     <string name="monogram_api_required">Enter your own API ID and hash to sign in.</string>
     <string name="monogram_api_sign_out_first">Sign out of Monogram before editing the API credentials.</string>
     <string name="monogram_api_setup_hint">Get an API ID and hash at my.telegram.org/apps. They are saved encrypted on this device and are not compiled into the app.</string>
+    <string name="monogram_leave_channel">Leave channel</string>
+    <string name="monogram_leave_failed">Could not leave this channel</string>
 </resources>

@@ -80,6 +80,16 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn("apiCredentialsReady", settings)
         self.assertIn("resetForCredentials()", backend)
 
+    def test_leave_channel_patch_is_pinned_and_native_only(self):
+        shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
+        gradle = (ROOT / "app" / "build.gradle.kts").read_text()
+        patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()
+        self.assertIn('patch=$patch_digest', shell)
+        self.assertIn('patch_monogram_leave.py', gradle)
+        self.assertIn('ChannelsLeaveChannelRequest', patch)
+        self.assertIn('nativeLeaveChat', patch)
+        self.assertIn('mono_proto_client::dispatch::leave_chat', patch)
+
     def test_opt_in_and_native_module_only_build_graph(self):
         gradle = (ROOT / "app" / "build.gradle.kts").read_text()
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()

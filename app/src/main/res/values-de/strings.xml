@@ -2249,4 +2249,6 @@
     <string name="monogram_api_required">Zum Anmelden eigene API-ID und API-Hash eingeben.</string>
     <string name="monogram_api_sign_out_first">Zum Ändern der API-Zugangsdaten zuerst bei Monogram abmelden.</string>
     <string name="monogram_api_setup_hint">API-ID und API-Hash unter my.telegram.org/apps erstellen. Die Daten werden verschlüsselt auf diesem Gerät gespeichert und nicht in die App kompiliert.</string>
+    <string name="monogram_leave_channel">Kanal verlassen</string>
+    <string name="monogram_leave_failed">Kanal konnte nicht verlassen werden</string>
 </resources>

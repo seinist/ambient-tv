@@ -66,6 +66,20 @@ update. Generated AARs, upstream source and credentials are git-ignored.
 The assembly script merges per-ABI AARs only if their non-native Java resources
 are identical.
 
+## Minimal channel leave patch
+
+The pinned upstream Monogram MTProto interface provides joinChat but no
+`channels.leaveChannel`. The opt-in build therefore applies the versioned,
+idempotent `scripts/patch_monogram_leave.py` to the pinned GPL module and
+its pinned mono-rs submodule. Only the standard Telegram channels.leaveChannel
+RPC plus a small Rust/UniFFI/Kotlin bridge are added: no extra UI, databases,
+or Monogram feature modules are compiled.
+
+The AAR stamp includes this patch's SHA-256 checksum. A patch change cannot
+silently reuse old MTProto binaries. Distributions must include these GPL
+patches and corresponding source. Verify join, leave, reconnect, account cache
+invalidation and all four ABIs on real devices before marking the PR ready.
+
 ## Distribution / legal considerations
 
 Monogram's native module and its original logo artwork are GPL-3.0-only.

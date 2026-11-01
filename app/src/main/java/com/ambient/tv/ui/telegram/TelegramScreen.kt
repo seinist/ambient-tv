@@ -279,10 +279,12 @@ fun TelegramScreen(
                     )
                     ViewOptionsChip(activeSortCount, onClick = { showViewOptions = true },
                         modifier = Modifier.focusRequester(viewOptionsFocus))
-                    if (activeChannel?.subscribed == false) {
+                    if (activeChannel?.subscribed != null) {
                         TvChip(
-                            text = stringResource(R.string.monogram_join_channel),
-                            selected = false,
+                            text = stringResource(
+                                if (activeChannel?.subscribed == true) R.string.monogram_leave_channel
+                                else R.string.monogram_join_channel),
+                            selected = activeChannel?.subscribed == true,
                             icon = Icons.Filled.Subscriptions,
                             iconOnly = true,
                             loading = joiningChannel,
@@ -293,9 +295,15 @@ fun TelegramScreen(
                                     channelError = null
                                     channelScope.launch {
                                         try {
-                                            if (viewModel.joinChannel(id)) {
-                                                activeChannel = activeChannel?.copy(subscribed = true)
-                                            } else channelError = "Monogram channel join not accepted"
+                                            val wasJoined = activeChannel?.subscribed == true
+                                            val accepted = if (wasJoined) viewModel.leaveChannel(id)
+                                                else viewModel.joinChannel(id)
+                                            if (accepted) {
+                                                activeChannel = activeChannel?.copy(subscribed = !wasJoined)
+                                                if (wasJoined) onSelectSection("channels")
+                                            } else channelError = if (wasJoined)
+                                                "Monogram channel could not be left"
+                                            else "Monogram channel join not accepted"
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (error: Exception) {
