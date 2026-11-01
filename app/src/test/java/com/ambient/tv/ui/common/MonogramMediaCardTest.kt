@@ -31,7 +31,7 @@ class MonogramMediaCardTest {
 
     @Test fun cardMetaUsesPublishedDateChannelAndDurationWithoutInventingValues() {
         assertEquals(
-            "Channel A  ·  Date  ·  8min",
+            "Channel A  ·  Date  ·  8:00",
             monogramCardMeta(media.toMediaItem(), { "Date" }, { "8:00" }),
         )
         assertEquals(
@@ -45,7 +45,7 @@ class MonogramMediaCardTest {
         val channel = TelegramChannel(19L, "News").toBrowseItem()
         assertEquals("", monogramCardMeta(channel, { "Date" }, { "8:00" }))
         val youtube = media.copy(summary = "https://youtu.be/dQw4w9WgXcQ").youtubePosts().first()
-        assertEquals("Channel A  ·  Date  ·  8min",
+        assertEquals("Channel A  ·  Date  ·  8:00",
             monogramCardMeta(youtube.toMediaItem(), { "Date" }, { "8:00" }))
         assertTrue(youtube.previewUrl?.contains("i.ytimg.com/vi/") == true)
     }
