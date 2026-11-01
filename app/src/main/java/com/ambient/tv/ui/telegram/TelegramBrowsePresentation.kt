@@ -5,7 +5,7 @@ import com.ambient.tv.ui.common.ContentRowData
 import java.util.Locale
 
 /** A view is a presentation choice: one source queue, same items and stable IDs. */
-internal enum class MonogramBrowseLayout { ROWS, GRID, LIST }
+internal enum class MonogramBrowseLayout { ROWS, GRID, LIST, INFO_LIST }
 internal enum class MonogramBrowseSort { DATE, TITLE, DURATION }
 
 internal fun visibleMonogramRows(
