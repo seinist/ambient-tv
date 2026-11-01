@@ -15,7 +15,7 @@ class TelegramRowsTest {
 
     @Test fun groupByChannelWithStableRowsAndNoDuplicates() {
         val rows = telegramRows("recent", entries)
-        assertEquals(listOf("telegram.recent.Channel A", "telegram.recent.Channel B"), rows.map { it.id })
+        assertEquals(listOf("telegram.recent.1", "telegram.recent.2"), rows.map { it.id })
         assertEquals(listOf("telegram:1:10", "telegram:1:11"), rows.first().items.map { it.ratingKey })
         assertEquals(listOf("telegram:2:12"), rows.last().items.map { it.ratingKey })
     }

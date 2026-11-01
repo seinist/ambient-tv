@@ -6,12 +6,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** Results are cursor-based; tokens never escape the authenticated account. */
+data class TelegramMediaPage(val items: List<TelegramMedia>, val nextCursor: String? = null)
+data class TelegramChannelPage(val items: List<TelegramChannel>, val nextCursor: String? = null)
+
 /** A narrow bridge boundary: Monogram/mono-rs and its GPL sources are not bundled into core APKs.
  * An optional, separately licensed native module may install its authorized client here. */
 interface TelegramClientPort {
     val accountName: String
-    suspend fun channels(): List<TelegramChannel>
-    suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia>
+    suspend fun channels(cursor: String? = null, limit: Int = 60): TelegramChannelPage
+    suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
@@ -36,9 +40,13 @@ class TelegramRepository @Inject constructor() {
         mutableAuthorized.value = false
     }
 
-    suspend fun channels(): List<TelegramChannel> = client?.channels().orEmpty()
+    suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage =
+        client?.channels(cursor, limit) ?: TelegramChannelPage(emptyList())
+    suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage =
+        client?.browse(section, cursor, limit) ?: TelegramMediaPage(emptyList())
+    suspend fun channels(): List<TelegramChannel> = channelsPage().items
     suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia> =
-        client?.browse(section, limit).orEmpty()
+        browsePage(section, limit = limit).items
 
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = client?.media(chatId, messageId)
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =

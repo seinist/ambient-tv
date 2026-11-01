@@ -67,7 +67,9 @@ fun TelegramScreen(
     val chain = rememberPageFocusChain()
     val focus = rememberRowColumnFocus()
     val listState = rememberLazyListState()
-    val canonical = sectionKey.takeIf { key -> sections.any { it.first == key } } ?: "recent"
+    val visibleSections = sections.filter { it.first in viewModel.visibleSections || it.first == sectionKey }
+        .ifEmpty { sections.take(1) }
+    val canonical = sectionKey.takeIf { key -> visibleSections.any { it.first == key } } ?: "recent"
     var lastKey by rememberSaveable(sectionKey) { mutableStateOf<String?>(null) }
     LaunchedEffect(sectionKey) { viewModel.open(sectionKey) }
     // Menu -> content handoff waits for this category, not a stale prior category.
@@ -77,7 +79,7 @@ fun TelegramScreen(
     )
     Column(
         Modifier.fillMaxSize().handheldSwipeTabs(
-            tabs = sections.map { it.first }, selected = canonical, onSelect = onSelectSection,
+            tabs = visibleSections.map { it.first }, selected = canonical, onSelect = onSelectSection,
             enabled = !sectionKey.startsWith("channel:"),
         ),
     ) {
@@ -94,8 +96,8 @@ fun TelegramScreen(
             title = { SystemPageTitle(MediaSystem.TELEGRAM) },
         )
         PageChipRow(chain, contentPadding = PaddingValues(horizontal = screenGutter()),
-            selectedIndex = sections.indexOfFirst { it.first == canonical }.coerceAtLeast(0)) {
-            items(sections, key = { it.first }) { (key, label) ->
+            selectedIndex = visibleSections.indexOfFirst { it.first == canonical }.coerceAtLeast(0)) {
+            items(visibleSections, key = { it.first }) { (key, label) ->
                 TvChip(
                     text = stringResource(label),
                     selected = key == canonical && !sectionKey.startsWith("channel:"),
@@ -143,7 +145,13 @@ fun TelegramScreen(
                         columnFocus = focus,
                         restoreRatingKey = lastKey?.takeIf { key -> row.items.any { it.ratingKey == key } }
                             ?: row.items.firstOrNull()?.ratingKey,
-                        onItemFocused = { lastKey = it.ratingKey },
+                        onItemFocused = { focused ->
+                            lastKey = focused.ratingKey
+                            // A single long LazyRow does not move the LazyColumn scroll index:
+                            // load pages from row focus as well as vertical list focus.
+                            val index = row.items.indexOfFirst { it.ratingKey == focused.ratingKey }
+                            if (index >= row.items.size - 8) viewModel.loadMore()
+                        },
                         onItemClick = { item ->
                             if (item.ratingKey.startsWith(TELEGRAM_CHANNEL_ITEM_PREFIX)) {
                                 item.ratingKey.removePrefix(TELEGRAM_CHANNEL_ITEM_PREFIX)
