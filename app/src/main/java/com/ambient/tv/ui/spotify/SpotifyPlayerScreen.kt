@@ -82,6 +82,8 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
     val state by viewModel.state.collectAsState()
     val operationFeedback by viewModel.operationFeedback.collectAsState()
     val track = state.current
+    val paused = com.ambient.tv.ui.player.shouldShowPlayerPaused(state.playing,
+        active = state.connected && track != null)
     val art = track?.album?.images?.firstOrNull()?.url
     var configuredVisualizer by remember { mutableStateOf(viewModel.visualizerMode) }
     val audioReactive = configuredVisualizer == "spectrum" || configuredVisualizer == "projectm"
@@ -235,6 +237,7 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
                     subtitle = track?.artists?.joinToString(", ") { it.name },
                     artworkAspectRatio = 1f,
                     artworkContentScale = ContentScale.Crop,
+                    showPaused = paused && state.durationMs <= 0L,
                 )
                 if (state.durationMs > 0L) {
                     TvPlayerSeekBar(
@@ -244,6 +247,7 @@ private fun SpotifyPlayerContent(onBack: () -> Unit, viewModel: SpotifyPlayerVie
                         onInteraction = osd::interact,
                         onTogglePlayback = viewModel::toggle,
                         onPlay = viewModel::play,
+                        paused = paused,
                         modifier = Modifier.focusRequester(seekFocusRequester),
                     )
                 }
