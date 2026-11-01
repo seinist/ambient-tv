@@ -131,7 +131,9 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
         withContext(Dispatchers.IO) { lock.withLock {
             runCatching {
                 val past = if (replace) emptyList() else mediaUnsafe(account, section)
-                val selected = (past + items).distinctBy(TelegramMedia::mediaKey).takeLast(240)
+                // Pages arrive newest first. Keep the first 240, not the oldest 240;
+                // after deep scrolling Home must still hydrate with recent media.
+                val selected = (past + items).distinctBy(TelegramMedia::mediaKey).take(240)
                 val array = JSONArray()
                 selected.forEach { m -> array.put(JSONObject()
                     .put("chat", m.chatId).put("message", m.messageId)
@@ -173,7 +175,7 @@ class TelegramDiskCache @Inject constructor(@ApplicationContext context: Context
                     }.getOrNull() }
                 }
                 val array = JSONArray()
-                (past + entries).distinctBy(TelegramChannel::chatId).takeLast(240).forEach { c ->
+                (past + entries).distinctBy(TelegramChannel::chatId).take(240).forEach { c ->
                     array.put(JSONObject().put("chat", c.chatId).put("title", c.title)
                         .put("description", c.description).put("thumb", c.thumbnailUrl))
                 }
