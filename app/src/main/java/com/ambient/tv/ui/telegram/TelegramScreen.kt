@@ -533,7 +533,7 @@ private fun MonogramListItem(
         monogramCardMeta(
             item,
             dateLabel = { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(it)) },
-            durationLabel = { com.ambient.tv.ui.common.formatDuration(it) },
+            durationLabel = { com.ambient.tv.ui.common.formatPlaybackClock(it) },
         )
     }
     Surface(
