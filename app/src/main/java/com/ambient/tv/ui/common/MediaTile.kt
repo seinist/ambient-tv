@@ -151,6 +151,21 @@ fun MediaTile(
     /** Menu, Info, or a long press. OK and a short tap stay [onClick]. */
     onInfo: (() -> Unit)? = null,
 ) {
+    // Monogram mirrors SmartTube's single-surface cards in Home, rows and grids.
+    // All non-Monogram sources keep the existing MediaTile presentation unchanged.
+    if (isMonogramMediaTile(item)) {
+        MonogramMediaCard(
+            item = item,
+            onClick = onClick,
+            modifier = modifier,
+            onFocused = onFocused,
+            requestInitialFocus = requestInitialFocus,
+            style = style,
+            fillCell = fillCell,
+            onInfo = onInfo,
+        )
+        return
+    }
     val handheld = LocalHandheldUi.current
     val heroRowTiles = LocalHeroRowTiles.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
