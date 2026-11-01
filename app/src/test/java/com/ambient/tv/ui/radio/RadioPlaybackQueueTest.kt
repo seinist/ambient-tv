@@ -36,6 +36,27 @@ class RadioPlaybackQueueTest {
         assertEquals("c", queue.next()?.id)
     }
 
+    @Test fun openingThirdRadioStationKeepsBothPredecessorsInItsOriginalList() {
+        val queue = RadioPlaybackQueue()
+        val scope = RadioFocusScope(RadioSection.COUNTRIES, "DE", "")
+        val source = RadioBrowseQueueSource(scope, countryCode = "DE", nextOffset = 48, hasMore = true)
+        queue.replace(listOf(station("one"), station("two"), station("three"), station("four")),
+            "three", source)
+
+        assertEquals("two", queue.previous()?.id)
+        assertEquals("four", queue.next()?.id)
+        queue.select("two")
+        assertEquals("one", queue.previous()?.id)
+        assertEquals("three", queue.next()?.id)
+        queue.select("one")
+        assertNull(queue.previous())
+        assertEquals("two", queue.next()?.id)
+
+        // Switching the current station never drops the exact originating country.
+        assertEquals(scope, queue.snapshot().source?.focusScope)
+        assertEquals("DE", queue.snapshot().source?.countryCode)
+    }
+
     @Test fun edgesDoNotWrapAndDuplicatesAreRemoved() {
         val queue = RadioPlaybackQueue()
         val a = station("a")
