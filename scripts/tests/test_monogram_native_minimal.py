@@ -90,6 +90,21 @@ class MinimalMonogramTests(unittest.TestCase):
         self.assertIn('nativeLeaveChat', patch)
         self.assertIn('mono_proto_client::dispatch::leave_chat', patch)
 
+    def test_unused_sticker_qr_and_waveform_native_code_is_pruned(self):
+        shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
+        patch = (ROOT / "scripts" / "patch_monogram_leave.py").read_text()
+        # The media-only build retains core MTProto/UniFFI but not the sticker
+        # renderer, the separate native QR stack or audio-waveform helpers.
+        self.assertIn("vendor/mono-rs", shell)
+        self.assertNotIn("vendor/tlottie vendor/mono-rs", shell)
+        self.assertIn("'rxing = { version = ", patch)
+        self.assertIn("'flate2 = \"1\"\\ntlottie = {", patch)
+        self.assertIn("pub fn create_lottie(", patch)
+        self.assertIn("pub fn decode_vpx_alpha_packet(", patch)
+        self.assertIn("LottieNative.kt", patch)
+        self.assertIn("VpxNative.kt", patch)
+        self.assertIn("source.count(start) != 1", patch)
+
     def test_opt_in_and_native_module_only_build_graph(self):
         gradle = (ROOT / "app" / "build.gradle.kts").read_text()
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
