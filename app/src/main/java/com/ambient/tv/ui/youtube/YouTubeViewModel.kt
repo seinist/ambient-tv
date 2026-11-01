@@ -108,16 +108,22 @@ class YouTubeViewModel @Inject constructor(
         scheduleRowContinuation(rowId, videoId)
     }
 
-    /** Capture the actual visible row order before navigation; never infer the queue from suggestions. */
-    fun playbackToken(videoId: String): Long? {
+    /** Capture exactly the visible row or flattened grid, not watch history or suggestions. */
+    fun playbackToken(videoId: String, sectioned: Boolean = true): Long? {
         // Opening a channel tile is navigation, not a new playback queue.
         if (com.ambient.tv.youtube.youtubeChannelIdOf(videoId) != null) return null
         val state = _uiState.value
         val rows = applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
         val preferredRow = focusedRowId(state.feed)
-        val row = rows.firstOrNull { it.id == preferredRow && it.items.any { item -> item.videoId == videoId } }
-            ?: rows.firstOrNull { it.items.any { item -> item.videoId == videoId } }
-        return playbackContext.start(displayedContentKey, row, videoId)
+        val row = youtubePlaybackSourceRow(rows, videoId, preferredRow, sectioned)
+        val sourceRowId = rows.firstOrNull {
+            it.id == preferredRow && it.items.any { item -> item.videoId == videoId }
+        }?.id ?: rows.firstOrNull { it.items.any { item -> item.videoId == videoId } }?.id
+        return playbackContext.start(
+            displayedContentKey, row, videoId,
+            continuationRowIds = if (sectioned) listOfNotNull(row?.id) else rows.map { it.id },
+            returnRowId = sourceRowId,
+        )
     }
 
     private fun restorePlayedFocus() {
