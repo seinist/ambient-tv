@@ -557,10 +557,21 @@ private fun MonogramListItem(
             )
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.title, maxLines = 2, style = MaterialTheme.typography.titleMedium)
-                item.parentTitle?.takeIf(String::isNotBlank)?.let {
-                    Text(it, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall)
-                }
+                val info = buildList {
+                    item.parentTitle?.takeIf(String::isNotBlank)?.let(::add)
+                    item.addedAt?.takeIf { it > 0L }?.let { timestamp ->
+                        add(remember(timestamp) {
+                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+                                .format(java.util.Date(timestamp))
+                        })
+                    }
+                    item.durationMs?.takeIf { it > 0 }?.let { duration ->
+                        com.ambient.tv.ui.common.formatDuration(duration)?.let(::add)
+                    }
+                }.joinToString(" · ")
+                if (info.isNotBlank()) Text(info, maxLines = 1,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }
