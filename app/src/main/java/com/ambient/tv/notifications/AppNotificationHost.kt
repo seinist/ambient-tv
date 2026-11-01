@@ -65,7 +65,12 @@ private object NotificationWindows {
 
 /** The active window presents status cards. On TV, active wakes also expose a focusable cancel action. */
 @Composable
-fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playback: Boolean = false) {
+fun AppNotificationHost(
+    dialog: Boolean = false,
+    hidden: Boolean = false,
+    playback: Boolean = false,
+    autoFocusWake: Boolean = true,
+) {
     val window = remember { Any() }
     DisposableEffect(dialog) {
         if (dialog) NotificationWindows.dialogs.add(window)
@@ -147,7 +152,7 @@ fun AppNotificationHost(dialog: Boolean = false, hidden: Boolean = false, playba
         }
         if (activeWakes.isNotEmpty()) {
             val wakeVm: UnreachableServerViewModel = hiltViewModel()
-            TvWakeCancelBar(activeWakes, autoFocus = !playback, onCancel = wakeVm::cancelWake,
+            TvWakeCancelBar(activeWakes, autoFocus = autoFocusWake && !playback, onCancel = wakeVm::cancelWake,
                 modifier = Modifier.align(Alignment.BottomCenter))
         }
     }
