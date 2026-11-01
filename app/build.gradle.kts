@@ -147,6 +147,18 @@ val selectedAbis = when (apkAbiMode) {
     "x86_64", "x86-64" -> listOf("x86_64")
     else -> listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
 }
+if (monogramEnabled) {
+    val stamp = file("libs/.monogram-native-version")
+    require(stamp.isFile && stamp.readLines().contains("ref=${externalVersion("MONOGRAM_REF")}")) {
+        "Monogram AAR pin mismatch; rebuild with ./build.sh monogram"
+    }
+    ZipFile(monogramAar).use { aar ->
+        val missing = selectedAbis.filter { aar.getEntry("jni/$it/libmonogram_mtproto.so") == null }
+        require(missing.isEmpty()) {
+            "Monogram AAR has no native runtime for $missing; use ./build.sh with matching ABI(s)"
+        }
+    }
+}
 if (vulkanVlcAar.isFile) {
     ZipFile(vulkanVlcAar).use { aar ->
         val missing = selectedAbis.filter { aar.getEntry("jni/$it/libvlcjni.so") == null || aar.getEntry("jni/$it/libvlc.so") == null }
