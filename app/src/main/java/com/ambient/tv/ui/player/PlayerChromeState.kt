@@ -45,6 +45,8 @@ class PlayerChromeState(initialZapOsd: Boolean = false) {
     internal val engineFocus = FocusRequester()
     /** Whether anything inside the player (engine, OSD, panel) holds the focus. */
     internal var hasFocus = false
+    /** Last title that was ready in this player; see [titleChangeRevealsOsd]. */
+    internal var readyTitleIdentity: String? = null
 
     /** Synchronous: no panel-close effect may reveal controls between these changes. */
     internal fun closePanelsForInactivity(expectedActivity: Int): Boolean {
