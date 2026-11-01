@@ -267,7 +267,7 @@ Ambient TV is built by one enthusiast for everyone who wants more from their med
 
 ## Known limits
 
-- NNEDI deinterlace weights (`app/src/main/res/raw/nnedi3_deinterlace_weights.bin`, GPLv2) are kept in-tree; other native libraries (MPV/FFmpeg, …) are built or downloaded by `./build.sh` on first use.
+- NNEDI deinterlace weights (`app/src/main/res/raw/nnedi3_deinterlace_weights.bin`, GPL-2.0-or-later) are kept in-tree; other native libraries (MPV/FFmpeg, …) are built or downloaded by `./build.sh` on first use.
 - No guarantee for every codec/filter combination on every device; image filters need a GPU video output
 - Files: no NFS Kerberos, NFSv4.1+ or NetBIOS discovery, no FTP; WebDAV with Basic or Digest auth
 - DLNA renderer: no Google Cast, DRM content or images
@@ -288,7 +288,7 @@ This project is dedicated to the public domain under **[Creative Commons Zero v1
 
 Third-party engines and trademarks (Plex, Jellyfin, Emby, YouTube/SmartTube, Spotify, …) remain under their own licenses and branding — see About in the app and `third_party_licenses/`.
 
-**Built APKs:** the app bundles GPL-licensed components (mpv, several GLSL shaders, NNEDI weights, the TVHeadend logo) and LGPL components (FFmpeg, VLC, SVP adapters). APKs built from this repository are therefore distributed under the terms of the **GNU GPL v3.0**; the corresponding source is this repository plus the pinned upstream sources in `gradle/external-versions.properties`.
+**Built APKs:** the app bundles GPL-licensed components (mpv: GPL-2.0-or-later; FFmpeg, built by mpv-android with `--enable-gpl --enable-version3`: GPL-3.0-or-later; NNEDI weights: GPL-2.0-or-later; TVHeadend logo: GPL-3.0-or-later) and LGPL components (VLC, SVP adapters). The bundled GLSL shaders are LGPL-3.0-or-later, MIT, BSD-2-Clause or CC0-1.0 (see `SHADER_SOURCES_027.json`). APKs built from this repository are therefore distributed under the terms of the **GNU GPL v3.0**; the corresponding source is this repository plus the pinned upstream sources in `gradle/external-versions.properties`.
 
 ---
 

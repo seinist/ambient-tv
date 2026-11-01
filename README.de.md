@@ -267,7 +267,7 @@ Ambient TV entsteht aus Leidenschaft – für alle, die mehr aus ihrem Medienset
 
 ## Bekannte Grenzen
 
-- Die NNEDI-Deinterlace-Gewichte (`app/src/main/res/raw/nnedi3_deinterlace_weights.bin`, GPLv2) bleiben im Baum; andere native Bibliotheken (MPV/FFmpeg, …) baut oder lädt `./build.sh` beim ersten Mal.
+- Die NNEDI-Deinterlace-Gewichte (`app/src/main/res/raw/nnedi3_deinterlace_weights.bin`, GPL-2.0-or-later) bleiben im Baum; andere native Bibliotheken (MPV/FFmpeg, …) baut oder lädt `./build.sh` beim ersten Mal.
 - Keine Garantie für jede Codec-/Filter-Kombination auf jedem Gerät; Bildfilter brauchen eine GPU-Videoausgabe
 - Dateien: kein NFS-Kerberos, kein NFSv4.1+, keine NetBIOS-Suche, kein FTP; WebDAV mit Basic- oder Digest-Anmeldung
 - DLNA-Renderer: kein Google Cast, keine DRM-Inhalte, keine Bilder
@@ -288,7 +288,7 @@ Dieses Projekt steht unter **[Creative Commons Zero v1.0 Universal (CC0-1.0)](LI
 
 Drittanbieter-Engines und Marken (Plex, Jellyfin, Emby, YouTube/SmartTube, Spotify, …) unterliegen eigenen Lizenzen und Kennzeichnungen – siehe „Über“ in der App und `third_party_licenses/`.
 
-**Gebaute APKs:** Die App enthält GPL-lizenzierte Bestandteile (mpv, mehrere GLSL-Shader, NNEDI-Gewichte, TVHeadend-Logo) und LGPL-Bestandteile (FFmpeg, VLC, SVP-Adapter). Aus diesem Repository gebaute APKs werden daher unter den Bedingungen der **GNU GPL v3.0** verteilt; der zugehörige Quelltext ist dieses Repository plus die gepinnten Upstream-Quellen in `gradle/external-versions.properties`.
+**Gebaute APKs:** Die App enthält GPL-lizenzierte Bestandteile (mpv: GPL-2.0-or-later; FFmpeg, von mpv-android mit `--enable-gpl --enable-version3` gebaut: GPL-3.0-or-later; NNEDI-Gewichte: GPL-2.0-or-later; TVHeadend-Logo: GPL-3.0-or-later) und LGPL-Bestandteile (VLC, SVP-Adapter). Die enthaltenen GLSL-Shader stehen unter LGPL-3.0-or-later, MIT, BSD-2-Clause oder CC0-1.0 (siehe `SHADER_SOURCES_027.json`). Aus diesem Repository gebaute APKs werden daher unter den Bedingungen der **GNU GPL v3.0** verteilt; der zugehörige Quelltext ist dieses Repository plus die gepinnten Upstream-Quellen in `gradle/external-versions.properties`.
 
 ---
 
