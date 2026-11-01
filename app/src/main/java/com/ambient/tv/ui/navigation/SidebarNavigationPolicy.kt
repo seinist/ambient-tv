@@ -113,7 +113,8 @@ internal fun sidebarBackAction(
 /**
  * Global Search is shown only when at least one backend [com.ambient.tv.ui.search.SearchViewModel]
  * can query. Files are excluded: [com.ambient.tv.data.files.FilesRepository.search] is a stub
- *. Spotify needs auth + native to actually return results.
+ *. Spotify needs auth + native to actually return results; Telegram needs the native Monogram
+ * build, the toggle and a login ([com.ambient.tv.data.telegram.telegramSearchAvailable]).
  */
 internal fun sidebarShowsGlobalSearch(
     plexConfigured: Boolean,
@@ -123,8 +124,9 @@ internal fun sidebarShowsGlobalSearch(
     youtubeEnabled: Boolean,
     spotifyCanSearch: Boolean,
     radioEnabled: Boolean = false,
+    telegramCanSearch: Boolean = false,
 ): Boolean = plexConfigured || jellyfinConfigured || embyConfigured ||
-    tvheadendConfigured || youtubeEnabled || spotifyCanSearch || radioEnabled
+    tvheadendConfigured || youtubeEnabled || spotifyCanSearch || radioEnabled || telegramCanSearch
 
 /** Home rail entry: systems that contribute home-like rows (Files-only has no Home). */
 internal fun sidebarShowsHome(

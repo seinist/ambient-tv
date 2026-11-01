@@ -116,6 +116,20 @@ class SidebarNavigationPolicyTest {
         )
     }
 
+    @Test fun globalSearchShownForSearchableTelegramOnly() {
+        assertTrue(sidebarShowsGlobalSearch(
+            plexConfigured = false, jellyfinConfigured = false, embyConfigured = false,
+            tvheadendConfigured = false, youtubeEnabled = false, spotifyCanSearch = false,
+            telegramCanSearch = true,
+        ))
+        assertFalse(sidebarShowsGlobalSearch(
+            plexConfigured = false, jellyfinConfigured = false, embyConfigured = false,
+            tvheadendConfigured = false, youtubeEnabled = false, spotifyCanSearch = false,
+            telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
+                nativeBuild = false, enabled = true, authorized = true),
+        ))
+    }
+
     @Test fun homeHiddenForFilesOnlySetup() {
         assertFalse(
             sidebarShowsHome(

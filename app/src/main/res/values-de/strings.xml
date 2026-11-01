@@ -141,6 +141,9 @@
     <string name="search_source_failed">%1$s konnte nicht durchsucht werden.</string>
     <string name="search_videos">Videos</string>
     <string name="search_tracks">Titel</string>
+    <string name="search_telegram_videos">Videos aus deinen Telegram-Kanälen</string>
+    <string name="search_telegram_audio">Audio aus deinen Telegram-Kanälen</string>
+    <string name="search_source_flood_wait">%1$s: Telegram begrenzt gerade die Suche. In %2$d s erneut versuchen.</string>
     <string name="search_channels">Sender</string>
     <string name="search_program_meta">%1$s · %2$s · Sendung</string>
     <string name="search_recording_meta">%1$s · %2$s · Aufnahme</string>
@@ -2270,6 +2273,7 @@
     <string name="monogram_error_code_first">Zuerst einen Anmeldecode anfordern</string>
     <string name="monogram_error_not_streamable">Dieses Monogram-Medium kann nicht gestreamt werden</string>
     <string name="monogram_error_not_authorized">Nicht bei Monogram angemeldet</string>
+    <string name="monogram_error_search_timeout">Telegram hat nicht rechtzeitig auf die Suche geantwortet.</string>
     <string name="monogram_error_channel_left">Du hast diesen Kanal verlassen</string>
     <string name="monogram_error_account_changed">Monogram-Konto oder Kanalmitgliedschaft hat sich geändert</string>
     <string name="monogram_error_media_unavailable">Dieses Monogram-Medium ist nicht verfügbar</string>

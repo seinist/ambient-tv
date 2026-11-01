@@ -13,6 +13,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -70,6 +71,11 @@ interface TelegramClientPort {
     suspend fun photoFile(chatId: Long, messageId: Int): String? = null
     /** A byte range from a Telegram file; Monogram downloadMessageMediaChunk does the MTProto I/O. */
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray
+    /**
+     * Playable video/audio posts from subscribed channels matching [query]. One request per
+     * submitted search; throws [TelegramFloodWaitException] when Telegram asks to wait.
+     */
+    suspend fun search(query: String, limit: Int = TELEGRAM_SEARCH_LIMIT): List<TelegramMedia> = emptyList()
 }
 
 @Singleton
@@ -544,6 +550,42 @@ class TelegramRepository @Inject constructor(
         return result.takeIf { sameAccount(selected, identity, generation) &&
             chatId !in blockedChannels }
     }
+    /** Monotonic end of a FLOOD_WAIT: until then, search answers without contacting Telegram. */
+    @Volatile private var searchBlockedUntilMs = 0L
+
+    private fun noteSearchFloodWait(seconds: Int) {
+        val until = System.nanoTime() / 1_000_000L + seconds.coerceAtLeast(1) * 1_000L
+        if (until > searchBlockedUntilMs) searchBlockedUntilMs = until
+    }
+
+    /**
+     * Global search for the app's search screen. Empty without the native build or a signed-in
+     * account. The native call keeps running in the background after [TELEGRAM_SEARCH_TIMEOUT_MS],
+     * but the screen no longer waits for it.
+     */
+    suspend fun search(query: String, limit: Int = TELEGRAM_SEARCH_LIMIT): List<TelegramMedia> {
+        if (!BuildConfig.MONOGRAM_NATIVE) return emptyList()
+        val selected = client ?: return emptyList()
+        val trimmed = query.trim()
+        if (trimmed.length < 2) return emptyList()
+        val waitMs = searchBlockedUntilMs - System.nanoTime() / 1_000_000L
+        if (waitMs > 0) throw TelegramFloodWaitException(((waitMs + 999L) / 1_000L).toInt())
+        val generation = streamEpoch.get()
+        val identity = selected.cacheIdentity
+        val request = scope.async { selected.search(trimmed, limit) }
+        request.invokeOnCompletion { failure ->
+            (failure as? TelegramFloodWaitException)?.let { noteSearchFloodWait(it.seconds) }
+        }
+        val found = try {
+            kotlinx.coroutines.withTimeoutOrNull(TELEGRAM_SEARCH_TIMEOUT_MS) { request.await() }
+        } catch (flood: TelegramFloodWaitException) {
+            noteSearchFloodWait(flood.seconds)
+            throw flood
+        } ?: throw IllegalStateException(appContext.getString(R.string.monogram_error_search_timeout))
+        if (!sameAccount(selected, identity, generation)) return emptyList()
+        return telegramSearchResults(found, subscribed = null, excluded = blockedChannels, limit = limit)
+    }
+
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray {
         val selected = checkNotNull(client) { appContext.getString(R.string.monogram_error_not_authorized) }
         check(chatId !in blockedChannels) { appContext.getString(R.string.monogram_error_channel_left) }
@@ -563,3 +605,6 @@ internal fun monogramResumeWorthKeeping(positionMs: Long, durationMs: Long): Boo
 
 /** A stop at position 0 without an end usually means the decoder never started; keep the old entry. */
 internal fun monogramStopPositionKnown(positionMs: Long, ended: Boolean): Boolean = ended || positionMs > 0L
+
+/** The search screen stops waiting for Telegram after this long. */
+internal const val TELEGRAM_SEARCH_TIMEOUT_MS = 15_000L

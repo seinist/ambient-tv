@@ -66,6 +66,8 @@ fun HandheldNavigationHost(
         youtubeEnabled = sidebarState.youtubeEnabled,
         spotifyCanSearch = sidebarState.spotifyEnabled && sidebarState.spotifyAuthorized && sidebarState.spotifyNativeAvailable,
         radioEnabled = sidebarState.radioEnabled,
+        telegramCanSearch = com.ambient.tv.data.telegram.telegramSearchAvailable(
+            com.ambient.tv.BuildConfig.MONOGRAM_NATIVE, sidebarState.telegramEnabled, sidebarState.telegramAuthorized),
     )
     // Rotation switches between the Row and Column branches below. Moving the content instead of
     // recreating it keeps the NavHost (and a running trailer, which stops on dispose) alive.

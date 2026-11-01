@@ -516,6 +516,52 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             TelegramMediaPage(items.distinctBy(TelegramMedia::mediaKey), next)
         } }
 
+    /**
+     * messages.searchGlobal has no media filter (search_rpc.rs), so its hits are reduced to
+     * playable video/audio posts from subscribed channels. Only when that yields few hits, a
+     * small, paced per-channel search (videos, music) over the most recently active channels
+     * supplements it. A FLOOD_WAIT stops the search and is reported, never retried here.
+     */
+    override suspend fun search(query: String, limit: Int): List<TelegramMedia> =
+        browseMutex.withLock { nativeCall { h ->
+            requireAuthorized(h)
+            val wanted = limit.coerceIn(1, 50)
+            try {
+                // The current dialog snapshot (one getChats when empty). Posts from channels
+                // not yet paged into it are left out rather than paging dialogs per search.
+                val channels = knownChannels(h, 1).associateBy { it.id }
+                val subscribed = channels.keys - leftChannels
+                val found = LinkedHashMap<String, TelegramMedia>()
+                fun collect(messages: List<MessageDto>) {
+                    for (message in messages) {
+                        if (found.size >= wanted) return
+                        val chat = channels[message.chatId] ?: continue
+                        // Skip text and photo posts before media() fetches any preview.
+                        if (message.mediaKind == null || message.mediaKind.equals("photo", true)) continue
+                        val item = media(h, message, chat.title) ?: continue
+                        telegramSearchResults(listOf(item), subscribed, leftChannels, 1)
+                            .firstOrNull()?.let { found.putIfAbsent(it.mediaKey, it) }
+                    }
+                }
+                collect(native.searchGlobal(h, query, 0, 0L, 0, SEARCH_GLOBAL_LIMIT, 0).messages)
+                if (found.size < wanted / 2) {
+                    val recent = channels.values.filter { it.id in subscribed }
+                        .sortedByDescending { it.lastMessageDate ?: 0L }
+                        .take(SEARCH_SUPPLEMENT_CHANNELS)
+                    loop@ for (chat in recent) for (filter in listOf("videos", "music")) {
+                        if (found.size >= wanted) break@loop
+                        Thread.sleep(CATALOG_ROUND_PAUSE_MS)
+                        collect(native.searchMessagesPage(h, chat.id, query, filter, 0, 0,
+                            SEARCH_CHANNEL_LIMIT).messages)
+                    }
+                }
+                found.values.toList()
+            } catch (failure: MtprotoException) {
+                telegramFloodWaitSeconds(failure.message)?.let { throw TelegramFloodWaitException(it) }
+                throw failure
+            }
+        } }
+
     override suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = nativeCall { h ->
         requireAuthorized(h)
         if (chatId in leftChannels) return@nativeCall null
@@ -602,5 +648,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     private companion object {
         const val CATALOG_ROUND_PAUSE_MS = 300L
+        const val SEARCH_GLOBAL_LIMIT = 50
+        const val SEARCH_SUPPLEMENT_CHANNELS = 3
+        const val SEARCH_CHANNEL_LIMIT = 20
     }
 }
