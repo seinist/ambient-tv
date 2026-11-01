@@ -2331,6 +2331,9 @@ private fun AmbientTvApp(
                             chatId = entry.arguments?.getLong("chatId") ?: 0L,
                             messageId = entry.arguments?.getInt("messageId") ?: 0,
                             onBack = ::navigateBack,
+                            onOpenChannel = { chat ->
+                                navController.navigate(Destinations.telegramSection("channel:$chat"))
+                            },
                         )
                     }
                     composable(Destinations.RADIO) {
