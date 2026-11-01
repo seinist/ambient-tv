@@ -43,8 +43,9 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val rowId: String,
         val items: MutableList<YouTubeItem>,
         val playerScope: String,
-        var forked: Boolean,
-        var exhausted: Boolean = false,
+        val continuationRows: List<String>,
+        val forkedRows: MutableSet<String>,
+        val exhaustedRows: MutableSet<String> = mutableSetOf(),
         var lastPlayed: String? = null,
         var returnPending: Boolean = false,
     )
@@ -54,14 +55,25 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
     private val continuationMutex = Mutex()
 
     @Synchronized
-    fun start(scope: String?, row: YouTubeRow?, videoId: String): Long? {
+    fun start(
+        scope: String?,
+        row: YouTubeRow?,
+        videoId: String,
+        continuationRowIds: List<String> = listOfNotNull(row?.id),
+        returnRowId: String? = row?.id,
+    ): Long? {
         if (scope.isNullOrBlank() || row == null || row.items.none { it.videoId == videoId }) return null
         current?.let { engine.discardRowContinuation(it.playerScope) }
         val token = ++nextToken
         val playerScope = "youtube-player-row:$token"
-        val forked = engine.forkRowContinuation(scope, playerScope, row.id)
-        current = Session(token, scope, row.id, row.items.distinctBy { it.videoId }.toMutableList(),
-            playerScope = playerScope, forked = forked)
+        val sourceRows = continuationRowIds.filter(String::isNotBlank).distinct()
+            .ifEmpty { listOf(row.id) }
+        val forked = sourceRows.filter { engine.forkRowContinuation(scope, playerScope, it) }.toMutableSet()
+        current = Session(
+            token = token, scope = scope, rowId = returnRowId ?: row.id,
+            items = row.items.distinctBy { it.videoId }.toMutableList(),
+            playerScope = playerScope, continuationRows = sourceRows, forkedRows = forked,
+        )
         return token
     }
 
@@ -99,38 +111,42 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
     }
 
     /**
-     * Continue the ORIGINAL row while the player is open. A missing continuation handle means
-     * that row really has no next page; errors propagate and do not mark it exhausted.
-     * Bounded duplicate-only pages prevent an upstream feed from looping forever.
+     * Continue only the originating row(s) while the player is open. A flat grid can
+     * combine several source rows: each keeps its own frozen continuation handle.
+     * Exhausting one row must not silently replace the queue with another feed.
      */
     suspend fun next(token: Long, videoId: String): YouTubeItem? = continuationMutex.withLock {
-        repeat(MAX_EMPTY_OR_FILTERED_PAGES) {
+        val rowCount = synchronized(this) { current?.takeIf { it.token == token }?.continuationRows?.size ?: 0 }
+        repeat(MAX_EMPTY_OR_FILTERED_PAGES * rowCount.coerceAtLeast(1)) {
             nextLoaded(token, videoId)?.let { return@withLock it }
             val source = synchronized(this) {
-                current?.takeIf { it.token == token && !it.exhausted && it.items.any { item -> item.videoId == videoId } }
+                current?.takeIf { it.token == token && it.items.any { item -> item.videoId == videoId } }
             } ?: return@withLock null
-            // A cache-only first frame may precede the initial upstream feed; retry acquiring
-            // the original handle at the point where the row actually needs another page.
-            if (!source.forked && engine.forkRowContinuation(source.scope, source.playerScope, source.rowId)) {
-                source.forked = true
+            val rowId = synchronized(this) {
+                source.continuationRows.firstOrNull { it !in source.exhaustedRows }
+            } ?: return@withLock null
+
+            // The initial browse page may have been displayed from disk. Reacquire a handle
+            // for that exact source row if the upstream feed finished loading in the meantime.
+            if (rowId !in source.forkedRows && engine.forkRowContinuation(source.scope, source.playerScope, rowId)) {
+                synchronized(this) { source.forkedRows.add(rowId) }
             }
             val page = engine.continueRow(
-                if (source.forked) source.playerScope else source.scope, source.rowId,
+                if (rowId in source.forkedRows) source.playerScope else source.scope,
+                rowId,
             )
             synchronized(this) {
                 current?.takeIf { it === source && it.token == token }?.let { session ->
-                    if (page == null) {
-                        session.exhausted = true
-                    } else {
+                    if (page == null || !page.hasMore) session.exhaustedRows.add(rowId)
+                    if (page != null) {
                         val known = session.items.mapTo(HashSet()) { it.videoId }
                         session.items += page.items.filter { known.add(it.videoId) }
-                        session.exhausted = !page.hasMore
-                        // Return browsing can show videos loaded while the player was foreground.
-                        if (page.items.isNotEmpty()) cache.appendItems(session.scope, session.rowId, page.items)
+                        // Put continuation items back in their actual source row on return.
+                        if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items)
                     }
                 }
             }
-            if (page == null || !page.hasMore) return@withLock nextLoaded(token, videoId)
+            nextLoaded(token, videoId)?.let { return@withLock it }
         }
         nextLoaded(token, videoId)
     }
