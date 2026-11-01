@@ -727,6 +727,8 @@ internal fun GuideEventCard(
     onArtworkNeeded: (kotlinx.coroutines.CoroutineScope) -> Unit = {},
     modifier: Modifier = Modifier,
     artworkUpdates: kotlinx.coroutines.flow.StateFlow<Map<String, String>>? = null,
+    gapBeforeSeconds: Long = 0L,
+    visibleSeconds: Long = event.durationSeconds,
 ) {
     // LazyRow only composes nearby events; never prefetch the full multi-day EPG.
     LaunchedEffect(event.eventId, event.title) { onArtworkNeeded(this) }
@@ -741,23 +743,39 @@ internal fun GuideEventCard(
     } else null
     val previewArt = (tmdbUrl?.let { LiveTvArt(it, external = true) } ?: art)?.asGuideThumbnail()
     var focused by remember { mutableStateOf(false) }
-    val width = (event.durationSeconds / 60f * 3.2f).roundToInt().coerceIn(150, 430).dp
+    val width = guideTimelineWidthDp(visibleSeconds).coerceAtLeast(24f).dp
+    val gapWidth = guideTimelineWidthDp(gapBeforeSeconds).dp
     val live = event.isLive(now)
-    val cardShape = RoundedCornerShape(10.dp)
+    // Square adjacent frames, one separator and a continuous top time rail.
+    val cardShape = RoundedCornerShape(0.dp)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+    if (gapBeforeSeconds > 0L) {
+        Box(
+            Modifier.width(gapWidth).height(86.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = .44f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (gapWidth >= 115.dp) Text(stringResource(R.string.guide_no_programme),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
     Surface(
         onClick = { onEvent(event) },
         colors = transparentSurfaceColors(),
         scale = noSurfaceScale(),
         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = cardShape),
         modifier = modifier.width(width).browseFocusTarget("event:${event.eventId}", rowKey = event.channelUuid)
-            .mediaFocusMotion(focused).activateOnTvKey { onEvent(event) }.onFocusChanged {
+            .activateOnTvKey { onEvent(event) }.onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocused()
             },
     ) {
-        // Fixed 86dp geometry keeps the EPG grid and its focus targets steady as images arrive.
-        Box(Modifier.fillMaxWidth().height(86.dp).clip(cardShape)) {
-            if (previewArt != null) LiveTvArtBox(previewArt, event.title, imageHeaders, Modifier.fillMaxSize())
+        // Fixed 86dp height keeps the EPG focus stable; no shimmer or zoom between cells.
+        Box(Modifier.fillMaxWidth().height(86.dp)) {
+            if (previewArt != null) LiveTvArtBox(previewArt, event.title, imageHeaders,
+                Modifier.fillMaxSize(), artworkPlaceholder = false)
             if (previewArt != null) {
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                     listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
@@ -780,9 +798,14 @@ internal fun GuideEventCard(
                     color = if (previewArt != null) Color.White else MaterialTheme.colorScheme.onSurface,
                     overflow = TextOverflow.Ellipsis)
             }
+            // The upper rail stays continuous between neighbouring programme segments.
+            Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp)
+                .background(if (live) com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
+                    else Color.White.copy(alpha = .20f)))
             Box(Modifier.matchParentSize().border(if (focused) 2.dp else 1.dp,
-                if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .08f), cardShape))
+                if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .16f), cardShape))
         }
+    }
     }
 }
 
@@ -1025,6 +1048,7 @@ private fun DvrRow(
 internal fun LiveTvArtBox(
     art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier,
     logoPadding: Dp = 10.dp,
+    artworkPlaceholder: Boolean = true,
 ) {
     Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
         if (art != null) ArtworkImage(
@@ -1032,6 +1056,7 @@ internal fun LiveTvArtBox(
             modifier = if (art.logo) Modifier.fillMaxSize().padding(logoPadding) else Modifier.fillMaxSize(),
             contentScale = if (art.logo) ContentScale.Fit else ContentScale.Crop,
             headers = art.headers(imageHeaders),
+            placeholder = artworkPlaceholder,
         )
     }
 }
