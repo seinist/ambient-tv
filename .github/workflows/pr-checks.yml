@@ -58,7 +58,7 @@ jobs:
         run: |
           bash -n build.sh
           bash -n scripts/build_monogram_native.sh scripts/measure_monogram_apk.sh
-          python3 -m py_compile scripts/merge_monogram_aars.py scripts/update_monogram_pin.py scripts/monogram_size_audit.py
+          python3 -m py_compile scripts/merge_monogram_aars.py scripts/update_monogram_pin.py scripts/patch_monogram_leave.py scripts/monogram_size_audit.py
           python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
       - name: Compile and run unit tests
