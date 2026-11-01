@@ -78,6 +78,8 @@ class PlaybackService : MediaBrowserServiceCompat() {
     @Inject lateinit var radioQueue: com.ambient.tv.ui.radio.RadioPlaybackQueue
     @Inject internal lateinit var carCatalog: CarAudioCatalog
     @Inject lateinit var spotify: SpotifyRepository
+    // Resolved only for a Telegram playback: other sources never touch the repository.
+    @Inject lateinit var telegram: javax.inject.Provider<com.ambient.tv.data.telegram.TelegramRepository>
     private var carPlaybackJob: Job? = null
     private val carSpotifySelection = CarSpotifySelection()
     private val carSpotifySelected: Boolean get() = carSpotifySelection.active
@@ -283,7 +285,7 @@ class PlaybackService : MediaBrowserServiceCompat() {
     private fun enqueueReport(state: BackgroundPlaybackSession.Snapshot, stopped: Boolean) {
         if (state.replacingSource) return
         if (state.metadata?.isTrailer == true) return
-        if (state.metadata?.liveTvSession == null && state.metadata?.source !in setOf("plex", "jellyfin", "emby", "dlna", "youtube", "files")) return
+        if (state.metadata?.liveTvSession == null && state.metadata?.source !in setOf("plex", "jellyfin", "emby", "dlna", "youtube", "files", "telegram")) return
         reportQueue.put(state.generation, state, stopped)
         reports.trySend(Unit)
     }
@@ -358,6 +360,10 @@ class PlaybackService : MediaBrowserServiceCompat() {
                     ended = if (metadata.hasVideo) completed else state.status.ended && state.status.error == null,
                     streamUrl = (metadata.resumeState as? PlayerUiState.Ready)?.streamUrl)
                 "youtube" -> youtube.updateHistory(metadata.mediaId, position)
+                // Telegram keeps its resume point on the device and needs only the final position;
+                // an unknown one (renderer at 0) was already replaced by the last position seen.
+                "telegram" -> if (stopped) telegram.get().rememberResumePosition(metadata.mediaId,
+                    if (state.status.ended && state.status.error == null) duration else position, duration)
             }
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
