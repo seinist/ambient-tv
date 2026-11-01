@@ -7,6 +7,7 @@ on:
     paths:
       - "app/src/monogram/**"
       - "scripts/build_monogram_native.sh"
+      - "scripts/patch_monogram_leave.py"
       - "scripts/merge_monogram_aars.py"
       - "scripts/monogram_size_audit.py"
       - "scripts/measure_monogram_apk.sh"
