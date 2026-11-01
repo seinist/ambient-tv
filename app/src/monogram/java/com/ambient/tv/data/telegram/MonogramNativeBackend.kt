@@ -323,15 +323,17 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                 val (id, title) = available[index]
                 val fetchLimit = minOf(60, limit.coerceIn(1, 60) - items.size)
                 val history = native.getHistoryPage(h, id, fetchLimit, offset, 0, 0)
-                val mapped = history.mapNotNull { media(h, it, title) }.filter {
-                    when (section) {
-                        "videos" -> it.kind == TelegramMediaKind.VIDEO
-                        "youtube" -> it.kind == TelegramMediaKind.YOUTUBE
-                        "audio" -> it.kind == TelegramMediaKind.AUDIO
-                        "photos" -> it.kind == TelegramMediaKind.PHOTO
-                        else -> true
+                val mapped = history.mapNotNull { media(h, it, title) }
+                    .flatMap { item -> if (section == "youtube") item.youtubePosts() else listOf(item) }
+                    .filter {
+                        when (section) {
+                            "videos" -> it.kind == TelegramMediaKind.VIDEO
+                            "youtube" -> it.kind == TelegramMediaKind.YOUTUBE
+                            "audio" -> it.kind == TelegramMediaKind.AUDIO
+                            "photos" -> it.kind == TelegramMediaKind.PHOTO
+                            else -> true
+                        }
                     }
-                }
                 items.addAll(mapped)
                 if (history.size == fetchLimit) {
                     offset = history.last().id
