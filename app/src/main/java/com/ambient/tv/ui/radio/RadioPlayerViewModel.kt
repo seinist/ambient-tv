@@ -82,6 +82,8 @@ class RadioPlayerViewModel @Inject constructor(
         return queue.next() != null || queue.snapshot().source?.hasMore == true
     }
 
+    fun isFavorite(stationId: String): Boolean = preferences.isRadioFavorite(stationId)
+
     fun toggleFavorite() {
         val station = queue.current() ?: return
         val next = !preferences.isRadioFavorite(station.id)
@@ -98,8 +100,9 @@ class RadioPlayerViewModel @Inject constructor(
             try {
                 launcher.play(station)
             } finally {
-                pendingStation = null
+                // Expose the committed stream before clearing the pending artwork.
                 switchingStation = false
+                pendingStation = null
             }
         }
     }
@@ -146,8 +149,9 @@ class RadioPlayerViewModel @Inject constructor(
                 }
             }
             } finally {
-                pendingStation = null
+                // Expose the committed stream before clearing the pending artwork.
                 switchingStation = false
+                pendingStation = null
             }
         }
     }
