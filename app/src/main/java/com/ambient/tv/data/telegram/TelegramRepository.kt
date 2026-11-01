@@ -1,6 +1,9 @@
 package com.ambient.tv.data.telegram
 
 import android.content.Context
+import com.ambient.tv.BuildConfig
+import com.ambient.tv.data.local.AppPreferences
+import kotlinx.coroutines.withContext
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,18 +61,44 @@ interface TelegramClientPort {
 class TelegramRepository @Inject constructor(
     @ApplicationContext context: Context,
     private val diskCache: TelegramDiskCache,
+    private val preferences: AppPreferences,
 ) {
-    // The class exists only in GPL-enabled builds. The normal CC0 APK never loads
-    // a native Telegram client or impersonates a successful authorization.
-    private val backend: MonogramAuthClientPort? = runCatching {
-        val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
-        factory.getConstructor(Context::class.java).newInstance(context) as MonogramAuthClientPort
-    }.getOrNull()
+    // Loading Rust/UniFFI is expensive; never initialize it on the UI thread
+    // or on an ordinary no-Monogram build. Only enabled systems restore sessions.
+    private val appContext = context.applicationContext
+    private val backend: MonogramAuthClientPort? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        if (!BuildConfig.MONOGRAM_NATIVE) null
+        else runCatching {
+            val factory = Class.forName("com.ambient.tv.data.telegram.MonogramNativeBackend")
+            factory.getConstructor(Context::class.java).newInstance(appContext) as MonogramAuthClientPort
+        }.getOrNull()
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutableLogin = MutableStateFlow(MonogramLoginState(
-        if (backend == null) MonogramLoginStep.UNAVAILABLE else MonogramLoginStep.READY))
+        if (BuildConfig.MONOGRAM_NATIVE) MonogramLoginStep.READY else MonogramLoginStep.UNAVAILABLE))
     val login: StateFlow<MonogramLoginState> = mutableLogin.asStateFlow()
-    val nativeAvailable: Boolean get() = backend != null
+    val nativeAvailable: Boolean get() = BuildConfig.MONOGRAM_NATIVE
+
+    private suspend fun obtainBackend(): MonogramAuthClientPort? =
+        withContext(Dispatchers.IO) { backend }
+
+    /** Idempotent session restoration; also called when Monogram was enabled in Settings. */
+    suspend fun restoreIfNeeded() {
+        if (!nativeAvailable || available || mutableLogin.value.busy) return
+        val target = obtainBackend()
+        if (target == null) {
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.UNAVAILABLE)
+            return
+        }
+        try {
+            applyLogin(target.restoreSession())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
+                error = error.message ?: "Monogram session restore failed")
+        }
+    }
     @Volatile private var client: TelegramClientPort? = null
     /** Exact launch row (not a guessed global "recent" queue). Switching pages never changes it. */
     private val queues = LinkedHashMap<String, List<String>>()
@@ -112,24 +141,26 @@ class TelegramRepository @Inject constructor(
     }
 
     init {
-        if (backend != null) scope.launch {
-            applyLogin(runCatching { backend.restoreSession() }.getOrElse {
-                MonogramLoginState(MonogramLoginStep.ERROR, error = it.message)
-            })
+        if (nativeAvailable && preferences.telegramEnabled) {
+            scope.launch { restoreIfNeeded() }
         }
     }
 
     private fun applyLogin(state: MonogramLoginState) {
-        mutableLogin.value = state.copy(busy = false, error = null)
-        if (state.step == MonogramLoginStep.AUTHORIZED && backend is TelegramClientPort) {
-            installAuthorized(backend)
+        mutableLogin.value = state.copy(busy = false)
+        val currentBackend = backend
+        if (state.step == MonogramLoginStep.AUTHORIZED && currentBackend is TelegramClientPort) {
+            installAuthorized(currentBackend)
         } else if (state.step != MonogramLoginStep.AUTHORIZED) {
             disconnect()
         }
     }
 
     private suspend fun transition(block: suspend MonogramAuthClientPort.() -> MonogramLoginState) {
-        val target = backend ?: return
+        val target = obtainBackend() ?: run {
+            mutableLogin.value = MonogramLoginState(MonogramLoginStep.UNAVAILABLE)
+            return
+        }
         if (mutableLogin.value.busy) return
         val previous = mutableLogin.value
         mutableLogin.value = previous.copy(busy = true, error = null)
@@ -152,7 +183,7 @@ class TelegramRepository @Inject constructor(
     suspend fun confirmCode(code: String) = transition { submitPhoneCode(code) }
     suspend fun confirmPassword(password: String) = transition { submitTwoFactorPassword(password) }
     suspend fun signOut() {
-        val target = backend ?: return
+        val target = obtainBackend() ?: return
         val before = mutableLogin.value
         mutableLogin.value = before.copy(busy = true, error = null)
         try {

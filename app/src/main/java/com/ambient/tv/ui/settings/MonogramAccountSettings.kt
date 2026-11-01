@@ -36,6 +36,7 @@ import androidx.tv.material3.Text
 @HiltViewModel
 class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepository) : ViewModel() {
     val login = repository.login
+    fun initialize() { viewModelScope.launch { repository.restoreIfNeeded() } }
     private var pollJob: Job? = null
     fun qr() {
         viewModelScope.launch { repository.requestQr(); watchQr() }
@@ -60,6 +61,7 @@ class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepos
 @Composable
 internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltViewModel()) {
     val login by viewModel.login.collectAsState()
+    LaunchedEffect(Unit) { viewModel.initialize() }
     var phone by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
