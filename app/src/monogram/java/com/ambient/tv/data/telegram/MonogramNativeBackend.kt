@@ -34,6 +34,9 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
     private val mutex = Mutex()
     private val browseMutex = Mutex()
     private val diskChunkLock = Any()
+    /** Account-generation fences prevent older thumbnail RPCs repopulating a new account's cache. */
+    @Volatile private var cacheGeneration = 0L
+    private var previewWrites = 0
     private val accountIdFile = File(session.parentFile, "account.id")
     private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
         runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
@@ -73,8 +76,12 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
     private fun authorized(id: Long? = null): MonogramLoginState {
         if (id != null) {
             if (accountId != id) {
-                cache.deleteRecursively()
-                cache.mkdirs()
+                synchronized(diskChunkLock) {
+                    cacheGeneration++
+                    cache.deleteRecursively()
+                    cache.mkdirs()
+                    previewWrites = 0
+                }
             }
             accountId = id
             accountIdFile.writeText(id.toString())
@@ -167,8 +174,10 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             codeHash = null
             loginState = MonogramLoginState(MonogramLoginStep.READY)
             synchronized(diskChunkLock) {
+                cacheGeneration++
                 cache.deleteRecursively()
                 cache.mkdirs()
+                previewWrites = 0
             }
             accountIdFile.delete()
             accountId = null
@@ -224,14 +233,45 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                 cursor(index + result.size) else null)
         } }
 
-    /** Inline previews only: do not download the full channel's posters on first load. */
+    /** Only small in-message previews; bounded across a long scrolling session. */
     private fun preview(h: Long, chat: Long, id: Int, peer: Boolean = false): String? {
+        val expectedGeneration = cacheGeneration
+        val expectedAccount = accountId
         val bytes = if (peer) native.peekPeerInlineThumb(h, chat)
             else native.peekMessageInlineThumb(h, chat, id)
         if (bytes.isNullOrEmpty() || bytes.size > 512 * 1024) return null
-        val out = File(cache, if (peer) "channel-$chat.bin" else "thumb-$chat-$id.bin")
-        if (!out.isFile || out.length() != bytes.size.toLong()) out.writeBytes(bytes)
-        return out.toURI().toString()
+        synchronized(diskChunkLock) {
+            if (expectedAccount == null || accountId != expectedAccount ||
+                cacheGeneration != expectedGeneration) return null
+            val out = File(cache, if (peer) "channel-$chat.bin" else "thumb-$chat-$id.bin")
+            if (!out.isFile || out.length() != bytes.size.toLong()) {
+                out.writeBytes(bytes)
+                // Avoid per-image directory scans while still bounding the native preview cache.
+                if (++previewWrites % 16 == 1) trimPreviewCache()
+            } else {
+                out.setLastModified(System.currentTimeMillis())
+            }
+            return out.toURI().toString()
+        }
+    }
+
+    /** Enforce both age and byte/count limits without touching media chunk/photo caches. */
+    private fun trimPreviewCache() {
+        val thumbnails = cache.listFiles().orEmpty()
+            .filter { it.isFile && (it.name.startsWith("thumb-") || it.name.startsWith("channel-")) }
+            .sortedBy { it.lastModified() }
+        val expiry = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        var remainingBytes = thumbnails.sumOf { it.length() }
+        var remainingCount = thumbnails.size
+        for (item in thumbnails) {
+            if (item.lastModified() >= expiry &&
+                remainingCount <= 500 && remainingBytes <= 32L * 1024 * 1024) break
+            val size = item.length()
+            if (item.delete()) {
+                remainingBytes -= size
+                remainingCount--
+            }
+        }
     }
 
     private fun media(h: Long, m: MessageDto, channel: String): TelegramMedia? {
