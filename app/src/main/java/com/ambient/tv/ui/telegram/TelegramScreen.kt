@@ -461,6 +461,9 @@ fun TelegramScreen(
                                 }
                             }
                         }
+                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
+                            MonogramPageRetry(viewModel::loadMore)
+                        }
                     }
                 layout == MonogramBrowseLayout.GRID ->
                     TvLazyVerticalGrid(
@@ -492,6 +495,10 @@ fun TelegramScreen(
                                 MonogramCardPlaceholder(fillCell = true)
                             }
                         }
+                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY,
+                            span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            MonogramPageRetry(viewModel::loadMore)
+                        }
                     }
                 else ->
                     androidx.compose.foundation.lazy.LazyColumn(
@@ -515,16 +522,14 @@ fun TelegramScreen(
                                     detailed = layout == MonogramBrowseLayout.INFO_LIST)
                             }
                         }
+                        if (state.pageError != null) item(key = MONOGRAM_PAGE_ERROR_KEY) {
+                            MonogramPageRetry(viewModel::loadMore)
+                        }
                     }
             }
-            // Next pages show card-shaped placeholders inside the grid/list (and the refresh
-            // chip's spinner); a spinner below the list would shrink the viewport and shift it.
-            if (state.pageError != null) {
-                TvActionButton(
-                    text = stringResource(R.string.action_reload),
-                    onClick = viewModel::loadMore,
-                )
-            }
+            // Next pages show card-shaped placeholders and a failed page its retry button as the
+            // last item inside the grid/list; anything below the list would shrink the viewport
+            // and shift it.
         }
         if (showViewOptions) {
             RightPanelOverlay(onOutsideTap = closeOptions) {
@@ -649,5 +654,15 @@ private fun MonogramListItem(
                 }
             }
         }
+    }
+}
+
+private const val MONOGRAM_PAGE_ERROR_KEY = "monogram-page-error"
+
+/** Retry for a failed next page, placed after the last item instead of below the list. */
+@Composable
+private fun MonogramPageRetry(onRetry: () -> Unit) {
+    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+        TvActionButton(text = stringResource(R.string.action_reload), onClick = onRetry)
     }
 }
