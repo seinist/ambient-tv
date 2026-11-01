@@ -1683,7 +1683,7 @@ private fun AmbientTvApp(
     fun navigateSidebar(route: String) {
         // Only selecting SmartTube Start in the menu or the feed chips requests a Home update.
         // Navigation back from playback must not be confused with this explicit action.
-        if (route == youtubeFeedRoute("home")) {
+        if (route == Destinations.youtubeSection("home", appPreferences.youtubeStartFeedKey)) {
             com.ambient.tv.ui.youtube.YouTubeHomeSelection.request()
         }
         // The handheld Startseite control always means the app home screen. The shared
