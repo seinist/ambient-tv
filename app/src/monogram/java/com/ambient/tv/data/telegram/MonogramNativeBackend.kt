@@ -89,7 +89,9 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
         return loginState
     }
 
-    override suspend fun restoreSession() = nativeCall {
+    // Read the locally encrypted native session first, even with no network.
+    // The private feed cache may then paint Home before MTProto reconnects.
+    override suspend fun restoreSession() = nativeCall(connect = false) {
         if (native.isAuthorized(it)) authorized() else
             MonogramLoginState(MonogramLoginStep.READY).also { state -> loginState = state }
     }

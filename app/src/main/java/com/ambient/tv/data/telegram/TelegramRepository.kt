@@ -4,6 +4,8 @@ import android.content.Context
 import com.ambient.tv.BuildConfig
 import com.ambient.tv.data.local.AppPreferences
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,19 +84,27 @@ class TelegramRepository @Inject constructor(
     private suspend fun obtainBackend(): MonogramAuthClientPort? =
         withContext(Dispatchers.IO) { backend }
 
-    /** Idempotent session restoration; also called when Monogram was enabled in Settings. */
-    suspend fun restoreIfNeeded() {
-        if (!nativeAvailable || available || mutableLogin.value.busy) return
+    private val sessionRestoreMutex = Mutex()
+    private var restoredSessionOnce = false
+
+    /** One asynchronous local session probe; never reset a pending QR/2FA login. */
+    suspend fun restoreIfNeeded() = sessionRestoreMutex.withLock {
+        if (!nativeAvailable || available || restoredSessionOnce ||
+            mutableLogin.value.step != MonogramLoginStep.READY ||
+            mutableLogin.value.busy) return@withLock
+        restoredSessionOnce = true
         val target = obtainBackend()
         if (target == null) {
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.UNAVAILABLE)
-            return
+            return@withLock
         }
         try {
             applyLogin(target.restoreSession())
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            restoredSessionOnce = false
             throw cancelled
         } catch (error: Exception) {
+            // Keep the sign-in controls reachable if the session is invalid.
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.READY,
                 error = error.message ?: "Monogram session restore failed")
         }
