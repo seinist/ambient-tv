@@ -328,6 +328,7 @@ class YouTubeViewModel @Inject constructor(
     private var contentGeneration = 0L
     private var displayedContentKey: String? = null
     private var entered = false
+    private var lastHandledHomeSelection = YouTubeHomeSelection.requests.value
     val uiState: StateFlow<YouTubeUiState> = _uiState.asStateFlow()
 
     init {
@@ -341,13 +342,42 @@ class YouTubeViewModel @Inject constructor(
     }
 
     fun enter(initialFeedKey: String?) {
-        if (!entered) {
+        val firstEntry = !entered
+        if (firstEntry) {
             entered = true
             val feed = initialFeedKey?.let(YouTubeFeed::fromKey)?.takeIf { it in configuredFeeds }
             if (feed != null && feed != _uiState.value.feed) { selectFeed(feed); return }
         }
         restorePlayedFocus()
-        refresh()
+        val current = _uiState.value
+        val request = YouTubeHomeSelection.requests.value
+        val homeSelection = channelId == null && current.feed == YouTubeFeed.HOME &&
+            request > lastHandledHomeSelection
+        if (homeSelection) {
+            lastHandledHomeSelection = request
+            // Clicking Home while search is open must return to the Home feed, not re-run search.
+            if (current.query.isNotBlank()) {
+                _uiState.value = current.copy(query = "")
+                load(YouTubeFeed.HOME, preserveExtent = true, manual = true)
+                return
+            }
+        }
+        if (youtubeShouldRefreshOnEntry(current.feed, firstEntry, channelId != null, homeSelection)) {
+            refresh(manual = homeSelection)
+        }
+    }
+
+    /** Handle a Home click even when Navigation keeps the already visible route alive. */
+    fun onHomeSelected(request: Long) {
+        if (request <= lastHandledHomeSelection || !entered || channelId != null ||
+            _uiState.value.feed != YouTubeFeed.HOME) return
+        lastHandledHomeSelection = request
+        if (_uiState.value.query.isNotBlank()) {
+            _uiState.value = _uiState.value.copy(query = "")
+            load(YouTubeFeed.HOME, preserveExtent = true, manual = true)
+        } else {
+            refresh(manual = true)
+        }
     }
 
     fun refresh() = refresh(manual = false)
@@ -603,7 +633,12 @@ class YouTubeViewModel @Inject constructor(
                     if (generation != contentGeneration) return@launch
                     _uiState.value = _uiState.value.copy(signedIn = signed, accountProfile = profile)
                     var rows = engine.feed(selectedFeed.key) { rows ->
-                        if (refreshRows.isEmpty()) showRows(cacheKey, rows, cacheRevision, generation)
+                        // Subscription observables may remain open. Publish newly arrived items
+                        // against the retained cache without waiting for the final snapshot.
+                        if (refreshRows.isEmpty() || selectedFeed == YouTubeFeed.SUBSCRIPTIONS ||
+                            selectedFeed == YouTubeFeed.CHANNELS) {
+                            showRows(cacheKey, rows, cacheRevision, generation)
+                        }
                     }
                     // MediaServiceCore can report an empty Home feed while its services are still
                     // warming up on the first app start. A manual refresh then works immediately,
