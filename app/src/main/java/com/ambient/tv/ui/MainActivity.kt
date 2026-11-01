@@ -1047,6 +1047,50 @@ private fun AmbientTvApp(
     }
 
     val photoContext = LocalContext.current
+    fun handleHomeRadioSelection(selection: com.ambient.tv.ui.home.HomeRadioPlaybackSelection) {
+        if (selection.stationId.isBlank() || mediaSelectionBusy) return
+        mediaSelectionBusy = true
+        val originEntry = navController.currentBackStackEntry?.id
+        mediaSelectionScope.launch {
+            try {
+                // Usually the Home ViewModel already owns all 24 source stations. When a
+                // cached Home row was displayed before its network refresh, hydrate that same
+                // category, then restore the *displayed* ordering by station UUID.
+                val known = selection.cachedStations.mapTo(HashSet()) { it.id }
+                val fetched = if (selection.stationIds.all { it in known }) emptyList() else {
+                    val key = selection.rowId.removePrefix("radio.")
+                    suspendResult {
+                        when {
+                            key in setOf("home", HomeRowDefinition.RADIO_POPULAR) ->
+                                radioBrowserRepository.popular(24)
+                            key == HomeRowDefinition.RADIO_FAVORITES -> appPreferences.radioFavorites
+                            key == HomeRowDefinition.RADIO_RECENT -> appPreferences.recentRadioStations
+                            key.startsWith("${HomeRowDefinition.RADIO_GENRE}:") ->
+                                radioBrowserRepository.search(tag = key.substringAfter(':'), limit = 24).items
+                            key.startsWith("${HomeRowDefinition.RADIO_COUNTRY}:") ->
+                                radioBrowserRepository.search(countryCode = key.substringAfter(':'), limit = 24).items
+                            key.startsWith("${HomeRowDefinition.RADIO_LANGUAGE}:") ->
+                                radioBrowserRepository.search(language = key.substringAfter(':'), limit = 24).items
+                            else -> emptyList()
+                        }
+                    }.getOrDefault(emptyList())
+                }
+                val clicked = (selection.cachedStations + fetched).firstOrNull { it.id == selection.stationId }
+                    ?: suspendResult { radioBrowserRepository.station(selection.stationId) }.getOrNull()
+                    ?: return@launch
+                if (navController.currentBackStackEntry?.id != originEntry) return@launch
+                val sourceQueue = com.ambient.tv.ui.home.homeRadioPlaybackQueue(selection, fetched, clicked)
+                radioPlaybackLauncher.play(clicked, sourceQueue).onSuccess {
+                    if (navController.currentBackStackEntry?.id == originEntry) {
+                        navController.navigate(Destinations.RADIO_PLAYER) { launchSingleTop = true }
+                    }
+                }
+            } finally {
+                mediaSelectionBusy = false
+            }
+        }
+    }
+
     fun handleMediaSelection(
         ratingKey: String,
         collectionId: String? = null,
@@ -2086,6 +2130,7 @@ private fun AmbientTvApp(
                                     }
                                 },
                                 onYouTubeVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
+                                onRadioHomeStationClick = ::handleHomeRadioSelection,
                                 onWatchLiveChannel = { channel -> playOnSelectedTarget(Destinations.tvhPlayer("channel", channel.uuid, channel.sourceId)) },
                                 onOpenHomeContent = { row ->
                                     when (row.system) {
