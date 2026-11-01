@@ -85,18 +85,18 @@ jobs:
       - name: Audit native MTProto size (10 MB raw ELF budget)
         run: |
           python3 scripts/monogram_size_audit.py \
-            --abi "${{ matrix.abi }" \
+            --abi "${{ matrix.abi }}" \
             --aar app/libs/monogram-mtproto.aar --max-native-mb 10 \
-            --json "monogram-native-size-${{ matrix.abi }.json" \
-            --markdown "monogram-native-size-${{ matrix.abi }.md"
-          cat "monogram-native-size-${{ matrix.abi }.md" >> "$GITHUB_STEP_SUMMARY"
+            --json "monogram-native-size-${{ matrix.abi }}.json" \
+            --markdown "monogram-native-size-${{ matrix.abi }}.md"
+          cat "monogram-native-size-${{ matrix.abi }}.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload native size report
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: monogram-native-size-${{ matrix.abi }
-          path: monogram-native-size-${{ matrix.abi }.*
+          name: monogram-native-size-${{ matrix.abi }}
+          path: monogram-native-size-${{ matrix.abi }}.*
           if-no-files-found: warn
           retention-days: 14
 
