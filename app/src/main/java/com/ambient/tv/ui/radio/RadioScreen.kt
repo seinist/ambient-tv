@@ -565,6 +565,18 @@ fun RadioScreen(
                                                 },
                                             )
                                         }
+                                        if (state.hasMore) {
+                                            item(key = "radio-grid-page-tail") {
+                                                RadioPagingTail(
+                                                    scope = focusScope,
+                                                    nextOffset = state.nextOffset,
+                                                    hasMore = state.hasMore,
+                                                    loading = state.loading,
+                                                    loadingMore = state.loadingMore,
+                                                    onLoadMore = viewModel::loadMore,
+                                                )
+                                            }
+                                        }
                                         if (state.loadingMore) {
                                             items(
                                                 count = RADIO_GRID_END_PLACEHOLDERS,
@@ -583,6 +595,11 @@ fun RadioScreen(
                                         startingStationId = state.startingStationId,
                                         favoriteIds = state.favoriteIds,
                                         loadingMore = state.loadingMore,
+                                        hasMore = state.hasMore,
+                                        nextOffset = state.nextOffset,
+                                        pagingScope = focusScope,
+                                        loading = state.loading,
+                                        onLoadMore = viewModel::loadMore,
                                         state = listState,
                                         onClick = { station -> viewModel.play(station, onOpenPlayer) },
                                         onFavorite = toggleStationFavorite,
@@ -1049,6 +1066,11 @@ private fun RadioStationList(
     startingStationId: String?,
     favoriteIds: Set<String>,
     loadingMore: Boolean,
+    hasMore: Boolean,
+    nextOffset: Int,
+    pagingScope: RadioFocusScope,
+    loading: Boolean,
+    onLoadMore: () -> Unit,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
     onFavorite: (RadioStation) -> Unit,
@@ -1147,6 +1169,18 @@ private fun RadioStationList(
                     onClick = { onFavorite(station) },
                     onFocused = { onFocused(station) },
                     modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+        }
+        if (hasMore) {
+            item(key = "radio-list-page-tail") {
+                RadioPagingTail(
+                    scope = pagingScope,
+                    nextOffset = nextOffset,
+                    hasMore = hasMore,
+                    loading = loading,
+                    loadingMore = loadingMore,
+                    onLoadMore = onLoadMore,
                 )
             }
         }
