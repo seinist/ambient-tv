@@ -1475,6 +1475,37 @@ class HomeViewModel @Inject constructor(
         telegramRowsPending = true
         telegramJob = viewModelScope.launch {
             try {
+                // Cached private account rows paint before any MTProto I/O. The live rows
+                // replace them without changing row IDs or remembered focus.
+                val cached = coroutineScope {
+                    definitions.map { definition ->
+                        async {
+                            val items = if (definition.contentKey == "channels") {
+                                telegramRepository.cachedChannels().map { it.toBrowseItem() }
+                            } else {
+                                com.ambient.tv.ui.telegram.telegramRows(
+                                    definition.contentKey,
+                                    telegramRepository.cachedBrowse(definition.contentKey),
+                                ).flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            }
+                            if (items.isEmpty()) null else ContentRowData(
+                                id = "telegram.${definition.contentKey}",
+                                title = definition.displayTitle(context),
+                                style = definition.tileStyle(MediaTileStyle.LANDSCAPE),
+                                items = items,
+                            )
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                if (cached.isNotEmpty() && telegramRepository.available) {
+                    telegramRows = cached
+                    cached.forEach { row ->
+                        telegramRepository.registerPlaybackQueue(
+                            "home:${row.id}", row.items.map(MediaItem::ratingKey))
+                    }
+                    if (!_uiState.value.isFailurePage())
+                        publishRows((_uiState.value as? HomeUiState.Loaded)?.rows.orEmpty())
+                }
                 val updates = coroutineScope {
                     definitions.map { definition ->
                         async {
