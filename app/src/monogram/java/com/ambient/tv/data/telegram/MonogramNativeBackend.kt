@@ -47,6 +47,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private var epoch = System.nanoTime()
     private var chats = mutableListOf<ChatDto>()
     private var chatsExhausted = false
+    private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
+    private var nextRecentFeed = 0L
     private var phone: String? = null
     private var codeHash: String? = null
     private var qrExpiresAt = 0L
@@ -119,6 +121,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             accountIdFile.writeText(id.toString())
         }
         accountId?.let { label = "Monogram #$it" }
+        recentFeeds.clear()
         chats.clear()
         chatsExhausted = false
         phone = null
@@ -200,6 +203,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         mutex.withLock {
             chats.clear()
             chatsExhausted = false
+            recentFeeds.clear()
             epoch++
             label = "Monogram"
             phone = null
@@ -220,6 +224,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         browseMutex.withLock {
             chats.clear()
             chatsExhausted = false
+            recentFeeds.clear()
         }
     }
 
@@ -286,6 +291,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (joined) {
                 chats.clear()
                 chatsExhausted = false
+                recentFeeds.clear()
                 epoch++
             }
             joined
@@ -371,10 +377,54 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         )
     }
 
-    // Cursor tracks both channel index and history offset; no large message lists are kept.
+    /**
+     * Complete the dialog index once per global timeline. Otherwise a not-yet-loaded channel
+     * could contain newer media than entries that were already emitted.
+     */
+    private fun fullChannelCatalog(h: Long): List<ChatDto> {
+        var previous = -1
+        repeat(64) {
+            val current = knownChannels(h, Int.MAX_VALUE)
+            if (chatsExhausted) return current
+            if (chats.size == previous) return current
+            previous = chats.size
+        }
+        check(chatsExhausted) { "Monogram channel catalog exceeded paging safety limit" }
+        return knownChannels(h, Int.MAX_VALUE)
+    }
+
+    private fun recent(h: Long, token: String?, limit: Int): TelegramMediaPage {
+        val cursorToken = token ?: ("recent:" + epoch + ":" + (++nextRecentFeed))
+        val timeline = if (token == null) {
+            val channels = fullChannelCatalog(h)
+                .map { channel ->
+                    MonogramRecentTimeline.Channel(channel.id,
+                        (channel.lastMessageDate ?: 0L) * 1000L)
+                }
+            MonogramRecentTimeline(channels) { id, offset, size ->
+                val history = native.getHistoryPage(h, id, size, offset, 0, 0)
+                val title = chats.firstOrNull { it.id == id }?.title ?: "Monogram"
+                val items = history.mapNotNull { entry -> media(h, entry, title) }
+                val next = history.lastOrNull()?.id?.takeIf { history.size == size }
+                MonogramRecentTimeline.HistoryBatch(
+                    items, next,
+                    history.lastOrNull()?.date?.times(1000L) ?: Long.MIN_VALUE)
+            }.also { recentFeeds[cursorToken] = it }
+        } else {
+            require(token.startsWith("recent:" + epoch + ":")) { "Stale Monogram recent cursor" }
+            checkNotNull(recentFeeds[token]) { "Expired Monogram recent cursor" }
+        }
+        val page = timeline.nextPage(limit.coerceIn(1, 60))
+        if (!page.hasMore) recentFeeds.remove(cursorToken)
+        while (recentFeeds.size > 3) recentFeeds.remove(recentFeeds.keys.first())
+        return TelegramMediaPage(page.media, if (page.hasMore) cursorToken else null)
+    }
+
+    // Other tabs keep their channel+history-offset cursor; recent uses a global timeline.
     override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
         browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
+            if (section == "recent") return@nativeCall recent(h, cursor, limit)
             val parts = cursor?.split(':')
             require(parts == null || (parts.size == 3 && parts[0].toLongOrNull() == epoch))
             var index = parts?.get(1)?.toIntOrNull() ?: 0
