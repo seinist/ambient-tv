@@ -168,9 +168,12 @@ internal fun PersistentPlayerOverlays(
         CompositionLocalProvider(LocalPlayerPanelNavigation provides navigation) {
             // An outgoing engine may keep its old OSD model for one composition frame.
             // Never paint it for the incoming live station while the renderer is replaced.
-            val activeModel = chrome.osdModel.value?.takeIf { model ->
+            // Prefer the caller's current model, including A -> B -> A rapid zaps; a
+            // previously published A model could otherwise match the identity but contain
+            // obsolete ICY text for one frame.
+            val activeModel = immediateOsdModel?.takeIf { model ->
                 playerOsdIdentityMatches(model.sourceIdentity, expectedSourceIdentity)
-            } ?: immediateOsdModel?.takeIf { model ->
+            } ?: chrome.osdModel.value?.takeIf { model ->
                 playerOsdIdentityMatches(model.sourceIdentity, expectedSourceIdentity)
             }
             if (!hideSourceInfo) {
