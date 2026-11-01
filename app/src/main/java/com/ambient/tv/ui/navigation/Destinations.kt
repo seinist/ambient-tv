@@ -28,6 +28,7 @@ object Destinations {
     const val TELEGRAM = "telegram"
     const val TELEGRAM_SECTION = "telegram_section/{sectionKey}"
     const val TELEGRAM_PLAYER = "telegram_player/{chatId}/{messageId}"
+    const val TELEGRAM_DETAIL = "telegram_detail/{chatId}/{messageId}"
     const val TRAILERS = "trailers"
     const val TRAILER_FEED = "trailers/feed/{feedKey}"
     const val ITEM_TRAILERS = "trailers/item/{ratingKey}"
@@ -54,7 +55,7 @@ object Destinations {
 
     /** NavDestination route patterns, not the concrete URLs passed to navigate(). */
     fun isDetailRoute(route: String?): Boolean =
-        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL
+        route == DETAIL || route == YOUTUBE_DETAIL || route == SPOTIFY_DETAIL || route == TELEGRAM_DETAIL
 
     fun setupSettings(category: String) = "setup_settings/${Uri.encode(category)}"
     fun detail(ratingKey: String, collectionId: String? = null, collectionSort: String? = null) = buildString {
@@ -69,6 +70,7 @@ object Destinations {
     fun youtubeFeed(feedKey: String) = "youtube_feed/${Uri.encode(feedKey)}"
     fun telegramSection(key: String) = if (key == "recent") TELEGRAM else "telegram_section/${Uri.encode(key)}"
     fun telegramPlayer(chatId: Long, messageId: Int) = "telegram_player/$chatId/$messageId"
+    fun telegramDetail(chatId: Long, messageId: Int) = "telegram_detail/$chatId/$messageId"
     /** SmartTube's root route shows the chosen start section; every other section has its feed route. */
     fun youtubeSection(feedKey: String, startFeedKey: String) = if (feedKey == startFeedKey) YOUTUBE else youtubeFeed(feedKey)
     fun trailerFeed(feedKey: String) = "trailers/feed/${Uri.encode(feedKey)}"
