@@ -27,9 +27,9 @@ class GuideTimelineTest {
         assertEquals(600L, slots[0].visibleSeconds)
         assertEquals(600L, slots[1].gapBeforeSeconds)
         assertEquals(1_800L, slots[1].visibleSeconds)
-        assertEquals(40f, guideTimelineWidthDp(slots[0].visibleSeconds))
-        assertEquals(120f, guideTimelineWidthDp(slots[1].visibleSeconds))
-        assertEquals(40f, guideTimelineWidthDp(slots[1].gapBeforeSeconds))
+        assertEquals(40f, guideTimelineWidthDp(slots[0].visibleSeconds), 0.001f)
+        assertEquals(120f, guideTimelineWidthDp(slots[1].visibleSeconds), 0.001f)
+        assertEquals(40f, guideTimelineWidthDp(slots[1].gapBeforeSeconds), 0.001f)
     }
 
     @Test fun overlappingEpgEventsDoNotCreateNegativeSpaceOrShiftFocusIndices() {
