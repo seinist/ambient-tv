@@ -30,6 +30,9 @@ import com.ambient.tv.ui.common.TvLazyColumn as LazyColumn
 import com.ambient.tv.ui.mobile.DeviceActionRow
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -56,10 +59,12 @@ internal fun Guide(
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
     titleArt: Map<String, String> = emptyMap(),
     onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
+    artworkUpdates: StateFlow<Map<String, String>>? = null,
 ) = LiveTvChannelBrowser(browseState, channels, events, imageHeaders, onEvent,
     firstContentFocusRequester, focusTarget, onFocused, options, onOptions, onWatch, canWatch, controls,
     refreshing = refreshing, restoreFocus = restoreFocus, onFocusRestored = onFocusRestored,
-    pageFocusChain = pageFocusChain, listing = listing, titleArt = titleArt, onArtworkNeeded = onArtworkNeeded)
+    pageFocusChain = pageFocusChain, listing = listing, titleArt = titleArt, onArtworkNeeded = onArtworkNeeded,
+    artworkUpdates = artworkUpdates)
 
 /** The same filtered rows drive rendering, alphabet jumps and restored focus. */
 @Composable
@@ -87,6 +92,7 @@ internal fun LiveTvChannelBrowser(
     listing: LiveTvChannelListing = rememberLiveTvChannelListing(channels, events, options),
     titleArt: Map<String, String> = emptyMap(),
     onArtworkNeeded: (String, kotlinx.coroutines.CoroutineScope) -> Unit = { _, _ -> },
+    artworkUpdates: StateFlow<Map<String, String>>? = null,
 ) {
     val now = listing.now
     val eventsByChannel = listing.eventsByChannel
@@ -333,6 +339,7 @@ internal fun LiveTvChannelBrowser(
                                         GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
                                             art = liveTvProgrammeArt(event, listOf(channel), titleArt),
                                             imageHeaders = imageHeaders,
+                                            artworkUpdates = artworkUpdates,
                                             onArtworkNeeded = { onArtworkNeeded(event.title, it) },
                                             modifier = (if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)
