@@ -95,6 +95,7 @@ internal fun LiveTvChannelBrowser(
     artworkUpdates: StateFlow<Map<String, String>>? = null,
 ) {
     val now = listing.now
+    val timelineOrigin = remember(now) { guideTimelineOrigin(now) }
     val eventsByChannel = listing.eventsByChannel
     val visibleChannels = listing.visibleChannels
     val tags = listing.tags
@@ -291,6 +292,11 @@ internal fun LiveTvChannelBrowser(
                                 modifier = Modifier.focusRequester(rowFocus.getOrPut(channel.uuid) { FocusRequester() })
                                     .then(if (channel.uuid == focusTarget.contentId) Modifier.focusRequester(firstContentFocusRequester) else Modifier))
                         } else {
+                            // All channels share the same timeline origin, including gaps with no EPG.
+                            // Keep one LazyRow item per original event so saved focus indices stay valid.
+                            val timelineSlots = remember(rowEvents, timelineOrigin) {
+                                guideTimelineSlots(rowEvents, timelineOrigin)
+                            }
                             // A channel target (back from the player) starts at the programme running now.
                             val channelTarget = channel.uuid == focusTarget.rowId && focusTarget.contentId == "channel:${channel.uuid}"
                             val rowPosition = remember(browseState, channel.uuid) { browseState.position("guide:${channel.uuid}") }
@@ -334,12 +340,16 @@ internal fun LiveTvChannelBrowser(
                                     androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.primary)
                                 } else if (rowEvents.isEmpty()) Text(stringResource(R.string.guide_no_programme), modifier = Modifier.padding(12.dp),
                                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(), horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                                    items(rowEvents, key = { it.eventId }) { event ->
+                                else LazyRow(state = rowState, modifier = Modifier.containRowFocusExit(),
+                                    horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                                    items(timelineSlots, key = { it.programme.eventId }) { slot ->
+                                        val event = slot.programme
                                         GuideEventCard(event, now, onEvent, onFocused = { alphabetTarget = channel.uuid; contentFocused("event:${event.eventId}", channel.uuid) },
                                             art = liveTvProgrammeArt(event, listOf(channel), titleArt),
                                             imageHeaders = imageHeaders,
                                             artworkUpdates = artworkUpdates,
+                                            gapBeforeSeconds = slot.gapBeforeSeconds,
+                                            visibleSeconds = slot.visibleSeconds,
                                             onArtworkNeeded = { onArtworkNeeded(event.title, it) },
                                             modifier = (if (channel.uuid == focusTarget.rowId && "event:${event.eventId}" == focusTarget.contentId)
                                                 Modifier.focusRequester(firstContentFocusRequester) else Modifier)
