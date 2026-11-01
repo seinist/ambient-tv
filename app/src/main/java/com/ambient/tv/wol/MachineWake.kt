@@ -105,6 +105,9 @@ class MachineWake @Inject constructor(
         retries = { preferences.wolRetryCount },
     )
 
+    fun machineKey(system: String, host: String?, mac: String?): String =
+        machines.keyFor(system, host, mac)
+
     /** Fire-and-forget: progress and result appear on the machine's shared wake card. */
     fun wake(request: ManualWakeRequest) {
         scope.launch {
