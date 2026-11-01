@@ -323,6 +323,8 @@ private fun TelegramPlaybackContent(
                 )
             }
             val ownsSession = snapshot.metadata?.mediaId == media.mediaKey
+            val trackControls = monogramRendererControls(
+                BackgroundPlaybackSession.activeHandle().takeIf { ownsSession })
             val position = if (ownsSession) snapshot.status.positionMs else 0L
             val duration = if (ownsSession) snapshot.status.durationMs.takeIf { it > 0 }
                 ?: metadata.durationMs else metadata.durationMs
@@ -361,17 +363,17 @@ private fun TelegramPlaybackContent(
                     scalingKey = "fit",
                     aspectKey = "auto",
                     zoomFactor = 1f,
-                    speed = 1f,
+                    speed = trackControls.speed,
                     onScalingChanged = null,
                     onAspectChanged = null,
                     onZoomChanged = null,
-                    onSpeedChanged = null,
-                    audioOptions = emptyList(),
-                    selectedAudio = "",
-                    onAudioSelected = {},
-                    subtitleOptions = emptyList(),
-                    selectedSubtitle = "",
-                    onSubtitleSelected = {},
+                    onSpeedChanged = trackControls.onSpeedChanged,
+                    audioOptions = trackControls.audio,
+                    selectedAudio = trackControls.selectedAudio,
+                    onAudioSelected = trackControls.selectAudio,
+                    subtitleOptions = trackControls.subtitles,
+                    selectedSubtitle = trackControls.selectedSubtitle,
+                    onSubtitleSelected = trackControls.selectSubtitle,
                     sleepTimer = BackgroundPlaybackSession.sleepTimer,
                     onSleepChanged = BackgroundPlaybackSession::setSleepTimer,
                     infoLines = listOf(
