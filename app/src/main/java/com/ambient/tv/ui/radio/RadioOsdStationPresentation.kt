@@ -64,3 +64,11 @@ internal fun radioOsdStationPresentation(
         artworkHeaders = metadata.artworkHeaders,
     )
 }
+
+/**
+ * Whether the details dialog has a station to show. While switching, the requested station is
+ * shown (without song text, which belongs to the old stream), so the Details button stays on the
+ * OSD during zapping; only the neutral "loading next station" placeholder has no details.
+ */
+internal fun radioOsdHasDetail(shown: RadioOsdStationPresentation): Boolean =
+    !shown.switching || shown.station != null

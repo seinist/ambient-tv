@@ -374,24 +374,43 @@ fun TvheadendPlayerScreen(
                     )
                     // Outside the engine branch: a renderer switch replaces the engine, not OSD and panel.
                     val detailRecording = current.playingRecording ?: current.recordingArtSource
+                    val tuneTarget = current.channel?.takeIf { it.uuid == viewModel.expectedChannelUuid } ?: viewModel.expectedChannel
                     com.ambient.tv.ui.player.PublishPlayerDetail(
-                        androidx.compose.runtime.remember(current.channel, current.nowEvent, current.nextEvent, detailRecording, pendingChannelUi) {
-                            // Never show the previous channel's programme during a new tune.
-                            if (pendingChannelUi) null else com.ambient.tv.ui.player.playerDetailForLiveTv(
+                        androidx.compose.runtime.remember(current.channel, current.nowEvent, current.nextEvent, detailRecording, pendingChannelUi, tuneTarget) {
+                            // Never show the previous channel's programme during a new tune; the
+                            // new channel alone keeps the Details button while zapping.
+                            com.ambient.tv.ui.player.playerDetailForLiveTune(
+                                pendingChannelUi, tuneTarget,
                                 current.channel, current.nowEvent, current.nextEvent, detailRecording,
                             )
                         },
                     )
+                    // Covers outgoing video frames while a replacement stream is acquired, but
+                    // below the OSD: a visible OSD stays on screen and only shows the new channel.
+                    if (pendingChannelUi) {
+                        Box(
+                            Modifier.fillMaxSize().background(Color.Black),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            PlayerBufferingSpinner(visible = true)
+                        }
+                    }
+                    val handoverOsd = liveOsdHandover(
+                        zapChrome?.osdModel?.value,
+                        tuneTarget,
+                    )
                     com.ambient.tv.ui.player.PersistentPlayerOverlays(
-                        hideSourceInfo = pendingChannelUi,
+                        hideSourceInfo = pendingChannelUi && handoverOsd == null,
                         expectedSourceIdentity = viewModel.expectedChannelUuid.takeIf { current.channel != null },
+                        immediateOsdModel = handoverOsd,
                     )
                 }
             }
         }
         // Covers outgoing video frames and chrome while a replacement stream is acquired.
-        // Never expose the previous channel's title/EPG during the new tune.
-        if (pendingChannelUi) {
+        // Never expose the previous channel's title/EPG during the new tune. In Ready the
+        // cover is drawn below the OSD (see above).
+        if (pendingChannelUi && ready == null) {
             Box(
                 Modifier.fillMaxSize().background(Color.Black),
                 contentAlignment = Alignment.Center,

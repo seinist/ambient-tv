@@ -23,6 +23,12 @@ internal class PlayerOsdController(initialZapOsd: Boolean = false) {
     var transitionVersion by mutableIntStateOf(0)
         private set
 
+    /**
+     * Whether the OSD was last drawn fully on screen. Survives a short remount of the overlay
+     * (channel/station change, engine replacement) so a visible OSD does not fade in again.
+     */
+    internal var onScreen: Boolean = false
+
     /** Compatibility with engine callbacks; visibility includes the closing phase. */
     val visible: MutableState<Boolean> = object : MutableState<Boolean> {
         override var value: Boolean

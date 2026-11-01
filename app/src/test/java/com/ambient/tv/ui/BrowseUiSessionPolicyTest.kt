@@ -83,3 +83,17 @@ class BrowseUiSessionPolicyTest {
         assertFalse(policy.create(Any(), hasSavedState = true))
     }
 }
+
+class LauncherFreshUiSessionTest {
+    private val launcher = setOf(android.content.Intent.CATEGORY_LAUNCHER)
+
+    @org.junit.Test fun launcherAfterRootBackStartsFresh() {
+        org.junit.Assert.assertTrue(launcherStartsFreshUiSession(true, android.content.Intent.ACTION_MAIN, launcher))
+    }
+
+    @org.junit.Test fun otherReturnsKeepTheSession() {
+        org.junit.Assert.assertFalse(launcherStartsFreshUiSession(false, android.content.Intent.ACTION_MAIN, launcher))
+        org.junit.Assert.assertFalse(launcherStartsFreshUiSession(true, android.content.Intent.ACTION_VIEW, launcher))
+        org.junit.Assert.assertFalse(launcherStartsFreshUiSession(true, android.content.Intent.ACTION_MAIN, null))
+    }
+}

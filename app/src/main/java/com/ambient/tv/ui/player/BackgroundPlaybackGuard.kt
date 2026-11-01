@@ -31,6 +31,8 @@ object BackgroundPlaybackGuard : DefaultLifecycleObserver {
     private var foreground = true
     @Volatile private var externalFlowMarkedAt: Long? = null
     private var stopPending = false
+    /** A PiP window of the app is on screen; it never counts as leaving the app. */
+    @Volatile private var pictureInPicture = false
     private var wakeLock: PowerManager.WakeLock? = null
 
     private val delayedStop = Runnable {
@@ -60,6 +62,12 @@ object BackgroundPlaybackGuard : DefaultLifecycleObserver {
         lifecycle.addObserver(this)
         ContextCompat.registerReceiver(application, screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF),
             ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    /** Reported by the Activity whenever the system PiP window opens or closes. */
+    fun setPictureInPicture(visible: Boolean) {
+        pictureInPicture = visible
+        if (visible) cancelPending()
     }
 
     /** Call right before the app opens another app's screen and expects to come back to it. */
@@ -99,6 +107,7 @@ object BackgroundPlaybackGuard : DefaultLifecycleObserver {
             television = com.ambient.tv.ui.mobile.isTelevision(context),
             screenOn = screenOn,
             externalFlow = externalFlow,
+            pictureInPicture = pictureInPicture,
         )
         if (action != BackgroundPlaybackAction.NONE) {
             Timber.i("App in background: %s (live=%s video=%s screenOn=%s)", action, metadata?.isLive, metadata?.hasVideo, screenOn)

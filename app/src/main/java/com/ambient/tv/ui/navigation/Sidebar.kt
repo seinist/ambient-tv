@@ -317,19 +317,9 @@ internal fun SidebarContent(
         }
         if (telegramEnabled) add(MenuSystem(
             "telegram", systemName(MediaSystem.TELEGRAM), Icons.Filled.Subscriptions, system = MediaSystem.TELEGRAM,
-            entries = listOf(
-                Triple("recent", R.string.telegram_recent, Icons.Filled.Update),
-                Triple("channels", R.string.telegram_channels, Icons.Filled.Subscriptions),
-                Triple("videos", R.string.telegram_videos, Icons.Filled.OndemandVideo),
-                Triple("youtube", R.string.telegram_youtube, Icons.Filled.SmartDisplay),
-                Triple("audio", R.string.telegram_audio, Icons.Filled.Audiotrack),
-                Triple("photos", R.string.telegram_photos, Icons.Filled.PhotoLibrary),
-            ).filter { (key, _, _) -> key in sidebarState.telegramSubmenuKeys }
-                .map { (key, title, icon) ->
-                    MenuDestination("telegram:$key", stringResource(title), icon, Destinations.telegramSection(key))
-                }.ifEmpty { listOf(MenuDestination(
-                    "telegram:recent", stringResource(R.string.telegram_recent), Icons.Filled.Update, Destinations.TELEGRAM,
-                )) },
+            entries = telegramMenuEntries(sidebarState.telegramSubmenuKeys).map { entry ->
+                MenuDestination("telegram:${entry.key}", stringResource(entry.title), telegramMenuIcon(entry.key), Destinations.telegramSection(entry.key))
+            },
         ))
         if (radioEnabled) add(MenuSystem(
             "radio", systemName(MediaSystem.RADIO), Icons.Filled.Headphones, system = MediaSystem.RADIO,

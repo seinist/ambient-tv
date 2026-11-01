@@ -91,6 +91,24 @@ internal fun menuOrderItems(state: SidebarUiState): List<MenuOrderItem> {
         .map { MenuOrderItem(it.key, systemName(it), menuSystemIcon(it), it) }
 }
 
+/**
+ * Only fields the user actually changed count as edited. A field still showing the name the
+ * menu showed, the provider name or the system's own label stores no override, so opening and
+ * closing the editor never turns a label (TVHeadend's "Live-TV") into a custom name.
+ */
+internal fun menuOrderRenames(
+    names: Map<String, String>,
+    shown: Map<String, String>,
+    providers: Map<String, String>,
+    defaults: Map<String, String>,
+): Pair<Map<String, String>, Set<String>> {
+    val edited = names.filter { (id, name) -> name.trim() != shown[id]?.trim() }.keys
+    val renamed = names.filter { (id, name) ->
+        id in edited && name.isNotBlank() && name.trim() != providers[id] && name.trim() != defaults[id]
+    }
+    return renamed to edited
+}
+
 internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
     buildList {
         if (state.dlnaServers.isNotEmpty()) add(MediaSystem.DLNA)
@@ -101,6 +119,7 @@ internal fun menuOrderSystems(state: SidebarUiState): List<MediaSystem> =
         if (state.trailersConfigured) add(MediaSystem.TRAILERS)
         if (state.youtubeEnabled) add(MediaSystem.YOUTUBE)
         if (state.spotifyEnabled && state.spotifyAuthorized) add(MediaSystem.SPOTIFY)
+        if (state.telegramEnabled && state.telegramAuthorized) add(MediaSystem.TELEGRAM)
         if (state.tvheadendEnabled) add(MediaSystem.TVHEADEND)
         if (state.liveTvSources.any { it.source.system == "iptv" }) add(MediaSystem.IPTV)
     }
@@ -129,6 +148,10 @@ internal fun MenuOrderDialog(
     val providers = systems.associate { item ->
         item.id to (item.system?.let { it.brand ?: stringResource(it.label) } ?: item.label)
     }
+    // A system's own label can differ from its provider ("Live-TV" for TVHeadend). Keeping
+    // that label is no rename either.
+    val defaults = systems.associate { item -> item.id to (item.system?.let { stringResource(it.label) } ?: item.label) }
+    val shown = remember { systems.associate { it.id to it.label } }
     val names = remember { mutableStateMapOf<String, String>().apply { systems.forEach { put(it.id, it.label) } } }
     var draftOrder by remember { mutableStateOf(systems.map { it.id }) }
     val draftItems = remember(draftOrder, systems) {
@@ -148,11 +171,12 @@ internal fun MenuOrderDialog(
     }
     // Names are saved while typing, like every other setting (no separate save step).
     val saveNames = {
-        onRename(names.filter { (id, name) -> name.trim() != providers[id] }, systems.map { it.id }.toSet())
+        val (renamed, edited) = menuOrderRenames(names.toMap(), shown, providers, defaults)
+        onRename(renamed, edited)
     }
     val applyAndClose = {
         onApplyOrder(draftOrder)
-        onRename(names.filter { (id, name) -> name.trim() != providers[id] }, systems.map { it.id }.toSet())
+        saveNames()
         onDismiss()
     }
     // Closing keeps what was changed; names are applied when the editor closes.
