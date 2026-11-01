@@ -117,6 +117,7 @@ internal fun MonogramAccountSettings(
     var showApiDashboardQr by remember { mutableStateOf(false) }
     var apiDashboardError by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val handheld = LocalHandheldUi.current
     LaunchedEffect(login.step) {
         if (login.step == MonogramLoginStep.AUTHORIZED) { code = ""; password = "" }
     }
@@ -184,7 +185,7 @@ internal fun MonogramAccountSettings(
                 TvActionButton(
                     text = stringResource(R.string.monogram_api_open_dashboard),
                     onClick = {
-                        if (LocalHandheldUi.current) {
+                        if (handheld) {
                             apiDashboardError = !openLoginLink(context, "https://my.telegram.org/apps")
                         } else showApiDashboardQr = true
                     },
@@ -223,7 +224,7 @@ internal fun MonogramAccountSettings(
                     if (configured) {
                         // On TV, the QR is the primary button. Reopen an existing token
                         // without requesting a new one (which would invalidate the old QR).
-                        if (!LocalHandheldUi.current) {
+                        if (!handheld) {
                             SettingsActionRow {
                                 TvActionButton(
                                     text = stringResource(R.string.monogram_sign_in_qr),
