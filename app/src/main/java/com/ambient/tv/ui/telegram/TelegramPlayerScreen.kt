@@ -63,6 +63,10 @@ import com.ambient.tv.ui.player.OsdPlayer
 import com.ambient.tv.ui.player.PersistentPlayerChrome
 import com.ambient.tv.ui.player.PersistentPlayerOverlays
 import com.ambient.tv.ui.player.PlaybackEngineFactory
+import com.ambient.tv.ui.player.resizeKey
+import com.ambient.tv.ui.player.aspectKey
+import com.ambient.tv.ui.player.videoResizeMode
+import com.ambient.tv.ui.player.videoAspectRatio
 import com.ambient.tv.ui.player.TitleVideoSettingsStore
 import com.ambient.tv.ui.player.backend.MpvBackendAvailability
 import com.ambient.tv.ui.player.backend.PlaybackBackendResolver
@@ -231,6 +235,7 @@ private fun TelegramPlaybackContent(
         }
     }
     val snapshot by BackgroundPlaybackSession.snapshot.collectAsState()
+    val presentation by BackgroundPlaybackSession.videoPresentation.collectAsState()
     val controls = rememberPlayerControlsVisible()
     var controlsVisible by controls
     val osd = rememberPlayerOsdController()
@@ -360,13 +365,16 @@ private fun TelegramPlaybackContent(
                     audioSession = BackgroundPlaybackSession.currentAudioSession(),
                     hasVideo = metadata.hasVideo,
                     isLive = false,
-                    scalingKey = "fit",
-                    aspectKey = "auto",
-                    zoomFactor = 1f,
+                    scalingKey = presentation.resizeKey(),
+                    aspectKey = presentation.aspectKey(),
+                    zoomFactor = presentation.zoom,
                     speed = trackControls.speed,
-                    onScalingChanged = null,
-                    onAspectChanged = null,
-                    onZoomChanged = null,
+                    onScalingChanged = { next -> BackgroundPlaybackSession.setVideoPresentation(
+                        presentation.copy(resizeMode = videoResizeMode(next))) },
+                    onAspectChanged = { next -> BackgroundPlaybackSession.setVideoPresentation(
+                        presentation.copy(aspectRatio = videoAspectRatio(next))) },
+                    onZoomChanged = { next -> BackgroundPlaybackSession.setVideoPresentation(
+                        presentation.copy(zoom = next)) },
                     onSpeedChanged = trackControls.onSpeedChanged,
                     audioOptions = trackControls.audio,
                     selectedAudio = trackControls.selectedAudio,
