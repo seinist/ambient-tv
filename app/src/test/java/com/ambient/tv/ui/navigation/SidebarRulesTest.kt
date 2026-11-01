@@ -51,4 +51,10 @@ class SidebarRulesTest {
         )
         assertEquals(listOf(MediaSystem.IPTV), menuOrderSystems(state))
     }
+
+    @Test fun monogramParticipatesInTheSharedMenuEditorLikeSmartTube() {
+        val state = SidebarUiState(youtubeEnabled = true, telegramEnabled = true, systemOrder = listOf("telegram", "youtube"))
+        assertEquals(listOf(MediaSystem.TELEGRAM, MediaSystem.YOUTUBE), menuOrderSystems(state))
+        assertEquals(listOf(MediaSystem.YOUTUBE), menuOrderSystems(state.copy(telegramEnabled = false)))
+    }
 }

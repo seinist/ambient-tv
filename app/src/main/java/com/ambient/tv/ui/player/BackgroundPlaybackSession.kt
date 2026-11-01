@@ -682,7 +682,7 @@ object BackgroundPlaybackSession {
                 buffer.liveWallMs > buffer.oldestWallMs
         } else player.canSeekNow() || source.resumeSeekCanReload && source.resumeSeek != null && metadata.durationMs > 0L
         val savesProgress = !metadata.isTrailer && metadata.source in setOf(
-            "plex", "jellyfin", "emby", "files", "dlna", "youtube", "tvheadend", "iptv",
+            "plex", "jellyfin", "emby", "files", "dlna", "youtube", "telegram", "tvheadend", "iptv",
         )
         return playbackResumeCapabilities(video, live, seekable, savesProgress)
     }
