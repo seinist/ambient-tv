@@ -659,7 +659,11 @@ internal fun LazyListScope.settingsSystemCategoryItems(
                     viewModel::onTelegramEnabledChanged,
                 )
             }
-            // Like Spotify, allow entering API credentials before the system is activated.
+            // Same account-setup header hierarchy as Spotify. Credentials can be entered
+            // before enabling the source; account sign-in still requires the opt-in backend.
+            item(key = "telegram-account-section") {
+                SettingsSubheader(stringResource(R.string.settings_system_account_setup))
+            }
             item(key = "telegram-account") {
                 MonogramAccountSettings(allowSignIn = uiState.telegramEnabled)
             }
