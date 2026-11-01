@@ -347,7 +347,7 @@ private fun RadioPlayerContent(
 
                 val infoLines = buildList {
                     add(stringResource(R.string.player_nerd_backend) to "Media3")
-                    osdStation.station?.let { current ->
+                    osdStation?.station?.let { current ->
                         current.codec?.takeIf { it.isNotBlank() }?.let {
                             add(stringResource(R.string.player_audio) to it)
                         }
