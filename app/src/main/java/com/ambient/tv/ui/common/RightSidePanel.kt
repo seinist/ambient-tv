@@ -520,6 +520,9 @@ private fun RightSidePanelChrome(
     val footerFocus = remember { FocusRequester() }
     val bodyFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
+    // The drawer's own focus group holding focus (no row inside it) is not a usable selection:
+    // nothing is highlighted and the D-pad has nowhere to go until OK picks a row.
+    var drawerSelfFocused by remember { mutableStateOf(false) }
     var bodyHasFocus by remember { mutableStateOf(false) }
     // A rebuilt level that already held focus rescues it like a panel that just lost it.
     var hadPanelFocus by remember { mutableStateOf(focusRescue?.levelFresh == false) }
@@ -583,6 +586,13 @@ private fun RightSidePanelChrome(
             }
         }
     }
+    LaunchedEffect(drawerSelfFocused, panelInteractive) {
+        if (!drawerSelfFocused || !panelInteractive) return@LaunchedEffect
+        // Let a pending rescue place its remembered row first; then fall back to a real row.
+        androidx.compose.runtime.withFrameNanos { }
+        androidx.compose.runtime.withFrameNanos { }
+        if (drawerSelfFocused && !focusFirstRow()) runCatching { footerFocus.requestFocus() }
+    }
     if (requestHeaderFocus && panelInteractive) {
         LaunchedEffect(requestHeaderFocus, panelInteractive) {
             // Do not leave focus on the old grid for 400 ms while the drawer enters.
@@ -630,6 +640,7 @@ private fun RightSidePanelChrome(
             .focusRequester(panelFocus)
             .onFocusChanged {
                 panelHasFocus = it.hasFocus
+                drawerSelfFocused = it.isFocused
                 if (it.hasFocus) {
                     hadPanelFocus = true
                     focusRescue?.onFocused?.invoke()
