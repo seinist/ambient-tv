@@ -13,11 +13,20 @@ SHA-pinned upstream checkout. It never builds or packages Monogram's
 `feature:dialog`, `feature:folders`, `feature:profile`, `feature:settings`,
 `network:bridge`, `network:http` or `native:markup` modules.
 
-The upstream native *Rust crate* still depends on mono-rs and tlottie and
-exports broader Telegram APIs; those crates cannot be safely elided without
-upstream features or a maintained fork. Upstream uses `opt-level="z"`,
-full LTO, stripping and `panic="abort"` for release. R8 also shrinks
-Kotlin/Java code when building Ambient TV release.
+The pinned upstream native Rust crate depends on mono-rs and also originally
+includes tlottie/TGS sticker rendering, VPX video-sticker decoding, native
+waveform generation and a separate Rust QR codec. Ambient TV does not call
+these features: the reproducible source patch in
+`scripts/patch_monogram_leave.py` removes their Rust modules, UniFFI exports,
+Kotlin facades and `tlottie`/`rxing`/`flate2` dependency declarations
+**before compilation**. The native builder no longer checks out tlottie.
+The actual MTProto `mono-rs` transport, auth, session, chat metadata and
+media fetching remain intact; broader mono-rs functionality cannot all be
+safely removed without independent, reviewed upstream feature work. The
+upstream Rust release already uses `opt-level="z"`, full LTO, stripping and
+`panic="abort"`. R8 also shrinks Kotlin/Java code in release APKs.
+The saved native bytes from this trim must be proven by a passing four-ABI
+CI rebuild and compared with the previously recorded raw ELF figures.
 
 The adapter lives under `app/src/monogram/java` and is included only when
 `MONOGRAM_NATIVE=1`. Normal builds contain neither the AAR, its JNA/Rustls
