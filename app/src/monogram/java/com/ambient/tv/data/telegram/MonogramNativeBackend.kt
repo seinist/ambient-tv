@@ -29,7 +29,14 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
         parentFile?.mkdirs()
     }
     private val cache = File(app.cacheDir, "monogram").apply { mkdirs() }
+    /** The upstream MTProto handle supports overlapping RPCs. Only handle creation and
+     * connecting are serialized: an artwork request must never block video seeking. */
     private val mutex = Mutex()
+    private val browseMutex = Mutex()
+    private val accountIdFile = File(session.parentFile, "account.id")
+    private var accountId: Long? = accountIdFile.takeIf { it.isFile }?.let {
+        runCatching { it.readText().trim().toLongOrNull() }.getOrNull()
+    }
     private var handle = 0L
     private var connected = false
     private var epoch = System.nanoTime()
@@ -41,11 +48,12 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
     private var label = "Monogram"
     private var loginState = MonogramLoginState(MonogramLoginStep.READY)
     override val accountName get() = label
+    override val cacheIdentity: String? get() = accountId?.toString()
 
     /** Serializes native operations and keeps network work off the UI thread. */
     private suspend fun <T> nativeCall(connect: Boolean = true, action: (Long) -> T): T =
         withContext(Dispatchers.IO) {
-            mutex.withLock {
+            val current = mutex.withLock {
                 if (handle == 0L) {
                     handle = native.createClient(BuildConfig.MONOGRAM_API_ID,
                         BuildConfig.MONOGRAM_API_HASH, session.absolutePath)
@@ -56,12 +64,21 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                     native.connect(handle)
                     connected = true
                 }
-                action(handle)
+                handle
             }
+            action(current)
         }
 
     private fun authorized(id: Long? = null): MonogramLoginState {
-        if (id != null) label = "Monogram #$id"
+        if (id != null) {
+            if (accountId != id) {
+                cache.deleteRecursively()
+                cache.mkdirs()
+            }
+            accountId = id
+            accountIdFile.writeText(id.toString())
+        }
+        accountId?.let { label = "Monogram #$it" }
         chats.clear()
         chatsExhausted = false
         phone = null
@@ -138,6 +155,8 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             loginState = MonogramLoginState(MonogramLoginStep.READY)
             cache.deleteRecursively()
             cache.mkdirs()
+            accountIdFile.delete()
+            accountId = null
         }
     }
 
@@ -172,7 +191,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
     }
 
     override suspend fun channels(cursor: String?, limit: Int): TelegramChannelPage =
-        nativeCall { h ->
+        browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
             val index = cursorIndex(cursor)
             val all = knownChannels(h, index + limit.coerceIn(1, 60) + 1)
@@ -181,7 +200,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                 TelegramChannel(it.id, it.title, thumbnailUrl = preview(h, it.id, 0, true))
             }, if (index + result.size < all.size || (!chatsExhausted && result.isNotEmpty()))
                 cursor(index + result.size) else null)
-        }
+        } }
 
     /** Inline previews only: do not download the full channel's posters on first load. */
     private fun preview(h: Long, chat: Long, id: Int, peer: Boolean = false): String? {
@@ -224,7 +243,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
 
     // Cursor tracks both channel index and history offset; no large message lists are kept.
     override suspend fun browse(section: String, cursor: String?, limit: Int): TelegramMediaPage =
-        nativeCall { h ->
+        browseMutex.withLock { nativeCall { h ->
             requireAuthorized(h)
             val parts = cursor?.split(':')
             require(parts == null || (parts.size == 3 && parts[0].toLongOrNull() == epoch))
@@ -263,7 +282,7 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             val next = if (index < available.size || (channelId == null && !chatsExhausted))
                 "$epoch:$index:$offset" else null
             TelegramMediaPage(items.distinctBy(TelegramMedia::mediaKey), next)
-        }
+        } }
 
     override suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = nativeCall { h ->
         requireAuthorized(h)
@@ -276,6 +295,12 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             requireAuthorized(h)
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
+            val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
+            if (cacheFile.isFile && cacheFile.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
+                cacheFile.setLastModified(System.currentTimeMillis())
+                return@nativeCall cacheFile.readBytes()
+            }
+            val currentIdentity = accountId
             val temp = File.createTempFile("part-", ".bin", dir)
             var actual: File? = null
             try {
@@ -285,10 +310,27 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
                 require(actual.length() in 1..TELEGRAM_MEDIA_PART_BYTES.toLong()) {
                     "Invalid Monogram chunk size"
                 }
-                actual.readBytes()
+                val payload = actual.readBytes()
+                if (accountId == currentIdentity && native.isAuthorized(h)) {
+                    // An account switch must never publish the previous account's bytes.
+                    if (!cacheFile.isFile) actual.copyTo(cacheFile, overwrite = false)
+                    trimChunkCache(dir)
+                }
+                payload
             } finally {
                 temp.delete()
                 actual?.takeIf { it.parentFile == dir }?.delete()
             }
         }
+
+    private fun trimChunkCache(dir: File) {
+        val files = dir.listFiles()?.filter { it.isFile && it.name.endsWith(".bin") }
+            ?.sortedBy { it.lastModified() } ?: return
+        var bytes = files.sumOf { it.length() }
+        for (item in files) {
+            if (bytes <= 64L * 1024L * 1024L) break
+            bytes -= item.length()
+            item.delete()
+        }
+    }
 }

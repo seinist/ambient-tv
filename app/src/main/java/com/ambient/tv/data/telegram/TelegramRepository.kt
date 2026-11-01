@@ -39,6 +39,8 @@ data class TelegramChannelPage(val items: List<TelegramChannel>, val nextCursor:
  * An optional, separately licensed native module may install its authorized client here. */
 interface TelegramClientPort {
     val accountName: String
+    /** Stable native account identity; no cache is shared across different logins. */
+    val cacheIdentity: String? get() = null
     suspend fun channels(cursor: String? = null, limit: Int = 60): TelegramChannelPage
     suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
@@ -49,6 +51,7 @@ interface TelegramClientPort {
 @Singleton
 class TelegramRepository @Inject constructor(
     @ApplicationContext context: Context,
+    private val diskCache: TelegramDiskCache,
 ) {
     // The class exists only in GPL-enabled builds. The normal CC0 APK never loads
     // a native Telegram client or impersonates a successful authorization.
@@ -96,7 +99,9 @@ class TelegramRepository @Inject constructor(
     suspend fun signOut() {
         val target = backend ?: return
         try {
+            val identity = client?.cacheIdentity
             target.logout()
+            identity?.let { diskCache.clearAccount(it) }
             applyLogin(MonogramLoginState(MonogramLoginStep.READY))
         } catch (error: Exception) {
             mutableLogin.value = MonogramLoginState(MonogramLoginStep.ERROR, error = error.message)
@@ -118,13 +123,39 @@ class TelegramRepository @Inject constructor(
         mutableAuthorized.value = false
     }
 
-    suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage =
-        client?.channels(cursor, limit) ?: TelegramChannelPage(emptyList())
-    suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage =
-        client?.browse(section, cursor, limit) ?: TelegramMediaPage(emptyList())
-    suspend fun channels(): List<TelegramChannel> = channelsPage().items
-    suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia> =
-        browsePage(section, limit = limit).items
+    /** Cache is only read after native account authorization confirms the same identity. */
+    suspend fun cachedChannels(): List<TelegramChannel> =
+        client?.cacheIdentity?.let { diskCache.channels(it) }.orEmpty()
+    suspend fun cachedBrowse(section: String): List<TelegramMedia> =
+        client?.cacheIdentity?.let { diskCache.media(it, section) }.orEmpty()
+
+    suspend fun channelsPage(cursor: String? = null, limit: Int = 60): TelegramChannelPage {
+        val selected = client ?: return TelegramChannelPage(emptyList())
+        val page = selected.channels(cursor, limit)
+        selected.cacheIdentity?.let { id ->
+            if (page.items.isNotEmpty()) diskCache.saveChannels(id, page.items, cursor == null)
+        }
+        return page
+    }
+    suspend fun browsePage(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage {
+        val selected = client ?: return TelegramMediaPage(emptyList())
+        val page = selected.browse(section, cursor, limit)
+        selected.cacheIdentity?.let { id ->
+            if (page.items.isNotEmpty()) diskCache.saveMedia(id, section, page.items, cursor == null)
+        }
+        return page
+    }
+    suspend fun channels(): List<TelegramChannel> = try {
+        channelsPage().items.ifEmpty { cachedChannels() }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) { cachedChannels() }
+
+    suspend fun browse(section: String, limit: Int = 60): List<TelegramMedia> = try {
+        browsePage(section, limit = limit).items.ifEmpty { cachedBrowse(section).take(limit) }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) { cachedBrowse(section).take(limit) }
 
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = client?.media(chatId, messageId)
     suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =

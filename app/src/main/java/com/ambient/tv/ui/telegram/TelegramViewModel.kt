@@ -117,7 +117,21 @@ class TelegramViewModel @Inject constructor(
             error = null,
         )
         if (!repository.available) return
-        fetchPage(key, cursor = null, generation = pageGeneration)
+        // Paint last authorized-account snapshot first; a live refresh replaces it.
+        val generation = pageGeneration
+        viewModelScope.launch {
+            val cached = if (key == "channels") repository.cachedChannels().let { list ->
+                if (list.isEmpty()) emptyList() else listOf(ContentRowData(
+                    id = "telegram.channels", title = "Monogram",
+                    style = MediaTileStyle.POSTER,
+                    items = list.map(TelegramChannel::toBrowseItem)))
+            } else telegramRows(key, repository.cachedBrowse(key))
+            if (generation == pageGeneration && mutableState.value.section == key &&
+                mutableState.value.rows.isEmpty() && cached.isNotEmpty()) {
+                mutableState.value = mutableState.value.copy(rows = cached)
+            }
+        }
+        fetchPage(key, cursor = null, generation = generation)
     }
 
     fun loadMore() {
