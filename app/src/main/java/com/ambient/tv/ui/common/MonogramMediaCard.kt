@@ -61,6 +61,30 @@ internal fun monogramCardMeta(
     item.durationMs?.takeIf { it > 0L }?.let { durationLabel(it)?.let(::add) }
 }.joinToString("  ·  ")
 
+/** The same thumbnail treatment is used by rows, grids and lists. */
+@Composable
+internal fun MonogramArtwork(
+    item: MediaItem,
+    style: MediaTileStyle,
+    modifier: Modifier = Modifier,
+) {
+    val imageUrl = mediaTileImageUrl(item, style)
+    if (item.ratingKey.startsWith("telegram-channel:")) {
+        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)),
+            contentAlignment = Alignment.Center) {
+            if (imageUrl != null) ArtworkImage(
+                imageUrl, item.title,
+                Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
+                ContentScale.Crop,
+            ) else Icon(
+                Icons.Filled.AccountCircle, contentDescription = item.title,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
+            )
+        }
+    } else ArtworkImage(imageUrl, item.title, modifier, ContentScale.Crop)
+}
+
 @Composable
 internal fun MonogramMediaCard(
     item: MediaItem,
@@ -76,7 +100,6 @@ internal fun MonogramMediaCard(
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
     val aspect = if (resolvedStyle in setOf(MediaTileStyle.POSTER, MediaTileStyle.AUTO)) 2f / 3f else 16f / 9f
     val width = mediaTileWidth(resolvedStyle)
-    val imageUrl = mediaTileImageUrl(item, resolvedStyle)
     val shape = RoundedCornerShape(10.dp)
     val artworkShape = RoundedCornerShape(7.dp)
     val heroRow = LocalHeroRowTiles.current
@@ -144,26 +167,11 @@ internal fun MonogramMediaCard(
                 .padding(if (heroRow) 3.dp else 8.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Box(Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
-                contentAlignment = Alignment.Center) {
-                if (item.ratingKey.startsWith("telegram-channel:")) {
-                    Box(Modifier.fillMaxSize().background(
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)),
-                        contentAlignment = Alignment.Center) {
-                        if (imageUrl != null) ArtworkImage(
-                            imageUrl, item.title,
-                            Modifier.fillMaxHeight(.82f).aspectRatio(1f).clip(CircleShape),
-                            ContentScale.Crop,
-                        ) else Icon(
-                            Icons.Filled.AccountCircle, contentDescription = item.title,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxHeight(.64f).aspectRatio(1f),
-                        )
-                    }
-                } else {
-                    ArtworkImage(imageUrl, item.title, Modifier.fillMaxSize(), ContentScale.Crop)
-                }
-            }
+            MonogramArtwork(
+                item = item,
+                style = resolvedStyle,
+                modifier = Modifier.fillMaxWidth().aspectRatio(aspect).clip(artworkShape),
+            )
             if (!heroRow) {
                 Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
                     CenteredMarqueeTitle(
