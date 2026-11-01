@@ -7,6 +7,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -69,6 +71,9 @@ import com.ambient.tv.ui.common.FilterBarModel
 import com.ambient.tv.ui.common.LocalFilterBarSetting
 import com.ambient.tv.ui.common.MediaSystem
 import com.ambient.tv.ui.common.MediaTile
+import com.ambient.tv.ui.common.LocalMonogramRowCardWidth
+import com.ambient.tv.ui.common.GridDensityProfile
+import com.ambient.tv.ui.common.visibleGridColumns
 import com.ambient.tv.ui.common.MonogramArtwork
 import com.ambient.tv.ui.common.MarqueeTitle
 import com.ambient.tv.ui.common.monogramCardMeta
@@ -104,6 +109,7 @@ import com.ambient.tv.ui.common.rememberRowColumnFocus
 import com.ambient.tv.ui.common.sortDirectionOptions
 import com.ambient.tv.ui.common.transparentSurfaceColors
 import com.ambient.tv.ui.mobile.deviceDensityGridCells
+import com.ambient.tv.ui.mobile.LocalHandheldUi
 import com.ambient.tv.ui.mobile.deviceDp
 import com.ambient.tv.ui.theme.screenGutter
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -408,22 +414,41 @@ fun TelegramScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(currentRows, key = { it.id }) { row ->
-                            ContentRow(
-                                row = row, columnFocus = focus,
-                                restoreRatingKey = lastKey?.takeIf { key -> row.items.any { it.ratingKey == key } },
-                                onItemFocused = { focused ->
-                                    lastKey = focused.ratingKey
-                                    val index = row.items.indexOfFirst { it.ratingKey == focused.ratingKey }
-                                    if (index >= row.items.size - 8) viewModel.loadMore()
-                                },
-                                onViewportNearEnd = { viewModel.loadMore() },
-                                onItemClick = { choose(it, row.items) },
-                            )
+                            // SmartTube computes row-card widths from the viewport and the same
+                            // density setting, rather than using a fixed TV poster width on phones.
+                            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                                val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+                                val handheld = LocalHandheldUi.current
+                                val count = visibleGridColumns(
+                                    gridColumns, ViewPreview.LANDSCAPE, GridDensityProfile.SMARTTUBE,
+                                    handheld, configuration.screenWidthDp, configuration.screenHeightDp,
+                                ).coerceAtLeast(1)
+                                val gap = 16.dp
+                                val cardWidth = ((maxWidth - screenGutter() * 2 - gap * (count - 1)) / count)
+                                    .coerceAtLeast(if (handheld) 104.dp else 160.dp)
+                                CompositionLocalProvider(LocalMonogramRowCardWidth provides cardWidth) {
+                                    ContentRow(
+                                        row = row, columnFocus = focus,
+                                        restoreRatingKey = lastKey?.takeIf { key ->
+                                            row.items.any { it.ratingKey == key }
+                                        },
+                                        onItemFocused = { focused ->
+                                            lastKey = focused.ratingKey
+                                            val index = row.items.indexOfFirst { it.ratingKey == focused.ratingKey }
+                                            if (index >= row.items.size - 8) viewModel.loadMore()
+                                        },
+                                        onViewportNearEnd = { viewModel.loadMore() },
+                                        onItemClick = { choose(it, row.items) },
+                                    )
+                                }
+                            }
                         }
                     }
                 layout == MonogramBrowseLayout.GRID ->
                     TvLazyVerticalGrid(
-                        columns = deviceDensityGridCells(gridColumns, 160.dp, 8),
+                        columns = deviceDensityGridCells(
+                            com.ambient.tv.ui.common.landscapeGridColumns(gridColumns), 260.dp, 4),
+
                         state = grid,
                         modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
                         contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 12.dp),
@@ -480,7 +505,7 @@ fun TelegramScreen(
                     ViewOptionsPanel(
                         views = listOf(
                             ViewOption("ROWS", stringResource(R.string.library_view_rows), ViewPreview.ROWS),
-                            ViewOption("GRID", stringResource(R.string.library_view_grid), ViewPreview.GRID),
+                            ViewOption("GRID", stringResource(R.string.library_view_grid), ViewPreview.LANDSCAPE),
                             ViewOption("LIST", stringResource(R.string.library_view_list), ViewPreview.LIST),
                         ),
                         selectedView = layout.name,
