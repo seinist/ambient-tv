@@ -76,7 +76,12 @@ class CompanionMediaMapper @Inject constructor(
     internal fun nextUpMedia(next: com.ambient.tv.ui.player.NextUpCandidate, current: CompanionMedia?): CompanionMedia? = runCatching {
         if (current?.kind == "library" && next.source in setOf("plex", "jellyfin", "emby"))
             current.copy(id = next.mediaId, restart = false, mediaIndex = null)
-        else fromRoute(if (next.source == "youtube") Destinations.youtubePlayer(next.mediaId) else Destinations.player(next.mediaId))
+        else fromRoute(when (next.source) {
+            "youtube" -> Destinations.youtubePlayer(next.mediaId)
+            // Monogram's next post is a "telegram:<chat>:<message>" key, not a library id.
+            "telegram" -> requireNotNull(telegramPlayerRouteFor(next.mediaId))
+            else -> Destinations.player(next.mediaId)
+        })
             .also { require(current == null || it.kind == "youtube" || it.source == current.source) }
     }.getOrNull()
 
@@ -90,6 +95,9 @@ class CompanionMediaMapper @Inject constructor(
                 CompanionMedia("spotify:${parts[1]}", parts[2])
             }
             "youtube_player" -> CompanionMedia("youtube", path[1], trailer = uri.getQueryParameter("trailer") == "true")
+            // The browse queue token is local to one device; the post itself is portable.
+            "telegram_player" -> CompanionMedia("telegram",
+                telegramCompanionId(path[1].toLong(), path[2].toInt()))
             "player" -> {
                 val key = path[1]
                 when {
@@ -134,6 +142,11 @@ class CompanionMediaMapper @Inject constructor(
                 require(media.id.matches(Regex("[A-Za-z0-9_-]{11}")))
                 if (media.trailer) Destinations.trailerPlayer(media.id) else Destinations.youtubePlayer(media.id)
             }
+            "telegram" -> {
+                require(media.source.isEmpty())
+                val (chatId, messageId) = requireNotNull(parseTelegramCompanionId(media.id))
+                Destinations.telegramPlayer(chatId, messageId)
+            }
             "library" -> {
                 require(media.id.matches(Regex("(?:[je]:)?[A-Za-z0-9_-]{1,128}")))
                 require(media.source.isNotEmpty() && media.source == librarySource(media.id))
@@ -155,4 +168,25 @@ class CompanionMediaMapper @Inject constructor(
             else -> error("Unsupported media")
         }
     }
+}
+
+/** Companion id of a Monogram post: "chatId/messageId". */
+internal fun telegramCompanionId(chatId: Long, messageId: Int): String {
+    require(chatId != 0L && messageId > 0)
+    return "$chatId/$messageId"
+}
+
+internal fun parseTelegramCompanionId(id: String): Pair<Long, Int>? {
+    val match = Regex("(-?[1-9][0-9]{0,18})/([1-9][0-9]{0,9})").matchEntire(id) ?: return null
+    val chatId = match.groupValues[1].toLongOrNull() ?: return null
+    val messageId = match.groupValues[2].toIntOrNull() ?: return null
+    return chatId to messageId
+}
+
+/** Player route of a Monogram media key ("telegram:<chat>:<message>"); null for other keys. */
+internal fun telegramPlayerRouteFor(mediaKey: String): String? {
+    if (!mediaKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX)) return null
+    val (chatId, messageId) = parseTelegramCompanionId(
+        mediaKey.removePrefix(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX).replace(':', '/')) ?: return null
+    return Destinations.telegramPlayer(chatId, messageId)
 }
