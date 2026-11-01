@@ -289,3 +289,67 @@ internal fun playerDetailForRadio(
     ),
     system = MediaSystem.RADIO,
 )
+
+/** Short post texts that fit the title line are not repeated as a description. */
+internal const val TELEGRAM_DETAIL_REPEAT_MAX_CHARS = 60
+
+private val TELEGRAM_FORMAT_EXTENSIONS = setOf("mp4", "mkv", "webm", "mov", "avi", "mp3", "flac", "ogg", "opus", "m4a", "wav")
+
+/**
+ * Telegram (Monogram): only what the post itself carries — channel, date, runtime, picture size,
+ * file and the full post text. Telegram has no year, genres, cast or ratings, so those stay empty
+ * and the dialog hides their sections.
+ */
+internal fun playerDetailForTelegram(
+    media: com.ambient.tv.data.telegram.TelegramMedia,
+    channel: com.ambient.tv.data.telegram.TelegramChannel?,
+    formatDate: (Long) -> String,
+    formatSize: (Long) -> String,
+    playerDurationMs: Long = 0L,
+): PlayerDetailInfo {
+    val kind = media.kind
+    val cover = media.previewUrl?.takeIf { it.isNotBlank() }
+    val channelImage = channel?.takeIf { it.chatId == media.chatId }?.thumbnailUrl?.takeIf { it.isNotBlank() }
+    val visual = kind == com.ambient.tv.data.telegram.TelegramMediaKind.VIDEO ||
+        kind == com.ambient.tv.data.telegram.TelegramMediaKind.PHOTO
+    val width = media.width.takeIf { visual && it > 0 }
+    val height = media.height.takeIf { visual && it > 0 }
+    val shape = when {
+        cover == null -> PlayerDetailArtShape.LOGO
+        kind == com.ambient.tv.data.telegram.TelegramMediaKind.AUDIO -> PlayerDetailArtShape.SQUARE
+        width != null && height != null && height > width -> PlayerDetailArtShape.POSTER
+        else -> PlayerDetailArtShape.WIDE
+    }
+    val title = media.title.trim().ifEmpty { media.channel }
+    val text = media.summary?.trim()?.takeIf { it.isNotEmpty() }
+    // The title is the beginning of the post text; a short post would only repeat it.
+    val overview = text?.takeUnless { it == title && it.length <= TELEGRAM_DETAIL_REPEAT_MAX_CHARS && '\n' !in it }
+    val duration = media.durationMs.takeIf { it > 0 }
+        ?: playerDurationMs.takeIf { it > 0 && kind != com.ambient.tv.data.telegram.TelegramMediaKind.PHOTO }
+    val fileName = media.fileName?.trim()?.takeIf { it.isNotEmpty() && it != title }
+    val resolution = playerResolutionLabel(width, height)
+    val exactSize = if (width != null && height != null) "${width}×${height}" else null
+    val format = media.fileName?.substringAfterLast('.', "")?.lowercase()
+        ?.takeIf { it in TELEGRAM_FORMAT_EXTENSIONS }?.uppercase()
+    return PlayerDetailInfo(
+        osdPlayer = OsdPlayer.MEDIA,
+        title = title,
+        artworkUrl = cover ?: channelImage,
+        artworkFallbackUrls = listOfNotNull(channelImage).filter { cover != null && it != cover },
+        artShape = shape,
+        eyebrow = (channel?.takeIf { it.chatId == media.chatId }?.title ?: media.channel).takeIf { it.isNotBlank() },
+        meta = listOfNotNull(
+            media.publishedAtMs.takeIf { it > 0 }?.let(formatDate),
+            formatDuration(duration),
+        ),
+        overview = capPlayerDetailText(overview),
+        lines = listOfNotNull(fileName?.let { PlayerDetailLine(R.string.photos_info_file, it) }),
+        chips = listOfNotNull(
+            resolution,
+            exactSize?.takeIf { it != resolution },
+            format,
+            media.fileSize.takeIf { it > 0 }?.let(formatSize),
+        ),
+        system = MediaSystem.TELEGRAM,
+    )
+}
