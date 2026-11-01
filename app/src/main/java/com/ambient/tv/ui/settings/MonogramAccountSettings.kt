@@ -117,23 +117,32 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
             Text(stringResource(R.string.monogram_api_setup_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TvTextField(
-                value = apiId,
-                onValueChange = { apiId = it.filter(Char::isDigit).take(10) },
-                label = stringResource(R.string.monogram_api_id),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
-                enabled = canEditCredentials,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TvTextField(
-                value = apiHash,
-                onValueChange = { apiHash = it.trim().take(32) },
-                label = stringResource(R.string.monogram_api_hash),
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                enabled = canEditCredentials,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (login.step in setOf(MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE)) {
+                TvTextField(
+                    value = apiId,
+                    onValueChange = { apiId = it.filter(Char::isDigit).take(10) },
+                    label = stringResource(R.string.monogram_api_id),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TvTextField(
+                    value = apiHash,
+                    onValueChange = { apiHash = it.trim().take(32) },
+                    label = stringResource(R.string.monogram_api_hash),
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                // TvTextField has no disabled state. Read-only labels keep an authorized user
+                // from accidentally editing live API credentials without a logout.
+                Text(stringResource(R.string.monogram_api_id) + ": " +
+                    viewModel.repository.configuredApiId.ifBlank { "—" },
+                    style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.monogram_api_hash) + ": " +
+                    (if (configured) "••••••••" else "—"),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
             Text(
                 stringResource(if (configured) R.string.monogram_api_ready else R.string.monogram_api_required),
                 style = MaterialTheme.typography.bodySmall,
