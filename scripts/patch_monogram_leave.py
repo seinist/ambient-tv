@@ -94,7 +94,7 @@ pub fn leave_chat(handle: u64, chat_id: i64) -> Result<(), MtprotoError> {
            "pub fn leave_chat(handle: u64")
 api = "native/mtproto/src/main/java/org/monogram/mtproto/MtprotoNative.kt"
 add_before(api,
-           "    /** \`contacts.unblock\` for a user peer. */",
+           "    /** `contacts.unblock` for a user peer. */",
            """    /** Telegram channels.leaveChannel. Available in the Ambient TV opt-in patched build. */
     @Throws(MtprotoException::class)
     fun leaveChat(handle: Long, chatId: Long): Unit =

@@ -48,6 +48,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     private var chats = mutableListOf<ChatDto>()
     private var chatsExhausted = false
     private val recentFeeds = LinkedHashMap<String, MonogramRecentTimeline>()
+    private val leftChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<Long>()
     private var nextRecentFeed = 0L
     private var phone: String? = null
     private var codeHash: String? = null
@@ -93,6 +94,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 cache.mkdirs()
                 previewWrites = 0
             }
+            leftChannels.clear()
             session.delete()
             accountIdFile.delete()
             accountId = null
@@ -121,6 +123,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             accountIdFile.writeText(id.toString())
         }
         accountId?.let { label = "Monogram #$it" }
+        leftChannels.clear()
         recentFeeds.clear()
         chats.clear()
         chatsExhausted = false
@@ -204,6 +207,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             chats.clear()
             chatsExhausted = false
             recentFeeds.clear()
+            leftChannels.clear()
             epoch++
             label = "Monogram"
             phone = null
@@ -247,7 +251,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             if (new.isEmpty()) { chatsExhausted = true; break }
             chats.addAll(new)
         }
-        return chats.filter { it.isChannel && !it.left }
+        return chats.filter { it.isChannel && !it.left && it.id !in leftChannels }
     }
 
     private fun cursor(index: Int) = "$epoch:$index"
@@ -281,7 +285,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 ?: return@nativeCall null
             TelegramChannel(found.id, found.title,
                 thumbnailUrl = preview(h, found.id, 0, true),
-                subscribed = !found.left)
+                subscribed = !found.left && found.id !in leftChannels)
         } }
 
     override suspend fun joinChannel(chatId: Long): Boolean =
@@ -289,12 +293,31 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             requireAuthorized(h)
             val joined = native.joinChat(h, chatId).joined
             if (joined) {
+                leftChannels.remove(chatId)
                 chats.clear()
                 chatsExhausted = false
                 recentFeeds.clear()
                 epoch++
             }
             joined
+        } }
+
+    override suspend fun leaveChannel(chatId: Long): Boolean =
+        browseMutex.withLock { nativeCall { h ->
+            requireAuthorized(h)
+            native.leaveChat(h, chatId)
+            leftChannels.add(chatId)
+            synchronized(diskChunkLock) {
+                cacheGeneration++
+                cache.deleteRecursively()
+                cache.mkdirs()
+                previewWrites = 0
+            }
+            chats.clear()
+            chatsExhausted = false
+            recentFeeds.clear()
+            epoch++
+            true
         } }
 
     /** Only small in-message previews; bounded across a long scrolling session. */
@@ -432,6 +455,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             require(index >= 0 && offset >= 0)
             val channelId = section.takeIf { it.startsWith("channel:") }
                 ?.substringAfter(':')?.toLongOrNull()
+            if (channelId != null && channelId in leftChannels)
+                return@nativeCall TelegramMediaPage(emptyList())
             val available = if (channelId != null) {
                 listOf(channelId to (knownChannels(h, 1).firstOrNull { it.id == channelId }?.title ?: "Monogram"))
             } else knownChannels(h, index + 2).map { it.id to it.title }
@@ -468,12 +493,14 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun media(chatId: Long, messageId: Int): TelegramMedia? = nativeCall { h ->
         requireAuthorized(h)
+        if (chatId in leftChannels) return@nativeCall null
         val title = knownChannels(h, 1).firstOrNull { it.id == chatId }?.title ?: "Monogram"
         native.getMessage(h, chatId, messageId)?.let { media(h, it, title) }
     }
 
     override suspend fun photoFile(chatId: Long, messageId: Int): String? = nativeCall { h ->
         requireAuthorized(h)
+        check(chatId !in leftChannels) { "Channel was left" }
         val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.media")
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
@@ -488,6 +515,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         nativeCall { h ->
             requireAuthorized(h)
+            check(chatId !in leftChannels) { "Channel was left" }
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
             val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")

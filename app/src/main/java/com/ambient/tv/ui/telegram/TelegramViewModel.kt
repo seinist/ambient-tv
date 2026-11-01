@@ -83,6 +83,7 @@ class TelegramViewModel @Inject constructor(
     val visibleSections: List<String> get() = preferences.telegramSubmenuKeys
     suspend fun channel(chatId: Long): TelegramChannel? = repository.channel(chatId)
     suspend fun joinChannel(chatId: Long): Boolean = repository.joinChannel(chatId)
+    suspend fun leaveChannel(chatId: Long): Boolean = repository.leaveChannel(chatId)
     internal fun viewMode(section: String): MonogramBrowseLayout =
         runCatching { MonogramBrowseLayout.valueOf(preferences.sectionViewMode("monogram.$section") ?: "ROWS") }
             .getOrDefault(MonogramBrowseLayout.ROWS)

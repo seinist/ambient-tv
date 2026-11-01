@@ -59,6 +59,8 @@ interface TelegramClientPort {
     suspend fun channel(chatId: Long): TelegramChannel? = null
     /** Joining is a real MTProto action; unsupported leave must not be simulated locally. */
     suspend fun joinChannel(chatId: Long): Boolean = false
+    /** Available in the pinned native opt-in build with the leave-channel RPC extension. */
+    suspend fun leaveChannel(chatId: Long): Boolean = false
     suspend fun browse(section: String, cursor: String? = null, limit: Int = 60): TelegramMediaPage
     suspend fun media(chatId: Long, messageId: Int): TelegramMedia?
     /** The original photo is fetched only when the viewer opens, never while listing. */
@@ -343,6 +345,18 @@ class TelegramRepository @Inject constructor(
         val joined = account.joinChannel(chatId)
         if (joined) account.refreshCatalog()
         return joined
+    }
+
+    suspend fun leaveChannel(chatId: Long): Boolean {
+        val account = client ?: return false
+        val left = account.leaveChannel(chatId)
+        if (left) {
+            streamEpoch.incrementAndGet()
+            revokePlaybackUrls()
+            clearPlaybackQueues()
+            account.cacheIdentity?.let { diskCache.clearAccount(it) }
+        }
+        return left
     }
     suspend fun cachedBrowse(section: String): List<TelegramMedia> =
         client?.cacheIdentity?.let { diskCache.media(it, section) }.orEmpty()

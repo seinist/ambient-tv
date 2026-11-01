@@ -128,22 +128,27 @@ class TelegramPlayerViewModel @Inject constructor(
     private val mutableChannelError = MutableStateFlow<String?>(null)
     val channelError = mutableChannelError.asStateFlow()
 
-    fun joinCurrentChannel() {
-        val selected = mutableChannel.value?.takeIf { it.subscribed == false } ?: return
+    fun toggleChannelSubscription() {
+        val selected = mutableChannel.value?.takeIf { it.subscribed != null } ?: return
         if (mutableChannelBusy.value) return
         mutableChannelBusy.value = true
         mutableChannelError.value = null
         viewModelScope.launch {
             try {
-                if (repository.joinChannel(selected.chatId)) {
-                    mutableChannel.value = selected.copy(subscribed = true)
+                val wasJoined = selected.subscribed == true
+                if (wasJoined) BackgroundPlaybackSession.stop()
+                val accepted = if (wasJoined) repository.leaveChannel(selected.chatId)
+                    else repository.joinChannel(selected.chatId)
+                if (accepted) {
+                    mutableChannel.value = selected.copy(subscribed = !wasJoined)
                 } else {
-                    mutableChannelError.value = "Monogram channel join not accepted"
+                    mutableChannelError.value = if (wasJoined)
+                        "Monogram channel could not be left" else "Monogram channel join not accepted"
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                mutableChannelError.value = failure.message ?: "Monogram channel join failed"
+                mutableChannelError.value = failure.message ?: "Monogram membership change failed"
             } finally {
                 mutableChannelBusy.value = false
             }
@@ -404,7 +409,7 @@ private fun TelegramPlaybackContent(
                         BackgroundPlaybackSession.pause()
                         onOpenChannel(media.chatId)
                     },
-                    onJoinChannel = viewModel::joinCurrentChannel,
+                    onToggleSubscription = viewModel::toggleChannelSubscription,
                     onOpenSettings = { panel = UnifiedPlayerPanel.SETTINGS },
                     onOpenSleep = { panel = UnifiedPlayerPanel.SLEEP },
                 ),
@@ -480,7 +485,7 @@ internal data class TelegramOsd(
     val channelBusy: Boolean,
     val channelError: String?,
     val onOpenChannel: () -> Unit,
-    val onJoinChannel: () -> Unit,
+    val onToggleSubscription: () -> Unit,
     val onOpenSettings: () -> Unit,
     val onOpenSleep: () -> Unit,
 ) : PlayerOsdSpec {
@@ -549,21 +554,15 @@ internal data class TelegramOsd(
                             onOpenChannel,
                             imageUrl = channel.thumbnailUrl,
                         )
-                        when (channel.subscribed) {
-                            false -> PlayerIconButton(
+                        channel.subscribed?.let { joined ->
+                            PlayerIconButton(
                                 Icons.Filled.Subscriptions,
-                                stringResource(R.string.monogram_join_channel),
-                                onJoinChannel,
+                                stringResource(if (joined) R.string.monogram_leave_channel
+                                    else R.string.monogram_join_channel),
+                                onToggleSubscription,
+                                selected = joined,
                                 enabled = !channelBusy,
                             )
-                            true -> PlayerIconButton(
-                                Icons.Filled.Subscriptions,
-                                stringResource(R.string.monogram_joined_channel),
-                                {},
-                                selected = true,
-                                enabled = false,
-                            )
-                            else -> Unit
                         }
                         PlayerSleepTimerButton(onOpenSleep, selected = panel == UnifiedPlayerPanel.SLEEP)
                         PlayerIconButton(
