@@ -66,6 +66,22 @@ internal fun radioVisibleSections(enabledKeys: List<String>): List<RadioSection>
 internal val RadioSection.isFacetSection: Boolean
     get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
+/** Only complete, non-paged station datasets can expose a trustworthy A–Z jump index.
+ * Countries, genres, languages and searches fetch their results page by page; keep the
+ * normal scrollbar for their full lifetime, even after their last page arrives. */
+internal fun radioStationAlphabetAllowed(
+    section: RadioSection,
+    selectedFacet: RadioFacet?,
+    submittedQuery: String,
+): Boolean = selectedFacet == null && submittedQuery.isBlank() &&
+    section in setOf(RadioSection.POPULAR, RadioSection.FAVORITES, RadioSection.RECENT)
+
+/** Facet overviews are API-limited; reaching that cap is not proof that the catalog ends. */
+internal fun radioFacetAlphabetAllowed(facetCount: Int, cap: Int = RADIO_FACET_LIMIT): Boolean =
+    facetCount > 5 && facetCount < cap
+
+internal const val RADIO_FACET_LIMIT = 150
+
 /** Category overviews are always text lists; the saved user choice still controls station pages. */
 internal fun RadioUiState.isFacetOverview(): Boolean =
     section.isFacetSection && selectedFacet == null && submittedQuery.isBlank()
@@ -518,9 +534,9 @@ class RadioViewModel @Inject constructor(
             )
             suspendResult {
                 when (section) {
-                    RadioSection.GENRES -> repository.tags(FACET_LIMIT)
-                    RadioSection.COUNTRIES -> repository.countries(FACET_LIMIT)
-                    RadioSection.LANGUAGES -> repository.languages(FACET_LIMIT)
+                    RadioSection.GENRES -> repository.tags(RADIO_FACET_LIMIT)
+                    RadioSection.COUNTRIES -> repository.countries(RADIO_FACET_LIMIT)
+                    RadioSection.LANGUAGES -> repository.languages(RADIO_FACET_LIMIT)
                     else -> emptyList()
                 }
             }.onSuccess { facets ->
@@ -644,7 +660,6 @@ class RadioViewModel @Inject constructor(
     companion object {
         private const val PAGE_SIZE = 48
         private const val POPULAR_LIMIT = 100
-        private const val FACET_LIMIT = 150
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
 }
