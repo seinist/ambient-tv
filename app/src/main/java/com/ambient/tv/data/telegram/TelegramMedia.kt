@@ -36,6 +36,8 @@ data class TelegramChannel(
     val title: String,
     val description: String? = null,
     val thumbnailUrl: String? = null,
+    /** Unknown until the native session confirms the channel's membership. */
+    val subscribed: Boolean? = null,
 )
 
 const val TELEGRAM_MEDIA_PREFIX = "telegram:"
