@@ -144,6 +144,32 @@ class UnreachableServerGate @Inject constructor(
         refresh()
     }
 
+    /**
+     * Cancel only the selected physical machine. Other servers may still be waking and must
+     * keep their own connect jobs and notifications. Manual/NAS/DLNA jobs are tracked separately.
+     */
+    fun cancelMachineWake(machine: String): Boolean {
+        var cancelled = false
+        if (hosts.machine("plex") == machine && com.ambient.tv.server.isInFlightConnectState(plex.state.value)) {
+            plex.cancelStartupWake()
+            cancelled = true
+        }
+        if (hosts.machine("jellyfin") == machine && com.ambient.tv.server.isInFlightConnectState(jellyfin.state.value)) {
+            jellyfin.cancelStartupWake()
+            cancelled = true
+        }
+        if (hosts.machine("emby") == machine && com.ambient.tv.server.isInFlightConnectState(emby.state.value)) {
+            emby.cancelStartupWake()
+            cancelled = true
+        }
+        if (hosts.machine("tvheadend") == machine && com.ambient.tv.server.isInFlightConnectState(tvheadend.state.value)) {
+            tvheadend.cancelStartupWake()
+            cancelled = true
+        }
+        if (cancelled) refresh()
+        return cancelled
+    }
+
     /** Retry/Reload re-enables wake attempts without changing persistent WOL preferences. */
     fun allowWakeRetry() {
         plex.allowWakeRetry()
