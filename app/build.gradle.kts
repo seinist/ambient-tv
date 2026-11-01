@@ -179,14 +179,14 @@ android {
     ndkVersion = "30.0.16248370"
     if (monogramEnabled) {
         // This folder is not compiled or packaged in normal CC0 builds.
-        sourceSets.getByName("main").java.srcDir("src/monogram/java")
-        // AGP built-in Kotlin compiles the Kotlin source set; java.srcDir alone skipped the backend.
-        sourceSets.getByName("main").kotlin.srcDir("src/monogram/java")
+        sourceSets.getByName("main").java.directories.add("src/monogram/java")
+        // AGP built-in Kotlin compiles the Kotlin source set; the java directory alone skipped the backend.
+        sourceSets.getByName("main").kotlin.directories.add("src/monogram/java")
         // Monogram's GPL-3.0-only logo artwork ships only in the opt-in build.
-        sourceSets.getByName("main").res.srcDir("src/monogram/res")
+        sourceSets.getByName("main").res.directories.add("src/monogram/res")
     } else {
         // Normal CC0 builds use Ambient TV's own neutral mark under the same names.
-        sourceSets.getByName("main").res.srcDir("src/plain/res")
+        sourceSets.getByName("main").res.directories.add("src/plain/res")
     }
 
     defaultConfig {
@@ -322,6 +322,8 @@ android {
             // Multiple runtimes bundle libc++_shared.so (app/mpv + VLC). Choose explicitly
             // to avoid duplicate packaging; combined-engine compatibility still needs a device test.
             pickFirsts += selectedAbis.map { "**/$it/libc++_shared.so" }
+            // JNA (Monogram) bundles libjnidispatch for ABIs Android no longer supports.
+            excludes += setOf("**/mips/libjnidispatch.so", "**/mips64/libjnidispatch.so", "**/armeabi/libjnidispatch.so")
 
             // AGP's llvm-strip rejects these prebuilt ELFs and would keep their debug info.
             // The release strip below still runs llvm-strip --strip-unneeded on every .so.
