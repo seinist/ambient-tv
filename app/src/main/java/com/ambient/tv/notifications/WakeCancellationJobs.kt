@@ -27,7 +27,7 @@ internal object WakeCancellationJobs {
 
     fun cancel(machine: String): Boolean {
         val running = synchronized(this) { jobs[machine]?.filter(Job::isActive).orEmpty() }
-        running.forEach(Job::cancel)
+        running.forEach { it.cancel() }
         return running.isNotEmpty()
     }
 }
