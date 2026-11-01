@@ -423,6 +423,9 @@ internal fun VlcTvheadendPlaybackSurface(
             durationMs = snapshot.durationMs,
             playing = snapshot.isPlaying,
             loading = waitingForPlaybackPicture(snapshot.wantsToPlay, snapshot.isPlaying),
+            paused = com.ambient.tv.ui.player.shouldShowPlayerPaused(snapshot.wantsToPlay,
+                changingItem = changingItem,
+                ended = BackgroundPlaybackSession.snapshot.value.status.ended),
             backendLabel = "VLC",
             mediaBadges = listOfNotNull(
                 controller.sourceHdrStandard?.label,

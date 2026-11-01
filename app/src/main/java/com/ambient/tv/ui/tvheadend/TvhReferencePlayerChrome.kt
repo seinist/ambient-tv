@@ -67,6 +67,7 @@ fun BoxScope.TvhReferencePlayerChrome(
     durationMs: Long,
     playing: Boolean,
     loading: Boolean,
+    paused: Boolean = false,
     backendLabel: String,
     mediaBadges: List<String>,
     seekJumpMs: Long,
@@ -192,14 +193,23 @@ fun BoxScope.TvhReferencePlayerChrome(
             )
             // EPG is fetched separately from the stream. Empty text retains the line height
             // without briefly showing programme information from the previous channel.
-            Text(
-                nextEvent?.let {
-                    stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title)
-                } ?: "",
-                color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
-                fontSize = 12.sp,
-                maxLines = 1,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    nextEvent?.let {
+                        stringResource(R.string.tvh_next_program, formatTvhChromeClock(it.startEpochSeconds), it.title)
+                    } ?: "",
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.62f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    modifier = Modifier.weight(1f),
+                )
+                // Without timeshift there is no seekbar. Reuse the reserved next-programme line.
+                if (!showTimeshift) com.ambient.tv.ui.player.PlayerPausedIndicator(paused, showLabel = true)
+            }
         } else if (!source.isLive && durationMs > 0L) {
             TvPlayerSeekBar(
                 positionMs = positionMs,
@@ -208,6 +218,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 onInteraction = osd::interact,
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
+                paused = paused,
                 modifier = Modifier.focusRequester(seekFocusRequester),
             )
         }
@@ -223,6 +234,7 @@ fun BoxScope.TvhReferencePlayerChrome(
                 onInteraction = osd::interact,
                 onTogglePlayback = onTogglePlayback,
                 onPlay = { if (!playing) onTogglePlayback() },
+                paused = paused,
                 modifier = Modifier.focusRequester(seekFocusRequester),
                 showEndTime = false,
                 timelineContext = { previewPosition ->
@@ -366,6 +378,7 @@ internal data class LiveOsdModel(
     val durationMs: Long,
     val playing: Boolean,
     val loading: Boolean,
+    val paused: Boolean = false,
     val backendLabel: String,
     val mediaBadges: List<String>,
     val seekJumpMs: Long,
@@ -414,6 +427,7 @@ internal data class LiveOsdModel(
                 durationMs = durationMs,
                 playing = playing,
                 loading = loading,
+                paused = paused,
                 backendLabel = backendLabel,
                 mediaBadges = mediaBadges,
                 seekJumpMs = seekJumpMs,

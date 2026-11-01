@@ -814,6 +814,9 @@ private fun PlayerContent(
             durationMs = durationMs,
             isPlaying = isPlaying,
             isBuffering = media3WaitingForPlaybackPicture(playbackState, playWhenReady),
+            paused = shouldShowPlayerPaused(playWhenReady,
+                active = playbackState != Player.STATE_IDLE && playbackState != Player.STATE_ENDED,
+                changingItem = changingItem),
             nerdStats = nerdStats,
             panel = panel,
             onPanelChange = { target ->
@@ -879,6 +882,7 @@ private fun PlayerControlsOverlay(
     durationMs: Long,
     isPlaying: Boolean,
     isBuffering: Boolean,
+    paused: Boolean,
     nerdStats: Media3NerdStats,
     panel: UnifiedPlayerPanel,
     onPanelChange: (UnifiedPlayerPanel) -> Unit,
@@ -929,6 +933,7 @@ private fun PlayerControlsOverlay(
         clockEndPadding = deviceDp(48.dp, 16.dp),
         isPlaying = isPlaying,
         loading = isBuffering,
+        paused = paused,
         seekState = seekState,
         onSeekBarSeek = { deltaMs -> onSeekBy(deltaMs); onInteraction() },
         onSeekBarInteraction = { if (osd != null) osd.interact() else onInteraction() },
@@ -1096,6 +1101,7 @@ internal fun TvPlayerSeekBar(
     onPlay: () -> Unit = { BackgroundPlaybackSession.play() },
     timelineContext: (@Composable (Long) -> Unit)? = null,
     showEndTime: Boolean = com.ambient.tv.ui.common.LocalClockSettings.current.endTime,
+    paused: Boolean = false,
 ) {
     val seekable = interactive && durationMs > 0L
     val osd = LocalPlayerChromeState.current?.osd
@@ -1120,7 +1126,7 @@ internal fun TvPlayerSeekBar(
         Modifier
     }
     if (com.ambient.tv.ui.mobile.LocalHandheldUi.current && seekable) {
-        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime)
+        com.ambient.tv.ui.mobile.HandheldSeekBar(positionMs, durationMs, onSeekBy, onInteraction, modifier, showEndTime, paused = paused)
         return
     }
     val navigation = LocalPlaybackNavigation.current
@@ -1363,11 +1369,17 @@ internal fun TvPlayerSeekBar(
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
-                color = Color.White.copy(alpha = 0.82f),
-                fontSize = 13.sp,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                PlayerPausedIndicator(paused)
+                Text(
+                    if (durationMs > 0L) "${formatDuration(displayedPosition)} / ${formatDuration(durationMs)}" else formatDuration(displayedPosition),
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 13.sp,
+                )
+            }
             val endFormatter = com.ambient.tv.ui.common.rememberTimeFormatter()
             val endsAt = if (showEndTime && durationMs > 0L) {
                 java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(endFormatter)

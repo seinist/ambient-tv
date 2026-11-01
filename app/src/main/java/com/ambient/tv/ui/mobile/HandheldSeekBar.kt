@@ -52,6 +52,7 @@ fun HandheldSeekBar(
     onInteraction: () -> Unit,
     modifier: Modifier = Modifier,
     showEndTime: Boolean = true,
+    paused: Boolean = false,
 ) {
     val accent = com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
     val navigation = LocalPlaybackNavigation.current
@@ -154,10 +155,13 @@ fun HandheldSeekBar(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             // Same readout as the TV player: position / duration, remaining time and end time.
             val remaining = (durationMs - shownPosition).coerceAtLeast(0L)
-            Text(
-                if (durationMs > 0L) "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}" else elapsedLabel(shownPosition),
-                color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                com.ambient.tv.ui.player.PlayerPausedIndicator(paused)
+                Text(
+                    if (durationMs > 0L) "${elapsedLabel(shownPosition)} / ${elapsedLabel(durationMs)}" else elapsedLabel(shownPosition),
+                    color = Color.White.copy(alpha = 0.82f), fontSize = 13.sp,
+                )
+            }
             val endsAt = if (showEndTime && durationMs > 0L) {
                 java.time.LocalTime.now().plusSeconds(remaining / 1000L).format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
             } else null

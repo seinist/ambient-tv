@@ -108,6 +108,7 @@ fun ReferencePlayerHeader(
     artworkHeaders: Map<String, String> = emptyMap(),
     artworkAspectRatio: Float = 16f / 9f,
     artworkContentScale: ContentScale = ContentScale.Crop,
+    showPaused: Boolean = false,
 ) {
     // The bubble occupies the area above the timeline. Fade only the header's pixels,
     // never its measured height: the seekbar, badges and actions must not jump.
@@ -136,15 +137,25 @@ fun ReferencePlayerHeader(
             )
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            contextLine?.takeIf { it.isNotBlank() }?.let {
-                Text(
-                    text = it,
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            // A stream without a seekbar shows pause status in this existing context row.
+            if (!contextLine.isNullOrBlank() || showPaused) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    contextLine?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            text = it,
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                    PlayerPausedIndicator(showPaused, showLabel = true)
+                }
             }
             Text(
                 text = title,
