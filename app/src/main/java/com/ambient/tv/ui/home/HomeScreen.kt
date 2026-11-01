@@ -374,7 +374,9 @@ fun HomeScreen(
 
         }
     }
-        if (canCancelStartupWake) {
+        // The shared TV wake bar now handles cancellation on every screen; keep the
+        // Home-specific button on handhelds, where notification cards remain touch-through.
+        if (canCancelStartupWake && LocalHandheldUi.current) {
             TvActionButton(
                 text = stringResource(R.string.home_cancel_wake),
                 onClick = viewModel::cancelStartupWake,

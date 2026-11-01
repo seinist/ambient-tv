@@ -19,6 +19,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.ambient.tv.notifications.AppNotifications
+import com.ambient.tv.notifications.NoticeKind
+import com.ambient.tv.notifications.NoticePhase
+import com.ambient.tv.ui.home.UnreachableServerViewModel
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.ambient.tv.R
@@ -181,6 +186,13 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
     var mac by remember(group.key) { mutableStateOf(group.mac) }
     LaunchedEffect(resolved) { resolved?.takeIf { it.groupKey == group.key }?.let { mac = it.mac } }
     val labels = group.members.map { wakeMemberLabel(it) }
+    val wakeVm: UnreachableServerViewModel = hiltViewModel()
+    val notifications by AppNotifications.store.state.collectAsState()
+    val machineKey = viewModel.wakeMachineKey(group)
+    val waking = notifications.pending.any {
+        it.notice.key == "wake:$machineKey" &&
+            it.notice.kind == NoticeKind.WAKE && it.notice.phase == NoticePhase.WORKING
+    }
     SettingsGroup(
         title = group.hosts.joinToString(" · ").ifBlank { labels.first() },
         subtitle = stringResource(R.string.settings_wake_group_services, labels.joinToString(", ")),
@@ -217,7 +229,14 @@ private fun WakeGroupCard(group: WakeHostGroup, viewModel: SettingsViewModel) {
                 if (group.members.any { it.kind.isMediaServer }) {
                     TvActionButton(stringResource(R.string.settings_test_connection), { viewModel.testGroup(group) })
                 }
-                TvActionButton(stringResource(R.string.settings_network_wake_now), { viewModel.wakeGroup(group) }, enabled = isUsableWakeMac(group.mac))
+                TvActionButton(
+                    text = stringResource(if (waking) R.string.home_cancel_wake else R.string.settings_network_wake_now),
+                    onClick = {
+                        if (waking) wakeVm.cancelWake(machineKey)
+                        else viewModel.wakeGroup(group)
+                    },
+                    enabled = waking || isUsableWakeMac(group.mac),
+                )
             }
             NasWakeDetails(group, viewModel)
         }

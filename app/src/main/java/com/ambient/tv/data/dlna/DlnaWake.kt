@@ -9,6 +9,7 @@ import com.ambient.tv.notifications.NoticeKind
 import com.ambient.tv.notifications.NoticePhase
 import com.ambient.tv.notifications.notifyResult
 import com.ambient.tv.wol.WolManager
+import com.ambient.tv.notifications.withCancellableWake
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
@@ -50,6 +51,7 @@ class DlnaWake @Inject constructor(
         val member = "dlna:${server.id}"
         com.ambient.tv.notifications.WakeNotices.begin(machine, "dlna", server.name, member,
             budgetMs = com.ambient.tv.wol.wakeBudgetMs(preferences.wolRetryCount, WAIT_MS))
+        withCancellableWake(machine) {
         try {
             val ready = wakeWithRetries(
                 retries = preferences.wolRetryCount,
@@ -68,6 +70,7 @@ class DlnaWake @Inject constructor(
         } catch (error: Exception) {
             com.ambient.tv.notifications.WakeNotices.finish(machine, "dlna", success = false, member = member)
             throw error
+        }
         }
     }
 

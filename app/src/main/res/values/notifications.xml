@@ -64,6 +64,11 @@
     <string name="notice_recording_failed">Recording failed</string>
     <string name="notice_switched_to_media3">Playback continued in Media3</string>
     <string name="notice_wake_remaining">At most about %1$d s left</string>
+    <string name="notice_wake_remaining_label">Maximum remaining</string>
+    <string name="notice_wake_next_packet_label">Next wake packet</string>
+    <string name="notice_wake_waiting_label">Waiting for response</string>
+    <string name="notice_wake_packet_sent_short">Wake packet %1$d of %2$d sent</string>
+    <string name="notice_wake_seconds">%1$d s</string>
     <string name="notice_wake_packet_single">Wake packet sent · waiting for an answer</string>
     <string name="notice_wake_packet_next">Wake packet %1$d of %2$d sent · next in %3$d s</string>
     <string name="notice_wake_packet_last">Wake packet %1$d of %2$d sent · last attempt</string>
