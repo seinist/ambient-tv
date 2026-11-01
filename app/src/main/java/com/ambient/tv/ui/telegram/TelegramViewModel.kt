@@ -215,5 +215,10 @@ class TelegramViewModel @Inject constructor(
         }
     }
 
+    fun rememberPlaybackQueue(ids: List<String>, selected: String) {
+        val safe = ids.filter { mutableState.value.media[it]?.playableOnTelegram == true }
+        repository.activatePlaybackQueue(safe, selected)
+    }
+
     fun selected(key: String): TelegramMedia? = mutableState.value.media[key]
 }

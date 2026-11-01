@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -111,6 +113,18 @@ class TelegramPlayerViewModel @Inject constructor(
         }
     }
 
+    fun switchInQueue(current: TelegramMedia, direction: Int) {
+        viewModelScope.launch {
+            for ((chat, msg) in repository.playbackCandidates(current.mediaKey, direction)) {
+                val candidate = runCatching { repository.media(chat, msg) }.getOrNull()
+                if (candidate?.playableOnTelegram == true) {
+                    load(chat, msg)
+                    return@launch
+                }
+            }
+        }
+    }
+
     fun reportFailure(message: String) {
         mutableError.value = message
     }
@@ -140,7 +154,8 @@ fun TelegramPlayerScreen(
                 onAction = onBack,
             )
         } else {
-            TelegramPlaybackContent(selected, onBack, viewModel::reportFailure, viewModel.repository)
+            TelegramPlaybackContent(selected, onBack, viewModel::reportFailure,
+                viewModel.repository, viewModel)
         }
     }
 }
@@ -151,6 +166,7 @@ private fun TelegramPlaybackContent(
     onBack: () -> Unit,
     onFailure: (String) -> Unit,
     repository: TelegramRepository,
+    viewModel: TelegramPlayerViewModel,
 ) {
     val context = LocalContext.current
     val metadata = remember(media.mediaKey) { media.playerMetadata() }
@@ -242,6 +258,10 @@ private fun TelegramPlaybackContent(
                     },
                     onStop = { BackgroundPlaybackSession.stop(); onBack() },
                     onBack = onBack,
+                    hasPrevious = repository.playbackCandidates(media.mediaKey, -1).isNotEmpty(),
+                    hasNext = repository.playbackCandidates(media.mediaKey, 1).isNotEmpty(),
+                    onPrevious = { viewModel.switchInQueue(media, -1) },
+                    onNext = { viewModel.switchInQueue(media, 1) },
                     onOpenSettings = { panel = UnifiedPlayerPanel.SETTINGS },
                     onOpenSleep = { panel = UnifiedPlayerPanel.SLEEP },
                 ),
@@ -271,7 +291,7 @@ private fun TelegramPlaybackContent(
                     sleepTimer = BackgroundPlaybackSession.sleepTimer,
                     onSleepChanged = BackgroundPlaybackSession::setSleepTimer,
                     infoLines = listOf(
-                        "Source" to "Telegram",
+                        "Source" to "Monogram",
                         "Channel" to media.channel,
                         "Media ID" to media.mediaKey,
                         "Size" to "${media.fileSize} bytes",
@@ -297,6 +317,10 @@ internal data class TelegramOsd(
     val onSeekBy: (Long) -> Unit,
     val onStop: () -> Unit,
     val onBack: () -> Unit,
+    val hasPrevious: Boolean,
+    val hasNext: Boolean,
+    val onPrevious: () -> Unit,
+    val onNext: () -> Unit,
     val onOpenSettings: () -> Unit,
     val onOpenSleep: () -> Unit,
 ) : PlayerOsdSpec {
@@ -337,10 +361,20 @@ internal data class TelegramOsd(
                 PlayerControlBar(
                     player = OsdPlayer.MEDIA,
                     leftContent = {
-                        PlayerIconButton(
+                        if (hasPrevious) PlayerIconButton(
+                            Icons.Filled.SkipPrevious,
+                            stringResource(R.string.player_previous),
+                            onPrevious,
+                        )
+                        if (media.kind != TelegramMediaKind.PHOTO) PlayerIconButton(
                             if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                             stringResource(if (playing) R.string.player_pause else R.string.player_play),
                             onToggle, modifier = Modifier.focusRequester(playFocus), primary = true,
+                        )
+                        if (hasNext) PlayerIconButton(
+                            Icons.Filled.SkipNext,
+                            stringResource(R.string.player_next),
+                            onNext,
                         )
                         PlayerIconButton(
                             Icons.Filled.Stop, stringResource(R.string.player_stop),

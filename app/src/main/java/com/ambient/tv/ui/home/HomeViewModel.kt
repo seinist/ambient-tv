@@ -1495,6 +1495,10 @@ class HomeViewModel @Inject constructor(
                     }.awaitAll().filterNotNull()
                 }
                 telegramRows = updates
+                updates.forEach { row ->
+                    telegramRepository.registerPlaybackQueue(
+                        "home:${row.id}", row.items.map(MediaItem::ratingKey))
+                }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) {

@@ -1074,6 +1074,7 @@ private fun AmbientTvApp(
                 if (selected.kind == com.ambient.tv.data.telegram.TelegramMediaKind.YOUTUBE) {
                     selected.youtubeVideoId?.let { id -> playOnSelectedTarget(Destinations.youtubePlayer(id)) }
                 } else if (selected.playableOnTelegram) {
+                    telegramRepository.activateHomePlaybackQueue(ratingKey)
                     playOnSelectedTarget(Destinations.telegramPlayer(chatId, messageId))
                 }
             }

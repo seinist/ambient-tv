@@ -65,6 +65,44 @@ class TelegramRepository @Inject constructor(
     val login: StateFlow<MonogramLoginState> = mutableLogin.asStateFlow()
     val nativeAvailable: Boolean get() = backend != null
     @Volatile private var client: TelegramClientPort? = null
+    /** Exact launch row (not a guessed global "recent" queue). Switching pages never changes it. */
+    private val queues = LinkedHashMap<String, List<String>>()
+    private var activeQueue: List<String> = emptyList()
+
+    @Synchronized
+    fun registerPlaybackQueue(source: String, ids: List<String>) {
+        val safe = ids.filter { telegramMediaIds(it) != null }.distinct().take(500)
+        queues.remove(source)
+        queues[source] = safe
+        while (queues.size > 24) queues.remove(queues.keys.first())
+    }
+
+    @Synchronized
+    fun activatePlaybackQueue(ids: List<String>, selected: String) {
+        activeQueue = ids.filter { telegramMediaIds(it) != null }.distinct().take(500)
+            .takeIf { selected in it } ?: listOf(selected)
+    }
+
+    @Synchronized
+    fun activateHomePlaybackQueue(selected: String) {
+        val found = queues.values.firstOrNull { selected in it }
+        activeQueue = found ?: listOf(selected)
+    }
+
+    @Synchronized
+    fun playbackCandidates(current: String, direction: Int): List<Pair<Long, Int>> {
+        val i = activeQueue.indexOf(current)
+        if (i < 0 || direction == 0) return emptyList()
+        val next = if (direction > 0) activeQueue.drop(i + 1)
+            else activeQueue.take(i).asReversed()
+        return next.mapNotNull(::telegramMediaIds)
+    }
+
+    @Synchronized
+    fun clearPlaybackQueues() {
+        activeQueue = emptyList()
+        queues.clear()
+    }
 
     init {
         if (backend != null) scope.launch {
@@ -120,6 +158,7 @@ class TelegramRepository @Inject constructor(
 
     fun disconnect() {
         client = null
+        clearPlaybackQueues()
         mutableAuthorized.value = false
     }
 
