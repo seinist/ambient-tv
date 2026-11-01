@@ -83,6 +83,10 @@ import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 @Composable fun YouTubeScreen(
     onVideoClick:(String, Long?)->Unit,
@@ -97,6 +101,14 @@ import kotlinx.coroutines.delay
     val selectFeed = onSelectFeed ?: viewModel::selectFeed
     val filterFocusState = rememberFilterFocusState(initialFeedKey, state.feed, state.channel?.channelId)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) { viewModel.enter(initialFeedKey) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // A menu/chip re-selection need not create a destination or resume its lifecycle.
+    // Observe explicit requests only while this screen is actually on top.
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            YouTubeHomeSelection.requests.collect(viewModel::onHomeSelected)
+        }
+    }
     val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
         applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
     }
