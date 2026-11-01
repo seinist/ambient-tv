@@ -36,6 +36,22 @@ import com.ambient.tv.ui.navigation.LocalSidebarContentPending
 
 enum class FeedbackLayout { FIELD, COMPACT, PAGE }
 
+/** Page feedback has its own compact handset geometry; TV and inline feedback stay unchanged. */
+internal data class HandheldFeedbackPageMetrics(
+    val maxWidthDp: Int,
+    val gutterDp: Int,
+    val contentPaddingDp: Int,
+    val iconFrameDp: Int,
+    val iconDp: Int,
+)
+
+internal fun handheldFeedbackPageMetrics(tablet: Boolean, landscape: Boolean): HandheldFeedbackPageMetrics =
+    when {
+        tablet -> HandheldFeedbackPageMetrics(440, 24, 18, 52, 28)
+        landscape -> HandheldFeedbackPageMetrics(380, 20, 14, 44, 24)
+        else -> HandheldFeedbackPageMetrics(300, 20, 14, 44, 24)
+    }
+
 @Composable
 fun OperationFeedbackScope(reporter: OperationFeedbackReporter, scope: String, enabled: Boolean = true) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -114,29 +130,44 @@ internal fun FeedbackContent(
         }
     }
     val page = layout == FeedbackLayout.PAGE
+    val handheldPage = if (page && handheld) handheldFeedbackPageMetrics(tablet, wideHandheld) else null
     val shape = RoundedCornerShape(14.dp)
-    val responsiveBounds = if (page && wideHandheld && !tablet) Modifier.widthIn(max = 560.dp) else Modifier
+    // Padding is outside the card surface, so even a 320dp phone has visible side margins.
+    // The outer width cap also constrains direct centered OperationFeedbackContent callers.
+    val responsiveBounds = handheldPage?.let { metrics ->
+        Modifier.padding(horizontal = metrics.gutterDp.dp).widthIn(max = metrics.maxWidthDp.dp)
+    } ?: Modifier
     val surface = if (layout == FeedbackLayout.FIELD) Modifier else Modifier
         .background(colors.surface.copy(alpha = .9f), shape)
         .border(1.dp, (if (phase == FeedbackPhase.ERROR) statusColor else colors.onSurface).copy(alpha = .16f), shape)
-        .padding(if (page) if (handheld) if (wideHandheld) 18.dp else 20.dp else 28.dp else 14.dp)
+        .padding(if (page) handheldPage?.contentPaddingDp?.dp ?: 28.dp else 14.dp)
+    val titleStyle = when {
+        handheldPage != null && !tablet -> MaterialTheme.typography.titleMedium
+        handheldPage != null -> MaterialTheme.typography.titleLarge
+        page -> MaterialTheme.typography.headlineSmall
+        else -> MaterialTheme.typography.titleSmall
+    }
     Column(responsiveBounds.then(modifier).then(surface).semantics { liveRegion = LiveRegionMode.Polite },
-        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        verticalArrangement = Arrangement.spacedBy(if (handheldPage != null) 8.dp else 12.dp)) {
         if (page && centered) {
             Column(
-                Modifier.fillMaxWidth(),
+                // Do not stretch short "no stations" messages into full-width cards on phones.
+                if (handheldPage != null) Modifier else Modifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(if (handheldPage != null) 8.dp else 10.dp),
             ) {
                 leadingIcon?.let { image ->
                     Box(
-                        Modifier.size(64.dp).background(statusColor.copy(alpha = .12f), RoundedCornerShape(20.dp)),
+                        Modifier.size(handheldPage?.iconFrameDp?.dp ?: 64.dp)
+                            .background(statusColor.copy(alpha = .12f),
+                                RoundedCornerShape(if (handheldPage != null) 14.dp else 20.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(image, contentDescription = null, tint = statusColor, modifier = Modifier.size(34.dp))
+                        Icon(image, contentDescription = null, tint = statusColor,
+                            modifier = Modifier.size(handheldPage?.iconDp?.dp ?: 34.dp))
                     }
                 }
-                Text(title, style = MaterialTheme.typography.headlineSmall, color = colors.onSurface,
+                Text(title, style = titleStyle, color = colors.onSurface,
                     textAlign = TextAlign.Center)
                 body?.takeIf(String::isNotBlank)?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
@@ -146,11 +177,11 @@ internal fun FeedbackContent(
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
                 leadingIcon?.let {
-                    Icon(it, contentDescription = null, tint = statusColor, modifier = Modifier.size(if (page) 28.dp else 24.dp))
+                    Icon(it, contentDescription = null, tint = statusColor,
+                        modifier = Modifier.size(if (page) handheldPage?.iconDp?.dp ?: 28.dp else 24.dp))
                 }
                 Column(Modifier.weight(1f, fill = !page), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(title, style = if (page) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall,
-                        color = colors.onSurface)
+                    Text(title, style = titleStyle, color = colors.onSurface)
                     body?.takeIf(String::isNotBlank)?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                     }
