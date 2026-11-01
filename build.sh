@@ -17,6 +17,7 @@
 #   ./build.sh svp            # only build/update the pinned Open-SVPFlow runtime
 #   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
 #   ./build.sh monogram-check / monogram-update  # check/update reviewed source pin
+#   ./build.sh monogram-size [arm64|armv7|x86|x86_64|all]  # compare complete release APK sizes
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -131,6 +132,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven(url = "https://jitpack.io")
+        // Required when the optional pinned Monogram MTProto Rustls verifier is enabled.
+        maven(url = "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/") {
+            content { includeGroup("org.rustls") }
+        }
     }
 }
 
@@ -1206,6 +1211,11 @@ if [[ "$MODE" == "monogram-check" || "$MODE" == "monogram-update" ]]; then
     exit 0
 fi
 
+if [[ "$MODE" == "monogram-size" ]]; then
+    bash "$ROOT_DIR/scripts/measure_monogram_apk.sh" "${2:-arm64}"
+    exit 0
+fi
+
 if [[ "$MODE" == "monogram" ]]; then
     [[ -f "$MONOGRAM_BUILD_SCRIPT" ]] || fail "Missing $MONOGRAM_BUILD_SCRIPT"
     bash "$MONOGRAM_BUILD_SCRIPT"
@@ -1287,7 +1297,7 @@ case "$MODE" in
         ;;
     *)
         cat >&2 <<EOT
-Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp for library updates]
+Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-size|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp for library updates]
 EOT
         exit 2
         ;;
