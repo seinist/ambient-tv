@@ -109,6 +109,24 @@ require(appDisplayName.isNotBlank() && appDisplayName.none { it == '\n' || it ==
 
 val externalVersions = loadProjectProperties("gradle/external-versions.properties")
 val vulkanVlcAar = file("libs/libvlc-vulkan.aar")
+val monogramEnabled = (providers.gradleProperty("MONOGRAM_NATIVE").orElse(
+    providers.environmentVariable("MONOGRAM_NATIVE")
+).orElse("0").get()).let { it == "1" || it.equals("true", true) }
+val monogramAar = file("libs/monogram-mtproto.aar")
+val monogramProperties = loadProjectProperties("telegram.properties")
+val monogramApiId = (project.findProperty("MONOGRAM_API_ID") as? String
+    ?: System.getenv("MONOGRAM_API_ID") ?: monogramProperties.getProperty("MONOGRAM_API_ID", ""))
+    .trim().toIntOrNull() ?: 0
+val monogramApiHash = (project.findProperty("MONOGRAM_API_HASH") as? String
+    ?: System.getenv("MONOGRAM_API_HASH") ?: monogramProperties.getProperty("MONOGRAM_API_HASH", "")).trim()
+if (monogramEnabled) {
+    require(monogramAar.isFile) {
+        "MONOGRAM_NATIVE requires a pinned native artifact. Run MONOGRAM_NATIVE=1 ./build.sh monogram first."
+    }
+    require(monogramApiId > 0 && monogramApiHash.matches(Regex("[A-Za-z0-9]{32}"))) {
+        "MONOGRAM_NATIVE requires MONOGRAM_API_ID and MONOGRAM_API_HASH (telegram.properties, untracked)."
+    }
+}
 fun externalVersion(key: String): String = externalVersions.getProperty(key, "").trim()
 
 // APK_ABI controls which release artifact is produced by :app:packageRelease.
@@ -146,6 +164,10 @@ android {
     }
     compileSdk = 37
     ndkVersion = "30.0.16248370"
+    if (monogramEnabled) {
+        // This folder is not compiled or packaged in normal CC0 builds.
+        sourceSets.getByName("main").java.srcDir("src/monogram/java")
+    }
 
     defaultConfig {
         applicationId = "com.ambient.tv"
@@ -160,6 +182,10 @@ android {
         // ndk.abiFilters here: AGP 8.11+ rejects using both mechanisms together.
 
         buildConfigField("String", "APP_DISPLAY_NAME", quotedBuildConfigString(appDisplayName))
+        buildConfigField("boolean", "MONOGRAM_NATIVE", monogramEnabled.toString())
+        buildConfigField("int", "MONOGRAM_API_ID", monogramApiId.toString())
+        buildConfigField("String", "MONOGRAM_API_HASH", quotedBuildConfigString(monogramApiHash))
+        buildConfigField("String", "MONOGRAM_REF", quotedBuildConfigString(externalVersion("MONOGRAM_REF")))
         resValue("string", "brand_app_name", quotedBuildConfigString(appDisplayName))
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", quotedBuildConfigString(spotifyRedirectUriForBuild))
         buildConfigField("String", "SPOTIFY_QR_REDIRECT_URI", quotedBuildConfigString(spotifyQrRedirectUriForBuild))
@@ -401,6 +427,13 @@ kotlin {
 }
 
 dependencies {
+    // Only :native:mtproto from Monogram. No Monogram :app, feature/*, chat
+    // UI, database, networking bridge or HTTP downloader is compiled.
+    if (monogramEnabled) {
+        implementation(files(monogramAar))
+        implementation("net.java.dev.jna:jna:5.19.1@aar")
+        implementation("org.rustls:rustls-platform-verifier:${externalVersion("MONOGRAM_RUSTLS_PLATFORM_VERIFIER_VERSION")}")
+    }
     implementation(libs.smbj)
     implementation(libs.jcifs.ng)
     // QR decoding for the phone's pairing scanner (pure Java, no transitive dependencies).

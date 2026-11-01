@@ -13,6 +13,11 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven(url = "https://jitpack.io")
+        // Only needed in GPL-enabled Monogram builds; do not resolve the full
+        // Monogram project or its unrelated UI/database dependencies.
+        maven(url = "https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/") {
+            content { includeGroup("org.rustls") }
+        }
     }
 }
 

@@ -15,6 +15,8 @@
 #   ./build.sh all            # all Android artifacts
 #   ./build.sh mpv            # only build/install native MPV libraries
 #   ./build.sh svp            # only build/update the pinned Open-SVPFlow runtime
+#   ./build.sh monogram       # build ONLY Monogram's native MTProto AAR, opt-in
+#   ./build.sh monogram-check / monogram-update  # check/update reviewed source pin
 #   ./build.sh nnedi3-shaders # pre-bundle additional NNEDI3 win8x4/win8x6 assets
 #   ./build.sh clean-mpv      # rebuild native MPV libraries from scratch
 #   ./build.sh gen-keystore   # create keystore/release.jks
@@ -23,6 +25,8 @@
 #                               # lib-check / lib-update are aliases
 #
 # Environment overrides:
+#   MONOGRAM_NATIVE=1         Include Monogram's native runtime in the APK (GPL distribution).
+#   MONOGRAM_ABIS="arm64-v8a" Restrict standalone Monogram native build to ABI(s).
 #   SKIP_MPV_NATIVE=1         Do not build/check MPV before Android artifacts.
 #   REBUILD_MPV=1             Force rebuilding MPV even when .so files exist.
 #   REBUILD_SVP=1             Run SVP tests/build even when the runtime is cached.
@@ -65,6 +69,8 @@ MPV_SCRIPT="$ROOT_DIR/scripts/build_mpv_android.sh"
 PROJECTM_SCRIPT="$ROOT_DIR/scripts/build_projectm_android.sh"
 YOUTUBE_ENGINE_SCRIPT="$ROOT_DIR/scripts/fetch_smarttube_engine.sh"
 SPOTIFY_ENGINE_SCRIPT="$ROOT_DIR/scripts/build_spotify_engine.sh"
+MONOGRAM_BUILD_SCRIPT="$ROOT_DIR/scripts/build_monogram_native.sh"
+MONOGRAM_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_monogram_pin.py"
 EXTERNAL_VERSIONS="$ROOT_DIR/gradle/external-versions.properties"
 LIB_UPDATE_SCRIPT="$ROOT_DIR/scripts/update_external_libraries.py"
 NNEDI3_VENDOR_SCRIPT="$ROOT_DIR/scripts/vendor_nnedi3_quality_ladder.py"
@@ -507,6 +513,14 @@ youtube_engine_ready() {
     return 0
 }
 
+ensure_monogram_native() {
+    [[ "${MONOGRAM_NATIVE:-0}" == "1" ]] || return 0
+    [[ -f "$MONOGRAM_BUILD_SCRIPT" ]] || fail "Missing $MONOGRAM_BUILD_SCRIPT"
+    local selected="${MONOGRAM_ABIS:-${1:-arm64-v8a armeabi-v7a x86 x86_64}}"
+    log "Building only the pinned Monogram MTProto runtime for $selected"
+    MONOGRAM_ABIS="$selected" bash "$MONOGRAM_BUILD_SCRIPT"
+}
+
 ensure_youtube_engine() {
     if [[ "${SKIP_YOUTUBE_ENGINE:-0}" == "1" ]]; then
         warn "SKIP_YOUTUBE_ENGINE=1: YouTube UI stays available but engine calls will be unavailable."
@@ -902,6 +916,7 @@ prepare_nnedi3_quality_ladder() {
 }
 
 build_debug() {
+    ensure_monogram_native
     prepare_nnedi3_quality_ladder
     ensure_spotify
     ensure_youtube_engine
@@ -988,6 +1003,7 @@ build_release_variant() {
     UPDATE_ABIS=("$abi_mode")
     rm -f "$DIST_DIR/update.json"
 
+    ensure_monogram_native "$abi_mode"
     ensure_spotify
     ensure_youtube_engine
     ensure_mpv
@@ -1098,6 +1114,7 @@ build_release_variant_adb() {
 }
 
 build_release() {
+    ensure_monogram_native
     UPDATE_APKS=()
     UPDATE_ABIS=(arm64-v8a armeabi-v7a x86 x86_64)
     rm -f "$DIST_DIR/update.json"
@@ -1183,6 +1200,18 @@ if [[ "$MODE" == "libs-update" || "$MODE" == "lib-update" || "$MODE" == "deps-up
     exit 0
 fi
 
+if [[ "$MODE" == "monogram-check" || "$MODE" == "monogram-update" ]]; then
+    [[ -f "$MONOGRAM_UPDATE_SCRIPT" ]] || fail "Missing $MONOGRAM_UPDATE_SCRIPT"
+    python3 "$MONOGRAM_UPDATE_SCRIPT" "$([[ "$MODE" == "monogram-update" ]] && echo --apply || echo --check)"
+    exit 0
+fi
+
+if [[ "$MODE" == "monogram" ]]; then
+    [[ -f "$MONOGRAM_BUILD_SCRIPT" ]] || fail "Missing $MONOGRAM_BUILD_SCRIPT"
+    bash "$MONOGRAM_BUILD_SCRIPT"
+    exit 0
+fi
+
 if [[ "$MODE" == "svp" ]]; then
     # Native-only work does not need to rewrite/clean the Android Gradle graph.
     bash "$ROOT_DIR/scripts/build_svp_android.sh"
@@ -1258,7 +1287,7 @@ case "$MODE" in
         ;;
     *)
         cat >&2 <<EOT
-Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|clean|gen-keystore] [adb-ip[:port] or svp for library updates]
+Usage: $0 [debug|release|arm64|armv7|x86|x86_64|arm64-adb|armv7-adb|x86-adb|x86_64-adb|all|youtube-engine|spotify|clean-spotify|mpv|clean-mpv|svp|nnedi3-shaders|projectm|clean-projectm|libs-check|libs-update|monogram|monogram-check|monogram-update|clean|gen-keystore] [adb-ip[:port] or svp for library updates]
 EOT
         exit 2
         ;;
