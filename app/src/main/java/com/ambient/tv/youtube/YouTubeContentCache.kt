@@ -103,10 +103,23 @@ class YouTubeContentCache() {
         return if (appended === current) current else storeRows(key, appended)
     }
 
-    @Synchronized fun replace(key: String, incoming: List<YouTubeRow>, expected: Long = generation): List<YouTubeRow> {
+    /**
+     * [keepVisible]: an automatic refresh of tiles already on screen (cold start, entry). Their
+     * order and membership stay; new videos are appended. YouTube's recommendations differ on
+     * every request, so a complete replace swapped nearly every tile under the user's focus.
+     * Disk still receives the fresh server result, which the next start shows.
+     */
+    @Synchronized fun replace(
+        key: String,
+        incoming: List<YouTubeRow>,
+        expected: Long = generation,
+        keepVisible: Boolean = false,
+    ): List<YouTubeRow> {
         if (expected != generation) return emptyList()
         val previous = get(key).orEmpty()
-        val rows = storeRows(key, reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
+        val rows = storeRows(key, if (keepVisible && previous.isNotEmpty())
+            stableYouTubeRows(previous, incoming, complete = false)
+        else reconcileComplete(previous, stableYouTubeRows(previous, incoming, complete = true)) { it.id })
         val namespace = source
         if (namespace != null) disk?.put(namespace, "rows:$key", { generation == expected }) {
             // Persist the server's current ordering for the next cold start; the active view

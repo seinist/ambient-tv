@@ -686,7 +686,11 @@ class YouTubeViewModel @Inject constructor(
                     signed to refreshYouTubeRowExtents(rows, refreshRows) { rowId -> engine.continueRow(cacheKey, rowId) }
                 }.onSuccess { (signed, rows) ->
                     if (generation != contentGeneration || contentCache.revision() != cacheRevision) return@onSuccess
-                    _uiState.value = _uiState.value.copy(loading = false, signedIn = signed, rows = contentCache.replace(cacheKey, rows, cacheRevision))
+                    // An automatic Start refresh keeps the tiles the user already sees; a click
+                    // on Start (manual) shows the new recommendations.
+                    val keepVisible = !manual && selectedFeed == YouTubeFeed.HOME && refreshRows.isNotEmpty()
+                    _uiState.value = _uiState.value.copy(loading = false, signedIn = signed,
+                        rows = contentCache.replace(cacheKey, rows, cacheRevision, keepVisible = keepVisible))
                     if (displayedContentKey == cacheKey) armPaging(cacheKey, cacheRevision)
                 }.onFailure { e ->
                     contentLoadFailed(e, manual, generation)

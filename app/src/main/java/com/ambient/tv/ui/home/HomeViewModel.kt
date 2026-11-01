@@ -1443,8 +1443,12 @@ class HomeViewModel @Inject constructor(
                                 val rows = result.getOrThrow()
                                 // The common SmartTube cache reconciles by ID, preserving
                                 // the positions of focused tiles while fresh results arrive.
+                                // Start recommendations change on every request: tiles already
+                                // on Home stay in place, new ones are appended (see replace).
+                                val keepVisible = definition.contentKey == "home" &&
+                                    definition.contentKey in youtubeSourceRows
                                 val visible = if (youtubeContentCache.revision() == revision)
-                                    youtubeContentCache.replace(cacheKey, rows, revision) else rows
+                                    youtubeContentCache.replace(cacheKey, rows, revision, keepVisible = keepVisible) else rows
                                 val selected = homeYouTubeSourceRow(visible, HOME_ROW_LIMIT)
                                 // A successful empty feed removes expired Home tiles. A failed
                                 // refresh keeps the previously shown cached source instead.
