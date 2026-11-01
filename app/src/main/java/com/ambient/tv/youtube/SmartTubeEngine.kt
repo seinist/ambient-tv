@@ -852,7 +852,7 @@ class SmartTubeEngine @Inject constructor(
                         method.contains("SubscribedChannels")
                     var emissions = 0
                     val finished = stream.collectBoundedSnapshot(
-                        timeoutMs = if (subscriptionsFeed) 8_000L else 30_000L,
+                        timeoutMs = 30_000L,
                         maxEmissions = if (subscriptionsFeed) 128 else 16,
                     ) { emissions++; publish(it) }
                     if (subscriptionsFeed) {
