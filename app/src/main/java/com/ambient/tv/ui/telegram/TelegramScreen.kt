@@ -411,7 +411,7 @@ fun TelegramScreen(
                 layout == MonogramBrowseLayout.ROWS ->
                     androidx.compose.foundation.lazy.LazyColumn(
                         state = rowList, modifier = Modifier.weight(1f).pageContentUp(chain),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         items(currentRows, key = { it.id }) { row ->
                             // SmartTube computes row-card widths from the viewport and the same
@@ -451,9 +451,9 @@ fun TelegramScreen(
 
                         state = grid,
                         modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
-                        contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         gridItems(flat, key = { it.ratingKey }) { item ->
                             MediaTile(
@@ -473,7 +473,7 @@ fun TelegramScreen(
                 else ->
                     androidx.compose.foundation.lazy.LazyColumn(
                         state = flatList, modifier = Modifier.weight(1f).pageContentUp(chain).focusGroup(),
-                        contentPadding = PaddingValues(horizontal = screenGutter(), vertical = 8.dp),
+                        contentPadding = PaddingValues(screenGutter(), 10.dp, screenGutter(), 36.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         items(flat, key = { it.ratingKey }) { item ->
