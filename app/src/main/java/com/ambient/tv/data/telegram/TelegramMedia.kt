@@ -54,6 +54,16 @@ fun telegramYouTubeItemId(key: String): String? {
     return parts[2].takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
 }
 
+/** The clicked card may be the post itself or one of its distinct YouTube links. */
+fun telegramPostIds(key: String): Pair<Long, Int>? {
+    telegramMediaIds(key)?.let { return it }
+    if (!key.startsWith(TELEGRAM_YOUTUBE_PREFIX) || telegramYouTubeItemId(key) == null) return null
+    val parts = key.removePrefix(TELEGRAM_YOUTUBE_PREFIX).split(':')
+    return parts[0].toLongOrNull()?.let { chat ->
+        parts[1].toIntOrNull()?.takeIf { it > 0 }?.let { chat to it }
+    }
+}
+
 /** Expand one Telegram post into a distinct card per URL without downloading YouTube streams via MTProto. */
 fun TelegramMedia.youtubePosts(): List<TelegramMedia> = youtubeIds.map { id ->
     copy(kind = TelegramMediaKind.YOUTUBE, youtubeVideoId = id,
