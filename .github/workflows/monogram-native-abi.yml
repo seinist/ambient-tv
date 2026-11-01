@@ -79,6 +79,4 @@ jobs:
         run: |
           ./gradlew --no-daemon --no-configuration-cache :app:compileDebugKotlin \
             -PAPK_ABI="${{ matrix.abi }}" \
-            -PMONOGRAM_NATIVE=1 \
-            -PMONOGRAM_API_ID=12345 \
-            -PMONOGRAM_API_HASH=0123456789abcdef0123456789abcdef
+            -PMONOGRAM_NATIVE=1
