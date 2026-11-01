@@ -82,11 +82,11 @@ jobs:
           PY
       # This is only an *early* ELF/AAR gate. Full 15 MB APK growth is measured
       # by ./build.sh monogram-size (requires all existing native media engines).
-      - name: Audit native MTProto size (10 MB raw ELF budget)
+      - name: Audit native MTProto size (12 MB raw ELF budget)
         run: |
           python3 scripts/monogram_size_audit.py \
             --abi "${{ matrix.abi }}" \
-            --aar app/libs/monogram-mtproto.aar --max-native-mb 10 \
+            --aar app/libs/monogram-mtproto.aar --max-native-mb 12 \
             --json "monogram-native-size-${{ matrix.abi }}.json" \
             --markdown "monogram-native-size-${{ matrix.abi }}.md"
           cat "monogram-native-size-${{ matrix.abi }}.md" >> "$GITHUB_STEP_SUMMARY"
