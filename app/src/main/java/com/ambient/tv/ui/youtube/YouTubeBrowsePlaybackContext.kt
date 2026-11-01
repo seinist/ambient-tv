@@ -45,6 +45,9 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         val playerScope: String,
         val continuationRows: List<String>,
         val forkedRows: MutableSet<String>,
+        val sort: YouTubeSort,
+        val filter: YouTubeFilter,
+        val descending: Boolean,
         val exhaustedRows: MutableSet<String> = mutableSetOf(),
         var lastPlayed: String? = null,
         var returnPending: Boolean = false,
@@ -61,6 +64,9 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
         videoId: String,
         continuationRowIds: List<String> = listOfNotNull(row?.id),
         returnRowId: String? = row?.id,
+        sort: YouTubeSort = YouTubeSort.DEFAULT,
+        filter: YouTubeFilter = YouTubeFilter.ALL,
+        descending: Boolean = false,
     ): Long? {
         if (scope.isNullOrBlank() || row == null || row.items.none { it.videoId == videoId }) return null
         current?.let { engine.discardRowContinuation(it.playerScope) }
@@ -73,6 +79,7 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
             token = token, scope = scope, rowId = returnRowId ?: row.id,
             items = row.items.distinctBy { it.videoId }.toMutableList(),
             playerScope = playerScope, continuationRows = sourceRows, forkedRows = forked,
+            sort = sort, filter = filter, descending = descending,
         )
         return token
     }
@@ -140,8 +147,11 @@ class YouTubeBrowsePlaybackContext @Inject constructor(
                     if (page == null || !page.hasMore) session.exhaustedRows.add(rowId)
                     if (page != null) {
                         val known = session.items.mapTo(HashSet()) { it.videoId }
-                        session.items += page.items.filter { known.add(it.videoId) }
-                        // Put continuation items back in their actual source row on return.
+                        val visible = youtubePlayableContinuationItems(
+                            page.items, session.sort, session.filter, session.descending,
+                        )
+                        session.items += visible.filter { known.add(it.videoId) }
+                        // Put raw continuation items back in their actual source row on return.
                         if (page.items.isNotEmpty()) cache.appendItems(session.scope, rowId, page.items)
                     }
                 }
