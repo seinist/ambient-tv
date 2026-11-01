@@ -1637,6 +1637,11 @@ private fun AmbientTvApp(
     val providerNavigationViewModel: com.ambient.tv.ui.navigation.SidebarViewModel = androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel()
 
     fun navigateSidebar(route: String) {
+        // Only selecting SmartTube Start in the menu or the feed chips requests a Home update.
+        // Navigation back from playback must not be confused with this explicit action.
+        if (route == youtubeFeedRoute("home")) {
+            com.ambient.tv.ui.youtube.YouTubeHomeSelection.request()
+        }
         // The handheld Startseite control always means the app home screen. The shared
         // top-level navigation restores a saved stack on top of the graph start, so that
         // tap can leave the current page in place.
