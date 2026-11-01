@@ -759,6 +759,8 @@ internal fun GuideEventCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp)
+                .background(Color.White.copy(alpha = .12f)))
         }
     }
     Surface(
@@ -775,7 +777,7 @@ internal fun GuideEventCard(
         // Fixed 86dp height keeps the EPG focus stable; no shimmer or zoom between cells.
         Box(Modifier.fillMaxWidth().height(86.dp)) {
             if (previewArt != null) LiveTvArtBox(previewArt, event.title, imageHeaders,
-                Modifier.fillMaxSize(), artworkPlaceholder = false)
+                Modifier.fillMaxSize(), artworkPlaceholder = false, cornerRadius = 0.dp)
             if (previewArt != null) {
                 Box(Modifier.matchParentSize().background(Brush.verticalGradient(
                     listOf(Color.Black.copy(alpha = .50f), Color.Black.copy(alpha = .82f)))))
@@ -802,8 +804,11 @@ internal fun GuideEventCard(
             Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp)
                 .background(if (live) com.ambient.tv.ui.theme.LocalPlaybackAccent.current.indicator
                     else Color.White.copy(alpha = .20f)))
-            Box(Modifier.matchParentSize().border(if (focused) 2.dp else 1.dp,
-                if (focused) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .16f), cardShape))
+            // Hairline separators rather than a rounded border around every programme.
+            Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight()
+                .background(Color.White.copy(alpha = .18f)))
+            if (focused) Box(Modifier.matchParentSize().border(2.dp,
+                MaterialTheme.colorScheme.primary, cardShape))
         }
     }
     }
@@ -1049,8 +1054,9 @@ internal fun LiveTvArtBox(
     art: LiveTvArt?, title: String, imageHeaders: Map<String, String>, modifier: Modifier,
     logoPadding: Dp = 10.dp,
     artworkPlaceholder: Boolean = true,
+    cornerRadius: Dp = 9.dp,
 ) {
-    Box(modifier.clip(RoundedCornerShape(9.dp)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
+    Box(modifier.clip(RoundedCornerShape(cornerRadius)).background(Color.Black.copy(alpha = 0.36f)), contentAlignment = Alignment.Center) {
         if (art != null) ArtworkImage(
             model = art.url, title = title,
             modifier = if (art.logo) Modifier.fillMaxSize().padding(logoPadding) else Modifier.fillMaxSize(),
