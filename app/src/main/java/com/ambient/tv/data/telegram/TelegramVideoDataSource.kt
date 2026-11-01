@@ -7,6 +7,11 @@ import androidx.media3.datasource.BaseDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 
 /** Seekable Media3 transport. The authenticated Monogram port owns MTProto, session and DRM policy. */
@@ -25,6 +30,9 @@ class TelegramVideoDataSource(
     private var remaining = 0L
     private var partStart = -1L
     private var part = ByteArray(0)
+    /** One-part read-ahead: the next 512 KiB MTProto part downloads while this one is decoded. */
+    private val prefetchScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var prefetch: Pair<Long, Deferred<ByteArray>>? = null
 
     override fun open(dataSpec: DataSpec): Long {
         if (!media.playableOnTelegram) throw IOException("Protected or externally hosted media")
@@ -47,13 +55,10 @@ class TelegramVideoDataSource(
         if (sourceUri == null) throw IOException("Data source closed")
         if (partStart < 0 || position !in partStart until (partStart + part.size)) {
             partStart = telegramPartOffset(position)
-            part = try {
-                runBlocking { repository.mediaPart(media.chatId, media.messageId, partStart) }
-            } catch (error: Exception) {
-                throw IOException("Telegram media read failed", error)
-            }
+            part = fetchPart(partStart)
             if (part.isEmpty() || part.size > TELEGRAM_MEDIA_PART_BYTES)
                 throw IOException("Invalid Telegram media part")
+            schedulePrefetch(partStart + TELEGRAM_MEDIA_PART_BYTES)
         }
         val relative = (position - partStart).toInt()
         val count = minOf(length, part.size - relative, remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
@@ -65,8 +70,35 @@ class TelegramVideoDataSource(
         return count
     }
 
+    private fun fetchPart(offset: Long): ByteArray {
+        val pending = prefetch?.takeIf { it.first == offset }?.second
+        if (pending == null) cancelPrefetch() else prefetch = null
+        return try {
+            runBlocking {
+                // A failed read-ahead is retried directly instead of failing playback.
+                pending?.let { runCatching { it.await() }.getOrNull() }
+                    ?: repository.mediaPart(media.chatId, media.messageId, offset)
+            }
+        } catch (error: Exception) {
+            throw IOException("Telegram media read failed", error)
+        }
+    }
+
+    private fun schedulePrefetch(offset: Long) {
+        if (offset >= media.fileSize || offset >= position + remaining) return
+        prefetch = offset to prefetchScope.async {
+            repository.mediaPart(media.chatId, media.messageId, offset)
+        }
+    }
+
+    private fun cancelPrefetch() {
+        prefetch?.second?.cancel()
+        prefetch = null
+    }
+
     override fun getUri(): Uri? = sourceUri
     override fun close() {
+        cancelPrefetch()
         val hadSource = sourceUri != null
         sourceUri = null
         part = ByteArray(0)
