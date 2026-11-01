@@ -29,6 +29,19 @@ class YouTubePlaybackSourceTest {
         assertEquals(a.id, youtubePlaybackSourceRow(listOf(a), "shared", null, sectioned = false)?.id)
     }
 
+    @Test fun continuedPagesKeepTheOriginalUnwatchedFilterAndSort() {
+        val raw = listOf(
+            item("seen").copy(title = "AAA", percentWatched = 100),
+            item("b").copy(title = "Zoo", percentWatched = 0),
+            item("a").copy(title = "Beta", percentWatched = 0),
+        )
+        val filtered = youtubePlayableContinuationItems(
+            raw, sort = YouTubeSort.TITLE, filter = YouTubeFilter.UNWATCHED,
+            descending = false,
+        )
+        assertEquals(listOf("a", "b"), filtered.map { it.videoId })
+    }
+
     @Test fun videoMissingFromTheClickedDatasetCannotBorrowAnotherQueue() {
         assertNull(youtubePlaybackSourceRow(listOf(a, b), "not-in-source", a.id, sectioned = true))
         assertNull(youtubePlaybackSourceRow(listOf(a, b), "not-in-source", a.id, sectioned = false))
