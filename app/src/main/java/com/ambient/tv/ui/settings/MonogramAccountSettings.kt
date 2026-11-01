@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,6 +27,7 @@ import com.ambient.tv.data.telegram.TelegramRepository
 import com.ambient.tv.ui.common.QrCodeDialog
 import com.ambient.tv.ui.common.TvActionButton
 import com.ambient.tv.ui.common.TvTextField
+import com.ambient.tv.ui.common.openLoginLink
 import com.ambient.tv.ui.mobile.LocalHandheldUi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -112,20 +114,31 @@ internal fun MonogramAccountSettings(
     var code by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var qrDismissed by remember(login.qrUrl) { mutableStateOf(false) }
+    var showApiDashboardQr by remember { mutableStateOf(false) }
+    var apiDashboardError by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     LaunchedEffect(login.step) {
         if (login.step == MonogramLoginStep.AUTHORIZED) { code = ""; password = "" }
     }
-    SettingsGroup(title = stringResource(R.string.monogram_api_settings), card = true) {
+    // Identical account-setup hierarchy to Spotify: one card for application identity,
+    // live sign-in status, and context-appropriate actions. No Telegram session is saved here.
+    SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(stringResource(R.string.monogram_api_settings),
+                style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.monogram_api_setup_hint),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // TvTextField has no disabled mode. For active accounts use read-only labels
+            // and a masked hash; modifying an existing native session requires sign-out.
             if (login.step in setOf(MonogramLoginStep.READY, MonogramLoginStep.UNAVAILABLE)) {
                 TvTextField(
                     value = apiId,
                     onValueChange = { apiId = it.filter(Char::isDigit).take(10) },
                     label = stringResource(R.string.monogram_api_id),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number, imeAction = ImeAction.Next),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 TvTextField(
@@ -137,8 +150,6 @@ internal fun MonogramAccountSettings(
                     modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                // TvTextField has no disabled state. Read-only labels keep an authorized user
-                // from accidentally editing live API credentials without a logout.
                 Text(stringResource(R.string.monogram_api_id) + ": " +
                     viewModel.repository.configuredApiId.ifBlank { "—" },
                     style = MaterialTheme.typography.bodyMedium)
@@ -146,10 +157,13 @@ internal fun MonogramAccountSettings(
                     (if (configured) "••••••••" else "—"),
                     style = MaterialTheme.typography.bodyMedium)
             }
+
             Text(
-                stringResource(if (configured) R.string.monogram_api_ready else R.string.monogram_api_required),
+                stringResource(if (configured) R.string.monogram_api_ready
+                    else R.string.monogram_api_required),
                 style = MaterialTheme.typography.bodySmall,
-                color = if (configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (configured) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (login.step == MonogramLoginStep.AUTHORIZED) {
                 Text(stringResource(R.string.monogram_api_sign_out_first),
@@ -157,89 +171,132 @@ internal fun MonogramAccountSettings(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            TvActionButton(
-                text = stringResource(R.string.monogram_api_save),
-                onClick = { viewModel.saveApiCredentials(apiId, apiHash) },
-                enabled = canEditCredentials && validId && validHash &&
-                    (apiId != viewModel.repository.configuredApiId ||
-                     !apiHash.equals(viewModel.repository.configuredApiHash, ignoreCase = true)),
-                loading = saving,
-            )
-        }
-    }
-    // The application ID/hash can be configured before enabling the system, but session
-    // authorization is never started for a disabled source.
-    if (!allowSignIn) return
-    SettingsGroup(title = stringResource(R.string.telegram_account), card = true) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            when (login.step) {
-                MonogramLoginStep.UNAVAILABLE -> Text(
-                    stringResource(R.string.settings_telegram_native_missing),
-                    style = MaterialTheme.typography.bodyMedium,
+
+            SettingsActionRow {
+                TvActionButton(
+                    text = stringResource(R.string.monogram_api_save),
+                    onClick = { viewModel.saveApiCredentials(apiId, apiHash) },
+                    enabled = canEditCredentials && validId && validHash &&
+                        (apiId != viewModel.repository.configuredApiId ||
+                            !apiHash.equals(viewModel.repository.configuredApiHash, ignoreCase = true)),
+                    loading = saving,
                 )
+                TvActionButton(
+                    text = stringResource(R.string.monogram_api_open_dashboard),
+                    onClick = {
+                        if (LocalHandheldUi.current) {
+                            apiDashboardError = !openLoginLink(context, "https://my.telegram.org/apps")
+                        } else showApiDashboardQr = true
+                    },
+                )
+            }
+            if (apiDashboardError) Text(stringResource(R.string.monogram_api_open_failed),
+                color = MaterialTheme.colorScheme.error)
+
+            val status = when {
+                login.busy || saving -> stringResource(R.string.monogram_login_busy)
+                login.step == MonogramLoginStep.AUTHORIZED ->
+                    stringResource(R.string.monogram_connected, login.account ?: "Monogram")
+                login.step == MonogramLoginStep.UNAVAILABLE ->
+                    stringResource(R.string.settings_telegram_native_missing)
+                login.step == MonogramLoginStep.QR -> stringResource(R.string.monogram_qr_pending)
+                login.step == MonogramLoginStep.CODE -> stringResource(R.string.monogram_login_check_code)
+                login.step == MonogramLoginStep.PASSWORD -> stringResource(R.string.monogram_login_check_password)
+                else -> stringResource(R.string.monogram_login_signed_out)
+            }
+            Text(status, color = if (login.step == MonogramLoginStep.AUTHORIZED)
+                MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+
+            if (!allowSignIn) {
+                Text(stringResource(R.string.monogram_login_enable_source),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else when (login.step) {
+                MonogramLoginStep.UNAVAILABLE -> Unit
                 MonogramLoginStep.AUTHORIZED -> {
-                    Text(stringResource(R.string.monogram_connected, login.account ?: "Monogram"))
-                    TvActionButton(text = stringResource(R.string.action_sign_out),
-                        onClick = viewModel::logout, enabled = !login.busy, loading = login.busy)
+                    SettingsActionRow {
+                        TvActionButton(text = stringResource(R.string.action_sign_out),
+                            onClick = viewModel::logout, enabled = !login.busy, loading = login.busy)
+                    }
                 }
                 else -> {
-                    // A phone cannot scan a QR displayed on its own screen.
-                    if (!LocalHandheldUi.current) {
-                        TvActionButton(
-                            text = stringResource(R.string.monogram_sign_in_qr),
-                            onClick = viewModel::qr,
-                            enabled = !login.busy && configured,
-                            loading = login.busy,
-                        )
+                    if (configured) {
+                        // On TV, the QR is the primary button. Reopen an existing token
+                        // without requesting a new one (which would invalidate the old QR).
+                        if (!LocalHandheldUi.current) {
+                            SettingsActionRow {
+                                TvActionButton(
+                                    text = stringResource(R.string.monogram_sign_in_qr),
+                                    onClick = {
+                                        if (login.step == MonogramLoginStep.QR && !login.qrUrl.isNullOrBlank())
+                                            qrDismissed = false
+                                        else viewModel.qr()
+                                    },
+                                    enabled = !login.busy, loading = login.busy,
+                                )
+                            }
+                        }
+                        // The phone route also works when a TV QR is already pending.
+                        if (login.step !in setOf(MonogramLoginStep.PASSWORD, MonogramLoginStep.CODE)) {
+                            Text(stringResource(R.string.monogram_login_phone_alternative),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            TvTextField(
+                                value = phone,
+                                onValueChange = { phone = it },
+                                label = stringResource(R.string.monogram_phone),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            SettingsActionRow {
+                                TvActionButton(
+                                    text = stringResource(R.string.monogram_sign_in_phone),
+                                    onClick = { viewModel.phone(phone.trim()) },
+                                    enabled = !login.busy && phone.trim().startsWith("+") &&
+                                        phone.trim().length in 7..19,
+                                    loading = login.busy,
+                                )
+                            }
+                        }
+                        if (login.step == MonogramLoginStep.CODE) {
+                            TvTextField(value = code, onValueChange = { code = it },
+                                label = stringResource(R.string.monogram_code),
+                                modifier = Modifier.fillMaxWidth())
+                            SettingsActionRow {
+                                TvActionButton(text = stringResource(R.string.monogram_verify_code),
+                                    enabled = !login.busy && code.isNotBlank(),
+                                    loading = login.busy, onClick = { viewModel.code(code.trim()) })
+                                TvActionButton(text = stringResource(R.string.monogram_resend_code),
+                                    enabled = !login.busy, onClick = viewModel::resend)
+                            }
+                        }
+                        if (login.step == MonogramLoginStep.PASSWORD) {
+                            TvTextField(value = password, onValueChange = { password = it },
+                                label = stringResource(R.string.monogram_password),
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth())
+                            SettingsActionRow {
+                                TvActionButton(text = stringResource(R.string.monogram_verify_password),
+                                    enabled = !login.busy && password.isNotBlank(),
+                                    loading = login.busy, onClick = { viewModel.password(password) })
+                            }
+                        }
                     }
-                    TvTextField(
-                        value = phone,
-                        onValueChange = { phone = it },
-                        label = stringResource(R.string.monogram_phone),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    TvActionButton(
-                        text = stringResource(R.string.monogram_sign_in_phone),
-                        onClick = { viewModel.phone(phone.trim()) },
-                        enabled = !login.busy && configured && phone.trim().startsWith("+") && phone.length >= 7,
-                        loading = login.busy,
-                    )
-                    if (login.step == MonogramLoginStep.CODE) {
-                        TvTextField(
-                            value = code,
-                            onValueChange = { code = it },
-                            label = stringResource(R.string.monogram_code),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        TvActionButton(text = stringResource(R.string.monogram_verify_code),
-                            enabled = !login.busy && configured && code.isNotBlank(),
-                            loading = login.busy,
-                            onClick = { viewModel.code(code.trim()) })
-                        TvActionButton(text = stringResource(R.string.monogram_resend_code),
-                            enabled = !login.busy && configured, onClick = viewModel::resend)
-                    }
-                    if (login.step == MonogramLoginStep.PASSWORD) {
-                        TvTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = stringResource(R.string.monogram_password),
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        TvActionButton(text = stringResource(R.string.monogram_verify_password),
-                            enabled = !login.busy && configured && password.isNotBlank(),
-                            loading = login.busy,
-                            onClick = { viewModel.password(password) })
-                    }
-                    if (login.step == MonogramLoginStep.QR) {
-                        Text(stringResource(R.string.monogram_qr_pending))
-                    }
-                    login.error?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error)
-                    }
+                    login.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             }
         }
+    }
+    if (showApiDashboardQr) {
+        QrCodeDialog(
+            title = stringResource(R.string.monogram_api_open_dashboard),
+            hint = stringResource(R.string.monogram_api_setup_hint),
+            payload = "https://my.telegram.org/apps",
+            onDismiss = { showApiDashboardQr = false },
+            footer = {
+                TvActionButton(text = stringResource(R.string.action_close),
+                    onClick = { showApiDashboardQr = false })
+            },
+        )
     }
     val qr = login.qrUrl
     if (login.step == MonogramLoginStep.QR && !qr.isNullOrBlank() && !qrDismissed) {
