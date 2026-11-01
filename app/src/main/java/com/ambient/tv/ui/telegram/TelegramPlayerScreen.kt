@@ -15,6 +15,8 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -41,6 +43,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ambient.tv.R
 import com.ambient.tv.data.telegram.TelegramMedia
+import com.ambient.tv.data.telegram.TelegramChannel
 import com.ambient.tv.data.local.AppPreferences
 import com.ambient.tv.data.telegram.TelegramMediaKind
 import com.ambient.tv.data.telegram.TelegramRepository
@@ -118,6 +121,34 @@ class TelegramPlayerViewModel @Inject constructor(
 
     private val mutableMedia = MutableStateFlow<TelegramMedia?>(null)
     val media = mutableMedia.asStateFlow()
+    private val mutableChannel = MutableStateFlow<TelegramChannel?>(null)
+    val channel = mutableChannel.asStateFlow()
+    private val mutableChannelBusy = MutableStateFlow(false)
+    val channelBusy = mutableChannelBusy.asStateFlow()
+    private val mutableChannelError = MutableStateFlow<String?>(null)
+    val channelError = mutableChannelError.asStateFlow()
+
+    fun joinCurrentChannel() {
+        val selected = mutableChannel.value?.takeIf { it.subscribed == false } ?: return
+        if (mutableChannelBusy.value) return
+        mutableChannelBusy.value = true
+        mutableChannelError.value = null
+        viewModelScope.launch {
+            try {
+                if (repository.joinChannel(selected.chatId)) {
+                    mutableChannel.value = selected.copy(subscribed = true)
+                } else {
+                    mutableChannelError.value = "Monogram channel join not accepted"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                mutableChannelError.value = failure.message ?: "Monogram channel join failed"
+            } finally {
+                mutableChannelBusy.value = false
+            }
+        }
+    }
     private val mutablePhotoUrl = MutableStateFlow<String?>(null)
     val photoUrl = mutablePhotoUrl.asStateFlow()
     private val mutableError = MutableStateFlow<String?>(null)
@@ -126,6 +157,8 @@ class TelegramPlayerViewModel @Inject constructor(
     fun load(chatId: Long, messageId: Int) {
         mutableError.value = null
         mutableMedia.value = null
+        mutableChannel.value = null
+        mutableChannelError.value = null
         viewModelScope.launch {
             try {
                 val selected = repository.media(chatId, messageId)
@@ -136,6 +169,14 @@ class TelegramPlayerViewModel @Inject constructor(
                     mutableRenderer.value = PlaybackBackendResolver.resolve(TitleVideoSettingsStore.rendererFor(
                         context, selected.playerMetadata(), preferences.playbackBackendKey)).key
                     mutableMedia.value = selected
+                    // Load channel artwork and membership independently from the player start.
+                    launch {
+                        try {
+                            mutableChannel.value = repository.channel(selected.chatId)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) { /* Channel action remains optional. */ }
+                    }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -180,6 +221,7 @@ fun TelegramPlayerScreen(
     chatId: Long,
     messageId: Int,
     onBack: () -> Unit,
+    onOpenChannel: (Long) -> Unit,
     viewModel: TelegramPlayerViewModel = hiltViewModel(),
 ) {
     val media by viewModel.media.collectAsState()
@@ -200,7 +242,7 @@ fun TelegramPlayerScreen(
             )
         } else {
             TelegramPlaybackContent(selected, onBack, viewModel::reportFailure,
-                viewModel.repository, viewModel)
+                viewModel.repository, viewModel, onOpenChannel)
         }
     }
 }
@@ -212,9 +254,13 @@ private fun TelegramPlaybackContent(
     onFailure: (String) -> Unit,
     repository: TelegramRepository,
     viewModel: TelegramPlayerViewModel,
+    onOpenChannel: (Long) -> Unit,
 ) {
     val context = LocalContext.current
     val fullPhotoUrl by viewModel.photoUrl.collectAsState()
+    val channel by viewModel.channel.collectAsState()
+    val channelBusy by viewModel.channelBusy.collectAsState()
+    val channelError by viewModel.channelError.collectAsState()
     LaunchedEffect(media.mediaKey) {
         if (media.kind == TelegramMediaKind.PHOTO) viewModel.loadPhoto(media)
     }
@@ -351,6 +397,14 @@ private fun TelegramPlaybackContent(
                     hasNext = repository.playbackCandidates(media.mediaKey, 1).isNotEmpty(),
                     onPrevious = { viewModel.switchInQueue(media, -1) },
                     onNext = { viewModel.switchInQueue(media, 1) },
+                    channel = channel ?: TelegramChannel(media.chatId, media.channel),
+                    channelBusy = channelBusy,
+                    channelError = channelError,
+                    onOpenChannel = {
+                        BackgroundPlaybackSession.pause()
+                        onOpenChannel(media.chatId)
+                    },
+                    onJoinChannel = viewModel::joinCurrentChannel,
                     onOpenSettings = { panel = UnifiedPlayerPanel.SETTINGS },
                     onOpenSleep = { panel = UnifiedPlayerPanel.SLEEP },
                 ),
@@ -422,6 +476,11 @@ internal data class TelegramOsd(
     val hasNext: Boolean,
     val onPrevious: () -> Unit,
     val onNext: () -> Unit,
+    val channel: TelegramChannel,
+    val channelBusy: Boolean,
+    val channelError: String?,
+    val onOpenChannel: () -> Unit,
+    val onJoinChannel: () -> Unit,
     val onOpenSettings: () -> Unit,
     val onOpenSleep: () -> Unit,
 ) : PlayerOsdSpec {
@@ -458,6 +517,7 @@ internal data class TelegramOsd(
                 PlayerTechBadgeRow {
                     MetaBadge(systemName(MediaSystem.TELEGRAM), emphasized = true)
                     MetaBadge(media.channel)
+                    channelError?.let { MetaBadge(it) }
                 }
                 PlayerControlBar(
                     player = OsdPlayer.MEDIA,
@@ -484,6 +544,27 @@ internal data class TelegramOsd(
                     },
                     rightContent = {
                         PlayerExitButton(onBack)
+                        PlayerIconButton(
+                            Icons.Filled.AccountCircle, channel.title,
+                            onOpenChannel,
+                            imageUrl = channel.thumbnailUrl,
+                        )
+                        when (channel.subscribed) {
+                            false -> PlayerIconButton(
+                                Icons.Filled.Subscriptions,
+                                stringResource(R.string.monogram_join_channel),
+                                onJoinChannel,
+                                enabled = !channelBusy,
+                            )
+                            true -> PlayerIconButton(
+                                Icons.Filled.Subscriptions,
+                                stringResource(R.string.monogram_joined_channel),
+                                {},
+                                selected = true,
+                                enabled = false,
+                            )
+                            else -> Unit
+                        }
                         PlayerSleepTimerButton(onOpenSleep, selected = panel == UnifiedPlayerPanel.SLEEP)
                         PlayerIconButton(
                             Icons.Filled.Settings,
