@@ -245,6 +245,10 @@ class HomeViewModel @Inject constructor(
     private var tvPreviewGeneration = 0
     private var trailerRows: List<ContentRowData> = emptyList()
     private var radioRows: List<ContentRowData> = emptyList()
+    /** The actual stations behind each displayed Radio Browser Home row. */
+    private val radioSourceRows = java.util.concurrent.ConcurrentHashMap<String, List<RadioStation>>()
+    fun radioHomePlaybackStations(rowId: String): List<RadioStation> = radioSourceRows[rowId].orEmpty()
+
     private var youtubeRows: List<ContentRowData> = emptyList()
     private var telegramRows: List<ContentRowData> = emptyList()
     /** The exact upstream SmartTube group per configured feed, for bounded next/previous. */
@@ -1555,6 +1559,7 @@ class HomeViewModel @Inject constructor(
         radioRowsPending = false
         if (plexOnly || jellyfinOnly || embyOnly || !appPreferences.radioEnabled) {
             radioRows = emptyList()
+            radioSourceRows.clear()
             return
         }
         val definitions = appPreferences.homeRows.filter { row ->
@@ -1567,8 +1572,10 @@ class HomeViewModel @Inject constructor(
         }.distinctBy { it.contentKey.lowercase() }
         val enabledIds = definitions.mapTo(hashSetOf()) { "radio.${it.contentKey}" }
         radioRows = radioRows.filter { it.id in enabledIds }
+        radioSourceRows.keys.removeIf { it !in enabledIds }
         if (definitions.isEmpty()) {
             radioRows = emptyList()
+            radioSourceRows.clear()
             return
         }
 
@@ -1592,6 +1599,8 @@ class HomeViewModel @Inject constructor(
                         val entries = if (definition.contentKey == HomeRowDefinition.RADIO_FAVORITES)
                             appPreferences.radioFavorites else appPreferences.recentRadioStations
                         val row = radioHomeRow(definition, entries)
+                        if (row != null) radioSourceRows[id] = entries.take(HOME_ROW_LIMIT)
+                        else radioSourceRows.remove(id)
                         radioRows = radioRows.filterNot { it.id == id } + listOfNotNull(row)
                         homeRowSnapshots.save("radio", id, row)
                     }
@@ -1617,11 +1626,18 @@ class HomeViewModel @Inject constructor(
                             }
                         }
                         if (result.isFailure) null
-                        else "radio.${definition.contentKey}" to radioHomeRow(definition, result.getOrThrow())
+                        else {
+                            val stations = result.getOrThrow()
+                            Triple("radio.${definition.contentKey}", radioHomeRow(definition, stations),
+                                stations.take(HOME_ROW_LIMIT))
+                        }
                     } }.awaitAll().filterNotNull()
                 }
                 if (generation == radioRowsGeneration && updates.isNotEmpty()) {
-                    updates.forEach { (id, row) ->
+                    updates.forEach { (id, row, stations) ->
+                        // Commit station metadata alongside exactly this Home row snapshot.
+                        // A stale request never installs a queue for another generation.
+                        if (row != null) radioSourceRows[id] = stations else radioSourceRows.remove(id)
                         // A failure retains its previous snapshot; a successful empty result
                         // records a tombstone so deleted feeds do not reappear on cold start.
                         homeRowSnapshots.save("radio", id, row)

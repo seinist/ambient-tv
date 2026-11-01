@@ -89,6 +89,7 @@ class WakeOnLan {
         if (manual) {
             if (!notices.tryBegin(machine, "files", source.name, member, budget)) return false
         } else notices.begin(machine, "files", source.name, member, budget)
+        return withCancellableWake(machine) {
         try {
         val ready = wakeWithRetries(
             retries = retryCount(),
@@ -109,13 +110,14 @@ class WakeOnLan {
         if (!ready) throw java.net.SocketTimeoutException("Wake timeout")
         rememberOnline(source)
         notices.finish(machine, "files", success = true, member = member)
-        return true
+        true
         } catch (cancelled: CancellationException) {
             notices.cancel(machine, "files", member)
             throw cancelled
         } catch (error: Exception) {
             notices.finish(machine, "files", success = false, member = member)
             throw error
+        }
         }
     }
 

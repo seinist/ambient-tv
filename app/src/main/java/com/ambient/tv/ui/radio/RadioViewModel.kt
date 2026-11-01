@@ -66,6 +66,22 @@ internal fun radioVisibleSections(enabledKeys: List<String>): List<RadioSection>
 internal val RadioSection.isFacetSection: Boolean
     get() = this == RadioSection.GENRES || this == RadioSection.COUNTRIES || this == RadioSection.LANGUAGES
 
+/** Only complete, non-paged station datasets can expose a trustworthy A–Z jump index.
+ * Countries, genres, languages and searches fetch their results page by page; keep the
+ * normal scrollbar for their full lifetime, even after their last page arrives. */
+internal fun radioStationAlphabetAllowed(
+    section: RadioSection,
+    selectedFacet: RadioFacet?,
+    submittedQuery: String,
+): Boolean = selectedFacet == null && submittedQuery.isBlank() &&
+    section in setOf(RadioSection.POPULAR, RadioSection.FAVORITES, RadioSection.RECENT)
+
+/** Facet overviews are API-limited; reaching that cap is not proof that the catalog ends. */
+internal fun radioFacetAlphabetAllowed(facetCount: Int, cap: Int = RADIO_FACET_LIMIT): Boolean =
+    facetCount > 5 && facetCount < cap
+
+internal const val RADIO_FACET_LIMIT = 150
+
 /** Category overviews are always text lists; the saved user choice still controls station pages. */
 internal fun RadioUiState.isFacetOverview(): Boolean =
     section.isFacetSection && selectedFacet == null && submittedQuery.isBlank()
@@ -164,8 +180,10 @@ class RadioViewModel @Inject constructor(
         val currentId = returned.currentId ?: return false
         RadioFocusMemory.save(scope, currentId)
         val before = _state.value
-        val known = before.stations.mapTo(HashSet()) { it.id }
-        val stations = radioAlphabeticalStations(before.stations + returned.stations.filter { known.add(it.id) }, before.sortDescending)
+        val merged = radioAppendPagedStations(before.stations, returned.stations)
+        val stations = if (radioStationAlphabetAllowed(before.section, before.selectedFacet, before.submittedQuery)) {
+            radioAlphabeticalStations(merged, before.sortDescending)
+        } else merged
         _state.value = before.copy(
             stations = stations,
             nextOffset = returned.source?.nextOffset ?: before.nextOffset,
@@ -518,9 +536,9 @@ class RadioViewModel @Inject constructor(
             )
             suspendResult {
                 when (section) {
-                    RadioSection.GENRES -> repository.tags(FACET_LIMIT)
-                    RadioSection.COUNTRIES -> repository.countries(FACET_LIMIT)
-                    RadioSection.LANGUAGES -> repository.languages(FACET_LIMIT)
+                    RadioSection.GENRES -> repository.tags(RADIO_FACET_LIMIT)
+                    RadioSection.COUNTRIES -> repository.countries(RADIO_FACET_LIMIT)
+                    RadioSection.LANGUAGES -> repository.languages(RADIO_FACET_LIMIT)
                     else -> emptyList()
                 }
             }.onSuccess { facets ->
@@ -588,8 +606,15 @@ class RadioViewModel @Inject constructor(
                 _state.value = _state.value.copy(
                     loading = false,
                     loadingMore = false,
-                    stations = radioAlphabeticalStations((existing + page.items).distinctBy(RadioStation::id), descending),
-                    hasMore = page.hasMore,
+                    // API pages are sorted consistently by the remote cursor. Appending in
+                    // that order ensures a scroll fetch really extends the visible tail.
+                    stations = if (section == RadioSection.POPULAR && facet == null && query == null) {
+                        radioAlphabeticalStations(radioAppendPagedStations(existing, page.items), descending)
+                    } else radioAppendPagedStations(existing, page.items),
+                    // Facet counts provide a fallback when a mirror delivers a short page.
+                    // An empty mapped page still terminates the fallback to avoid endless fetches.
+                    hasMore = radioHasMoreStations(page.hasMore, page.items.size,
+                        page.offset + page.limit, facet?.stationCount),
                     nextOffset = page.offset + page.limit,
                     error = false,
                     contentReady = true,
@@ -641,10 +666,19 @@ class RadioViewModel @Inject constructor(
     companion object {
         private const val PAGE_SIZE = 48
         private const val POPULAR_LIMIT = 100
-        private const val FACET_LIMIT = 150
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
 }
+
+/** A mirror can return an underfilled filtered page despite a larger facet count.
+ * Probe the next offset once instead of incorrectly declaring the entire country/genre done. */
+internal fun radioHasMoreStations(
+    apiHasMore: Boolean,
+    mappedCount: Int,
+    nextOffset: Int,
+    facetStationCount: Int?,
+): Boolean = apiHasMore || (mappedCount > 0 && facetStationCount != null &&
+    nextOffset < facetStationCount)
 
 internal fun radioShouldLoadOnFocus(
     index: Int,

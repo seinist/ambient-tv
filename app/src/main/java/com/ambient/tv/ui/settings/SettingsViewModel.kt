@@ -910,6 +910,13 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Resolve the exact machine key also used by WakeNotices and the global cancel bar. */
+    internal fun wakeMachineKey(group: WakeHostGroup): String {
+        val target = group.wakeTarget
+        val probe = group.probe ?: target
+        return machineWake.machineKey(target.kind.linkTarget, probe.normalizedHost.ifBlank { null }, group.mac)
+    }
+
     internal fun wakeGroup(group: WakeHostGroup) {
         val target = group.wakeTarget
         val probe = group.probe ?: target

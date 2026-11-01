@@ -507,7 +507,10 @@ class FilesViewModel @Inject constructor(
                 else _state.update { it.copy(loading = false) }
             }
             catch (error: Exception) {
-                if (error is CancellationException) throw error
+                if (error is CancellationException) {
+                    _state.update { it.copy(loading = false, error = null) }
+                    throw error
+                }
                 _state.update { it.copy(loading = false, error = fileError(if (error is WireGuardUnavailableException) R.string.files_wireguard_error else R.string.files_wake_timeout)) }
             }
         }

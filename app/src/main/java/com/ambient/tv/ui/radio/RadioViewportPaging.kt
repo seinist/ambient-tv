@@ -1,5 +1,10 @@
 package com.ambient.tv.ui.radio
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.Composable
@@ -51,4 +56,31 @@ internal fun ObserveRadioViewportPaging(
             }
         }
     }
+}
+
+/** A Lazy item at the actual end is a second paging signal when no item receives TV focus.
+ * It also works if a touch scroll or a scrollbar does not move the focused card. */
+internal fun radioPagingTailReady(hasMore: Boolean, loading: Boolean, loadingMore: Boolean): Boolean =
+    hasMore && !loading && !loadingMore
+
+@Composable
+internal fun RadioPagingTail(
+    scope: RadioFocusScope,
+    nextOffset: Int,
+    hasMore: Boolean,
+    loading: Boolean,
+    loadingMore: Boolean,
+    onLoadMore: () -> Unit,
+) {
+    val request by rememberUpdatedState(onLoadMore)
+    val ready = radioPagingTailReady(hasMore, loading, loadingMore)
+    LaunchedEffect(scope, nextOffset, ready) {
+        if (ready) {
+            // The tail can be composed just ahead of the viewport. Allow a fast fling
+            // to settle, then let the ViewModel atomically claim the next page.
+            delay(180L)
+            request()
+        }
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp))
 }

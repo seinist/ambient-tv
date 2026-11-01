@@ -83,6 +83,10 @@ import com.ambient.tv.ui.navigation.ReportSidebarContentReady
 import com.ambient.tv.youtube.YouTubeItem
 import com.ambient.tv.youtube.YouTubeRow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 
 @Composable fun YouTubeScreen(
     onVideoClick:(String, Long?)->Unit,
@@ -97,10 +101,20 @@ import kotlinx.coroutines.delay
     val selectFeed = onSelectFeed ?: viewModel::selectFeed
     val filterFocusState = rememberFilterFocusState(initialFeedKey, state.feed, state.channel?.channelId)
     com.ambient.tv.ui.common.RefreshOnEnterAndReconnect(setOf("youtube")) { viewModel.enter(initialFeedKey) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // A menu/chip re-selection need not create a destination or resume its lifecycle.
+    // Observe explicit requests only while this screen is actually on top.
+    LaunchedEffect(viewModel, lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            YouTubeHomeSelection.requests.collect(viewModel::onHomeSelected)
+        }
+    }
     val visibleRows = remember(state.rows, state.sort, state.sortDescending, state.filter) {
         applyYouTubeViewOptions(state.rows, state.sort, state.filter, state.sortDescending)
     }
     val populatedRows = remember(visibleRows) { visibleRows.filter { it.items.isNotEmpty() } }
+    val browseSectioned = (state.query.isBlank() && state.feed == YouTubeFeed.HOME &&
+        state.channel == null) || populatedRows.hasSubsections()
     // Error/unavailable states still expose stable header actions. Only the transient loading
     // tree must hold the sidebar handoff.
     ReportSidebarContentReady(!state.loading)
@@ -296,7 +310,7 @@ import kotlinx.coroutines.delay
                         mode = state.viewMode,
                         gridColumns = state.gridColumns,
                         listRows = state.listRows,
-                        click = { videoId -> onVideoClick(videoId, viewModel.playbackToken(videoId)) },
+                        click = { videoId -> onVideoClick(videoId, viewModel.playbackToken(videoId, sectioned = browseSectioned)) },
                         initialFocusRequester = contentItemFocusRequester,
                         focusTarget = contentFocusTarget,
                         onItemFocused = { rowId, videoId ->
@@ -628,7 +642,8 @@ private fun RowMode(
         ) {
             itemsIndexed(row.items, key = { _, it -> it.videoId }) { _, item ->
                 Card(
-                    item, click, Modifier.width(cardWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId), true,
+                    item, { tapped -> onItemFocused(rowId, tapped); click(tapped) },
+                    Modifier.width(cardWidth).rowColumnFocusTarget(rowFocus, rowId, item.videoId), true,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
                 )
@@ -746,7 +761,7 @@ private fun SectionedYouTubeList(
                 YouTubeListItem(
                     item = item,
                     rowScale = rowScale,
-                    click = click,
+                    click = { tapped -> onItemFocused(rowId, tapped); click(tapped) },
                     detailed = detailed,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
                     onFocused = { onItemFocused(rowId, item.videoId) },
@@ -862,7 +877,7 @@ private fun SectionedYouTubeWall(
                 BrowseFocusRow(rowId) {
                 Card(
                     item,
-                    click,
+                    { tapped -> onItemFocused(rowId, tapped); click(tapped) },
                     Modifier.fillMaxWidth(),
                     false,
                     focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,
@@ -1009,7 +1024,7 @@ private fun YouTubeCinematicSection(
                     itemsIndexed(row.items, key = { _, it -> it.videoId }) { _, item ->
                         Card(
                             item,
-                            click,
+                            { tapped -> onItemFocused(rowId, tapped); click(tapped) },
                             Modifier.width(landscapeCardWidth()).rowColumnFocusTarget(rowFocus, rowId, item.videoId),
                             false,
                             focusRequester = if (rowId == focusTarget.rowId && item.videoId == focusTarget.itemId) initialFocusRequester else null,

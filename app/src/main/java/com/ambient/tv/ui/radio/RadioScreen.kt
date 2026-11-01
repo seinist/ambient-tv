@@ -97,7 +97,6 @@ import com.ambient.tv.ui.common.rememberBrowseListState
 import com.ambient.tv.ui.common.handheldSwipeTabs
 import com.ambient.tv.ui.common.mediaFocusMotion
 import com.ambient.tv.ui.common.noSurfaceScale
-import com.ambient.tv.ui.common.overlayLazyGridScrollbar
 import com.ambient.tv.ui.common.pageContentUp
 import com.ambient.tv.ui.common.LocalBrowseRightIndexFocus
 import com.ambient.tv.ui.common.pageFocusStage
@@ -179,6 +178,8 @@ fun RadioScreen(
     }
     val alphabetJumps = remember(sortedFacets) { radioAlphabetJumps(sortedFacets) }
     val alphabetLetters = remember(alphabetJumps) { alphabetJumps.mapNotNull { it.letter.singleOrNull() } }
+    // A capped facet response may omit later letters; offer the real scrollbar instead.
+    val showFacetAlphabet = radioFacetAlphabetAllowed(sortedFacets.size)
     // Senderlisten (auch Raster, Suche und Favoriten) verwenden denselben Index wie Kategorien.
     // Die Sender selbst sind bereits vom ViewModel alphabetisch in der angezeigten Reihenfolge.
     val stationJumps = remember(state.stations) { radioStationAlphabetJumps(state.stations) }
@@ -248,7 +249,8 @@ fun RadioScreen(
         if (effectiveViewMode == RadioViewMode.GRID) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex,
     )?.let(::radioStationLetter)
     val stationLetter = alphabetTrackedLetter(handheld, visibleStationLetter, focusedStationLetter)
-    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending
+    val showStationAlphabet = !showingFacets && stationLetters.isNotEmpty() && !requestedPagePending &&
+        radioStationAlphabetAllowed(state.section, state.selectedFacet, state.submittedQuery)
 
     BrowseFocusContentIdentity(listOf(viewModel, focusScope, effectiveViewMode, state.sortDescending, state.returnFocusRevision),
         restoreInitialTarget = true)
@@ -474,7 +476,7 @@ fun RadioScreen(
                             .focusRequester(facetListFocus)
                             .focusGroup(),
                     ) {
-                        androidx.compose.runtime.CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { alphabetLetters.size > 5 }) {
+                        androidx.compose.runtime.CompositionLocalProvider(LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showFacetAlphabet }) {
                         RadioFacetList(
                             facets = sortedFacets,
                             listRows = state.listRows,
@@ -491,7 +493,7 @@ fun RadioScreen(
                         )
                         }
                     }
-                    if (alphabetLetters.size > 5) {
+                    if (showFacetAlphabet) {
                         // Shared component already used by the main library: no new A-Z widget.
                         AlphabetBar(
                             letters = alphabetLetters,
@@ -529,8 +531,8 @@ fun RadioScreen(
                         Modifier.weight(1f).fillMaxHeight()
                             .focusRequester(stationContentFocus).focusGroup(),
                     ) {
-                        // Reuse the existing focus-aware A–Z bar in both grid and list mode.
-                        // While shown, D-pad Right goes to its top entry rather than page actions.
+                        // Paged station results use the shared scrollbar; complete local catalogs
+                        // retain the A–Z index. Never render both on the same screen.
                         androidx.compose.runtime.CompositionLocalProvider(
                             LocalBrowseRightIndexFocus provides alphabetRightFocusRequester.takeIf { showStationAlphabet },
                         ) {
@@ -539,7 +541,6 @@ fun RadioScreen(
                                     TvLazyVerticalGrid(
                                         columns = deviceDensityGridCells(state.gridColumns, 160.dp, 8),
                                         modifier = Modifier.fillMaxSize()
-                                            .then(if (showStationAlphabet) Modifier else Modifier.overlayLazyGridScrollbar(gridState))
                                             .pageContentUp(focusChain).focusGroup(),
                                         state = gridState,
                                         contentPadding = PaddingValues(bottom = 40.dp),
@@ -565,6 +566,18 @@ fun RadioScreen(
                                                 },
                                             )
                                         }
+                                        if (state.hasMore) {
+                                            item(key = "radio-grid-page-tail") {
+                                                RadioPagingTail(
+                                                    scope = focusScope,
+                                                    nextOffset = state.nextOffset,
+                                                    hasMore = state.hasMore,
+                                                    loading = state.loading,
+                                                    loadingMore = state.loadingMore,
+                                                    onLoadMore = viewModel::loadMore,
+                                                )
+                                            }
+                                        }
                                         if (state.loadingMore) {
                                             items(
                                                 count = RADIO_GRID_END_PLACEHOLDERS,
@@ -583,6 +596,11 @@ fun RadioScreen(
                                         startingStationId = state.startingStationId,
                                         favoriteIds = state.favoriteIds,
                                         loadingMore = state.loadingMore,
+                                        hasMore = state.hasMore,
+                                        nextOffset = state.nextOffset,
+                                        pagingScope = focusScope,
+                                        loading = state.loading,
+                                        onLoadMore = viewModel::loadMore,
                                         state = listState,
                                         onClick = { station -> viewModel.play(station, onOpenPlayer) },
                                         onFavorite = toggleStationFavorite,
@@ -1049,6 +1067,11 @@ private fun RadioStationList(
     startingStationId: String?,
     favoriteIds: Set<String>,
     loadingMore: Boolean,
+    hasMore: Boolean,
+    nextOffset: Int,
+    pagingScope: RadioFocusScope,
+    loading: Boolean,
+    onLoadMore: () -> Unit,
     state: androidx.compose.foundation.lazy.LazyListState,
     onClick: (RadioStation) -> Unit,
     onFavorite: (RadioStation) -> Unit,
@@ -1147,6 +1170,18 @@ private fun RadioStationList(
                     onClick = { onFavorite(station) },
                     onFocused = { onFocused(station) },
                     modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+        }
+        if (hasMore) {
+            item(key = "radio-list-page-tail") {
+                RadioPagingTail(
+                    scope = pagingScope,
+                    nextOffset = nextOffset,
+                    hasMore = hasMore,
+                    loading = loading,
+                    loadingMore = loadingMore,
+                    onLoadMore = onLoadMore,
                 )
             }
         }
