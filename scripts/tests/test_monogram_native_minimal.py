@@ -60,6 +60,26 @@ class MinimalMonogramTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "lacks"):
                 module.merge(root / "out.aar", [f"x86={wrong}"])
 
+    def test_application_api_keys_are_runtime_only_and_encrypted(self):
+        gradle = (ROOT / "app" / "build.gradle.kts").read_text()
+        backend = (ROOT / "app/src/monogram/java/com/ambient/tv/data/telegram/MonogramNativeBackend.kt").read_text()
+        repository = (ROOT / "app/src/main/java/com/ambient/tv/data/telegram/TelegramRepository.kt").read_text()
+        token_store = (ROOT / "app/src/main/java/com/ambient/tv/data/local/TokenStore.kt").read_text()
+        settings = (ROOT / "app/src/main/java/com/ambient/tv/ui/settings/MonogramAccountSettings.kt").read_text()
+        workflow = (ROOT / ".github/workflows/monogram-native-abi.yml").read_text()
+
+        for forbidden in ("MONOGRAM_API_ID", "MONOGRAM_API_HASH"):
+            self.assertNotIn(forbidden, gradle)
+            self.assertNotIn(forbidden, workflow)
+        self.assertIn("tokenStore.monogramCredentials()", backend)
+        self.assertIn("TokenStore::class.java", repository)
+        self.assertIn("@EncryptedPrefs private val prefs", token_store)
+        self.assertIn('putString("monogram_api_id"', token_store)
+        self.assertIn('putString("monogram_api_hash"', token_store)
+        self.assertIn("PasswordVisualTransformation()", settings)
+        self.assertIn("apiCredentialsReady", settings)
+        self.assertIn("resetForCredentials()", backend)
+
     def test_opt_in_and_native_module_only_build_graph(self):
         gradle = (ROOT / "app" / "build.gradle.kts").read_text()
         shell = (ROOT / "scripts" / "build_monogram_native.sh").read_text()
