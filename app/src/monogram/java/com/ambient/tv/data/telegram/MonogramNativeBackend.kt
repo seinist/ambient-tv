@@ -228,9 +228,35 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             val all = knownChannels(h, index + limit.coerceIn(1, 60) + 1)
             val result = all.drop(index).take(limit.coerceIn(1, 60))
             TelegramChannelPage(result.map {
-                TelegramChannel(it.id, it.title, thumbnailUrl = preview(h, it.id, 0, true))
+                TelegramChannel(it.id, it.title, thumbnailUrl = preview(h, it.id, 0, true),
+                    subscribed = !it.left)
             }, if (index + result.size < all.size || (!chatsExhausted && result.isNotEmpty()))
                 cursor(index + result.size) else null)
+        } }
+
+    override suspend fun channel(chatId: Long): TelegramChannel? =
+        browseMutex.withLock { nativeCall { h ->
+            requireAuthorized(h)
+            // The dialog is often already in the catalog. One getChats fallback can locate
+            // an older channel without paging through unrelated subscriptions.
+            val found = chats.firstOrNull { it.id == chatId && it.isChannel }
+                ?: native.getChats(h).firstOrNull { it.id == chatId && it.isChannel }
+                ?: return@nativeCall null
+            TelegramChannel(found.id, found.title,
+                thumbnailUrl = preview(h, found.id, 0, true),
+                subscribed = !found.left)
+        } }
+
+    override suspend fun joinChannel(chatId: Long): Boolean =
+        browseMutex.withLock { nativeCall { h ->
+            requireAuthorized(h)
+            val joined = native.joinChat(h, chatId).joined
+            if (joined) {
+                chats.clear()
+                chatsExhausted = false
+                epoch++
+            }
+            joined
         } }
 
     /** Only small in-message previews; bounded across a long scrolling session. */
