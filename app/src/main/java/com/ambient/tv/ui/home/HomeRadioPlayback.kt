@@ -1,6 +1,11 @@
 package com.ambient.tv.ui.home
 
 import com.ambient.tv.data.radio.RadioStation
+import com.ambient.tv.data.radio.RADIO_HOME_ITEM_PREFIX
+
+internal fun homeRadioStationId(key: String): String? =
+    key.takeIf { it.startsWith(RADIO_HOME_ITEM_PREFIX) }
+        ?.removePrefix(RADIO_HOME_ITEM_PREFIX)?.takeIf(String::isNotBlank)
 
 /** The exact radio Home row that was clicked, including its displayed tile order. */
 data class HomeRadioPlaybackSelection(
