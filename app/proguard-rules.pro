@@ -99,3 +99,8 @@
 # WireGuard profile is kotlinx-serialized into preferences and settings backups.
 -keep class com.ambient.tv.vpn.WireGuardProfile { *; }
 -keep class com.ambient.tv.vpn.WireGuardProfile$$serializer { *; }
+
+# Monogram's optional native MTProto adapter is loaded by its fully-qualified class
+# name, never by a direct static reference. Keep the constructor for release R8.
+# The upstream AAR supplies additional UniFFI/JNA consumer rules.
+-keep class com.ambient.tv.data.telegram.MonogramNativeBackend { *; }
