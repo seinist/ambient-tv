@@ -66,6 +66,40 @@ update. Generated AARs, upstream source and credentials are git-ignored.
 The assembly script merges per-ABI AARs only if their non-native Java resources
 are identical.
 
+## Size budget and release APK measurement
+
+The optional native CI workflow records the **raw MTProto ELF** and compressed
+AAR size separately for each ABI. It enforces an early **10 MB raw ELF budget**.
+This does **not** prove the final APK fits: Android can store native libraries
+uncompressed, and Monogram also needs UniFFI, JNA and Rustls dependencies.
+
+To measure the **actual extra bytes per ABI**, use the full normal release build
+with the required existing Ambient TV engines (SmartTube, Spotify, VLC/MPV,
+projectM and SVP) available:
+
+```sh
+./build.sh monogram-size arm64      # baseline release vs Monogram release
+./build.sh monogram-size armv7
+./build.sh monogram-size x86
+./build.sh monogram-size x86_64
+./build.sh monogram-size all        # all four comparisons, sequential
+```
+
+Each benchmark builds the **same source and versionCode**, first with
+`MONOGRAM_NATIVE=0` and then `MONOGRAM_NATIVE=1`, using the same single ABI,
+release minification, R8 and packaging options. The normal build infrastructure
+prepares/reuses its native engines; `CI=1` prevents a versionCode bump between
+the pair. The check fails if the added APK bytes exceed **15,000,000 bytes**
+(15 MB, decimal), if the architecture mismatches or if the baseline already
+contains Monogram. Report files are written to
+`dist/monogram-size-<abi>.md` and `dist/monogram-size-<abi>.json`.
+
+The report shows total APK byte delta (the **actual budget gate**), native
+library ZIP contribution, DEX, resources and largest increased entries.
+Compressed AAR/ELF figures must **never** be described as an APK-size result.
+An opt-in APK requires the same GPL source/distribution review regardless of
+the size budget.
+
 ## Account setup and sign-in (Android TV / phone)
 
 The in-app Monogram account section follows the same **Settings → Media sources
