@@ -45,6 +45,10 @@ import java.util.Date
 /** Monogram source cards use the same visual language as SmartTube's 16:9 Card:
  * a single focused surface, 7dp rounded artwork, 44dp title and one metadata line.
  * The existing MediaTile remains unchanged for other providers. */
+/** SmartTube-like horizontal rows use viewport-based, density-aware widths. */
+internal val LocalMonogramRowCardWidth =
+    androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.ui.unit.Dp?> { null }
+
 internal fun isMonogramMediaTile(item: MediaItem): Boolean =
     item.ratingKey.startsWith("telegram:") ||
     item.ratingKey.startsWith("telegram-youtube:") ||
@@ -99,7 +103,7 @@ internal fun MonogramMediaCard(
     val handheld = LocalHandheldUi.current
     val resolvedStyle = resolveMediaTileStyle(style, item.type, handheld)
     val aspect = if (resolvedStyle in setOf(MediaTileStyle.POSTER, MediaTileStyle.AUTO)) 2f / 3f else 16f / 9f
-    val width = mediaTileWidth(resolvedStyle)
+    val width = LocalMonogramRowCardWidth.current ?: mediaTileWidth(resolvedStyle)
     val shape = RoundedCornerShape(10.dp)
     val artworkShape = RoundedCornerShape(7.dp)
     val heroRow = LocalHeroRowTiles.current
