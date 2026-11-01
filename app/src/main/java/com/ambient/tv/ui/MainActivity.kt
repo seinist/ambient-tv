@@ -1176,7 +1176,7 @@ private fun AmbientTvApp(
         youtube = appPreferences.youtubeEnabled,
         spotify = appPreferences.spotifyEnabled && spotifyRepository.nativeAvailable && spotifyWebAuthorized(tokenStore),
         radio = appPreferences.radioEnabled,
-        telegram = appPreferences.telegramEnabled,
+        telegram = appPreferences.telegramEnabled && telegramRepository.nativeAvailable,
         files = appPreferences.filesEnabled,
         trailers = appPreferences.trailersEnabled && !tokenStore.tmdbApiKey.isNullOrBlank(),
         iptvSourceId = configuredIptvSourceId,

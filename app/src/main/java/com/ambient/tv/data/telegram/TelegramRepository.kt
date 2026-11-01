@@ -19,6 +19,7 @@ data class MonogramLoginState(
     val qrUrl: String? = null,
     val account: String? = null,
     val error: String? = null,
+    val busy: Boolean = false,
 )
 /** Implemented by the optional upstream Monogram source module, not a synthetic login. */
 interface MonogramAuthClientPort {
@@ -26,6 +27,7 @@ interface MonogramAuthClientPort {
     suspend fun beginQrLogin(): MonogramLoginState
     suspend fun pollQrLogin(): MonogramLoginState
     suspend fun sendPhoneCode(phone: String): MonogramLoginState
+    suspend fun resendPhoneCode(): MonogramLoginState
     suspend fun submitPhoneCode(code: String): MonogramLoginState
     suspend fun submitTwoFactorPassword(password: String): MonogramLoginState
     suspend fun logout()
@@ -115,7 +117,7 @@ class TelegramRepository @Inject constructor(
     }
 
     private fun applyLogin(state: MonogramLoginState) {
-        mutableLogin.value = state
+        mutableLogin.value = state.copy(busy = false, error = null)
         if (state.step == MonogramLoginStep.AUTHORIZED && backend is TelegramClientPort) {
             installAuthorized(backend)
         } else if (state.step != MonogramLoginStep.AUTHORIZED) {
@@ -125,26 +127,42 @@ class TelegramRepository @Inject constructor(
 
     private suspend fun transition(block: suspend MonogramAuthClientPort.() -> MonogramLoginState) {
         val target = backend ?: return
+        if (mutableLogin.value.busy) return
+        val previous = mutableLogin.value
+        mutableLogin.value = previous.copy(busy = true, error = null)
         try {
             applyLogin(target.block())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            mutableLogin.value = previous.copy(busy = false)
+            throw cancelled
         } catch (error: Exception) {
-            applyLogin(MonogramLoginState(MonogramLoginStep.ERROR, error = error.message))
+            // Wrong OTP / two-factor password MUST keep the same input step.
+            // Disconnecting on an auth error could also invalidate an existing session.
+            mutableLogin.value = previous.copy(
+                busy = false, error = error.message ?: "Monogram request failed")
         }
     }
     suspend fun requestQr() = transition { beginQrLogin() }
     suspend fun pollQr() = transition { pollQrLogin() }
     suspend fun requestPhone(phone: String) = transition { sendPhoneCode(phone) }
+    suspend fun resendCode() = transition { resendPhoneCode() }
     suspend fun confirmCode(code: String) = transition { submitPhoneCode(code) }
     suspend fun confirmPassword(password: String) = transition { submitTwoFactorPassword(password) }
     suspend fun signOut() {
         val target = backend ?: return
+        val before = mutableLogin.value
+        mutableLogin.value = before.copy(busy = true, error = null)
         try {
             val identity = client?.cacheIdentity
             target.logout()
             identity?.let { diskCache.clearAccount(it) }
             applyLogin(MonogramLoginState(MonogramLoginStep.READY))
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            mutableLogin.value = before.copy(busy = false)
+            throw cancelled
         } catch (error: Exception) {
-            mutableLogin.value = MonogramLoginState(MonogramLoginStep.ERROR, error = error.message)
+            mutableLogin.value = before.copy(
+                busy = false, error = error.message ?: "Monogram logout failed")
         }
     }
     private val mutableAuthorized = MutableStateFlow(false)

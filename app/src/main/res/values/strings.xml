@@ -2233,4 +2233,5 @@
     <string name="monogram_qr_hint">Open Telegram on your phone, then scan this login QR code from Devices.</string>
     <string name="monogram_qr_pending">Waiting for authorization on your phone…</string>
     <string name="monogram_search_loaded">Search loaded Monogram media</string>
+    <string name="monogram_resend_code">Resend login code</string>
 </resources>

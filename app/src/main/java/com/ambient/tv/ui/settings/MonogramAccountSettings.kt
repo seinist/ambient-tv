@@ -51,6 +51,7 @@ class MonogramAccountViewModel @Inject constructor(val repository: TelegramRepos
     }
     fun phone(phone: String) { viewModelScope.launch { repository.requestPhone(phone) } }
     fun code(code: String) { viewModelScope.launch { repository.confirmCode(code) } }
+    fun resend() { viewModelScope.launch { repository.resendCode() } }
     fun password(password: String) { viewModelScope.launch { repository.confirmPassword(password) } }
     fun logout() { pollJob?.cancel(); viewModelScope.launch { repository.signOut() } }
     override fun onCleared() { pollJob?.cancel(); super.onCleared() }
@@ -75,7 +76,8 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                 )
                 MonogramLoginStep.AUTHORIZED -> {
                     Text(stringResource(R.string.monogram_connected, login.account ?: "Monogram"))
-                    TvActionButton(text = stringResource(R.string.action_sign_out), onClick = viewModel::logout)
+                    TvActionButton(text = stringResource(R.string.action_sign_out),
+                        onClick = viewModel::logout, enabled = !login.busy, loading = login.busy)
                 }
                 else -> {
                     // A phone cannot scan a QR displayed on its own screen.
@@ -83,6 +85,8 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                         TvActionButton(
                             text = stringResource(R.string.monogram_sign_in_qr),
                             onClick = viewModel::qr,
+                            enabled = !login.busy,
+                            loading = login.busy,
                         )
                     }
                     TvTextField(
@@ -94,7 +98,8 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                     TvActionButton(
                         text = stringResource(R.string.monogram_sign_in_phone),
                         onClick = { viewModel.phone(phone.trim()) },
-                        enabled = phone.trim().startsWith("+") && phone.length >= 7,
+                        enabled = !login.busy && phone.trim().startsWith("+") && phone.length >= 7,
+                        loading = login.busy,
                     )
                     if (login.step == MonogramLoginStep.CODE) {
                         TvTextField(
@@ -104,8 +109,11 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                             modifier = Modifier.fillMaxWidth(),
                         )
                         TvActionButton(text = stringResource(R.string.monogram_verify_code),
-                            enabled = code.isNotBlank(),
+                            enabled = !login.busy && code.isNotBlank(),
+                            loading = login.busy,
                             onClick = { viewModel.code(code.trim()) })
+                        TvActionButton(text = stringResource(R.string.monogram_resend_code),
+                            enabled = !login.busy, onClick = viewModel::resend)
                     }
                     if (login.step == MonogramLoginStep.PASSWORD) {
                         TvTextField(
@@ -116,7 +124,8 @@ internal fun MonogramAccountSettings(viewModel: MonogramAccountViewModel = hiltV
                             modifier = Modifier.fillMaxWidth(),
                         )
                         TvActionButton(text = stringResource(R.string.monogram_verify_password),
-                            enabled = password.isNotBlank(),
+                            enabled = !login.busy && password.isNotBlank(),
+                            loading = login.busy,
                             onClick = { viewModel.password(password) })
                     }
                     if (login.step == MonogramLoginStep.QR) {

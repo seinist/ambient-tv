@@ -132,6 +132,16 @@ class MonogramNativeBackend(context: Context) : MonogramAuthClientPort, Telegram
             MonogramLoginState(MonogramLoginStep.CODE).also { loginState = it }
         }
 
+    override suspend fun resendPhoneCode(): MonogramLoginState =
+        nativeCall(connect = false) { h ->
+            val previous = checkNotNull(phone) { "Request a phone code first" }
+            val hash = checkNotNull(codeHash) { "Request a phone code first" }
+            val sent = native.resendAuthCode(h, previous, hash)
+            phone = sent.phone
+            codeHash = sent.phoneCodeHash
+            MonogramLoginState(MonogramLoginStep.CODE).also { loginState = it }
+        }
+
     override suspend fun submitPhoneCode(code: String): MonogramLoginState = nativeCall { h ->
         try {
             authorized(native.signIn(h, checkNotNull(phone), checkNotNull(codeHash), code).userId)
