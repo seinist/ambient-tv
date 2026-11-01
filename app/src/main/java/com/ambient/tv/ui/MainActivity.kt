@@ -145,6 +145,7 @@ import com.ambient.tv.ui.tvheadend.TvheadendPlayerScreen
 import com.ambient.tv.ui.tvheadend.TvheadendScreen
 import com.ambient.tv.ui.youtube.YouTubeScreen
 import com.ambient.tv.ui.youtube.YouTubeDetailScreen
+import com.ambient.tv.ui.navigation.navigateToYouTubeBrowsePlayer
 import com.ambient.tv.ui.youtube.YouTubePlayerScreen
 import com.ambient.tv.ui.spotify.SpotifyHomeScreen
 import com.ambient.tv.ui.spotify.SpotifyDetailScreen
@@ -983,12 +984,18 @@ private fun AmbientTvApp(
     }
     val playbackGateScope = rememberCoroutineScope()
     var playbackGateJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    fun playOnSelectedTarget(route: String, title: String = "", options: androidx.navigation.NavOptionsBuilder.() -> Unit = {}) {
+    /** [navigate] replaces the plain local navigation, e.g. to rebuild the back stack below the player. */
+    fun playOnSelectedTarget(
+        route: String,
+        title: String = "",
+        navigate: ((String) -> Unit)? = null,
+        options: androidx.navigation.NavOptionsBuilder.() -> Unit = {},
+    ) {
         val localPlayback = {
             playbackGateJob?.cancel()
             playbackGateJob = playbackGateScope.launch {
                 if (BackgroundPlaybackSession.snapshot.value.metadata?.route == route || playbackAvailability.route(route)) {
-                    navController.navigate(route, options)
+                    if (navigate != null) navigate(route) else navController.navigate(route, options)
                 }
             }
             Unit
@@ -1159,8 +1166,19 @@ private fun AmbientTvApp(
         navController.navigate(Destinations.youtubeChannel(channel.channelId, channel.title, channel.avatarUrl))
     }
 
-    /** [replacePlayer]: a video started from a channel page opened in the player replaces that player. */
-    fun handleYouTubeSelection(videoId: String, browseSession: Long? = null, replacePlayer: Boolean = false) {
+    /**
+     * A YouTube player started from a browse page (channel, feed, Home): Back and the real end of
+     * the queue return to that page. A channel opened from a player's OSD replaces that player
+     * below it, and a details page of the same queue closes together with the player.
+     */
+    fun playYouTubeFromBrowse(videoId: String, browseSession: Long?) {
+        playOnSelectedTarget(
+            Destinations.youtubePlayer(videoId, browseSession),
+            navigate = { route -> navController.navigateToYouTubeBrowsePlayer(route, closeDetails = browseSession != null) },
+        )
+    }
+
+    fun handleYouTubeSelection(videoId: String, browseSession: Long? = null) {
         // Channel tiles open the channel page whatever the selection behavior says.
         com.ambient.tv.youtube.youtubeChannelIdOf(videoId)?.let { channelId ->
             navController.navigate(Destinations.youtubeChannel(channelId))
@@ -1168,9 +1186,7 @@ private fun AmbientTvApp(
         }
         when (val route = youtubeSelectionRoute(appPreferences.youtubeMediaSelectionBehaviorKey, videoId)) {
             is YouTubeSelectionRoute.Details -> navController.navigate(Destinations.youtubeDetail(route.videoId, browseSession))
-            is YouTubeSelectionRoute.Play -> playOnSelectedTarget(Destinations.youtubePlayer(route.videoId, browseSession)) {
-                if (replacePlayer) popUpTo(Destinations.YOUTUBE_PLAYER) { inclusive = true }
-            }
+            is YouTubeSelectionRoute.Play -> playYouTubeFromBrowse(route.videoId, browseSession)
             is YouTubeSelectionRoute.Ask -> {
                 pendingYouTubeVideoId = route.videoId
                 pendingYouTubeBrowseSession = browseSession
@@ -2315,10 +2331,7 @@ private fun AmbientTvApp(
                             onBack = ::navigateBack,
                             onOpenSettings = { openSystemSettings("youtube") },
                             onPlay = { videoId ->
-                                playOnSelectedTarget(Destinations.youtubePlayer(
-                                    videoId,
-                                    entry.arguments?.getLong("browseSession")?.takeIf { it >= 0L },
-                                ))
+                                playYouTubeFromBrowse(videoId, entry.arguments?.getLong("browseSession")?.takeIf { it >= 0L })
                             },
                             onOpenChannel = ::openYouTubeChannel,
                             onOpenItem = { videoId -> handleYouTubeSelection(videoId) },
@@ -2333,7 +2346,7 @@ private fun AmbientTvApp(
                         ),
                     ) {
                         YouTubeScreen(
-                            onVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session, replacePlayer = true) },
+                            onVideoClick = { videoId, session -> handleYouTubeSelection(videoId, session) },
                             onBack = ::navigateBack,
                         )
                     }
@@ -2751,7 +2764,7 @@ private fun AmbientTvApp(
                             val session = pendingYouTubeBrowseSession
                             pendingYouTubeVideoId = null
                             pendingYouTubeBrowseSession = null
-                            playOnSelectedTarget(Destinations.youtubePlayer(videoId, session))
+                            playYouTubeFromBrowse(videoId, session)
                         },
                         onDetails = {
                             val session = pendingYouTubeBrowseSession
