@@ -20,7 +20,13 @@ data class TelegramMedia(
     val youtubeVideoId: String? = null,
     val protectedContent: Boolean = false,
 ) {
-    val mediaKey: String get() = telegramMediaKey(chatId, messageId)
+    /** A linked YouTube video is a separate media card, even inside a post with an attachment. */
+    val youtubeIds: List<String>
+        get() = (telegramYouTubeIds(summary.orEmpty()) + listOfNotNull(youtubeVideoId)).distinct()
+    val mediaKey: String get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
+        telegramYouTubeMediaKey(chatId, messageId, youtubeVideoId) else telegramMediaKey(chatId, messageId)
+    val previewUrl: String? get() = if (kind == TelegramMediaKind.YOUTUBE && youtubeVideoId != null)
+        com.ambient.tv.youtube.youtubeThumbnailUrl(youtubeVideoId) else thumbnailUrl
     /** YouTube playback is delegated to SmartTube; the Telegram file never shadows it. */
     val playableOnTelegram: Boolean get() = kind != TelegramMediaKind.YOUTUBE && !protectedContent
 }
@@ -33,6 +39,25 @@ data class TelegramChannel(
 )
 
 const val TELEGRAM_MEDIA_PREFIX = "telegram:"
+const val TELEGRAM_YOUTUBE_PREFIX = "telegram-youtube:"
+fun telegramYouTubeMediaKey(chatId: Long, messageId: Int, videoId: String): String =
+    "$TELEGRAM_YOUTUBE_PREFIX$chatId:$messageId:$videoId"
+
+/** Validated virtual tile identifier; the original post stays accessible through chat/message ids. */
+fun telegramYouTubeItemId(key: String): String? {
+    if (!key.startsWith(TELEGRAM_YOUTUBE_PREFIX)) return null
+    val parts = key.removePrefix(TELEGRAM_YOUTUBE_PREFIX).split(':')
+    if (parts.size != 3 || parts[0].toLongOrNull() == null ||
+        parts[1].toIntOrNull()?.let { it > 0 } != true) return null
+    return parts[2].takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+}
+
+/** Expand one Telegram post into a distinct card per URL without downloading YouTube streams via MTProto. */
+fun TelegramMedia.youtubePosts(): List<TelegramMedia> = youtubeIds.map { id ->
+    copy(kind = TelegramMediaKind.YOUTUBE, youtubeVideoId = id,
+        thumbnailUrl = com.ambient.tv.youtube.youtubeThumbnailUrl(id))
+}
+
 fun telegramMediaKey(chatId: Long, messageId: Int): String = "$TELEGRAM_MEDIA_PREFIX$chatId:$messageId"
 fun telegramMediaIds(key: String): Pair<Long, Int>? {
     if (!key.startsWith(TELEGRAM_MEDIA_PREFIX)) return null
@@ -52,8 +77,8 @@ fun TelegramMedia.toMediaItem(): MediaItem = MediaItem(
         else -> "movie"
     },
     index = null,
-    thumbUrl = thumbnailUrl,
-    artUrl = thumbnailUrl,
+    thumbUrl = previewUrl,
+    artUrl = previewUrl,
     year = null,
     summary = summary,
     tagline = null,
