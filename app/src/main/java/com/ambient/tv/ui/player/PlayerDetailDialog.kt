@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import com.ambient.tv.ui.common.dispatchBackOnRelease
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -241,7 +242,9 @@ internal fun PlayerDetailDialog(
                 .border(1.dp, overlayPanelBorder(), shape)
                 .then(if (handheld) Modifier.windowInsetsPadding(WindowInsets.navigationBars) else Modifier)
                 .padding(horizontal = deviceDp(32.dp, 16.dp), vertical = deviceDp(26.dp, 14.dp))
-                .then(keys),
+                .then(keys)
+                // Back would otherwise move focus to the player's root and leave the dialog open.
+                .dispatchBackOnRelease(),
         ) {
             OverlayAccentStrip()
             Spacer(Modifier.height(tokens.itemGap))
