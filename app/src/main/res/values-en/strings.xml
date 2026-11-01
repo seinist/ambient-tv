@@ -2291,7 +2291,7 @@
     <string name="settings_sleep_standby_hint">With permission, Ambient TV requests standby when the timer finishes. Otherwise it releases the screen-on lock so Android can enter standby on its own. Whether the connected TV turns off depends on the device and HDMI-CEC.</string>
     <string name="settings_sleep_standby_unavailable">Immediate standby is not supported by this TV. The timer still stops playback and allows Android to enter standby automatically.</string>
     <string name="settings_sleep_standby_explanation">Allow Ambient TV to lock the screen only when a sleep timer ends. This is optional and can be disabled at any time.</string>
-    <string name="telegram_title">Telegram</string>
+    <string name="telegram_title">Monogram</string>
     <string name="settings_page_telegram_hint">Browse media, channels and YouTube links from your Telegram account.</string>
     <string name="settings_telegram_enable">Enable Telegram</string>
     <string name="settings_telegram_enable_hint">Browse media, channels and YouTube links from your Telegram account.</string>
@@ -2305,6 +2305,6 @@
     <string name="telegram_photos">Photos</string>
     <string name="telegram_no_results">No Telegram media found</string>
     <string name="telegram_error">Telegram media is not available</string>
-    <string name="telegram_home_row">Telegram · %1$s</string>
-    <string name="telegram_account">Telegram account</string>
+    <string name="telegram_home_row">Monogram · %1$s</string>
+    <string name="telegram_account">Monogram account</string>
 </resources>

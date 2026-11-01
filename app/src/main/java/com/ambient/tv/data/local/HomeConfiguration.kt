@@ -21,7 +21,7 @@ data class HomeRowDefinition(
         const val SYSTEM_TVHEADEND = "tvheadend"
         const val SYSTEM_YOUTUBE = "youtube"
         const val SYSTEM_TELEGRAM = "telegram"
-        val TELEGRAM_ROW_KEYS = listOf("recent", "videos", "youtube", "audio", "photos")
+        val TELEGRAM_ROW_KEYS = listOf("recent", "channels", "videos", "youtube", "audio", "photos")
         const val SYSTEM_TRAILERS = "trailers"
         const val SYSTEM_SPOTIFY = "spotify"
         const val SYSTEM_RADIO = "radio"

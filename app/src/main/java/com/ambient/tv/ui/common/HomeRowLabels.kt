@@ -15,6 +15,7 @@ fun HomeRowDefinition.displayTitle(context: Context): String {
     if (title.isNotBlank()) return title
     if (system == HomeRowDefinition.SYSTEM_TELEGRAM) {
         val key = when (contentKey) {
+            "channels" -> R.string.telegram_channels
             "videos" -> R.string.telegram_videos
             "youtube" -> R.string.telegram_youtube
             "audio" -> R.string.telegram_audio

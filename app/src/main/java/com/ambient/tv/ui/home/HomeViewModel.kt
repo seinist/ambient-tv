@@ -28,6 +28,7 @@ import com.ambient.tv.data.radio.RadioBrowserRepository
 import com.ambient.tv.data.radio.RadioStation
 import com.ambient.tv.data.radio.localizedLanguageNames
 import com.ambient.tv.youtube.SmartTubeEngine
+import com.ambient.tv.ui.telegram.toBrowseItem
 import com.ambient.tv.youtube.YouTubeContentCache
 import com.ambient.tv.youtube.YouTubeRow
 import com.ambient.tv.ui.youtube.YouTubeBrowsePlaybackContext
@@ -114,7 +115,7 @@ internal fun MediaItem.toHomeHeroContent() = HomeHeroContent(
     providerLabel = when {
         ratingKey.startsWith("trailer-video:") -> "trailers"
         ratingKey.startsWith(RADIO_HOME_ITEM_PREFIX) -> MediaSystem.RADIO.customName ?: "Radio Browser"
-        ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> MediaSystem.TELEGRAM.customName ?: "Telegram"
+        ratingKey.startsWith(com.ambient.tv.data.telegram.TELEGRAM_MEDIA_PREFIX) -> MediaSystem.TELEGRAM.customName ?: "Monogram"
         ratingKey.startsWith(HOME_YOUTUBE_ITEM_PREFIX) -> "SmartTube"
         EmbyBackend.owns(ratingKey) -> "Emby"
         JellyfinBackend.owns(ratingKey) -> "Jellyfin"
@@ -1477,9 +1478,13 @@ class HomeViewModel @Inject constructor(
                 val updates = coroutineScope {
                     definitions.map { definition ->
                         async {
-                            val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT)
-                            val items = com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries)
-                                .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            val items = if (definition.contentKey == "channels") {
+                                telegramRepository.channels().map { channel -> channel.toBrowseItem() }
+                            } else {
+                                val entries = telegramRepository.browse(definition.contentKey, HOME_ROW_LIMIT)
+                                com.ambient.tv.ui.telegram.telegramRows(definition.contentKey, entries)
+                                    .flatMap { it.items }.distinctBy(MediaItem::ratingKey)
+                            }
                             if (items.isEmpty()) null else ContentRowData(
                                 id = "telegram.${definition.contentKey}",
                                 title = definition.displayTitle(context),

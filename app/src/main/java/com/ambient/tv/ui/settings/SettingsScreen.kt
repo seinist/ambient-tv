@@ -1898,6 +1898,7 @@ private fun HomeRowAddButtons(
         stringResource(R.string.settings_home_source_spotify_artists) to (HomeRowDefinition.SYSTEM_SPOTIFY to "artists"),
         stringResource(R.string.settings_home_source_spotify_now_playing) to (HomeRowDefinition.SYSTEM_SPOTIFY to "now_playing"),
         stringResource(R.string.telegram_recent) to (HomeRowDefinition.SYSTEM_TELEGRAM to "recent"),
+        stringResource(R.string.telegram_channels) to (HomeRowDefinition.SYSTEM_TELEGRAM to "channels"),
         stringResource(R.string.telegram_videos) to (HomeRowDefinition.SYSTEM_TELEGRAM to "videos"),
         stringResource(R.string.telegram_youtube) to (HomeRowDefinition.SYSTEM_TELEGRAM to "youtube"),
         stringResource(R.string.telegram_audio) to (HomeRowDefinition.SYSTEM_TELEGRAM to "audio"),

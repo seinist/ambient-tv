@@ -30,7 +30,7 @@ data class TelegramBrowseState(
     val error: String? = null,
 )
 
-internal fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
+fun TelegramChannel.toBrowseItem(): MediaItem = MediaItem(
     ratingKey = TELEGRAM_CHANNEL_ITEM_PREFIX + chatId,
     title = title,
     type = "collection",

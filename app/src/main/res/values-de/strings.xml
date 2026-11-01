@@ -2205,7 +2205,7 @@
     <string name="settings_auto_pip_title">Bild-in-Bild</string>
     <string name="settings_auto_pip_enable">Bild-in-Bild automatisch starten</string>
     <string name="settings_auto_pip_hint">Auf Handys Videos beim Verlassen der App in einem schwebenden Android-Fenster weiterspielen. Audio läuft weiterhin ohne Bild-in-Bild im Hintergrund.</string>
-    <string name="telegram_title">Telegram</string>
+    <string name="telegram_title">Monogram</string>
     <string name="settings_page_telegram_hint">Medien, Kanäle und YouTube-Links aus deinem Telegram-Konto anzeigen.</string>
     <string name="settings_telegram_enable">Telegram aktivieren</string>
     <string name="settings_telegram_enable_hint">Medien, Kanäle und YouTube-Links aus deinem Telegram-Konto anzeigen.</string>
@@ -2219,6 +2219,6 @@
     <string name="telegram_photos">Fotos</string>
     <string name="telegram_no_results">Keine Telegram-Medien gefunden</string>
     <string name="telegram_error">Telegram-Medien nicht verfügbar</string>
-    <string name="telegram_home_row">Telegram · %1$s</string>
-    <string name="telegram_account">Telegram-Konto</string>
+    <string name="telegram_home_row">Monogram · %1$s</string>
+    <string name="telegram_account">Monogram-Konto</string>
 </resources>
