@@ -9,6 +9,18 @@ import com.ambient.tv.youtube.YouTubeRow
  *
  * Input rows are already filtered and sorted with applyYouTubeViewOptions.
  */
+/** Apply the same visible filter/sort to pages fetched after the player opened. */
+internal fun youtubePlayableContinuationItems(
+    items: List<com.ambient.tv.youtube.YouTubeItem>,
+    sort: YouTubeSort,
+    filter: YouTubeFilter,
+    descending: Boolean,
+): List<com.ambient.tv.youtube.YouTubeItem> =
+    applyYouTubeViewOptions(
+        listOf(YouTubeRow("Continuation", items)),
+        sort, filter, descending,
+    ).flatMap { it.items }
+
 internal fun youtubePlaybackSourceRow(
     rows: List<YouTubeRow>,
     videoId: String,
