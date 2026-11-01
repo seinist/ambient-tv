@@ -589,7 +589,10 @@ class RadioViewModel @Inject constructor(
                     loading = false,
                     loadingMore = false,
                     stations = radioAlphabeticalStations((existing + page.items).distinctBy(RadioStation::id), descending),
-                    hasMore = page.hasMore,
+                    // Facet counts provide a fallback when a mirror delivers a short page.
+                    // An empty mapped page still terminates the fallback to avoid endless fetches.
+                    hasMore = radioHasMoreStations(page.hasMore, page.items.size,
+                        page.offset + page.limit, facet?.stationCount),
                     nextOffset = page.offset + page.limit,
                     error = false,
                     contentReady = true,
@@ -645,6 +648,16 @@ class RadioViewModel @Inject constructor(
         private const val RADIO_VIEW_STATE_KEY = "radio"
     }
 }
+
+/** A mirror can return an underfilled filtered page despite a larger facet count.
+ * Probe the next offset once instead of incorrectly declaring the entire country/genre done. */
+internal fun radioHasMoreStations(
+    apiHasMore: Boolean,
+    mappedCount: Int,
+    nextOffset: Int,
+    facetStationCount: Int?,
+): Boolean = apiHasMore || (mappedCount > 0 && facetStationCount != null &&
+    nextOffset < facetStationCount)
 
 internal fun radioShouldLoadOnFocus(
     index: Int,
