@@ -449,8 +449,34 @@ class YouTubeViewModel @Inject constructor(
     }
 
     fun onQueryChanged(value: String) {
+        val previousQuery = _uiState.value.query
         _uiState.value = _uiState.value.copy(query = value)
-        if (value.trim().length >= 2) search(value) else load(_uiState.value.feed)
+        if (value.trim().length >= 2) {
+            search(value)
+        } else if (channelId == null && _uiState.value.feed == YouTubeFeed.HOME) {
+            // Typing a single character or closing a search is not a Home selection.
+            if (youtubeRestoreHomeAfterSearch(previousQuery, value)) restoreCachedHome()
+        } else {
+            load(_uiState.value.feed)
+        }
+    }
+
+    private fun restoreCachedHome() {
+        val key = "feed:home"
+        val snapshot = contentCache.get(key)
+        if (snapshot.isNullOrEmpty()) {
+            load(YouTubeFeed.HOME)
+            return
+        }
+        ++contentGeneration
+        contentJob?.cancel()
+        visibleViewportEnds.clear()
+        resetPaging(null)
+        displayedContentKey = key
+        _uiState.value = _uiState.value.copy(
+            rows = snapshot, loading = false, refreshing = false,
+            error = null, refreshError = null,
+        )
     }
 
     fun requestSignIn() {
