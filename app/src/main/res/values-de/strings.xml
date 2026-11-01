@@ -2266,6 +2266,8 @@
     <string name="monogram_error_api_id">Ungültige API-ID</string>
     <string name="monogram_error_api_hash">Ungültiger API-Hash</string>
     <string name="monogram_error_api_credentials">Ungültige API-ID oder ungültiger API-Hash</string>
+    <string name="monogram_error_phone">Telefonnummer mit Ländervorwahl eingeben, zum Beispiel +49 …</string>
+    <string name="monogram_error_code_first">Zuerst einen Anmeldecode anfordern</string>
     <string name="monogram_error_not_streamable">Dieses Monogram-Medium kann nicht gestreamt werden</string>
     <string name="monogram_error_not_authorized">Nicht bei Monogram angemeldet</string>
     <string name="monogram_error_channel_left">Du hast diesen Kanal verlassen</string>

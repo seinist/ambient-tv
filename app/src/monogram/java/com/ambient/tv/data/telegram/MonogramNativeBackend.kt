@@ -1,5 +1,6 @@
 package com.ambient.tv.data.telegram
 
+import com.ambient.tv.R
 import android.content.Context
 import android.util.Base64
 import com.ambient.tv.data.local.TokenStore
@@ -68,7 +69,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
             val current = mutex.withLock {
                 if (handle == 0L) {
                     val (id, hash) = checkNotNull(tokenStore.monogramCredentials()) {
-                        "Configure the Monogram API ID and hash in Settings first"
+                        app.getString(R.string.monogram_api_required)
                     }
                     handle = native.createClient(id, hash, session.absolutePath)
                     native.setDownloadChunkKib(512)
@@ -87,7 +88,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun resetForCredentials() = withContext(Dispatchers.IO) {
         mutex.withLock {
             if (handle != 0L) {
-                check(!native.isAuthorized(handle)) { "Sign out before changing Monogram API credentials" }
+                check(!native.isAuthorized(handle)) { app.getString(R.string.monogram_error_signout_first) }
             }
             wipeLocalLocked()
         }
@@ -192,7 +193,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun sendPhoneCode(number: String): MonogramLoginState =
         nativeCall(connect = false) { h ->
-            require(number.startsWith("+") && number.length in 7..19) { "Invalid phone number" }
+            require(number.startsWith("+") && number.length in 7..19) { app.getString(R.string.monogram_error_phone) }
             val sent = native.sendAuthCode(h, number)
             phone = sent.phone
             codeHash = sent.phoneCodeHash
@@ -201,8 +202,8 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun resendPhoneCode(): MonogramLoginState =
         nativeCall(connect = false) { h ->
-            val previous = checkNotNull(phone) { "Request a phone code first" }
-            val hash = checkNotNull(codeHash) { "Request a phone code first" }
+            val previous = checkNotNull(phone) { app.getString(R.string.monogram_error_code_first) }
+            val hash = checkNotNull(codeHash) { app.getString(R.string.monogram_error_code_first) }
             val sent = native.resendAuthCode(h, previous, hash)
             phone = sent.phone
             codeHash = sent.phoneCodeHash
@@ -252,7 +253,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     }
 
     private fun requireAuthorized(h: Long) {
-        check(native.isAuthorized(h)) { "Monogram account is not authorized" }
+        check(native.isAuthorized(h)) { app.getString(R.string.monogram_error_not_authorized) }
     }
 
     private fun knownChannels(h: Long, count: Int): List<ChatDto> {
@@ -347,7 +348,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
         val expectedAccount = accountId
         val bytes = if (peer) native.peekPeerInlineThumb(h, chat)
             else native.peekMessageInlineThumb(h, chat, id)
-        if (bytes.isNullOrEmpty() || bytes.size > 512 * 1024) return null
+        if (bytes == null || bytes.isEmpty() || bytes.size > 512 * 1024) return null
         synchronized(diskChunkLock) {
             if (expectedAccount == null || accountId != expectedAccount ||
                 cacheGeneration != expectedGeneration) return null
@@ -527,7 +528,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
 
     override suspend fun photoFile(chatId: Long, messageId: Int): String? = nativeCall { h ->
         requireAuthorized(h)
-        check(chatId !in leftChannels) { "Channel was left" }
+        check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
         val dir = File(cache, "photos").apply { mkdirs() }.canonicalFile
         val output = File(dir, "$chatId-$messageId.media")
         if (output.isFile && output.length() > 0L) return@nativeCall output.toURI().toString()
@@ -543,7 +544,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
     override suspend fun mediaPart(chatId: Long, messageId: Int, offset: Long): ByteArray =
         nativeCall { h ->
             requireAuthorized(h)
-            check(chatId !in leftChannels) { "Channel was left" }
+            check(chatId !in leftChannels) { app.getString(R.string.monogram_error_channel_left) }
             require(offset >= 0L && offset % TELEGRAM_MEDIA_PART_BYTES == 0L)
             val dir = File(cache, "chunks").apply { mkdirs() }.canonicalFile
             val cacheFile = File(dir, "$chatId-$messageId-$offset.bin")
@@ -568,7 +569,7 @@ class MonogramNativeBackend(context: Context, private val tokenStore: TokenStore
                 // An account switch/log-out invalidates in-flight native file results.
                 check(accountId == currentIdentity && native.isAuthorized(h) &&
                     chatId !in leftChannels) {
-                    "Monogram session changed during media download"
+                    app.getString(R.string.monogram_error_account_changed)
                 }
                 synchronized(diskChunkLock) {
                     if (accountId == currentIdentity && chatId !in leftChannels) {

@@ -2352,6 +2352,8 @@
     <string name="monogram_error_api_id">Invalid API ID</string>
     <string name="monogram_error_api_hash">Invalid API hash</string>
     <string name="monogram_error_api_credentials">Invalid API ID or API hash</string>
+    <string name="monogram_error_phone">Enter the phone number with country code, for example +49…</string>
+    <string name="monogram_error_code_first">Request a login code first</string>
     <string name="monogram_error_not_streamable">This Monogram media cannot be streamed</string>
     <string name="monogram_error_not_authorized">Not signed in to Monogram</string>
     <string name="monogram_error_channel_left">You left this channel</string>

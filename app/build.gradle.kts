@@ -177,6 +177,8 @@ android {
     if (monogramEnabled) {
         // This folder is not compiled or packaged in normal CC0 builds.
         sourceSets.getByName("main").java.srcDir("src/monogram/java")
+        // AGP built-in Kotlin compiles the Kotlin source set; java.srcDir alone skipped the backend.
+        sourceSets.getByName("main").kotlin.srcDir("src/monogram/java")
         // Monogram's GPL-3.0-only logo artwork ships only in the opt-in build.
         sourceSets.getByName("main").res.srcDir("src/monogram/res")
     } else {
